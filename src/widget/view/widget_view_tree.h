@@ -9,6 +9,7 @@
 #include <chrono>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -92,6 +93,8 @@ struct ViewLength
 {
     ViewLengthKind kind = ViewLengthKind::Auto;
     float value = 0.0f;
+
+    bool operator==(const ViewLength&) const = default;
 };
 
 enum class ViewAlignment
@@ -377,6 +380,8 @@ struct ViewShadow
     float offsetX = 0.0f;
     float offsetY = 4.0f;
     float alpha = 0.25f;
+
+    bool operator==(const ViewShadow&) const = default;
 };
 
 struct ViewTransform
@@ -443,6 +448,8 @@ struct ViewChoiceOption
     std::string value;
     std::string label;
     bool enabled = true;
+
+    bool operator==(const ViewChoiceOption&) const = default;
 };
 
 struct ViewTextSpan
@@ -467,6 +474,8 @@ struct ViewTextSpan
     std::string tooltip;
     std::string accessibilityLabel;
     std::map<std::string, InteractionAction, std::less<>> events;
+
+    bool operator==(const ViewTextSpan&) const = default;
 };
 
 struct ViewMonthCalendarCell
@@ -483,6 +492,8 @@ struct ViewVirtualItemMeasurement
 {
     std::size_t index = 0;
     float extent = 0.0f;
+
+    bool operator==(const ViewVirtualItemMeasurement&) const = default;
 };
 
 struct ViewNode
@@ -660,6 +671,8 @@ struct ViewNode
     // keeps scrolling separate from opt-in layout transitions.
     ViewRect layoutTransitionFrame;
     std::optional<ViewRect> clipFrame;
+    // Host-owned track bounds; content clipping and layout remain independent.
+    std::optional<ViewRect> scrollbarFrame;
     float scrollOffset = 0.0f;
     float scrollViewportExtent = 0.0f;
     float scrollContentExtent = 0.0f;
@@ -667,6 +680,10 @@ struct ViewNode
     std::vector<float> virtualMeasuredExtents;
     std::vector<std::size_t> virtualChildIndices;
     std::vector<std::size_t> virtualMeasuredIndices;
+
+    // Include every descriptor field in layout-cache identity, including new
+    // fields added later. Never compare a scrolled/presented tree as input.
+    bool operator==(const ViewNode&) const = default;
 };
 
 /** Developer-only snapshot of one committed declarative scene node. */
@@ -691,6 +708,7 @@ struct ViewScrollViewport
     float maximum = 0.0f;
     bool initialized = false;
     bool selectPopup = false;
+    std::optional<ViewRect> scrollbarFrame;
 };
 
 struct ViewInputControl
@@ -840,6 +858,26 @@ struct ViewTreeLimits
 
 bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
     std::string& error);
+
+// One successful pure-layout result per host surface. Lua evaluation, parsing,
+// host slot validation, scrolling, interaction and drawing remain uncached.
+class ViewLayoutCache
+{
+public:
+    bool ValidateAndLayout(ViewNode& root, float width, float height,
+        std::string& error, bool* reused = nullptr);
+
+private:
+    struct Snapshot
+    {
+        ViewNode input;
+        ViewNode output;
+        float width = 0.0f;
+        float height = 0.0f;
+    };
+    std::shared_ptr<const Snapshot> snapshot_;
+};
+
 bool ValidateViewLogicalSlots(const ViewNode& root,
     const LogicalSlotModel& model, std::string& error);
 bool CollectViewInteractionRegions(const ViewNode& root,
@@ -851,6 +889,12 @@ bool HasVisibleIndeterminateProgress(const ViewNode& root) noexcept;
 bool ApplyViewScrollOffsets(ViewNode& root,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports, std::string& error);
+
+// Move a surface-filling scroll container's track into host chrome gutters.
+// Clipped, transformed and local/nested scroll areas keep their own bounds.
+void ApplyViewSurfaceScrollbarGutters(ViewNode& root,
+    std::vector<ViewScrollViewport>& viewports,
+    const ViewRect& contentBounds, const ViewRect& trackBounds);
 bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,
     std::size_t columns, float rowGap, float viewportExtent,
     float requestedOffset, std::size_t overscan,

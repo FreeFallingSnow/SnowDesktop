@@ -507,7 +507,7 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
             SetWindowPos(button->host, insertAfter ? insertAfter : HWND_TOP,
                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
-    WriteDiagnosticLogEntry(L"Startup animation shown on independent UI thread");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Startup animation shown on independent UI thread");
 
     HANDLE events[]{ stop, finish, handoff };
     ULONGLONG fadeEnd = 0;
@@ -540,7 +540,7 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
         }
     }
     ShowWindow(window.value, SW_HIDE);
-    WriteDiagnosticLogEntry(L"Startup animation retired");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Startup animation retired");
 }
 }
 
@@ -575,7 +575,7 @@ bool StartupAnimation::Start(HINSTANCE instance, HWND desktopHost,
                 startingText, cancelText, cancellation_, stopEvent_, finishEvent_, handoffEvent_); }
             catch (...)
             {
-                WriteDiagnosticLogEntry(L"Startup animation unavailable; continuing without overlay",
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Startup animation unavailable; continuing without overlay",
                     DiagnosticLogLevel::Warning);
             }
             CoUninitialize();

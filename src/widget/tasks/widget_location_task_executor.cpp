@@ -1,4 +1,5 @@
 #include "widget_location_task_executor.h"
+#include "diagnostics/performance_trace.h"
 #include <windows.h>
 #include <winrt/Windows.Devices.Geolocation.h>
 #include <winrt/Windows.Foundation.h>
@@ -71,6 +72,7 @@ struct WidgetLocationTaskExecutor::State
                     std::chrono::milliseconds(options.timeoutMs));
                 if (!state->Track(id, position.as<winrt::Windows::Foundation::IAsyncInfo>())) co_return;
                 const auto value = co_await position;
+                performance::TaskExecution trace(id, "location.decode");
                 const auto coordinate = value.Coordinate();
                 const auto point = coordinate.Point().Position();
                 result.latitude = point.Latitude; result.longitude = point.Longitude;

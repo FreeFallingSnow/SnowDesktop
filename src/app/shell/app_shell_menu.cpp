@@ -3,6 +3,7 @@
 #include "app/popup/popup_window_pair_z_order.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
+#include "app/dock/dock_input_diagnostics.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_start_pin.h"
@@ -68,7 +69,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
             FlushPendingQuickNavigationCompositionCommit();
         });
     if (!pump.IsAvailable())
-        WriteDiagnosticLogEntry(L"Shell menu animation pump unavailable");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell menu animation pump unavailable", DiagnosticLogLevel::Warning);
 
     shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
     const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
@@ -102,7 +103,7 @@ BOOL DesktopApp::InvokeShellMenuCommand(
             FlushPendingQuickNavigationCompositionCommit();
         });
     if (!pump.IsAvailable())
-        WriteDiagnosticLogEntry(L"Shell invocation animation pump unavailable");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell invocation animation pump unavailable", DiagnosticLogLevel::Warning);
 
     const bool foregroundReady = FocusKeyboardWindow(
         owner, true, L"Shell command owner");
@@ -110,10 +111,10 @@ BOOL DesktopApp::InvokeShellMenuCommand(
     swprintf_s(message,
         L"Shell command begin owner=%p foregroundReady=%d animationPump=%d verb=%p",
         owner, foregroundReady, pump.IsAvailable(), invoke.lpVerb);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message);
     const BOOL result = SafeInvokeCommand(
         menu, reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-    WriteDiagnosticLogEntry(L"Shell command returned");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell command returned");
     return result;
 }
 
@@ -172,7 +173,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
         const HRESULT hr = snowdesktop::AttachShellNewItemCapture(context, capture);
         if (FAILED(hr))
         {
-            WriteDiagnosticLogEntry(L"New-menu item ownership site unavailable");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"New-menu item ownership site unavailable", DiagnosticLogLevel::Warning);
             MessageBeep(MB_ICONWARNING);
             return hr;
         }
@@ -333,9 +334,15 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     dockWindowTransitionLayerUpdateActive_ = true;
     struct LayerUpdateScope final
     {
-        bool& active;
-        ~LayerUpdateScope() { active = false; }
-    } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
+        DesktopApp& app; HWND window; bool wasTopmost;
+        ~LayerUpdateScope()
+        {
+            app.dockWindowTransitionLayerUpdateActive_ = false;
+            if (!wasTopmost && snowdesktop::popup_window_pair_z_order::IsTopmost(window))
+                if (auto* current = app.FindPersistentDockHost(window))
+                    app.RefreshFloatingDockPromotionInput(*current, true);
+        }
+    } layerUpdateScope{*this, host.hwnd, wasTopmost};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
     host.desktopLayerRestorePending = false;
     host.desktopLayerRestoreRetryTick = GetTickCount64() +
@@ -430,6 +437,8 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
     if (!promoted && !systemShowDesktopGuard)
     {
+        if (wasTopmost)
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"policy-lower", host.hwnd, host.promoted);
         // A desktop-band Dock is still a top-level no-activate window. Place
         // it below ordinary applications and above Explorer's desktop host,
         // while preserving the same HWND and
@@ -452,7 +461,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             },
             [&host](HWND anchor) {
                 return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
-            });
+            }, GetAncestor(GetForegroundWindow(), GA_ROOT));
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
             snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
@@ -780,7 +789,7 @@ ShowShellItemContextMenuForPaths(
             wchar_t message[96]{};
             swprintf_s(message, L"Shell Start pin command result=0x%08lX",
                 static_cast<unsigned long>(*startPin));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message, FAILED(*startPin) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
         else
             InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);

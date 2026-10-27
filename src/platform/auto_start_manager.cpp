@@ -87,7 +87,7 @@ std::wstring ExceptionMessage()
 
 bool ReportFailure(std::wstring message, std::wstring* error)
 {
-    WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Error);
     if (error) *error = std::move(message);
     return false;
 }

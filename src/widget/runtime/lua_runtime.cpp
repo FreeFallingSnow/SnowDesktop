@@ -1,5 +1,8 @@
 #include "lua_runtime.h"
 #include "diagnostics/performance_trace.h"
+#include "diagnostics/performance_trace_control.h"
+#include <cstdlib>
+#include <algorithm>
 
 extern "C" {
 #include <lauxlib.h>
@@ -7,6 +10,64 @@ extern "C" {
 
 namespace snowdesktop::lua_runtime
 {
+namespace
+{
+void PrepareAllocationTraffic(LuaRuntimeQuota& quota, std::uint64_t generation)
+{
+    if (quota.allocationTraffic.generation == generation) return;
+    quota.allocationTraffic = {};
+    quota.allocationTraffic.generation = generation;
+    quota.allocationTraffic.baselineBytes = quota.allocationTraffic.peakBytes = quota.memoryBytes;
+}
+}
+void* QuotaAllocator(void* userData, void* pointer, std::size_t oldSize, std::size_t newSize)
+{
+    auto* quota = static_cast<LuaRuntimeQuota*>(userData);
+    if (!quota) return nullptr;
+    const auto generation = performance::CaptureGeneration();
+    if (generation) PrepareAllocationTraffic(*quota, generation);
+    auto& traffic = quota->allocationTraffic;
+    if (!newSize)
+    {
+        if (pointer)
+        {
+            quota->memoryBytes = oldSize > quota->memoryBytes ? 0 : quota->memoryBytes - oldSize;
+            if (generation) { ++traffic.frees; traffic.freedBytes += oldSize; }
+        }
+        std::free(pointer); return nullptr;
+    }
+    const auto current = pointer ? oldSize : 0;
+    const auto without = current > quota->memoryBytes ? 0 : quota->memoryBytes - current;
+    if (newSize > quota->memoryLimit || without > quota->memoryLimit - newSize)
+    { quota->memoryExceeded = true; return nullptr; }
+    void* result = std::realloc(pointer, newSize);
+    if (result)
+    {
+        quota->memoryBytes = without + newSize;
+        if (generation)
+        {
+            traffic.allocatedBytes += newSize; traffic.freedBytes += current;
+            if (pointer) ++traffic.reallocations; else ++traffic.allocations;
+            traffic.peakBytes = (std::max)(traffic.peakBytes, quota->memoryBytes);
+        }
+    }
+    return result;
+}
+void SampleAllocationTraffic(LuaRuntimeQuota& quota, std::wstring_view owner)
+{
+    const auto generation = performance::CaptureGeneration();
+    if (!generation) return;
+    PrepareAllocationTraffic(quota, generation);
+    const auto& traffic = quota.allocationTraffic;
+    using performance::Value;
+    Value("widget.memory", "lua_allocated_bytes_total", owner, static_cast<double>(traffic.allocatedBytes));
+    Value("widget.memory", "lua_freed_bytes_total", owner, static_cast<double>(traffic.freedBytes));
+    Value("widget.memory", "lua_allocations_total", owner, static_cast<double>(traffic.allocations));
+    Value("widget.memory", "lua_frees_total", owner, static_cast<double>(traffic.frees));
+    Value("widget.memory", "lua_reallocations_total", owner, static_cast<double>(traffic.reallocations));
+    Value("widget.memory", "lua_peak_live_bytes", owner, static_cast<double>(traffic.peakBytes));
+    Value("widget.memory", "lua_baseline_live_bytes", owner, static_cast<double>(traffic.baselineBytes));
+}
 namespace
 {
 constexpr int kHookInstructionStep = 10000;

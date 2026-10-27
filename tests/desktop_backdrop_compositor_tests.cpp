@@ -1,8 +1,13 @@
+#include "diagnostics/native_trace_observation.h"
 #include "../src/app/render/desktop_backdrop_compositor.h"
 #include "../src/app/render/desktop_backdrop_update_rules.h"
 #include "app/render/widget_icon_backdrops.h"
 #include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
+#include "layout/popup_motion_curve.h"
+#include "layout/popup_animation_rules.h"
+#include "navigation/quick_navigation_animation_rules.h"
+#include "diagnostics/performance_trace.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "dock/dock_window_transition.h"
 #include "dock/floating_dock_rules.h"
@@ -13,6 +18,8 @@
 #include "system/panel/system_panel_backdrop_placement.h"
 #include "dock/dock_desktop_layer_cases.h"
 #include "navigation/quick_navigation_attraction_render_cases.h"
+#include "ui/render/desktop_backdrop_panel_properties_cases.h"
+#include "ui/render/desktop_backdrop_region_cache_cases.h"
 #include <commctrl.h>
 
 #include <roapi.h>
@@ -24,6 +31,7 @@
 #include <wrl/client.h>
 
 #include <array>
+#include <atomic>
 #include <algorithm>
 #include <iostream>
 #include <string_view>
@@ -34,6 +42,35 @@ namespace
 {
 
 constexpr UINT kCommitCompleted = WM_APP + 471;
+
+std::atomic<DWORD> warmupThread{0};
+std::atomic<unsigned> warmupBuilds{0}, warmupReuses{0};
+struct WarmupObservation
+{
+    snowdesktop::test::NativeTraceObservation trace{[](const snowdesktop::test::NativeTraceEvent& event) {
+        if (event.kind == snowdesktop::test::NativeTraceEvent::Begin && event.name == "backdrop.warmup.background")
+        { warmupThread.store(GetCurrentThreadId()); ++warmupBuilds; }
+        if (event.kind == snowdesktop::test::NativeTraceEvent::Counter && event.name == "backdrop.warmup.reused") ++warmupReuses;
+    }};
+};
+
+bool WaitForWarmup(const std::shared_future<bool>& result)
+{
+    if (!result.valid()) return false;
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    while (result.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (GetTickCount64() >= deadline) return false;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+    return result.get();
+}
 
 struct PopupWindow
 {
@@ -363,6 +400,80 @@ int CheckNativeTooltipLifecycle()
         return windows;
     };
     const auto baseline = backdrops();
+    // Status-bar tips reuse their HWND after a panel opens. Exercise the real
+    // tooltip entry point against a newer topmost popup on this private desktop.
+    for (const bool glass : {false, true})
+    {
+        appearance.glassEnabled = glass;
+        tooltip.Configure(owner.handle, composition.Get(), text.Get(), appearance);
+        const auto showTooltip = [&] {
+            tooltip.SetTarget("private/z-order", L"Status-bar tooltip", {100, 100, 180, 140},
+                snowdesktop::NativeTooltipPlacement::Below, true);
+        };
+        showTooltip();
+        const HWND tip = tooltip.Window();
+        tooltip.Hide();
+        PopupWindow popup;
+        if (!check(popup.handle != nullptr, "tooltip layer fixture creates a competing popup")) continue;
+        const auto above = [](HWND upper, HWND lower) {
+            for (HWND window = upper; window; window = GetWindow(window, GW_HWNDNEXT))
+                if (window == lower) return true;
+            return false;
+        };
+        const auto raisePopup = [&] {
+            return SetWindowPos(popup.handle, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE;
+        };
+        check(raisePopup() && above(popup.handle, tip),
+            "a newer panel starts above the reused hidden tooltip");
+        SetActiveWindow(popup.handle);
+        SetFocus(popup.handle);
+        const HWND active = GetActiveWindow(), focus = GetFocus();
+        const auto checkTooltipLayer = [&] {
+            check(tooltip.Visible() && tooltip.Window() == tip && above(tip, popup.handle),
+                "reused and refreshed tooltip content stays above the popup");
+            HWND helper = nullptr;
+            for (const HWND window : backdrops())
+                if (std::find(baseline.begin(), baseline.end(), window) == baseline.end()) helper = window;
+            check(glass ? helper && IsWindowVisible(helper) &&
+                    GetWindow(helper, GW_HWNDPREV) == tip && above(helper, popup.handle) : !helper,
+                "tooltip glass stays directly behind its content and above the popup; opaque tips need no glass");
+            check(GetActiveWindow() == active && GetFocus() == focus,
+                "raising a tooltip preserves the popup's activation and keyboard focus");
+        };
+        showTooltip();
+        checkTooltipLayer();
+        check(raisePopup() && above(popup.handle, tip),
+            "a panel can overtake an already-visible tooltip before its next refresh");
+        showTooltip();
+        checkTooltipLayer();
+        tooltip.Hide();
+    }
+    appearance.glassEnabled = true;
+    tooltip.Configure(owner.handle, composition.Get(), text.Get(), appearance);
+    // Menu hover hints must survive the menu's capture without changing it.
+    SetCapture(owner.handle);
+    tooltip.SetTarget("private/captured", L"Ordinary hover", {100, 100, 180, 140},
+        snowdesktop::NativeTooltipPlacement::Below, true);
+    check(!tooltip.Visible(), "ordinary tooltips remain suppressed during capture");
+    tooltip.SetMenuFeedback(true);
+    tooltip.SetTarget("private/menu-history", L"Will undo rename: change after.txt back to before.txt", {100, 100, 180, 140},
+        snowdesktop::NativeTooltipPlacement::Below, true);
+    wchar_t operationText[256]{};
+    GetWindowTextW(tooltip.Window(), operationText, static_cast<int>(std::size(operationText)));
+    check(tooltip.Visible() && GetCapture() == owner.handle &&
+        std::wstring(operationText).find(L"after.txt") != std::wstring::npos &&
+        std::wstring(operationText).find(L"before.txt") != std::wstring::npos,
+        "menu-owned tooltip exposes the concrete operation while preserving capture");
+    tooltip.SetTarget("private/menu-history-redo", L"Will redo rename: change before.txt to after.txt", {100, 100, 180, 140},
+        snowdesktop::NativeTooltipPlacement::Below, true);
+    GetWindowTextW(tooltip.Window(), operationText, static_cast<int>(std::size(operationText)));
+    check(std::wstring(operationText) == L"Will redo rename: change before.txt to after.txt",
+        "history hint presents the future action without a title or forced line break");
+    tooltip.Hide();
+    check(!tooltip.Visible() && GetCapture() == owner.handle, "leaving a menu action hides its hint without stealing capture");
+    ReleaseCapture();
+    tooltip.SetMenuFeedback(false);
     for (int scenario = 0; scenario < 5; ++scenario)
     {
         ShowWindow(owner.handle, SW_SHOWNOACTIVATE);
@@ -553,6 +664,64 @@ int CheckHiddenPopupKeyboardFocus()
                     "repeating pair hide must not restore hidden keyboard focus");
             }
         }
+        // A hidden native window can retain capture even after all its pixels
+        // and its backdrop are removed. Exercise the actual pair-hiding API.
+        for (const bool initialized : {false, true})
+        {
+            DesktopBackdropCompositor noBackdrop;
+            auto& presentation = initialized ? glass : noBackdrop;
+            Window edit{CreateWindowExW(0, L"EDIT", L"capture-child", WS_CHILD | WS_VISIBLE,
+                8, 8, 80, 24, content.handle, nullptr, GetModuleHandleW(nullptr), nullptr)};
+            if (!check(edit.handle != nullptr, "create a private captured child")) return;
+            for (const HWND captured : {content.handle, edit.handle})
+            {
+                presentation.ShowPopupWindowPair(content.handle);
+                SetCapture(captured);
+                if (!check(GetCapture() == captured, "capture fixture must own the real native capture")) return;
+                presentation.HidePopupWindowPair(content.handle);
+                check(GetCapture() == nullptr, initialized ?
+                    "real popup pair hide must release content/child capture" :
+                    "fallback popup hide must release content/child capture");
+                check(!IsWindowVisible(content.handle), "capture cleanup keeps the popup hidden");
+                ReleaseCapture();
+            }
+            // Idempotent hiding also cleans up capture obtained while hidden,
+            // and cannot release an unrelated window's current capture.
+            SetCapture(content.handle);
+            presentation.HidePopupWindowPair(content.handle);
+            check(GetCapture() == nullptr, "repeated popup hide retires hidden capture");
+            ReleaseCapture();
+            SetCapture(outside.handle);
+            presentation.HidePopupWindowPair(content.handle);
+            check(GetCapture() == outside.handle, "popup hide preserves capture held by another window");
+            ReleaseCapture();
+        }
+        struct CaptureTransfer { HWND replacement; unsigned notifications = 0; } transfer{outside.handle};
+        const auto transferInput = [](HWND window, UINT message, WPARAM wp, LPARAM lp,
+            UINT_PTR, DWORD_PTR data) -> LRESULT {
+            auto& state = *reinterpret_cast<CaptureTransfer*>(data);
+            if (message == WM_CAPTURECHANGED && !lp)
+            {
+                ++state.notifications;
+                SetCapture(state.replacement);
+                SetActiveWindow(state.replacement);
+                SetFocus(state.replacement);
+            }
+            return DefSubclassProc(window, message, wp, lp);
+        };
+        if (!check(SetWindowSubclass(content.handle, transferInput, 2,
+                reinterpret_cast<DWORD_PTR>(&transfer)) != FALSE,
+                "attach test-owned capture transfer callback")) return;
+        glass.ShowPopupWindowPair(content.handle);
+        SetActiveWindow(content.handle);
+        SetFocus(content.handle);
+        SetCapture(content.handle);
+        glass.HidePopupWindowPair(content.handle);
+        check(transfer.notifications == 1 && GetCapture() == outside.handle &&
+                GetFocus() == outside.handle && GetActiveWindow() == outside.handle,
+            "capture-loss callback can transfer capture/focus without pair hide clearing the replacement");
+        RemoveWindowSubclass(content.handle, transferInput, 2);
+        ReleaseCapture();
         failures += CheckNativeTooltipLifecycle();
     }).join();
     // The thread and its WinComp context have ended before releasing desktop.
@@ -686,6 +855,8 @@ int RunDesktopBackdropCompositorTests()
             "backdrop integration initializes its Windows Runtime apartment"))
         return failures;
 
+    snowdesktop::test::backdrop_region_cache::CheckWindowRegionCache(check, FindOwnedBackdrop);
+
     PopupWindow content;
     PopupWindow otherContent;
     if (!check(content.handle && otherContent.handle,
@@ -693,6 +864,77 @@ int RunDesktopBackdropCompositorTests()
         return failures;
 
     failures += CheckPopupRoundedEdgeCoverage();
+    {
+        WarmupObservation observe;
+        warmupThread = 0;
+        warmupBuilds = warmupReuses = 0;
+        std::shared_future<bool> prepared;
+        {
+            DesktopBackdropCompositor prewarmer;
+            prepared = prewarmer.PrepareBlurFactoryInBackground(24);
+            check(prewarmer.PrepareBlurFactoryInBackground(24).valid(),
+                "duplicate requests reuse one background factory job");
+        }
+        check(WaitForWarmup(prepared) && warmupThread.load() != 0 &&
+            warmupThread.load() != GetCurrentThreadId() && warmupBuilds.load() == 1,
+            "real blur-factory creation runs once off the UI thread and survives initiator destruction");
+        DesktopBackdropCompositor springGlass;
+        if (check(springGlass.InitializePopup(content.handle, false, false),
+                "spring glass initializes on a hidden test-owned window"))
+        {
+            springGlass.BeginFrame(true);
+            check(springGlass.AddPanel({10, 10, 300, 220}, 18, 24), "spring fixture creates its actual native glass panel");
+            check(warmupReuses.load() == 1,
+                "popup initialization consumes the actual background-created factory across target reset");
+            springGlass.EndFrame(false);
+            snowdesktop::popup_animation_rules::State popup;
+            popup.Configure(false, 1.0, true);
+            popup.Open(1000);
+            const auto trajectory = popup.RemainingTimeline();
+            check(springGlass.StartVisualTransformAnimation(0.0f, 1.0f, 1.0f, 1.0f,
+                160.0f, 240.0f, 160, 0.0f, &trajectory),
+                "Windows Composition accepts the shared zero-to-one spring keyframes");
+            popup.Advance(1060);
+            const auto initial = popup.GetVisual();
+            popup.Close(1060);
+            const auto reversed = popup.RemainingTimeline();
+            check(springGlass.StartVisualTransformAnimation(initial.scale, 0.0f,
+                1.0f, 1.0f, 160.0f, 240.0f, 110, 0.0f, &reversed),
+                "Windows Composition accepts a velocity-preserving reverse through its turning point");
+            popup.ShowImmediately();
+            popup.Close(2000);
+            const auto closeTrajectory = popup.RemainingTimeline();
+            check(springGlass.StartVisualTransformAnimation(1.0f, 0.0f, 1.0f, 1.0f,
+                160.0f, 240.0f, 110, 0.0f, &closeTrajectory),
+                "Windows Composition accepts the same visible 110ms close as the content and UI fallback");
+            springGlass.SetVisualTransform(0.0f, 0.0f, 160.0f, 240.0f);
+            for (const auto effect : {snowdesktop::quick_navigation_animation_rules::Effect::Scale,
+                snowdesktop::quick_navigation_animation_rules::Effect::Fade})
+            {
+                snowdesktop::quick_navigation_animation_rules::State quick;
+                quick.Configure(effect, 1.0, false, true); quick.Open(1000);
+                const auto reveal = quick.RemainingTimeline(), scale = quick.RemainingScaleTimeline();
+                check(springGlass.StartVisualTransformAnimation(quick.HiddenScale(), 1.0f, 0.0f, 1.0f,
+                    160.0f, 240.0f, 160, 0.0f, &scale, &reveal),
+                    "native glass accepts the exact responsive scale and opacity keyframes together");
+                quick.Advance(1060); quick.Close(1060);
+                const auto closeReveal = quick.RemainingTimeline(), closeScale = quick.RemainingScaleTimeline();
+                const auto visual = quick.GetVisual();
+                check(springGlass.StartVisualTransformAnimation(visual.scale, quick.HiddenScale(), visual.opacity, 0.0f,
+                    160.0f, 240.0f, 110, 0.0f, &closeScale, &closeReveal),
+                    "native glass accepts responsive scale and opacity reversal through their turning points");
+                quick.ResetHidden(); quick.Open(2000); quick.Close(2150); quick.Open(2150);
+                const auto boundedReveal = quick.RemainingTimeline(), boundedScale = quick.RemainingScaleTimeline();
+                const auto bounded = quick.GetVisual();
+                check(springGlass.StartVisualTransformAnimation(bounded.scale, 1.0f, bounded.opacity, 1.0f,
+                    160.0f, 240.0f, 160, 0.0f, &boundedScale, &boundedReveal),
+                    "native glass accepts bounded same-tick endpoint reversals for both opacity and scale");
+            }
+            springGlass.CommitVisualChanges();
+            check(springGlass.IsAvailable(), "zero-sized glass completion remains available for the next open");
+        }
+    }
+    snowdesktop::test::backdrop_properties::Run(content.handle, check, FindOwnedBackdrop);
     failures += snowdesktop::test::CheckQuickNavigationAttractionPixels();
     failures += CheckHiddenPopupKeyboardFocus();
 

@@ -1,4 +1,5 @@
 #include "widget_clipboard_task_executor.h"
+#include "diagnostics/performance_trace.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -528,6 +529,7 @@ void WidgetClipboardTaskExecutor::WorkerMain(
         WidgetClipboardTaskRunResult result;
         try
         {
+            performance::TaskExecution trace(request.id, "clipboard");
             result = runner_(request.request);
         }
         catch (...)

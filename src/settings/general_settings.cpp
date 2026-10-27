@@ -80,6 +80,21 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     std::string text = ss.str();
     if (text.empty()) return false;
 
+    int logModules = 0;
+    if (ReadIntField(text, "diagnosticLogModules", logModules) && logModules >= 0)
+        settings.diagnosticLogModules = snowdesktop::diagnostics::NormalizeLogModules(
+            static_cast<std::uint32_t>(logModules));
+    else
+        settings.diagnosticLogModules = 0;
+
+    settings.showAdvancedSettings = false;
+    settings.runtimeModules = {};
+    ReadBoolField(text, "showAdvancedSettings", settings.showAdvancedSettings);
+    for (std::size_t i = 0; i < snowdesktop::runtime_modules::kCount; ++i)
+    {
+        const std::string key = "moduleAllowed_" + std::string(snowdesktop::runtime_modules::kKeys[i]);
+        ReadBoolField(text, key.c_str(), settings.runtimeModules.allowed[i]);
+    }
     bool val = false;
     if (ReadBoolField(text, "softwareDesktopEnabled", val))
         settings.softwareDesktopEnabled = val;
@@ -298,6 +313,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"widgetDeveloperToolsEnabled\": "
          << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
          << ",\n";
+    file << "  \"diagnosticLogModules\": "
+         << snowdesktop::diagnostics::NormalizeLogModules(settings.diagnosticLogModules) << ",\n";
+    file << "  \"showAdvancedSettings\": " << (settings.showAdvancedSettings ? "true" : "false") << ",\n";
+    for (std::size_t i = 0; i < snowdesktop::runtime_modules::kCount; ++i)
+        file << "  \"moduleAllowed_" << snowdesktop::runtime_modules::kKeys[i] << "\": "
+             << (settings.runtimeModules.allowed[i] ? "true" : "false") << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
     return snowdesktop::atomic_file::WriteAll(path, file.str());

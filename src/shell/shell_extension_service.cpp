@@ -3,6 +3,7 @@
 #include "shell_extension_discovery.h"
 #include "shell_extension_attribution.h"
 #include "shell_extension_demand.h"
+#include "shell_menu_read_projection.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_catalogue_workers.h"
@@ -48,6 +49,7 @@ Key SelectionKey(Request request)
 Key SelectionBaseKey(Request request)
 {
     request.omitNvidiaCompatibility = false;
+    request.visibleMenuProviders.reset();
     return SelectionKey(std::move(request));
 }
 bool NetworkSelection(const Request &request)
@@ -167,15 +169,21 @@ struct MenuService::Impl
         Request request;
         MenuView view;
         QueryPriority priority = QueryPriority::Inspect;
-        std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
+        std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0, snapshotRevision = 0;
         unsigned failures = 0;
         Key identity, snapshotIdentity;
         std::uint64_t snapshotSignature = 0, snapshotDependency = 0;
-        bool snapshotTargetChecked = false, registryInvalid = false;
+        bool snapshotTargetChecked = false, registryInvalid = false, snapshotManagementProof = false;
         std::optional<MenuSnapshotCache::Ticket> provisionalTicket;
         std::uint64_t provisionalRegistryRevision = 0;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
+        // A notification can request target validation without authorizing a
+        // foreground root query. Only an explicit Queue supplies this intent.
+        std::optional<QueryPriority> targetCheckDemand;
         bool queued = false, force = false, invalid = false, inspection = false;
+        // A finite management request, independent of ordinary query priority
+        // and of whether settings happened to be opened earlier in this process.
+        bool managementAttributionRequested = false;
         bool fullMenuRequested = false;
         std::vector<Click> clicks;
     };
@@ -189,25 +197,42 @@ struct MenuService::Impl
         std::optional<Reply> reply;
         std::uint64_t verificationRevision = 0;
         ULONGLONG replyReadyAt = 0;
+        bool managementOnly = false;
+        std::uint64_t managementGeneration = 0;
     };
     struct SourceJob
     {
         Key key;
-        Request request;
+        Request request, selection;
         Registration source;
         Reply actual;
         std::vector<Key> attempts;
         QueryWork work;
-        std::uint64_t revision = 0, menuRevision = 0, started = 0;
+        Key identity;
+        std::uint64_t dependency = 0, sequence = 0, snapshotRevision = 0, configuration = 0, started = 0;
+        std::optional<Reply> reply;
+        ULONGLONG replyReadyAt = 0;
+        std::uint64_t managementGeneration = 0;
     };
     std::unique_ptr<SourceJob> sourceJob;
     std::set<Key> sourceAttempts, sourceSelections;
     std::set<std::string> failedSources;
     bool sourcePending = false;
+    bool managementActive = false;
+    std::uint64_t managementGeneration = 1, workGeneration = 1, scanWorkGeneration = 0, scanManagementGeneration = 0;
     std::mutex mutex;
     std::map<Key, Row> rows;
     std::map<Key, Key> requestedViews;
     Catalogue catalogue;
+    Catalogue sourceCatalogue;
+    std::future<Catalogue> sourceScan;
+    SourceCatalogueReader readSources;
+    bool sourceScanRequested = false, sourceScanning = false;
+    std::uint64_t checkedSourceRegistryRevision = 0, checkedSourceConfiguration = 0, sourceScanRegistryRevision = 0,
+        sourceScanConfiguration = 0, sourceScanWorkGeneration = 0, sourceScanManagementGeneration = 0;
+    std::vector<Registration> sourceScanSeeds;
+    CatalogueForegroundDemand sourceScanDemand{false, BackgroundCatalogueFullscreen};
+    ULONGLONG sourceScanStarted = 0;
     Catalogue available;
     std::map<std::string, Registration> observed;
     bool observedDirty = false;
@@ -218,11 +243,13 @@ struct MenuService::Impl
     size_t nextType = 0;
     bool typesRequested = false, typesPreparing = false, typesForce = false, typeBatchForce = false;
     Preferences preferences;
+    std::array<std::vector<std::string>, 2> readProjection;
     std::array<std::set<std::string>, 4> shown;
     Request management;
     Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     bool foregroundScanRequested = false;
+    std::uint64_t configurationRevision = 0;
     CatalogueForegroundDemand foregroundScanDemand{false, [wasPaused = false]() mutable {
         const bool paused = BackgroundCatalogueFullscreen();
         if (paused != wasPaused) MenuTrace("catalogue", paused ? "paused.fullscreen" : "resumed.fullscreen");
@@ -230,25 +257,31 @@ struct MenuService::Impl
         return paused;
     }};
     std::uint64_t clock = 0;
-    std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
-    struct ScopeVerification { std::future<std::uint64_t> scan; std::uint64_t checked = 0, signature = 0, attempt = 0, scanRevision = 0; };
+    std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0,
+        checkedManagementGeneration = 0;
+    struct ScopeVerification
+    {
+        std::future<std::uint64_t> scan;
+        std::uint64_t checked = 0, signature = 0, attempt = 0, scanRevision = 0, workGeneration = 0;
+        CatalogueForegroundDemand demand{false, BackgroundCatalogueFullscreen};
+    };
     std::array<ScopeVerification, 3> scopedVerification;
     ULONGLONG scanStarted = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
     std::filesystem::path directory;
     QueryFactory factory;
-    bool nativeFactory = false, usePreparedQuery = false, preparationRequested = false;
+    bool nativeFactory = false;
     CatalogueReader readCatalogue;
     FolderVerifier verifyFolder;
     BackgroundVerifier verifyBackground;
     std::vector<Running> running;
     std::future<Catalogue> scan;
-    explicit Impl(std::filesystem::path path, QueryFactory f, CatalogueReader r, FolderVerifier v, BackgroundVerifier b)
-        : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v)), verifyBackground(std::move(b))
+    explicit Impl(std::filesystem::path path, QueryFactory f, CatalogueReader r, FolderVerifier v, BackgroundVerifier b, SourceCatalogueReader sr)
+        : readSources(std::move(sr)), directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v)), verifyBackground(std::move(b))
     {
         if (!factory) { nativeFactory = true; factory = [this](const Request &request) {
-            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, usePreparedQuery);
+            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, false);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
                 [session] { return session->SelectionContexts(); }};
@@ -256,37 +289,71 @@ struct MenuService::Impl
         if (!readCatalogue)
         {
             readCatalogue = [this] {
-                return ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, true, foregroundScanDemand);
+                auto value = ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, true, foregroundScanDemand);
+                const auto waited = foregroundScanDemand.BudgetWaitMilliseconds();
+                snowdesktop::performance::Value("shell.catalogue", "background_budget_wait_ms", {}, static_cast<double>(waited));
+                MenuTrace("catalogue", "budget_wait", static_cast<double>(waited));
+                return value;
             };
-            if (!verifyFolder) verifyFolder = [] { return ReadFolderCatalogueRevision(); };
-            if (!verifyBackground) verifyBackground = [](Context context) { return ReadBackgroundCatalogueRevision(context); };
+            if (!verifyFolder) verifyFolder = [this] {
+                return ReadFolderCatalogueRevision(HKEY_CLASSES_ROOT, true, &scopedVerification[0].demand);
+            };
+            if (!verifyBackground) verifyBackground = [this](Context context) {
+                const auto index = context == Context::Desktop ? 2 : 1;
+                return ReadBackgroundCatalogueRevision(context, HKEY_CLASSES_ROOT, true, &scopedVerification[index].demand);
+            };
         }
+        if (!readSources) readSources = [this](const auto &sources) { return ReadCatalogueSources(sources, &sourceScanDemand); };
         worker = std::thread([this] { Run(); });
+    }
+    QueryWork DispatchQuery(Request request)
+    {
+        if (request.visibleMenuProviders)
+        {
+            const auto contexts = Contexts(request);
+            std::lock_guard lock(mutex);
+            request.visibleMenuProviders = ResolveMenuReadProjection(*request.visibleMenuProviders, catalogue, contexts);
+        }
+        // Factory adapters may pass the request directly into a real Session.
+        // Internal cache-policy tags must never cross that query boundary.
+        return factory(request);
     }
     ~Impl() { Stop(); if (wake) CloseHandle(wake); }
     // Called with mutex held. A menu can promote an already running refresh;
     // only an outstanding later scan retains demand for its own launch.
     void RequestForegroundScan()
     {
-        if (scanning) foregroundScanDemand.Promote();
-        if (scanRequested || catalogueStale || (!scanning && !catalogue.revision))
-            foregroundScanRequested = true;
+        if (managementActive)
+        {
+            if (scanning) foregroundScanDemand.Promote();
+            if (scanRequested || catalogueStale || (!scanning && !catalogue.revision)) foregroundScanRequested = true;
+        }
+        else
+        {
+            if (sourceScanning) sourceScanDemand.Promote();
+            if (sourceScanRequested) foregroundScanRequested = true;
+        }
     }
     void Stop()
     {
         { std::lock_guard lock(mutex); stop = true; }
         foregroundScanDemand.Cancel();
+        sourceScanDemand.Cancel();
+        for (auto &scope : scopedVerification) scope.demand.Cancel();
         SetEvent(wake);
         if (worker.joinable()) worker.join();
         // The registry scan runs separately from the scheduler. Drain it before
         // returning to host teardown, while their static metadata caches exist.
         if (scan.valid()) scan.wait();
+        if (sourceScan.valid()) sourceScan.wait();
         for (auto &scope : scopedVerification) if (scope.scan.valid()) scope.scan.wait();
     }
     ULONGLONG ActiveScanElapsed() const
     {
         const auto elapsed = GetTickCount64() - scanStarted;
-        const auto paused = foregroundScanDemand.PausedMilliseconds();
+        // Neither fullscreen suspension nor intentional soft-budget waits
+        // represent a stalled registry/extension operation.
+        const auto paused = foregroundScanDemand.PausedMilliseconds() + foregroundScanDemand.BudgetWaitMilliseconds();
         return elapsed > paused ? elapsed - paused : 0;
     }
     // Called while mutex holds the same row and catalogue used for display.
@@ -332,7 +399,11 @@ struct MenuService::Impl
                 const auto registration = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == id; });
                 // Unknown dynamic providers remain eligible; never infer their
                 // applicability from a caption or an incomplete observation.
-                if (catalogueStale || scanning || registration == catalogue.rows.end() ||
+                const bool sourceChecked = sourceCatalogue.revision && checkedSourceRegistryRevision == registryRevision &&
+                    checkedSourceConfiguration == configurationRevision && !sourceScanning && !sourceScanRequested;
+                const bool registrationProven = sourceChecked && std::any_of(sourceCatalogue.rows.begin(), sourceCatalogue.rows.end(),
+                    [&](const auto &row) { return row.id == id; });
+                if (!registrationProven || registration == catalogue.rows.end() ||
                     (registration->systemEnabled && DependsOn(*registration, request, candidates))) return true;
             }
         return false;
@@ -341,15 +412,217 @@ struct MenuService::Impl
     {
         return std::any_of(shown.begin(), shown.end(), [](const auto &ids) { return !ids.empty(); });
     }
-    bool ObjectPreparationEnabled() const
+    bool ManagementAttributionPending() const
     {
-        for (int i = 0; i < 2; ++i)
-            for (const auto &id : shown[i]) if (StateVisibilityId(id) != "state:start-pin")
+        return std::any_of(rows.begin(), rows.end(), [](const auto &item) {
+            return item.second.managementAttributionRequested;
+        });
+    }
+    bool AcceptedExecutionPending() const
+    {
+        return std::any_of(rows.begin(), rows.end(), [](const auto &item) { return !item.second.clicks.empty(); });
+    }
+    bool BackgroundWorkAllowed() const
+    {
+        return !configured || AnyEnabled() || managementActive || AcceptedExecutionPending();
+    }
+    std::optional<Registration> ConfiguredSource(const std::string &id, unsigned contexts) const
+    {
+        const auto direct = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &row) {
+            return row.id == id && row.kind != RegistrationKind::Observed && (row.contexts & contexts);
+        });
+        if (direct != catalogue.rows.end()) return *direct;
+        if (id.starts_with("reg:"))
+        {
+            Registration row; row.id = id; row.kind = RegistrationKind::Verb; row.contexts = contexts;
+            return row; // The exact reader decodes this registration path, without a type enumeration.
+        }
+        if (const auto *source = DemandSource(catalogue, available, id, contexts)) return *source;
+        std::set<std::string> owners;
+        for (const auto &association : catalogue.associations)
+            if (association.provider == id && (ContextBit(association.context) & contexts)) owners.insert(association.registration);
+        if (owners.empty() && id.starts_with("verb:"))
+            for (const auto &row : catalogue.rows)
+                if ((row.contexts & contexts) && row.kind != RegistrationKind::Observed &&
+                    std::find(row.verbs.begin(), row.verbs.end(), id.substr(5)) != row.verbs.end()) owners.insert(row.id);
+        if (owners.size() != 1) return {};
+        const auto found = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &row) { return row.id == *owners.begin(); });
+        return found == catalogue.rows.end() ? std::optional<Registration>{} : *found;
+    }
+    std::vector<Registration> ConfiguredSources() const
+    {
+        std::map<std::string, Registration> selected;
+        for (int i = 0; i < 4; ++i)
+            for (const auto &id : shown[i])
+                if (auto source = ConfiguredSource(id, 1u << i);
+                    source && (source->kind == RegistrationKind::Verb || source->kind == RegistrationKind::Handler))
+                {
+                    const auto [found, inserted] = selected.emplace(source->id, *source);
+                    if (!inserted) found->second.contexts |= source->contexts;
+                }
+        std::vector<Registration> result;
+        for (auto &[id, source] : selected) result.push_back(std::move(source));
+        return result;
+    }
+    bool KnownSelectionSources(unsigned contexts) const
+    {
+        bool wanted = false;
+        for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
+            for (const auto &id : shown[i])
             {
-                const auto *source = DemandSource(catalogue, available, id, 1u << i);
-                if (!source || DemandSourceKey(*source, {}, 1u << i).empty()) return true;
+                wanted = true;
+                const auto source = ConfiguredSource(id, 1u << i);
+                if (!source || (source->kind != RegistrationKind::Verb && source->kind != RegistrationKind::Handler)) return false;
             }
-        return false;
+        return wanted;
+    }
+    bool RuntimeProof(const Request &request, unsigned contexts) const
+    {
+        if ((ShortcutSelection(request) && request.sourceClsid.empty()) || !contexts || !sourceCatalogue.revision || checkedSourceRegistryRevision != registryRevision ||
+            checkedSourceConfiguration != configurationRevision || sourceScanning || sourceScanRequested) return false;
+        const auto proven = [&](const Registration &source) {
+            return std::any_of(sourceCatalogue.rows.begin(), sourceCatalogue.rows.end(), [&](const auto &row) {
+                return row.id == source.id && row.systemEnabled && (row.contexts & contexts) == contexts;
+            });
+        };
+        if (!request.sourceClsid.empty())
+        {
+            for (const auto &row : catalogue.rows)
+                if (row.kind == RegistrationKind::Handler && std::any_of(row.verbs.begin(), row.verbs.end(), [&](const auto &verb) {
+                    const std::wstring clsid(verb.begin(), verb.end());
+                    return lstrcmpiW(clsid.c_str(), request.sourceClsid.c_str()) == 0;
+                })) return proven(row);
+            return false;
+        }
+        bool wanted = false;
+        for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
+            for (const auto &id : shown[i])
+            {
+                wanted = true;
+                const auto source = ConfiguredSource(id, 1u << i);
+                if (!source || !proven(*source)) return false;
+            }
+        return wanted;
+    }
+    void RefreshConfiguredSources(MenuSnapshotCache &cache)
+    {
+        std::vector<Request> affected;
+        if (sourceScan.valid() && sourceScan.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+        {
+            auto value = sourceScan.get();
+            std::lock_guard lock(mutex); sourceScanning = false;
+            if (sourceScanWorkGeneration == workGeneration && sourceScanManagementGeneration == managementGeneration &&
+                sourceScanConfiguration == configurationRevision &&
+                sourceScanRegistryRevision == registryRevision && AnyEnabled() && !managementActive)
+            {
+                sourceCatalogue = std::move(value);
+                checkedSourceRegistryRevision = sourceScanRegistryRevision;
+                checkedSourceConfiguration = sourceScanConfiguration;
+                std::vector<Registration> changed;
+                for (const auto &seed : sourceScanSeeds)
+                {
+                    std::erase_if(catalogue.rows, [&](const auto &row) { return row.id == seed.id; });
+                    const auto current = std::find_if(sourceCatalogue.rows.begin(), sourceCatalogue.rows.end(), [&](const auto &row) { return row.id == seed.id; });
+                    if (current != sourceCatalogue.rows.end())
+                    {
+                        catalogue.rows.push_back(*current);
+                        if (MenuRevision(seed) && (MenuRevision(seed) != MenuRevision(*current) || seed.systemEnabled != current->systemEnabled))
+                            changed.push_back(seed);
+                    }
+                    else
+                    {
+                        if (MenuRevision(seed)) changed.push_back(seed);
+                        // Missing, unsupported and failed exact reads all mean
+                        // unproven. Only a returned row can prove disabled policy.
+                        catalogue.rows.push_back(seed);
+                    }
+                }
+                for (auto &[key, row] : rows)
+                    if (std::any_of(changed.begin(), changed.end(), [&](const auto &source) {
+                        return ShortcutSelection(row.request) || DependsOn(source, row.request,
+                            row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u));
+                    }))
+                    {
+                        row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
+                        affected.push_back(row.request);
+                    }
+                catalogueDirty = true;
+                for (auto &[key, row] : rows)
+                    if (row.registryInvalid && row.view.snapshot && !row.view.pending) row.checkRequested = true;
+                RebuildAvailable();
+                MenuTrace("catalogue.sources", "completed", 0, static_cast<unsigned>(sourceCatalogue.rows.size()));
+            }
+        }
+        for (const auto &request : affected) cache.Erase(request);
+        std::vector<Registration> seeds;
+        {
+            std::lock_guard lock(mutex);
+            if (!AnyEnabled() || managementActive) sourceScanRequested = false;
+            if (managementActive || sourceScan.valid() || !sourceScanRequested) return;
+            sourceScanRequested = false; seeds = ConfiguredSources();
+            sourceScanConfiguration = configurationRevision; sourceScanRegistryRevision = registryRevision;
+            sourceScanWorkGeneration = workGeneration; sourceScanManagementGeneration = managementGeneration;
+            sourceScanSeeds = seeds;
+            if (seeds.empty())
+            {
+                sourceCatalogue = {}; checkedSourceRegistryRevision = registryRevision;
+                checkedSourceConfiguration = configurationRevision; foregroundScanRequested = false; return;
+            }
+            sourceScanning = true; sourceScanStarted = GetTickCount64();
+            sourceScanDemand.Reset(std::exchange(foregroundScanRequested, false));
+        }
+        sourceScan = std::async(std::launch::async, [read = readSources, seeds = std::move(seeds)] {
+            const HRESULT ole = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            Catalogue result;
+            try { result = read(seeds); } catch (...) { MenuTrace("catalogue.sources", "failure"); }
+            if (SUCCEEDED(ole)) CoUninitialize();
+            return result;
+        });
+    }
+    void ReapClosedManagement()
+    {
+        // Only the worker owns sessions/futures. EndInspection changes demand
+        // in memory and wakes this cancellation boundary; the UI never waits.
+        std::vector<size_t> retired;
+        bool retireSource = false, releasePrepared = false;
+        {
+            std::lock_guard lock(mutex);
+            const bool allowed = BackgroundWorkAllowed();
+            if (sourceJob && (!managementActive || sourceJob->managementGeneration != managementGeneration))
+            {
+                for (const auto &attempt : sourceJob->attempts) sourceAttempts.erase(attempt);
+                retireSource = true;
+            }
+            for (size_t i = 0; i < running.size(); ++i)
+            {
+                const auto &job = running[i];
+                const auto found = rows.find(job.key);
+                const bool same = found != rows.end() && found->second.sequence == job.sequence;
+                const bool execute = same && !found->second.clicks.empty();
+                const bool ordinary = AnyEnabled() && same && found->second.priority != QueryPriority::Inspect;
+                const bool closed = job.managementOnly && job.managementGeneration != managementGeneration;
+                if (!execute && ((!allowed) || (closed && !ordinary)))
+                {
+                    if (found != rows.end() && found->second.sequence == job.sequence)
+                        found->second.queued = found->second.view.pending = found->second.inspection = false;
+                    retired.push_back(i);
+                }
+            }
+            if (!allowed)
+            {
+                scanRequested = foregroundScanRequested = startupWarm = false;
+                for (auto &[key, row] : rows)
+                    if (row.clicks.empty())
+                    {
+                        row.queued = row.view.pending = row.checkRequested = row.checkInspection = false;
+                        row.targetCheckDemand.reset();
+                    }
+                releasePrepared = true;
+            }
+        }
+        if (retireSource) sourceJob.reset();
+        for (auto it = retired.rbegin(); it != retired.rend(); ++it) running.erase(running.begin() + *it);
+        if (releasePrepared) Session::ReleasePreparedMenuWorker();
     }
     bool OnlyStartShown(const Request &request, unsigned contexts = 0) const
     {
@@ -366,13 +639,24 @@ struct MenuService::Impl
     Request PopupRequest(Request request) const
     {
         request.catalogueOnly = false;
+        if (configured && request.sourceClsid.empty() && !request.startPinOnly)
+            request.visibleMenuProviders = readProjection[static_cast<int>(
+                request.background || request.context == Context::Desktop ? Category::Background : Category::Objects)];
         request.omitNvidiaCompatibility = configured && request.background &&
             request.context == Context::Desktop && request.sourceClsid.empty() &&
             !NvidiaCompatibilityShown(shown[static_cast<int>(Context::Desktop)]);
         return request;
     }
+    std::uint64_t SnapshotDependency(const Request &request, unsigned contexts, bool managementProof) const
+    {
+        if (managementProof) return managementActive && checkedManagementGeneration == managementGeneration &&
+            (checkedRegistryRevision >= registryRevision || ScopeChecked(contexts, registryRevision)) ?
+                Dependency(catalogue, request, contexts) : 0;
+        return RuntimeProof(request, contexts) ? Dependency(sourceCatalogue, request, contexts) : 0;
+    }
     bool VerifiedBackgroundSnapshot(const Row &row) const
     {
+        if (!managementActive || !row.snapshotManagementProof) return false;
         const int scope = VerificationIndex(row.view.contexts);
         return row.invalid && !row.force && scope > 0 && row.snapshotTargetChecked &&
             row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope) &&
@@ -385,14 +669,16 @@ struct MenuService::Impl
         // target both confirm the snapshot's original dependencies.
         if (!row.registryInvalid || !row.view.snapshot || row.force || !row.clicks.empty() ||
             !row.view.error.empty() || row.expires <= MenuSnapshotCache::Now() ||
-            checkedRegistryRevision < registryRevision || !ticket ||
+            (row.snapshotManagementProof ? (!managementActive || checkedRegistryRevision < registryRevision) :
+                !RuntimeProof(row.request, row.view.contexts)) || !ticket ||
             row.snapshotIdentity != ticket.identity || !row.snapshotDependency ||
             row.snapshotDependency != ticket.dependency) return false;
         row.invalid = row.registryInvalid = false;
+        row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
         row.snapshotTargetChecked = true;
         if (row.queued) row.queued = row.view.pending = row.inspection = false;
         ++row.view.revision;
-        sourcePending |= AnyEnabled();
+        sourcePending |= row.managementAttributionRequested;
         SetEvent(wake);
         MenuTrace("schedule", "registry_snapshot_reused");
         return true;
@@ -400,16 +686,26 @@ struct MenuService::Impl
     Key PopupKey(const Request &request, bool retainPublished = false) const
     {
         auto popup = PopupRequest(request);
-        if (popup.omitNvidiaCompatibility)
+        if (popup.omitNvidiaCompatibility || popup.visibleMenuProviders)
         {
-            auto full = popup; full.omitNvidiaCompatibility = false;
-            const auto found = rows.find(SelectionKey(full));
-            if (found != rows.end())
+            auto full = popup;
+            full.visibleMenuProviders.reset();
+            // Fresh execution can have complete ordinary details while still
+            // omitting optional compatibility work. Prefer that healthy row
+            // before consulting the independent management query.
+            for (int i = 0; i < (popup.omitNvidiaCompatibility ? 2 : 1); ++i)
             {
-                const auto &row = found->second;
-                if (row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now() &&
-                    (!row.invalid || VerifiedBackgroundSnapshot(row) ||
-                        (retainPublished && row.view.error.empty()))) return found->first;
+                if (i) full.omitNvidiaCompatibility = false;
+                const auto found = rows.find(SelectionKey(full));
+                if (found != rows.end())
+                {
+                    const auto &row = found->second;
+                    const bool verifiedBackground = VerifiedBackgroundSnapshot(row);
+                    if (row.view.snapshot && (row.view.error.empty() || verifiedBackground) &&
+                        row.expires > MenuSnapshotCache::Now() &&
+                        (!row.invalid || verifiedBackground ||
+                            (retainPublished && row.view.error.empty()))) return found->first;
+                }
             }
         }
         return SelectionKey(popup);
@@ -424,6 +720,8 @@ struct MenuService::Impl
     {
         const auto found = requestedViews.find(SelectionBaseKey(request));
         if (found != requestedViews.end() && rows.contains(found->second)) return found->second;
+        const auto direct = SelectionKey(request);
+        if (rows.contains(direct)) return direct;
         return PopupKey(request);
     }
     Key Queue(const Request &request, QueryPriority priority, bool force, unsigned delay = 0)
@@ -432,29 +730,57 @@ struct MenuService::Impl
         // Opening/refreshing a Start-only popup is served by its dedicated
         // request. Inspection and explicit execution still retain full queries.
         if (priority == QueryPriority::Menu && !request.startPinOnly && OnlyStartShown(request)) return {};
-        if ((priority == QueryPriority::Menu || priority == QueryPriority::Prewarm) && !Enabled(request)) return {};
-        if (catalogueStale && !scanRequested)
+        if ((priority == QueryPriority::Menu || priority == QueryPriority::Prewarm || priority == QueryPriority::Execute) &&
+            !Enabled(request)) return {};
+        if (catalogueStale)
         {
-            scanRequested = true;
-            MenuTrace("catalogue", "request.stale_query");
+            if (priority == QueryPriority::Inspect || managementActive) scanRequested = true;
+            else if (AnyEnabled() && !sourceScanning &&
+                (checkedSourceRegistryRevision != registryRevision || checkedSourceConfiguration != configurationRevision))
+                sourceScanRequested = true;
         }
         auto target = priority == QueryPriority::Inspect ? request : PopupRequest(request);
+        if (priority == QueryPriority::Inspect || priority == QueryPriority::Execute) target.visibleMenuProviders.reset();
         target.catalogueOnly = false;
         if (priority == QueryPriority::Inspect) target.omitNvidiaCompatibility = false;
         // Reuse an already complete full snapshot, but never make a fresh
         // popup/click inherit the optional resolver of an in-flight inspection.
-        if (target.omitNvidiaCompatibility && !force && priority != QueryPriority::Execute)
+        if ((target.omitNvidiaCompatibility || target.visibleMenuProviders) && !force && priority != QueryPriority::Execute)
         {
-            auto full = target; full.omitNvidiaCompatibility = false;
-            const auto old = rows.find(SelectionKey(full));
-            if (old != rows.end() && old->second.view.snapshot && !old->second.invalid &&
-                old->second.view.error.empty() && old->second.expires > MenuSnapshotCache::Now())
-                target = std::move(full);
+            auto full = target;
+            full.visibleMenuProviders.reset();
+            for (int i = 0; i < (target.omitNvidiaCompatibility ? 2 : 1); ++i)
+            {
+                if (i) full.omitNvidiaCompatibility = false;
+                const auto old = rows.find(SelectionKey(full));
+                if (old != rows.end() && old->second.view.snapshot && !old->second.invalid &&
+                    old->second.view.error.empty() && old->second.expires > MenuSnapshotCache::Now())
+                {
+                    target = std::move(full);
+                    break;
+                }
+            }
         }
         const auto key = SelectionKey(target);
         auto &row = rows[key];
         const bool inspection = row.inspection || priority == QueryPriority::Inspect;
         row.request = std::move(target); row.used = ++clock;
+        if (priority == QueryPriority::Inspect)
+        {
+            const bool opening = !managementActive;
+            if (opening)
+            {
+                sourceScanRequested = false;
+                sourceScanDemand.Cancel();
+            }
+            managementActive = true;
+            if (!row.request.startPinOnly && row.request.sourceClsid.empty())
+            {
+                scanRequested |= opening;
+                row.managementAttributionRequested = true;
+                sourcePending = true;
+            }
+        }
         const auto now = GetTickCount64();
         row.inspection = inspection;
         if (row.view.pending)
@@ -468,6 +794,7 @@ struct MenuService::Impl
         }
         row.checkRequested = true;
         row.checkInspection |= priority == QueryPriority::Inspect;
+        row.targetCheckDemand = row.targetCheckDemand ? std::min(*row.targetCheckDemand, priority) : priority;
         SetEvent(wake);
         if (!force && (now < row.retryAt || (row.view.snapshot && !row.invalid && row.expires > MenuSnapshotCache::Now())))
         {
@@ -493,6 +820,7 @@ struct MenuService::Impl
             if (victim == rows.end()) break;
             bytes -= victim->second.bytes;
             std::erase_if(requestedViews, [&](const auto &view) { return view.second == victim->first; });
+            sourceSelections.erase(victim->first);
             rows.erase(victim);
         }
     }
@@ -624,39 +952,46 @@ struct MenuService::Impl
         if (row.bytes > 2 * 1024 * 1024) { row.bytes = 0; return; }
         row.snapshotIdentity = row.identity;
         row.provisionalTicket.reset();
-        row.snapshotDependency = Dependency(catalogue, row.request, contexts);
+        row.snapshotDependency = SnapshotDependency(row.request, contexts, row.snapshotManagementProof);
         const int scope = VerificationIndex(contexts);
         row.snapshotSignature = scope > 0 ? VerificationSignature(scope) : 0;
         row.snapshotTargetChecked = !row.snapshotIdentity.empty();
         row.expires = written + MenuSnapshotCache::LifetimeMs;
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
+        ++row.snapshotRevision;
         row.used = ++clock;
         RebuildAvailable();
-        sourcePending |= inspected || AnyEnabled();
+        sourcePending |= row.managementAttributionRequested;
     }
     std::unique_ptr<SourceJob> NextSource()
     {
         // Called only by the worker after ordinary menu/execute work has been
         // dispatched. One metadata probe leaves the other process slot free.
         std::lock_guard lock(mutex);
-        if (!sourcePending || scanning || scanRequested || !catalogue.revision) return {};
-        // Normal usage learns routing too, but idle learning must not postpone
-        // the prepared foreground worker or take its reserved process slot.
-        if (!inspected && nativeFactory && ObjectPreparationEnabled() &&
-            Session::PollPreparedMenuWorker() != Session::PreparationState::Ready)
-            return {};
-        for (const auto &[key, row] : rows)
+        if (!sourcePending || catalogueStale || scanning || scanRequested || !catalogue.revision) return {};
+        for (auto &[key, row] : rows)
         {
-            if (row.request.startPinOnly || !row.request.sourceClsid.empty()) continue;
-            if (!inspected && (row.request.background || row.request.extended || row.request.originalShortcutOnly)) continue;
-            if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
+            if (!row.managementAttributionRequested) continue;
+            if (row.view.pending || row.queued) continue;
+            const auto finish = [&] {
+                row.managementAttributionRequested = false;
+                sourceSelections.erase(key);
+            };
+            if (!row.view.snapshot || row.snapshotIdentity.empty() || !row.view.error.empty() ||
+                row.expires <= MenuSnapshotCache::Now() || !Local(row.request))
+            {
+                finish();
+                continue;
+            }
+            if (row.invalid) continue; // A requested live verification still owns the snapshot.
+            const auto managementProof = SnapshotDependency(row.request, row.view.contexts, true);
+            if (!managementProof) { finish(); continue; }
             const auto visible = VisibleSnapshot(preferences, *row.view.snapshot, row.view.contexts);
             const auto routable = [](const auto &entry) {
                 return !entry.separator && !entry.provider.empty() && entry.registration.empty() &&
                     !StatePairForVerb(entry.key) && (!entry.key.empty() || !entry.pixels.empty());
             };
-            if (!inspected && !std::any_of(visible.begin(), visible.end(), routable)) continue;
-            const bool missingApplication = inspected && std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
+            const bool missingApplication = std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
                 const auto found = observed.find(entry.registration.empty() ? entry.provider : entry.registration);
                 return found != observed.end() && found->second.application.id.empty();
             });
@@ -664,10 +999,10 @@ struct MenuService::Impl
                 return routable(entry) && !DemandSource(catalogue, available, entry.provider, row.view.contexts);
             });
             if (missingApplication || missingRoute) sourceSelections.insert(key);
-            if (!sourceSelections.contains(key)) continue;
+            if (!sourceSelections.contains(key)) { finish(); continue; }
             for (const auto &source : catalogue.rows)
             {
-                if ((source.kind != RegistrationKind::Handler && (source.kind != RegistrationKind::Packaged || !inspected)) || !source.systemEnabled ||
+                if ((source.kind != RegistrationKind::Handler && source.kind != RegistrationKind::Packaged) || !source.systemEnabled ||
                     source.verbs.empty() || failedSources.contains(source.id) || !DependsOn(source, row.request, row.view.contexts)) continue;
                 // Repeated file suffixes share many already-inspected root
                 // actions. Probe again only when this source sees a new action
@@ -677,43 +1012,81 @@ struct MenuService::Impl
                     attempts.push_back(settings_ipc::Pack(entry.provider, row.view.contexts, source.id, source.revision));
                 if (std::all_of(attempts.begin(), attempts.end(), [&](const auto &attempt) { return sourceAttempts.contains(attempt); })) continue;
                 std::wstring typeKey;
-                if (!inspected) typeKey = DemandSourceKey(source, row.request, row.view.contexts);
-                else for (const auto &path : source.sources)
+                for (const auto &path : source.sources)
                     if (const auto at = path.find(L"\\shellex\\ContextMenuHandlers\\"); at != std::wstring::npos) { typeKey = path.substr(0, at); break; }
                 if (typeKey.empty() && source.kind != RegistrationKind::Packaged) continue;
                 sourceAttempts.insert(attempts.begin(), attempts.end());
                 auto job = std::make_unique<SourceJob>();
                 job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
+                job->selection = row.request;
                 job->attempts = std::move(attempts);
                 // Attribution is metadata-only, independent of the original-file
                 // executable recovery lane that produced these observed rows.
                 job->request.originalShortcutOnly = false;
                 job->request.sourceClsid.assign(source.verbs.front().begin(), source.verbs.front().end());
                 job->request.sourceKey = std::move(typeKey);
-                job->revision = catalogue.revision; job->menuRevision = row.view.revision;
+                job->identity = row.snapshotIdentity;
+                // This row still has explicit management attribution demand.
+                // Its latest snapshot may come from Execute and deliberately
+                // carry no ordinary disk proof. Keep this separate full proof
+                // on the metadata job, without promoting that ordinary snapshot.
+                job->dependency = managementProof;
+                job->sequence = row.sequence; job->snapshotRevision = row.snapshotRevision;
+                job->configuration = configurationRevision;
+                job->managementGeneration = managementGeneration;
                 return job;
             }
+            finish();
         }
         sourcePending = false;
         return {};
     }
-    void CompleteSource(SourceJob &job, const Reply &reply)
+    bool CompleteSource(SourceJob &job, const Reply &reply, MenuSnapshotCache &cache)
     {
+        // Target I/O remains on the service worker, outside the publication lock.
+        const auto target = cache.Capture(job.selection);
         std::lock_guard lock(mutex);
-        MenuTrace("attribution", reply.ok ? "completed" : "failed", double(GetTickCount64() - job.started),
-            static_cast<unsigned>(reply.entries.size()));
+        if (!managementActive || job.managementGeneration != managementGeneration)
+        {
+            MenuTrace("attribution", "management_closed");
+            return true;
+        }
         if (!reply.ok && !reply.error.empty()) failedSources.insert(job.source.id);
         const auto current = rows.find(job.key);
-        if (!reply.ok) return;
-        if (catalogue.revision != job.revision || current == rows.end() || current->second.invalid ||
-            current->second.view.revision != job.menuRevision)
-        {
-            // A notification can invalidate a reply without changing its
-            // provider. Do not permanently mark an unaccepted proof as tried.
+        const auto discard = [&] {
             for (const auto &attempt : job.attempts) sourceAttempts.erase(attempt);
-            sourcePending |= inspected || AnyEnabled();
-            return;
+            sourcePending |= current != rows.end() && current->second.managementAttributionRequested;
+            MenuTrace("attribution", "proof_discarded");
+            return true;
+        };
+        if (!reply.ok) { MenuTrace("attribution", "failed"); return true; }
+        if (current != rows.end() && (!target || target.identity != job.identity) &&
+            current->second.snapshotIdentity == job.identity)
+        {
+            current->second.checkRequested = true;
+            current->second.invalid = true; current->second.registryInvalid = false;
         }
+        if (!target || target.identity != job.identity || current == rows.end() ||
+            current->second.sequence != job.sequence || current->second.snapshotRevision != job.snapshotRevision ||
+            current->second.expires <= MenuSnapshotCache::Now() || !current->second.view.snapshot ||
+            configurationRevision != job.configuration) return discard();
+        const auto &row = current->second;
+        // A notification changes display state, not the captured menu content.
+        // Hold a successful reply until live proof settles instead of querying
+        // its extension again for each notification / snapshot restoration.
+        if ((catalogueStale || checkedRegistryRevision < registryRevision) &&
+            !ScopeChecked(row.view.contexts, registryRevision))
+        {
+            if (failedRegistryRevision >= registryRevision ||
+                GetTickCount64() - job.replyReadyAt >= kInventoryWaitMs) return discard();
+            scanRequested |= catalogueStale;
+            return false;
+        }
+        if ((row.invalid && !row.registryInvalid) || !job.dependency ||
+            SnapshotDependency(row.request, row.view.contexts, true) != job.dependency ||
+            std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &source) {
+                return source.id == job.source.id && source.systemEnabled && MenuRevision(source) == MenuRevision(job.source);
+            })) return discard();
         for (const auto &provider : MatchSourceCommands(job.actual, reply))
             if (const auto found = observed.find(provider); found != observed.end() && found->second.kind == RegistrationKind::Observed)
             {
@@ -724,6 +1097,9 @@ struct MenuService::Impl
                     found->second.sources.push_back(proof);
             }
         RebuildAvailable();
+        MenuTrace("attribution", "completed", double(GetTickCount64() - job.started),
+            static_cast<unsigned>(reply.entries.size()));
+        return true;
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
@@ -742,9 +1118,16 @@ struct MenuService::Impl
             const auto it = rows.find(job.key);
             if (it == rows.end()) return;
             auto &row = it->second; request = row.request;
+            const bool sameSequence = row.sequence == job.sequence;
+            if (job.managementOnly && job.managementGeneration != managementGeneration &&
+                !(sameSequence && (!row.clicks.empty() || (AnyEnabled() && row.priority != QueryPriority::Inspect))))
+            {
+                MenuTrace("query", "management_closed");
+                return;
+            }
             current = targetCurrent && row.sequence == job.sequence && row.dependency == job.dependency;
-            clicks = std::move(row.clicks);
-            if (!current)
+            if (sameSequence) clicks = std::move(row.clicks);
+            if (!current && sameSequence)
             {
                 row.view.pending = false;
                 // A Start action can retain the validated ordinary snapshot
@@ -767,9 +1150,11 @@ struct MenuService::Impl
                     row.force = false;
                     // Completion and display publication are one observable state.
                     // Settings must not stop polling before the snapshot appears.
+                    row.snapshotManagementProof = job.managementOnly && managementActive &&
+                        job.managementGeneration == managementGeneration;
                     Publish(job.key, reply, contexts);
                     job.ticket.dependency = row.snapshotDependency;
-                    if (job.ticket && !job.ticket.dependency)
+                    if (row.snapshotManagementProof && job.ticket && !job.ticket.dependency)
                     {
                         // Known verbs can appear before initial attribution.
                         // Retain this exact issued ticket until the initial live
@@ -780,6 +1165,8 @@ struct MenuService::Impl
                 }
                 else
                 {
+                    row.managementAttributionRequested = false;
+                    sourceSelections.erase(job.key);
                     row.failures = std::min(row.failures + 1, 5u);
                     row.retryAt = GetTickCount64() + std::min(30000u, 1000u << row.failures);
                     MenuTrace("schedule", "backoff", double(std::min(30000u, 1000u << row.failures)));
@@ -854,10 +1241,10 @@ struct MenuService::Impl
                     if (ticket && ticket.identity == saved.identity)
                     {
                         { std::lock_guard lock(mutex);
-                          ticket.dependency = Dependency(catalogue, saved.request, saved.contexts); }
+                          ticket.dependency = SnapshotDependency(saved.request, saved.contexts, false); }
                         // Replace the disk row without extending the lifetime
                         // of its ordinary commands or persisting the old pin.
-                        if (!cache.Store(cache.Begin(std::move(ticket)), saved.reply, saved.written)) cache.Erase(saved.request);
+                        if (!ticket.dependency || !cache.Store(cache.Begin(std::move(ticket)), saved.reply, saved.written)) cache.Erase(saved.request);
                     }
                     else
                     {
@@ -928,6 +1315,15 @@ struct MenuService::Impl
         if (scan.valid() && scan.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
         {
             auto value = scan.get(); std::vector<Request> affected; bool retirePreparation = false;
+            {
+                std::lock_guard lock(mutex);
+                if (scanWorkGeneration != workGeneration || !managementActive || scanManagementGeneration != managementGeneration)
+                {
+                    scanning = false;
+                    MenuTrace("catalogue", "closed_generation_discarded");
+                    return;
+                }
+            }
             if (!value.revision)
             {
                 std::lock_guard lock(mutex); scanning = false; typesRequested = false; catalogueStale = true;
@@ -937,6 +1333,7 @@ struct MenuService::Impl
             {
                 std::lock_guard lock(mutex);
                 checkedRegistryRevision = std::max(checkedRegistryRevision, scanRegistryRevision);
+                checkedManagementGeneration = managementGeneration;
                 const bool initial = !catalogue.revision;
                 const bool commandInventoryChanged = initial ||
                     InventoryDependency(value) != InventoryDependency(catalogue);
@@ -949,7 +1346,7 @@ struct MenuService::Impl
                     catalogue.folderRevision = value.folderRevision;
                     catalogue.backgroundRevisions = value.backgroundRevisions;
                     scanning = false;
-                    sourcePending |= inspected || AnyEnabled();
+                    sourcePending |= ManagementAttributionPending();
                     MenuTrace("catalogue", "unchanged");
                 }
                 else
@@ -965,7 +1362,7 @@ struct MenuService::Impl
                     for (const auto &a : catalogue.associations)
                         if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                     catalogue = std::move(value); scanning = false; catalogueDirty = true;
-                    sourcePending |= inspected || AnyEnabled();
+                    sourcePending |= ManagementAttributionPending();
                     if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
                     if (!initial && !changed.empty())
                     {
@@ -980,7 +1377,7 @@ struct MenuService::Impl
                                     std::any_of(item.types.begin(), item.types.end(), [&](const auto &t) { return std::find(r.types.begin(), r.types.end(), t) != r.types.end(); });
                             });
                         });
-                        if (inspected) typesRequested = true;
+                        if (managementActive) typesRequested = true;
                     }
                     for (auto &[key, row] : rows)
                         if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) {
@@ -990,7 +1387,7 @@ struct MenuService::Impl
                         {
                             row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
                             affected.push_back(row.request);
-                            if (std::any_of(discovery.begin(), discovery.end(), [&](const auto &r) { return SelectionKey(r) == key; })) Queue(row.request, QueryPriority::Inspect, true);
+                            if (managementActive && std::any_of(discovery.begin(), discovery.end(), [&](const auto &r) { return SelectionKey(r) == key; })) Queue(row.request, QueryPriority::Inspect, true);
                         }
                     for (auto &[key, row] : rows)
                         if (row.view.snapshot)
@@ -1013,7 +1410,6 @@ struct MenuService::Impl
             if (retirePreparation)
             {
                 Session::ReleasePreparedMenuWorker();
-                std::lock_guard lock(mutex); preparationRequested |= ObjectPreparationEnabled();
             }
             if (!affected.empty()) Session::ReleaseIdleWorker();
             SaveCatalogue(cache);
@@ -1021,8 +1417,15 @@ struct MenuService::Impl
         bool requested = false;
         {
             std::lock_guard lock(mutex);
-            if (!stop && !scan.valid() && scanRequested)
+            if (!managementActive)
             {
+                sourceScanRequested |= scanRequested && AnyEnabled();
+                scanRequested = false;
+            }
+            if (!stop && managementActive && !scan.valid() && scanRequested)
+            {
+                scanWorkGeneration = workGeneration;
+                scanManagementGeneration = managementGeneration;
                 scanRegistryRevision = registryRevision;
                 snowdesktop::performance::Value("shell.catalogue", "request.registry_revision", {},
                     static_cast<double>(scanRegistryRevision));
@@ -1049,10 +1452,10 @@ struct MenuService::Impl
         std::vector<std::pair<MenuSnapshotCache::Ticket, Reply>> stores;
         {
             std::lock_guard lock(mutex);
-            if (!catalogue.revision) return;
+            if (!managementActive || !catalogue.revision) return;
             for (auto &[key, row] : rows)
             {
-                if (!row.provisionalTicket) continue;
+                if (!row.snapshotManagementProof || !row.provisionalTicket) continue;
                 if (checkedRegistryRevision < row.provisionalRegistryRevision) continue;
                 auto ticket = std::move(*row.provisionalTicket);
                 row.provisionalTicket.reset();
@@ -1103,6 +1506,7 @@ struct MenuService::Impl
             if (!scope.scan.valid() || scope.scan.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) continue;
             const auto signature = scope.scan.get();
             std::lock_guard lock(mutex);
+            if (!managementActive || scope.workGeneration != managementGeneration) continue;
             if (signature && signature == VerificationSignature(index))
             {
                 scope.checked = std::max(scope.checked, scope.scanRevision);
@@ -1120,9 +1524,14 @@ struct MenuService::Impl
         if (scope.scan.valid()) return;
         {
             std::lock_guard lock(mutex);
+            if (!managementActive) return;
             if (!VerificationSignature(index) || checkedRegistryRevision >= required ||
                 ScopeChecked(contexts, required) || registryRevision <= scope.attempt) return;
             scope.scanRevision = scope.attempt = registryRevision;
+            scope.workGeneration = managementGeneration;
+            // The previous future has been consumed above before a new scan
+            // can reset this scope's cancellation token.
+            scope.demand.Reset(true);
         }
         const auto read = index == 0 ? verifyFolder : FolderVerifier([this, index] {
             return verifyBackground(index == 1 ? Context::FolderBackground : Context::Desktop);
@@ -1144,24 +1553,16 @@ struct MenuService::Impl
         MenuSnapshotCache cache(directory.empty() ? SharedMenuCache().Directory() : directory);
         LoadCatalogue(cache);
         LoadObserved(cache);
-        for (auto &[request, reply] : cache.Warm())
-        {
-            const auto contexts = Contexts(request);
-            auto ticket = cache.Capture(request);
-            ticket.dependency = Dependency(catalogue, request, contexts);
-            auto current = cache.Find(ticket);
-            if (!current) continue;
-            std::lock_guard lock(mutex); const auto key = SelectionKey(request);
-            auto &row = rows[key]; row.request = request;
-            row.identity = ticket.identity;
-            Publish(key, std::move(*current), contexts, cache.Written(ticket));
-        }
-        bool preparedWasReady = false;
+        // Inventory loaded from disk is routing metadata only. Snapshot lookup
+        // waits for explicit management proof or a current exact-source check.
         for (;;)
         {
             { std::lock_guard lock(mutex); if (stop) break; }
+            ReapClosedManagement();
             bool discover = false;
-            { std::lock_guard lock(mutex); discover = discoverRequested; }
+            std::uint64_t iterationManagementGeneration = 0;
+            { std::lock_guard lock(mutex); discover = managementActive && discoverRequested;
+              iterationManagementGeneration = managementGeneration; }
             if (discover)
             {
                 std::vector<Request> targets;
@@ -1180,12 +1581,16 @@ struct MenuService::Impl
                 }
                 std::erase_if(targets, [](const auto &request) { return !Local(request); });
                 std::lock_guard lock(mutex);
-                discovery = std::move(targets); discoverRequested = false;
-                const bool force = std::exchange(discoverForce, false);
-                for (const auto &request : discovery) Queue(request, QueryPriority::Inspect, force);
+                if (managementActive && iterationManagementGeneration == managementGeneration)
+                {
+                    discovery = std::move(targets); discoverRequested = false;
+                    const bool force = std::exchange(discoverForce, false);
+                    for (const auto &request : discovery) Queue(request, QueryPriority::Inspect, force);
+                }
             }
             bool warmDesktop = false, inspectDesktop = false;
-            { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); inspectDesktop = desktopInspection; }
+            { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false);
+              inspectDesktop = managementActive && desktopInspection; }
             if (warmDesktop || inspectDesktop)
             {
                 PWSTR path = nullptr;
@@ -1195,15 +1600,16 @@ struct MenuService::Impl
                     if (Local(request))
                     {
                         std::lock_guard lock(mutex);
-                        if (inspectDesktop) { management = request; Queue(request, QueryPriority::Inspect, true); }
+                        if (inspectDesktop && managementActive && iterationManagementGeneration == managementGeneration)
+                        { management = request; Queue(request, QueryPriority::Inspect, true); }
                         if (warmDesktop) Queue(request, QueryPriority::Prewarm, false);
                     }
                 }
-                if (inspectDesktop) { std::lock_guard lock(mutex); desktopInspection = false; }
+                if (inspectDesktop) { std::lock_guard lock(mutex);
+                    if (iterationManagementGeneration == managementGeneration) desktopInspection = false; }
             }
             if (TakeMenuRegistryChanges())
             {
-                const bool prepared = nativeFactory && Session::PollPreparedMenuWorker() != Session::PreparationState::Absent;
                 std::lock_guard lock(mutex);
                 // Classes notifications also include unrelated Shell caches.
                 // Mark cached views stale, but retain published payloads for an open
@@ -1213,30 +1619,32 @@ struct MenuService::Impl
                 // Preparation also needs verification before it has acquired a
                 // worker. Otherwise an unrelated notification leaves it behind
                 // catalogueStale forever, until a foreground click starts the scan.
-                scanRequested |= prepared || (nativeFactory && preparationRequested && ObjectPreparationEnabled()) ||
-                    sourcePending || static_cast<bool>(sourceJob);
+                const bool allowed = BackgroundWorkAllowed();
+                scanRequested |= managementActive && (sourcePending || static_cast<bool>(sourceJob));
+                sourceScanRequested |= !managementActive && AnyEnabled();
                 for (auto &[key, row] : rows)
                 {
                     row.registryInvalid = row.view.snapshot && (!row.invalid || row.registryInvalid);
                     row.invalid = true; row.snapshotTargetChecked = false; ++row.view.revision;
-                    if (row.view.snapshot && VerificationIndex(row.view.contexts) > 0) row.checkRequested = true;
+                    if (allowed && row.view.snapshot) row.checkRequested = true;
                     // Classes includes Shell caches written by the query itself.
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.
                     if (row.view.pending)
-                        scanRequested |= !row.request.startPinOnly;
+                        scanRequested |= managementActive && !row.request.startPinOnly;
                     else
                         ++row.dependency;
                 }
                 MenuTrace("catalogue", "stale.registry");
             }
             RefreshCatalogue(cache);
+            RefreshConfiguredSources(cache);
             StoreProvisionalSnapshots(cache);
             RefreshScopeVerification();
             Catalogue typeCatalogue; bool discoverTypes = false;
             {
                 std::lock_guard lock(mutex);
-                if (typesRequested && !scanning && !scanRequested && catalogue.revision)
+                if (managementActive && typesRequested && !scanning && !scanRequested && catalogue.revision)
                 {
                     typesRequested = false; typesPreparing = true; discoverTypes = true;
                     typeCatalogue = catalogue; typeBatchForce = std::exchange(typesForce, false);
@@ -1246,9 +1654,12 @@ struct MenuService::Impl
             {
                 auto targets = DiscoverFileTypes(typeCatalogue, cache.Directory());
                 std::lock_guard lock(mutex);
-                typeDiscovery = std::move(targets); nextType = 0; typesPreparing = false;
-                // Keep the polling set bounded across repeated refreshes.
-                std::erase_if(discovery, [&](const auto &r) { return !r.paths.empty() && std::filesystem::path(r.paths.front()).parent_path() == cache.Directory() / L"discovery-samples-v1"; });
+                if (managementActive && iterationManagementGeneration == managementGeneration)
+                {
+                    typeDiscovery = std::move(targets); nextType = 0; typesPreparing = false;
+                    // Keep the polling set bounded across repeated refreshes.
+                    std::erase_if(discovery, [&](const auto &r) { return !r.paths.empty() && std::filesystem::path(r.paths.front()).parent_path() == cache.Directory() / L"discovery-samples-v1"; });
+                }
             }
             for (size_t i = 0; i < running.size();)
             {
@@ -1283,7 +1694,7 @@ struct MenuService::Impl
                 // The native metadata helper checks its exact live registration
                 // and enabled policy before and after querying. Unrelated registry
                 // scans must not delay that fresh, non-executable display payload.
-                if (job.reply->ok && !job.startPinOnly && !verifiedSource)
+                if (job.managementOnly && job.reply->ok && !job.startPinOnly && !verifiedSource)
                 {
                     StartScopeVerification(job.contexts, job.verificationRevision);
                     std::lock_guard lock(mutex);
@@ -1309,10 +1720,14 @@ struct MenuService::Impl
             }
             if (sourceJob)
             {
-                std::optional<Reply> reply;
-                try { reply = sourceJob->work.poll(); } catch (...) { reply = Reply{false, {}, "source query exception"}; }
-                if (!reply && GetTickCount64() - sourceJob->started >= 8000) reply = Reply{false, {}, "source query timeout"};
-                if (reply) { CompleteSource(*sourceJob, *reply); sourceJob.reset(); }
+                if (!sourceJob->reply)
+                {
+                    try { sourceJob->reply = sourceJob->work.poll(); } catch (...) { sourceJob->reply = Reply{false, {}, "source query exception"}; }
+                    if (!sourceJob->reply && GetTickCount64() - sourceJob->started >= 8000)
+                        sourceJob->reply = Reply{false, {}, "source query timeout"};
+                    if (sourceJob->reply) sourceJob->replyReadyAt = GetTickCount64();
+                }
+                if (sourceJob->reply && CompleteSource(*sourceJob, *sourceJob->reply, cache)) sourceJob.reset();
             }
             // Arbitrary extensions retain two supervised slots. Microsoft's
             // Start handler has one reserved slot and never inherits a worker
@@ -1323,13 +1738,12 @@ struct MenuService::Impl
                     return job.startPinOnly;
                 });
                 const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs + (sourceJob ? 1 : 0);
-                const bool preparedSlot = nativeFactory && Session::PollPreparedMenuWorker() != Session::PreparationState::Absent;
-                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
+                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
                     // Background queries share one slot, including metadata probes.
                     // Keep the second slot available for an explicit popup or click.
-                    if (normalJobs < 1 && nextType < typeDiscovery.size())
+                    if (managementActive && normalJobs < 1 && nextType < typeDiscovery.size())
                     {
                         const auto &target = typeDiscovery[nextType++];
                         Queue(target, QueryPriority::Inspect, typeBatchForce);
@@ -1340,12 +1754,10 @@ struct MenuService::Impl
                         if (it->second.queued && it->second.due <= now &&
                             (it->second.request.startPinOnly ? startJobs < 1 :
                                 normalJobs < (it->second.priority <= QueryPriority::Menu ? 2 : 1)) &&
-                            // Metadata needs a fresh process; unlike an ordinary
-                            // aggregate it cannot consume the prepared worker.
-                            (it->second.request.sourceClsid.empty() || normalJobs + (preparedSlot ? 1 : 0) < 2) &&
                             (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
+                    dispatchManagementGeneration = managementGeneration;
                     sequence = row.sequence; dependency = row.dependency; invalid = row.invalid; row.queued = false;
                 }
                 if (priority == QueryPriority::Prewarm && !Local(request))
@@ -1355,22 +1767,31 @@ struct MenuService::Impl
                 auto ticket = cache.Capture(request);
                 const auto contexts = Contexts(request);
                 std::uint64_t verifyCachedRevision = 0;
+                bool diskAllowed = false;
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key];
                     if (!row.inspection && priority != QueryPriority::Execute && !Enabled(request, contexts))
                     {
-                        row.view.pending = false; row.checkRequested = false;
+                        row.view.pending = false; row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
                         MenuTrace("schedule", "no_enabled_items"); continue;
                     }
-                    ticket.dependency = Dependency(catalogue, request, contexts);
+                    if (priority != QueryPriority::Inspect && priority != QueryPriority::Execute &&
+                        request.sourceClsid.empty() && !request.startPinOnly && sourceScanning &&
+                        KnownSelectionSources(contexts) && GetTickCount64() - sourceScanStarted < kInventoryWaitMs)
+                    {
+                        row.queued = true; row.due = GetTickCount64() + 20;
+                        break;
+                    }
+                    ticket.dependency = SnapshotDependency(request, contexts, priority == QueryPriority::Inspect);
+                    diskAllowed = ticket.dependency != 0;
                     row.snapshotTargetChecked = ticket && row.snapshotIdentity == ticket.identity;
                     if (RestoreRegistrySnapshot(row, ticket))
                     {
                         row.view.pending = row.inspection = false;
                         continue;
                     }
-                    if (contexts >= 1 && contexts <= 3 && row.registryInvalid &&
+                    if (priority == QueryPriority::Inspect && contexts >= 1 && contexts <= 3 && row.registryInvalid &&
                         !row.force && row.view.snapshot && row.snapshotTargetChecked &&
                         checkedRegistryRevision < registryRevision &&
                         failedRegistryRevision < registryRevision &&
@@ -1383,10 +1804,11 @@ struct MenuService::Impl
                         break;
                     }
                     const int scope = VerificationIndex(contexts);
-                    if (row.invalid && !row.force && row.view.snapshot && row.snapshotTargetChecked && scope > 0 &&
+                    if (priority == QueryPriority::Inspect && row.invalid && !row.force && row.view.snapshot && row.snapshotTargetChecked && scope > 0 &&
                         row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope))
                         verifyCachedRevision = registryRevision;
                     row.identity = ticket.identity; row.checkRequested = row.checkInspection = false;
+                    row.targetCheckDemand.reset();
                 }
                 // A previous background snapshot can be verified while the new
                 // Shell query is still running, including a stalled extension.
@@ -1394,11 +1816,15 @@ struct MenuService::Impl
                 // both match; full/explicit invalidation never retains this data.
                 if (verifyCachedRevision) StartScopeVerification(contexts, verifyCachedRevision);
                 if (invalid) cache.Erase(request);
-                if (auto disk = cache.Find(ticket))
+                if (auto disk = diskAllowed ? cache.Find(ticket) : std::optional<Reply>{})
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key];
-                    if (!row.view.snapshot && row.dependency == dependency) Publish(key, *disk, contexts, cache.Written(ticket));
+                    if (!row.view.snapshot && row.dependency == dependency)
+                    {
+                        row.snapshotManagementProof = priority == QueryPriority::Inspect;
+                        Publish(key, *disk, contexts, cache.Written(ticket));
+                    }
                     if (!row.force && row.clicks.empty() && row.sequence == sequence && row.dependency == dependency && row.view.snapshot)
                     {
                         row.view.pending = false; row.inspection = false;
@@ -1415,18 +1841,27 @@ struct MenuService::Impl
                         request.sourceClsid.empty() && !request.startPinOnly && !request.originalShortcutOnly)
                     {
                         auto plan = PlanDemandQueries(catalogue, available, preferences, request, contexts);
-                        const bool verifying = catalogueStale || checkedRegistryRevision < registryRevision;
-                        // While global attribution is being refreshed, retain a
-                        // full fallback even for a previously sources-only plan.
-                        // Known sources are freshly checked by the native helper.
+                        const bool verifying = !RuntimeProof(request, contexts);
+                        // Only a current exact-source check can remove the root
+                        // fallback. Old complete inventories are routing hints.
                         if (verifying) plan.full = true;
                         row.view.sources = plan.sources;
                         row.view.sourcesOnly = !plan.full;
                         row.view.contexts = contexts;
                         for (const auto &source : plan.sources) Queue(source, priority, row.force || verifying);
+                        if (priority == QueryPriority::Prewarm && plan.full)
+                        {
+                            // Background selection work can warm proven sources,
+                            // but never create a full root for unseen commands.
+                            row.view.pending = false; row.view.sourcesOnly = true;
+                            row.force = row.fullMenuRequested = false;
+                            MenuTrace("schedule", "prewarm_sources_only", 0, static_cast<unsigned>(plan.sources.size()));
+                            continue;
+                        }
                         if (!plan.full)
                         {
-                            row.view.pending = false; row.view.error.clear(); row.checkRequested = false;
+                            row.view.pending = false; row.view.error.clear(); row.checkRequested = row.checkInspection = false;
+                            row.targetCheckDemand.reset();
                             row.force = false; ++row.view.revision;
                             MenuTrace("schedule", "sources_only", 0, static_cast<unsigned>(plan.sources.size()));
                             continue;
@@ -1443,19 +1878,21 @@ struct MenuService::Impl
                         }
                     }
                     else row.view.sourcesOnly = false;
-                    row.fullMenuRequested = false;
+                }
+                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly)
+                {
+                    std::lock_guard lock(mutex);
+                    auto &row = rows[key]; row.view.pending = false; row.fullMenuRequested = false;
+                    MenuTrace("schedule", "prewarm_no_aggregate");
+                    continue;
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
-                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty();
-                if (nativeFactory && usePreparedQuery)
-                {
-                    bool unverified = false;
-                    { std::lock_guard lock(mutex);
-                      unverified = catalogueStale || scanning || checkedRegistryRevision < registryRevision;
-                      preparationRequested |= ObjectPreparationEnabled(); }
-                    if (unverified) Session::ReleasePreparedMenuWorker();
-                }
-                try { job.work = factory(request); running.push_back(std::move(job)); }
+                job.managementOnly = priority == QueryPriority::Inspect;
+                job.managementGeneration = dispatchManagementGeneration;
+                { std::lock_guard lock(mutex);
+                  if (job.managementOnly && (!managementActive || job.managementGeneration != managementGeneration)) continue;
+                  rows[key].fullMenuRequested = false; }
+                try { job.work = DispatchQuery(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
             if (!sourceJob && std::count_if(running.begin(), running.end(), [](const auto &job) {
@@ -1464,71 +1901,64 @@ struct MenuService::Impl
                 if (auto job = NextSource())
                 {
                     job->started = GetTickCount64();
-                    usePreparedQuery = false;
-                    try { job->work = factory(job->request); sourceJob = std::move(job); }
+                    try { job->work = DispatchQuery(job->request); sourceJob = std::move(job); }
                     catch (...) { std::lock_guard lock(mutex); failedSources.insert(job->source.id); MenuTrace("attribution", "start_failed"); }
                 }
-            bool preparing = false;
-            if (nativeFactory)
-            {
-                bool prepare = false, enabled = false;
-                {
-                    std::lock_guard lock(mutex);
-                    enabled = ObjectPreparationEnabled();
-                    if (!enabled) preparationRequested = false;
-                    else if (preparationRequested && running.empty() && !sourceJob &&
-                        catalogue.revision && !scanning && !scanRequested && !catalogueStale &&
-                        !typesPreparing && nextType >= typeDiscovery.size() &&
-                        std::none_of(rows.begin(), rows.end(), [](const auto &pair) { return pair.second.queued; }))
-                        prepare = std::exchange(preparationRequested, false);
-                }
-                if (!enabled) Session::ReleasePreparedMenuWorker();
-                if (prepare)
-                {
-                    // One attempt per idle opportunity; a failed bootstrap
-                    // must not become a perpetual background restart.
-                    try { Session::PrepareFirstMenuWorker(); } catch (...) {}
-                }
-                const auto preparedState = Session::PollPreparedMenuWorker();
-                if (enabled && preparedWasReady && preparedState == Session::PreparationState::Absent)
-                {
-                    std::lock_guard lock(mutex);
-                    preparationRequested = true;
-                    SetEvent(wake);
-                    MenuTrace("preparation", "idle_replenish");
-                }
-                preparedWasReady = preparedState == Session::PreparationState::Ready;
-                preparing = preparedState == Session::PreparationState::Pending;
-            }
-            std::vector<std::tuple<Key, Request, bool>> checks;
+            std::vector<std::tuple<Key, Request, bool, std::optional<QueryPriority>, std::uint64_t>> checks;
             {
                 std::lock_guard lock(mutex);
                 for (auto &[key, row] : rows) if (row.checkRequested &&
                     (!row.view.pending || (row.invalid && row.view.snapshot && VerificationIndex(row.view.contexts) > 0)))
                 {
-                    checks.emplace_back(key, row.request, row.checkInspection);
-                    row.checkRequested = row.checkInspection = false;
+                    if (!BackgroundWorkAllowed())
+                    {
+                        row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset(); continue;
+                    }
+                    const bool inspection = row.checkInspection || (managementActive && row.snapshotManagementProof);
+                    checks.emplace_back(key, row.request, inspection, row.targetCheckDemand, row.sequence);
+                    row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
                 }
                 Trim();
             }
-            for (const auto &[key, request, inspection] : checks)
+            for (const auto &[key, request, inspection, demand, sequence] : checks)
             {
+                { std::lock_guard lock(mutex);
+                  if (!BackgroundWorkAllowed() || (inspection && (!managementActive || iterationManagementGeneration != managementGeneration))) continue; }
                 auto ticket = cache.Capture(request);
                 unsigned verifyContexts = 0; std::uint64_t verifyRevision = 0;
                 {
                     std::lock_guard lock(mutex);
                     const auto found = rows.find(key); if (found == rows.end()) continue;
                     auto &row = found->second;
-                    ticket.dependency = Dependency(catalogue, request, row.view.contexts);
+                    // Capture performs target I/O outside the lock. A new row
+                    // sequence owns a newer validation, and a closed management
+                    // generation must not be reopened by this old check.
+                    const bool effectiveInspection = inspection || row.checkInspection;
+                    if (row.sequence != sequence || !BackgroundWorkAllowed() ||
+                        (effectiveInspection && (!managementActive || iterationManagementGeneration != managementGeneration))) continue;
+                    auto effectiveDemand = demand;
+                    if (row.targetCheckDemand)
+                        effectiveDemand = effectiveDemand ? std::min(*effectiveDemand, *row.targetCheckDemand) : *row.targetCheckDemand;
+                    ticket.dependency = SnapshotDependency(request, row.view.contexts, row.snapshotManagementProof);
                     if (row.view.snapshot && row.identity != ticket.identity)
                     {
                         row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
                         RebuildAvailable();
-                        Queue(request, inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
+                        // Pure notification checks cannot turn an old, unseen
+                        // ordinary row into a foreground aggregate query. A real
+                        // Menu cache hit still carries its explicit priority.
+                        Queue(request, effectiveInspection ? QueryPriority::Inspect : effectiveDemand.value_or(QueryPriority::Prewarm), true);
+                    }
+                    else if (row.targetCheckDemand)
+                    {
+                        // A new memory-hit Query arrived during Capture. Leave
+                        // its intent pending for a fresh target capture rather
+                        // than consuming it with this older observation.
+                        continue;
                     }
                     RestoreRegistrySnapshot(row, ticket);
                     const int scope = VerificationIndex(row.view.contexts);
-                    if (row.invalid && !row.force && row.view.snapshot && scope > 0)
+                    if (row.snapshotManagementProof && managementActive && row.invalid && !row.force && row.view.snapshot && scope > 0)
                     {
                         row.snapshotTargetChecked = ticket && row.snapshotIdentity == ticket.identity;
                         if (row.snapshotTargetChecked && row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope))
@@ -1544,16 +1974,12 @@ struct MenuService::Impl
             auto handles = MenuRegistryWaitHandles(watchesComplete);
             handles.insert(handles.begin(), wake);
             DWORD wait = watchesComplete ? INFINITE : 1000;
-            // A ready worker can expire without a registry or query event.
-            // Observe its retirement without rescanning metadata or restarting
-            // a failed bootstrap.
-            if (preparedWasReady) wait = std::min(wait, DWORD(1000));
-            if (preparing || !running.empty() || sourceJob || scan.valid() ||
+            if (!running.empty() || sourceJob || scan.valid() || sourceScan.valid() ||
                 std::any_of(scopedVerification.begin(), scopedVerification.end(), [](const auto &scope) { return scope.scan.valid(); })) wait = 20;
             {
                 std::lock_guard lock(mutex);
                 const auto now = GetTickCount64();
-                if (stop || discoverRequested || startupWarm || desktopInspection || scanRequested ||
+                if (stop || discoverRequested || startupWarm || desktopInspection || scanRequested || sourceScanRequested ||
                     nextType < typeDiscovery.size()) wait = std::min(wait, DWORD(20));
                 for (const auto &[key, row] : rows)
                     if (row.queued) wait = std::min(wait, static_cast<DWORD>(row.due > now ? std::min(row.due - now, std::uint64_t(MAXDWORD - 1)) : 20));
@@ -1565,8 +1991,8 @@ struct MenuService::Impl
         sourceJob.reset(); running.clear(); Session::ReleaseIdleWorker(); OleUninitialize();
     }
 };
-MenuService::MenuService(std::filesystem::path directory, QueryFactory factory, CatalogueReader reader, FolderVerifier verifier, BackgroundVerifier backgroundVerifier)
-    : impl_(std::make_unique<Impl>(std::move(directory), std::move(factory), std::move(reader), std::move(verifier), std::move(backgroundVerifier))) {}
+MenuService::MenuService(std::filesystem::path directory, QueryFactory factory, CatalogueReader reader, FolderVerifier verifier, BackgroundVerifier backgroundVerifier, SourceCatalogueReader sourceReader)
+    : impl_(std::make_unique<Impl>(std::move(directory), std::move(factory), std::move(reader), std::move(verifier), std::move(backgroundVerifier), std::move(sourceReader))) {}
 MenuService::~MenuService() = default;
 void MenuService::Shutdown() { impl_->Stop(); }
 MenuService &SharedMenuService() { static MenuService service; return service; }
@@ -1609,6 +2035,14 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
 {
     MenuTiming timing("first_screen");
     std::lock_guard lock(impl_->mutex);
+    if (impl_->configured && !impl_->Enabled(request))
+    {
+        // Current all-off rules are authoritative even if an older projected
+        // row is still being verified. An empty menu is ready without a query.
+        MenuView view; view.snapshot = Reply{true, {}, {}};
+        timing.Record("disabled");
+        return view;
+    }
     const auto it = impl_->rows.find(impl_->PopupKey(request, retainPublished));
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
@@ -1670,17 +2104,36 @@ void MenuService::Configure(Preferences preferences)
     {
         std::lock_guard lock(impl_->mutex);
         const bool enabled = impl_->AnyEnabled();
+        const auto previousConfiguration = impl_->configurationRevision;
         const bool desktop = !impl_->shown[static_cast<int>(Context::Desktop)].empty();
-        const bool objectPreparation = impl_->ObjectPreparationEnabled();
+        if (!impl_->configured || impl_->preferences != preferences)
+            ++impl_->configurationRevision;
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
-        impl_->sourcePending |= impl_->AnyEnabled();
-        if (!objectPreparation && impl_->ObjectPreparationEnabled()) impl_->preparationRequested = true;
-        if (!enabled && impl_->AnyEnabled()) { impl_->scanRequested = true; MenuTrace("catalogue", "request.configure"); }
+        for (int i = 0; i < 2; ++i)
+            impl_->readProjection[i] = MenuReadPolicy(impl_->preferences, static_cast<Category>(i));
+        impl_->sourcePending |= impl_->ManagementAttributionPending();
+        if (previousConfiguration != impl_->configurationRevision && impl_->AnyEnabled())
+        {
+            if (impl_->managementActive) impl_->scanRequested = true;
+            else impl_->sourceScanRequested = true;
+            MenuTrace("catalogue.sources", "request.configure");
+        }
         if (!desktop && !impl_->shown[static_cast<int>(Context::Desktop)].empty()) impl_->startupWarm = true;
         for (auto &[key, row] : impl_->rows)
             if (row.queued && !row.inspection && row.priority != QueryPriority::Execute && !impl_->Enabled(row.request, row.view.contexts))
-                row.queued = row.view.pending = row.checkRequested = false;
+            {
+                row.queued = row.view.pending = row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
+            }
+        if (enabled && !impl_->AnyEnabled() && !impl_->managementActive)
+        {
+            ++impl_->workGeneration;
+            impl_->scanRequested = impl_->foregroundScanRequested = impl_->startupWarm = false;
+            impl_->catalogueStale = true;
+            impl_->foregroundScanDemand.Cancel();
+            impl_->sourceScanRequested = false;
+            impl_->sourceScanDemand.Cancel();
+        }
     }
     SetEvent(impl_->wake);
 }
@@ -1691,12 +2144,19 @@ void MenuService::Manage(const Request &request)
 CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 {
     std::lock_guard lock(impl_->mutex);
+    const bool reopening = !impl_->managementActive;
+    impl_->managementActive = true;
+    if (reopening)
+    {
+        impl_->sourceScanRequested = false;
+        impl_->sourceScanDemand.Cancel();
+    }
     if (impl_->catalogueStale && !impl_->scanRequested)
     {
         impl_->scanRequested = true;
         MenuTrace("catalogue", "request.stale_inspect");
     }
-    if (refresh || !impl_->inspected)
+    if (refresh || !impl_->inspected || reopening)
     {
         MenuTrace("catalogue", refresh ? "request.refresh" : "request.inspect");
         impl_->sourcePending = true;
@@ -1718,7 +2178,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     const bool invalidated = previous != impl_->rows.end() && previous->second.invalid;
     // Polling observes the current discovery, never starts it over after the
     // ordinary query freshness window expires (or after cache eviction).
-    if (!selection.paths.empty() && (refresh || selectionKey != impl_->inspectedSelection || invalidated))
+    if (!selection.paths.empty() && (refresh || reopening || selectionKey != impl_->inspectedSelection || invalidated))
     {
         impl_->inspectedSelection = selectionKey;
         impl_->RememberView(selection, impl_->Queue(selection, QueryPriority::Inspect, refresh));
@@ -1734,6 +2194,52 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
         result.menu.contexts = it->second.view.contexts; result.menu.error = it->second.view.error;
     }
     SetEvent(impl_->wake); return result;
+}
+void MenuService::EndInspection()
+{
+    std::lock_guard lock(impl_->mutex);
+    if (!impl_->managementActive) return;
+    impl_->managementActive = false;
+    ++impl_->managementGeneration;
+    for (auto &scope : impl_->scopedVerification)
+    {
+        scope.demand.Cancel();
+        scope.attempt = scope.checked = scope.signature = 0;
+    }
+    impl_->scanRequested = false;
+    impl_->foregroundScanDemand.Cancel();
+    impl_->sourceScanRequested |= impl_->AnyEnabled();
+    impl_->sourcePending = impl_->discoverRequested = impl_->discoverForce = impl_->desktopInspection = false;
+    impl_->typesRequested = impl_->typesPreparing = impl_->typesForce = impl_->typeBatchForce = false;
+    impl_->typeDiscovery.clear(); impl_->nextType = 0;
+    impl_->discovery.clear(); impl_->sourceSelections.clear();
+    for (auto &[key, row] : impl_->rows)
+    {
+        row.managementAttributionRequested = false;
+        if (row.snapshotManagementProof)
+        {
+            row.snapshotManagementProof = false; row.snapshotDependency = 0;
+            row.invalid = true; row.registryInvalid = false;
+        }
+        row.inspection = row.checkInspection = false;
+        if (row.targetCheckDemand == QueryPriority::Inspect) row.targetCheckDemand.reset();
+        if (row.priority == QueryPriority::Inspect && row.clicks.empty())
+        {
+            row.queued = row.view.pending = row.checkRequested = false; row.targetCheckDemand.reset();
+        }
+    }
+    if (!impl_->AnyEnabled())
+    {
+        ++impl_->workGeneration;
+        impl_->scanRequested = impl_->foregroundScanRequested = impl_->startupWarm = false;
+        impl_->catalogueStale = true;
+        // Cancel is checked by the production reader. Reset is performed only
+        // after this future has drained, immediately before a later scan starts.
+        impl_->foregroundScanDemand.Cancel();
+        impl_->sourceScanRequested = false;
+        impl_->sourceScanDemand.Cancel();
+    }
+    SetEvent(impl_->wake);
 }
 void MenuService::Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed, HWND owner)
 {

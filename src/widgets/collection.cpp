@@ -111,8 +111,7 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     else if (snowdesktop::widget_item_layout::CollectionUsesFullFrame(
             data->scrollContainerMode,
             data->gridSpan.columns, data->gridSpan.rows))
-        // The large-folder action bar floats over the frame on hover. It does
-        // not own layout space, so fixed rows use the complete widget height.
+        // Large folders have no title bar; fixed rows use the complete frame.
         content = widget->GetFrameRect();
     else
         content = widget->GetBodyRect();
@@ -984,6 +983,28 @@ RECT Collection::GetAllButtonRect() const
     if (!presentation.showAllButton) return {};
     return GetCollectionSlotRect(
         this, presentation.allButtonSlot, body);
+}
+
+RECT Collection::GetTitleCellRect() const
+{
+    if (!app_ || !IsLargeFolderMode()) return {};
+    // The Show all mosaic and dense titleless grids carry the collection's
+    // title in the final resolved cell; ordinary final cells keep the bottom
+    // title and rename there instead.
+    return GetCollectionSlotRect(this,
+        GetCollectionPhysicalCapacity(this) - 1, GetBodyRect());
+}
+
+bool Collection::HidesBottomBarTitle() const
+{
+    if (!IsLargeFolderMode() || !data_ || !app_) return false;
+    // Match the drawn presentation: a compatible drag temporarily turns the
+    // final cell of an exactly filled grid into the Show all mosaic, which
+    // owns the title again, so the bottom bar must not repeat it meanwhile.
+    return snowdesktop::widget_item_layout::LargeFolderHidesBottomBarTitle(
+        CollectionTitlelessActive(this),
+        GetCollectionPresentation(this,
+            app_->CanCurrentDragUseCollectionPopup()));
 }
 
 /**

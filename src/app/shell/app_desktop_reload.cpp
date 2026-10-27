@@ -4,9 +4,12 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_capture.h"
 #include "diagnostics/performance_trace.h"
+#include "app/render/app_resource_statistics.h"
+#include "diagnostics/input_diagnostics.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "shell/directory_change_watch.h"
 
@@ -162,9 +165,13 @@ void DesktopApp::CheckRecycleBinStatus()
 {
     const auto pollState = recycleBinPollState_;
     if (pollState->queryInFlight.exchange(true))
+    {
+        snowdesktop::performance::Value("shared.maintenance", "recycle.query.in_flight", {}, 1);
         return;
+    }
     const HWND target = hwnd_;
     std::thread([target, pollState] {
+        snowdesktop::performance::Scope trace("shared.maintenance", "recycle.query");
         const DWORD64 started = GetTickCount64();
         const bool hasItems = RecycleBinContainsItems();
         pollState->lastQueryDurationMs.store(
@@ -364,13 +371,15 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (snowdesktop::InputDiagnostics::Acknowledge(hwnd, msg, wp, lp)) return 0;
     // The stable control HWND receives cross-process minimize preparation even
     // while Explorer reparents/recreates the desktop surface.
     if (dockShellHookMessage_ && msg == dockShellHookMessage_)
         return HandleMessage(hwnd, msg, wp, lp);
     if (msg >= 0xC000 &&
         (msg == snowdesktop::dock_minimize::RequestMessage() ||
-         msg == snowdesktop::dock_minimize::CancelMessage()))
+         msg == snowdesktop::dock_minimize::CancelMessage() ||
+         msg == snowdesktop::window_support::BeforeNativeMinimizeMessage()))
         return HandleMessage(hwnd, msg, wp, lp);
     static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
     if (menuUnavailable && msg == menuUnavailable)
@@ -378,29 +387,35 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         ShowBalloonNotification(_LW("settings.contextMenu.page"), _LW("settings.contextMenu.commandUnavailable"));
         return 0;
     }
+    if (snowdesktop::performance::IsStateChangeMessage(msg)) return 0;
     if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
     {
+        static const UINT performanceControl = RegisterWindowMessageW(
+            snowdesktop::performance::ControlMessageName);
+        if (performanceControl && msg == performanceControl)
+        {
+            snowdesktop::performance::ConfigureControl(hwnd, {});
+            const auto provider = systemDataProvider_;
+            snowdesktop::performance::ConfigureGpuDemand([provider](bool active) {
+                if (!provider) return;
+                if (active) (void)provider->StartTopic("performance-capture", "system.gpu", std::chrono::milliseconds(1000));
+                else provider->RemoveConsumer("performance-capture");
+            });
+        }
         return snowdesktop::performance::HandleControlMessage(
             hwnd, msg, wp, lp, +[](void* context) {
                 auto* app = static_cast<DesktopApp*>(context);
                 snowdesktop::performance::Scope sample("profiler", "sample.widgets");
                 using snowdesktop::performance::Value;
+                app->RecordIconTextResources();
+                snowdesktop::app_resource_statistics::Record(app->items_, app->widgets_,
+                    app->dockFolderPopupWidget_, app->gridPages_, app->dockEntries_,
+                    app->quickNavigationAppEntries_, app->quickNavigationEverythingResults_,
+                    app->quickNavigationAppResultIndices_, app->layoutRecords_, app->itemIndexByKeyCache_);
+                Value("host.model.memory", "desktop_app_inline_bytes", {}, static_cast<double>(sizeof(DesktopApp)));
                 if (app->widgetEngine_)
                 {
                     app->widgetEngine_->RecordPerformanceResources();
-                    for (const auto& widget : app->widgetEngine_->GetWidgets())
-                    {
-                        if (widget.quota)
-                            Value("widget.memory", "lua_bytes", widget.widgetId,
-                                static_cast<double>(widget.quota->memoryBytes));
-                        Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
-                        Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
-                        Value("widget.state", "timers", widget.widgetId,
-                            static_cast<double>(widget.namedTimers.Size()));
-                        Value("widget.state", "animation_requests", widget.widgetId,
-                            static_cast<double>(widget.animationFrames.Size()));
-                        Value("widget.package", widget.packageId, widget.widgetId, 1);
-                    }
                 }
                 double hiddenBytes = 0;
                 std::size_t hiddenResident = 0;
@@ -589,6 +604,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_DEVICECHANGE:
+        snowdesktop::InputDiagnostics::DeviceChange(wp);
         switch (wp)
         {
         case DBT_DEVNODES_CHANGED:
@@ -1159,9 +1175,13 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
                 snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
+                const auto incomingBitmap = result->bitmap;
                 snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
                     result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
                     [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
+                if (incomingBitmap && item.iconBitmap == incomingBitmap)
+                    WarmStyledIconBitmap(incomingBitmap, result->preparedPixels,
+                        ResolveIconAppearance(item.layoutKey, item.iconIsMediaThumbnail));
                 matched = true;
                 if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
                 if (!result->typeName.empty()) item.typeName = result->typeName;
@@ -1202,9 +1222,13 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
                     snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
                 {
+                    const auto incomingBitmap = result->bitmap;
                     snowdesktop::shell_icon_request::ApplyBitmap(entry, result->phase,
                         result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
                         [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
+                    if (incomingBitmap && entry.iconBitmap == incomingBitmap)
+                        WarmStyledIconBitmap(incomingBitmap, result->preparedPixels,
+                            ResolveIconAppearance(entry.fullPath, entry.iconIsMediaThumbnail));
                     matched = true;
                     if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
                     if (!result->typeName.empty()) entry.typeName = result->typeName;

@@ -107,7 +107,7 @@ bool DesktopApp::ExecuteDockFolderPopupDisplayCommand(UINT command)
         popupAnimation_.ShowImmediately();
         popupAnimation_.Configure(
             snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-            snowdesktop::animation::RuntimeDurationScale() * (widget.fanPopup ? 2.4 : 1.0));
+            snowdesktop::animation::RuntimeDurationScale() * (widget.fanPopup ? 2.4 : 1.0), !widget.fanPopup);
     }
     if (dockFolderPopupContainer_)
     {

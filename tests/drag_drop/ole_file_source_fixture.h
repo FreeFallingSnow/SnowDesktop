@@ -18,6 +18,7 @@ public:
     bool wrongApartment = false, fileReadBeforeStart = false;
     int fileReads = 0, starts = 0, ends = 0;
     int dataReads = 0;
+    int identityReads = 0;
     HRESULT outcome = E_PENDING;
     DWORD endEffect = 0xffffffff;
     // A virtual multi-parent selection supplies a standard CF_HDROP batch.
@@ -28,7 +29,13 @@ public:
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* format, STGMEDIUM* medium) override
     {
         CheckThread();
-        ++dataReads;
+        // CIDA is selection metadata, not delayed file content. Keep the
+        // content-read assertions strict while observing identity probes.
+        const bool identity = format && format->cfFormat ==
+            RegisterClipboardFormatW(CFSTR_SHELLIDLIST);
+        if (identity) ++identityReads;
+        else ++dataReads;
+        if (identity && !multiParentPaths.empty()) return DV_E_FORMATETC;
         if (format && format->cfFormat == CF_HDROP)
         { ++fileReads; fileReadBeforeStart |= asynchronous && starts == 0; }
         if (format && format->cfFormat == CF_HDROP && !multiParentPaths.empty())

@@ -20,7 +20,7 @@ using Microsoft::WRL::ComPtr;
 // The shell localizes this accessible name independently of our UI language.
 // Resolve the OS resource rather than maintaining translated match strings or
 // assuming that every SystemTrayIcon/NormalButton is the input mode button.
-inline std::wstring ModeButtonName()
+inline std::wstring InputButtonName(const wchar_t* resourceName)
 {
     wchar_t windows[MAX_PATH]{};
     const UINT length = GetWindowsDirectoryW(windows, MAX_PATH);
@@ -29,13 +29,15 @@ inline std::wstring ModeButtonName()
     {
         const std::wstring resource = std::wstring(L"@{") + windows + L"\\SystemApps\\" +
             package + L"_cw5n1h2txyewy\\resources.pri?ms-resource://" + package +
-            L"/SystemTray/Resources/AutomationName_ImeButton}";
+            L"/SystemTray/Resources/" + resourceName + L"}";
         wchar_t name[256]{};
         if (SUCCEEDED(SHLoadIndirectString(resource.c_str(), name, static_cast<UINT>(std::size(name)), nullptr)) && name[0])
             return name;
     }
     return {};
 }
+inline std::wstring ModeButtonName() { return InputButtonName(L"AutomationName_ImeButton"); }
+inline std::wstring LayoutButtonName() { return InputButtonName(L"AutomationName_LanguageButton"); }
 
 inline bool HasModernTaskbar()
 {
@@ -56,7 +58,7 @@ inline ComPtr<IUIAutomationCondition> Property(IUIAutomation* automation, PROPER
 }
 
 inline HRESULT FindModeButton(IUIAutomation* automation, HWND taskbar, std::wstring_view name,
-    ULONGLONG deadline, std::stop_token stop, ComPtr<IUIAutomationElement>& result)
+    ULONGLONG deadline, std::stop_token stop, ComPtr<IUIAutomationElement>& result, bool layoutPanel = false)
 {
     result.Reset();
     if (!automation || !taskbar || name.empty()) return E_INVALIDARG;
@@ -83,6 +85,7 @@ inline HRESULT FindModeButton(IUIAutomation* automation, HWND taskbar, std::wstr
     }, reinterpret_cast<LPARAM>(&roots));
     DWORD shellProcess = 0;
     GetWindowThreadProcessId(taskbar, &shellProcess);
+    const auto languageHint = InputButtonName(L"LanguageIndicatorHelpString");
     for (HWND window : roots)
     {
         if (stop.stop_requested() || GetTickCount64() >= deadline) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
@@ -102,7 +105,7 @@ inline HRESULT FindModeButton(IUIAutomation* automation, HWND taskbar, std::wstr
             BSTR accessibleName = nullptr;
             hr = item->get_CurrentName(&accessibleName);
             const bool matches = SUCCEEDED(hr) && accessibleName &&
-                MatchesModeButton({accessibleName, SysStringLen(accessibleName)}, name);
+                MatchesInputButton({accessibleName, SysStringLen(accessibleName)}, name, languageHint, layoutPanel);
             SysFreeString(accessibleName);
             if (matches) { result = std::move(item); return S_OK; }
         }
@@ -112,7 +115,7 @@ inline HRESULT FindModeButton(IUIAutomation* automation, HWND taskbar, std::wstr
 
 // Worker/MTA only. UIA owns the native button's XAML menu and its lifetime.
 // Provider timeouts and a search deadline bound shell restart/hang failures.
-inline HRESULT ShowContextMenu(std::wstring_view name, ULONGLONG deadline, std::stop_token stop,
+inline HRESULT ShowInputButton(std::wstring_view name, bool layoutPanel, ULONGLONG deadline, std::stop_token stop,
     HWND foreground, DWORD inputThread, HKL layout)
 {
     ComPtr<IUIAutomation> automation;
@@ -127,14 +130,11 @@ inline HRESULT ShowContextMenu(std::wstring_view name, ULONGLONG deadline, std::
     }
     ComPtr<IUIAutomationElement> button;
     const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
-    hr = FindModeButton(automation.Get(), taskbar, name, deadline, stop, button);
+    hr = FindModeButton(automation.Get(), taskbar, name, deadline, stop, button, layoutPanel);
     if (FAILED(hr)) return hr;
     if (stop.stop_requested() || GetTickCount64() >= deadline ||
         GetForegroundWindow() != foreground || (inputThread && GetKeyboardLayout(inputThread) != layout))
         return HRESULT_FROM_WIN32(ERROR_CANCELLED);
-    ComPtr<IUIAutomationElement3> context;
-    hr = button.As(&context);
-    if (FAILED(hr)) return hr;
     taskbar_hook::native::MenuAccess access;
     hr = access.Begin(taskbar);
     if (FAILED(hr)) return hr;
@@ -143,7 +143,17 @@ inline HRESULT ShowContextMenu(std::wstring_view name, ULONGLONG deadline, std::
     if (stop.stop_requested() || GetTickCount64() >= deadline ||
         GetForegroundWindow() != foreground || (inputThread && GetKeyboardLayout(inputThread) != layout))
         return HRESULT_FROM_WIN32(ERROR_CANCELLED);
-    hr = context->ShowContextMenu();
+    hr = InvokeInputButton(layoutPanel,
+        [&]() -> HRESULT {
+            ComPtr<IUIAutomationInvokePattern> invoke;
+            const HRESULT pattern = button->GetCurrentPatternAs(UIA_InvokePatternId, IID_PPV_ARGS(&invoke));
+            return FAILED(pattern) ? pattern : invoke->Invoke();
+        },
+        [&]() -> HRESULT {
+            ComPtr<IUIAutomationElement3> context;
+            const HRESULT queried = button.As(&context);
+            return FAILED(queried) ? queried : context->ShowContextMenu();
+        });
     if (SUCCEEDED(hr)) access.HandOff();
     return hr;
 }

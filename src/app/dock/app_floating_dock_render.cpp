@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock_input_diagnostics.h"
 #include "ui/render/ui_presentation_scope.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
@@ -150,6 +151,36 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
                 host.container->DrawContents(context.Get());
             });
         }
+        if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
+        {
+            const auto& appearance = floatingDockPersonalization_;
+            const D2D1_COLOR_F background = D2D1::ColorF(appearance.widgetBgR,
+                appearance.widgetBgG, appearance.widgetBgB, 0.98f);
+            const float contrast = background.r * 0.2126f + background.g * 0.7152f + background.b * 0.0722f;
+            const float ink = contrast > 0.55f ? 0.05f : 1.0f;
+            const D2D1_COLOR_F foreground = D2D1::ColorF(ink, ink, ink, 1.0f);
+            const RECT button = host.explicitDismissRect;
+            const float size = static_cast<float>(button.right - button.left);
+            ComPtr<ID2D1SolidColorBrush> closeBrush;
+            if (SUCCEEDED(context->CreateSolidColorBrush(foreground, &closeBrush)))
+            {
+                const auto circle = D2D1::Ellipse(D2D1::Point2F(
+                    (static_cast<float>(button.left) + static_cast<float>(button.right)) * 0.5f,
+                    (static_cast<float>(button.top) + static_cast<float>(button.bottom)) * 0.5f),
+                    size * 0.5f - 0.5f, size * 0.5f - 0.5f);
+                closeBrush->SetColor(background);
+                context->FillEllipse(circle, closeBrush.Get());
+                closeBrush->SetColor(D2D1::ColorF(foreground.r, foreground.g, foreground.b, 0.35f));
+                context->DrawEllipse(circle, closeBrush.Get(), 1.0f);
+                closeBrush->SetColor(foreground);
+                const float left = static_cast<float>(button.left) + size * 0.32f;
+                const float right = static_cast<float>(button.right) - size * 0.32f;
+                const float top = static_cast<float>(button.top) + size * 0.32f;
+                const float bottom = static_cast<float>(button.bottom) - size * 0.32f;
+                context->DrawLine(D2D1::Point2F(left, top), D2D1::Point2F(right, bottom), closeBrush.Get(), size / 16.f);
+                context->DrawLine(D2D1::Point2F(right, top), D2D1::Point2F(left, bottom), closeBrush.Get(), size / 16.f);
+            }
+        }
         DrawDynamicOverlays(context.Get());
     }
     catch (...)
@@ -234,7 +265,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         if (!host.backdrop.ApplyStagedFrame())
         {
             std::wstring message = L"Floating Dock backdrop candidate failed: " + host.backdrop.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
             host.backdropRecoveryPending = true;
             RecoverFloatingDockCompositionFailure(host, L"Backdrop candidate", E_FAIL, true);
             return false;
@@ -312,6 +343,25 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (host.active && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
+        (msg == WM_NCHITTEST || msg == WM_MOUSEACTIVATE || msg == WM_LBUTTONDOWN) &&
+        (!host.mergedPresentationActive || host.mergedPresentation.inputEnabled))
+    {
+        POINT screen{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        if (msg == WM_MOUSEACTIVATE) GetCursorPos(&screen);
+        else if (msg != WM_NCHITTEST) ClientToScreen(hwnd, &screen);
+        POINT point = screen;
+        if (hwnd_) ScreenToClient(hwnd_, &point);
+        else { point.x -= virtualLeft_; point.y -= virtualTop_; }
+        if (snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(host.explicitDismissRect, point))
+        {
+            if (msg == WM_NCHITTEST) return HTCLIENT;
+            if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+            floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+            CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
+            return 0;
+        }
+    }
     if ((msg == WM_MOUSEACTIVATE || msg == WM_NCHITTEST ||
             (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
             msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_CHAR) &&
@@ -366,6 +416,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR)) return 0;
     switch (msg)
     {
+    case WM_WINDOWPOSCHANGED:
+        if (host.promoted && !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST))
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"observed-low-while-promoted", hwnd, host.promoted);
+        break;
     case WM_WINDOWPOSCHANGING:
         if (lp)
             PreserveModernMenuHostZOrder(
@@ -405,9 +459,19 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     {
         snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
         POINT livePointer{};
-        if (GetCursorPos(&livePointer))
+        const bool cursorKnown = GetCursorPos(&livePointer) != FALSE;
+        if (cursorKnown)
             snowdesktop::desktop_hover_rules::ObserveRetainedDockLeavePointer(
                 host.retainedLeaveTracking, livePointer.x, livePointer.y);
+        constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
+        if (!(wp & buttons) && cursorKnown && host.promoted &&
+            host.promotionInputCapabilityMissing == true && WindowFromPoint(livePointer) == hwnd)
+        {
+            auto* identity = &host;
+            RefreshFloatingDockPromotionInput(host, false, true);
+            // Activation and immediate presentation can dispatch native work.
+            if (FindPersistentDockHost(hwnd) != identity || !identity->active) return 0;
+        }
         SelectPersistentDockHost(&host);
         floatingDockHoverHandoffPending_ = false;
         floatingDockHoverHandoffRect_ = {};
@@ -418,11 +482,12 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         bool dragPreviewSynced = false;
-        OnMouseMoveAt(
+        const bool pointerUpdated = OnNativeMouseMoveAt(
             wp, latestDesktopPointer(),
             &dragPreviewSynced);
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
+        if (!pointerUpdated) return 0;
         // The pointer presenter refreshes both region and pixels at its
         // deadline. An invalidation here would bypass that limit and feed
         // stationary region-generated moves back into WM_PAINT.
@@ -538,9 +603,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         if (msg == WM_CANCELMODE) CancelRenameClick();
-        if (msg == WM_CANCELMODE ||
-            !IsOwnedPointerCaptureWindow(
-                reinterpret_cast<HWND>(lp)))
+        if (snowdesktop::floating_popup_rules::ShouldCancelPointerPressForHostMessage(
+                msg == WM_CANCELMODE, hwnd, GetCapture(),
+                IsOwnedPointerCaptureWindow(GetCapture()),
+                IsOwnedPointerCaptureWindow(reinterpret_cast<HWND>(lp))))
         {
             if (rightButtonDownDockHost_ == &host)
                 rightButtonDownDockHost_ = nullptr;
@@ -548,6 +614,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             {
                 CancelPointerPressWithoutCaptureRelease();
             }
+            if (msg == WM_CANCELMODE && GetCapture() == hwnd)
+                ReleaseCapturePreservingPointerState();
         }
         return 0;
     case WM_LBUTTONDBLCLK:

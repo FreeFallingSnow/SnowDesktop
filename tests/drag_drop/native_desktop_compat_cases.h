@@ -1,4 +1,5 @@
 #pragma once
+#include "../icons/native_large_icon_completion_cases.h"
 
 namespace native_desktop_compat_cases
 {
@@ -88,6 +89,7 @@ inline void RunShortcuts()
 
 inline void RunAppearance()
 {
+    native_large_icon_completion_cases::Run();
     native_drag_commit_cases::Profile profile;
     const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop;
     fs::create_directories(desktop);

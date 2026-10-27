@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shell_start_pin_command.h"
+#include "platform/runtime_module_policy.h"
 #include <optional>
 #include <vector>
 
@@ -9,6 +10,9 @@ namespace snowdesktop::shell_start_pin
 inline HRESULT Invoke(const std::wstring& hookPath, Action action,
     const std::wstring& path, HWND owner, POINT point)
 {
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu))
+        return HRESULT_FROM_WIN32(ERROR_ACCESS_DISABLED_BY_POLICY);
+    snowdesktop::runtime_modules::Activity activity(snowdesktop::runtime_modules::Module::StartMenu);
     Request request;
     request.processId = GetCurrentProcessId();
     LARGE_INTEGER counter{};
@@ -48,6 +52,9 @@ inline HRESULT Invoke(const std::wstring& hookPath, Action action,
     struct ViewScope { void* value; ~ViewScope() { UnmapViewOfFile(value); } } viewScope{state};
     *state = request;
     MemoryBarrier();
+    // Recheck at submission: a settings change can arrive while preparing the request.
+    if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu))
+        return HRESULT_FROM_WIN32(ERROR_ACCESS_DISABLED_BY_POLICY);
     const HHOOK hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread);
     if (!hook) return HRESULT_FROM_WIN32(GetLastError());
     struct HookScope { HHOOK value; ~HookScope() { UnhookWindowsHookEx(value); } } hookScope{hook};

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock/dock_work_area_reservation.h"
 #include "system/status_bar/status_bar_appbar.h"
 #include <algorithm>
 #include <numeric>
@@ -245,11 +246,11 @@ void DesktopApp::ApplyDockWorkAreaReservation()
 
         // Match each Dock copy to the icon grid of its own display. This also
         // keeps mixed-resolution monitors from inheriting another screen's size.
-        GridPage bestPage = targetPage;
-        int bestReserved = 1;
-        int bestError = INT_MAX;
-        for (int reserved = 1; reserved < edgeExtent; ++reserved)
-        {
+        const snowdesktop::dock_work_area_reservation::Inputs reservationInputs{
+            targetPage, ResolveDockSizingPage(targetPage), dockSettings_,
+            iconSpacingScale_, itemFontSizeCu_, itemIconSizeScale_, edgeExtent};
+        static thread_local snowdesktop::dock_work_area_reservation::Cache reservationCache;
+        const int bestReserved = reservationCache.Resolve(reservationInputs, [&](int reserved) {
             GridPage candidate = targetPage;
             reserveEdge(candidate, reserved, nullptr);
             ApplyIconSpacingToPage(candidate);
@@ -263,20 +264,13 @@ void DesktopApp::ApplyDockWorkAreaReservation()
             const int edgeDistance = componentMargin;
             const int innerGap = 0;
             const int panelThickness = scaledIconSize + scaledSpacing * 2;
-            const int desiredReservation = dockSettings_.edgeAttached
+            return dockSettings_.edgeAttached
                 ? panelThickness + innerGap
                 : panelThickness + edgeDistance + innerGap;
-            const int error = std::abs(desiredReservation - reserved);
-            if (error < bestError)
-            {
-                bestError = error;
-                bestReserved = reserved;
-                bestPage = candidate;
-                if (error == 0) break;
-            }
-        }
+        });
 
-        targetPage = bestPage;
+        // Recompute current geometry below even on a cache hit. Shell approval
+        // and status-bar merging remain live and cannot restore a cached page.
         RECT dockArea{};
         reserveEdge(targetPage, bestReserved, &dockArea);
         const auto dockMonitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);

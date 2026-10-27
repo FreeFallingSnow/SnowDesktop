@@ -7,6 +7,7 @@
 #include "navigation/search_match.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "widget/runtime/widget_menu_catalogue.h"
+#include "shell/shell_file_history.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -1528,6 +1529,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPasteCommand, _LW("app.menu.paste"));
     AppendMenuW(menu, MF_STRING, kContextRefreshCommand, _LW("app.menu.refresh"));
+    AppendFileHistoryMenu(menu);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -2029,7 +2031,46 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
                 luaPage, luaSearch, luaFilter, workshopAvailable));
     };
+    snowdesktop::NativeTooltip historyTooltip;
+    historyTooltip.SetMenuFeedback(true);
     auto previewWidgetMenuItem = [&](const snowdesktop::modern_menu::HoverInfo& hover) {
+        if (hover.command == kFileUndoCommand || hover.command == kFileRedoCommand)
+        {
+            const bool redo = hover.command == kFileRedoCommand;
+            const auto description = shellFileOperationWorker_.DescribeHistory(redo);
+            if (CanApplyFileHistory(redo) && !description.items.empty())
+            {
+                const bool rename = description.kind == snowdesktop::file_history::Entry::Kind::Rename;
+                std::wstring body;
+                if (rename)
+                {
+                    const auto& [from, to] = description.items.front();
+                    const auto before = std::filesystem::path(from).filename().wstring();
+                    const auto after = std::filesystem::path(to).filename().wstring();
+                    body = redo ? _LFW("app.fileHistory.redoRename", before, after) :
+                        _LFW("app.fileHistory.undoRename", before, after);
+                }
+                else
+                {
+                    std::wstring paths;
+                    if (description.count > 1) paths = L"(" + std::to_wstring(description.count) + L") ";
+                    for (size_t index = 0; index < description.items.size(); ++index)
+                    {
+                        if (index) paths += L"; ";
+                        paths += description.items[index].first;
+                    }
+                    if (description.count > description.items.size()) paths += L"; …";
+                    body = redo ? _LFW("app.fileHistory.redoDelete", paths) :
+                        _LFW("app.fileHistory.undoDelete", paths);
+                }
+                historyTooltip.Configure(snowdesktop::modern_menu::ActiveRootWindow(), dcompDevice_.Get(),
+                    dwriteFactory_.Get(), snowdesktop::NativeTooltipAppearance());
+                historyTooltip.SetTarget(redo ? "file_history.redo" : "file_history.undo", std::move(body),
+                    hover.itemScreenRect, snowdesktop::NativeTooltipPlacement::Below);
+            }
+            else historyTooltip.Hide();
+        }
+        else historyTooltip.Hide();
         if (!wallpaperPrefetchStarted &&
             IsAddWidgetMenuCommand(hover.command))
         {
@@ -2142,9 +2183,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets, &shellRequest,
-        [&]() { return previewWindow.Handle(); }, false,
+        [&]() { return historyTooltip.Visible() ? historyTooltip.Window() : previewWindow.Handle(); }, false,
         kContextPageRename, kContextPageRenameCancel,
         prepareWidgetSubmenu);
+    historyTooltip.Close();
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);
@@ -2211,6 +2253,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         switch (command)
         {
+        case kFileUndoCommand: QueueFileHistory(false); break;
+        case kFileRedoCommand: QueueFileHistory(true); break;
         case kContextRefreshCommand: ReloadItems(); break;
         case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
         case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;

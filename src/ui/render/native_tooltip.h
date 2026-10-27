@@ -37,6 +37,9 @@ public:
     HWND Window() const;
     // Drag feedback must remain visible during capture/OLE; hover tips hide.
     void SetDragFeedback(bool enabled);
+    // Menu-owned hints remain visible while the modal menu holds capture.
+    // The menu must hide/close them on hover changes and before it returns.
+    void SetMenuFeedback(bool enabled);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

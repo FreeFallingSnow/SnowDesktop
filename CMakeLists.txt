@@ -4,6 +4,9 @@ include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.SharedBuildGuard.cmake")
 snowdesktop_check_shared_output()
 
 project(SnowDesktop LANGUAGES C CXX)
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.DependencyEvidence.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ProductBuild.cmake")
 
 # Ship a deterministic WebP decoder, independent of installed WIC extensions.
 foreach(WEBP_TOOL ANIM_UTILS CWEBP DWEBP GIF2WEBP IMG2WEBP VWEBP WEBPINFO LIBWEBPMUX WEBPMUX EXTRAS)
@@ -12,6 +15,8 @@ endforeach()
 set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL "" FORCE)
 set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL "" FORCE)
 set(WEBP_LINK_STATIC ON CACHE BOOL "" FORCE)
+option(SNOWDESKTOP_CACHE_WEBP_PROBES "Reuse unchanged native MSVC WebP SIMD checks" ON)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SnowDesktop.WebPProbeCache.cmake")
 add_subdirectory(third_party/libwebp EXCLUDE_FROM_ALL)
 if(MSVC)
     # The host and native tests use the static CRT. Apply it to the upstream
@@ -28,6 +33,8 @@ target_include_directories(SnowDesktopPuff PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/t
 if(MSVC)
     set_property(TARGET SnowDesktopPuff PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SnowDesktop.Perfetto.cmake")
 # Decoder-only upstream target exports its root; expose the public API directory.
 target_include_directories(webpdecoder INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp/src>")
 
@@ -40,7 +47,6 @@ if (NOT CMAKE_GENERATOR MATCHES "^Visual Studio ")
         "SnowDesktop WinUI 3 requires a Visual Studio/MSBuild generator")
 endif()
 
-include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.VersionResources.cmake")
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
@@ -182,10 +188,13 @@ set(SNOWDESKTOP_SOURCES
     src/platform/auto_start_elevation.cpp
     src/platform/auto_start_elevation.h
     src/platform/auto_start_rules.h
+    src/platform/startup_privileges_dialog.h
     src/platform/application_crash_watchdog.cpp
     src/desktop/desktop_namespace_registry.cpp
     src/desktop/desktop_namespace_registry.h
+    src/desktop/display_color_mode.h
     src/icons/icon_beautify.cpp
+    src/icons/icon_backplate_analysis.inc
     src/icons/icon_beautify_preview.h
     src/icons/icon_appearance.h
     src/icons/icon_appearance_codec.h
@@ -193,6 +202,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_customization_lifecycle.h
     src/icons/icon_control_source.h
     src/app/render/app_bitmap_cache.cpp
+    src/app/render/desktop_composition_effect.h
     src/app/menus/app_background_menu.cpp
     src/app/render/app_animation_scheduler.cpp
     src/app/input/app_clipboard_interaction.cpp
@@ -206,6 +216,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_drop.cpp
     src/app/dock/app_dock_running_drag.cpp
     src/app/dock/dock_running_drag_state.h
+    src/app/dock/dock_input_diagnostics.h
     src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_tray.cpp
@@ -217,15 +228,18 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_appbar.cpp
     src/dock/dock_appbar.h
     src/dock/dock_running_animation.h
+    src/dock/dock_entry_removal.h
     src/app/features/app_status_bar.cpp
     src/system/status_bar/status_bar_view.cpp
     src/system/status_bar/status_bar_tooltip.h
     src/system/status_bar/status_bar_view.h
+    src/system/status_bar/status_bar_geometry.h
     src/system/status_bar/status_bar_preview.cpp
     src/system/status_bar/status_bar_preview.h
     src/system/status_bar/status_bar.cpp
     src/system/status_bar/status_bar_input_method.cpp
     src/system/status_bar/status_bar_input_method.h
+    src/system/status_bar/status_bar_input_method_profiles.h
     src/system/status_bar/status_bar_notification.cpp
     src/system/status_bar/status_bar_notification.h
     src/system/tray/tray_service.cpp
@@ -242,6 +256,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/tray/tray_model.cpp
     src/system/tray/tray_change_notifications.h
     src/system/tray/tray_service.h
+    src/system/tray/tray_geometry_table.h
     src/system/tray/tray_focus.h
     src/taskbar_hook/tray_protocol.h
     src/system/status_bar/status_bar.h
@@ -250,6 +265,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/status_bar/status_bar_task_view_input.h
     src/system/status_bar/status_bar_interaction.h
     src/system/status_bar/status_bar_settings.h
+    src/system/status_bar/status_bar_reveal.h
     src/system/status_bar/status_bar_appbar.h
     src/app/dock/app_dock_menu.cpp
     src/app/dock/app_dock_model.cpp
@@ -258,6 +274,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_external_minimize.cpp
     src/dock/dock_external_minimize.cpp
     src/dock/dock_external_minimize.h
+    src/dock/dock_minimize_process_cache.h
+    src/dock/dock_work_area_reservation.h
     src/dock/dock_minimize_protocol.h
     src/dock/dock_minimize_hook_threads.h
     src/app/dock/app_dock_window_tracking.cpp
@@ -390,7 +408,13 @@ set(SNOWDESKTOP_SOURCES
     src/app/lifecycle/app_settings_apply.cpp
     src/app/input/desktop_passthrough_indicator.cpp
     src/app/render/app_text_render.cpp
+    src/platform/runtime_module_policy.h
+    src/platform/runtime_module_status.h
+    src/winui/runtime_modules_page_presenter.h
+    src/app/features/app_runtime_modules.cpp
     src/app/features/app_taskbar_integration.cpp
+    src/app/dock/app_dock_start_menu.cpp
+    src/shell/native_start_menu.cpp
     src/app/features/app_steam_workshop.cpp
     src/app/lifecycle/app_timer_dispatch.cpp
     src/app/tray/app_tray.cpp
@@ -418,6 +442,7 @@ set(SNOWDESKTOP_SOURCES
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
     src/core/dock.cpp
+    src/core/dock_entry_removal.cpp
     src/core/slot.cpp
     src/core/container.cpp
     src/core/desktop.cpp
@@ -449,9 +474,12 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_cloak_dispatcher.cpp
     src/dock/dock_cloak_dispatcher.h
     src/platform/shell_overlay_window.h
+    src/platform/window_peek_policy.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
+    src/icons/icon_load_diagnostics.h
     src/common/utils.cpp
+    src/diagnostics/diagnostic_log.cpp
     src/platform/operation_feedback.cpp
     src/desktop/desktop_display_settings.h
     src/settings/settings_controller.cpp
@@ -516,6 +544,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/general_advanced_feature_ipc_values.h
     src/winui/category_creation_acknowledgement.h
     src/settings/category_rule_creation.h
+    src/winui/runtime_modules_page_presenter.cpp
     src/winui/home_about_page_presenter.cpp
     src/winui/start_page_presenter.cpp
     src/winui/start_page_presenter.h
@@ -569,6 +598,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/preview/component_preview.cpp
     src/ui/preview/native_component_preview_export.cpp
     src/ui/preview/preview_png_writer.cpp
+    src/widget/authoring/widget_author_profile.cpp
+    src/widget/authoring/widget_author_profile.h
     src/widget/authoring/widget_author_preview.cpp
     src/widget/preview/widget_preview_stage.cpp
     src/widget/preview/widget_wallpaper_pixels.h
@@ -596,11 +627,13 @@ set(SNOWDESKTOP_SOURCES
     src/widget/api/widget_calendar_query_options.cpp
     src/widget/api/widget_calendar_query_options.h
     src/widget/tasks/widget_task_broker.cpp
+    src/widget/tasks/widget_native_task_executor.cpp
     src/widget/tasks/widget_location_task_executor.cpp
     src/widget/tasks/widget_notification_runtime.cpp
     src/widget/tasks/widget_notification_schedule_store.cpp
     src/widget/tasks/widget_media_task_executor.cpp
     src/widget/tasks/widget_audio_output_task_executor.cpp
+    src/widget/tasks/widget_audio_playback.cpp
     src/widget/tasks/widget_system_control_tasks.cpp
     src/widget/tasks/widget_clipboard_task_executor.cpp
     src/widget/tasks/widget_filesystem_handle_store.cpp
@@ -639,6 +672,12 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/runtime/widget_runtime_diagnostics.cpp
     src/diagnostics/performance_capture.cpp
+    src/diagnostics/performance_process_resources.cpp
+    src/diagnostics/performance_process_resources.h
+    src/app/render/app_resource_statistics.h
+    src/diagnostics/performance_analysis.cpp
+    src/diagnostics/performance_environment.cpp
+    src/diagnostics/performance_control_pipe.cpp
     src/widget/runtime/widget_runtime_scheduler.cpp
     src/widget/runtime/widget_timer_dispatch.h
     src/widget/runtime/widget_calendar_provider.h
@@ -958,10 +997,43 @@ source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "Source" FILES
     src/resources/resource.rc)
 snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
+add_library(SnowDesktopWindowSupport STATIC
+    src/platform/window_support/window_support_installation.cpp
+    src/platform/window_support/window_support_host_identity.cpp
+    src/platform/window_support/window_support_runtime.cpp
+    src/platform/window_support/window_support_security.cpp
+    src/platform/window_support/window_support_authorization.cpp)
+target_include_directories(SnowDesktopWindowSupport PUBLIC "${CMAKE_SOURCE_DIR}/src")
+target_compile_features(SnowDesktopWindowSupport PUBLIC cxx_std_20)
+target_compile_definitions(SnowDesktopWindowSupport PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopWindowSupport PRIVATE /W4 /permissive- /EHsc /utf-8)
+set_property(TARGET SnowDesktopWindowSupport PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(SnowDesktopWindowSupport PUBLIC advapi32 bcrypt ole32 oleaut32 shell32 taskschd user32)
+
+# A small, independently authorized HWND broker. No desktop composition root,
+# Lua engine, Shell extension loader or arbitrary command executor is linked.
+add_executable(SnowDesktopWindowHelper WIN32
+    src/platform/window_support/window_helper_main.cpp
+    src/dock/dock_window_pin.cpp
+    src/dock/dock_external_minimize.cpp
+    src/dock/dock_window_helper_animation.cpp
+    src/dock/dock_cloak_dispatcher.cpp
+    src/dock/dock_window_transition.cpp
+    src/ui/render/ui_animation_scheduler.cpp)
+target_include_directories(SnowDesktopWindowHelper PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_features(SnowDesktopWindowHelper PRIVATE cxx_std_20)
+target_compile_definitions(SnowDesktopWindowHelper PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopWindowHelper PRIVATE /W4 /permissive- /EHsc /utf-8)
+set_property(TARGET SnowDesktopWindowHelper PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(SnowDesktopWindowHelper PRIVATE SnowDesktopWindowSupport SnowDesktopPerfetto d2d1 dwmapi dcomp dxgi d3d11)
+snowdesktop_add_executable_version_resource(SnowDesktopWindowHelper "SnowDesktop administrator window support")
+snowdesktop_enable_native_window_compatibility(SnowDesktopWindowHelper)
+add_dependencies(SnowDesktop SnowDesktopWindowHelper)
+
 # Error messages must survive a missing or damaged distribution/lang tree.
 # Keep lang/*.json as the only translation source, embedded at configure time.
 file(GLOB SNOWDESKTOP_LAUNCHER_CATALOGS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/lang/*.json")
-set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
+set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; const wchar_t* startupPrivileges; const wchar_t* startAnyway; const wchar_t* cancel; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
 foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${catalog}")
     get_filename_component(language "${catalog}" NAME_WE)
@@ -971,7 +1043,10 @@ foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
     string(JSON warning GET "${catalog_json}" "app.launcher.warning")
     string(JSON startup GET "${catalog_json}" "app.operation.startFailed")
     string(JSON security_hint GET "${catalog_json}" "app.launcher.securitySoftwareHint")
-    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\", LR\"LAUNCHER(${pending})LAUNCHER\", LR\"LAUNCHER(${warning})LAUNCHER\", LR\"LAUNCHER(${startup})LAUNCHER\", LR\"LAUNCHER(${security_hint})LAUNCHER\"},\n")
+    string(JSON startup_privileges GET "${catalog_json}" "app.startup.privilegesFailed")
+    string(JSON start_anyway GET "${catalog_json}" "app.startup.startAnyway")
+    string(JSON cancel GET "${catalog_json}" "settings.dialog.cancel")
+    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\", LR\"LAUNCHER(${pending})LAUNCHER\", LR\"LAUNCHER(${warning})LAUNCHER\", LR\"LAUNCHER(${startup})LAUNCHER\", LR\"LAUNCHER(${security_hint})LAUNCHER\", LR\"LAUNCHER(${startup_privileges})LAUNCHER\", LR\"LAUNCHER(${start_anyway})LAUNCHER\", LR\"LAUNCHER(${cancel})LAUNCHER\"},\n")
 endforeach()
 string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "};\n")
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_messages.h"
@@ -987,8 +1062,10 @@ add_executable(SnowDesktopLauncher WIN32
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
 target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
 target_include_directories(SnowDesktopLauncher PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32 ole32 oleaut32)
+target_link_libraries(SnowDesktopLauncher PRIVATE bcrypt shell32 user32 ole32 oleaut32 advapi32 comctl32)
 if (MSVC)
+    target_link_options(SnowDesktopLauncher PRIVATE
+        "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'")
     set_property(TARGET SnowDesktopLauncher PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopLauncher PRIVATE
@@ -1058,6 +1135,8 @@ target_compile_options(SnowDesktopDockMinimizeHook PRIVATE /W4 /permissive- /EHs
 target_link_libraries(SnowDesktopDockMinimizeHook PRIVATE user32 dwmapi)
 set_property(TARGET SnowDesktopDockMinimizeHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 include(ExternalProject)
+snowdesktop_observed_build_command(SNOWDESKTOP_DOCK32_BUILD_COMMAND
+    "${CMAKE_BINARY_DIR}/dock_minimize32" "$<CONFIG>")
 ExternalProject_Add(SnowDesktopDockMinimize32
     SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/dock"
     BINARY_DIR "${CMAKE_BINARY_DIR}/dock_minimize32"
@@ -1065,10 +1144,17 @@ ExternalProject_Add(SnowDesktopDockMinimize32
     CMAKE_GENERATOR_PLATFORM Win32
     CMAKE_ARGS "-DSNOWDESKTOP_OUTPUT_DIR=${CMAKE_BINARY_DIR}/$<CONFIG>"
         "-DSNOWDESKTOP_BUILD_HOOK_FIXTURE=${BUILD_TESTING}"
-    BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG>
+    BUILD_COMMAND ${SNOWDESKTOP_DOCK32_BUILD_COMMAND}
     BUILD_ALWAYS TRUE
     INSTALL_COMMAND "")
 add_dependencies(SnowDesktop SnowDesktopDockMinimizeHook SnowDesktopDockMinimize32)
+include(cmake/SnowDesktop.WindowSupport.cmake)
+snowdesktop_window_support_build_identity()
+foreach(target SnowDesktopTaskbarHook SnowDesktopWallpaperHook SnowDesktopHookEntry SnowDesktopDockMinimizeHook)
+    if(TARGET ${target})
+        snowdesktop_private_runtime_target(${target} "${CMAKE_BINARY_DIR}/$<CONFIG>")
+    endif()
+endforeach()
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
@@ -1128,7 +1214,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
-    webpdecoder SnowDesktopPuff
+    webpdecoder SnowDesktopPuff SnowDesktopWindowSupport
     ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
@@ -1188,7 +1274,7 @@ add_executable(snowwidget
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 snowdesktop_add_executable_version_resource(snowwidget "SnowDesktop widget authoring tool")
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32 pdh dxgi)
+target_link_libraries(snowwidget PRIVATE SnowDesktopLua SnowDesktopPerfetto bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
@@ -1211,6 +1297,10 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopWorkshopManagerSupport)
 
 add_dependencies(SnowDesktop snowwidget SnowDesktopSteamBridge)
+snowdesktop_add_product_build(SnowDesktopReleaseBuild SnowDesktop SnowDesktopLauncher
+    SnowDesktopSteamBridge SnowDesktopWorkshopManager snowwidget)
+snowdesktop_add_product_build(SnowDesktopDebugBuild SnowDesktop
+    SnowDesktopSteamBridge SnowDesktopWorkshopManager)
 add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:SnowDesktop>/widgets/snowdesktop-lua-widget/bin"
@@ -1246,7 +1336,7 @@ if (MSVC)
         "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopTextInput PRIVATE /W4 /permissive- /EHsc /utf-8)
 endif()
-target_link_libraries(SnowDesktop PRIVATE SnowDesktopTextInput)
+target_link_libraries(SnowDesktop PRIVATE SnowDesktopTextInput SnowDesktopPerfetto bcrypt)
 
 include(CTest)
 if (BUILD_TESTING)
@@ -1264,7 +1354,7 @@ if (BUILD_TESTING)
             COMMAND_ARGUMENTS
             LABELS)
         cmake_parse_arguments(
-            SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY" "" "${multiValueArgs}" ${ARGN})
+            SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY;OBSERVE_RUNTIME_MODULES" "" "${multiValueArgs}" ${ARGN})
 
         if (NOT SNOW_TEST_SOURCES)
             message(FATAL_ERROR
@@ -1273,6 +1363,16 @@ if (BUILD_TESTING)
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
         target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopTextInput)
+        if ("src/dock/dock_window_pin.cpp" IN_LIST SNOW_TEST_SOURCES OR "src/dock/dock_window_transition.cpp" IN_LIST SNOW_TEST_SOURCES)
+            target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopWindowSupport)
+        endif()
+        foreach(probe_source IN LISTS SNOW_TEST_SOURCES)
+            if(probe_source IN_LIST SNOWDESKTOP_PERFETTO_PROBE_SOURCES)
+                target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopPerfetto)
+                target_include_directories(${TEST_TARGET} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+                break()
+            endif()
+        endforeach()
         if (SNOW_TEST_NATIVE_WINDOW_COMPATIBILITY)
             snowdesktop_enable_native_window_compatibility(${TEST_TARGET})
         endif()
@@ -1319,6 +1419,20 @@ if (BUILD_TESTING)
                 -Wall -Wextra -pedantic)
         endif()
 
+        if(SNOW_TEST_OBSERVE_RUNTIME_MODULES)
+            if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
+                get_target_property(existing_launcher ${TEST_TARGET} TEST_LAUNCHER)
+                if(existing_launcher)
+                    message(STATUS "Runtime module observation unavailable with an existing test launcher; evidence remains unclosed")
+                else()
+                    set_property(TARGET ${TEST_TARGET} PROPERTY TEST_LAUNCHER
+                        "$<TARGET_FILE:SnowDesktopTestRuntimeObserver>;--test;${TEST_NAME};--")
+                    add_dependencies(${TEST_TARGET} SnowDesktopTestRuntimeObserver)
+                endif()
+            else()
+                message(STATUS "Runtime module observation unavailable before CMake 3.29; evidence remains unclosed")
+            endif()
+        endif()
         add_test(
             NAME ${TEST_NAME}
             COMMAND ${TEST_TARGET}
@@ -1356,6 +1470,15 @@ if (BUILD_TESTING)
                 "${SNOWDESKTOP_FAST_TEST_TARGETS}" PARENT_SCOPE)
         endif()
     endfunction()
+
+    snowdesktop_add_test(
+        SnowDesktopWindowSupportTests
+        window_support
+        SOURCES tests/platform/window_support_tests.cpp
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopHookEntryFixture1>"
+        LINK_LIBRARIES SnowDesktopWindowSupport user32
+        INCLUDE_DIRECTORIES src
+        LABELS core platform rules)
 
     snowdesktop_add_test(
         SnowDesktopApplicationDataLifecycleTests
@@ -1488,16 +1611,17 @@ if (BUILD_TESTING)
             "$<TARGET_FILE:SnowDesktopHookEntryFixture1>" "$<TARGET_FILE:SnowDesktopHookEntryFixture2>"
         LABELS core integration deployment)
     add_dependencies(SnowDesktopHookEntryTests SnowDesktopHookEntry SnowDesktopHookEntryFixture1 SnowDesktopHookEntryFixture2)
+    add_dependencies(SnowDesktopWindowSupportTests SnowDesktopHookEntryFixture1)
     add_dependencies(SnowDesktopHookEntryTests SnowDesktopDockMinimize32)
     add_test(NAME hook_stable_entry32 COMMAND SnowDesktopHookEntryTests --run32
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe"
-        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopHookEntry32.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktop.Runtime/SnowDesktopHookEntry32.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll")
     set_tests_properties(hook_stable_entry32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHookEntryTests>")
     add_test(NAME hook_stable_entry_cross32 COMMAND SnowDesktopHookEntryTests --cross32
-        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopHookEntry32.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktop.Runtime/SnowDesktopHookEntry32.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe")
@@ -1510,7 +1634,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/platform/shell_overlay_window_tests.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32
+        LINK_LIBRARIES user32 dwmapi
         LABELS core integration window)
 
     add_test(NAME http_network_integration
@@ -1575,12 +1699,25 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_runtime_diagnostics_tests.cpp
             tests/performance_capture_tests.cpp
+            tests/diagnostics/perfetto_session_tests.cpp
+            tests/diagnostics/performance_workload_tests.cpp
+            tests/diagnostics/process_resource_statistics_tests.cpp
             src/widget/runtime/widget_runtime_diagnostics.cpp
             src/diagnostics/performance_capture.cpp
+            src/diagnostics/performance_process_resources.cpp
+            src/diagnostics/performance_analysis.cpp
+            src/diagnostics/performance_environment.cpp
+            src/diagnostics/performance_control_pipe.cpp
             src/widget/runtime/lua_runtime.cpp
+            src/widget/tasks/widget_task_broker.cpp
+            src/widget/tasks/widget_filesystem_task_executor.cpp
+            src/ui/render/ui_animation_scheduler.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopLua pdh psapi user32
+        LINK_LIBRARIES SnowDesktopLua SnowDesktopPerfetto bcrypt advapi32 pdh psapi user32 shell32 ole32 windowscodecs
         LABELS contract widget)
+    target_compile_definitions(SnowDesktopWidgetRuntimeDiagnosticsTests PRIVATE
+        SNOWDESKTOP_PERFORMANCE_SOURCE_ROOT=L"${CMAKE_SOURCE_DIR}")
 
     snowdesktop_add_test(
         SnowDesktopWidgetPreviewContextTests
@@ -1674,6 +1811,17 @@ if (BUILD_TESTING)
             src/widget/tasks/widget_audio_output_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
+        LABELS contract audio task lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAudioPlaybackTests
+        widget_audio_playback
+        COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/aurora-player/modules/local_queue.lua"
+        SOURCES
+            tests/widget/widget_audio_playback_tests.cpp
+            src/widget/tasks/widget_audio_playback.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua windowsapp shcore ole32
         LABELS contract audio task lua widget)
 
     snowdesktop_add_test(
@@ -1778,6 +1926,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopWidgetCompositionLayerRulesTests
         widget_composition_layer_rules
+        OBSERVE_RUNTIME_MODULES
         SOURCES
             tests/widget_composition_layer_rules_tests.cpp
         INCLUDE_DIRECTORIES src
@@ -1873,6 +2022,15 @@ if (BUILD_TESTING)
         LABELS core contract l10n)
 
     snowdesktop_add_test(
+        SnowDesktopDiagnosticLogTests
+        diagnostic_log
+        SOURCES
+            tests/diagnostics/diagnostic_log_tests.cpp
+            src/diagnostics/diagnostic_log.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract diagnostics integration)
+
+    snowdesktop_add_test(
         SnowDesktopGeneralSettingsTests
         general_settings
         SOURCES
@@ -1887,6 +2045,20 @@ if (BUILD_TESTING)
         LINK_LIBRARIES dwrite d2d1 windowscodecs gdi32 ole32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract settings)
+
+    snowdesktop_add_test(
+        SnowDesktopStatusBarVisibilityTests
+        status_bar_visibility
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES
+            tests/system/status_bar_visibility_tests.cpp
+            src/system/status_bar/status_bar_view.cpp
+            src/widget/preview/widget_preview_stage.cpp
+            src/common/l10n.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 d3d11 dcomp dwrite dxgi dxguid gdi32 ole32 user32 windowscodecs
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract render settings status-bar)
 
     snowdesktop_add_test(
         SnowDesktopThemeWorkflowTests
@@ -1909,6 +2081,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopDemoModeRulesTests
         demo_mode_rules
+        OBSERVE_RUNTIME_MODULES
         SOURCES tests/demo_mode_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract settings render)
@@ -2084,9 +2257,13 @@ if (BUILD_TESTING)
             tests/auto_start_manager_tests.cpp
             src/platform/auto_start_manager.cpp
             src/platform/auto_start_elevation.cpp
-        INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32 comctl32
         LABELS contract rules settings startup)
+    if (MSVC)
+        target_link_options(SnowDesktopAutoStartRulesTests PRIVATE
+            "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'")
+    endif()
 
     add_test(NAME auto_start_scheduler
         COMMAND $<TARGET_FILE:SnowDesktopAutoStartRulesTests> --scheduler)
@@ -2273,12 +2450,40 @@ if (BUILD_TESTING)
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32 pdh dxgi
         LABELS authoring contract data permission security widget)
 
+    snowdesktop_add_test(
+        SnowDesktopWidgetNativeHelperTests
+        widget_native_helper
+        SOURCES
+            tests/widget/native_helper_tests.cpp
+            src/widget/tasks/widget_native_task_executor.cpp
+            src/widget/packages/widget_package.cpp
+            src/widget/runtime/widget_logical_slot.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
+            src/data/atomic_file.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES bcrypt ole32
+        LABELS integration security permission widget)
+
     # Keep file-export validation independent from installation-review fixtures.
     add_test(NAME widget_package_file_export
         COMMAND SnowDesktopWidgetAuthorToolsTests --package-export)
     set_tests_properties(widget_package_file_export PROPERTIES
         TIMEOUT 30 LABELS "authoring;contract;data;security;widget"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorToolsTests>")
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetAuthorProfileCliTests
+        widget_author_profile_cli
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/widget/authoring/widget_author_profile_cli_tests.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES SnowDesktopBuildToolTestSupport
+        COMMAND_ARGUMENTS "$<TARGET_FILE:snowwidget>" "$<TARGET_FILE:SnowDesktop>"
+        LABELS authoring integration performance widget host-runtime)
+    add_dependencies(SnowDesktopWidgetAuthorProfileCliTests snowwidget SnowDesktop)
+    set_tests_properties(widget_author_profile_cli PROPERTIES TIMEOUT 150)
+    set_target_properties(SnowDesktopWidgetAuthorProfileCliTests PROPERTIES VS_GLOBAL_UseCommonOutputDirectory "true")
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests
@@ -2679,10 +2884,16 @@ if (BUILD_TESTING)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host")
+    target_include_directories(SnowDesktopNativeDragIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/tests")
     set_tests_properties(native_drag_target_integration PROPERTIES TIMEOUT 90)
     add_test(NAME native_drag_commit_storage
         COMMAND SnowDesktopNativeDragIntegrationTests --commit-storage)
     set_tests_properties(native_drag_commit_storage PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
+    add_test(NAME native_async_layout_save
+        COMMAND SnowDesktopNativeDragIntegrationTests --async-layout-save)
+    set_tests_properties(native_async_layout_save PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
     add_test(NAME native_drag_reload_storage
@@ -2853,6 +3064,7 @@ if (BUILD_TESTING)
         "native_ole_target_changes|--ole-target-changes"
         "native_ole_partial_batch|--ole-partial-batch"
         "native_dock_partition_storage|--dock-partitions"
+        "native_dock_removal_animation|--dock-removal"
         "native_dock_running_pin_storage|--dock-running-pin-storage"
         "native_shortcut_final_targets|--shortcut-targets"
         "native_folder_shortcut_handoff|--folder-shortcut-handoff"
@@ -2879,13 +3091,19 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
     add_test(NAME native_popup_display_menu
         COMMAND SnowDesktopNativeDragIntegrationTests --popup-display-menu)
+    add_test(NAME native_input_safety
+        COMMAND SnowDesktopNativeDragIntegrationTests --input-safety)
     set_tests_properties(native_list_title_hover native_list_title_font_isolation native_popup_display_menu PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;widget;rendering")
+    set_tests_properties(native_input_safety PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 60 LABELS "integration;interaction;rendering")
 
     # Every mode in this fixture uses its own process, GUID storage/profile and
-    # message-only HWND. It never starts the desktop host, clipboard service or
-    # persistent Dock windows. Shell file operations touch only owned paths.
+    # message-only HWND, except input safety uses native windows on an inactive
+    # private Win32 desktop. None starts the desktop host or clipboard service;
+    # Shell file operations touch only owned paths.
     # Derive the set from registrations so new modes inherit this isolation
     # contract without maintaining another list of test names.
     get_property(SNOWDESKTOP_NATIVE_DRAG_TESTS DIRECTORY PROPERTY TESTS)
@@ -2903,6 +3121,7 @@ if (BUILD_TESTING)
         icon_beautify
         SOURCES
             tests/icon_beautify_tests.cpp
+            tests/icons/icon_backplate_tests.h
             tests/icons/icon_appearance_tests.cpp
             src/icons/icon_beautify.cpp
         INCLUDE_DIRECTORIES src
@@ -2991,7 +3210,14 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-extension-sessions)
     add_test(NAME shell_context_menu_bootstrap
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-bootstrap)
-    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap PROPERTIES
+    add_test(NAME shell_menu_refresh_control
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-refresh)
+    add_test(NAME shell_registry_catalogue
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-registry-catalogue)
+    add_test(NAME shell_shortcut_query_recovery
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-shortcut-query-recovery)
+    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap
+        shell_menu_refresh_control shell_registry_catalogue shell_shortcut_query_recovery PROPERTIES
         TIMEOUT 60
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
         LABELS "integration;contract;shell")
@@ -3104,6 +3330,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/dock/start_menu_tests.cpp
             tests/desktop/explorer_icon_visibility_tests.cpp
             tests/dock/dock_window_pin_tests.cpp
             tests/dock/fullscreen_focus_tests.cpp
@@ -3118,6 +3345,7 @@ if (BUILD_TESTING)
             src/ui/render/native_tooltip.cpp
             src/theme/personalization.cpp
             tests/tray_model_tests.cpp
+            tests/system/status_bar_input_method_profiles_cases.h
             tests/tray_live_tests.cpp
             src/system/tray/tray_model.cpp
             src/system/tray/tray_service.cpp
@@ -3130,16 +3358,41 @@ if (BUILD_TESTING)
             src/dock/dock_window_transition.cpp
             src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 oleaut32 runtimeobject shell32 shcore shlwapi uiautomationcore user32 windowsapp winhttp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 oleaut32 runtimeobject shell32 shcore shlwapi uiautomationcore user32 uuid windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
+    snowdesktop_add_test(
+        SnowDesktopDesktopLayerRecoveryTests
+        desktop_layer_recovery
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/desktop/desktop_layer_recovery_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS integration core desktop window)
+    snowdesktop_add_test(
+        SnowDesktopDockWorkAreaReservationTests
+        dock_work_area_reservation
+        SOURCES tests/dock/dock_work_area_reservation_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS core dock rules)
+    snowdesktop_add_test(
+        SnowDesktopDockDocumentProxyTests
+        dock_document_proxy
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/dock/dock_document_proxy_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS integration core dock window)
     snowdesktop_add_test(
         SnowDesktopDockHookResourceTests
         dock_hook_resources
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock/dock_hook_resource_tests.cpp
+            tests/dock/dock_minimize_target_cases.h
+            src/dock/dock_external_minimize.cpp
             src/dock/dock_cloak_dispatcher.cpp
             src/dock/dock_minimize_hook.cpp
         INCLUDE_DIRECTORIES src
@@ -3347,6 +3600,8 @@ if (BUILD_TESTING)
         LABELS rules animation)
 
     include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts
+        build_tools/build_product_artifacts_tests.cpp "tools;integration;packaging" 120)
     # Shared desktop/Explorer/host resources are serialized. Isolated fixtures
     # and pure logic cases can execute alongside these tests.
     get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
@@ -3357,7 +3612,10 @@ if (BUILD_TESTING)
         # 20 native hosts alongside tool workflows saturated the 24-core test
         # machine and caused timeouts, while eight heavy natives passed.
         if("isolated-native-model" IN_LIST test_labels OR "tools" IN_LIST test_labels)
-            set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
+            get_property(test_has_processor_budget TEST ${test_name} PROPERTY PROCESSORS SET)
+            if(NOT test_has_processor_budget)
+                set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
+            endif()
         endif()
         if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
             "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)

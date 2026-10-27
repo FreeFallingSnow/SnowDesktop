@@ -2,6 +2,9 @@
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_preview_layout.h"
 #include "dock/dock_app_identity_rules.h"
+#include "dock_preview_thumbnail_cases.h"
+#include "dock_window_peek_cases.h"
+#include "dock_window_transition_suppression_cases.h"
 
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -214,6 +217,9 @@ int RunDockWindowPinTests()
             std::cerr << "FAIL: " << message << '\n';
         }
     };
+    dock_preview_thumbnail_cases::Run(check);
+    dock_window_peek_cases::Run(check);
+    dock_window_transition_suppression_cases::Run(check);
     // Real cross-input-queue calls: a controller always releases the fixture,
     // so the old synchronous implementation fails an assertion, not a timeout.
     {
@@ -262,6 +268,17 @@ int RunDockWindowPinTests()
             !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty); }),
             "the independent operation owner withdraws a late pin after its visual was destroyed");
         pin->Clear();
+        const HWND lostBorder = CreateWindowExW(0, L"STATIC", L"stale pin fixture", WS_POPUP,
+            0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        check(lostBorder && SetPropW(target.window, kPinProperty, lostBorder) &&
+            SetPropW(target.window, kUndoProperty, lostBorder), "fixture establishes markers owned by a disappearing pin host");
+        DestroyWindow(lostBorder);
+        SetWindowPos(target.window, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS);
+        check(target.Until([&] { return IsNativeTopmost(target.window); }), "orphaned pin remains topmost before recovery");
+        check(pin->Toggle(target.window) && target.Until([&] { return !IsNativeTopmost(target.window); }) &&
+            !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty),
+            "next user toggle recovers stale owner markers and unpins after helper loss");
     }
     // A protected consent broker can reject process-path reads while exposing
     // a normal task window. The discovery identity must retain each such window

@@ -39,12 +39,16 @@ class MenuService
   public:
     using QueryFactory = std::function<QueryWork(const Request &)>;
     using CatalogueReader = std::function<Catalogue()>;
-    // A custom inventory reader must explicitly provide matching live proof.
-    // Persisted inventories and readers without it always use full verification.
+    // Reads only the requested registration paths; absent/unsupported rows do
+    // not acquire proof from an older complete inventory.
+    using SourceCatalogueReader = std::function<Catalogue(const std::vector<Registration> &)>;
+    // Optional full-scope proof applies only during explicit management.
+    // Ordinary use verifies exact selected sources; unknown selections retain
+    // a fresh root query without disk restoration or persistence.
     using FolderVerifier = std::function<std::uint64_t()>;
     using BackgroundVerifier = std::function<std::uint64_t(Context)>;
     explicit MenuService(std::filesystem::path directory = {}, QueryFactory factory = {}, CatalogueReader reader = {},
-                         FolderVerifier verifier = {}, BackgroundVerifier backgroundVerifier = {});
+                         FolderVerifier verifier = {}, BackgroundVerifier backgroundVerifier = {}, SourceCatalogueReader sourceReader = {});
     ~MenuService();
     MenuService(const MenuService &) = delete;
     // All public methods are memory-only. The worker owns all disk I/O, target
@@ -68,6 +72,9 @@ class MenuService
     void Configure(Preferences preferences);
     void Manage(const Request &request);
     CatalogueView Inspect(const Request &request = {}, bool refresh = false);
+    // Ends the current settings-page demand; retained command execution and
+    // enabled ordinary menu work keep their independent lifetimes.
+    void EndInspection();
     void Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed = {}, HWND owner = nullptr);
     void Invalidate(const Request &request);
     void Shutdown();

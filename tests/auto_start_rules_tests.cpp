@@ -21,14 +21,184 @@ void Check(bool condition, const char* message)
     std::cerr << "FAIL: " << message << '\n';
 }
 
+int primaryChoice = IDCONTINUE;
+int fallbackChoice = IDCONTINUE;
+bool primaryUnavailable = false;
+int fallbackCalls = 0;
+HRESULT WINAPI TestStartupTaskDialog(const TASKDIALOGCONFIG* dialog, int* selected, int*, BOOL*)
+{
+    Check(dialog->cButtons == 2 && dialog->pButtons[0].nButtonID == IDCONTINUE &&
+        std::wstring_view(dialog->pButtons[0].pszButtonText) == L"仍然启动" &&
+        dialog->pButtons[1].nButtonID == IDCANCEL,
+        "startup decisions expose an explicit Start anyway action and cancellation");
+    *selected = primaryChoice;
+    return primaryUnavailable ? E_FAIL : S_OK;
+}
+int TestStartupFallback(const wchar_t* content,
+    const snowdesktop::auto_start_launch::StartupChoiceLabels& labels) noexcept
+{
+    ++fallbackCalls;
+    namespace launch = snowdesktop::auto_start_launch;
+    const auto data = launch::StartupChoiceTemplate(content, labels);
+    // Create the actual fallback resource without WS_VISIBLE. This exercises
+    // native controls/labels, not a source-text check or the desktop host UI.
+    const HWND window = CreateDialogIndirectParamW(GetModuleHandleW(nullptr),
+        reinterpret_cast<const DLGTEMPLATE*>(data.data()), nullptr, launch::StartupChoiceWindowProc, 0);
+    Check(window != nullptr, "the native startup fallback template creates a hidden dialog");
+    if (window)
+    {
+        wchar_t label[128]{}, cancel[128]{}, details[128]{};
+        GetDlgItemTextW(window, IDCONTINUE, label, 128);
+        GetDlgItemTextW(window, IDCANCEL, cancel, 128);
+        GetDlgItemTextW(window, 100, details, 128);
+        Check(std::wstring_view(label) == labels.start && std::wstring_view(cancel) == labels.cancel &&
+            !GetDlgItem(window, IDOK) && std::wstring_view(details) == content && !IsWindowVisible(window),
+            "fallback preserves the actual Start anyway button, cancellation and full failure details");
+        DestroyWindow(window);
+    }
+    return fallbackChoice;
+}
+void CheckStartupDialogChoices()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    const launch::StartupDialogApi api{&TestStartupTaskDialog, &TestStartupFallback};
+    const launch::StartupChoiceLabels labels{L"仍然启动", L"取消"};
+    Check(launch::ConfirmStartupContinuation(L"startup failure", labels, api) && fallbackCalls == 0,
+        "explicit primary-dialog continuation proceeds without another dialog");
+    primaryChoice = IDCANCEL;
+    Check(!launch::ConfirmStartupContinuation(L"startup failure", labels, api),
+        "primary-dialog cancellation cannot proceed");
+    primaryUnavailable = true;
+    for (const int choice : {IDCONTINUE, IDCANCEL, IDOK, -1})
+    {
+        fallbackChoice = choice;
+        Check(launch::ConfirmStartupContinuation(L"startup failure", labels, api) == (choice == IDCONTINUE),
+            "only the explicit fallback continuation action can proceed, including UI errors and unknown results");
+    }
+    Check(fallbackCalls == 4, "an unavailable TaskDialog invokes the labelled native fallback once per decision");
+}
+
+void ShellReportsSuccessWithoutChild(const std::wstring&, const std::wstring&, const std::wstring&) {}
+void CheckUnacknowledgedExplorerLaunch()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    launch::NativePlatform native{&ShellReportsSuccessWithoutChild, 10};
+    bool timedOut = false;
+    try { (void)native.Relaunch(L"host.exe"); }
+    catch (const launch::Failure& failure) { timedOut = failure.code == ERROR_TIMEOUT; }
+    Check(timedOut, "a successful Shell request without a child acknowledgement is not reported as successful startup");
+}
+
+int receiptChildStarts = 0;
+int failedReceiptWaits = 0;
+bool receiptArgumentExpected = false;
+HANDLE WINAPI DenyReceiptEvent(LPSECURITY_ATTRIBUTES, BOOL, BOOL, LPCWSTR)
+{
+    SetLastError(ERROR_ACCESS_DENIED);
+    return nullptr;
+}
+DWORD WINAPI FailReceiptWait(HANDLE, DWORD)
+{
+    ++failedReceiptWaits;
+    SetLastError(ERROR_INVALID_HANDLE);
+    return WAIT_FAILED;
+}
+void StartReceiptFallbackChild(const std::wstring& executable,
+    const std::wstring& parameters, const std::wstring& directory)
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    const launch::Arguments arguments(L"host.exe " + parameters);
+    bool receiptArgument = false, guard = false, background = false;
+    for (int index = 1; index < arguments.count; ++index)
+    {
+        const std::wstring_view argument(arguments.value[index]);
+        receiptArgument = receiptArgument || launch::IsExplorerAckArgument(argument);
+        guard = guard || argument == launch::kExplorerRelaunchArgument;
+        background = background || argument == snowdesktop::kAutoStartBackgroundArgument;
+    }
+    Check(receiptArgument == receiptArgumentExpected && guard && background,
+        "optional receipt failure preserves the restart guard and background launch arguments");
+    // Only the Explorer submission boundary is replaced. The native parent
+    // path and an actual isolated child still run when receipt APIs fail.
+    std::wstring command = launch::QuoteArgument(executable) + L" " + parameters;
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &child))
+    {
+        Check(false, "receipt fallback creates a real isolated child");
+        return;
+    }
+    ++receiptChildStarts;
+    CloseHandle(child.hThread);
+    const DWORD waited = WaitForSingleObject(child.hProcess, 5000);
+    DWORD exitCode = STILL_ACTIVE;
+    Check(waited == WAIT_OBJECT_0 && GetExitCodeProcess(child.hProcess, &exitCode) && exitCode == 0,
+        "the child starts and exits normally despite the failed optional receipt mechanism");
+    if (waited != WAIT_OBJECT_0) TerminateProcess(child.hProcess, ERROR_TIMEOUT);
+    CloseHandle(child.hProcess);
+}
+void CheckOptionalReceiptFailure()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    for (const bool eventDenied : {true, false})
+    {
+        receiptArgumentExpected = !eventDenied;
+        launch::NativePlatform native{&StartReceiptFallbackChild, 10,
+            eventDenied ? &DenyReceiptEvent : &CreateEventW, &FailReceiptWait};
+        bool requested = false;
+        try
+        {
+            requested = native.Relaunch(
+                L"host.exe --receipt-fallback-child --snowdesktop-autostart-owner=portable") == 0;
+        }
+        catch (...) {}
+        Check(requested, "receipt setup or observation failure does not become a new startup prerequisite");
+    }
+    Check(receiptChildStarts == 2 && failedReceiptWaits == 1,
+        "both optional receipt failures still start a child, and unavailable channels are never waited on");
+}
+
 void CheckAutoStartLaunchRules()
 {
     namespace launch = snowdesktop::auto_start_launch;
+    Check(launch::IsPreviewHostCommand(L"host.exe --widget-author-preview request") &&
+        launch::IsPreviewHostCommand(L"host.exe --native-component-preview request") &&
+        !launch::IsPreviewHostCommand(L"host.exe --data-directory=--widget-author-preview") &&
+        !launch::IsPreviewHostCommand(L"host.exe profile --native-component-preview"),
+        "only dedicated preview entry points retain their independent tool argument protocol");
     struct Platform
     {
         int launches = 0;
+        int tokenChecks = 0;
+        int explorerChecks = 0;
+        int prompts = 0;
+        bool elevated = false;
+        bool explorerElevated = false;
+        bool continueStartup = false;
+        DWORD tokenError = 0;
+        DWORD explorerError = 0;
         DWORD error = 0;
+        DWORD promptedError = 0;
         std::wstring forwarded;
+        bool IsElevated()
+        {
+            ++tokenChecks;
+            if (tokenError) throw launch::Failure{tokenError, L"test token query"};
+            return elevated;
+        }
+        bool IsExplorerElevated()
+        {
+            ++explorerChecks;
+            if (explorerError) throw launch::Failure{explorerError, L"test Explorer token query"};
+            return explorerElevated;
+        }
+        bool ConfirmContinue(const launch::Failure& failure)
+        {
+            ++prompts;
+            promptedError = failure.code;
+            return continueStartup;
+        }
         DWORD Relaunch(std::wstring_view command)
         {
             ++launches;
@@ -60,8 +230,106 @@ void CheckAutoStartLaunchRules()
         Platform platform;
         platform.error = ERROR_ACCESS_DENIED;
         const auto result = launch::Normalize(L"host.exe --snowdesktop-autostart-owner=steam", platform);
-        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 1,
-            "an Explorer launch failure is reported without a second creation path");
+        Check(result.handled && result.error == ERROR_CANCELLED && platform.launches == 1 &&
+            platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED,
+            "an Explorer launch failure offers a decision and cancellation does not retry");
+    }
+    // Steam/manual launches carry no login owner. The actual token, including
+    // a background/recovery launch or an unrecognized owner, decides routing.
+    for (const auto command : {L"host.exe", L"host.exe --snowdesktop-autostart",
+        L"host.exe --snowdesktop-autostart-owner=portable",
+        L"host.exe --snowdesktop-autostart-owner=packaged",
+        L"host.exe --snowdesktop-autostart-owner=steam",
+        L"host.exe --snowdesktop-application-recovery", L"host.exe --wait-for-pid=42",
+        L"host.exe --snowdesktop-autostart-owner=unknown",
+        L"host.exe --data-directory=--snowdesktop-autostart-owner=steam"})
+    {
+        Platform platform;
+        platform.elevated = true;
+        const auto result = launch::Normalize(command, platform);
+        Check(result.handled && result.error == ERROR_SUCCESS && platform.tokenChecks == 1 &&
+            platform.launches == 1 && platform.forwarded == command,
+            "every elevated desktop launch delegates regardless of source, background intent or owner arguments");
+        platform.error = ERROR_ACCESS_DENIED;
+        const auto denied = launch::Normalize(command, platform);
+        Check(denied.handled && denied.error == ERROR_CANCELLED && platform.launches == 2 &&
+            platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED,
+            "failed ordinary launch handoff prompts before any elevated fallback");
+        platform.continueStartup = true;
+        const auto accepted = launch::Normalize(command, platform);
+        Check(!accepted.handled && accepted.error == ERROR_ACCESS_DENIED &&
+            accepted.currentPrivilegesAccepted && platform.prompts == 2 && platform.launches == 3,
+            "accepting a failed handoff continues in the current process with explicit per-launch consent");
+    }
+    for (const auto command : {L"host.exe --snowdesktop-explorer-relaunch",
+        L"host.exe --snowdesktop-autostart --snowdesktop-explorer-relaunch"})
+    {
+        Platform platform;
+        Check(!launch::Normalize(command, platform).handled && platform.tokenChecks == 1 &&
+            platform.launches == 0, "an ordinary Explorer child continues without another handoff");
+        platform.elevated = true;
+        const auto result = launch::Normalize(command, platform);
+        Check(result.handled && result.error == ERROR_CANCELLED && platform.tokenChecks == 2 &&
+            platform.launches == 0 && platform.prompts == 1 &&
+            platform.promptedError == ERROR_ELEVATION_REQUIRED,
+            "a still-elevated child offers a decision instead of looping or exiting silently");
+        platform.continueStartup = true;
+        const auto accepted = launch::Normalize(command, platform);
+        Check(!accepted.handled && accepted.currentPrivilegesAccepted && platform.launches == 0 &&
+            platform.prompts == 2, "an elevated Explorer child can continue only after confirmation");
+    }
+    for (const auto command : {L"host.exe", L"host.exe --snowdesktop-autostart-owner=steam",
+        L"host.exe --snowdesktop-autostart", L"host.exe --wait-for-pid=42",
+        L"host.exe --snowdesktop-autostart-owner=portable", L"host.exe --snowdesktop-autostart-owner=packaged",
+        L"host.exe --snowdesktop-application-recovery", L"host.exe --snowdesktop-explorer-relaunch",
+        L"host.exe --snowdesktop-autostart --snowdesktop-explorer-relaunch"})
+    {
+        for (const bool elevated : {false, true})
+        {
+            Platform platform;
+            platform.elevated = elevated;
+            platform.explorerElevated = true;
+            const auto result = launch::Normalize(command, platform);
+            Check(!result.handled && result.error == ERROR_SUCCESS && platform.launches == 0 &&
+                platform.prompts == 0 && (!elevated || platform.explorerChecks == 1),
+                "a high-privilege Explorer preserves current startup without a handoff or a warning");
+        }
+    }
+    {
+        Platform platform;
+        platform.elevated = true;
+        platform.explorerError = ERROR_ACCESS_DENIED;
+        Check(launch::Normalize(L"host.exe", platform).handled && platform.prompts == 1 &&
+            platform.promptedError == ERROR_ACCESS_DENIED && platform.launches == 0,
+            "an unreadable Explorer token requires a decision instead of assuming desktop privileges");
+        platform.continueStartup = true;
+        Check(!launch::Normalize(L"host.exe", platform).handled && platform.prompts == 2 &&
+            platform.launches == 0, "Explorer token inspection failure can continue with explicit consent");
+    }
+    {
+        Platform platform;
+        platform.tokenError = ERROR_ACCESS_DENIED;
+        const auto result = launch::Normalize(L"host.exe", platform);
+        Check(result.handled && result.error == ERROR_CANCELLED && platform.launches == 0 &&
+            platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED,
+            "unknown privileges offer a decision before desktop initialization");
+        Check(!launch::Normalize(L"host.exe --shell-open-helper 123 456", platform, false).handled &&
+            platform.tokenChecks == 1 && platform.launches == 0 && platform.prompts == 1,
+            "inherited-channel helper dispatch retains its handles and independent validation");
+        platform.continueStartup = true;
+        const auto accepted = launch::Normalize(L"host.exe", platform);
+        Check(!accepted.handled && accepted.currentPrivilegesAccepted && platform.prompts == 2,
+            "token-query failure can continue only after confirmation");
+    }
+    {
+        Platform platform;
+        platform.tokenError = ERROR_ACCESS_DENIED;
+        const auto accepted = launch::Normalize(L"host.exe", platform, true, true);
+        Check(!accepted.handled && accepted.currentPrivilegesAccepted && platform.tokenChecks == 0 &&
+            platform.explorerChecks == 0 && platform.prompts == 0 && platform.launches == 0,
+            "the launcher's PID-bound consent avoids a second decision in its own runtime child");
+        Check(!launch::Normalize(L"host.exe --shell-open-helper", platform, false, true).currentPrivilegesAccepted,
+            "desktop startup consent never changes helper dispatch");
     }
 }
 }
@@ -74,6 +342,9 @@ int main(int argc, char** argv)
         return RunAutoStartManagerTests();
     // A test task must remain harmless if a logon happens during the test.
     if (argc > 1) return 0;
+    CheckStartupDialogChoices();
+    CheckUnacknowledgedExplorerLaunch();
+    CheckOptionalReceiptFailure();
     CheckAutoStartLaunchRules();
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;

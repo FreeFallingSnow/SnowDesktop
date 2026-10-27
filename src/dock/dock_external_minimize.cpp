@@ -4,6 +4,8 @@
 
 #include <vector>
 #include <utility>
+#include <algorithm>
+#include <functional>
 
 bool DockExternalMinimize::Start(HWND receiver, const std::wstring& nativeDll,
     std::wstring helperExecutable, std::wstring helperDll)
@@ -27,11 +29,18 @@ bool DockExternalMinimize::Start(HWND receiver, const std::wstring& nativeDll,
 
 bool DockExternalMinimize::OwnsTarget(HWND window) const noexcept
 {
+    return OwnedTargetThread(window) != 0;
+}
+
+DWORD DockExternalMinimize::OwnedTargetThread(HWND window) const noexcept
+{
     const auto found = targets_.find(window);
+    if (found == targets_.end()) return 0;
     DWORD process = 0;
-    return found != targets_.end() && GetWindowThreadProcessId(window, &process) &&
+    const DWORD thread = GetWindowThreadProcessId(window, &process);
+    return thread &&
         process == found->second &&
-        GetPropW(window, snowdesktop::dock_minimize::kTargetProperty) == receiver_;
+        GetPropW(window, snowdesktop::dock_minimize::kTargetProperty) == receiver_ ? thread : 0;
 }
 
 bool DockExternalMinimize::IsMinimizeButtonPress(HWND window, POINT screenPoint) const noexcept
@@ -62,10 +71,20 @@ bool DockExternalMinimize::IsMinimizeButtonPress(HWND window, POINT screenPoint)
 void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
 {
     if (!receiver_) return;
+    // The app supplies a sorted snapshot. Keep the internal entry point safe
+    // for other callers too, without copying the usual already-sorted input.
+    std::span<const HWND> desired = windows;
+    std::vector<HWND> sortedWindows;
+    if (!std::is_sorted(windows.begin(), windows.end(), std::less<HWND>{}))
+    {
+        sortedWindows.assign(windows.begin(), windows.end());
+        std::sort(sortedWindows.begin(), sortedWindows.end(), std::less<HWND>{});
+        desired = sortedWindows;
+    }
     bool changed = false;
     for (auto it = targets_.begin(); it != targets_.end();)
     {
-        if (std::find(windows.begin(), windows.end(), it->first) == windows.end() ||
+        if (!std::binary_search(desired.begin(), desired.end(), it->first, std::less<HWND>{}) ||
             !OwnsTarget(it->first))
         {
             if (OwnsTarget(it->first))
@@ -87,6 +106,8 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
         else ++it;
     }
     std::vector<DWORD> threads;
+    threads.reserve(windows.size());
+    processBitness_.BeginUpdate();
     bool needsHelper = false;
     for (const HWND window : windows)
     {
@@ -108,12 +129,13 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
             changed = true;
         }
         targets_[window] = process;
-        if (snowdesktop::dock_minimize::Is32BitProcess(process)) needsHelper = true;
+        if (processBitness_.Is32Bit(process)) needsHelper = true;
         else threads.push_back(thread);
     }
+    processBitness_.EndUpdate();
     hooks_.Sync(threads);
     for (const HWND window : windows)
-        if (OwnsTarget(window) && hooks_.HasThread(GetWindowThreadProcessId(window, nullptr)))
+        if (const DWORD thread = OwnedTargetThread(window); thread && hooks_.HasThread(thread))
         {
             if (SetPropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty, hooks_.CloakWindow()))
                 SetPropW(window, snowdesktop::dock_minimize::kReadyProperty, receiver_);
@@ -170,6 +192,7 @@ void DockExternalMinimize::Stop() noexcept
         }
     }
     targets_.clear();
+    processBitness_.Clear();
     if (receiver_ && GetPropW(receiver_, snowdesktop::dock_minimize::kOwnerProperty) ==
             ULongToHandle(GetCurrentProcessId()))
     {

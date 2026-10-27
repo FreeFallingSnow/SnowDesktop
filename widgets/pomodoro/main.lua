@@ -1,3 +1,5 @@
+local sound = resource.audio("sound")
+
 -- pomodoro/main.lua - API v2 Pomodoro timer with background deadlines
 local DEFAULT_WORK_COLOR = 0xFF6347
 local DEFAULT_BREAK_COLOR = 0x4ECDC4
@@ -14,6 +16,7 @@ local descriptor
 
 local settings = {
     fields = {
+        { key = "soundEnabled", label = l10n.tr("lua_widget.pomodoro.sound"), type = "bool", default = false },
         { key = "workMin", label = l10n.tr("lua_widget.pomodoro.work_minutes"), type = "duration", unit = "minutes", default = 25, min = 1, max = 120 },
         { key = "breakMin", label = l10n.tr("lua_widget.pomodoro.short_break_minutes"), type = "duration", unit = "minutes", default = 5, min = 1, max = 60 },
         { key = "longBreakMin", label = l10n.tr("lua_widget.pomodoro.long_break_minutes"), type = "duration", unit = "minutes", default = 15, min = 1, max = 120 },
@@ -22,6 +25,18 @@ local settings = {
         { key = "breakColor", label = l10n.tr("lua_widget.pomodoro.break_color"), type = "color", default = DEFAULT_BREAK_COLOR },
     },
 }
+
+local function soundEnabled()
+    local value = storage.get("soundEnabled")
+    return value == true or value == 1 or value == "1" or value == "true"
+end
+
+local function playSound()
+    if soundEnabled() and widget.hasFeature("task.audio.playback") and widget.hasPermission("audio.playback") then
+        local id, err = task.start("audio.play", { source = sound, volume = 0.65 })
+        if not id then widget.log("warn", "audio.play: " .. tostring(err)) end
+    end
+end
 
 local function clampInteger(value, minimum, maximum, fallback)
     local number = math.floor(tonumber(value) or fallback)
@@ -157,6 +172,7 @@ local function updateTitle()
 end
 
 local function postNotification(model, messageKey)
+    playSound()
     if not widget.hasFeature("task.start") or
         not widget.hasFeature("task.notification.show") or
         not widget.hasPermission("notification.post") then
@@ -592,6 +608,11 @@ local function event(_context, model, value)
         updateTitle()
         return
     end
+    if value.kind == "action" and value.id == "pomodoro.sound" then
+        storage.set("soundEnabled", not soundEnabled())
+        widget.invalidate()
+        return
+    end
     if value.kind == "action" then
         dispatchAction(model, value.id)
     end
@@ -648,6 +669,7 @@ local function menu(_context, _model, request)
         icon = fluent.reset,
         iconFont = "fluent",
     }
+    items[#items + 1] = { id = "pomodoro.sound", label = l10n.tr("lua_widget.pomodoro.sound"), checked = soundEnabled() }
     return ui.menu(items)
 end
 

@@ -286,6 +286,30 @@ const std::vector<std::wstring>& FileCategories::CachedCategoryKeys(
     return it != categorySnapshot_.keysByCategory.end() ? it->second : empty;
 }
 
+std::wstring FileCategories::CachedCategoryIdForKey(
+    const std::wstring& layoutKey) const
+{
+    if (!data_ || layoutKey.empty()) return {};
+    EnsureCategorySnapshot();
+    const std::wstring key = ToUpperInvariant(layoutKey);
+    for (const auto& [categoryId, keys] : categorySnapshot_.keysByCategory)
+    {
+        if (categoryId == L"all") continue;
+        if (std::find(keys.begin(), keys.end(), key) != keys.end())
+            return categoryId;
+    }
+    return {};
+}
+
+bool FileCategories::AutoCollectsItem(const std::wstring& layoutKey) const
+{
+    if (!data_) return false;
+    // The aggregate snapshot row shares the "all" id, so resolve the real
+    // category first; an unclassified key keeps the legacy All-scope answer.
+    return snowdesktop::file_category_auto_collect_rules::AutoCollectsCategory(
+        *data_, CachedCategoryIdForKey(layoutKey));
+}
+
 const std::vector<std::wstring>& FileCategories::CachedVisibleCategoryIds() const
 {
     EnsureCategorySnapshot();
@@ -480,6 +504,11 @@ bool FileCategories::CollectTopLevelDesktopItems()
 bool FileCategories::PruneUncollectableItems()
 {
     if (!data_ || !app_) return false;
+    const auto& widgets = app_->GetWidgets();
+    const auto self = std::find_if(widgets.begin(), widgets.end(),
+        [&](const DesktopWidget& widget) { return widget.id == data_->id; });
+    const size_t selfIndex = self == widgets.end()
+        ? widgets.size() : static_cast<size_t>(self - widgets.begin());
     const size_t oldSize = data_->itemKeys.size();
     data_->itemKeys.erase(
         std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
@@ -487,14 +516,17 @@ bool FileCategories::PruneUncollectableItems()
                 size_t itemIdx = app_->FindItemIndexByKey(key);
                 if (itemIdx == static_cast<size_t>(-1)) return false;
                 const auto& item = app_->GetDesktopItems()[itemIdx];
-                if (!IsCollectable(app_->GetCategorySettings(), item)) return true;
                 const auto extension = DesktopItemExtensionUpper(item);
-                if ((extension == L".LNK" || extension == L".URL") &&
-                    !item.shortcutTarget.classified)
-                    return false;
-                return data_->autoCollect &&
-                    !snowdesktop::file_category_auto_collect_rules::Matches(*data_,
-                        FileCategoryIdForItem(item, app_->GetCategorySettings()));
+                // Changing this component's category scope keeps existing
+                // members; only items that cannot be collected at all or were
+                // taken over by another automatic collector leave the list.
+                return snowdesktop::file_category_auto_collect_rules::
+                    ShouldReleaseCollectedItem(*data_,
+                        IsCollectable(app_->GetCategorySettings(), item),
+                        (extension == L".LNK" || extension == L".URL") &&
+                            !item.shortcutTarget.classified,
+                        FileCategoryIdForItem(item, app_->GetCategorySettings()),
+                        widgets, selfIndex);
             }),
         data_->itemKeys.end());
     if (data_->itemKeys.size() == oldSize) return false;
@@ -1268,7 +1300,13 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     RECT tabsRect = FileCategoryTabsRect(this);
     if (!IsRectEmptyRect(tabsRect))
     {
-        context->PushAxisAlignedClip(app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const int totalWidth = FileCategoryTabTotalWidth(
+            FileCategoryTabWidths(this, tabsRect.right - tabsRect.left));
+        const int scroll = snowdesktop::collection_group_rules::ClampIndependentTabScroll(
+            data_->tabScrollOffset, totalWidth, tabsRect.right - tabsRect.left);
+        const snowdesktop::ScrollContentClip tabsClip(
+            context, tabContentFadeCache_, tabsRect, scroll, totalWidth,
+            static_cast<float>(Cu(16.0f)), snowdesktop::ScrollContentAxis::Horizontal);
         for (size_t i = 0; i < categoryIds.size(); ++i)
         {
             RECT layoutTab = FileCategoryTabLayoutRect(this, i);
@@ -1292,7 +1330,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                                 static_cast<int>(i) &&
                             app_->OwnsWidgetKeyboardNavigation(this)));
         }
-        context->PopAxisAlignedClip();
     }
 
     const auto& keys = CachedCategoryKeys(activeCategory);

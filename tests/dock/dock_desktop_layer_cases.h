@@ -98,6 +98,24 @@ void CheckDockDesktopLayerRestoration(Check&& check)
                     check(prepare() && !rules::RestoreDesktopLayer(content, shell, application, owned,
                             [&](HWND) { ++calls; return false; }) && calls == 2,
                         "persistent placement failure remains pending after a bounded attempt");
+                    calls = 0;
+                    const bool fallbackPrepared = prepare();
+                    // These names do not establish native order: previous
+                    // band transitions can reverse the two application HWNDs.
+                    // Reject the actual lowest anchor, not a presumed name.
+                    const HWND fallbackForeground = above(upperApplication, lowerApplication)
+                        ? upperApplication : lowerApplication;
+                    const HWND rejectedLowest = fallbackForeground == upperApplication
+                        ? lowerApplication : upperApplication;
+                    check(fallbackPrepared && !rules::RestoreDesktopLayer(content, shell, application, owned,
+                            [&](HWND anchor) {
+                                ++calls;
+                                return anchor == fallbackForeground && place(anchor);
+                            }, fallbackForeground) && calls == 3 &&
+                            !pair::IsTopmost(content) && above(fallbackForeground, content) &&
+                            above(content, shell) && !above(rejectedLowest, content) &&
+                            (!glass || (!pair::IsTopmost(backdrop) && pair::IsPaired(content, backdrop))),
+                        "a rejected lowest anchor still lowers the dismissed Dock below the active app while full restoration remains pending");
                     check(prepare() && !rules::RestoreDesktopLayer(content, nullptr, application, owned, place) &&
                             above(lowerApplication, content) && !pair::IsTopmost(content) &&
                             rules::RestoreDesktopLayer(content, shell, application, owned, place) && expected(),

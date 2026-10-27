@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings_ipc_codec.h"
+#include "platform/runtime_module_status.h"
 #include "settings_controller.h"
 #include "widget/settings/widget_settings_service.h"
 #include "layout/page_layout_settings.h"
@@ -40,9 +41,9 @@ SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick)
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.edgeDistanceScale, v.floatingShortcutMode, v.floatingHotkeyModifiers,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.summonOnAppMinimize, v.edgeRevealGesture, v.edgeHoverDelayMs, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
-    v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
+    v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.startMenuKeepTaskbarHidden, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale, v.mergedIconScale,
-    v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
+    v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.suppressSystemTaskbarAllMonitors, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications,
@@ -69,10 +70,16 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.taskView,
     v.clockSystemPanel, v.controlCenterSystemPanel, v.inputMethodSystemPanel, v.leftOrder, v.rightOrder,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
-    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop);
+    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage, v.showDesktop,
+    v.controlCenterSingleIcon, v.notifications, v.showOnlyWhenSummoned, v.edgeRevealGesture);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
+SD_IPC_FIELDS(runtime_modules::Target, v.process, v.name, v.explorer);
+SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v.residencyKnown, v.targets);
+SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
+SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
-    v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
+    v.showAdvancedSettings, v.runtimeModules,
+    v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,
     v.forceRestartHotkeyEnabled, v.forceRestartHotkeyModifiers, v.forceRestartHotkeyVirtualKey,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
@@ -164,7 +171,7 @@ SD_IPC_FIELDS(WidgetSettingsSearchDescriptor,
     v.visible);
 SD_IPC_FIELDS(SettingsSearchIndexInput,
     v.languageTag, v.staticSettings, v.widgets, v.developerToolsVisible,
-    v.debugVisible);
+    v.debugVisible, v.advancedSettingsVisible);
 SD_IPC_FIELDS(widget_runtime::InteractionValue,
     v.type, v.boolean, v.integer, v.number,
     v.string, v.array, v.object);

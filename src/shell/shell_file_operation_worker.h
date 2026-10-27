@@ -17,6 +17,8 @@
 
 namespace snowdesktop
 {
+namespace external_drop_content { struct ShellFileSource; }
+namespace file_history { class History; struct Result; struct Entry; struct Description; }
 
 /** @brief One path-based Shell operation executed by the worker. */
 struct ShellFileOperationStep
@@ -151,7 +153,7 @@ public:
     using Completion = std::function<void(bool)>;
     using RenameCompletion = std::function<void(ShellRenameResult)>;
 
-    ShellFileOperationWorker() = default;
+    ShellFileOperationWorker();
     ~ShellFileOperationWorker();
 
     ShellFileOperationWorker(const ShellFileOperationWorker&) = delete;
@@ -161,12 +163,22 @@ public:
     bool Enqueue(ShellDropRequest request, Completion completion);
     bool Enqueue(ShellRenameRequest request, RenameCompletion completion);
     bool Enqueue(ShellReadRequest request, Completion completion);
+    bool CanUndo() const;
+    bool CanRedo() const;
+    file_history::Description DescribeHistory(bool redo) const;
+    bool EnqueueHistory(bool redo, std::shared_ptr<file_history::Result> result, Completion completion);
     void Stop();
 
     /** @brief Execute a request synchronously on the calling STA. */
-    static bool Execute(const ShellFileOperationRequest& request);
+    static bool Execute(const ShellFileOperationRequest& request,
+        std::vector<file_history::Entry>* recycled = nullptr);
     /** @brief Execute a path-backed IDropTarget handoff on the calling STA. */
     static bool Execute(ShellDropRequest request);
+    // Synchronous OLE Drop boundary: keep a non-async provider alive until the
+    // native Shell operation and its progress/cancellation have completed.
+    static HRESULT ExecuteNamespaceFiles(const external_drop_content::ShellFileSource& source,
+        const std::wstring& destination, DWORD effect,
+        const std::shared_ptr<ShellFileOperationResult>& result);
     static ShellRenameResult Execute(const ShellRenameRequest& request);
 
 private:
@@ -186,6 +198,7 @@ private:
     std::deque<Task> tasks_;
     bool started_ = false;
     bool stopping_ = false;
+    std::shared_ptr<file_history::History> history_;
 };
 
 } // namespace snowdesktop

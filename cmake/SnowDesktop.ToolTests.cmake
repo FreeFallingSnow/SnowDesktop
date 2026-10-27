@@ -5,6 +5,30 @@ if(BUILD_TESTING AND WIN32)
     add_library(SnowDesktopBuildToolTestSupport STATIC tests/build_tool_test_support.cpp)
     target_include_directories(SnowDesktopBuildToolTestSupport PUBLIC tests src)
     target_compile_features(SnowDesktopBuildToolTestSupport PUBLIC cxx_std_20)
+    target_link_libraries(SnowDesktopBuildToolTestSupport PUBLIC shell32)
+    add_executable(SnowDesktopTestRuntimeObserver tests/build_tools/test_runtime_observer.cpp)
+    target_link_libraries(SnowDesktopTestRuntimeObserver PRIVATE SnowDesktopBuildToolTestSupport bcrypt psapi winhttp ws2_32)
+    target_compile_features(SnowDesktopTestRuntimeObserver PRIVATE cxx_std_20)
+    set_target_properties(SnowDesktopTestRuntimeObserver PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    if(MSVC)
+        set_property(TARGET SnowDesktopTestRuntimeObserver PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopTestRuntimeObserver PRIVATE /W4 /permissive- /EHsc /utf-8)
+    endif()
+    foreach(variant A B)
+        add_library(SnowDesktopRuntimeObserverFixture${variant} SHARED tests/build_tools/runtime_observer_fixture.cpp)
+        target_compile_definitions(SnowDesktopRuntimeObserverFixture${variant} PRIVATE SNOWDESKTOP_RUNTIME_FIXTURE_VALUE=$<IF:$<STREQUAL:${variant},A>,7,9>)
+        set_target_properties(SnowDesktopRuntimeObserverFixture${variant} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+            PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+        if(MSVC)
+            set_property(TARGET SnowDesktopRuntimeObserverFixture${variant} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+            target_compile_options(SnowDesktopRuntimeObserverFixture${variant} PRIVATE /W4 /permissive- /EHsc /utf-8)
+        endif()
+    endforeach()
     target_compile_definitions(SnowDesktopBuildToolTestSupport PUBLIC _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     set_target_properties(SnowDesktopBuildToolTestSupport PROPERTIES
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
@@ -42,16 +66,73 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildWorkflowTests build_workflow
         build_workflow_tests.cpp "integration;tools" 300
         tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
+    snowdesktop_add_native_tool_test(SnowDesktopTestDependencyTests test_dependencies
+        build_tools/build_test_dependency_tests.cpp "tools;core;integration" 120)
+    snowdesktop_add_native_tool_test(SnowDesktopRuntimeObserverTests test_runtime_modules
+        build_tools/build_runtime_observer_tests.cpp "tools;core;integration" 120)
+    add_dependencies(SnowDesktopRuntimeObserverTests SnowDesktopTestRuntimeObserver SnowDesktopRuntimeObserverFixtureA SnowDesktopRuntimeObserverFixtureB
+        SnowDesktopDemoModeRulesTests SnowDesktopWidgetCompositionLayerRulesTests)
+    target_sources(SnowDesktopTestDependencyTests PRIVATE tests/build_tools/build_source_report_tests.cpp tests/build_tools/build_test_runtime_inputs_tests.cpp)
+    add_test(NAME test_runtime_inputs COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --runtime-inputs)
+    set_tests_properties(test_runtime_inputs PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopTestDependencyTests>")
+    add_test(NAME test_dependency_reports COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --source-reports)
+    set_tests_properties(test_dependency_reports PROPERTIES TIMEOUT 180 LABELS "tools;core;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopTestDependencyTests>")
+    add_test(NAME build_input_identity COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --input-identity)
+    set_tests_properties(build_input_identity PROPERTIES TIMEOUT 45 LABELS "tools;core;contract"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
+    add_test(NAME build_commit_lifecycle COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --commit-lifecycle)
+    set_tests_properties(build_commit_lifecycle PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
+    add_test(NAME build_wait_progress COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --wait-progress)
+    set_tests_properties(build_wait_progress PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
+    add_test(NAME build_git_wait COMMAND SnowDesktopBuildWorkflowTests "${CMAKE_CURRENT_SOURCE_DIR}" --git-wait)
+    set_tests_properties(build_git_wait PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWorkflowTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildPlanExecutionTests build_plan_execution
         build_plan_execution_tests.cpp "tools;core" 120)
+    target_sources(SnowDesktopBuildPlanExecutionTests PRIVATE tests/build_tools/build_records_tests.cpp tests/build_tools/build_verification_tests.cpp)
+    foreach(record IN ITEMS evidence acceptance)
+        add_test(NAME build_${record} COMMAND SnowDesktopBuildPlanExecutionTests
+            "${CMAKE_CURRENT_SOURCE_DIR}" --${record})
+        set_tests_properties(build_${record} PROPERTIES TIMEOUT 180 LABELS "tools;integration"
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
+    endforeach()
+    add_test(NAME build_verification COMMAND SnowDesktopBuildPlanExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --verification)
+    set_tests_properties(build_verification PROPERTIES TIMEOUT 240 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildPlanExecutionTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildDashboardTests build_dashboard
         build_dashboard_tests.cpp "tools;core;retry-isolated-resource" 60)
+    add_test(NAME build_dashboard_candidate_logs COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --candidate-logs)
+    set_tests_properties(build_dashboard_candidate_logs PROPERTIES TIMEOUT 60 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
+    add_test(NAME build_dashboard_references COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --references)
+    set_tests_properties(build_dashboard_references PROPERTIES TIMEOUT 60 LABELS "tools;integration" PROCESSORS 3
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
+    add_test(NAME build_dashboard_startup COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --startup)
+    set_tests_properties(build_dashboard_startup PROPERTIES TIMEOUT 60 LABELS "tools;core;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
     add_test(NAME build_dashboard_browser COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
     set_tests_properties(build_dashboard_browser PROPERTIES TIMEOUT 180
         LABELS "manual;integration;tools;retry-isolated-resource"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildWaitRetryTests build_wait_retry
         build_wait_retry_tests.cpp "integration;tools" 240)
+    add_test(NAME build_retry_ctest_selection COMMAND SnowDesktopBuildWaitRetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --ctest-selection)
+    set_tests_properties(build_retry_ctest_selection PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWaitRetryTests>")
+    add_test(NAME build_retry_repairs COMMAND SnowDesktopBuildWaitRetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --repairs)
+    set_tests_properties(build_retry_repairs PROPERTIES TIMEOUT 180 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildWaitRetryTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildSharedResourcesTests build_shared_resources
         build_shared_resources_tests.cpp "tools;core" 90)
     snowdesktop_add_native_tool_test(SnowDesktopBuildForegroundWaitTests build_foreground_wait
@@ -62,4 +143,156 @@ if(BUILD_TESTING AND WIN32)
         test_selection_tests.cpp "tools;core;contract;build" 30)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCollaborationTests build_collaboration
         build_collaboration_tests.cpp "tools;core;contract;build" 180)
+    # Three independent fixture groups run concurrently within this one test.
+    # Reserve their combined budget rather than multiplying hidden parallelism.
+    set_tests_properties(build_collaboration PROPERTIES PROCESSORS 9)
+    # The bridge, Host, cold-recovery and Client cases share this total budget;
+    # their individual process deadlines and isolated fixtures remain unchanged.
+    snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
+        build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 120)
+    add_test(NAME dsh_collaboration_client COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --client)
+    set_tests_properties(dsh_collaboration_client PROPERTIES TIMEOUT 30 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
+    add_test(NAME dsh_installed_sdk COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --installed-sdk)
+    set_tests_properties(dsh_installed_sdk PROPERTIES TIMEOUT 60 LABELS "manual;integration;tools"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildRunTests build_run
+        build_tools/build_run_tests.cpp "tools;core;integration" 180)
+    foreach(run_case IN ITEMS plans batch-lifetime default-entry process-lifetime)
+        string(REPLACE "-" "_" run_name "${run_case}")
+        add_test(NAME build_run_${run_name} COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --${run_case})
+        set_tests_properties(build_run_${run_name} PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildRunTests>")
+    endforeach()
+    snowdesktop_add_native_tool_test(SnowDesktopBuildResourceBudgetTests build_resource_budget
+        build_tools/build_resource_budget_tests.cpp "tools;integration" 240)
+    set_tests_properties(build_resource_budget PROPERTIES PROCESSORS 6)
+    add_test(NAME build_resource_fairness COMMAND SnowDesktopBuildResourceBudgetTests "${CMAKE_CURRENT_SOURCE_DIR}" --fairness)
+    set_tests_properties(build_resource_fairness PROPERTIES TIMEOUT 180 PROCESSORS 6 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildResourceBudgetTests>")
+    add_test(NAME build_resource_budget_compile COMMAND SnowDesktopBuildResourceBudgetTests "${CMAKE_CURRENT_SOURCE_DIR}" --compile)
+    set_tests_properties(build_resource_budget_compile PROPERTIES TIMEOUT 240 PROCESSORS 9 LABELS "manual;tools;integration"
+        RESOURCE_LOCK snowdesktop_compiler_budget
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildResourceBudgetTests>")
+    add_test(NAME build_project_resources COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --project-resources)
+    set_tests_properties(build_project_resources PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildRunTests>")
+    add_test(NAME build_run_observer COMMAND SnowDesktopBuildRunTests "${CMAKE_CURRENT_SOURCE_DIR}" --observer-snapshot)
+    set_tests_properties(build_run_observer PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildRunTests>")
+    add_test(NAME build_request_publication COMMAND SnowDesktopBuildRunTests
+        "${CMAKE_CURRENT_SOURCE_DIR}" --request-publication)
+    set_tests_properties(build_request_publication PROPERTIES TIMEOUT 90
+        LABELS "tools;core;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildRunTests>")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildStateTransactionTests build_state_transaction
+        build_tools/build_state_transaction_tests.cpp "tools;core;integration" 60)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildTelemetryTests build_telemetry
+        build_tools/build_telemetry_tests.cpp "tools;integration" 180)
+    target_sources(SnowDesktopBuildTelemetryTests PRIVATE tests/build_tools/build_test_build_roots_tests.cpp)
+    add_test(NAME test_build_roots COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --test-build-roots)
+    set_tests_properties(test_build_roots PROPERTIES TIMEOUT 240 LABELS "tools;integration;build"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildNoopTests build_noop_outputs
+        build_tools/build_noop_tests.cpp "tools;integration" 240)
+    set_tests_properties(build_noop_outputs PROPERTIES PROCESSORS 4)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateTests build_candidate
+        build_tools/build_candidate_tests.cpp "tools;integration" 180)
+    add_test(NAME build_candidate_compiler_context COMMAND SnowDesktopBuildCandidateTests "${CMAKE_CURRENT_SOURCE_DIR}" --compiler-context)
+    set_tests_properties(build_candidate_compiler_context PROPERTIES TIMEOUT 90 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateTests>")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateRecoveryTests build_candidate_recovery
+        build_tools/build_candidate_recovery_tests.cpp "tools;integration" 90)
+    set_tests_properties(build_candidate PROPERTIES PROCESSORS 4)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildActivationTests build_activation
+        build_tools/build_activation_tests.cpp "tools;integration" 120)
+    target_link_libraries(SnowDesktopBuildActivationTests PRIVATE user32)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateExecutionTests build_candidate_execution
+        build_tools/build_candidate_execution_tests.cpp "tools;integration" 300)
+    set_tests_properties(build_candidate_execution PROPERTIES PROCESSORS 4)
+    foreach(cache_scene checkout-cache)
+        string(REPLACE "-" "_" cache_test "${cache_scene}")
+        add_test(NAME build_candidate_${cache_test} COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --${cache_scene})
+        set_tests_properties(build_candidate_${cache_test} PROPERTIES TIMEOUT 360 LABELS "tools;integration" PROCESSORS 4
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    endforeach()
+    add_test(NAME build_candidate_weighted COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --weighted)
+    set_tests_properties(build_candidate_weighted PROPERTIES TIMEOUT 180 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    foreach(control checkout_lock source_lock)
+        string(REPLACE "_" "-" control_option "${control}")
+        add_test(NAME build_candidate_${control} COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --verify-${control_option})
+        set_tests_properties(build_candidate_${control} PROPERTIES TIMEOUT 100 LABELS "tools;integration" PROCESSORS 4
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    endforeach()
+    add_test(NAME build_candidate_batches COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --batches)
+    add_test(NAME build_candidate_tool_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --tool-verification)
+    add_dependencies(SnowDesktopBuildCandidateExecutionTests SnowDesktopTestRuntimeObserver)
+    add_test(NAME build_completed_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --completed-verification)
+    set_tests_properties(build_completed_verification PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
+    add_test(NAME build_completed_verification_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --completed-verification-control)
+    set_tests_properties(build_completed_verification_control PROPERTIES TIMEOUT 180 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
+    add_test(NAME build_compatible_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --compatible-verification)
+    add_test(NAME build_compatible_verification_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --compatible-verification-control)
+    add_test(NAME build_automatic_selection COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --automatic-selection)
+    set_tests_properties(build_automatic_selection PROPERTIES TIMEOUT 300 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
+    add_test(NAME build_automatic_selection_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --automatic-selection-control)
+    set_tests_properties(build_automatic_selection_control PROPERTIES TIMEOUT 270 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
+    set_tests_properties(build_compatible_verification build_compatible_verification_control PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>;$<TARGET_FILE:SnowDesktopTestRuntimeObserver>")
+    set_tests_properties(build_candidate_tool_verification PROPERTIES TIMEOUT 180 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    set_tests_properties(build_candidate_batches PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    add_test(NAME build_candidate_artifacts COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --artifacts)
+    set_tests_properties(build_candidate_artifacts PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    add_test(NAME build_candidate_preflight COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --preflight)
+    set_tests_properties(build_candidate_preflight PROPERTIES TIMEOUT 90 LABELS "tools;integration" PROCESSORS 3
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
+    target_sources(SnowDesktopBuildTelemetryTests PRIVATE
+        tests/build_tools/build_configuration_tests.cpp
+        tests/build_tools/build_compile_budget_tests.cpp
+        tests/build_tools/build_resource_publication_tests.cpp)
+    add_test(NAME build_compile_budget COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --compile-budget)
+    set_tests_properties(build_compile_budget PROPERTIES TIMEOUT 240 LABELS "manual;tools;integration" PROCESSORS 9
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        RESOURCE_LOCK snowdesktop_compiler_budget
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
+    add_test(NAME build_resource_publication COMMAND SnowDesktopBuildTelemetryTests
+        "${CMAKE_CURRENT_SOURCE_DIR}" --resource-publication)
+    add_test(NAME build_run_publication COMMAND SnowDesktopBuildTelemetryTests
+        "${CMAKE_CURRENT_SOURCE_DIR}" --run-record-publication)
+    set_tests_properties(build_run_publication PROPERTIES TIMEOUT 90 LABELS "tools;integration" PROCESSORS 3
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
+    set_tests_properties(build_resource_publication PROPERTIES TIMEOUT 90 LABELS "tools;integration"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
+    add_test(NAME build_configuration COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --configuration-cache)
+    set_tests_properties(build_configuration PROPERTIES TIMEOUT 180 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
 endif()

@@ -1,5 +1,6 @@
 #include "shell_extension_menu.h"
 #include "shell_extension_menu_query.h"
+#include "shell_menu_read_projection.h"
 #include "shell_extension_source.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_menu_registry_watch.h"
@@ -18,6 +19,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <shlwapi.h>
 #include <shobjidl.h>
@@ -35,30 +37,74 @@ std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 using RegistryWatch = detail::MenuRegistryWatch;
-struct CacheState
+struct RegistryNotifications
 {
-    std::uint64_t generation = 1;
-    bool dirty = false;
-    std::wstring epoch = SharedMenuCache().Epoch();
+    std::mutex mutex;
+    std::uint64_t revision = 1;
     std::vector<std::unique_ptr<RegistryWatch>> watches;
-    CacheState()
+    std::vector<HANDLE> subscribers;
+    RegistryNotifications()
     {
         for (auto root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
             for (auto path : {L"Software\\Classes",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\nvcplui.exe",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
-                watches.push_back(std::make_unique<RegistryWatch>(root, path, static_cast<unsigned>(watches.size())));
+                watches.push_back(std::make_unique<RegistryWatch>(root, path, static_cast<unsigned>(watches.size()),
+                    lstrcmpiW(path, L"Software\\Classes") == 0));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 8));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", 9));
     }
+    // Caller holds mutex. Keep existing consumers' edges while establishing
+    // a current baseline for a new consumer; older events are not its changes.
     std::uint64_t Poll()
     {
-        bool changed = false;
-        for (auto &watch : watches) changed |= watch->Changed();
-        dirty |= changed;
+        bool signalled = false;
+        for (auto &watch : watches) signalled |= watch->Changed();
+        if (signalled)
+        {
+            ++revision;
+            for (auto subscriber : subscribers) SetEvent(subscriber);
+        }
+        return revision;
+    }
+};
+std::shared_ptr<RegistryNotifications> SharedRegistryNotifications()
+{
+    // Subscribe once per process, rather than opening every class root for
+    // each STA/service. TLS caches retain independent invalidation generations.
+    static auto notifications = std::make_shared<RegistryNotifications>();
+    return notifications;
+}
+struct CacheState
+{
+    std::uint64_t generation = 1, seen = 0;
+    bool dirty = false;
+    std::wstring epoch = SharedMenuCache().Epoch();
+    std::shared_ptr<RegistryNotifications> notifications = SharedRegistryNotifications();
+    HANDLE changed = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CacheState()
+    {
+        std::lock_guard lock(notifications->mutex);
+        seen = notifications->Poll();
+        if (changed) notifications->subscribers.push_back(changed);
+    }
+    ~CacheState()
+    {
+        std::lock_guard lock(notifications->mutex);
+        std::erase(notifications->subscribers, changed);
+        if (changed) CloseHandle(changed);
+    }
+    std::uint64_t Poll()
+    {
+        std::lock_guard lock(notifications->mutex);
+        // The per-subscriber event preserves changes consumed by a sibling
+        // between this Poll and its following wait.
+        dirty |= seen != notifications->Poll();
+        seen = notifications->revision;
+        if (changed) ResetEvent(changed);
         return generation;
     }
 };
@@ -498,10 +544,26 @@ struct Host
             if (!entry.pixels.empty()) return;
         }
     }
-    std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
-                            const std::wstring &title = L"root")
+    std::vector<Entry> ReadUnexpandedIdentity(Native &source, HMENU menu, int depth)
     {
         std::vector<Entry> entries;
+        if (depth > 8 || InspectPopup(menu) == PopupContents::Deferred) return entries;
+        for (int i = 0; i < GetMenuItemCount(menu) && count < kMaximumEntries; ++i)
+        {
+            MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_ID | MIIM_SUBMENU;
+            if (!GetMenuItemInfoW(menu, i, TRUE, &item)) continue;
+            ++count;
+            Entry entry; entry.key = Utf8(Verb(source, item.wID));
+            if (item.hSubMenu) entry.children = ReadUnexpandedIdentity(source, item.hSubMenu, depth + 1);
+            entries.push_back(std::move(entry));
+        }
+        return entries;
+    }
+    std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
+                            const std::wstring &title = L"root", const Request *request = nullptr)
+    {
+        std::vector<Entry> entries;
+        std::vector<bool> omitted;
         if (depth > 8)
             return entries;
         if (depth == 0)
@@ -535,6 +597,23 @@ struct Host
             entry.key = Utf8(verb);
             if (OwnedVerb(verb) && IsRootMenuCommand(source.menu, item.wID))
                 continue;
+            const bool deferred = item.hSubMenu && InspectPopup(item.hSubMenu) == PopupContents::Deferred;
+            if (depth == 0 && deferred)
+                entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
+            const bool skip = depth == 0 && request && !entry.separator &&
+                !(item.fType & MFT_OWNERDRAW) && !entry.label.empty() &&
+                !ReadMenuRootDetails(*request, entry.key.empty() ? "" : "verb:" + Utf8(Lower(Wide(entry.key))),
+                                    "menu:" + Utf8(Lower(entry.label)) + ":");
+            if (skip)
+            {
+                // Keep root/sibling identity and already-readable descendant
+                // verbs for duplicate normalization, without invoking hidden
+                // cascades, reading bitmap callbacks or loading icon resources.
+                if (item.hSubMenu) entry.children = ReadUnexpandedIdentity(source, item.hSubMenu, depth + 1);
+                omitted.push_back(true); entries.push_back(std::move(entry));
+                MenuTrace("read_projection", "root_omitted");
+                continue;
+            }
             if (item.fType & MFT_OWNERDRAW || (!entry.separator && entry.label.empty()))
             {
                 entry.native = true;
@@ -549,8 +628,6 @@ struct Host
                     // Keep the original placeholder root's identity so an
                     // existing opt-in still applies after adding its children.
                     // IdentifyEntries still prefers a unique canonical verb.
-                    if (depth == 0)
-                        entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
                     progress("initialize deferred popup: " + Utf8(entry.label));
                     auto *previous = tracking;
                     tracking = &source;
@@ -587,7 +664,7 @@ struct Host
                 Bitmap(entry, entry.checked && item.hbmpChecked ? item.hbmpChecked : item.hbmpUnchecked);
             if (entry.pixels.empty() && !(item.fType & MFT_OWNERDRAW))
                 CallbackBitmap(entry, source, menu, item);
-            entries.push_back(std::move(entry));
+            omitted.push_back(false); entries.push_back(std::move(entry));
         }
         // Duplicate or absent verbs cannot be persisted as individual commands.
         std::map<std::string, int> keys;
@@ -609,6 +686,14 @@ struct Host
             }
         };
         clear(entries);
+        if (depth == 0 && request && request->visibleMenuProviders)
+        {
+            // Normalize against all root headers before removing hidden rows;
+            // filtering must not turn duplicate root verbs into unique IDs.
+            IdentifyEntries(entries);
+            for (size_t i = entries.size(); i-- > 0;)
+                if (omitted[i]) entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i));
+        }
         return entries;
     }
     void ReleaseMenu()
@@ -713,7 +798,7 @@ struct Host
         if (FAILED(SHCreateDefaultContextMenu(&description, IID_PPV_ARGS(&actual->context))) ||
             FAILED(actual->context->QueryContextMenu(actual->menu, 0, 1, 0x7fff,
                 CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) return {};
-        Reply reply; reply.entries = Read(*actual, actual->menu, "");
+        Reply reply; reply.entries = Read(*actual, actual->menu, "", 0, L"root", &request);
         IdentifyEntries(reply.entries);
         menus.push_back(std::move(actual));
 
@@ -744,6 +829,7 @@ struct Host
                 std::any_of(reply.entries.begin(), reply.entries.end(), [&](const auto &entry) {
                     return Lower(Wide(entry.key)) == Lower(identity);
                 })) continue;
+            if (!ReadMenuRootDetails(request, "verb:" + Utf8(Lower(identity)), "")) continue;
             auto provider = std::make_unique<Native>();
             provider->directory = delegated.directory; provider->paths = request.paths;
             provider->folder = selectionFolder; provider->shortcutObjects = true;
@@ -752,6 +838,9 @@ struct Host
                 FAILED(provider->context.As(&initialize)) || FAILED(initialize->Initialize(nullptr, data.Get(), nullptr)) ||
                 FAILED(provider->context->QueryContextMenu(provider->menu, 0, 1, 0x7fff,
                     CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) continue;
+            // The delegated aggregate already proved and selected this exact
+            // class. Its adapter's local verb can differ from the canonical
+            // identity assigned below, so read this selected provider intact.
             auto entries = Read(*provider, provider->menu, "");
             std::erase_if(entries, [](const auto &entry) { return entry.separator; });
             if (entries.size() == 1)
@@ -950,7 +1039,7 @@ struct Host
         Reply reply;
         if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
             fileAssociationsReady = true;
-        reply.entries = Read(*native, native->menu, "");
+        reply.entries = Read(*native, native->menu, "", 0, L"root", &request);
         if (request.startPinOnly)
             std::erase_if(reply.entries, [](const auto &entry) {
                 const auto *pair = StatePairForVerb(entry.key);
@@ -1109,8 +1198,11 @@ bool TakeMenuRegistryChanges() { auto &state = Caches(); state.Poll(); return st
 std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete)
 {
     std::vector<HANDLE> handles;
-    complete = true;
-    for (const auto &watch : Caches().watches)
+    auto &cache = Caches();
+    std::lock_guard lock(cache.notifications->mutex);
+    complete = cache.changed != nullptr;
+    if (cache.changed) handles.push_back(cache.changed);
+    for (const auto &watch : cache.notifications->watches)
         if (watch->armed && watch->event) handles.push_back(watch->event);
         else complete = false;
     return handles;

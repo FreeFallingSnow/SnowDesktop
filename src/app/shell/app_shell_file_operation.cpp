@@ -3,6 +3,7 @@
 #include "platform/pending_window_message.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
+#include "shell/shell_file_history.h"
 
 #include <atomic>
 #include <new>
@@ -11,6 +12,66 @@
 #include <filesystem>
 
 // Asynchronous path-based Shell file operations.
+
+bool DesktopApp::CanApplyFileHistory(bool redo) const
+{
+    return shellFileOperationInFlight_ == 0 && pendingRenames_.empty() &&
+        !renameController_.IsActive() && !dragSession_.HasContext() &&
+        widgetAction_ == WidgetAction::None && !largeIconGesture_ &&
+        !dragDropController_.IsTransportActive() &&
+        (redo ? shellFileOperationWorker_.CanRedo() : shellFileOperationWorker_.CanUndo());
+}
+
+void DesktopApp::AppendFileHistoryMenu(HMENU menu)
+{
+    const auto append = [&](bool redo, UINT command, const char* key, const wchar_t* shortcut, const wchar_t* glyph) {
+        if (!CanApplyFileHistory(redo)) return;
+        const std::wstring label = std::wstring(_LW(key)) + L"\t" + shortcut;
+        AppendMenuW(menu, MF_STRING, command, label.c_str());
+        SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
+        SetMenuItemQuickAction(menu, command);
+    };
+    append(false, kFileUndoCommand, "app.menu.undo", L"Ctrl+Z", L"\uF199");
+    append(true, kFileRedoCommand, "app.menu.redo", L"Ctrl+Y", L"\uF16E");
+}
+
+bool DesktopApp::QueueFileHistory(bool redo)
+{
+    if (!CanApplyFileHistory(redo)) return false;
+    const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
+    if (!window || !IsWindow(window)) return false;
+    auto historyResult = std::make_shared<snowdesktop::file_history::Result>();
+    auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
+        false, [this, historyResult](bool) {
+            for (const auto& [from, to] : historyResult->renames)
+            {
+                auto renamed = std::make_shared<snowdesktop::ShellRenameResult>();
+                renamed->status = S_OK;
+                renamed->sourcePath = from;
+                renamed->path = to;
+                // Apply the existing reference migration before the guarded
+                // reload; file history does not restore a stale layout snapshot.
+                pendingRenames_.push_back(std::move(renamed));
+            }
+            if (!historyResult->removed.empty()) RemoveDesktopKeysFromWidgets(historyResult->removed);
+            ApplyPendingRenames();
+            RequestShellRefresh();
+        }};
+    if (!completion) return false;
+    if (!shellFileOperationWorker_.EnqueueHistory(redo, historyResult, [window, completion](bool succeeded) {
+        completion->succeeded = succeeded;
+        if (!PostMessageW(window, kShellFileOperationCompletedMessage, 0, reinterpret_cast<LPARAM>(completion)))
+            delete completion;
+    }))
+    {
+        delete completion;
+        return false;
+    }
+    ++shellFileOperationInFlight_;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
+    return true;
+}
 
 void DesktopApp::ReportPerformedDropEffect(
     IDataObject* dataObject, DWORD effect)
@@ -49,17 +110,37 @@ bool DesktopApp::QueueShellFileOperation(
     }
 
     std::vector<std::wstring> removedPaths;
+    std::vector<DockEntry> removalPins;
     for (const auto& step : request.steps)
         if (step.function == FO_DELETE || step.function == FO_MOVE)
             removedPaths.insert(removedPaths.end(), step.sources.begin(), step.sources.end());
     if (!removedPaths.empty())
     {
+        for (size_t i = 0; i < dockEntries_.size(); ++i)
+        {
+            const auto& entry = dockEntries_[i];
+            if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
+            const auto itemIndex = FindItemIndexByKey(entry.reference);
+            const auto& path = itemIndex < items_.size() ? items_[itemIndex].parsingName : entry.reference;
+            if (std::none_of(removedPaths.begin(), removedPaths.end(), [&](const auto& removed) {
+                    return _wcsicmp(path.c_str(), removed.c_str()) == 0;
+                })) continue;
+            removalPins.push_back(entry);
+            for (const auto& container : containers_)
+                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                    dock->PrepareEntryRemoval(i);
+        }
         auto callback = std::move(result->callback);
         result->callback = [this, removedPaths = std::move(removedPaths),
+            removalPins,
             callback = std::move(callback)](bool succeeded) {
             // A cancelled/failed operation must retain its original ownership.
             // Successful user deletions/moves must not become recoverable gaps.
             if (succeeded) RemoveDesktopKeysFromWidgets(removedPaths);
+            else
+                for (const auto& container : containers_)
+                    if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                        for (const auto& pin : removalPins) dock->CancelEntryRemoval(pin);
             if (callback) callback(succeeded);
         };
     }
@@ -76,6 +157,9 @@ bool DesktopApp::QueueShellFileOperation(
         });
     if (!queued)
     {
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                for (const auto& pin : removalPins) dock->CancelEntryRemoval(pin);
         delete result;
         snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
@@ -455,7 +539,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     bool orderChanged = false;
     for (const auto& [path, folder] : snapshot.folders)
         if (!folder.complete)
-            WriteDiagnosticLogEntry((L"Folder refresh failed; retaining current entries: " + path).c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, (L"Folder refresh failed; retaining current entries: " + path).c_str(), DiagnosticLogLevel::Warning);
     for (auto& widget : widgets_)
     {
         if (widget.type != DesktopWidgetType::FolderMapping) continue;
@@ -510,7 +594,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     wchar_t timing[192]{};
     swprintf_s(timing, L"Folder refresh async: folders=%zu readMs=%llu metadataHits=%zu metadataQueries=%zu",
         snapshot.folders.size(), snapshot.readMs, snapshot.metadata.hits, snapshot.metadata.queries);
-    WriteDiagnosticLogEntry(timing);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
 }
 
 void DesktopApp::RefreshShellItemsAsync()
@@ -536,7 +620,7 @@ void DesktopApp::RefreshShellItemsAsync()
         {
             shellReloadPending_ = false;
             shellDockFolderPopupRefreshPending_ = false;
-            WriteDiagnosticLogEntry(L"Shell refresh read failed; retaining current model");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell refresh read failed; retaining current model", DiagnosticLogLevel::Warning);
             CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
                 _LW("settings.backup.restoreLayout.commitFailed")));
             return; // Retry on a new event, not in an unbounded timer loop.
@@ -597,7 +681,7 @@ void DesktopApp::RefreshShellItemsAsync()
             snapshot->desktopReadMs, snapshot->folderReadMs,
             metadataHits, metadataQueries, snapshot->modelMs, snapshot->layoutMs,
             snapshot->saveMs, snapshot->rebuildMs, snapshot->notifyMs);
-        WriteDiagnosticLogEntry(timing);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
         return;
     }
 
@@ -683,7 +767,7 @@ void DesktopApp::StartInitialShellRead()
     if (!initialShellRead_.Start(std::move(request), completionWindow, kBackgroundShellReadyMessage))
     {
         shellRefreshRevision_.Finish(*revision);
-        WriteDiagnosticLogEntry(L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
         CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
             _LW("settings.backup.restoreLayout.commitFailed")));
     }
@@ -742,7 +826,7 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
             L"saveMs=%llu rebuildMs=%llu notifyMs=%llu", count,
             progress.modelMs, progress.layoutMs, progress.saveMs,
             progress.rebuildMs, progress.notifyMs);
-        WriteDiagnosticLogEntry(timing);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
     }
     if (!snapshot) return;
     if (!shellRefreshRevision_.Finish(initialShellReadRevision_))
@@ -751,14 +835,14 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
             std::to_wstring(initialShellReadRevision_) + L" currentRevision=" +
             std::to_wstring(shellRefreshRevision_.Current()) + L" items=" +
             std::to_wstring(snapshot->desktopItems.size());
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str());
         StartInitialShellRead();
         return;
     }
     if (!snapshot->desktopComplete)
     {
         shellReloadPending_ = false;
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell,
             L"Startup Shell read failed; saved layout retained, retry on next refresh",
             DiagnosticLogLevel::Warning);
         CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
@@ -778,6 +862,6 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
         snowdesktop::startup_diagnostics::Call(L"RefreshDockRunningWindows", [&] {
             RefreshDockRunningWindows(false);
         });
-        WriteDiagnosticLogEntry(L"Startup Shell snapshot applied");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Startup Shell snapshot applied");
     }
 }

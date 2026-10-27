@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <source_location>
 #include <unordered_map>
 #include <vector>
 
@@ -89,7 +90,8 @@ public:
     [[nodiscard]] bool HasScheduledWork() const noexcept;
 
     UiScheduleToken StartAnimation(
-        UiAnimationSurface surface, FrameCallback callback);
+        UiAnimationSurface surface, FrameCallback callback,
+        std::source_location source = std::source_location::current());
     UiScheduleToken ScheduleInterval(
         UINT intervalMilliseconds, TimerCallback callback);
     UiScheduleToken ScheduleOnce(
@@ -126,6 +128,8 @@ private:
     {
         UiAnimationSurface surface = UiAnimationSurface::Desktop;
         FrameCallback callback;
+        const char* type = "animation";
+        std::uint64_t traceGeneration = 0, traceId = 0;
     };
 
     struct TimerEntry
@@ -175,6 +179,7 @@ private:
     std::uint64_t requestedFrames_ = 0;
     std::uint64_t deliveredFrames_ = 0;
     std::uint64_t skippedFrames_ = 0;
+    std::uint64_t traceFrameSequence_ = 0, traceCommitSequence_ = 0, traceFrame_ = 0;
     std::vector<double> frameIntervalSamples_;
     std::vector<double> uiWorkSamples_;
     std::vector<double> commitSamples_;

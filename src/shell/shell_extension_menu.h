@@ -29,6 +29,9 @@ struct Request
     // It forms part of the disk cache identity so an omitted compatibility
     // source cannot be reused after the source is enabled.
     bool omitNvidiaCompatibility = false;
+    // Private popup read projection. Absent keeps complete inspection; an empty
+    // set reads no extension details. Part of the snapshot/query identity.
+    std::optional<std::vector<std::string>> visibleMenuProviders;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -104,7 +107,7 @@ template <> struct Fields<shell_extensions::Request>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey,
-                        v.startPinOnly, v.originalShortcutOnly, v.omitNvidiaCompatibility);
+                        v.startPinOnly, v.originalShortcutOnly, v.omitNvidiaCompatibility, v.visibleMenuProviders);
     }
 };
 template <> struct Fields<shell_extensions::Entry>

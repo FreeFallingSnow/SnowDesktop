@@ -11,6 +11,12 @@ extern "C" {
 
 struct LuaRuntimeQuota
 {
+    struct AllocationTraffic
+    {
+        std::uint64_t generation = 0, allocatedBytes = 0, freedBytes = 0;
+        std::uint64_t allocations = 0, frees = 0, reallocations = 0;
+        std::size_t baselineBytes = 0, peakBytes = 0;
+    } allocationTraffic;
     std::size_t memoryBytes = 0;
     std::size_t memoryLimit = 16u * 1024u * 1024u;
     std::int64_t instructionsRemaining = 0;
@@ -22,6 +28,8 @@ struct LuaRuntimeQuota
 
 namespace snowdesktop::lua_runtime
 {
+void* QuotaAllocator(void* userData, void* pointer, std::size_t oldSize, std::size_t newSize);
+void SampleAllocationTraffic(LuaRuntimeQuota& quota, std::wstring_view owner);
 inline constexpr std::int64_t kDefaultInstructionBudget = 500000;
 inline constexpr auto kDefaultTimeBudget = std::chrono::milliseconds(50);
 inline constexpr int kMaxProtectedCallDepth = 16;

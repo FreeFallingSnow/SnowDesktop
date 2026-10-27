@@ -33,17 +33,29 @@ private:
     bool temporary_ = false;
 };
 
-// Use the client area, so maximized windows with title bars are not fullscreen.
-inline bool ShouldBlockFullscreenEdgeSwipe(
-    bool enabled, const RECT& client, const RECT& monitor) noexcept
-{
-    return enabled && monitor.right > monitor.left && monitor.bottom > monitor.top &&
-        client.left <= monitor.left && client.top <= monitor.top &&
-        client.right >= monitor.right && client.bottom >= monitor.bottom;
-}
-
 inline constexpr DWORD kWindowExStyle =
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
+
+inline RECT ExplicitDismissBounds(RECT panel, RECT monitor, int size)
+{
+    if (IsRectEmpty(&panel) || IsRectEmpty(&monitor)) return {};
+    size = std::max(1, std::min({size, static_cast<int>(monitor.right - monitor.left),
+        static_cast<int>(monitor.bottom - monitor.top)}));
+    // Attach the circular badge to the actual painted corner, never the
+    // maximum magnification/input reserve or an independent screen anchor.
+    const LONG left = std::clamp<LONG>(panel.right - size / 2, monitor.left, monitor.right - size);
+    const LONG top = std::clamp<LONG>(panel.top - size / 2, monitor.top, monitor.bottom - size);
+    return {left, top, left + size, top + size};
+}
+
+inline bool IsPointOnExplicitDismiss(RECT bounds, POINT point)
+{
+    if (IsRectEmpty(&bounds)) return false;
+    const double radius = static_cast<double>(bounds.right - bounds.left) / 2.0;
+    const double dx = point.x - (static_cast<double>(bounds.left) + bounds.right) / 2.0;
+    const double dy = point.y - (static_cast<double>(bounds.top) + bounds.bottom) / 2.0;
+    return dx * dx + dy * dy < radius * radius;
+}
 
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
@@ -134,7 +146,7 @@ template <typename IsApplicationWindow, typename IsDockWindow, typename PlacePai
 bool RestoreDesktopLayer(
     HWND contentWindow, HWND desktopWindow,
     IsApplicationWindow&& isApplicationWindow, IsDockWindow&& isDockWindow,
-    PlacePair&& placePair)
+    PlacePair&& placePair, HWND foregroundFallback = nullptr)
 {
     if (!contentWindow || !IsWindow(contentWindow))
         return false;
@@ -150,6 +162,15 @@ bool RestoreDesktopLayer(
                 contentWindow, desktopWindow, isApplicationWindow, isDockWindow))
             return true;
     }
+    // A rejected/stale lowest anchor must not leave a dismissed Dock over the
+    // application the user just activated. This is a partial placement only:
+    // retain recovery until the complete desktop-order predicate also passes.
+    if (foregroundFallback && IsWindow(foregroundFallback) &&
+        foregroundFallback != contentWindow && !isDockWindow(foregroundFallback) &&
+        (GetWindowLongPtrW(foregroundFallback, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0 &&
+        isApplicationWindow(foregroundFallback) && placePair(foregroundFallback))
+        return IsDesktopLayerRestored(
+            contentWindow, desktopWindow, isApplicationWindow, isDockWindow);
     return false;
 }
 
@@ -585,10 +606,53 @@ inline bool IsPointInDockEdgeCorridor(
 
 inline bool HasNewPointerButtonPress(
     UINT buttonsDown, UINT previousButtonsDown,
-    UINT pressedSinceLastSample)
+    UINT pressedSinceLastSample, bool forwardedState = false)
 {
+    // A forwarded snapshot can arrive before its classified event. It only
+    // describes held buttons; dispatch owns the press and its minimize intent.
     return pressedSinceLastSample != 0 ||
-        (buttonsDown & ~previousButtonsDown) != 0;
+        (!forwardedState && (buttonsDown & ~previousButtonsDown) != 0);
+}
+
+// Custom caption buttons announce their action after button-up. Retain an
+// outside press while it is held and briefly after release, so the actual
+// native action can consume it before dismissal. Never infer an action from
+// the target's elevation or the presence of a helper process.
+class WindowActionOutsidePress
+{
+public:
+    static constexpr ULONGLONG SettleMs = 50;
+    HWND Source() const noexcept { return source_; }
+    void Begin(HWND source) noexcept
+    {
+        source_ = source;
+        released_ = false;
+    }
+    void Cancel(HWND source = nullptr) noexcept
+    {
+        if (!source || source == source_) { source_ = nullptr; released_ = false; }
+    }
+    bool TakeReady(bool held, ULONGLONG now) noexcept
+    {
+        if (!source_) return false;
+        if (held) { released_ = false; return false; }
+        if (!released_) { released_ = true; releasedAt_ = now; return false; }
+        if (now - releasedAt_ < SettleMs) return false;
+        Cancel();
+        return true;
+    }
+private:
+    HWND source_ = nullptr;
+    ULONGLONG releasedAt_ = 0;
+    bool released_ = false;
+};
+
+inline bool ShouldDismissForForegroundActivation(
+    bool visible, bool foregroundChanged, bool externalForeground,
+    bool windowTransitionActive, bool recentSystemMinimize) noexcept
+{
+    return visible && foregroundChanged && externalForeground &&
+        !windowTransitionActive && !recentSystemMinimize;
 }
 
 inline bool HasPointerButtonActivity(

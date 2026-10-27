@@ -1,4 +1,6 @@
 local player = module.require("modules/player.lua")
+local localPlayback = module.require("modules/local_playback.lua")
+local systemAudio = module.require("modules/system_audio.lua")
 local responsive = module.require("modules/responsive.lua")
 
 local mediaCurrent
@@ -17,6 +19,9 @@ local glyphs = {
     pause = utf8.char(0xF04C),
     next = utf8.char(0xF051),
     music = utf8.char(0xF001),
+    playlist = utf8.char(0xF03A),
+    options = utf8.char(0xF141),
+    sound = utf8.char(0xF028),
 }
 
 local function settingEnabled(key, defaultValue)
@@ -74,6 +79,9 @@ local function previewSession()
         artist = "Mira Vale",
         album = "Glass Horizons",
         playbackStatus = "playing",
+        shuffle = false,
+        repeatMode = "list",
+        playbackRate = 1.25,
         controls = {
             canPlay = true,
             canPause = true,
@@ -93,11 +101,15 @@ local function previewSession()
             minimumSeekMs = 0,
             maximumSeekMs = 238000,
             updatedAtMs = 0,
+            playbackRate = 1.25,
         },
     }
 end
 
 local function currentSession(model)
+    if model and localPlayback.isLocal(model.localPlayback) then
+        return localPlayback.session(model.localPlayback), model.localPlayback.updatedAtMs or 0
+    end
     if model and model.preview then return previewSession(), 0 end
     local snapshot = mediaCurrent and mediaCurrent:value() or nil
     return player.session(snapshot), tonumber(snapshot and
@@ -118,6 +130,9 @@ local function chooseLauncher()
 end
 
 local function currentArtwork(model, session)
+    if model and localPlayback.isLocal(model.localPlayback) then
+        return model.localPlayback.player.artwork
+    end
     if not session or (model and model.preview) then return nil end
     local artwork = player.artwork(
         mediaArtwork and mediaArtwork:value() or nil,
@@ -127,6 +142,7 @@ local function currentArtwork(model, session)
 end
 
 local function currentTimeline(model, session)
+    if localPlayback.isLocal(model.localPlayback) then return session and session.timeline end
     if not session or (model and model.timelineAfterMs ~= nil) then
         return nil
     end
@@ -174,6 +190,7 @@ local function syncAudioAnalysis(context, model)
     model.visualizer = analyze or model.preview
 end
 
+local playbackOptions=module.require("modules/playback_options.lua")
 local function setup(context)
     syncBackgroundBlur()
     launcherBinding = slots.binding("idlePlayer")
@@ -186,6 +203,8 @@ local function setup(context)
         whenHidden = "throttle",
     })
     local model = {
+        localPlayback = localPlayback.setup(context),
+        systemAudio = systemAudio.new(context),
         preview = context.preview == true,
         visualizer = false,
         tasks = {},
@@ -206,6 +225,15 @@ local function setup(context)
         recordFramePending = false,
         progressTicking = false,
     }
+    model.localPlayback.beforeLocal=function()
+        if model.preview then return end
+        local session=player.session(mediaCurrent and mediaCurrent:value())
+        local name,args=playbackOptions.pauseRequest(session,widget.hasPermission("media.action"))
+        if not name then return end
+        local id,err=task.start(name,args)
+        if id then model.tasks[tostring(id)]=name
+        else widget.log("warn",name.." rejected: "..tostring(err)) end
+    end
     syncAudioAnalysis(context, model)
     return model
 end
@@ -321,6 +349,9 @@ local function backgroundLayer(context, model)
 end
 
 local function startTask(model, name, arguments, pendingPlayback)
+    if localPlayback.isLocal(model.localPlayback) and name:sub(1,6)=="media." then
+        return localPlayback.control(model.localPlayback,name,arguments)
+    end
     if model.preview or not widget.hasPermission("media.action") then
         return false
     end
@@ -360,10 +391,15 @@ local function startLauncher(model)
     end
 end
 
+local function controlAllowed(model)
+    if localPlayback.isLocal(model.localPlayback) then return localPlayback.allowed() end
+    return widget.hasPermission("media.action")
+end
+
 local function startSessionTask(model, name, capability, extra)
     local session = currentSession(model)
     if not player.canControl(session,
-        widget.hasPermission("media.action"), capability) then
+        controlAllowed(model), capability) then
         return
     end
     local arguments = extra or {}
@@ -372,8 +408,12 @@ local function startSessionTask(model, name, capability, extra)
 end
 
 local function controlButton(key, glyph, label, enabled, colors, primary,
-    plan)
+    plan, tooltip)
     local size = primary and plan.primaryButton or plan.secondaryButton
+    local events={pointerEnter={id="media.hover"},pointerLeave={id="media.hover"}}
+    if key=="system.audio.open" and widget.hasFeature("view.pointer.events") then
+        events.wheel={id="system.audio.volume.wheel"}
+    end
     return view.iconButton({
         key = key,
         glyph = glyph,
@@ -383,6 +423,8 @@ local function controlButton(key, glyph, label, enabled, colors, primary,
         fontSize = size * (primary and 0.38 or 0.36),
         enabled = enabled,
         action = { id = key },
+        events = events,
+        tooltip = widget.hasFeature("view.tooltip") and tooltip or nil,
         accessibility = { role = "button", label = label },
         style = {
             background = primary and colors.button or colors.secondaryButton,
@@ -525,7 +567,7 @@ local function viewTree(context, model)
         context.accessibility.highContrast)
     local colors = palette(context, artworkBackgroundActive)
     local timeline = currentTimeline(model, session)
-    local canAct = model.preview or widget.hasPermission("media.action")
+    local canAct = model.preview or controlAllowed(model)
     local controls = session and session.controls or {}
     local playing = session and session.playbackStatus == "playing"
     if model.pendingPlayback == "playing" then playing = true end
@@ -541,11 +583,14 @@ local function viewTree(context, model)
         model.recordFramePending = false
     end
 
+    local localActive = localPlayback.isLocal(model.localPlayback)
+    local notice = localActive and localPlayback.notice(model.localPlayback) or nil
     local title = session and session.title ~= "" and session.title or
-        l10n.tr("workshop.aurora_player.empty")
+        (localActive and l10n.tr("music.empty") or l10n.tr("workshop.aurora_player.empty"))
     local artist = session and session.artist ~= "" and session.artist or
         (session and session.sourceName or (launcher and launcher.title or
             l10n.tr("workshop.aurora_player.configure_launcher")))
+    if notice then artist=notice end
     local album = session and session.album or ""
     local width = layout.width()
     local height = layout.height()
@@ -560,8 +605,8 @@ local function viewTree(context, model)
     if not hasTimeline then
         clearSeekPreview(model)
     end
-    updateProgressTicker(model, hasTimeline and playing and model.visible and
-        not model.preview and not model.recordFramePending)
+    updateProgressTicker(model, model.visible and not model.preview and not model.recordFramePending and
+        hasTimeline and playing)
     local now = hasTimeline and time.now() or nil
     local position = player.position(timeline, playing, now)
     if model.seekPreview ~= nil then
@@ -628,6 +673,8 @@ local function viewTree(context, model)
                 height = plan.sliderHeight,
                 enabled = seekEnabled,
                 events = {
+                    pointerEnter = { id = "media.hover" },
+                    pointerLeave = { id = "media.hover" },
                     change = { id = "media.seek.change" },
                     pointerUp = { id = "media.seek.commit" },
                 },
@@ -773,11 +820,34 @@ local function viewTree(context, model)
     local visualizer = visualizerNode(model, colors, plan)
     if visualizer then children[#children + 1] = visualizer end
     children[#children + 1] = content
+    local utilitySize=plan.secondaryButton*0.68
+    local utilities={controlButton("system.audio.open",glyphs.sound,l10n.tr("shared.audio"),
+        widget.hasFeature("widget.panel"),colors,false,{secondaryButton=utilitySize},systemAudio.tooltip(model.systemAudio)),controlButton("local.options",glyphs.options,
+        l10n.tr("music.options"),widget.hasFeature("widget.panel"),colors,false,
+        {secondaryButton=utilitySize})}
+    if localActive then table.insert(utilities,1,controlButton("local.playlist",glyphs.playlist,
+        l10n.tr("music.playlist"),true,colors,false,{secondaryButton=utilitySize})) end
+    local showUtilities=model.systemAudio.surface~=nil or localActive and
+        (playing or model.localPlayback.player.status=="loading")
+    if widget.hasFeature("interaction.pointerActions") then
+        for _,key in ipairs({"aurora.surface","media.previous","media.toggle","media.next",
+            "aurora.progress","local.options","local.playlist","system.audio.open"}) do
+            if interaction.isHovered(key) then showUtilities=true;break end
+        end
+    end
+    if showUtilities then
+        children[#children+1]=view.column({key="aurora.utilities",width="fill",height="fill",
+            padding=plan.padding*0.45,justifyContent="start",alignItems="end",children={
+                view.row({key="aurora.utilities.row",width="auto",height=utilitySize,gap=utilitySize*0.25,children=utilities})}})
+    end
     return view.stack({
         key = "aurora.surface",
         width = "fill",
         height = "fill",
         events = {
+            pointerEnter = { id = "media.hover" },
+            pointerLeave = { id = "media.hover" },
+            fileDrop = { id = "local.import" },
             doubleClick = { id = "launcher.open" },
             contextMenu = { id = "media.menu", scope = "component" },
         },
@@ -792,7 +862,7 @@ end
 local function seekRelative(model, delta)
     local session = currentSession(model)
     if not player.canControl(session,
-        widget.hasPermission("media.action"), "canSeek") then return end
+        controlAllowed(model), "canSeek") then return end
     local timeline = currentTimeline(model, session)
     if not player.hasTimeline(timeline) then return end
     local playing = session.playbackStatus == "playing"
@@ -808,7 +878,7 @@ end
 
 local function commitSeek(model, session, timeline, fraction)
     if not player.canControl(session,
-        widget.hasPermission("media.action"), "canSeek") or
+        controlAllowed(model), "canSeek") or
         not player.hasTimeline(timeline) then
         clearSeekPreview(model)
         widget.invalidate()
@@ -834,6 +904,22 @@ local function commitSeek(model, session, timeline, fraction)
 end
 
 local function event(context, model, value)
+    if systemAudio.event(model.systemAudio,value,model.localPlayback) then return end
+    local previousSource=model.localPlayback.source
+    if localPlayback.event(context,model.localPlayback,value) then
+        if previousSource~=model.localPlayback.source then
+            model.pendingPlayback=nil
+            clearSeekPreview(model)
+        end
+        if value.kind=="task.complete" and model.seekTaskId==tostring(value.taskId) then
+            model.seekTaskId=nil
+            if value.ok~=true then clearSeekPreview(model) end
+        elseif value.kind=="audio.state" and
+            (value.status=="stopped" or value.status=="error" or value.status=="ended") then
+            clearSeekPreview(model)
+        end
+        return
+    end
     if value.kind == "settings.changed" then
         local refreshBlur = false
         local refreshSpectrum = false
@@ -853,6 +939,7 @@ local function event(context, model, value)
     if value.kind == "visibility" then
         model.visible = value.visible == true
         if not model.visible then
+            updateProgressTicker(model,false)
             animation.cancelFrame(RECORD_FRAME)
             model.recordFramePending = false
         else
@@ -902,15 +989,24 @@ local function event(context, model, value)
         return
     end
     if value.kind ~= "action" then return end
+    if value.id=="media.hover" then widget.invalidate();return end
 
     local session = currentSession(model)
-    if value.id == "media.previous" then
+    local modeAction=value.id:match("^media%.rate%.") or value.id:match("^media%.shuffle%.") or
+        value.id:match("^media%.repeat%.")
+    if modeAction and (model.menuSessionId~=(session and session.id) or
+        model.menuSource~=model.localPlayback.source) then return end
+    if value.id:sub(1,7)=="system." then
+        if localPlayback.isLocal(model.localPlayback) then return end
+        local name,args=playbackOptions.command(session,controlAllowed(model),value)
+        if name then startTask(model,name,args) end
+    elseif value.id == "media.previous" then
         startSessionTask(model, "media.previous", "canPrevious")
     elseif value.id == "media.next" then
         startSessionTask(model, "media.next", "canNext")
     elseif value.id == "media.toggle" then
         if not player.canControl(session,
-            widget.hasPermission("media.action"), "canPlayPause") then return end
+            controlAllowed(model), "canPlayPause") then return end
         local playing = session.playbackStatus == "playing"
         startTask(model, "media.toggle", { sessionId = session.id },
             playing and "paused" or "playing")
@@ -922,7 +1018,7 @@ local function event(context, model, value)
         seekRelative(model, 10000)
     elseif value.id == "media.seek.change" then
         if not player.canControl(session,
-            widget.hasPermission("media.action"), "canSeek") then return end
+            controlAllowed(model), "canSeek") then return end
         local timeline = currentTimeline(model, session)
         if not player.hasTimeline(timeline) then return end
         local fraction = player.clamp(value.controlValue, 0, 1, 0)
@@ -944,7 +1040,7 @@ local function event(context, model, value)
             model.seekPreview)
     elseif value.id:sub(1, 11) == "media.rate." then
         if not player.canControl(session,
-            widget.hasPermission("media.action"),
+            controlAllowed(model),
             "canChangePlaybackRate") then return end
         local rateText = value.id:sub(12):gsub("_", ".")
         local rate = tonumber(rateText)
@@ -954,7 +1050,7 @@ local function event(context, model, value)
     elseif value.id == "media.shuffle.on" or
         value.id == "media.shuffle.off" then
         if not player.canControl(session,
-            widget.hasPermission("media.action"),
+            controlAllowed(model),
             "canToggleShuffle") then return end
         startTask(model, "media.setShuffle", {
             sessionId = session.id,
@@ -962,14 +1058,16 @@ local function event(context, model, value)
         })
     elseif value.id:sub(1, 13) == "media.repeat." then
         if not player.canControl(session,
-            widget.hasPermission("media.action"),
+            controlAllowed(model),
             "canChangeRepeatMode") then return end
         startTask(model, "media.setRepeat", {
             sessionId = session.id,
             mode = value.id:sub(14),
         })
     elseif value.id == "launcher.open" then
-        if not currentSession(model) then startLauncher(model) end
+        if localPlayback.isLocal(model.localPlayback) and not session then
+            localPlayback.event(context,model.localPlayback,{kind="action",id="local.files"})
+        elseif not localPlayback.isLocal(model.localPlayback) and not session then startLauncher(model) end
     elseif value.id == "launcher.configure" then
         chooseLauncher()
     elseif value.id == "launcher.clear" then
@@ -978,10 +1076,14 @@ local function event(context, model, value)
 end
 
 local function menu(_context, model, request)
+    if request.id=="local.track.menu" then return localPlayback.menu(_context,model.localPlayback,request) end
     if request.id ~= "media.menu" then return nil end
     local session = currentSession(model)
     local timeline = currentTimeline(model, session)
-    local permission = widget.hasPermission("media.action")
+    local permission = controlAllowed(model)
+    local modes=playbackOptions.state(session,permission)
+    model.menuSessionId=session and session.id
+    model.menuSource=model.localPlayback.source
     local function allowed(capability)
         if capability == "canSeek" and
             not player.hasTimeline(timeline) then return false end
@@ -994,6 +1096,7 @@ local function menu(_context, model, request)
             id = "media.rate." .. rate,
             label = rate:gsub("_", ".") .. "×",
             enabled = allowed("canChangePlaybackRate"),
+            checked = modes.rateValue==tonumber((rate:gsub("_", "."))),
         }
     end
     local items = {
@@ -1010,6 +1113,10 @@ local function menu(_context, model, request)
             enabled = false,
         },
     }
+    local sourceItems=localPlayback.menuItems(model.localPlayback)
+    sourceItems[#sourceItems+1]={type="separator"}
+    for _, item in ipairs(items) do sourceItems[#sourceItems+1]=item end
+    items=sourceItems
     if launcher then
         items[#items + 1] = { type = "separator" }
         items[#items + 1] = {
@@ -1081,11 +1188,28 @@ local function menu(_context, model, request)
             },
         },
     }
-    for _, item in ipairs(mediaItems) do items[#items + 1] = item end
+    for _, item in ipairs(mediaItems) do
+        local first=item.children and item.children[1] and item.children[1].id or ""
+        local supported=true
+        if first:sub(1,11)=="media.rate." then supported=modes.rate
+        elseif first:sub(1,14)=="media.shuffle." then
+            supported=modes.shuffle
+            for _,choice in ipairs(item.children) do
+                choice.checked=modes.shuffleValue~=nil and
+                    modes.shuffleValue==(choice.id=="media.shuffle.on")
+            end
+        elseif first:sub(1,13)=="media.repeat." then
+            supported=modes.repeatMode
+            for _,choice in ipairs(item.children) do choice.checked=modes.repeatValue==choice.id:sub(14) end
+        end
+        if supported then items[#items+1]=item end
+    end
     return ui.menu(items)
 end
 
-local function dispose()
+local function dispose(_context,model)
+    if model and model.systemAudio then systemAudio.dispose(model.systemAudio) end
+    if model and model.localPlayback then model.localPlayback.player:stop() end
     animation.cancelFrame(RECORD_FRAME)
     schedule.cancel(PROGRESS_TICK)
     if mediaCurrent then mediaCurrent:unsubscribe() end
@@ -1116,6 +1240,11 @@ descriptor = {
         blurRadius = 8,
     },
     view = viewTree,
+    panel = function(context,model)
+        if model.systemAudio.surface=="panel" then return systemAudio.view(model.systemAudio,model.localPlayback) end
+        return localPlayback.panel(context,model.localPlayback,currentSession(model),controlAllowed(model))
+    end,
+    popover = function(_context,model) return systemAudio.view(model.systemAudio,model.localPlayback) end,
     event = event,
     menu = menu,
     dispose = dispose,

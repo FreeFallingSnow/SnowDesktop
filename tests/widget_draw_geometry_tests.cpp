@@ -25,6 +25,26 @@ bool Near(float left, float right)
 
 void TestImagePlacement()
 {
+    Check(std::abs(RequiredImageRasterScale(1000, 1000, 400, 400,
+            DrawImageFit::Contain, {}) - 0.4) < 0.0001 &&
+        std::abs(RequiredImageRasterScale(1000, 1000, 400, 400,
+            DrawImageFit::Contain, {1,0,0,1,192,192}) - 0.8) < 0.0001,
+        "image cache demand follows physical pixels when the display DPI changes");
+    Check(std::abs(RequiredImageRasterScale(1000, 1000, 400, 400,
+            DrawImageFit::Contain, {1,0,0,1,192,192,true}) - 0.4) < 0.0001 &&
+        std::abs(RequiredImageRasterScale(1000, 1000, 400, 400,
+            DrawImageFit::Contain, {2,0,0,2,192,192,true}) - 0.8) < 0.0001,
+        "pixel unit contexts apply world transforms without counting DPI twice");
+    Check(std::abs(RequiredImageRasterScale(1000, 1000, 500, 250,
+            DrawImageFit::Contain, {2,0,0,1}) - 0.5) < 0.0001 &&
+        RequiredImageRasterScale(1000, 1000, 500, 250,
+            DrawImageFit::Cover, {1,1,0,1}) > 0.8,
+        "nonuniform and sheared transforms cannot underallocate the displayed image");
+    Check(RequiredImageRasterScale(1000, 1000, 20, 20,
+            DrawImageFit::Contain, {}, true) == 1 &&
+        RequiredImageRasterScale(1000, 1000, 20, 20,
+            DrawImageFit::None, {}) == 1,
+        "nearest pixel sampling and intrinsic-size drawing retain source pixel semantics");
     const DrawRect bounds{ 10.0f, 20.0f, 100.0f, 100.0f };
     const auto contain = ResolveDrawImagePlacement(
         200.0f, 100.0f, bounds, DrawImageFit::Contain,

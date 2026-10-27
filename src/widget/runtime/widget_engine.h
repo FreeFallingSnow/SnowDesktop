@@ -43,11 +43,13 @@
 #include "widget_lua_lifecycle.h"
 #include "widget/data/widget_data_broker.h"
 #include "widget/tasks/widget_task_broker.h"
+#include "widget/tasks/widget_native_task_executor.h"
 #include "widget/tasks/widget_location_task_executor.h"
 #include "widget/tasks/widget_notification_runtime.h"
 #include "widget/tasks/widget_notification_schedule_store.h"
 #include "widget/tasks/widget_media_task_executor.h"
 #include "widget/tasks/widget_audio_output_task_executor.h"
+#include "widget/tasks/widget_audio_playback.h"
 #include "widget/tasks/widget_system_control_tasks.h"
 #include "widget/tasks/widget_clipboard_task_executor.h"
 #include "widget/tasks/widget_filesystem_handle_store.h"
@@ -314,6 +316,7 @@ struct LuaWidgetPanelRequest
     std::wstring title;
     std::string surface = "panel";
     std::string placement = "auto";
+    std::string anchorKey;
     RECT anchorRect{};
     bool hasAnchor = false;
     bool showHeader = true;
@@ -322,6 +325,7 @@ struct LuaWidgetPanelRequest
     bool dismissOnOutside = true;
     bool dismissOnEscape = true;
     bool modal = false;
+    bool desktopGesture = false;
 };
 
 enum class LuaWidgetFilePickerKind
@@ -689,6 +693,7 @@ struct LuaWidget
     bool viewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    snowdesktop::widget_runtime::ViewLayoutCache viewLayoutCache;
     snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
     bool viewTransitionFramePending = false;
     bool viewIndeterminateProgressActive = false;
@@ -698,6 +703,7 @@ struct LuaWidget
     snowdesktop::widget_runtime::WidgetInteractionRegions
         panelInteractionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
+    snowdesktop::widget_runtime::ViewLayoutCache panelViewLayoutCache;
     snowdesktop::widget_runtime::ViewTransitionRuntime panelViewTransitions;
     bool panelViewTransitionFramePending = false;
     bool panelIndeterminateProgressActive = false;
@@ -984,11 +990,13 @@ public:
     void ApplyHostAnimationPreferences();
     bool RenderWidgetPanel(const std::wstring& widgetId,
         ID2D1DeviceContext* context, RECT bounds,
-        std::string_view surface = "panel");
+        std::string_view surface = "panel",
+        const RECT* scrollbarBounds = nullptr);
     void TickRuntime();
     /** @brief 在 UI 线程消费一次已合并的音频分析更新。 */
     void OnAudioAnalysisWake();
     void OnTaskWake();
+    void DrainPackageImageChanges();
     /**
      * @brief 处理宿主转发的组件调度截止时间到期
      * @param widgetId 触发刷新的小部件实例 ID
@@ -1232,13 +1240,15 @@ public:
         snowdesktop::widget::PermissionDecisionState state,
         const std::vector<std::string>& grantedPermissions,
         const std::vector<std::string>& grantedNetworkDomains,
-        std::string& error);
+        std::string& error, bool nativeAcknowledged = false,
+        std::string_view reviewedNativeIdentity = {});
     bool ApplyWidgetPermissionDecision(
         const std::wstring& packageId,
         snowdesktop::widget::PermissionDecisionState state,
         const std::vector<std::string>& grantedPermissions,
         const std::vector<std::string>& grantedNetworkDomains,
-        std::string& error);
+        std::string& error, bool nativeAcknowledged = false,
+        std::string_view reviewedNativeIdentity = {});
     static std::optional<snowdesktop::widget::PackageSourceRef>
         GetWidgetPackageSource(const std::wstring& packageId);
     static bool IsWidgetPackageAvailable(const std::wstring& packageId);
@@ -1576,6 +1586,7 @@ public:
         std::string placement, int width, int height,
         bool dismissOnOutside, bool dismissOnEscape);
     void RuntimeCloseWidgetPanel(const std::wstring& widgetId);
+    void PrepareWidgetPanelFocus(const std::wstring& widgetId);
 
     /**
      * @brief 发送系统通知
@@ -1915,6 +1926,8 @@ private:
         snowdesktop::widget_runtime::WidgetNotificationScheduleStore>
         notificationScheduleStore_;
     std::filesystem::path notificationSchedulePath_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetNativeTaskExecutor> nativeTaskExecutor_;
+    std::unordered_map<std::uint64_t, std::string> nativeTaskCompletions_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
     std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
     std::unique_ptr<
@@ -1923,6 +1936,7 @@ private:
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>
         audioOutputTaskExecutor_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioPlayback> audioPlayback_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>
         clipboardTaskExecutor_;

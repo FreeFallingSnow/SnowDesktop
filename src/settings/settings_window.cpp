@@ -27,6 +27,7 @@ struct SettingsWindow::Impl
     HWND window = nullptr;
     bool closing = false;
     bool opening = false;
+    bool contextMenuInspectionActive = false;
     snowdesktop::SettingsRoute openingRoute;
     OpenCompleted openCompleted;
     std::wstring lastError;
@@ -36,8 +37,13 @@ struct SettingsWindow::Impl
         return options.localize ? options.localize(key) : L"Settings process unavailable";
     }
 
+    void EndContextMenuInspection() noexcept
+    {
+        try { if (options.contextMenuClosed) options.contextMenuClosed(); } catch (...) {}
+    }
     void EndSession() noexcept
     {
+        EndContextMenuInspection();
         try
         {
             if (options.iconAppearance)
@@ -81,7 +87,7 @@ struct SettingsWindow::Impl
         try { if (error) std::rethrow_exception(error); }
         catch (const std::exception& failure) { detail = Utf8ToWide(failure.what()); }
         catch (...) {}
-        if (!detail.empty()) WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        if (!detail.empty()) WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, detail.c_str(), DiagnosticLogLevel::Error);
         lastError = LocalizedError("settings.process.startFailed") + (detail.empty() ? L"" : L"\n" + detail);
         EndSession();
         CompleteOpen(false);
@@ -112,7 +118,12 @@ struct SettingsWindow::Impl
         {
             channel = std::make_unique<ipc::Channel>();
             backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
-            channel->Bind<void>("ui.closed", [this] { closing = true; snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(nullptr); window = nullptr; });
+            channel->Bind<void>("ui.closed", [this] {
+                EndContextMenuInspection();
+                closing = true;
+                snowdesktop::EmergencyRestartHotkey().SetSettingsWindow(nullptr);
+                window = nullptr;
+            });
             channel->SetDisconnected([this] { EndSession(); });
         }
         // A normal close has acknowledged durable commits. An immediate
@@ -133,7 +144,7 @@ struct SettingsWindow::Impl
                     GetWindowThreadProcessId(candidate, &owner);
                     if (!initialized || !candidate || owner != process.ProcessId())
                     {
-                        if (!error.empty()) WriteDiagnosticLogEntry(error.c_str(), DiagnosticLogLevel::Error);
+                        if (!error.empty()) WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, error.c_str(), DiagnosticLogLevel::Error);
                         lastError = LocalizedError("settings.process.startFailed") + (error.empty() ? L"" : L"\n" + error);
                         EndSession();
                         CompleteOpen(false);
@@ -165,9 +176,14 @@ bool SettingsWindow::Init(HINSTANCE instance, snowdesktop::SettingsController& c
     impl_->instance = instance;
     impl_->controller = &controller;
     impl_->widgetSettingsService = service;
-    options.contextMenu = [&controller](const auto &request, bool refresh) {
+    options.contextMenu = [this, &controller](const auto &request, bool refresh) {
+        impl_->contextMenuInspectionActive = true;
         if (const auto snapshot = controller.Snapshot()) snowdesktop::shell_extensions::SharedMenuService().Configure(snapshot->values.general.shellExtensions);
         return snowdesktop::shell_extensions::SharedMenuService().Inspect(request, refresh);
+    };
+    options.contextMenuClosed = [this] {
+        if (std::exchange(impl_->contextMenuInspectionActive, false))
+            snowdesktop::shell_extensions::SharedMenuService().EndInspection();
     };
     impl_->options = std::move(options);
     impl_->lastError.clear();
@@ -175,6 +191,7 @@ bool SettingsWindow::Init(HINSTANCE instance, snowdesktop::SettingsController& c
 }
 void SettingsWindow::Shutdown() noexcept
 {
+    impl_->EndContextMenuInspection();
     impl_->opening = false;
     impl_->openCompleted = {};
     if (impl_->channel) impl_->channel->SetDisconnected({});

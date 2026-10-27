@@ -304,7 +304,7 @@ void DesktopApp::RecoverQuickNavCompositionFailure(const wchar_t* stage, HRESULT
     wchar_t buf[192];
     wsprintfW(buf, L"QuickNav %s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render", static_cast<unsigned>(hr));
-    WriteDiagnosticLogEntry(buf);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
 
     ResetQuickNavCompositionResources();
     EnsureUiAnimationFrame();
@@ -339,7 +339,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 buf,
                 L"QuickNav create isolated DComp device FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
             return FAILED(hr) ? hr : E_FAIL;
         }
     }
@@ -371,7 +371,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"QuickNav CreateTargetForHwnd FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
             return hr;
         }
     }
@@ -382,7 +382,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         {
             wchar_t buf[128];
             wsprintfW(buf, L"QuickNav CreateVisual FAILED hr=0x%08X", static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
             return hr;
         }
         quickNavDcompTarget_->SetRoot(quickNavDcompVisual_.Get());
@@ -399,7 +399,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 buf,
                 L"QuickNav CreateEffectGroup FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
             return FAILED(hr) ? hr : E_FAIL;
         }
         hr = quickNavDcompVisual_->SetEffect(
@@ -411,7 +411,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 buf,
                 L"QuickNav SetEffect FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
             return hr;
         }
     }
@@ -426,7 +426,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
                 buf,
                 L"QuickNav CreateScaleTransform FAILED hr=0x%08X",
                 static_cast<unsigned>(hr));
-            WriteDiagnosticLogEntry(buf);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
             return FAILED(hr) ? hr : E_FAIL;
         }
         hr = quickNavDcompVisual_->SetTransform(
@@ -449,7 +449,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     {
         wchar_t buf[128];
         wsprintfW(buf, L"QuickNav CreateSurface %ux%u FAILED hr=0x%08X", width, height, static_cast<unsigned>(hr));
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, buf, DiagnosticLogLevel::Warning);
         return hr;
     }
     // Keep the previously painted content attached until the replacement has

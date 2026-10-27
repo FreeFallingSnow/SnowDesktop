@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,9 @@ bool Apply(std::vector<Icon>& icons, const Event& event);
 enum class Activation { LeftDown, LeftUp, DoubleClick, RightDown, RightUp, Keyboard, ContextKeyboard, Hover, Leave };
 std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor);
 struct FocusOrigin { HWND target = nullptr, source = nullptr; };
+// Host-private synchronous updates. Keys not present in this batch keep the
+// geometry supplied by other tray presenters.
+struct GeometryUpdate { std::string key; RECT rect{}; };
 
 class Service
 {
@@ -47,6 +51,7 @@ public:
     void UnsubscribeChanges(HWND window);
     bool AcknowledgeChange(HWND window, std::uint64_t token);
     void SetGeometry(const std::string& key, RECT rect);
+    void SetGeometries(std::span<const GeometryUpdate> updates);
     void ClearGeometries();
     bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {},
         std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});

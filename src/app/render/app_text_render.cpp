@@ -309,6 +309,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
+        snowdesktop::ItemTextLayoutCacheEntry cached;
         std::wstring visibleText = text;
 
         float layoutHeight = selected ? th : lineHeight * static_cast<float>(titleLines);
@@ -364,27 +365,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         layout->GetMetrics(&metrics);
         bool isSingleLine = (metrics.lineCount == 1);
         if (!isSingleLine)
-        {
-            ComPtr<IDWriteTextLayout> measureLayout;
-            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
-                text.c_str(), static_cast<UINT32>(text.size()),
-                itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
-            {
-                const DWRITE_TEXT_RANGE
-                    measureRange{
-                        0,
-                        static_cast<UINT32>(
-                            text.size())
-                    };
-                measureLayout->SetFontSize(
-                    fontSize,
-                    measureRange);
-                snowdesktop::app_fonts::SetWeight(measureLayout.Get(), fontWeight, measureRange);
-                DWRITE_TEXT_METRICS m{};
-                measureLayout->GetMetrics(&m);
-                isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
-            }
-        }
+            isSingleLine = cached.fullWidth.FitsSingleLine(dwriteFactory_.Get(),
+                itemTextFormat_.Get(), text, fontSize, fontWeight, tw).fitsSingleLine;
         if (isSingleLine)
         {
             // Use the same exact centering band in both states. The expanded
@@ -394,14 +376,15 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 layout->SetMaxHeight(lineHeight * static_cast<float>(titleLines));
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
-        layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
+        cached.layout = std::move(layout);
+        layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(cached)).first;
     }
 
     float ty = static_cast<float>(textRect.top);
     if (componentPanel && !selected && titleLines == 1)
         ty += std::max(0.0f, (static_cast<float>(visualMetrics.titleHeight) - th) / 2.0f);
     DWRITE_TEXT_METRICS metrics{};
-    layoutIt->second->GetMetrics(&metrics);
+    layoutIt->second.layout->GetMetrics(&metrics);
     if (selected)
     {
         th = std::max(
@@ -419,21 +402,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     // The full-width measurement only positions an expanded selected title.
     // Collapsed titles already have their cached layout and do not use it.
     if (selected && !isSingleLine)
-    {
-        ComPtr<IDWriteTextLayout> measureLayout;
-        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
-            text.c_str(), static_cast<UINT32>(text.size()),
-            itemTextFormat_.Get(), 10000.0f, 10000.0f, &measureLayout)) && measureLayout)
-        {
-            const DWRITE_TEXT_RANGE fullRange{
-                0, static_cast<UINT32>(text.size()) };
-            measureLayout->SetFontSize(fontSize, fullRange);
-            snowdesktop::app_fonts::SetWeight(measureLayout.Get(), fontWeight, fullRange);
-            DWRITE_TEXT_METRICS m{};
-            measureLayout->GetMetrics(&m);
-            isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
-        }
-    }
+        isSingleLine = layoutIt->second.fullWidth.FitsSingleLine(dwriteFactory_.Get(),
+            itemTextFormat_.Get(), text, fontSize, fontWeight, tw).fitsSingleLine;
     if (isSingleLine && selected)
     {
         if (metrics.lineCount == 1)
@@ -457,7 +427,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
 
     DrawStyledItemTextLayout(
-        context, layoutIt->second.Get(), layoutIt->first,
+        context, layoutIt->second.layout.Get(), layoutIt->first,
         D2D1::Point2F(static_cast<float>(textRect.left), ty),
         D2D1::SizeF(tw, th), fontScale, opacity, lightTheme, false, componentPanel);
 }
@@ -588,7 +558,8 @@ void DesktopApp::DrawD2DText(ID2D1RenderTarget* ctx, const std::wstring& text,
 
 void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
     RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
-    DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis)
+    DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis,
+    IDWriteTextLayout* cachedLayout)
 {
     if (!ctx || !format || text.empty() || IsRectEmptyRect(rect) || !dwriteFactory_) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -605,6 +576,13 @@ void DesktopApp::DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring&
         it = brushCache_.emplace(key, std::move(brush)).first;
     }
     if (it == brushCache_.end() || !it->second) return;
+
+    if (cachedLayout)
+    {
+        ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(rect.left), static_cast<float>(rect.top)),
+            cachedLayout, it->second.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        return;
+    }
 
     const float w = static_cast<float>(std::max<LONG>(1, rect.right - rect.left));
     const float h = static_cast<float>(std::max<LONG>(1, rect.bottom - rect.top));

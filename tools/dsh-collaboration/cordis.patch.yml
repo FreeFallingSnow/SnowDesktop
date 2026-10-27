@@ -1,0 +1,7 @@
+- insert:
+    - id: snowdesktop-collaboration
+      name: '@local/snowdesktop-collaboration'
+      config:
+        repositoryRoot: 'D:/Code/Other/SnowDesktop'
+        dashboardPort: 8765
+        wakeResidentAgents: true

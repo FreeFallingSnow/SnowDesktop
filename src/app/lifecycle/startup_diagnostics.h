@@ -17,6 +17,7 @@ public:
     explicit Scope(const wchar_t* name, bool startupRoot = false,
         size_t items = 0) noexcept : name_(name), items_(items)
     {
+        if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Runtime)) return;
         if (!startupRoot && !current_) return;
         previous_ = current_;
         id_ = nextId_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -56,7 +57,7 @@ private:
                 L"call=%llu parent=%llu step=%ls items=%zu elapsed_ms=%llu",
                 event, GetCurrentProcessId(), run, GetCurrentThreadId(), pass_,
                 id_, parent_, name_, items_, elapsed);
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message);
         }
         catch (...) {} // Diagnostics must not change startup error handling.
         SetLastError(savedError);

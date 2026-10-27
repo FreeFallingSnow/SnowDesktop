@@ -1,0 +1,28 @@
+#pragma once
+
+#include "window_capabilities.h"
+#include <windows.h>
+#include <functional>
+#include <filesystem>
+#include <string_view>
+
+namespace snowdesktop::window_support
+{
+struct AuthorizationResult
+{
+    AuthorizationState state = AuthorizationState::NotRegistered;
+    DWORD error = ERROR_SUCCESS;
+    bool updateAvailable = false;
+};
+std::string_view HelperImplementationId() noexcept;
+bool HelperImplementationChanged(const std::filesystem::path& installedDirectory) noexcept;
+AuthorizationResult QueryAuthorization() noexcept;
+DWORD StartAuthorizedHelper() noexcept;
+bool AuthorizationTaskUserMatches(std::wstring_view user) noexcept;
+// COM-aware, bounded wait shared with authorization; never closes the handle.
+DWORD WaitForAuthorizationCompletion(HANDLE process, DWORD timeoutMs = 60000) noexcept;
+// Run on a worker: UAC is an explicit user decision, never a background retry.
+DWORD ConfigureAuthorization(bool enabled, HWND owner, const std::function<void()>& started = {}) noexcept;
+// Dedicated helper entry, before starting any privileged runtime or IPC server.
+int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept;
+}

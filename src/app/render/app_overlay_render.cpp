@@ -1,11 +1,12 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "foreground_paint_region.h"
 #include "ui/menu/modern_menu.h"
 #include "dock/floating_dock_rules.h"
 
 // Transient page, privacy and widget-positioning overlays.
 
-void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
+void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect)
 {
     using namespace snowdesktop::usage_guide;
     usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
@@ -76,6 +77,9 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     RECT frame = usageGuidePlacement_.Arrange(area, width, height, margin);
     MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&frame), 2);
     usageGuideFrame_ = frame;
+    // Arrangement and hit rectangles are semantic state even when this
+    // retained panel is outside the current foreground pixel update.
+    const bool drawPixels = snowdesktop::foreground_paint_region::Intersects(updateRect, frame);
     POINT clientCursor = cursor;
     ScreenToClient(hwnd_, &clientCursor);
     // This floating panel stays in the desktop foreground. Context menus use
@@ -92,20 +96,24 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     const auto foreground = highContrast ? systemColor(COLOR_WINDOWTEXT) : D2D1::ColorF(light ? 0x202020 : 0xf5f5f5);
     const auto secondary = highContrast ? foreground : D2D1::ColorF(light ? 0x606060 : 0xc5c5c5);
     const auto border = highContrast ? foreground : D2D1::ColorF(light ? 0xd6d6d6 : 0x505050);
-    DrawD2DRoundedRectangle(ctx, frame, 8.0f * scale, background, border, 1);
+    if (drawPixels) DrawD2DRoundedRectangle(ctx, frame, 8.0f * scale, background, border, 1);
     int y = frame.top + padding;
     const auto drawLine = [&](const std::wstring& value, int h, IDWriteTextFormat* style, D2D1_COLOR_F color) {
         RECT bounds{frame.left + padding, y, frame.right - padding, y + h};
-        DrawD2DText(ctx, value, bounds, style, color); y += h;
+        if (drawPixels) DrawD2DText(ctx, value, bounds, style, color);
+        y += h;
     };
     drawLine(title, titleHeight, titleFormat.Get(), foreground); y += px(12);
     usageGuideBodyRect_ = {frame.left + padding, y, frame.right - padding - px(16), y + textHeight};
     RECT textBounds = usageGuideBodyRect_;
     textBounds.top -= usageGuideScroll_.offset;
     textBounds.bottom = textBounds.top + contentHeight;
-    ctx->PushAxisAlignedClip(ToD2DRect(usageGuideBodyRect_), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    DrawD2DText(ctx, hint, textBounds, format.Get(), foreground);
-    ctx->PopAxisAlignedClip();
+    if (drawPixels)
+    {
+        ctx->PushAxisAlignedClip(ToD2DRect(usageGuideBodyRect_), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        DrawD2DText(ctx, hint, textBounds, format.Get(), foreground);
+        ctx->PopAxisAlignedClip();
+    }
     if (usageGuideScroll_.maximum > 0)
     {
         usageGuideScrollTrack_ = {frame.right - padding - px(12), y, frame.right - padding, y + textHeight};
@@ -113,10 +121,11 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
         const int thumbTop = y + MulDiv(textHeight - thumbHeight, usageGuideScroll_.offset, usageGuideScroll_.maximum);
         usageGuideScrollThumb_ = {usageGuideScrollTrack_.left, thumbTop, usageGuideScrollTrack_.right, thumbTop + thumbHeight};
         RECT visibleThumb = usageGuideScrollThumb_; InflateRect(&visibleThumb, -px(4), 0);
-        DrawD2DRoundedRectangle(ctx, visibleThumb, 2.0f * scale, secondary, secondary, 0);
+        if (drawPixels) DrawD2DRoundedRectangle(ctx, visibleThumb, 2.0f * scale, secondary, secondary, 0);
     }
     y += textHeight + px(12);
     const auto drawButton = [&](RECT& bounds, const std::wstring& label, IDWriteTextFormat* style) {
+        if (!drawPixels) return;
         const bool hover = PtInRect(&bounds, clientCursor) != FALSE;
         const auto fill = highContrast ? background :
             D2D1::ColorF(light ? (hover ? 0xe8e8e8 : 0xf9f9f9) : (hover ? 0x414141 : 0x292929));
@@ -436,7 +445,8 @@ void DesktopApp::PreparePageNotifyTextCache()
  */
 void DesktopApp::DrawPageNotify(
     ID2D1DeviceContext* ctx,
-    bool applyAnimation)
+    bool applyAnimation,
+    const RECT* updateRect)
 {
     if (!ctx || !pageNotifyActive_ || pageNotifyText_.empty()) return;
 
@@ -479,6 +489,9 @@ void DesktopApp::DrawPageNotify(
     if (!pageNotifyTextLayout_)
         PreparePageNotifyTextCache();
     if (!pageNotifyTextLayout_)
+        return;
+
+    if (!snowdesktop::foreground_paint_region::Intersects(updateRect, GetPageNotifyBounds()))
         return;
 
     // 背景圆角矩形（半透明深色）
@@ -528,7 +541,7 @@ void DesktopApp::ClearInlineTooltipBackdrop(std::uintptr_t ownerKey)
 
 bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
     const snowdesktop::NativeTooltipTextLayout& measured, float scale,
-    snowdesktop::InlineTooltipBackdrop& backdrop)
+    snowdesktop::InlineTooltipBackdrop& backdrop, const RECT* updateRect)
 {
     if (!ctx || !measured.layout || IsRectEmptyRect(bounds)) return false;
     if (!desktopWidgetCompositionDrawInProgress_ && !renderingFloatingPopup_)
@@ -541,7 +554,8 @@ bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
     const auto appearance = collectionPopupAppearance_;
     if (snowdesktop::NativeTooltipHighContrast())
     {
-        snowdesktop::DrawNativeTooltip(ctx, ToD2DRect(bounds), measured, appearance, scale);
+        if (snowdesktop::foreground_paint_region::Intersects(updateRect, bounds))
+            snowdesktop::DrawNativeTooltip(ctx, ToD2DRect(bounds), measured, appearance, scale);
         return false;
     }
     const float radius = snowdesktop::NativeTooltipCornerRadius(appearance,
@@ -563,6 +577,10 @@ bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
         registered = backdrop.Update(*compositor, backdropBounds, radius,
             appearance.glassBlurRadius, [this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     }
+    // Record content and reconcile its owner before skipping pixel work.
+    // The caller repairs newly discovered tooltip pixels in this transaction.
+    if (!snowdesktop::foreground_paint_region::Intersects(updateRect, bounds))
+        return registered;
     DrawWidgetPanelBackground(ctx, bounds, radius,
         D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
         D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
@@ -572,7 +590,7 @@ bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
 }
 
 bool DesktopApp::DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message,
-    snowdesktop::InlineTooltipBackdrop& backdrop)
+    snowdesktop::InlineTooltipBackdrop& backdrop, const RECT* updateRect)
 {
     if (!ctx || !dwriteFactory_ || !message || !*message) return false;
     POINT cursor{};
@@ -593,19 +611,19 @@ bool DesktopApp::DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* 
     const LONG height = static_cast<LONG>(std::ceil(measured.height));
     const LONG x = work.left + (work.right - work.left - width) / 2;
     const LONG y = std::min(work.top + static_cast<LONG>(60.f * scale), work.bottom - height);
-    return DrawInlineTooltip(ctx, {x, y, x + width, y + height}, measured, scale, backdrop);
+    return DrawInlineTooltip(ctx, {x, y, x + width, y + height}, measured, scale, backdrop, updateRect);
 }
 
-void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
+void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect)
 {
     auto tooltipPaint = hiddenHintBackdrop_.BeginPaint([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     if (desktopIconsHidden_ && showHiddenHint_)
-        tooltipPaint.Keep(DrawDesktopHintOverlay(ctx, _LW("app.overlay.hide_hint"), hiddenHintBackdrop_));
+        tooltipPaint.Keep(DrawDesktopHintOverlay(ctx, _LW("app.overlay.hide_hint"), hiddenHintBackdrop_, updateRect));
 }
 
-void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
+void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx, const RECT* updateRect)
 {
     auto tooltipPaint = widgetAddedHintBackdrop_.BeginPaint([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     if (showWidgetAddedHint_ && !IsUsageGuideVisible())
-        tooltipPaint.Keep(DrawDesktopHintOverlay(ctx, _LW("app.overlay.widget_move_hint"), widgetAddedHintBackdrop_));
+        tooltipPaint.Keep(DrawDesktopHintOverlay(ctx, _LW("app.overlay.widget_move_hint"), widgetAddedHintBackdrop_, updateRect));
 }

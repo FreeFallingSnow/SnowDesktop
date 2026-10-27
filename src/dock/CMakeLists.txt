@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(SnowDesktopDockMinimize32 LANGUAGES CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.DependencyEvidence.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.VersionResources.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.ProductBuild.cmake")
 if (NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "Dock minimize helper requires MSVC and -A Win32")
 endif()
@@ -20,10 +22,7 @@ foreach(target SnowDesktopDockMinimizeHook32 SnowDesktopDockMinimizeHost32 SnowD
     target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /utf-8)
     set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set_target_properties(${target} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${SNOWDESKTOP_OUTPUT_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SNOWDESKTOP_OUTPUT_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}")
+    snowdesktop_private_runtime_target(${target} "${SNOWDESKTOP_OUTPUT_DIR}")
 endforeach()
 if (SNOWDESKTOP_BUILD_HOOK_FIXTURE)
     foreach(marker 1 2)

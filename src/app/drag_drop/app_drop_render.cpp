@@ -116,7 +116,7 @@ void DesktopApp::ApplyPendingPlacement()
     if (changed)
     {
         LayoutItems();
-        SaveLayoutSlots();
+        RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, TRUE);
     }
 }

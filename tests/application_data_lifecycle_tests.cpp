@@ -17,6 +17,7 @@
 #include "data/portable_data_migration.h"
 #include "platform/single_instance.h"
 #include "dock/dock_folder_order_cases.h"
+#include "data/layout_save_queue_cases.h"
 
 #include <windows.h>
 #include <objbase.h>
@@ -1317,6 +1318,8 @@ int main()
 
     const auto hashInput = root / L"sha256-input.bin";
     TestPersistenceTransactions(root);
+    try { layout_save_queue_cases::Run(root); }
+    catch (const std::exception& error) { Expect(false, error.what()); }
     TestPackageMutationTransactions(root / L"package-transactions");
     TestDockFolderOrderPersistence(root);
     TestWidgetCatalogRediscovery(root);

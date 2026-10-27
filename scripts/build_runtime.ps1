@@ -30,14 +30,61 @@ function Get-BuildPython {
     finally {if($process){$process.Dispose()}}
 }
 
-function Ensure-BuildDashboard {
-    # Run inside the existing entry process instead of starting another shell.
+function Test-BuildDashboardHealthy([string]$Root,[int]$Port) {
+    $response=$null;$client=$null;$handler=$null
+    try {
+        $directory=Join-Path $Root '.build/dashboard'
+        $receiptPath=Join-Path $directory ('server-'+$Port+'.json')
+        foreach($part in @((Join-Path $Root '.build'),$directory,$receiptPath)){
+            if(([IO.File]::GetAttributes($part) -band [IO.FileAttributes]::ReparsePoint) -ne 0){return $false}
+        }
+        if((New-Object IO.FileInfo($receiptPath)).Length -gt 4096){return $false}
+        $receipt=[IO.File]::ReadAllText($receiptPath)|ConvertFrom-Json
+        if($receipt.instance -cnotmatch '^[a-f0-9]{32}$' -or $receipt.port -ne $Port -or $receipt.fixture -ne $false){return $false}
+        if(-not ('System.Net.Http.HttpClient' -as [type])){Add-Type -AssemblyName System.Net.Http}
+        $handler=New-Object Net.Http.HttpClientHandler
+        $handler.UseProxy=$false;$handler.AllowAutoRedirect=$false;$handler.UseDefaultCredentials=$false;$handler.UseCookies=$false;$handler.MaxResponseHeadersLength=8
+        $client=New-Object Net.Http.HttpClient($handler)
+        $client.Timeout=[TimeSpan]::FromMilliseconds(750);$client.MaxResponseContentBufferSize=4096
+        # Default completion buffers the bounded body under the same total
+        # timeout, so a slowly trickled response cannot extend each read.
+        $response=$client.GetAsync('http://127.0.0.1:'+$Port+'/api/health').GetAwaiter().GetResult()
+        if($response.StatusCode -ne [Net.HttpStatusCode]::OK){return $false}
+        $health=$response.Content.ReadAsStringAsync().GetAwaiter().GetResult()|ConvertFrom-Json
+        return $health.service -ceq 'SnowDesktop build dashboard' -and $health.instance -ceq $receipt.instance -and $health.fixture -eq $false
+    } catch {return $false}
+    finally {if($response){$response.Dispose()};if($client){$client.Dispose()};if($handler){$handler.Dispose()}}
+}
+function Ensure-BuildDashboard([string]$Root=(Split-Path $PSScriptRoot -Parent),[ValidateRange(0,65535)][int]$Port=0) {
+    $manager=Join-Path $Root 'tools/build-dashboard/manage.py'
+    if(-not [IO.File]::Exists($manager)){return}
+    if($Port -eq 0){
+        $Port=8765;$preferred=Join-Path $Root '.build/dashboard/preferred-port.json'
+        try {
+            $present=$false
+            try{[void][IO.File]::GetAttributes($preferred);$present=$true}catch [IO.FileNotFoundException]{}catch [IO.DirectoryNotFoundException]{}
+            if($present){
+                foreach($part in @((Join-Path $Root '.build'),(Join-Path $Root '.build/dashboard'),$preferred)){
+                    if(([IO.File]::GetAttributes($part) -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Linked dashboard port preference.'}
+                }
+                if((New-Object IO.FileInfo($preferred)).Length -gt 1024){throw 'Oversized dashboard port preference.'}
+                $value=[IO.File]::ReadAllText($preferred)|ConvertFrom-Json
+                if($value.schemaVersion -ne 1 -or ($value.port -isnot [int] -and $value.port -isnot [long])){throw 'Invalid dashboard port preference.'}
+                $Port=$value.port
+            }
+            if($Port -lt 1024 -or $Port -gt 65535){throw 'Dashboard port must be 1024..65535.'}
+        }catch{[Console]::Error.WriteLine('Optional local dashboard unavailable: '+$_.Exception.Message);return}
+    }
+    # A fresh receipt/health comparison avoids starting two Python processes on
+    # every coordination write. Unknown listeners still go through manage.py.
+    if(Test-BuildDashboardHealthy $Root $Port){return}
     $python=Get-BuildPython
     if(-not $python.available){return}
     $process=$null
     try {
         $info=New-Object Diagnostics.ProcessStartInfo
-        $info.FileName=$python.path;$info.Arguments='"'+(Join-Path $PSScriptRoot '../tools/build-dashboard/manage.py')+'" start'
+        $escapedRoot=$Root -replace '(\\+)$','$1$1'
+        $info.FileName=$python.path;$info.Arguments='"'+$manager+'" start --port '+$Port+' --root "'+$escapedRoot+'"'
         $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
         $process=[Diagnostics.Process]::Start($info)
         if(-not $process.WaitForExit(12000)){$process.Kill()}

@@ -5,11 +5,14 @@
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/drag_input_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "native_item_drag_source.h"
+#include "widgets/group_tab_drag_preview.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -205,10 +208,63 @@ void DesktopApp::UpdateWidgetDragPageNavigation(POINT clientPoint)
     PresentDesktopPointerUpdate();
 }
 
+bool DesktopApp::OnNativeMouseMoveAt(
+    WPARAM wp, POINT current,
+    bool* dragPreviewSynced)
+{
+    if (dragPreviewSynced)
+        *dragPreviewSynced = false;
+    constexpr WPARAM mouseButtons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
+        MK_XBUTTON1 | MK_XBUTTON2;
+    const HWND captured = GetCapture();
+    if (!(wp & mouseButtons) && IsOwnedPointerCaptureWindow(captured) &&
+        CanCancelPointerPressAfterCaptureLoss() &&
+        !(HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) & QS_MOUSEBUTTON) &&
+        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+            GetAsyncKeyState(VK_MBUTTON) | GetAsyncKeyState(VK_XBUTTON1) |
+            GetAsyncKeyState(VK_XBUTTON2)) & 0x8000) == 0)
+    {
+        // Device/connection changes can lose the matching button-up. Require
+        // both a button-free pointer message and no physically held button:
+        // a queued move alone must not cancel a live drag (including swapped
+        // buttons/chords). Drain already queued native button messages first;
+        // their real release must retain click/drop semantics. Native OLE and
+        // retained commits are excluded above.
+        CancelPointerPressWithoutCaptureRelease();
+        if (GetCapture() == captured)
+            ReleaseCapturePreservingPointerState();
+        wchar_t recovery[192]{};
+        swprintf_s(recovery, L"Pointer input recovered reason=button-free-return oldCapture=%p newCapture=%p messageButtons=0x%llX physicalButtons=0 queuedButtons=0",
+            static_cast<void*>(captured), static_cast<void*>(GetCapture()),
+            static_cast<unsigned long long>(wp & mouseButtons));
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, recovery);
+        return true;
+    }
+    // Physical release can precede its queued button-up by many old moves.
+    // Component handles use WidgetAction rather than DragSession; include
+    // pending gestures so an old move cannot start one after release. Keep
+    // real button-up authoritative and lost-release recovery above active.
+    const bool nativeWidgetGesture = widgetAction_ != WidgetAction::None &&
+        mouseDownWidgetIndex_ < widgets_.size() &&
+        !dragDropController_.IsTransportActive();
+    if ((snowdesktop::drag_input_rules::IsNativeDragActive(
+            dragSession_.IsActive(), dragDropController_.IsTransportActive()) ||
+            nativeWidgetGesture) &&
+        (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
+        return false;
+    OnMouseMoveAt(wp, current, dragPreviewSynced);
+    return true;
+}
+
 void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    if (dragPreviewSynced)
+        *dragPreviewSynced = false;
+    // This updater is also called after button-up was dequeued and by keyboard,
+    // dwell and OLE resampling. Only the native move entry above can infer a
+    // missing release; doing so here discards the gesture before its commit.
     // Lua hover invalidations and native chrome can request the same child
     // several times in one move. Merge their final state and subsequent
     // passive samples within a bounded presentation interval.
@@ -241,23 +297,59 @@ void DesktopApp::OnMouseMoveAt(
     widgetPointerBatch.passive = passivePointerMove;
     renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
-    if (dragPreviewSynced)
-        *dragPreviewSynced = false;
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
+    const auto queueCategorizedDesktopOwner = [this](ScrollingItemWidget* view) {
+        DesktopWidget* data = view->GetWidgetData();
+        // Single-cell thumbnails read the unfiltered source list, not tab
+        // order or search editing state. Dock popups edit a separate copy.
+        if (!data || IsRectEmptyRect(data->bounds) ||
+            snowdesktop::single_cell_widget::IsDesktopSingleCell(*data))
+            return;
+        const size_t index = FindWidgetIndexById(data->id);
+        if (index >= widgets_.size() || &widgets_[index] != data)
+            return;
+        // A pending complete scene already owns the source update. Let it
+        // establish the layers and backdrop owners before submitting a child.
+        if (desktopBackdropFullCollectionPending_)
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        (void)QueueDesktopWidgetComposition(data->id);
+    };
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
-        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
-        if (view->HasCategoryTabPress()) view->UpdateCategoryTabDrag(current);
-        else view->UpdateSearchPointerSelection(current);
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        bool changed = false;
+        const bool tabPress = view->HasCategoryTabPress();
+        {
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+            if (tabPress) view->UpdateCategoryTabDrag(current, &changed);
+            else changed = view->UpdateSearchPointerSelection(current);
+        }
+        if (changed)
+        {
+            queueCategorizedDesktopOwner(view);
+            if (IsCollectionPopupHostedByFloatingWindow() &&
+                floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
+                InvalidateFloatingPopupWindow(false);
+            else
+                InvalidateCollectionPopupAnimation(false);
+        }
         return;
     }
     for (auto& container : containers_)
         if (auto* categorized = dynamic_cast<ScrollingItemWidget*>(container.get());
-            categorized && categorized->UpdateCategoryTabDrag(current)) return;
+            categorized && categorized->HasCategoryTabPress())
+        {
+            bool changed = false;
+            categorized->UpdateCategoryTabDrag(current, &changed);
+            if (changed) queueCategorizedDesktopOwner(categorized);
+            return;
+        }
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseMoveBegin,
         tracePoint);
@@ -381,7 +473,7 @@ void DesktopApp::OnMouseMoveAt(
                     localX, localY, 1, 0);
             }
             UpdateHostInputImePosition();
-            (void)PresentDesktopForegroundComposition(content);
+            (void)PresentDesktopForegroundComposition(GetLuaWidgetPanelRect());
             return;
         }
 
@@ -456,10 +548,9 @@ void DesktopApp::OnMouseMoveAt(
         if (!searchable ||
             !searchable->IsSearchPointerSelecting())
             continue;
-        searchable->UpdateSearchPointerSelection(current);
+        const bool changed = searchable->UpdateSearchPointerSelection(current);
         UpdateHostInputImePosition();
-        if (DesktopWidget* data = searchable->GetWidgetData())
-            (void)QueueDesktopWidgetComposition(data->id);
+        if (changed) queueCategorizedDesktopOwner(searchable);
         return;
     }
 
@@ -684,6 +775,7 @@ void DesktopApp::OnMouseMoveAt(
             // From this point the drag session owns the logical interaction.
             // Do not retain the original wrapper pointer across object rebuilds.
             mouseDownHit_ = nullptr;
+            ClearDockPressedState();
             pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
             pendingCtrlToggleWidgetItem_ = nullptr;
             marqueeActive_ = false;
@@ -824,7 +916,7 @@ void DesktopApp::OnMouseMoveAt(
                 }
             widgetCollectionGroupTargetIndex_ = groupTarget;
             widgetCollectionGroupInsertIndex_ =
-                widgets_[groupTarget].childWidgetIds.size();
+                static_cast<size_t>(-1);
             for (auto& container : containers_)
             {
                 auto* group =
@@ -835,25 +927,18 @@ void DesktopApp::OnMouseMoveAt(
                     continue;
                 Slot* slot = nullptr;
                 HitRegion region = group->HitTestDrag(current, slot);
-                const bool overTab =
-                    widgets_[groupTarget].type ==
-                        DesktopWidgetType::CollectionGroup
-                        ? !dynamic_cast<CollectionGroup*>(group)->
-                            CategoryIdAtPoint(current).empty()
-                        : !dynamic_cast<FileGroup*>(group)->
-                            SourceIdAtPoint(current).empty();
-                if (overTab && slot)
+                if (snowdesktop::group_tab_drag_preview::IsTabInsertion(slot, region))
                     widgetCollectionGroupInsertIndex_ =
-                        std::min(slot->GetIndex() + (region == HitRegion::SortAfter ? 1 : 0),
+                        std::min(group->GetDropInsertIndex(slot, region),
                             widgets_[groupTarget].childWidgetIds.size());
                 break;
             }
             widgetDockTarget_ = false;
             widgetDockTargetContainer_ = nullptr;
-            ShowDragHintWindow(current,
-                _LW(movingCollection
-                    ? "core.drag.move_collection_group"
-                    : "core.drag.move_file_group"));
+            if (widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1))
+                ShowDragHintWindow(current, _LW(movingCollection
+                    ? "core.drag.move_collection_group" : "core.drag.move_file_group"));
+            else HideDragHintWindow();
             return;
         }
         widgetCollectionGroupTargetIndex_ =
@@ -967,9 +1052,13 @@ void DesktopApp::OnMouseMoveAt(
         }
 
         RevealSoftwareDesktopForDockDrag(current);
-        SyncDragPreviewWindow();
-        if (dragPreviewSynced)
-            *dragPreviewSynced = true;
+        // Tab landings replace the floating block. Resolve this sample's
+        // landing first so the end-of-input presentation switches atomically.
+        if (!snowdesktop::group_tab_drag_preview::CarriesTabs(dragSession_.SourceList()))
+        {
+            SyncDragPreviewWindow();
+            if (dragPreviewSynced) *dragPreviewSynced = true;
+        }
         bool overExternal = IsExternalDropWindowAt(current);
 
         if (overExternal)
@@ -1174,7 +1263,7 @@ void DesktopApp::OnMouseMoveAt(
                                 });
                         }
                     }
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                 }
 
                 if (!dragDropController_.SelfDragReturned())
@@ -1185,7 +1274,7 @@ void DesktopApp::OnMouseMoveAt(
                 }
                 else
                 {
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     CancelActiveItemDrag();
                     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1248,24 +1337,47 @@ void DesktopApp::OnMouseMoveAt(
             // Drop feedback lives on the foreground surface, but icon hover
             // pixels still belong to the background. Retire both hover states
             // before presenting the new feedback, including large-icon bounds.
-            if (IsPointOverWidgetChrome(oldMouse) ||
-                IsPointOverWidgetChrome(current))
+            if (presentedDragFeedbackRevision_ == 0 ||
+                desktopBackdropFullCollectionPending_ ||
+                desktopWidgetCompositionFailurePending_)
             {
+                // Keep first-layer migration and recovery in the original
+                // root paint transaction, without an earlier child commit.
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
             else
             {
-                // Background hover uses the complete layout cell, whereas
-                // input hit testing uses the tighter selection rectangle.
-                // Leaving the cell's padding must also erase its hover pixels.
+                const bool oldMouseOverWidget = IsPointOverWidgetChrome(oldMouse);
+                const bool newMouseOverWidget = IsPointOverWidgetChrome(current);
+                // This branch is past the nested OLE loop. Merge old/new child
+                // requests in the existing message-local batch and flush before
+                // returning, including continuously varying chrome/content hover.
+                desktopWidgetPointerBatchActive_ = true;
+                for (const auto& widget : widgets_)
+                {
+                    if (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)
+                        continue;
+                    const RECT frame = GetStandaloneWidgetFrameRect(widget);
+                    if (IsRectEmptyRect(frame) ||
+                        (!PtInRect(&frame, oldMouse) && !PtInRect(&frame, current)))
+                        continue;
+                    if (!QueueDesktopWidgetComposition(widget.id))
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+
+                // Background hover uses the complete cell, with widget occlusion
+                // applied before comparing states. Crossing a widget edge inside
+                // the same cell must erase its previous icon highlight too.
                 for (const auto& entry : items_oo_)
                 {
                     const auto* icon = dynamic_cast<const DesktopIcon*>(entry.get());
                     const auto* item = icon ? icon->GetDesktopItem() : nullptr;
-                    if (!item || IsRectEmptyRect(item->bounds) ||
-                        PtInRect(&item->bounds, oldMouse) ==
-                            PtInRect(&item->bounds, current))
-                        continue;
+                    if (!item || IsRectEmptyRect(item->bounds)) continue;
+                    const bool oldHovered = !oldMouseOverWidget &&
+                        PtInRect(&item->bounds, oldMouse);
+                    const bool newHovered = !newMouseOverWidget &&
+                        PtInRect(&item->bounds, current);
+                    if (oldHovered == newHovered) continue;
                     RECT dirty = item->largeIcon
                         ? GetLargeIconFrameRect(*item) : item->bounds;
                     if (IsRectEmptyRect(dirty)) continue;
@@ -1426,38 +1538,37 @@ void DesktopApp::OnMouseMoveAt(
             {
                 if (dock->ContainsInteractivePoint(point))
                 {
+                    const auto dockLayer =
+                        IsDockHostedByPersistentHost(dock) ||
+                            (desktopIconsHidden_ && !IsRetainedContainer(dock))
+                        ? snowdesktop::widget_composition_layer_rules::PointerVisualLayer::None
+                        : snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground;
                     if (DockEntryItem* entry = dock->EntryAtPoint(point))
                         return {
                             dock, entry, 8, entry->GetEntryIndex(), true,
                             nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (DockRunningItem* item = dock->RunningItemAtPoint(point))
                         return {
                             dock, item, 12, item->GetRunningIndex(), true,
                             nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (DockFrequentItem* item = dock->FrequentItemAtPoint(point))
                         return {
                             dock, item, 11, item->GetItemIndex(), true,
                             nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (dock->IsWindowsButtonPoint(point))
                         return {
                             dock, dock, 13, 0, true, nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     if (dock->IsSearchPoint(point))
                         return {
                             dock, dock, 9, 0, true, nullptr, {},
-                            snowdesktop::widget_composition_layer_rules::
-                                PointerVisualLayer::Foreground };
+                            dockLayer };
                     return {
                         dock, dock, 10, 0, true, nullptr, {},
-                        snowdesktop::widget_composition_layer_rules::
-                            PointerVisualLayer::Foreground };
+                        dockLayer };
                 }
             }
 
@@ -1583,6 +1694,7 @@ void DesktopApp::OnMouseMoveAt(
             auto* dock = dynamic_cast<DockContainer*>(
                 container.get());
             if (!dock ||
+                IsDockHostedByPersistentHost(dock) ||
                 (desktopIconsHidden_ &&
                     !IsRetainedContainer(dock)))
             {
@@ -1607,11 +1719,14 @@ void DesktopApp::OnMouseMoveAt(
                 ShouldInvalidateDesktopHover(
                     handlingFloatingDockInput_ ||
                     handlingFloatingPopupInput_);
+        const auto isDesktopDockVisual = [](const MouseHoverVisual& visual) {
+            return visual.kind >= 8 && visual.kind <= 13 &&
+                snowdesktop::widget_composition_layer_rules::
+                    NeedsForegroundPaint(visual.layer);
+        };
         const bool dockHoverActive =
-            (oldVisual.kind >= 8 &&
-                oldVisual.kind <= 13) ||
-            (newVisual.kind >= 8 &&
-                newVisual.kind <= 13) ||
+            isDesktopDockVisual(oldVisual) ||
+            isDesktopDockVisual(newVisual) ||
             dockHoverPresentationTracked;
         if (invalidateDesktopHover &&
             (marqueeActive_ || hoverChanged ||
@@ -1660,7 +1775,16 @@ void DesktopApp::OnMouseMoveAt(
                 {
                     auto* dock = dynamic_cast<DockContainer*>(
                         container.get());
-                    if (!dock)
+                    if (!dock || IsDockHostedByPersistentHost(dock) ||
+                        (desktopIconsHidden_ && !IsRetainedContainer(dock)))
+                        continue;
+                    // The old/current owner and the focus-retention strip can
+                    // need clearing even after the latest hit test moved focus.
+                    // Other live magnification tracks still own their exit pixels.
+                    if (dock != oldVisual.owner && dock != newVisual.owner &&
+                        !dock->IsMagnificationAnimating() &&
+                        !snowdesktop::dock_magnification::ShouldTrackHoverPresentation(
+                            dock->GetInteractiveBounds(), oldMouse, current))
                         continue;
                     // Dock hit-testing updates a hysteresis-backed focus
                     // rect. Reconstructing the old title/panel after resolving

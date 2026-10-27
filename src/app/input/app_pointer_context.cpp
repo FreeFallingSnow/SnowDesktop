@@ -376,8 +376,11 @@ void DesktopApp::OnRightButtonDown(
 
 int DesktopApp::PointerGestureVirtualKey() const
 {
-    return middleButtonWidgetMove_ ? VK_MBUTTON :
-        rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON;
+    if (middleButtonWidgetMove_) return VK_MBUTTON;
+    // Mouse messages name logical buttons; GetAsyncKeyState reads physical
+    // buttons even when the system's primary/secondary mapping is swapped.
+    const bool swapped = GetSystemMetrics(SM_SWAPBUTTON) != 0;
+    return rightButtonItemDrag_ != swapped ? VK_RBUTTON : VK_LBUTTON;
 }
 
 bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
@@ -668,7 +671,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     if (dock && contextDockHost && contextDockHost->active &&
         !dockOwnsContextInput)
     {
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input,
             L"Floating Dock context summon ignored: right-button press did not begin on matching DockHost");
         // The release belongs to a press handled by another surface (most
         // commonly a menu that disappeared after button-down). Do not let it
@@ -697,7 +700,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                         // Menu commands need the launcher as their target even
                         // when its running indicator suppresses Dock selection.
                         items_[itemIndex].selected = true;
-                        items_[itemIndex].bounds = dockItemBounds;
+                        // The source can remain visible on the desktop. Pass
+                        // its Dock anchor separately without moving that view.
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         ShowItemContextMenu(
                                 screenPt,
@@ -737,8 +741,6 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ClearSelection();
                 frequentItem->SetSelected(true);
                 items_[itemIndex].selected = true;
-                items_[itemIndex].bounds = dock->GetElementVisualRect(
-                    frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 ShowItemContextMenu(
                         screenPt,

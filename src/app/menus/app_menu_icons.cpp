@@ -617,7 +617,7 @@ UINT DesktopApp::ShowModernMenu(
     if (floatingDockHostWindowVisible &&
         !floatingDockHostEffectivelyFloating)
     {
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
             L"Desktop-band Dock excluded from modern menu Z-order ownership");
     }
     if (zOrderOwner)
@@ -692,7 +692,7 @@ UINT DesktopApp::ShowModernMenu(
              << (collectionPopupBackdropCompositor_.IsAvailable() ? 1 : 0)
              << L" popupGlass=" << (collectionPopupGlassTheme_ ? 1 : 0)
              << L" pid=" << GetCurrentProcessId();
-        WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, line.str().c_str(), DiagnosticLogLevel::Debug);
     }
     snowdesktop::shell_extensions::ConfigureMoreManagementRow(
         items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"),
@@ -765,12 +765,16 @@ void DesktopApp::ConfigureModernMenuEventPump(
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
     };
-    options.eventPump.traceDiagnostic = [this](const std::wstring& message) {
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Debug);
-        // Menu checkpoints share the click trace's window/composition state.
-        TraceDesktopInteraction(L"menu-checkpoint");
-    };
+    if (snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Menus) ||
+        snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Input))
+    {
+        options.eventPump.traceDiagnostic = [this](const std::wstring& message) {
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
+                message.c_str(), DiagnosticLogLevel::Debug);
+            // Menu checkpoints share the click trace's window/composition state.
+            TraceDesktopInteraction(L"menu-checkpoint");
+        };
+    }
     options.zOrderFloor = [this]() -> HWND {
         HWND floor = nullptr;
         // All visible DockHosts participate, including desktop-band hosts
@@ -821,7 +825,7 @@ void DesktopApp::PreserveModernMenuHostZOrder(
          << L" requestedFlags=0x" << std::hex << requestedFlags
          << L" appliedFlags=0x" << position.flags << std::dec
          << L" shellDepth=" << shellPopupMenuLayerDepth_;
-    WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, line.str().c_str(), DiagnosticLogLevel::Debug);
 }
 
 void DesktopApp::ClearMenuIcons()

@@ -1,7 +1,8 @@
 bin/
 obj/
 .vs/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.user
 *.suo
 TestResults/

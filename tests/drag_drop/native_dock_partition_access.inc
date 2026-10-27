@@ -31,6 +31,35 @@
     }
     static std::size_t DockPartitionFolderCount(DesktopApp& app)
     { return app.DockFolderEntryCount(); }
+    static void SeedColdFolderPreview(DesktopApp& app, const std::vector<std::filesystem::path>& files)
+    {
+        // Source first, followed by one fixed entry and one existing folder.
+        SeedDockPartitions(app, files, false, true);
+        app.shellVisualWork_.Stop();
+        app.dockFolderTargetCache_ = {};
+        for (std::size_t index = 1; index < files.size(); ++index)
+        {
+            app.dockEntries_.push_back({DockEntryType::DesktopItem, ToUpperInvariant(files[index].wstring()), true});
+            (void)app.ResolveDockFolderTarget(app.dockEntries_.back(), nullptr, true);
+        }
+        app.RefreshCollectedKeysCache(); app.LayoutItems();
+    }
+    static bool ColdSourceStillUnknown(DesktopApp& app, const std::filesystem::path& path)
+    { return !app.IsFolderDockEntry({DockEntryType::DesktopItem, ToUpperInvariant(path.wstring()), true}); }
+    static snowdesktop::dock_folder_rules::InsertRange DockPartitionPreviewRange(DesktopApp& app)
+    {
+        auto* dock = Dock(app);
+        const auto& slots = dock->GetSlots();
+        return {dock->GetDropInsertIndex(slots.empty() ? nullptr : slots.front().get(), HitRegion::SortBefore),
+            dock->GetDropInsertIndex(nullptr, HitRegion::Empty)};
+    }
+    static std::size_t DockPartitionPreviewIndex(DesktopApp& app)
+    { return Dock(app)->GetDropInsertIndex(app.dragSession_.TargetSlot(), app.dragSession_.TargetRegion()); }
+    static void EndPartitionPreview(DesktopApp& app)
+    {
+        app.dragSession_.End(); app.dragDropController_.EndExternalDrag();
+        app.ClearSelection();
+    }
     static void ReorderCapturedDockPartitions(DesktopApp& app)
     {
         std::vector<std::size_t> selected;

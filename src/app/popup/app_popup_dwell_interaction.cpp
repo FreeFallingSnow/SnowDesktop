@@ -362,7 +362,7 @@ void DesktopApp::TraceCollectionPopupDwell(
         L"Collection dwell trace: %ls point=(%ld,%ld) mouseDown=%d capture=%p",
         signature, point.x, point.y,
         mouseDown_ ? 1 : 0, GetCapture());
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
 #endif
 }
 

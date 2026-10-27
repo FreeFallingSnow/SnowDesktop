@@ -2,6 +2,9 @@
 #include <algorithm>
 #include <iostream>
 using namespace build_test;
+void evidence_records_tests(const fs::path& repo,bool omitEvidence,bool queryStartup);
+void acceptance_records_tests(const fs::path& repo,bool omitRevisionGuard);
+void verification_records_tests(const fs::path& repo,const std::string& control);
 namespace {
 void test(const fs::path& repo) {
     auto root=temporary("plan-execution");
@@ -27,7 +30,8 @@ exit 0
     auto request=Json::object({{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha"})},{"requiredFull",false},{"reason","independent fixture"}});
     auto second=request;second["tests"]=Json::array({"Beta"});
     auto plan=Json::object({{"schemaVersion",1},{"batchId",batch},{"configuration","Release"},{"mode","selected"},{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha","Beta"})},{"tasks",Json::array({Json::object({{"participant","a"},{"requirement",request}}),Json::object({{"participant","b"},{"requirement",second}})})}});
-    Bridge bridge(repo,root);
+    copy_persistent_entry(repo,root);copy(repo,root,{"scripts/powershell_runtime.bat"});write(root/L".gitignore","/*\n!/scripts/\n!/.gitignore\n");init_git(root);
+    Bridge bridge(repo,root,false,true);
     auto invoke=[&](const std::string& mode,bool success) {
         write(root/L"behavior",mode);write(folder/wide(batch+".plan.json"),plan.dump());
         auto result=bridge.invoke(root/L"scripts/test_manager.ps1",{"-Mode","plan","-PlanBatch",batch},env,20);
@@ -37,6 +41,7 @@ exit 0
     auto coverage=invoke("pass",true);require(coverage.at("status").str()=="passed"&&coverage.at("tasks").items.size()==2,"Coverage tasks not passed");
     for(const auto& item:coverage.at("tasks").items)require(item.at("status").str()=="passed","Per-task pass missing");
     require(coverage.at("testExecutablesBeforeRun").items.size()==2,"Fingerprint inventory incomplete");for(const auto& item:coverage.at("testExecutablesBeforeRun").items)require(item.at("sha256").str().size()==64,"Fingerprint missing");
+    require(coverage.at("testDefinitionsBeforeRun").items.size()==2&&coverage.at("executionContext").at("digest").str().size()==64&&!coverage.at("executionContext").at("externalDependenciesClosed").boolean,"Actual test invocation/environment identity was lost or external dependencies were inferred closed");
     coverage=invoke("failed",false);require(coverage.at("tasks").items[1].at("failed").items[0].str()=="Beta"&&coverage.at("tasks").items[0].at("status").str()=="passed","Per-task failure attribution incorrect");
     coverage=invoke("skipped",false);for(const auto& item:coverage.at("tasks").items)require(item.at("status").str()=="not-run","Skipped treated as pass");
     auto before=read(root/L"build.count");coverage=invoke("environment",false);
@@ -60,4 +65,12 @@ exit 0
     std::cout<<"PASS real test manager selection, fingerprints, task coverage, explicit unavailable/zero/skipped failure, cold/legacy host guards, arrangement and full output checkpoints"<<std::endl;
 }
 }
-int main(int argc,char** argv) {return test_main(argc,argv,test);}
+int main(int argc,char** argv) {return test_main(argc,argv,[&](const fs::path& repo){
+    if(argc>2){
+        const std::string mode=argv[2];
+        if(mode=="--verification"||mode=="--verification-configure"||mode=="--verification-duplicate"||mode=="--verification-path"||mode=="--verification-observations"){verification_records_tests(repo,mode=="--verification"?"":mode.substr(15));return;}
+        if(mode=="--evidence"||mode=="--without-evidence"||mode=="--with-query-startup"){evidence_records_tests(repo,mode=="--without-evidence",mode=="--with-query-startup");return;}
+        if(mode=="--acceptance"||mode=="--without-acceptance-revision"){acceptance_records_tests(repo,mode=="--without-acceptance-revision");return;}
+    }
+    test(repo);
+});}

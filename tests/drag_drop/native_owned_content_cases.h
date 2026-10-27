@@ -24,7 +24,7 @@ public:
     std::map<CLIPFORMAT, std::vector<std::byte>> formats;
     std::vector<std::string> contents;
     bool asynchronous = false, wrongApartment = false, readBeforeStart = false;
-    int failedContent = -1, starts = 0, ends = 0, reads = 0;
+    int failedContent = -1, starts = 0, ends = 0, reads = 0, contentReads = 0;
     DWORD owner = GetCurrentThreadId(), endEffect = 0xffffffff;
     HRESULT outcome = E_PENDING;
     void CheckThread() { wrongApartment |= owner != GetCurrentThreadId(); }
@@ -68,9 +68,9 @@ public:
         auto* drop = reinterpret_cast<DROPFILES*>(bytes.data()); drop->pFiles = sizeof(DROPFILES); drop->fWide = TRUE;
         memcpy(bytes.data() + sizeof(DROPFILES), names.data(), names.size() * sizeof(wchar_t));
     }
-    void ShellNamespaceAlternative()
+    void ShellNamespaceAlternative(const fs::path& file = {})
     {
-        const auto parsing = std::wstring(L"::") + kDesktopIconClsidRecycleBin;
+        const auto parsing = file.empty() ? std::wstring(L"::") + kDesktopIconClsidRecycleBin : file.wstring();
         PIDLIST_ABSOLUTE absolute = nullptr;
         Require(SUCCEEDED(SHParseDisplayName(parsing.c_str(), nullptr, &absolute, 0, nullptr)) && absolute,
             "resolve a known Shell namespace representation without enumerating the desktop");
@@ -106,6 +106,7 @@ public:
         const std::byte* bytes = nullptr; std::size_t size = 0; bool stream = false;
         if (format->cfFormat == Named(CFSTR_FILECONTENTS))
         {
+            ++contentReads;
             if (format->lindex < 0 || static_cast<std::size_t>(format->lindex) >= contents.size() || format->lindex == failedContent)
                 return DV_E_LINDEX;
             const auto& content = contents[static_cast<std::size_t>(format->lindex)];
@@ -118,7 +119,10 @@ public:
             if (found == formats.end() || !(format->tymed & TYMED_HGLOBAL)) return DV_E_FORMATETC;
             bytes = found->second.data(); size = found->second.size();
         }
-        readBeforeStart |= asynchronous && starts == 0;
+        // Native synchronous Shell binding may inspect a CIDA during Drop.
+        // Delayed file bytes on the asynchronous decoder path still require
+        // its source lease before extraction; asynchronous hover forbids reads.
+        readBeforeStart |= asynchronous && format->cfFormat == Named(CFSTR_FILECONTENTS) && starts == 0;
         HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, std::max<std::size_t>(size, 1));
         if (!memory) return E_OUTOFMEMORY;
         void* destination = GlobalLock(memory);
@@ -447,5 +451,87 @@ inline void Run(std::string_view targetName, bool cancel = false, bool rightCopy
         }
     }
     std::cout << scenes << " native owned-content decoding, routing, source lifetime and persistent output scenes passed\n";
+}
+
+inline void RunShellFiles(std::string_view targetName)
+{
+    if (targetName == "dock") return;
+    const bool mapped = targetName == "mapping", keyed = targetName == "collection";
+    native_drag_commit_cases::Profile profile;
+    const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop;
+    fs::create_directories(desktop);
+    for (const bool asynchronous : {false, true})
+    {
+        native_drag_commit_cases::context = "phone Shell file target=" + std::string(targetName) +
+            " async=" + std::to_string(asynchronous);
+        const auto directory = profile.root / (asynchronous ? L"shell-async" : L"shell-sync");
+        fs::create_directories(directory / L"mapped");
+        const auto original = (mapped ? directory / L"mapped" : desktop) / L"Existing-Target.txt";
+        const auto borrowed = directory / L"Large-Shell-File.bin";
+        { std::ofstream stream(original, std::ios::binary); stream << "existing-target"; }
+        { std::ofstream stream(borrowed, std::ios::binary); stream << "native-provider-header"; }
+        constexpr std::uint64_t fileSize = 70ull * 1024ull * 1024ull;
+        fs::resize_file(borrowed, fileSize);
+        { std::fstream stream(borrowed, std::ios::binary | std::ios::in | std::ios::out);
+          stream.seekp(static_cast<std::streamoff>(fileSize - 22)); stream << "native-provider-footer"; }
+        auto& app = profile.Model(false, directory / L"layout");
+        if (mapped || keyed) Access::SeedExternalStorage(app,
+            mapped ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection,
+            mapped ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection, false, original);
+        else Access::PopulateModel(app, {original}, 0);
+        Access::PrepareReload(app); Access::BindAsync(app);
+        Require(Access::Save(app), "save large native Shell file ingress baseline");
+        const auto staged = Staged();
+        auto source = Microsoft::WRL::Make<Source>();
+        source->asynchronous = asynchronous;
+        source->Virtual(1, false);
+        auto& bytes = source->formats[Source::Named(CFSTR_FILEDESCRIPTORW)];
+        auto* descriptor = reinterpret_cast<FILEGROUPDESCRIPTORW*>(bytes.data());
+        descriptor->fgd[0].nFileSizeLow = static_cast<DWORD>(fileSize);
+        wcscpy_s(descriptor->fgd[0].cFileName, borrowed.filename().c_str());
+        source->ShellNamespaceAlternative(borrowed);
+        auto adapter = Access::ExternalAdapter(app);
+        const POINT point = mapped || keyed ? POINT{350, 250} : POINT{150, 150};
+        DWORD effect = DROPEFFECT_COPY; Access::FreshExternalDwell(app);
+        Require(SUCCEEDED(adapter->DragEnter(source.Get(), MK_LBUTTON | MK_CONTROL,
+            Access::ExternalPoint(point), &effect)), "large Shell file enters actual OLE host routing");
+        effect = DROPEFFECT_COPY; Access::FreshExternalDwell(app);
+        Require(SUCCEEDED(adapter->DragOver(MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &effect)),
+            "large Shell file hover preserves its offered Copy action");
+        Require(source->contentReads == 0 && (!asynchronous || source->reads == 0) &&
+            source->starts == 0 && Staged() == staged,
+            "large Shell file hover must not extract content or lease the source");
+        effect = DROPEFFECT_COPY; Access::FreshExternalDwell(app);
+        Require(SUCCEEDED(adapter->Drop(source.Get(), MK_CONTROL, Access::ExternalPoint(point), &effect)) &&
+            effect == DROPEFFECT_COPY, "a real Shell file larger than 64 MiB must copy through host Drop");
+        const auto destination = mapped ? original.parent_path() : desktop;
+        const auto outputs = Outputs(destination, {original});
+        Require(outputs.size() == 1 && fs::file_size(outputs.front()) == fileSize &&
+            Read(outputs.front()) == Read(borrowed), "native transfer retains the entire large source bytes");
+        Require(source->contentReads == 0 && source->starts == source->ends && !source->wrongApartment &&
+            Staged() == staged && Read(original) == "existing-target",
+            "native Shell files bypass the private stream decoder and retain source lifetime and unrelated data");
+        native_drag_async_reload_cases::Refresh(app, true);
+        const auto check = [&] {
+            if (mapped || keyed)
+            {
+                const auto& widget = native_ole_widget_cases::Widget(app, L"ingress-root");
+                const bool found = mapped ? std::any_of(widget.folderEntries.begin(), widget.folderEntries.end(),
+                    [&](const auto& entry) { return fs::equivalent(entry.fullPath, outputs.front()); }) :
+                    std::count(widget.itemKeys.begin(), widget.itemKeys.end(), ToUpperInvariant(outputs.front().wstring())) == 1;
+                Require(found, "actual native Shell output retains its captured destination membership");
+            }
+            else Require(Access::HasMatchingRuntimeSlot(app, Find(app, ToUpperInvariant(outputs.front().wstring()))),
+                "actual native Shell output lands in the desktop model");
+        };
+        check(); Require(Access::Save(app), "save native Shell output ownership");
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        Access::StopModel(app); source.Reset();
+        if (!mapped)
+        {
+            for (const auto& output : outputs) RemoveOwnedOutput(desktop, output);
+            native_dock_return_cases::RemoveOwnedEntry(desktop, original);
+        }
+    }
 }
 }

@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(SnowDesktopWallpaperHook32 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.DependencyEvidence.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.VersionResources.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/SnowDesktop.ProductBuild.cmake")
 
 if (NOT MSVC)
     message(FATAL_ERROR "SnowDesktop 32-bit Wallpaper Engine Hook requires MSVC")
@@ -57,10 +59,7 @@ set_property(TARGET SnowDesktopWallpaperInjector32 PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 foreach(target SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32)
-    set_target_properties(${target} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${SNOWDESKTOP_OUTPUT_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SNOWDESKTOP_OUTPUT_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${SNOWDESKTOP_OUTPUT_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${SNOWDESKTOP_OUTPUT_DIR}")
+    snowdesktop_private_runtime_target(${target} "${SNOWDESKTOP_OUTPUT_DIR}")
 endforeach()
+snowdesktop_add_product_build(SnowDesktopWallpaperCapture32
+    SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32)

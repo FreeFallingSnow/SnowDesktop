@@ -76,6 +76,24 @@ void TestFilteredBackgroundDeliveryDoesNotWakeDeferredModels()
         "popup-only draining neither applies a held source result nor reposts its blocked wakeup");
     work.Drain();
     Check(applied == 7, "the same deferred source result applies once after the gesture fence clears");
+
+    snowdesktop::BackgroundWork notified(1);
+    notified.SetReadyCallback([target = window.value] {
+        PostMessageW(target, wake, 0, 0);
+    });
+    applied = 0;
+    notified.Submit(L"image:ready", [] { return 13; },
+        [&](int value) { applied = value; }, nullptr, 0);
+    ready = false;
+    const auto notifyDeadline = GetTickCount64() + 2000;
+    while (!ready && GetTickCount64() < notifyDeadline)
+    {
+        ready = PeekMessageW(&message, window.value, wake, wake, PM_REMOVE) != FALSE;
+        if (!ready) MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_POSTMESSAGE, MWMO_INPUTAVAILABLE);
+    }
+    Check(ready && applied == 0, "ready callbacks notify without mutating the owner model");
+    notified.Drain();
+    Check(applied == 13, "the first callback wake must already have a deliverable completion");
 }
 
 void TestBackgroundShellWorkIsolation()

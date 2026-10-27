@@ -13,10 +13,11 @@ void run_tests(const fs::path& repo){
     const auto defaultEntry=run({L"cmd.exe",L"/d",L"/c",(root/L"scripts/test.bat").wstring()},root);
     require(defaultEntry.code==2&&defaultEntry.out.find("Usage:")!=std::string::npos&&!fs::exists(root/L"scripts/unexpected.txt"),"No-argument test entry launched work instead of showing usage");
     write(script,"param([string]$Operation)\n$ErrorActionPreference='Stop';Set-StrictMode -Version Latest\n$repositoryRoot="+ps_literal(repo)+R"PS(
-foreach($import in @(@{path='scripts/test_manager.ps1';functions=@('Get-TestSelection','Invoke-FilteredTests','Get-TestRunOptions','Assert-HostRuntimeAvailable','Assert-CompleteTestReport')},@{path='scripts/build_protocol.ps1';functions=@('Get-Field','Resolve-PlanTests')},@{path='scripts/test_output.ps1';functions=@('Test-IsolatedOutput')})){
+foreach($import in @(@{path='scripts/test_manager.ps1';functions=@('Get-TestSelection','Get-TestBuildRoots','Get-TestConfirmedBuildTargets','Invoke-FilteredTests','Get-TestRunOptions','Assert-HostRuntimeAvailable','Assert-CompleteTestReport')},@{path='scripts/build_protocol.ps1';functions=@('Get-Field','Resolve-PlanTests')},@{path='scripts/test_output.ps1';functions=@('Test-IsolatedOutput')},@{path='scripts/build_entry.ps1';functions=@('Read-EntryJson','Test-CandidateSourceRoot','Get-CandidateEntryContext')})){
  $tokens=$null;$errors=$null;$source=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryRoot $import.path),[ref]$tokens,[ref]$errors)
  foreach($functionName in $import.functions){$definition=$source.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName},$false);. ([scriptblock]::Create($definition.Extent.Text))}
 }
+$repositoryRoot=$PSScriptRoot # Function-only probes operate on their isolated fixture, including inside a candidate checkout.
 $request=Get-Content -Raw (Join-Path $PSScriptRoot 'request.json')|ConvertFrom-Json
 $script:fixture=$request.inventory|ConvertTo-Json -Depth 12 -Compress;$script:queryArguments=@();$script:invocations=@();$script:runtimeInspections=0;$script:runtimeLocks=@($request.locks);$Mode='name'
 function Get-HostRuntimeLocks {++$script:runtimeInspections;$script:runtimeLocks}

@@ -19,6 +19,7 @@
 #include "dock/dock_insertion_cases.h"
 #include "dock/dock_task_window_filter_tests.h"
 #include "dock/dock_process_snapshot.h"
+#include "dock/dock_process_discovery_tests.h"
 #include "common/bounded_lru_cache.h"
 #include "diagnostics/slow_call_limiter.h"
 #include "icons/icon_row_index.h"
@@ -61,6 +62,7 @@
 #include "dock/floating_dock_rules.h"
 #include "system/panel/system_panel_placement.h"
 #include "system/status_bar/status_bar_appbar.h"
+#include "platform/foreground_fullscreen.h"
 #include "dock/merged_dock_presentation.h"
 #include "system/status_bar/status_bar_layout.h"
 #include "system/status_bar/status_bar_tooltip.h"
@@ -115,6 +117,7 @@ namespace identityRules = snowdesktop::dock_app_identity_rules;
 int RunDesktopBackdropCompositorTests();
 int RunExplorerIconVisibilityTests();
 int RunNativeTaskbarTests();
+int RunDockStartMenuTests();
 int RunTrayModelTests();
 int RunDockWindowPinTests();
 int TryRunTrayLiveTests();
@@ -723,9 +726,9 @@ void CheckTaskbarMinimizeProtection()
 
     DockSettings settings;
     settings.suppressSystemTaskbar = false;
-    Check(ShouldProtectAutoHideTaskbar(settings, false, true) &&
+    Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
         !ShouldProtectAutoHideTaskbar(settings, true, false),
-        "native auto-hide protection is independent of Dock enablement");
+        "native auto-hide alone must not enable protection without an active Dock");
     settings.position = DockPosition::Left;
     Check(ShouldProtectAutoHideTaskbar(settings, true, true),
         "a side Dock does not exclude passive taskbar activation on other screens");
@@ -733,6 +736,7 @@ void CheckTaskbarMinimizeProtection()
     Check(ShouldProtectAutoHideTaskbar(settings, true, false) &&
         !ShouldProtectAutoHideTaskbar(settings, false, false),
         "permanent hiding protects only its active auto-hide override");
+    for (const bool allMonitors : {false, true})
     for (const bool dockOnPrimary : {false, true})
     {
         SharedState shared;
@@ -741,7 +745,8 @@ void CheckTaskbarMinimizeProtection()
         for (LONG i = 0; i < 2; ++i)
         {
             SystemTaskbarTargetAppearance target{.appearance = PersonalizationSettings{}};
-            ConfigureSystemTaskbarTargetProtection(target, true, true, (i == 0) == dockOnPrimary);
+            ConfigureSystemTaskbarTargetProtection(target, true, true,
+                (i == 0) == dockOnPrimary, allMonitors);
             shared.targets[i].taskbar = static_cast<std::uintptr_t>(i + 1);
             shared.targets[i].suppressTaskbar = target.suppressTaskbar;
             shared.targets[i].protectAutoHideActivation = target.protectAutoHideActivation;
@@ -755,8 +760,8 @@ void CheckTaskbarMinimizeProtection()
             const auto taskbar = static_cast<std::uintptr_t>(i + 1);
             Check(ProtectsTaskbarMinimize(snapshot, taskbar),
                 "temporary protection covers both Dock and non-Dock screens");
-            Check(ShouldSuppressTaskbar(snapshot, taskbar) == ((i == 0) == dockOnPrimary),
-                "permanent hiding retains its original monitor scope");
+            Check(ShouldSuppressTaskbar(snapshot, taskbar) == (allMonitors || (i == 0) == dockOnPrimary),
+                "permanent hiding follows the selected Dock-only or all-monitor scope");
             snapshot.targets[i].shellPanelVisible = TRUE;
             Check(!ProtectsTaskbarMinimize(snapshot, taskbar) && !ShouldSuppressTaskbar(snapshot, taskbar),
                 "an explicitly open shell panel retains its taskbar access");
@@ -1802,6 +1807,30 @@ void CheckStatusBarFullscreenDockSession()
     timeline.Configure(quick_navigation_animation_rules::Effect::None, 1.0); timeline.Open(700);
     Check(MergedDockPresentationFrame(timeline).inputEnabled && MergedDockPresentationFrame(timeline).opacity == 1,
         "disabled animations reveal the merged surface immediately without waiting for a frame");
+    quick_navigation_animation_rules::State responsiveBar;
+    responsiveBar.Configure(quick_navigation_animation_rules::Effect::Fade, 1.0, false, true);
+    responsiveBar.Open(1000); responsiveBar.Advance(1016);
+    const auto firstReveal = MergedDockPresentationFrame(responsiveBar);
+    Check(firstReveal.visible && firstReveal.opacity == 1.f && !firstReveal.inputEnabled &&
+        firstReveal.hiddenFraction < .87f,
+        "merged Dock and status bar reveal together from the first frame at full opacity");
+    const double revealVelocity = responsiveBar.Velocity();
+    responsiveBar.Close(1016);
+    Check(MergedDockPresentationFrame(responsiveBar).hiddenFraction == firstReveal.hiddenFraction &&
+        responsiveBar.Velocity() == revealVelocity,
+        "merged bar reversal retains shared position and velocity");
+    responsiveBar.Advance(1126);
+    Check(!MergedDockPresentationFrame(responsiveBar).visible,
+        "merged bar close retires both surfaces at the finite endpoint");
+    responsiveBar.ShowImmediately(); responsiveBar.Close(1130); responsiveBar.Advance(1185);
+    const auto middleClose = MergedDockPresentationFrame(responsiveBar);
+    Check(middleClose.visible && middleClose.opacity == 1.f && !middleClose.inputEnabled &&
+        middleClose.hiddenFraction > .45f && middleClose.hiddenFraction < .70f,
+        "merged close distributes visible movement through its middle with the shared popup close curve");
+    responsiveBar.Open(1200); responsiveBar.Advance(1360);
+    Check(MergedDockPresentationFrame(responsiveBar).inputEnabled &&
+        MergedDockPresentationFrame(responsiveBar).hiddenFraction == 0.f,
+        "merged bar restores input only at its exact revealed endpoint");
     const RECT monitorArea{1920, 0, 3840, 1080}, strip{1920, 1016, 3840, 1080};
     auto sliding = opening;
     PositionDockRevealFrame(sliding, DockPosition::Bottom, strip, monitorArea);
@@ -1912,6 +1941,16 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    if (const auto helper = snowdesktop::tests::dock_process_discovery::TryRunHelper(argc, argv))
+        return *helper;
+    if (argc == 2 && (std::string_view(argv[1]) == "--dock-process-discovery" ||
+        std::string_view(argv[1]) == "--dock-process-discovery-negative-control"))
+    {
+        snowdesktop::tests::dock_process_discovery::Run(Check,
+            std::string_view(argv[1]) == "--dock-process-discovery-negative-control");
+        return failures == 0 ? 0 : 1;
+    }
+    snowdesktop::tests::dock_process_discovery::Run(Check);
     snowdesktop::tests::list_columns::Run(Check);
     {
         namespace single = snowdesktop::single_cell_widget;
@@ -2219,10 +2258,47 @@ int main(int argc, char** argv)
         Check(!snowdesktop::ResolveBarSettingsAvailability(false, dock, bar, 2).anyMerged,
             "disabled Dock cannot keep independent settings disabled");
         snowdesktop::SetTaskbarDisplayMode(dock, 2);
+        Check(!snowdesktop::CanSelectTaskbarDisplayMode(2, false, true) &&
+            snowdesktop::CanSelectTaskbarDisplayMode(3, false, true),
+            "without a Dock only all-display permanent hiding remains selectable");
+        Check(snowdesktop::CanSelectTaskbarDisplayMode(2, true, true) &&
+            snowdesktop::CanSelectTaskbarDisplayMode(3, true, true) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(2, true, false) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(3, false, false),
+            "both permanent modes require the taskbar module while Dock-only also requires a Dock");
+        Check(snowdesktop::CanSelectTaskbarDisplayMode(0, false, false) &&
+            snowdesktop::CanSelectTaskbarDisplayMode(1, false, false) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(-1, true, true) &&
+            !snowdesktop::CanSelectTaskbarDisplayMode(4, true, true),
+            "native visibility modes stay available and invalid selections are rejected");
         Check(dock.suppressSystemTaskbar && dock.systemTaskbarAutoHide,
             "always hidden taskbar also releases Windows work area");
+        Check(!dock.suppressSystemTaskbarAllMonitors && snowdesktop::TaskbarDisplayMode(dock) == 2 &&
+            ShouldSuppressSystemTaskbar(dock, true) && !ShouldSuppressSystemTaskbar(dock, false),
+            "legacy hidden settings keep their Dock-only scope and require an enabled Dock");
+        snowdesktop::SetTaskbarDisplayMode(dock, 3);
+        Check(dock.suppressSystemTaskbar && dock.systemTaskbarAutoHide &&
+            dock.suppressSystemTaskbarAllMonitors && snowdesktop::TaskbarDisplayMode(dock) == 3 &&
+            ShouldSuppressSystemTaskbar(dock, false),
+            "hiding every screen releases the work area and works independently of Dock enablement");
+        SystemTaskbarTargetAppearance target;
+        ConfigureSystemTaskbarTargetProtection(target, ShouldSuppressSystemTaskbar(dock, false),
+            false, false, dock.suppressSystemTaskbarAllMonitors);
+        Check(target.suppressTaskbar, "all-monitor hiding targets a screen with no Dock");
+        snowdesktop::SetTaskbarDisplayMode(dock, 2);
+        ConfigureSystemTaskbarTargetProtection(target, ShouldSuppressSystemTaskbar(dock, true),
+            false, false, dock.suppressSystemTaskbarAllMonitors);
+        Check(!target.suppressTaskbar && !dock.suppressSystemTaskbarAllMonitors,
+            "switching to Dock-only hiding releases taskbars on other screens");
+        snowdesktop::SetTaskbarDisplayMode(dock, 1);
+        ConfigureSystemTaskbarTargetProtection(target, ShouldSuppressSystemTaskbar(dock, true), false, true, true);
+        Check(!target.suppressTaskbar && !dock.suppressSystemTaskbar &&
+            !dock.suppressSystemTaskbarAllMonitors && dock.systemTaskbarAutoHide &&
+            snowdesktop::TaskbarDisplayMode(dock) == 1,
+            "native auto-hide clears permanent suppression even if a target retains the old scope");
         snowdesktop::SetTaskbarDisplayMode(dock, 0);
-        Check(!dock.suppressSystemTaskbar && !dock.systemTaskbarAutoHide,
+        Check(!dock.suppressSystemTaskbar && !dock.suppressSystemTaskbarAllMonitors &&
+            !dock.systemTaskbarAutoHide && snowdesktop::TaskbarDisplayMode(dock) == 0,
             "always visible mode clears both forms of hiding");
     }
     CheckStatusBarInteraction();
@@ -2514,21 +2590,22 @@ int main(int argc, char** argv)
         Check(!rejected.Place(window, WM_APP + 1, ABE_LEFT, 48, {0, 0, 1920, 1080}) &&
                 !rejected.Registered() && messages == std::vector<DWORD>{ABM_NEW},
             "registration failure must not negotiate or show an overlay substitute");
-        using snowdesktop::StatusBarFullscreenClient;
-        using snowdesktop::StatusBarFullscreenCandidate;
-        Check(StatusBarFullscreenCandidate(WS_POPUP,0,false,false) &&
-                !StatusBarFullscreenCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
-                StatusBarFullscreenCandidate(WS_POPUP | WS_MAXIMIZE,0,true,false) &&
-                StatusBarFullscreenCandidate((WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) & ~(WS_CAPTION | WS_THICKFRAME),0,true,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP | WS_THICKFRAME,0,true,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,0,false,true),
+        using snowdesktop::fullscreen::IsCandidate;
+        using snowdesktop::fullscreen::IsFullscreen;
+        Check(IsCandidate(WS_POPUP,0,false,false) &&
+                !IsCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
+                IsCandidate(WS_POPUP | WS_MAXIMIZE,0,true,false) &&
+                IsCandidate((WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) & ~(WS_CAPTION | WS_THICKFRAME),0,true,false) &&
+                !IsCandidate(WS_POPUP | WS_THICKFRAME,0,true,false) &&
+                !IsCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
+                !IsCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
+                !IsCandidate(WS_POPUP,0,false,true),
             "fullscreen candidates accept browser fullscreen retaining WS_MAXIMIZE, while excluding overlays, shell helpers and maximized windows retaining caption or resize frames");
-        Check(StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, false, false) &&
-                !StatusBarFullscreenClient({1920, 32, 4480, 1400}, {1920, 0, 4480, 1440}, true, false, false, false) &&
-                !StatusBarFullscreenClient({0, 0, 1920, 1080}, {1920, 0, 4480, 1440}, true, false, false, false) &&
-                !StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, true, false),
+        const RECT screen{1920, 0, 4480, 1440};
+        Check(IsFullscreen({nullptr, screen, WS_POPUP}, screen) &&
+                !IsFullscreen({nullptr, {1920, 32, 4480, 1400}, WS_POPUP}, screen) &&
+                !IsFullscreen({nullptr, {0, 0, 1920, 1080}, WS_POPUP}, screen) &&
+                !IsFullscreen({nullptr, screen, WS_POPUP, 0, false, true}, screen),
             "fullscreen detection must exclude maximized, other-monitor and cloaked windows");
         RECT left{-1920, 0, 0, 1080}, right = left, bottom = left;
         snowdesktop::StatusBarAppBar::SetThickness(left, ABE_LEFT, 72);
@@ -2551,6 +2628,7 @@ int main(int argc, char** argv)
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();
     failures += RunNativeTaskbarTests();
+    failures += RunDockStartMenuTests();
     failures += RunTrayModelTests();
     failures += RunDockWindowPinTests();
     CheckSingleLineRenameEditor();
@@ -2558,8 +2636,6 @@ int main(int argc, char** argv)
     CheckDockWindowPreviewLateOwnerPromotion();
     using snowdesktop::desktop_keyboard_rules::
         IsForegroundFocusReady;
-    using snowdesktop::desktop_keyboard_rules::
-        ShouldAttachForegroundInputQueue;
 
     Check(!IsForegroundFocusReady(
               true, false, false, false),
@@ -2572,10 +2648,6 @@ int main(int argc, char** argv)
             IsForegroundFocusReady(
               true, true, true, true),
         "foreground activation is additionally required for popup input proxies");
-    Check(ShouldAttachForegroundInputQueue(10, 20, false) &&
-            !ShouldAttachForegroundInputQueue(10, 10, false) &&
-            !ShouldAttachForegroundInputQueue(10, 20, true),
-        "a failed cross-thread foreground focus check requires one queue attachment retry");
 
     CheckPopupWindowPairZOrderTransitions();
     {
@@ -4159,7 +4231,7 @@ int main(int argc, char** argv)
             denseTwoByTwo.columns * denseTwoByTwo.rows > 4 &&
             denseTwoByTwo.iconSize >=
                 denseTwoByTwo.minimumIconSize,
-        "a default 2x2 titleless Collection must gain at least a 3x3 dense grid without shrinking icons below 80 percent");
+        "a default 2x2 titleless Collection must gain at least a 3x3 dense grid while keeping icons legible");
     const auto denseLandscape = titleless::ResolveDenseLayout(
         RECT{ 0, 0, 300, 150 }, 2, 2,
         50, 2, 2, 1.0f);
@@ -4182,7 +4254,7 @@ int main(int argc, char** argv)
             denseLargeIcons.minimumIconSize &&
             denseLargeIcons.columns * denseLargeIcons.rows <=
                 denseTwoByTwo.columns * denseTwoByTwo.rows,
-        "larger icon and spacing settings must recompute density while preserving the 80 percent floor");
+        "larger icon and spacing settings must recompute density while preserving the legibility floor");
     const auto denseFallback = titleless::ResolveDenseLayout(
         RECT{ 0, 0, 60, 60 }, 2, 2,
         50, 2, 2, 1.0f);
@@ -4232,45 +4304,61 @@ int main(int argc, char** argv)
             : dense.geometry.viewport.bottom - icons.back().bottom);
         return gaps;
     };
-    const auto denseOuterGaps = [&](
-        const titleless::DenseLayout& dense) {
-        const auto horizontal = denseVisualGaps(dense, true);
-        const auto vertical = denseVisualGaps(dense, false);
-        return std::array<int, 4>{
-            horizontal.front(), horizontal.back(),
-            vertical.front(), vertical.back()
-        };
-    };
-    const auto hasUnifiedOuterPadding = [&](
-        const titleless::DenseLayout& dense) {
-        const auto gaps = denseOuterGaps(dense);
-        const auto [minimum, maximum] =
-            std::minmax_element(gaps.begin(), gaps.end());
-        return *maximum - *minimum <= 1 &&
-            std::all_of(gaps.begin(), gaps.end(),
-                [&](int gap) {
-                    return std::abs(gap - dense.outerPadding) <= 1;
-                });
-    };
-    const auto hasEvenInternalDistribution = [&](
+    // The user's edge padding contract equals the internal visual gap on
+    // each axis, allowing one physical pixel for icon/track rounding.
+    const auto hasEqualGapPadding = [&](
         const titleless::DenseLayout& dense, bool horizontal) {
         const auto gaps = denseVisualGaps(dense, horizontal);
-        if (gaps.size() <= 3)
-            return true;
         const auto [minimum, maximum] = std::minmax_element(
-            gaps.begin() + 1, gaps.end() - 1);
-        return *maximum - *minimum <= 1;
+            gaps.begin(), gaps.end());
+        return *minimum >= 0 && *maximum - *minimum <= 1;
     };
-    Check(hasUnifiedOuterPadding(denseTwoByTwo) &&
-            hasUnifiedOuterPadding(denseLandscape) &&
-            hasUnifiedOuterPadding(densePortrait) &&
-            hasEvenInternalDistribution(denseTwoByTwo, true) &&
-            hasEvenInternalDistribution(denseTwoByTwo, false) &&
-            hasEvenInternalDistribution(denseLandscape, true) &&
-            hasEvenInternalDistribution(denseLandscape, false) &&
-            hasEvenInternalDistribution(densePortrait, true) &&
-            hasEvenInternalDistribution(densePortrait, false),
-        "dense compact grids must use one visual padding on all four edges and distribute each axis remainder evenly");
+    Check(hasEqualGapPadding(denseTwoByTwo, true) &&
+            hasEqualGapPadding(denseTwoByTwo, false) &&
+            hasEqualGapPadding(denseLandscape, true) &&
+            hasEqualGapPadding(denseLandscape, false) &&
+            hasEqualGapPadding(densePortrait, true) &&
+            hasEqualGapPadding(densePortrait, false),
+        "titleless Collection edges must equal the internal gap on each axis, with even pixel distribution");
+    // A narrow frame must trade a little icon size for another column instead
+    // of exposing an icon-wide gutter (162x112 previously had a 52px gap).
+    for (const int percentage : { 100, 125, 150, 200, 300 })
+    {
+        const auto scaled = [percentage](int value) {
+            return static_cast<int>(std::round(value * percentage / 100.0f));
+        };
+        for (const int height : { 112, 246, 254, 277 })
+        {
+            const auto narrow = titleless::ResolveDenseLayout(
+                RECT{ 13, 17, 13 + scaled(162), 17 + scaled(height) },
+                2, height == 112 ? 1 : 2,
+                scaled(64), scaled(2), scaled(2), 1.0f);
+            auto gaps = denseVisualGaps(narrow, true);
+            const auto verticalGaps = denseVisualGaps(narrow, false);
+            gaps.insert(gaps.end(), verticalGaps.begin(), verticalGaps.end());
+            const auto [minimum, maximum] =
+                std::minmax_element(gaps.begin(), gaps.end());
+            Check(narrow.columns >= 3 &&
+                    narrow.iconSize < scaled(52) &&
+                    narrow.iconSize >= narrow.minimumIconSize &&
+                    *minimum >= 0 &&
+                    *maximum - *minimum <= narrow.iconSize / 4 &&
+                    hasEqualGapPadding(narrow, true) &&
+                    hasEqualGapPadding(narrow, false),
+                "narrow titleless Collections must reflow icons with equal-gap edge padding at each tested scale");
+            const auto presentation = localLayout::ResolveCollectionPresentation(
+                15, static_cast<size_t>(narrow.columns * narrow.rows),
+                false, false);
+            const RECT lastSlot = localLayout::ItemRect(narrow.geometry,
+                presentation.showAllButton ? presentation.allButtonSlot :
+                    presentation.visibleItemCount - 1);
+            Check(lastSlot.left >= narrow.geometry.viewport.left &&
+                    lastSlot.top >= narrow.geometry.viewport.top &&
+                    lastSlot.right <= narrow.geometry.viewport.right &&
+                    lastSlot.bottom <= narrow.geometry.viewport.bottom,
+                "the reflowed titleless grid must keep its final item or overflow target inside the frame");
+        }
+    }
     const auto denseSingleColumn = titleless::ResolveDenseLayout(
         RECT{ 0, 0, 60, 150 }, 1, 2,
         50, 2, 2, 1.0f);
@@ -4279,9 +4367,11 @@ int main(int argc, char** argv)
         50, 2, 2, 1.0f);
     Check(denseSingleColumn.columns == 1 &&
             denseSingleRow.rows == 1 &&
-            hasUnifiedOuterPadding(denseSingleColumn) &&
-            hasUnifiedOuterPadding(denseSingleRow),
-        "single-column and single-row compact Collections must share the same horizontal and vertical edge padding");
+            hasEqualGapPadding(denseSingleColumn, true) &&
+            hasEqualGapPadding(denseSingleColumn, false) &&
+            hasEqualGapPadding(denseSingleRow, true) &&
+            hasEqualGapPadding(denseSingleRow, false),
+        "single-column and single-row compact Collections must remain centered and preserve equal-gap padding on the repeated axis");
     const auto ordinaryGrid = localLayout::ResolveGrid(
         RECT{ 0, 0, 184, 232 }, 2, 2,
         61, 80, 1.0f);
@@ -4645,6 +4735,23 @@ int main(int argc, char** argv)
             denseFullCollectionDuringDrag.showAllButton &&
             denseFullCollectionDuringDrag.allButtonSlot == 8,
         "titleless dense Collections must apply the single-overflow rule to their resolved physical grid capacity without rebuilding slots");
+    Check(!localLayout::LargeFolderHidesBottomBarTitle(
+                false, fullCollection) &&
+            !localLayout::LargeFolderHidesBottomBarTitle(
+                false, belowCollectionCapacity) &&
+            !localLayout::LargeFolderHidesBottomBarTitle(
+                false, denseFullCollection) &&
+            localLayout::LargeFolderHidesBottomBarTitle(
+                false, overflowingCollection) &&
+            localLayout::LargeFolderHidesBottomBarTitle(
+                false, fullCollectionDuringDrag) &&
+            localLayout::LargeFolderHidesBottomBarTitle(
+                false, denseFullCollectionDuringDrag) &&
+            localLayout::LargeFolderHidesBottomBarTitle(
+                true, fullCollection) &&
+            localLayout::LargeFolderHidesBottomBarTitle(
+                true, overflowingCollection),
+        "only the Show all cell or a titleless grid may replace the bottom title; an ordinary final cell keeps it for the collection name and rename anchor without reserving grid height");
     const auto compactCollection =
         localLayout::ResolveCollectionPresentation(
             5, 4, true, false);
@@ -5959,6 +6066,53 @@ int main(int argc, char** argv)
     Check(!floatingDock::HasNewPointerButtonPress(
             1, 1, 0),
         "a held pointer button must not repeatedly dismiss");
+    // Local consumer contract for the reported helper snapshot -> classified
+    // event ordering. Host scheduling and actual elevated windows need runtime
+    // acceptance; raw held state must never preempt the minimize classification.
+    Check(!floatingDock::HasNewPointerButtonPress(1, 0, 0, true),
+        "a forwarded held snapshot before event dispatch must not dismiss the Dock");
+    Check(floatingDock::HasNewPointerButtonPress(1, 1, 1, true),
+        "the delivered press must remain observable after an earlier held snapshot");
+    Check(!floatingDock::HasNewPointerButtonPress(0, 1, 0, true) &&
+            !floatingDock::HasNewPointerButtonPress(1, 1, 0, true),
+        "forwarded release and held snapshots must not create additional outside presses");
+    Check(floatingDock::HasNewPointerButtonPress(0, 0, 1, true) &&
+            floatingDock::HasNewPointerButtonPress(3, 1, 2, true),
+        "forwarded fast clicks and additional chord presses must remain observable");
+    Check(floatingDock::HasNewPointerButtonPress(1, 0, 0, false) &&
+            floatingDock::HasNewPointerButtonPress(3, 1, 0, false),
+        "live native input must retain rising-edge detection without forwarded events");
+    {
+        floatingDock::WindowActionOutsidePress outside;
+        const HWND source = reinterpret_cast<HWND>(1), other = reinterpret_cast<HWND>(2);
+        outside.Begin(source);
+        Check(!outside.TakeReady(true, 100) && !outside.TakeReady(true, 1000),
+            "a custom window-action press must stay pending for the whole physical hold");
+        Check(!outside.TakeReady(false, 1001) && !outside.TakeReady(false, 1050) &&
+                outside.TakeReady(false, 1051) && !outside.TakeReady(false, 1100),
+            "an ordinary outside click dismisses once after its release handoff");
+        outside.Begin(source);
+        outside.TakeReady(false, 2000);
+        outside.Cancel(source);
+        Check(!outside.TakeReady(false, 2051),
+            "native minimization consumes the matching pending outside click");
+        outside.Begin(source);
+        outside.Cancel(other);
+        Check(outside.Source() == source,
+            "another window's minimization must not consume an independent outside press");
+        outside.Cancel();
+        Check(!outside.TakeReady(false, 3000),
+            "closing or explicitly summoning a Dock retires the old pending click");
+    }
+    Check(floatingDock::ShouldDismissForForegroundActivation(true, true, true, false, false),
+        "external activation dismisses a summoned Dock even without a readable button-down");
+    Check(!floatingDock::ShouldDismissForForegroundActivation(true, false, true, false, false) &&
+            !floatingDock::ShouldDismissForForegroundActivation(true, true, false, false, false) &&
+            !floatingDock::ShouldDismissForForegroundActivation(false, true, true, false, false),
+        "unchanged, internal or hidden foreground observations do not invent dismissal");
+    Check(!floatingDock::ShouldDismissForForegroundActivation(true, true, true, true, false) &&
+            !floatingDock::ShouldDismissForForegroundActivation(true, true, true, false, true),
+        "window animation and recent native minimization retain their Dock handoff");
     Check(floatingDock::HasPointerButtonActivity(
               1, 0, 0) &&
             floatingDock::HasPointerButtonActivity(
@@ -6199,18 +6353,6 @@ int main(int argc, char** argv)
         "an inward pointer must not count as an along-edge swipe");
 
     const RECT fullscreenMonitor{-1920, 0, 0, 1080};
-    Check(floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            true, fullscreenMonitor, fullscreenMonitor),
-        "borderless fullscreen blocks swipes on a negative-coordinate monitor");
-    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            false, fullscreenMonitor, fullscreenMonitor),
-        "fullscreen protection can be disabled");
-    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            true, RECT{-1920, 30, 0, 1040}, fullscreenMonitor),
-        "maximized client areas do not block swipes");
-    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
-            true, RECT{0, 0, 1920, 1080}, fullscreenMonitor),
-        "fullscreen on another monitor does not block swipes");
     floatingDock::EdgeSwipeDetector fullscreenSwipe;
     fullscreenSwipe.Update(POINT{-1500, 1079}, fullscreenMonitor,
         DockPosition::Bottom, 100, 4, 72);
@@ -7548,14 +7690,12 @@ int main(int argc, char** argv)
     Check(singleFocusVisual.right <= singleNeighborVisual.left,
         "fixed gentle single hover must make room without enlarging its neighbor");
     Check(!magnification::ShouldSuppressMagnification(
-              false, false, false) &&
+              false) &&
             magnification::ShouldSuppressMagnification(
-              true, false, false) &&
+              true) &&
             magnification::ShouldSuppressMagnification(
-              false, true, false) &&
-            magnification::ShouldSuppressMagnification(
-              false, false, true),
-        "Dock magnification must be disabled for item drags and widget move or resize gestures");
+              false, false),
+        "Dock magnification remains available for drags but not resize or unavailable input");
     Check(std::abs(
             magnification::ScaleForAxisDistance(0, 76) -
             magnification::kFocusScale) < 0.001f,

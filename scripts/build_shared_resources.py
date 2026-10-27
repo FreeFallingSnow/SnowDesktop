@@ -9,11 +9,11 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
-from powershell_runtime import powershell_executable, run as run_process
 import sys
 import time
 
 sys.dont_write_bytecode = True
+from powershell_runtime import powershell_executable, run as run_process
 from build_wait_tasks import atomic, lease, process_owner, reader, overlaps
 
 HEX = re.compile(r'^[a-f0-9]{32}$')

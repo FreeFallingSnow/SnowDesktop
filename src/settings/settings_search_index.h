@@ -65,6 +65,7 @@ struct SettingsSearchIndexInput
     std::vector<WidgetSettingsSearchDescriptor> widgets;
     bool developerToolsVisible = false;
     bool debugVisible = false;
+    bool advancedSettingsVisible = false;
 };
 
 struct SettingsSearchResult

@@ -2,7 +2,10 @@
 
 #include <windows.h>
 #include <oleidl.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,11 +42,24 @@ enum class ClipboardFileSource { None, FilePaths, ShellObjects };
 // Menu admission only: never render files/descriptors or start source IO.
 // Shell keeps ownership of namespace IDs and virtual-file folder hierarchies.
 ClipboardFileSource ProbeClipboardFileSource(IDataObject* source);
+// Resolved only after Drop: real Shell files retain their provider instead of
+// being read through the bounded browser/private-stream content decoder.
+struct ShellFileSource
+{
+    std::vector<Microsoft::WRL::ComPtr<IShellItem>> items;
+    Paths identities;
+    Paths names;
+    bool canMove = true;
+};
+std::optional<ShellFileSource> ReadShellFileSource(IDataObject* source);
 struct FileSource
 {
     bool asynchronous = false;
     bool available = false;
     Paths paths;
+    // Optional Shell selection identities, never materialized file content.
+    // Available for Explorer's delayed CF_HDROP without starting its operation.
+    Paths previewPaths;
 };
 // Delayed CF_HDROP is advertised at hover time without rendering its data.
 // ReadFilePaths runs later on the source's marshaled apartment after Drop.

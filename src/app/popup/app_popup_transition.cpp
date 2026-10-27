@@ -143,7 +143,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             GetOpenPopupWidget() ? 1 : 0,
             mouseDown_ ? 1 : 0,
             GetCapture());
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
     if (widgetIndex >= widgets_.size() ||
         (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
@@ -201,6 +201,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                 anchorPoint,
                 categoryId,
             };
+        ContinueCollectionPopupSwitch();
         return;
     case snowdesktop::popup_animation_rules::
         ExistingSourceAction::ReopenExisting:
@@ -593,7 +594,7 @@ void DesktopApp::RefreshDockFolderPopup(
             std::to_wstring(snapshot->error) + L" items=" +
             std::to_wstring(dockFolderPopupWidget_.folderEntries.size()) + L" path=" +
             dockFolderPopupWidget_.sourceFolderPath;
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message.c_str(), DiagnosticLogLevel::Warning);
     }
     if (!dockFolderPopupContainer_)
         dockFolderPopupContainer_ =

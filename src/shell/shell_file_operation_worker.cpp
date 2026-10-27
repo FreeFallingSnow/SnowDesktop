@@ -1,6 +1,7 @@
 #include "shell_file_operation_worker.h"
 #include "platform/operation_feedback.h"
 #include "shell_file_operation_progress.h"
+#include "shell_file_history.h"
 #include "drag_drop/clipboard_file_operation.h"
 
 #include <objbase.h>
@@ -485,6 +486,26 @@ ShellFileOperationRequest CreateRecycleBinDeleteRequest(
     return request;
 }
 
+ShellFileOperationWorker::ShellFileOperationWorker()
+    : history_(std::make_shared<file_history::History>()) {}
+
+bool ShellFileOperationWorker::CanUndo() const { return history_->CanUndo(); }
+bool ShellFileOperationWorker::CanRedo() const { return history_->CanRedo(); }
+file_history::Description ShellFileOperationWorker::DescribeHistory(bool redo) const { return history_->Describe(redo); }
+
+bool ShellFileOperationWorker::EnqueueHistory(bool redo,
+    std::shared_ptr<file_history::Result> result, Completion completion)
+{
+    if (!result) return false;
+    return Enqueue(ShellReadRequest{[this, redo, result]() {
+        *result = history_->Apply(redo);
+        if (!result->failedPath.empty())
+            operation_feedback::Report({"app.operation.fileFailed", result->failedPath,
+                static_cast<DWORD>(result->status)});
+        return result->succeeded;
+    }}, std::move(completion));
+}
+
 ShellFileOperationWorker::~ShellFileOperationWorker()
 {
     Stop();
@@ -805,7 +826,7 @@ ShellRenameResult ShellFileOperationWorker::Execute(
 }
 
 bool ShellFileOperationWorker::Execute(
-    const ShellFileOperationRequest& request)
+    const ShellFileOperationRequest& request, std::vector<file_history::Entry>* recycled)
 {
     bool attempted = false;
     std::optional<operation_feedback::Failure> failure;
@@ -854,6 +875,17 @@ bool ShellFileOperationWorker::Execute(
         if (step.function == 0 || step.sources.empty())
             continue;
         attempted = true;
+
+        if (recycled && step.function == FO_DELETE && (step.flags & FOF_ALLOWUNDO))
+        {
+            const HRESULT status = file_history::Recycle(step.sources, step.flags, *recycled);
+            if (FAILED(status))
+            {
+                allSucceeded = false;
+                record(incompleteStep(step), static_cast<DWORD>(status));
+            }
+            continue;
+        }
 
         if (request.result && (step.function == FO_COPY || step.function == FO_MOVE))
         {
@@ -992,6 +1024,51 @@ bool ShellFileOperationWorker::Execute(
         operation_feedback::Report(std::move(*failure));
     }
     return attempted && allSucceeded;
+}
+
+HRESULT ShellFileOperationWorker::ExecuteNamespaceFiles(
+    const external_drop_content::ShellFileSource& source, const std::wstring& destinationPath,
+    DWORD effect, const std::shared_ptr<ShellFileOperationResult>& result)
+{
+    if (!result || source.items.empty() || source.items.size() != source.identities.size() ||
+        destinationPath.empty() || (effect != DROPEFFECT_COPY && effect != DROPEFFECT_MOVE) ||
+        (effect == DROPEFFECT_MOVE && !source.canMove)) return E_INVALIDARG;
+    result->outputs.clear();
+    ComPtr<IShellItem> destination;
+    HRESULT status = SHCreateItemFromParsingName(destinationPath.c_str(), nullptr, IID_PPV_ARGS(&destination));
+    if (FAILED(status)) return status;
+    ComPtr<IFileOperation> operation;
+    status = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&operation));
+    if (FAILED(status)) return status;
+    status = operation->SetOperationFlags(FOF_NOCONFIRMATION | FOF_NOCONFIRMMKDIR |
+        FOF_RENAMEONCOLLISION | FOF_NOERRORUI | FOFX_EARLYFAILURE);
+    if (FAILED(status)) return status;
+    std::vector<ComPtr<DropFileProgress>> sinks;
+    for (size_t index = 0; index < source.items.size(); ++index)
+    {
+        auto sink = Microsoft::WRL::Make<DropFileProgress>();
+        if (!sink) return E_OUTOFMEMORY;
+        sink->source = source.identities[index];
+        sink->sourceItem = source.items[index];
+        sink->result = result;
+        status = effect == DROPEFFECT_MOVE
+            ? operation->MoveItem(source.items[index].Get(), destination.Get(), nullptr, sink.Get())
+            : operation->CopyItem(source.items[index].Get(), destination.Get(), nullptr, sink.Get());
+        if (FAILED(status)) return status;
+        sinks.push_back(std::move(sink));
+    }
+    const HRESULT performed = operation->PerformOperations();
+    BOOL aborted = TRUE;
+    const HRESULT queried = operation->GetAnyOperationsAborted(&aborted);
+    if (FAILED(performed)) return performed;
+    if (FAILED(queried)) return queried;
+    if (aborted) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    for (const auto& sink : sinks)
+    {
+        if (FAILED(sink->failure)) return sink->failure;
+        if (!sink->completed) return E_FAIL;
+    }
+    return S_OK;
 }
 
 bool ShellFileOperationWorker::Execute(
@@ -1153,6 +1230,7 @@ void ShellFileOperationWorker::Run()
 
         if (auto* rename = std::get_if<ShellRenameRequest>(&task.request))
         {
+            const auto identity = file_history::Identify(rename->sourcePath);
             ShellRenameResult result;
             if (SUCCEEDED(comResult))
                 result = Execute(*rename);
@@ -1161,10 +1239,32 @@ void ShellFileOperationWorker::Run()
                 result.sourcePath = rename->sourcePath;
                 result.status = comResult;
             }
+            if (SUCCEEDED(result.status) && !result.path.empty() &&
+                result.path != result.sourcePath && identity == file_history::Identify(result.path))
+                history_->Record({{file_history::Entry::Kind::Rename,
+                    result.sourcePath, result.path, identity, {}}});
+            else if (SUCCEEDED(result.status) && result.path != result.sourcePath)
+                history_->Clear();
             if (task.renameCompletion)
                 task.renameCompletion(std::move(result));
             continue;
         }
+        if (auto* operation = std::get_if<ShellFileOperationRequest>(&task.request))
+        {
+            file_history::Group recycled;
+            // A non-recorded mutation is a history barrier; Undo must never
+            // skip a newer copy/move/permanent delete and select an older file.
+            const bool onlyRecycling = operation->shortcuts.empty() && operation->exactFileCopies.empty() &&
+                !operation->steps.empty() && std::all_of(operation->steps.begin(), operation->steps.end(),
+                    [](const auto& step) { return step.function == FO_DELETE && (step.flags & FOF_ALLOWUNDO); });
+            if (!onlyRecycling) history_->Clear();
+            const bool succeeded = SUCCEEDED(comResult) && Execute(*operation, &recycled);
+            if (onlyRecycling && !recycled.empty()) history_->Record(std::move(recycled));
+            else if (succeeded) history_->Clear();
+            if (task.completion) task.completion(succeeded);
+            continue;
+        }
+        if (std::holds_alternative<ShellDropRequest>(task.request)) history_->Clear();
         const bool succeeded = std::visit(
             [comResult](auto& request) {
                 using Request = std::decay_t<decltype(request)>;

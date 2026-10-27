@@ -12,10 +12,8 @@
 
 namespace snowdesktop::widget_runtime::storage_persistence
 {
-inline std::string EscapeStorageJson(std::string_view value)
+inline void AppendEscapedStorageJson(std::string& result, std::string_view value)
 {
-    std::string result;
-    result.reserve(value.size() + 8);
     static constexpr char hex[] = "0123456789abcdef";
     for (unsigned char ch : value)
     {
@@ -39,7 +37,6 @@ inline std::string EscapeStorageJson(std::string_view value)
             break;
         }
     }
-    return result;
 }
 
 template<class Exclude>
@@ -100,27 +97,38 @@ inline bool ReadStorageMap(const std::filesystem::path& path,
 
 inline bool SaveStorageMap(const std::filesystem::path& path, const StorageMap& storage)
 {
-    std::vector<std::pair<std::string, std::string>> values(
-        storage.begin(), storage.end());
+    // The synchronous writer cannot mutate storage. Sort references rather
+    // than copying every payload into another map-sized snapshot.
+    std::vector<const StorageMap::value_type*> values;
+    values.reserve(storage.size());
+    std::size_t textSize = 3;
+    for (const auto& entry : storage)
+    {
+        values.push_back(&entry);
+        textSize += entry.first.size() + entry.second.size() + 10;
+    }
     std::sort(values.begin(), values.end(),
-        [](const auto& left, const auto& right) {
-            return left.first < right.first;
+        [](const auto* left, const auto* right) {
+            return left->first < right->first;
         });
-    std::ostringstream output;
-    output << "{";
+    std::string text;
+    text.reserve(textSize);
+    text.push_back('{');
     for (std::size_t index = 0; index < values.size(); ++index)
     {
-        if (index) output << ',';
-        output << "\n  \"" << EscapeStorageJson(values[index].first)
-            << "\": \"" << EscapeStorageJson(values[index].second) << '"';
+        if (index) text.push_back(',');
+        text += "\n  \"";
+        AppendEscapedStorageJson(text, values[index]->first);
+        text += "\": \"";
+        AppendEscapedStorageJson(text, values[index]->second);
+        text.push_back('"');
     }
-    if (!values.empty()) output << '\n';
-    output << "}\n";
+    if (!values.empty()) text.push_back('\n');
+    text += "}\n";
 
     const std::wstring temporary = path.wstring() + L".tmp";
     std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
     if (!file) return false;
-    const std::string text = output.str();
     file.write(text.data(), static_cast<std::streamsize>(text.size()));
     file.flush();
     if (!file) return false;

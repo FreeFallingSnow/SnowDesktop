@@ -154,7 +154,7 @@ bool ConfigureElevated(const Target& target, bool enabled, std::wstring* error) 
     catch (...)
     {
         const auto message = ExceptionError();
-        WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Error);
         if (error) *error = message;
         return false;
     }
@@ -226,7 +226,7 @@ std::optional<int> TryRunElevationCommand() noexcept
     catch (...)
     {
         const auto error = ExceptionError();
-        WriteDiagnosticLogEntry(error.c_str(), DiagnosticLogLevel::Error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, error.c_str(), DiagnosticLogLevel::Error);
         return ERROR_INVALID_DATA;
     }
 }

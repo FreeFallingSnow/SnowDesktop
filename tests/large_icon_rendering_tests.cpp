@@ -5,6 +5,7 @@
 #include "icons/icon_hbitmap_pixels.h"
 #include "ui/preview/preview_png_writer.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "ui/render/app_font.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d2d1helper.h>
@@ -104,7 +105,7 @@ struct Canvas
         return pixels;
     }
     std::vector<unsigned> DrawBitmap(ID2D1Bitmap* bitmap, RECT frame,
-        bool preserveAspectRatio = true)
+        bool preserveAspectRatio = true, bool translucentMaterial = false)
     {
         const auto source = bitmap->GetPixelSize();
         const auto plan = snowdesktop::icon_bitmap_renderer::Prepare(
@@ -112,7 +113,7 @@ struct Canvas
             frame, preserveAspectRatio);
         target->BeginDraw();
         target->Clear(D2D1::ColorF(0, 0.f));
-        snowdesktop::icon_bitmap_renderer::Draw(target.Get(), bitmap, plan);
+        snowdesktop::icon_bitmap_renderer::Draw(target.Get(), bitmap, plan, 1.0f, translucentMaterial);
         Require(target->EndDraw(), "shared icon bitmap draw");
         return ReadPixels();
     }
@@ -554,6 +555,45 @@ int RunIconBitmapRenderingTests()
             const auto pixels = canvas.DrawBitmap(transparent.Get(), {20, 20, 116, 116});
             Check(Red(Pixel(pixels, 68, 68)) && (Pixel(pixels, 28, 28) >> 24) == 0,
                 "shared bitmap fitting preserves artwork transparency instead of cropping its margins");
+
+            // The reported white rim used a 15% plate and 30% reflection.
+            // Exercise the production bitmap draw on a transparent surface:
+            // cubic negative lobes must not turn its rim into additive color.
+            auto glass = snowdesktop::icon_beautify::MakePreset(snowdesktop::IconBeautifyPreset::FrostedGlassLight);
+            glass.backgroundOpacity = .15f; glass.edgeHighlightWidth = 1.8f; glass.edgeHighlightStrength = .3f;
+            glass.edgeLight.spread = 50; glass.edgeLight.feather = 70; glass.edgeLight.ambient = .1f;
+            glass.edgeLight.primary = .67f; glass.edgeLight.opposite = .63f;
+            glass.edgeLight.innerGlow = 1.6f; glass.edgeLight.outerGlow = .6f;
+            glass.edgeLight.glowStrength = .12f; glass.edgeLight.glowFalloff = 2.5f;
+            glass.edgeLight.shadowStrength = .2f; glass.edgeLight.shadowFalloff = 4.65f;
+            const auto premultiplied = [](const auto& values) {
+                return std::all_of(values.begin(), values.end(), [](unsigned pixel) {
+                    const auto alpha = pixel >> 24;
+                    return (pixel & 255) <= alpha && ((pixel >> 8) & 255) <= alpha &&
+                        ((pixel >> 16) & 255) <= alpha;
+                });
+            };
+            for (const int sourceSize : {64, 128, 256})
+            {
+                std::vector<std::uint32_t> glyph(static_cast<size_t>(sourceSize) * sourceSize);
+                for (int y = sourceSize / 3; y < sourceSize * 2 / 3; ++y)
+                    for (int x = sourceSize / 3; x < sourceSize * 2 / 3; ++x)
+                        glyph[static_cast<size_t>(y) * sourceSize + x] = 0xff24a060;
+                const auto material = snowdesktop::icon_beautify::Render(glyph, sourceSize, sourceSize, glass);
+                Check(premultiplied(material), "the glass fixture starts with bounded premultiplied source pixels");
+                ComPtr<ID2D1Bitmap> bitmap;
+                Require(canvas.target->CreateBitmap(D2D1::SizeU(sourceSize, sourceSize), material.data(), sourceSize * 4,
+                    D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96),
+                    &bitmap), "translucent glass fixture");
+                for (const int targetSize : {39, 47, 78})
+                {
+                    const auto rendered = canvas.DrawBitmap(bitmap.Get(), {20, 20, 20 + targetSize, 20 + targetSize}, true, true);
+                    Check(premultiplied(rendered), "scaled glass rims retain RGB within alpha without a black underlay");
+                    Check((Pixel(rendered, 20 + targetSize / 2, 20 + targetSize / 2) >> 24) == 255 &&
+                        (Pixel(rendered, 24, 20 + targetSize / 2) >> 24) > 0,
+                        "safe glass sampling retains its opaque glyph and translucent plate");
+                }
+            }
         }
     }
     catch (const std::exception& error)
@@ -712,6 +752,67 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(bounds.top > 115 && bounds.top < 150 && bounds.bottom - bounds.top == 64, "automatic up reveal centers a compact vertical icon-text stack");
         Check(Visible(pixels, {152, 200, 308, 242}) > 50, "up reveal places title close beneath the image");
         Save(outputDirectory, "04-up-title.png", pixels);
+
+        {
+            snowdesktop::large_icon_renderer::TitleResources adaptive;
+            auto adaptiveConfig = config;
+            adaptiveConfig.titleColor = 0xffffff;
+            auto adaptiveView = view;
+            adaptiveView.titleResources = &adaptive;
+            adaptiveView.frame = {40, 10, 440, 350};
+            adaptiveView.name = L"\u5fae\u4fe1";
+            (void)canvas.Draw(adaptiveConfig, adaptiveView);
+            const double shortNameSize = adaptive.open.titleFontSize;
+            Check(shortNameSize > 30 && shortNameSize < 40,
+                "production title rendering grows short names on a larger card");
+            adaptiveView.name = L"A very long application name with enough extra words to overflow two lines at the preferred size";
+            pixels = canvas.Draw(adaptiveConfig, adaptiveView);
+            Check(adaptive.open.titleFontSize < shortNameSize && adaptive.open.titleFontSize >= shortNameSize * .65 - .01,
+                "long names shrink within a bounded readable range before ellipsis");
+            Check(adaptive.layout && TextBands(pixels, {40, 10, 440, 350}) == 2,
+                "the adaptive production draw emits exactly two visible text lines");
+            Save(outputDirectory, "04-adaptive-title.png", pixels);
+        }
+
+        // Exercise the production cache while animation changes only position
+        // and opacity. Layout inputs must invalidate it without stale glyphs.
+        {
+            snowdesktop::large_icon_renderer::TitleResources cache;
+            auto cachedView = view;
+            auto cachedConfig = config;
+            cachedView.titleResources = &cache;
+            (void)canvas.Draw(cachedConfig, cachedView);
+            const auto firstLayout = cache.layout;
+            Check(firstLayout != nullptr, "title cache contains an actual DirectWrite layout");
+            for (const float progress : {.1f, .5f, .95f, 1.f})
+            {
+                cachedView.hover = progress;
+                const auto retainedPixels = canvas.Draw(cachedConfig, cachedView);
+                auto freshView = cachedView; freshView.titleResources = nullptr;
+                Check(retainedPixels == canvas.Draw(cachedConfig, freshView),
+                    "cached animated title matches fresh layout pixels");
+                Check(cache.layout == firstLayout, "animation frames reuse the retained text layout");
+            }
+            const auto compareFresh = [&] {
+                const auto retainedPixels = canvas.Draw(cachedConfig, cachedView);
+                auto freshView = cachedView; freshView.titleResources = nullptr;
+                Check(retainedPixels == canvas.Draw(cachedConfig, freshView),
+                    "changed title inputs invalidate cached geometry and glyphs");
+            };
+            cachedView.name = L"A different title that needs wrapping"; compareFresh();
+            cachedConfig.revealTitleSize = 18; cachedConfig.titleWeight = 900; compareFresh();
+            cachedView.frame = {40, 75, 440, 255}; cachedView.scale = 1.25f; compareFresh();
+            cachedConfig.autoTitleDirection = false; cachedConfig.titleDirection = 0;
+            cachedConfig.contentScale = .4; compareFresh();
+            cachedView.original = false; compareFresh();
+            auto replacement = canvas.Image(96, 48);
+            cachedView.bitmap = replacement.Get(); compareFresh();
+            const auto previousFontLayout = cache.layout;
+            snowdesktop::app_fonts::revision.fetch_add(1);
+            compareFresh();
+            Check(cache.layout && cache.layout != previousFontLayout,
+                "font selection revision rebuilds the retained title layout");
+        }
 
         config = {}; config.backgroundStyle = -2; config.radius = 32;
         view = {}; view.frame = {100, 60, 300, 260};

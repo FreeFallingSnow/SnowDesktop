@@ -3,15 +3,18 @@
 
 #include "widget/view/widget_accessibility_provider.h"
 #include "widget/view/widget_accessibility_events.h"
+#include "ui/input/text_input_accessibility.h"
 
 #include <oleauto.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -401,6 +404,189 @@ void TestSnapshotDiff()
         "semantic additions, removals, and ordering changes must invalidate structure");
 }
 
+void TestIndividualEventInputs()
+{
+    using Kind = WidgetAccessibilityChangeKind;
+    using Element = WidgetAccessibilityElementKind;
+    struct Mutation
+    {
+        const char* description;
+        std::function<void(LuaWidgetAccessibilitySnapshot&)> apply;
+        Kind kind;
+        Element element = Element::Node;
+        std::string_view semanticId = "path:0/1";
+    };
+    const Mutation mutations[] = {
+        { "widget identity", [](auto& s) { s.widgetId += L"-new"; }, Kind::Structure, Element::Root, {} },
+        { "package identity", [](auto& s) { s.packageId += ".new"; }, Kind::Structure, Element::Root, {} },
+        { "widget name", [](auto& s) { s.name += " new"; }, Kind::Name, Element::Widget, {} },
+        { "widget left", [](auto& s) { ++s.bounds.left; }, Kind::Bounds, Element::Widget, {} },
+        { "widget top", [](auto& s) { ++s.bounds.top; }, Kind::Bounds, Element::Widget, {} },
+        { "widget right", [](auto& s) { ++s.bounds.right; }, Kind::Bounds, Element::Widget, {} },
+        { "widget bottom", [](auto& s) { ++s.bounds.bottom; }, Kind::Bounds, Element::Widget, {} },
+        { "node count", [](auto& s) { s.nodes.pop_back(); }, Kind::Structure, Element::Root, {} },
+        { "node order", [](auto& s) { std::swap(s.nodes[1], s.nodes[2]); }, Kind::Structure, Element::Root, {} },
+        { "semantic identity", [](auto& s) { s.nodes[2].semanticId += "-new"; }, Kind::Structure, Element::Root, {} },
+        { "semantic parent", [](auto& s) { s.nodes[2].parentIndex = 1; }, Kind::Structure, Element::Root, {} },
+        { "control type", [](auto& s) { s.nodes[2].controlType = "Pane"; }, Kind::Structure, Element::Root, {} },
+        { "patterns", [](auto& s) { s.nodes[2].patterns = ViewAccessibilityPattern::Value; }, Kind::Structure, Element::Root, {} },
+        { "label relation", [](auto& s) { s.nodes[2].labelledBySemanticId = "key:open"; }, Kind::Structure, Element::Root, {} },
+        { "description relation", [](auto& s) { s.nodes[2].describedBySemanticId = "key:open"; }, Kind::Structure, Element::Root, {} },
+        { "focus loss", [](auto& s) { s.nodes[1].focused = false; }, Kind::Focus, Element::Root, {} },
+        { "name", [](auto& s) { s.nodes[2].name += " new"; }, Kind::Name },
+        { "role", [](auto& s) { s.nodes[2].role = "alert"; }, Kind::AriaRole },
+        { "help", [](auto& s) { s.nodes[2].helpText += " new"; }, Kind::HelpText },
+        { "status", [](auto& s) { s.nodes[2].valueText += " new"; }, Kind::ItemStatus },
+        { "heading", [](auto& s) { ++s.nodes[2].headingLevel; }, Kind::HeadingLevel },
+        { "live setting", [](auto& s) { s.nodes[2].live = AccessibilityLive::Assertive; }, Kind::LiveSetting },
+        { "position", [](auto& s) { s.nodes[2].positionInSet = 2; }, Kind::PositionInSet },
+        { "set size", [](auto& s) { s.nodes[2].setSize = 5; }, Kind::SizeOfSet },
+        { "enabled", [](auto& s) { s.nodes[2].enabled = false; }, Kind::Enabled },
+        { "required", [](auto& s) { s.nodes[2].required = true; }, Kind::Required },
+        { "offscreen", [](auto& s) { s.nodes[2].offscreen = true; }, Kind::Offscreen },
+        { "checked", [](auto& s) { s.nodes[3].checked = true; }, Kind::Toggle, Element::Node, "key:enabled" },
+        { "selected", [](auto& s) { s.nodes[7].checked = true; }, Kind::SelectionItem, Element::Node, "key:choice/a" },
+        { "range value", [](auto& s) { s.nodes[4].value = 5.f; }, Kind::RangeValue, Element::Node, "key:level" },
+        { "edit value", [](auto& s) { s.nodes[5].valueText += " new"; }, Kind::Value, Element::Node, "key:query" },
+        { "expanded", [](auto& s) { s.nodes[6].expanded = true; }, Kind::ExpandCollapse, Element::Node, "key:choice" },
+        { "node x", [](auto& s) { ++s.nodes[2].bounds.x; }, Kind::Bounds },
+        { "node y", [](auto& s) { ++s.nodes[2].bounds.y; }, Kind::Bounds },
+        { "node width", [](auto& s) { ++s.nodes[2].bounds.width; }, Kind::Bounds },
+        { "node height", [](auto& s) { ++s.nodes[2].bounds.height; }, Kind::Bounds },
+        { "scroll axis", [](auto& s) { s.nodes[9].scrollHorizontal = true; }, Kind::HorizontalScrollPercent, Element::Node, "key:feed-scroll" },
+        { "scroll offset", [](auto& s) { ++s.nodes[9].scrollOffset; }, Kind::VerticalScrollPercent, Element::Node, "key:feed-scroll" },
+        { "scroll viewport", [](auto& s) { ++s.nodes[9].scrollViewportExtent; }, Kind::VerticalViewSize, Element::Node, "key:feed-scroll" },
+        { "scroll content", [](auto& s) { s.nodes[9].scrollContentExtent = 100.f; }, Kind::VerticallyScrollable, Element::Node, "key:feed-scroll" },
+    };
+    const std::vector<LuaWidgetAccessibilitySnapshot> previous{ Snapshot() };
+    for (const auto& mutation : mutations)
+    {
+        auto current = previous;
+        mutation.apply(current[0]);
+        const auto changes = snowdesktop::DiffWidgetAccessibilitySnapshots(previous, current);
+        Check(ContainsChange(changes, mutation.kind, mutation.element,
+            mutation.semanticId), mutation.description);
+    }
+    auto adapterOnly = previous;
+    adapterOnly[0].nodes[5].textAccess =
+        std::make_shared<snowdesktop::text_input::TextAccess>();
+    Check(snowdesktop::DiffWidgetAccessibilitySnapshots(previous, adapterOnly).empty(),
+        "fresh text query adapters alone must not create events");
+}
+
+void TestEventListeningBaseline()
+{
+    // RefreshEvents uses this state directly. Only OS listening and runtime
+    // capture/failure are injected here; native event delivery needs a client.
+    snowdesktop::WidgetAccessibilityEventState events;
+    std::vector<LuaWidgetAccessibilitySnapshot> snapshots{ Snapshot() };
+    int captures = 0;
+    bool captureSucceeds = true;
+    const LuaWidgetAccessibilitySnapshot* captured = nullptr;
+    const auto capture = [&](auto& output) {
+        ++captures;
+        output = snapshots;
+        captured = output.data();
+        return captureSucceeds;
+    };
+    const auto refresh = [&](bool listening) {
+        return events.Refresh(capture, [listening] { return listening; });
+    };
+    for (int frame = 0; frame < 5; ++frame)
+        Check(refresh(false).changes.empty(),
+            "unobserved frames must emit no events");
+    Check(captures == 5 && events.Current().data() == captured,
+        "unobserved frames must move the live baseline without diffing or copying snapshots");
+
+    snapshots[0].nodes[5].valueText = "before client connected";
+    Check(refresh(false).changes.empty(),
+        "changes before client connection must update the baseline silently");
+    auto update = refresh(true);
+    Check(captures == 7 && events.Current().data() == captured &&
+            events.Current()[0].nodes[5].valueText == "before client connected" &&
+            update.previous.empty() && update.changes.empty(),
+        "late listeners must use the current baseline without replaying historical events or copying snapshots");
+    update = refresh(true);
+    Check(update.changes.empty() && update.previous.empty() && captures == 8 &&
+            events.Current().data() == captured,
+        "unchanged observed frames must keep the moved live baseline without events");
+
+    const auto* previousStorage = events.Current().data();
+    snapshots[0].bounds.left += 10;
+    snapshots[0].nodes[1].focused = false;
+    snapshots[0].nodes[5].focused = true;
+    snapshots[0].nodes[5].valueText = "after client connected";
+    update = refresh(true);
+    Check(update.changes.size() == 3 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Bounds,
+                WidgetAccessibilityElementKind::Widget) &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Focus,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            update.previous.data() == previousStorage &&
+            update.previous[0].nodes[5].valueText == "before client connected" &&
+            events.Current().data() == captured,
+        "observed property, bounds and focus transitions must preserve exact old/new values by moving snapshots");
+
+    const auto successful = snapshots;
+    snapshots[0].name = "retry after capture failure";
+    captureSucceeds = false;
+    Check(refresh(true).changes.empty() &&
+            events.Current()[0].name == successful[0].name,
+        "failed captures must preserve the last successful baseline");
+    captureSucceeds = true;
+    update = refresh(true);
+    Check(update.changes.size() == 1 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Name,
+                WidgetAccessibilityElementKind::Widget) &&
+            update.previous[0].name == successful[0].name &&
+            events.Current()[0].name == "retry after capture failure",
+        "the next successful capture must retry every change since the successful baseline");
+
+    const int beforeDisconnect = captures;
+    Check(refresh(false).changes.empty() &&
+            captures == beforeDisconnect + 1 &&
+            events.Current()[0].name == "retry after capture failure",
+        "disconnect must continue maintaining a fresh baseline without emitting changes");
+    snapshots[0].name = "new client current name";
+    snapshots[0].nodes[5].valueText = "new client current value";
+    Check(refresh(false).changes.empty(),
+        "disconnected changes must refresh the baseline without events");
+    update = refresh(true);
+    Check(update.previous.empty() && update.changes.empty() &&
+            events.Current()[0].name == "new client current name",
+        "reconnected listeners must not receive stale name, value, focus or structure events");
+    snapshots[0].nodes[5].valueText = "changed immediately after subscribing";
+    update = refresh(true);
+    Check(update.changes.size() == 1 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query") &&
+            update.previous[0].nodes[5].valueText == "new client current value",
+        "a change between subscription and the first paint must retain its property event and old value");
+    // A client can also connect while runtime snapshot capture is in progress.
+    bool listeningDuringCapture = false;
+    update = events.Refresh([&](auto& output) {
+        output = snapshots;
+        output[0].nodes[5].valueText = "changed while client connected";
+        listeningDuringCapture = true;
+        return true;
+    }, [&] { return listeningDuringCapture; });
+    Check(update.changes.size() == 1 &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Value,
+                WidgetAccessibilityElementKind::Node, "key:query"),
+        "listener state must be checked after capture to retain connections made during capture");
+    snapshots.clear();
+    update = refresh(true);
+    Check(ContainsChange(update.changes, WidgetAccessibilityChangeKind::Structure,
+            WidgetAccessibilityElementKind::Root) &&
+            ContainsChange(update.changes, WidgetAccessibilityChangeKind::Focus,
+                WidgetAccessibilityElementKind::Root),
+        "removing the final focused widget must still invalidate structure and return focus to the root");
+    events.Reset();
+    Check(events.Current().empty(), "window identity changes must clear the event baseline");
+}
+
 void TestProviderTreeAndLifetime()
 {
     const HRESULT initialized = OleInitialize(nullptr);
@@ -414,8 +600,9 @@ void TestProviderTreeAndLifetime()
     std::wstring focusedWidget;
     std::string focusedKey;
     std::vector<LuaWidgetAccessibilityActionRequest> actions;
+    int captures = 0;
     WidgetAccessibilityProviderHost host(
-        [&]() { return snapshots; },
+        [&]() { ++captures; return snapshots; },
         [&](const std::wstring& widgetId, const std::string& nodeKey) {
             focusedWidget = widgetId;
             focusedKey = nodeKey;
@@ -427,9 +614,14 @@ void TestProviderTreeAndLifetime()
         });
     Check(host.AttachWindow(window),
         "provider host must attach to a valid window");
+    Check(captures == 1, "attaching a provider must seed its event baseline before a client can subscribe");
 
     IRawElementProviderSimple* rootSimple = host.RootProvider();
     Check(rootSimple != nullptr, "attached provider must expose a root");
+    ProviderOptions rootOptions{};
+    Check(SUCCEEDED(rootSimple->get_ProviderOptions(&rootOptions)) &&
+            (rootOptions & ProviderOptions_UseComThreading) != 0,
+        "root UIA callbacks must respect the owning COM apartment");
     Check(PropertyString(rootSimple, UIA_AutomationIdPropertyId) ==
             L"SnowDesktop.Desktop",
         "root provider must expose its desktop automation id");
@@ -455,6 +647,10 @@ void TestProviderTreeAndLifetime()
             SUCCEEDED(button->Navigate(
                 NavigateDirection_NextSibling, &status)) && status,
         "widget semantic hierarchy must support child and sibling navigation");
+    ProviderOptions nodeOptions{};
+    Check(SUCCEEDED(AsSimple(button.Get())->get_ProviderOptions(&nodeOptions)) &&
+            (nodeOptions & ProviderOptions_UseComThreading) != 0,
+        "fragment UIA callbacks must respect the owning COM apartment");
     Check(PropertyString(AsSimple(button.Get()).Get(),
             UIA_AutomationIdPropertyId) == L"open" &&
             PropertyString(AsSimple(status.Get()).Get(),
@@ -829,6 +1025,15 @@ void TestProviderTreeAndLifetime()
     host.RefreshEvents();
     host.RefreshEvents();
 
+    snapshots[0].nodes[5].valueText = "live query after paint";
+    const int beforeLiveQuery = captures;
+    BSTR liveValue = nullptr;
+    Check(SUCCEEDED(valuePattern->get_Value(&liveValue)) &&
+            liveValue && std::wstring(liveValue, SysStringLen(liveValue)) == L"live query after paint" &&
+            captures > beforeLiveQuery,
+        "retained provider queries must capture current values independently of the event baseline");
+    SysFreeString(liveValue);
+
     host.DetachWindow(window);
     VARIANT unavailable;
     VariantInit(&unavailable);
@@ -840,12 +1045,259 @@ void TestProviderTreeAndLifetime()
     DestroyWindow(window);
     OleUninitialize();
 }
+
+constexpr UINT kDetachProvider = WM_APP + 73;
+
+struct ApartmentFixture
+{
+    DWORD ownerThread = GetCurrentThreadId();
+    std::atomic<unsigned> wrongThreadCalls{ 0 };
+    std::atomic<unsigned> captures{ 0 };
+    std::atomic<unsigned> focuses{ 0 };
+    std::atomic<unsigned> actions{ 0 };
+    std::atomic<unsigned> textReads{ 0 };
+    unsigned replacements = 0;
+    std::wstring text = L"before";
+    std::vector<LuaWidgetAccessibilitySnapshot> snapshots{ Snapshot() };
+    std::unique_ptr<WidgetAccessibilityProviderHost> host;
+    HANDLE detached = nullptr;
+
+    bool OnOwnerThread()
+    {
+        if (GetCurrentThreadId() == ownerThread) return true;
+        ++wrongThreadCalls;
+        return false;
+    }
+
+    void ReplaceSnapshot()
+    {
+        auto replacement = Snapshot();
+        const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+            text.data(), static_cast<int>(text.size()),
+            nullptr, 0, nullptr, nullptr);
+        Check(bytes > 0, "fixture text must encode as UTF-8");
+        replacement.nodes[5].valueText.resize(static_cast<std::size_t>(bytes));
+        Check(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                text.data(), static_cast<int>(text.size()),
+                replacement.nodes[5].valueText.data(), bytes,
+                nullptr, nullptr) == bytes,
+            "fixture text conversion must preserve every UTF-8 byte");
+        auto access = std::make_shared<snowdesktop::text_input::TextAccess>();
+        access->document = [this]() ->
+            std::optional<snowdesktop::text_input::AccessibleDocument> {
+            if (!OnOwnerThread()) return {};
+            ++textReads;
+            snowdesktop::text_input::AccessibleDocument document;
+            document.text = text;
+            return document;
+        };
+        replacement.nodes[5].textAccess = std::move(access);
+        snapshots = { std::move(replacement) };
+        ++replacements;
+    }
+};
+
+LRESULT CALLBACK ApartmentWindowProc(
+    HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_NCCREATE)
+    {
+        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        SetWindowLongPtrW(window, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    }
+    auto* fixture = reinterpret_cast<ApartmentFixture*>(
+        GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (fixture && fixture->host)
+    {
+        LRESULT result = 0;
+        if (message == WM_GETOBJECT &&
+            fixture->host->TryHandleGetObject(window, wParam, lParam, result))
+            return result;
+        if (message == kDetachProvider)
+        {
+            fixture->host->DetachWindow(window);
+            fixture->host.reset();
+            SetEvent(fixture->detached);
+            return 0;
+        }
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+ComPtr<IUIAutomationElement> FindClientElement(
+    IUIAutomation* automation, IUIAutomationElement* root,
+    const wchar_t* automationId)
+{
+    VARIANT value;
+    VariantInit(&value);
+    value.vt = VT_BSTR;
+    value.bstrVal = SysAllocString(automationId);
+    ComPtr<IUIAutomationCondition> condition;
+    const HRESULT conditionResult = automation->CreatePropertyCondition(
+        UIA_AutomationIdPropertyId, value, &condition);
+    VariantClear(&value);
+    Check(SUCCEEDED(conditionResult), "client property condition must be created");
+    ComPtr<IUIAutomationElement> element;
+    Check(SUCCEEDED(root->FindFirst(TreeScope_Descendants,
+            condition.Get(), &element)) && element,
+        "real UIA must navigate the private fixture's provider tree");
+    return element;
+}
+
+void TestRealUiaApartmentAndLifetime()
+{
+    Check(SUCCEEDED(OleInitialize(nullptr)),
+        "the UIA provider fixture must own an OLE STA");
+    ApartmentFixture fixture;
+    fixture.detached = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Check(fixture.detached && finished, "fixture completion events must exist");
+    fixture.ReplaceSnapshot();
+    fixture.host = std::make_unique<WidgetAccessibilityProviderHost>(
+        [&]() {
+            if (!fixture.OnOwnerThread())
+                return std::vector<LuaWidgetAccessibilitySnapshot>{};
+            ++fixture.captures;
+            return fixture.snapshots;
+        },
+        [&](const std::wstring&, const std::string&) {
+            if (!fixture.OnOwnerThread()) return false;
+            ++fixture.focuses;
+            return true;
+        },
+        [&](const LuaWidgetAccessibilityActionRequest& request) {
+            if (!fixture.OnOwnerThread()) return false;
+            ++fixture.actions;
+            if (request.kind == LuaWidgetAccessibilityActionKind::SetValue)
+                fixture.text = request.textValue;
+            fixture.ReplaceSnapshot();
+            return true;
+        });
+    const wchar_t* className = L"SnowDesktopUiaApartmentTest";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = ApartmentWindowProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    Check(RegisterClassW(&windowClass) != 0,
+        "the isolated provider window class must register");
+    HWND window = CreateWindowExW(0, className, L"UIA apartment fixture",
+        WS_POPUP, 0, 0, 400, 400, nullptr, nullptr,
+        windowClass.hInstance, &fixture);
+    Check(window && fixture.host->AttachWindow(window),
+        "the fixture provider must attach to its private hidden window");
+
+    std::thread client([&]() {
+        Check(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)),
+            "the real UIA client must use a separate MTA");
+        {
+            ComPtr<IUIAutomation> automation;
+            Check(SUCCEEDED(CoCreateInstance(__uuidof(CUIAutomation), nullptr,
+                    CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation))),
+                "the Windows UIA client must initialize");
+            ComPtr<IUIAutomationElement> root;
+            Check(SUCCEEDED(automation->ElementFromHandle(window, &root)) && root,
+                "UIA must resolve only the private fixture HWND");
+            auto button = FindClientElement(automation.Get(), root.Get(), L"open");
+            auto input = FindClientElement(automation.Get(), root.Get(), L"query");
+            ComPtr<IUIAutomationInvokePattern> invoke;
+            ComPtr<IUIAutomationValuePattern> value;
+            ComPtr<IUIAutomationTextPattern> text;
+            Check(SUCCEEDED(button->GetCurrentPatternAs(UIA_InvokePatternId,
+                    IID_PPV_ARGS(&invoke))) && invoke &&
+                    SUCCEEDED(input->GetCurrentPatternAs(UIA_ValuePatternId,
+                        IID_PPV_ARGS(&value))) && value &&
+                    SUCCEEDED(input->GetCurrentPatternAs(UIA_TextPatternId,
+                        IID_PPV_ARGS(&text))) && text,
+                "real UIA must marshal retained invoke, value and text patterns");
+            for (unsigned index = 0; index < 20; ++index)
+            {
+                SAFEARRAY* runtimeId = nullptr;
+                BSTR name = nullptr;
+                Check(SUCCEEDED(button->GetRuntimeId(&runtimeId)) && runtimeId &&
+                        SUCCEEDED(button->get_CurrentName(&name)) && name &&
+                        std::wstring(name, SysStringLen(name)) == L"Open",
+                    "background runtime-id and property queries must survive snapshot replacement");
+                SafeArrayDestroy(runtimeId);
+                SysFreeString(name);
+                Check(SUCCEEDED(invoke->Invoke()),
+                    "background UIA invoke must reach the owning STA");
+            }
+            Check(SUCCEEDED(button->SetFocus()) && fixture.focuses > 0,
+                "background UIA focus must reach the owning STA");
+            BSTR replacementValue = SysAllocString(L"after \u97f3\u4e50");
+            Check(replacementValue != nullptr,
+                "the client value argument must be an allocated BSTR");
+            const HRESULT writeResult = value->SetValue(replacementValue);
+            SysFreeString(replacementValue);
+            Check(SUCCEEDED(writeResult),
+                "background UIA value writes must reach the owning STA");
+            BSTR currentValue = nullptr;
+            Check(SUCCEEDED(value->get_CurrentValue(&currentValue)) &&
+                    currentValue &&
+                    std::wstring(currentValue, SysStringLen(currentValue)) == L"after \u97f3\u4e50",
+                "marshalling must preserve live values without waiting for paint events");
+            SysFreeString(currentValue);
+            ComPtr<IUIAutomationTextRange> range;
+            BSTR currentText = nullptr;
+            Check(SUCCEEDED(text->get_DocumentRange(&range)) && range &&
+                    SUCCEEDED(range->GetText(-1, &currentText)) && currentText &&
+                    std::wstring(currentText, SysStringLen(currentText)) == L"after \u97f3\u4e50" &&
+                    SUCCEEDED(range->Select()),
+                "retained text ranges must read and select through the owning STA");
+            SysFreeString(currentText);
+            Check(fixture.wrongThreadCalls == 0 && fixture.textReads > 0,
+                "no UIA snapshot, focus, action or text callback may run outside its STA");
+
+            Check(PostMessageW(window, kDetachProvider, 0, 0) &&
+                    WaitForSingleObject(fixture.detached, 10000) == WAIT_OBJECT_0,
+                "the owner must detach and destroy the host while clients retain providers");
+            const unsigned captures = fixture.captures;
+            const unsigned actions = fixture.actions;
+            currentText = nullptr;
+            const HRESULT textResult = range->GetText(-1, &currentText);
+            SysFreeString(currentText);
+            Check(FAILED(invoke->Invoke()) && FAILED(textResult) &&
+                    fixture.captures == captures && fixture.actions == actions,
+                "retained patterns and text ranges must fail without touching the destroyed host");
+        }
+        CoUninitialize();
+        SetEvent(finished);
+    });
+
+    const ULONGLONG deadline = GetTickCount64() + 20000;
+    while (WaitForSingleObject(finished, 0) == WAIT_TIMEOUT)
+    {
+        Check(GetTickCount64() < deadline,
+            "cross-apartment UIA calls must complete without deadlocking the GUI thread");
+        if (fixture.host) fixture.ReplaceSnapshot();
+        (void)MsgWaitForMultipleObjects(1, &finished, FALSE, 25, QS_ALLINPUT);
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    client.join();
+    Check(fixture.wrongThreadCalls == 0 && fixture.captures > 20 &&
+            fixture.actions >= 21 && fixture.replacements > 20,
+        "real UIA traffic must exercise live owner-thread reads, writes and replacement");
+    DestroyWindow(window);
+    UnregisterClassW(className, windowClass.hInstance);
+    CloseHandle(finished);
+    CloseHandle(fixture.detached);
+    OleUninitialize();
+}
 }
 
 int main()
 {
     TestSnapshotDiff();
+    TestIndividualEventInputs();
+    TestEventListeningBaseline();
     TestProviderTreeAndLifetime();
+    TestRealUiaApartmentAndLifetime();
     std::cout << "widget accessibility provider tests passed\n";
     return 0;
 }

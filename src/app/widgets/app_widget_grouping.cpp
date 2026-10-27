@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widget_package_source_capture.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
@@ -9,6 +10,7 @@
 #include <commctrl.h>
 #include <objbase.h>
 
+#include <algorithm>
 #include <set>
 #include <limits>
 #include <thread>
@@ -17,6 +19,16 @@
 
 namespace
 {
+bool NeedsNativeHelperConsent(const snowdesktop::widget::InstalledPackage& package)
+{
+    if (package.manifest.nativeHelpers.empty()) return false;
+    if (package.permissionState != snowdesktop::widget::PermissionDecisionState::Granted) return true;
+    const bool required = std::find(package.manifest.permissions.begin(), package.manifest.permissions.end(),
+        "native.execute") != package.manifest.permissions.end();
+    return required && std::find(package.grantedPermissions.begin(), package.grantedPermissions.end(),
+        "native.execute") == package.grantedPermissions.end();
+}
+
 const wchar_t* WidgetPermissionLabel(std::string_view permission)
 {
     if (const char* key = snowdesktop::widget::
@@ -255,54 +267,8 @@ void DesktopApp::CaptureWidgetPackageSource(DesktopWidget& widget) const
         return;
     const auto source = WidgetEngine::GetWidgetPackageSource(
         widget.packageId);
-    if (!source)
-    {
-        if (widget.packageSourceProvider != L"steam-workshop")
-        {
-            widget.packageSourceProvider.clear();
-            widget.packageSourceExternalItemId.clear();
-            widget.packageSourceUrl.clear();
-        }
-        return;
-    }
-
-    const bool hasRememberedWorkshopSource =
-        widget.packageSourceProvider == L"steam-workshop" &&
-        !snowdesktop::widget::SteamPublishedFileId(
-            WideToUtf8(widget.packageSourceExternalItemId)).empty();
-    if (hasRememberedWorkshopSource &&
-        source->providerId != "steam-workshop")
-    {
-        // A development override may remain after the subscribed managed copy
-        // disappears. Keep the durable Workshop recovery address instead of
-        // replacing it with the temporary local source.
-        return;
-    }
-
-    if (source->providerId != "steam-workshop")
-    {
-        // Built-in and local packages have no recoverable subscription page;
-        // keep their layout records free of provider-specific noise.
-        widget.packageSourceProvider.clear();
-        widget.packageSourceExternalItemId.clear();
-        widget.packageSourceUrl.clear();
-        return;
-    }
-
-    widget.packageSourceProvider = Utf8ToWide(source->providerId);
-    widget.packageSourceExternalItemId = Utf8ToWide(
-        source->externalItemId);
-    widget.packageSourceUrl.clear();
-    if (source->providerId == "steam-workshop")
-    {
-        const std::string publishedFileId = snowdesktop::widget::
-            SteamPublishedFileId(source->externalItemId);
-        if (!publishedFileId.empty())
-        {
-            widget.packageSourceUrl = snowdesktop::
-                SnowDesktopSteamCommunityItemUrl(publishedFileId);
-        }
-    }
+    snowdesktop::widget_source_capture::Apply(widget, source,
+        WideToUtf8, Utf8ToWide, snowdesktop::SnowDesktopSteamCommunityItemUrl);
 }
 
 void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
@@ -417,7 +383,7 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
     widgets_.push_back(std::move(widget));
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -714,8 +680,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
                 {DockEntryTypeForWidget(created.type), groupId, false});
             NormalizeDockRecycleBinPosition();
             LayoutItems();
-            RebuildContainersAndItems();
-            SaveLayoutSlots();
+            RequestLayoutSave();
         }
         else PlaceWidgetWithDisplacement(widgets_.size() - 1, landing, span, true);
     }
@@ -724,7 +689,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
         EnsureNavTabOrder();
         ApplyPageMapping();
         LayoutItems();
-        SaveLayoutSlots();
+        RequestLayoutSave();
     }
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
@@ -882,7 +847,7 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
     EnsureNavTabOrder();
     ApplyPageMapping();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
@@ -911,6 +876,10 @@ size_t DesktopApp::HitTestCollectionGroupIndex(
             continue;
         RECT bounds = widgets_[i].bounds;
         if (popupWidgetIndex_ == i && GetGroupPopupView()) bounds = GetGroupPopupView()->GetFrameRect();
+        else for (const auto& container : containers_)
+            if (const auto* group = dynamic_cast<WidgetContainer*>(container.get());
+                group && group->GetWidgetData() == &widgets_[i])
+            { bounds = group->GetFrameRect(); break; }
         if (!IsRectEmptyRect(bounds) && PtInRect(&bounds, point))
             return i;
     }
@@ -942,6 +911,10 @@ size_t DesktopApp::HitTestFileGroupIndex(
             continue;
         RECT bounds = widgets_[i].bounds;
         if (popupWidgetIndex_ == i && GetGroupPopupView()) bounds = GetGroupPopupView()->GetFrameRect();
+        else for (const auto& container : containers_)
+            if (const auto* group = dynamic_cast<WidgetContainer*>(container.get());
+                group && group->GetWidgetData() == &widgets_[i])
+            { bounds = group->GetFrameRect(); break; }
         if (!IsRectEmptyRect(bounds) && PtInRect(&bounds, point))
             return i;
     }
@@ -997,7 +970,7 @@ bool DesktopApp::AddWidgetToFileGroup(
     group.scrollOffset = 0;
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1021,7 +994,11 @@ bool DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
     const bool overTab = groupType == DesktopWidgetType::CollectionGroup
         ? !static_cast<CollectionGroup*>(group)->CategoryIdAtPoint(dragSession_.CurrentPoint()).empty()
         : !static_cast<FileGroup*>(group)->SourceIdAtPoint(dragSession_.CurrentPoint()).empty();
-    if (!overTab) insertIndex = target->childWidgetIds.size();
+    const bool tabInsertion = targetSlot &&
+        (targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::CollectionGroupTab ||
+         targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::FileGroupSourceTab) &&
+        (region == HitRegion::SortBefore || region == HitRegion::SortAfter);
+    if (!overTab && !tabInsertion) insertIndex = target->childWidgetIds.size();
     const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(source,
         snowdesktop::slot_contract::SurfaceForWidgetType(groupType), mods);
     std::vector<std::wstring> movingIds;
@@ -1131,8 +1108,7 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
     RefreshCollectedKeysCache();
     EnsureNavTabOrder();
     LayoutItems();
-    RebuildContainersAndItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
@@ -1151,8 +1127,7 @@ bool DesktopApp::ReleaseWidgetFromFileGroup(
         })) return false;
     EnsureNavTabOrder();
     LayoutItems();
-    RebuildContainersAndItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1238,7 +1213,7 @@ bool DesktopApp::AddCollectionToGroup(
         group.scrollOffset, 0, INT_MAX);
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1266,7 +1241,7 @@ bool DesktopApp::ReleaseCollectionFromGroup(
         })) return false;
     EnsureNavTabOrder();
     LayoutItems();
-    SaveLayoutSlots();
+    RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
@@ -1628,6 +1603,14 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
     if (packageId.empty()) return;
     const auto package = WidgetEngine::GetWidgetPackage(packageId);
     if (!package) return;
+    if (NeedsNativeHelperConsent(*package))
+    {
+        auto route = snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
+        route.itemKey = packageId;
+        ShowSettingsWindow(std::move(route));
+        return;
+    }
     const auto requiredConsentPermissions =
         snowdesktop::widget::PermissionsRequiringConsent(
             package->manifest.permissions);
@@ -1730,6 +1713,14 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
     }
     const auto package = WidgetEngine::GetWidgetPackage(packageId);
     if (!package) return;
+    if (NeedsNativeHelperConsent(*package))
+    {
+        auto route = snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::Widgets, "widgets.permissions");
+        route.itemKey = packageId;
+        ShowSettingsWindow(std::move(route));
+        return;
+    }
     const auto requiredConsentPermissions =
         snowdesktop::widget::PermissionsRequiringConsent(
             package->manifest.permissions);

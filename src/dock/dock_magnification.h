@@ -38,16 +38,12 @@ inline float ScaleGrowthMultiplier(float focusScale) noexcept
 }
 
 inline constexpr bool ShouldSuppressMagnification(
-    bool itemDragActive,
-    bool widgetMoveActive,
     bool widgetResizeActive,
     bool inputAvailable = true)
 {
-    // The same semantic hover drives title placement. Disabling the optional
-    // growth effect, or merging its chrome, must not disable that hover.
-    return !inputAvailable || itemDragActive ||
-        widgetMoveActive ||
-        widgetResizeActive;
+    // Item and component drags retain the passive pointer hover timeline.
+    // Titles have a separate drag gate so they do not obscure drop feedback.
+    return !inputAvailable || widgetResizeActive;
 }
 
 // Shared full-width chrome does not pin the Dock's magnification to an edge.

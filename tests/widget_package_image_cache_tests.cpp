@@ -1,4 +1,5 @@
 #include "widget/packages/widget_package_image_cache.h"
+#include "widget/widget_notification_image_tests.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -42,7 +43,10 @@ void WriteBitmap(const fs::path& path, std::uint32_t color)
 }
 }
 
-int main()
+#include "widget/widget_cold_start_prewarm_tests.h"
+#include "widget/widget_image_demand_tests.h"
+
+int main(int argc, char** argv)
 {
     const HRESULT initialized = CoInitializeEx(
         nullptr, COINIT_APARTMENTTHREADED);
@@ -57,6 +61,32 @@ int main()
     error.clear();
     fs::create_directories(root, error);
     Check(!error, "test directory must be created");
+
+    try
+    {
+        const bool legacyOnly = argc == 2 &&
+            std::string(argv[1]) == "--legacy-notification-eviction";
+        if (!legacyOnly)
+        {
+            bool rejected = false;
+            try { notification_image_tests::Run(root, true); }
+            catch (const std::runtime_error& failure)
+            {
+                rejected = std::string(failure.what()) ==
+                    "text/progress-only notification updates must retain the decoded bitmap";
+                std::cout << "legacy eviction control: " << failure.what() << '\n';
+            }
+            Check(rejected, "the original unconditional notification eviction must fail the reuse assertion");
+        }
+        notification_image_tests::Run(root, legacyOnly);
+    }
+    catch (const std::exception& failure)
+    {
+        fs::remove_all(root, error);
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        std::cerr << "FAIL: " << failure.what() << '\n';
+        return 1;
+    }
 
     const fs::path first = root / L"first.bmp";
     const fs::path second = root / L"second.bmp";
@@ -150,6 +180,8 @@ int main()
             !quotaCache.Failed("quota-second"),
         "cache clear must release pixels and negative entries");
 
+    RunColdStartPrewarmCases(root);
+    RunImageDemandCases(root);
     fs::remove_all(root, error);
     if (SUCCEEDED(initialized)) CoUninitialize();
     std::cout << "widget package image cache tests passed\n";

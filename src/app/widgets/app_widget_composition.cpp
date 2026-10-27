@@ -468,7 +468,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             failure.stage,
             static_cast<unsigned>(failure.hr),
             failure.retry ? L"recreating" : L"dropping");
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
 
         const auto position =
             desktopWidgetCompositionItems_.find(failure.widgetId);
@@ -520,10 +520,27 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     auto& item = position->second;
-    // Collapse and drag-time expansion can change another widget's frame
-    // outside the current dirty region. Rebuild its surface at the new size.
-    if (visible && !EqualRect(&item.bounds, &bounds))
+    // A restored/resized surface must publish fresh pixels before its clip
+    // opens. A passive hover tail can otherwise defer the draw while this
+    // frame commits the retained surface at its previous size.
+    const bool refreshBeforeShow = visible &&
+        (!item.visible || !EqualRect(&item.bounds, &bounds));
+    if (refreshBeforeShow)
+    {
         pendingDesktopWidgetCompositions_.insert(widgetId);
+        if (desktopWidgetHoverTailToken_)
+        {
+            uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
+            desktopWidgetHoverTailToken_ = 0;
+        }
+        // FlushPendingDesktopWidgetComposition opens the clip only after
+        // EndDraw succeeds and the current surface has been attached.
+        if (item.clip)
+        {
+            (void)item.clip->SetRight(0.0f);
+            (void)item.clip->SetBottom(0.0f);
+        }
+    }
     if (item.visible == visible)
         return;
     item.visible = visible;
@@ -545,12 +562,10 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible)
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
-    if (item.clip)
+    if (!visible && item.clip)
     {
-        (void)item.clip->SetRight(
-            visible ? static_cast<float>(item.width) : 0.0f);
-        (void)item.clip->SetBottom(
-            visible ? static_cast<float>(item.height) : 0.0f);
+        (void)item.clip->SetRight(0.0f);
+        (void)item.clip->SetBottom(0.0f);
     }
     if (!visible)
     {
@@ -615,7 +630,7 @@ void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
             monitorKnown ? monitor.szDevice : L"unknown",
             monitorKnown && (monitor.dwFlags & MONITORINFOF_PRIMARY) != 0,
             item.backdropBlurRadius);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message);
     }
     wchar_t summary[256]{};
     swprintf_s(summary,
@@ -623,7 +638,7 @@ void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
         L"available=%d requested=%zu registered=%zu panels=%zu",
         GetCurrentProcessId(), tick, phase, desktopBackdropCompositor_.IsAvailable(),
         requested, registered, desktopBackdropCompositor_.PanelCount());
-    WriteDiagnosticLogEntry(summary);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, summary);
 }
 
 std::uint64_t DesktopApp::GetDesktopWidgetSurfaceBytes(
@@ -723,7 +738,7 @@ void DesktopApp::TrimHiddenDesktopWidgetSurfaces()
             desktopWidgetCompositionFailurePending_ = true;
             const auto message = L"[WidgetComposition] Hidden surface detach failed: " +
                 id + L" hr=" + std::to_wstring(hr);
-            WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message.c_str(), DiagnosticLogLevel::Error);
             if (hwnd_ && IsWindow(hwnd_))
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }

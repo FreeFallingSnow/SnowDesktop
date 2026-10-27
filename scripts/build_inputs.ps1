@@ -40,6 +40,12 @@ function Test-BuildInputPath([string]$Relative) {
 }
 
 function Get-BuildInputIdentity([string]$Root) {
+    # A slot has no Git index. Never discover its mutable ancestor checkout.
+    if((Get-Command Test-CandidateSourceRoot -ErrorAction SilentlyContinue) -and (Test-CandidateSourceRoot $Root)){
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        return Get-CandidateExecutionInputIdentity $Root
+    }
     $listing = Invoke-InputGit $Root 'ls-files -z --cached --others --exclude-standard'
     if ($listing.code -ne 0) { throw ('Cannot enumerate repository inputs: ' + $listing.error) }
     $headQuery = Invoke-InputGit $Root 'rev-parse --verify HEAD'
@@ -53,7 +59,7 @@ function Get-BuildInputIdentity([string]$Root) {
     [string[]]$ordered = @($paths)
     [Array]::Sort($ordered, [StringComparer]::Ordinal)
     $content = New-Object Text.StringBuilder
-    [void]$content.Append("sha256-repository-inputs-v2`n")
+    [void]$content.Append("sha256-repository-inputs-v3`n")
     $sha = [Security.Cryptography.SHA256]::Create()
     $encoding = New-Object Text.UTF8Encoding($false)
     try {
@@ -70,14 +76,17 @@ function Get-BuildInputIdentity([string]$Root) {
             }
             [void]$content.Append($path).Append([char]0).Append($digest).Append("`n")
         }
+        # SDK_ROOT initializes steam_bridge's actual cache entry. Retain the
+        # previous SDK_PATH binding and invalidate v2 identities explicitly;
+        # this path binding does not close external SDK file dependencies.
         # Only build-related environment values; never hash arbitrary secrets.
         foreach ($key in @('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_GENERATOR_TOOLSET',
-            'SNOWDESKTOP_STEAMWORKS_SDK_PATH', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion')) {
+            'SNOWDESKTOP_STEAMWORKS_SDK_ROOT', 'SNOWDESKTOP_STEAMWORKS_SDK_PATH', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion')) {
             [void]$content.Append('ENV:').Append($key).Append([char]0).Append(
                 [string][Environment]::GetEnvironmentVariable($key, 'Process')).Append("`n")
         }
         $digest = [BitConverter]::ToString($sha.ComputeHash($encoding.GetBytes($content.ToString()))).Replace('-', '').ToLowerInvariant()
     }
     finally { $sha.Dispose() }
-    return [pscustomobject]@{ algorithm = 'sha256-repository-inputs-v2'; digest = $digest; fileCount = $ordered.Count; head = $head }
+    return [pscustomobject]@{ algorithm = 'sha256-repository-inputs-v3'; digest = $digest; fileCount = $ordered.Count; head = $head }
 }

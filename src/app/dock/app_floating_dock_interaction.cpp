@@ -1,4 +1,9 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "dock_platform_helpers.h"
+#include "dock_input_diagnostics.h"
+#include "platform/foreground_fullscreen.h"
+#include "app/popup/popup_window_pair_z_order.h"
 
 namespace
 {
@@ -12,20 +17,201 @@ struct ImmediateDockPaintDeferral
 };
 }
 
+void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus,
+    bool nativePointerInput)
+{
+    if (floatingDockPromotionInputUpdateActive_) return;
+    LASTINPUTINFO nativeInput{sizeof(LASTINPUTINFO)};
+    if (nativePointerInput && (!host.promoted || host.promotionInputPointerRetryUsed ||
+        host.promotionInputCapabilityMissing != true || !GetLastInputInfo(&nativeInput) ||
+        host.promotionInputRequestInputTime == nativeInput.dwTime)) return;
+    const bool raised = host.promoted || host.passivelyRevealed || host.mergedInteractionHeld;
+    const bool visible = raised && host.active && host.frameReady && host.hwnd &&
+        IsWindowVisible(host.hwnd) &&
+        snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd);
+    const bool newlyVisible = visible && !host.promotionInputVisible;
+    host.promotionInputVisible = visible;
+    if (!visible)
+    {
+        host.promotionInputBorrowedFocus = false;
+        host.promotionInputFocusPendingUntil = 0;
+        host.promotionInputRequestInputTime.reset();
+        host.promotionInputPointerRetryUsed = false;
+        host.promotionInputForeground = nullptr;
+        host.promotionInputProcess = 0;
+        host.promotionInputCapabilityMissing.reset();
+        if (host.explicitDismissAvailable)
+        {
+            host.explicitDismissAvailable = false;
+            host.explicitDismissRect = {};
+            host.windowRegionPending = true;
+            InvalidateFloatingDockWindow(host, true);
+        }
+        return;
+    }
+    if (!floatingDockPromotionInputToken_)
+        floatingDockPromotionInputToken_ = uiAnimationScheduler_.ScheduleInterval(50,
+            [this](snowdesktop::UiScheduleToken token) {
+                if (token != floatingDockPromotionInputToken_) return;
+                (void)ObserveDockPromotionActivation(GetForegroundWindow());
+                RefreshFloatingDockPromotionInputs();
+            });
+
+    const HWND foreground = GetForegroundWindow();
+    DWORD process = 0;
+    if (foreground) GetWindowThreadProcessId(foreground, &process);
+    const bool fullscreen = snowdesktop::fullscreen::ObserveForeground().has_value();
+    const bool blocked = fullscreen || host.passivelyRevealed || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active() ||
+        HasActiveContextMenuSession() || shellPopupMenuLayerDepth_ > 0 || shellFileOperationInFlight_ > 0 ||
+        (dockStartMenu_ && dockStartMenu_->Active()) ||
+        (dockWindowTransition_ && dockWindowTransition_->IsActive());
+    const bool retryDeferred = host.promotionInputBlocked && !blocked;
+    const bool request = requestFocus || newlyVisible || retryDeferred;
+    if (request) host.promotionInputPointerRetryUsed = false;
+    const auto borrowedContext = std::find_if(persistentDockHosts_.begin(), persistentDockHosts_.end(),
+        [](const auto& candidate) { return candidate && candidate->promotionInputBorrowedFocus; });
+    const bool compensatingSession = borrowedContext != persistentDockHosts_.end();
+    const bool observingBorrowedForeground = floatingDockKeyboardSessionActive_ &&
+        process == GetCurrentProcessId() && compensatingSession;
+    const HWND pointerContext = observingBorrowedForeground
+        ? (*borrowedContext)->promotionInputForeground : foreground;
+    const DWORD pointerContextProcess = observingBorrowedForeground
+        ? (*borrowedContext)->promotionInputProcess : process;
+    DWORD currentContextProcess = 0;
+    const bool contextCurrent = !observingBorrowedForeground ||
+        (pointerContext && IsWindow(pointerContext) && GetWindowThreadProcessId(pointerContext, &currentContextProcess) &&
+            currentContextProcess == pointerContextProcess);
+    // Borrowing our own input queue does not establish observation of the
+    // outside target. Keep every promoted host bound to the original context.
+    const bool pointerUnavailable = !contextCurrent || snowdesktop::window_support::WindowSupport().Resolve(
+        snowdesktop::window_support::Capability::PointerObservation, pointerContext).NeedsFallback();
+    host.promotionInputCapabilityMissing = pointerUnavailable;
+    if (!pointerUnavailable && host.promotionInputBorrowedFocus)
+    {
+        host.promotionInputBorrowedFocus = false;
+        host.promotionInputFocusPendingUntil = 0;
+        if (foreground == floatingDockInputHwnd_)
+            for (const auto& candidate : persistentDockHosts_)
+                if (candidate && candidate->promoted)
+                    candidate->desktopLayerForegroundWindow = pointerContext;
+        EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        return; // Hiding the proxy can rebuild hosts; reacquire on the next observation.
+    }
+    host.promotionInputForeground = pointerContext;
+    host.promotionInputProcess = pointerContextProcess;
+    host.promotionInputBlocked = blocked;
+    const bool borrowForeground = (request || nativePointerInput) && host.promotionInputCapabilityMissing.value_or(false) &&
+        !blocked && (!host.promotionInputFocusPendingUntil || nativePointerInput);
+
+    floatingDockPromotionInputUpdateActive_ = true;
+    struct InputUpdateScope { bool& active; ~InputUpdateScope() { active = false; } }
+        updateScope{floatingDockPromotionInputUpdateActive_};
+    const HWND hostWindow = host.hwnd;
+    auto* visibleHost = FindPersistentDockHost(hostWindow);
+    if (borrowForeground && visibleHost && visibleHost->active && visibleHost->frameReady &&
+        IsWindowVisible(hostWindow) && snowdesktop::popup_window_pair_z_order::IsTopmost(hostWindow) &&
+        GetForegroundWindow() == foreground)
+    {
+        // A registered hotkey supplies activation permission. A polled gesture
+        // may not; allow one more request only when new native Dock input arrives.
+        // Last-input time deduplicates that input, it never proves an outside click.
+        if (nativePointerInput || GetLastInputInfo(&nativeInput))
+            host.promotionInputRequestInputTime = nativeInput.dwTime;
+        else
+            host.promotionInputRequestInputTime.reset();
+        if (nativePointerInput) host.promotionInputPointerRetryUsed = true;
+        SelectPersistentDockHost(visibleHost);
+        CancelDockWindowActivationObservation(foreground);
+        const bool borrowSession = !floatingDockKeyboardSessionActive_ || compensatingSession;
+        BeginFloatingDockKeyboardSession(false);
+        if (auto* current = FindPersistentDockHost(hostWindow))
+            current->promotionInputBorrowedFocus = floatingDockKeyboardSessionActive_ && borrowSession;
+        const HWND observed = GetForegroundWindow();
+        DWORD observedProcess = 0;
+        if (observed) GetWindowThreadProcessId(observed, &observedProcess);
+        if (auto* current = FindPersistentDockHost(hostWindow))
+        {
+            current->promotionInputForeground = pointerContext;
+            current->promotionInputProcess = pointerContextProcess;
+            current->promotionInputCapabilityMissing = !contextCurrent || snowdesktop::window_support::WindowSupport().Resolve(
+                snowdesktop::window_support::Capability::PointerObservation, pointerContext).NeedsFallback();
+            // Publish the owned foreground immediately; a quick return click
+            // must not depend on a timer first sampling the proxy's activation.
+            current->desktopLayerForegroundWindow = observed;
+            // User32 can finish cross-input-queue activation after the API
+            // returns. Keep the proxy alive while observing that result;
+            // hiding it immediately can cancel an otherwise accepted request.
+            current->promotionInputFocusPendingUntil =
+                observedProcess != GetCurrentProcessId() && floatingDockKeyboardSessionActive_
+                ? GetTickCount64() + 150 : 0;
+        }
+    }
+    if (auto* current = FindPersistentDockHost(hostWindow))
+    {
+        const HWND actualForeground = GetForegroundWindow();
+        DWORD actualProcess = 0;
+        if (actualForeground) GetWindowThreadProcessId(actualForeground, &actualProcess);
+        if (floatingDockKeyboardSessionActive_ && actualForeground == floatingDockInputHwnd_)
+            floatingDockInputForegroundSeen_ = true;
+        if (current->promotionInputFocusPendingUntil)
+        {
+            if (actualProcess == GetCurrentProcessId())
+                current->promotionInputFocusPendingUntil = 0;
+            else if (blocked || !floatingDockKeyboardSessionActive_ ||
+                current->promotionInputCapabilityMissing == false ||
+                GetTickCount64() >= current->promotionInputFocusPendingUntil)
+            {
+                current->promotionInputFocusPendingUntil = 0;
+                EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+            }
+        }
+        const bool focusDismissAvailable = floatingDockKeyboardSessionActive_ &&
+            floatingDockInputForegroundSeen_ && actualProcess == GetCurrentProcessId();
+        const bool keepFallback = !focusDismissAvailable && !current->promotionInputFocusPendingUntil &&
+            (!current->promotionInputCapabilityMissing.has_value() ||
+                current->promotionInputCapabilityMissing.value_or(false));
+        if (current->explicitDismissAvailable != keepFallback)
+        {
+            current->explicitDismissAvailable = keepFallback;
+            UpdateFloatingDockWindowBounds(*current, true, true);
+        }
+    }
+}
+
+void DesktopApp::RefreshFloatingDockPromotionInputs(bool requestFocus)
+{
+    std::vector<HWND> windows;
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->hwnd) windows.push_back(host->hwnd);
+    for (const HWND window : windows)
+        if (auto* host = FindPersistentDockHost(window))
+            RefreshFloatingDockPromotionInput(*host, requestFocus);
+    const bool anyVisible = std::any_of(persistentDockHosts_.begin(), persistentDockHosts_.end(),
+        [](const auto& host) { return host && host->promotionInputVisible; });
+    if (!anyVisible && floatingDockPromotionInputToken_)
+    {
+        uiAnimationScheduler_.Cancel(floatingDockPromotionInputToken_);
+        floatingDockPromotionInputToken_ = 0;
+    }
+}
+
 // Floating-Dock visibility, pointer mapping and interaction state.
 
 void DesktopApp::ShowFloatingDock(
     HMONITOR preferredMonitor, DockRevealSource source)
 {
+    floatingDockOutsidePress_.Cancel();
     if (desktopPassthroughActive_)
         return;
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
         source == DockRevealSource::Hotkey ? L"Floating Dock shortcut received" :
         source == DockRevealSource::Gesture ? L"Floating Dock edge gesture received" :
+        source == DockRevealSource::WindowAction ? L"Floating Dock window action reveal received" :
         L"Floating Dock associated surface reveal received");
     if (!generalSettings_.dockEnabled)
     {
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
             L"Floating Dock shortcut ignored: feature disabled");
         return;
     }
@@ -42,7 +228,7 @@ void DesktopApp::ShowFloatingDock(
     }
     if (FullscreenBlocksDockReveal(source, targetMonitor))
     {
-        WriteDiagnosticLogEntry(L"Floating Dock reveal suppressed: foreground fullscreen");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: foreground fullscreen");
         return;
     }
     // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
@@ -52,8 +238,8 @@ void DesktopApp::ShowFloatingDock(
     HideDockWindowPreview();
     if (!SyncPersistentDockHost(targetMonitor))
     {
-        WriteDiagnosticLogEntry(
-            L"Floating Dock persistent host unavailable");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+            L"Floating Dock persistent host unavailable", DiagnosticLogLevel::Warning);
         MessageBeep(MB_ICONWARNING);
         return;
     }
@@ -66,6 +252,7 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     floatingDockHost_->promoted = true;
+    floatingDockHost_->promotionInputVisible = false;
     floatingDockHost_->windowActionPromotion.Retain();
     floatingDockHost_->mergedCloseAfterInteraction = false;
     floatingDockHost_->passivelyRevealed = false;
@@ -116,7 +303,7 @@ void DesktopApp::ShowFloatingDock(
                 SyncPersistentDockHost(
                     previouslySelectedMonitor);
             }
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
                 L"Floating Dock summon deferred: frame not ready");
             return;
         }
@@ -139,10 +326,12 @@ void DesktopApp::ShowFloatingDock(
         InvalidateFloatingDockWindow(
             *floatingDockHost_, true);
     }
-    // Pointer gestures reveal a NOACTIVATE surface, never a keyboard proxy.
-    if (snowdesktop::dock_fullscreen::StartsKeyboardSession(source))
-        BeginFloatingDockKeyboardSession(source == DockRevealSource::Hotkey &&
-            !FullscreenBlocksDockReveal(source, targetMonitor));
+    RefreshFloatingDockPromotionInput(*floatingDockHost_);
+    // Actual keyboard editors retain their explicit input request. All other
+    // promotion paths use the same established pointer capability above.
+    if (source == DockRevealSource::AssociatedSurface &&
+        !snowdesktop::fullscreen::ObserveForeground())
+        BeginFloatingDockKeyboardSession(false);
 }
 
 bool DesktopApp::
@@ -190,14 +379,15 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
             !ownedHost->hwnd) continue;
         // Consume the native minimize-button press for hidden and visible
         // Hosts alike, before an outside-pointer timer can sample it.
-        floatingDockPointerButtonsDown_ |=
+        const auto buttons = snowdesktop::window_support::WindowSupport().PointerButtons();
+        floatingDockPointerButtonsDown_ |= buttons ? *buttons : (
             ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
             ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
-            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));
         if (!IsWindowVisible(ownedHost->hwnd))
         {
             const bool alreadyPromoted = ownedHost->promoted;
-            ShowFloatingDock(monitor);
+            ShowFloatingDock(monitor, DockRevealSource::WindowAction);
             // Synchronization may rebuild the host collection. Reacquire the
             // actual revealed host before assigning animation ownership.
             for (const auto& revealed : persistentDockHosts_)
@@ -217,6 +407,7 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
             return nullptr;
         }
         auto& host = *ownedHost;
+        const bool alreadyPromoted = host.promoted;
         host.windowActionPromotion.Begin(host.promoted, retainPromotion);
         if (!host.promoted)
         {
@@ -228,6 +419,7 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
             RefreshFloatingDockVisibilityState();
             UpdatePersistentDockHostVisibility(host);
         }
+        RefreshFloatingDockPromotionInput(host, alreadyPromoted);
         return host.hwnd;
     }
     return nullptr;
@@ -238,8 +430,12 @@ void DesktopApp::ReleaseTemporaryDockActionPromotion()
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (ownedHost && ownedHost->windowActionPromotion.Release(dockSettings_.summonOnAppMinimize))
+        {
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"promotion-release", ownedHost->hwnd, ownedHost->promoted);
             CloseFloatingDock(*ownedHost, FloatingDockCloseFocusPolicy::PreserveCurrent);
+        }
     }
+    RefreshFloatingDockPromotionInputs(true);
 }
 
 void DesktopApp::CloseFloatingDock(
@@ -267,7 +463,7 @@ void DesktopApp::CloseFloatingDock(
 {
     if (rightButtonDownDockHost_ == &host)
         rightButtonDownDockHost_ = nullptr;
-    if (!IsPersistentDockHostPromoted(host))
+    if (!host.active || (!host.promoted && !host.passivelyRevealed && !host.explicitDismissAvailable))
     {
         std::function<void()> action =
             std::move(floatingDockPostCloseAction_);
@@ -279,6 +475,7 @@ void DesktopApp::CloseFloatingDock(
 
     const bool closingSelectedHost =
         floatingDockHost_ == &host;
+    snowdesktop::dock_input_diagnostics::RecordLayer(L"close-host", host.hwnd, host.promoted);
     const bool endKeyboardSession =
         closingSelectedHost &&
         floatingDockKeyboardSessionActive_;
@@ -294,6 +491,12 @@ void DesktopApp::CloseFloatingDock(
     }
 
     host.promoted = false;
+    host.promotionInputFocusPendingUntil = 0;
+    host.promotionInputRequestInputTime.reset();
+    host.promotionInputPointerRetryUsed = false;
+    host.promotionInputVisible = false;
+    host.explicitDismissAvailable = false;
+    host.explicitDismissRect = {};
     host.windowActionPromotion.Retain();
     host.passivelyRevealed = false;
     host.passiveRevealTick = 0;
@@ -335,6 +538,7 @@ void DesktopApp::CloseFloatingDock(
 void DesktopApp::CloseAllFloatingDocks(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    floatingDockOutsidePress_.Cancel();
     rightButtonDownDockHost_ = nullptr;
     const bool endKeyboardSession =
         floatingDockKeyboardSessionActive_;
@@ -352,6 +556,12 @@ void DesktopApp::CloseAllFloatingDocks(
         if (host)
         {
             host->promoted = false;
+            host->promotionInputFocusPendingUntil = 0;
+            host->promotionInputRequestInputTime.reset();
+            host->promotionInputPointerRetryUsed = false;
+            host->promotionInputVisible = false;
+            host->explicitDismissAvailable = false;
+            host->explicitDismissRect = {};
             host->windowActionPromotion.Retain();
             host->passivelyRevealed = false;
             host->passiveRevealTick = 0;
@@ -565,7 +775,7 @@ RecoverFloatingDockCompositionFailure(
         preserveExistingFrame
             ? L"retaining previous"
             : L"resetting");
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Warning);
     if (!preserveExistingFrame)
         ResetFloatingDockCompositionResources(host);
     if (!host.compositionRenderRecoveryPending &&

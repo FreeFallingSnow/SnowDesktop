@@ -743,8 +743,13 @@ struct PersonalizationPagePresenter::Impl
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
         fontRestartButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         fontRestart.ActionButton(fontRestartButton);
+        // The font card body uses zero spacing between styled subrows, so the
+        // notice and its error text need the same 16-DIP content inset as the
+        // rows above and below to stay aligned with the card content.
+        fontRestart.Margin({16.0, 8.0, 16.0, 8.0});
         fontCard.content.Children().Append(fontRestart);
         fontError.TextWrapping(mux::TextWrapping::Wrap);
+        fontError.Margin({16.0, 0.0, 16.0, 8.0});
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
         fontCard.content.Children().Append(tooltipFontSizeRow.root);

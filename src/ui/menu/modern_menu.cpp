@@ -271,6 +271,10 @@ public:
                                       !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
                 if (!pendingItems)
                     pendingItems = options_.pollItems(rootItems_, canApply);
+                else
+                    // A layout-changing candidate may wait for pointer leave;
+                    // continue deadline/recovery observation in the meantime.
+                    options_.pollItems(rootItems_, false);
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
                 if (pendingItems && hovered >= 0)

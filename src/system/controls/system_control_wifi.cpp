@@ -1,5 +1,6 @@
 #include "system_control_windows.h"
 #include "system_control_wifi_sampling.h"
+#include "system_control_wifi_profile.h"
 #include "system_control_feedback.h"
 #include <wlanapi.h>
 #include <condition_variable>
@@ -26,12 +27,7 @@ struct Wlan
     ~Wlan() { if (handle) WlanCloseHandle(handle, nullptr); }
 };
 std::string Hex(const DOT11_SSID& ssid)
-{
-    constexpr char digits[] = "0123456789ABCDEF"; std::string result;
-    for (ULONG i = 0; i < (std::min)(ssid.uSSIDLength, 32ul); ++i)
-    { result.push_back(digits[ssid.ucSSID[i] >> 4]); result.push_back(digits[ssid.ucSSID[i] & 15]); }
-    return result;
-}
+{ return Utf8(WifiSsidHex(ssid)); }
 std::string SsidName(const DOT11_SSID& ssid)
 {
     const std::string value(reinterpret_cast<const char*>(ssid.ucSSID), (std::min)(ssid.uSSIDLength, 32ul));
@@ -93,26 +89,6 @@ struct Notifications
         if (!complete) return {};
         return reason == 0 ? Result{true, {}, 0} : Error(reason, scanning ? "scanFailed" : "connectionFailed");
     }
-};
-void AppendXml(std::wstring& output, std::wstring_view value)
-{
-    for (const wchar_t character : value)
-    {
-        switch (character)
-        {
-        case L'&': output += L"&amp;"; break;
-        case L'<': output += L"&lt;"; break;
-        case L'>': output += L"&gt;"; break;
-        case L'\"': output += L"&quot;"; break;
-        case L'\'': output += L"&apos;"; break;
-        default: output += character; break;
-        }
-    }
-}
-struct ProfileXml
-{
-    std::wstring text;
-    ~ProfileXml() { if (!text.empty()) SecureZeroMemory(text.data(), text.size() * sizeof(wchar_t)); }
 };
 class Wifi final : public Backend
 {
@@ -271,27 +247,13 @@ public:
             if (security != "open" && (password.size() < 8 || password.size() > 63 ||
                 std::any_of(password.begin(), password.end(), [](wchar_t ch) { return ch < 32 || ch > 126; })))
                 return Error(ERROR_INVALID_PASSWORD, "passwordRequired");
-            GUID profileId{}; if (FAILED(CoCreateGuid(&profileId))) return Error(ERROR_GEN_FAILURE);
-            profile = L"SnowDesktop-" + Wide(Guid(profileId));
-            ProfileXml xml;
-            xml.text.reserve(4096);
-            xml.text = L"<?xml version=\"1.0\"?><WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\"><name>";
-            AppendXml(xml.text, profile); xml.text += L"</name><SSIDConfig><SSID><hex>" + Wide(Hex(ssid)) + L"</hex></SSID><nonBroadcast>";
-            xml.text += Argument(request, "hidden") == "1" ? L"true" : L"false";
-            xml.text += L"</nonBroadcast></SSIDConfig><connectionType>ESS</connectionType><connectionMode>auto</connectionMode><MSM><security><authEncryption><authentication>";
-            xml.text += security == "open" ? L"open" : security == "wpa3" ? L"WPA3SAE" : L"WPA2PSK";
-            xml.text += L"</authentication><encryption>"; xml.text += security == "open" ? L"none" : L"AES";
-            xml.text += L"</encryption><useOneX>false</useOneX></authEncryption>";
-            if (security != "open")
-            {
-                xml.text += L"<sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>";
-                AppendXml(xml.text, password); xml.text += L"</keyMaterial></sharedKey>";
-            }
-            xml.text += L"</security></MSM></WLANProfile>";
-            DWORD reason = 0;
-            if (cancel.Stop()) return cancel.Failure();
-            status = WlanSetProfile(wlan.handle, &id, WLAN_PROFILE_USER, xml.text.c_str(), nullptr, FALSE, nullptr, &reason);
-            if (status) return Error(status, "profileRejected"); created = true;
+            status = CreateWifiProfile(ssid, security, password, Argument(request, "hidden") == "1", profile,
+                [&] { return cancel.Stop(); }, [&](const wchar_t* xml) {
+                    DWORD reason = 0;
+                    return WlanSetProfile(wlan.handle, &id, WLAN_PROFILE_USER, xml, nullptr, FALSE, nullptr, &reason);
+                });
+            if (status) return cancel.Stop() ? cancel.Failure() : Error(status, "profileRejected");
+            created = true;
         }
         { std::lock_guard guard(notifications.mutex); notifications.profile = profile; notifications.complete = false; notifications.reason = 0; }
         WLAN_CONNECTION_PARAMETERS parameters{}; parameters.wlanConnectionMode = wlan_connection_mode_profile;

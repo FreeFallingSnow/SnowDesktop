@@ -3,6 +3,7 @@
 #include "ui/menu/menu_icon_render.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "widget/preview/widget_preview_stage.h"
+#include "platform/runtime_module_policy.h"
 #if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
 #include "app/features/wallpaper_engine_capture.h"
 #endif
@@ -872,6 +873,12 @@ std::wstring Window::ModelIdentity(const Model& model) const
 Window::WallpaperBackdropLoadResult
 Window::LoadDesktopWallpaperBackdrop()
 {
+    if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview))
+    {
+        CancelWallpaperEngineBackdropCapture(true);
+        wallpaperEngineCache_.reset();
+        desktopWallpaperEngineFrame_.reset();
+    }
     const POINT anchor{
         (menuBounds_.left + menuBounds_.right) / 2,
         (menuBounds_.top + menuBounds_.bottom) / 2,
@@ -1018,6 +1025,7 @@ void Window::StartWallpaperEngineBackdropCapture(
 {
     if (!hwnd_ || !IsWindow(hwnd_))
         return;
+    if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview)) return;
     WallpaperBackdropCaptureHandler captureHandler =
         wallpaperBackdropCaptureHandler_;
 #if defined(SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE)
@@ -1055,6 +1063,7 @@ void Window::StartWallpaperEngineBackdropCapture(
     }
 
     auto state = std::make_shared<WallpaperEngineCaptureState>();
+    state->policyRevision = runtime_modules::Revision(runtime_modules::Module::WallpaperPreview);
     state->generation = ++wallpaperEngineCaptureGeneration_;
     state->requestedBounds = monitorBounds;
     wallpaperEngineCaptureState_ = state;
@@ -1091,7 +1100,9 @@ void Window::FinishWallpaperEngineBackdropCapture(
     bool apply = false;
     {
         std::lock_guard lock(wallpaperEngineCaptureState_->mutex);
-        apply = wallpaperEngineCaptureState_->completed &&
+        apply = runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) &&
+            wallpaperEngineCaptureState_->policyRevision == runtime_modules::Revision(runtime_modules::Module::WallpaperPreview) &&
+            wallpaperEngineCaptureState_->completed &&
             !wallpaperEngineCaptureState_->cancelled.load(
                 std::memory_order_relaxed) &&
             !wallpaperEngineCaptureState_->wallpaper.pixels.empty();

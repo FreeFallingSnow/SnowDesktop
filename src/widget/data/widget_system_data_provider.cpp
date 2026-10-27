@@ -2013,6 +2013,39 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
                 controls.IsPlaybackRateEnabled();
             value.controls.canToggleShuffle = controls.IsShuffleEnabled();
             value.controls.canChangeRepeatMode = controls.IsRepeatEnabled();
+            // Nullable SMTC properties are independent of the control flags.
+            // Preserve unknown values instead of inventing an inactive mode.
+            try
+            {
+                if (const auto shuffle = playback.IsShuffleActive())
+                    value.shuffle = shuffle.Value();
+            }
+            catch (...) { /* One unavailable optional property must not hide the session. */ }
+            try
+            {
+                if (const auto repeat = playback.AutoRepeatMode())
+                {
+                    using winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+                    switch (repeat.Value())
+                    {
+                    case MediaPlaybackAutoRepeatMode::None: value.repeatMode = "none"; break;
+                    case MediaPlaybackAutoRepeatMode::Track: value.repeatMode = "track"; break;
+                    case MediaPlaybackAutoRepeatMode::List: value.repeatMode = "list"; break;
+                    default: break;
+                    }
+                }
+            }
+            catch (...) { /* Preserve unknown repeat state. */ }
+            try
+            {
+                if (const auto rate = playback.PlaybackRate();
+                    rate && std::isfinite(rate.Value()) && rate.Value() > 0)
+                {
+                    value.playbackRate = rate.Value();
+                    value.timeline.playbackRate = value.playbackRate;
+                }
+            }
+            catch (...) { /* Preserve unknown rate. */ }
 
             const auto timeline = session.GetTimelineProperties();
             const std::int64_t start = TimeSpanMilliseconds(

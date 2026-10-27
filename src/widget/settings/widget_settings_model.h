@@ -364,31 +364,49 @@ struct WidgetSettingSearchSnapshot
     bool operator==(const WidgetSettingSearchSnapshot&) const = default;
 };
 
-inline WidgetSettingKind WidgetSettingKindFromType(
-    std::string_view type) noexcept
+inline constexpr std::pair<std::string_view, WidgetSettingKind> kWidgetSettingTypes[] = {
+    { "text", WidgetSettingKind::Text },
+    { "password", WidgetSettingKind::Password },
+    { "bool", WidgetSettingKind::Boolean },
+    { "int", WidgetSettingKind::Integer },
+    { "float", WidgetSettingKind::FloatingPoint },
+    { "range", WidgetSettingKind::Range },
+    { "color", WidgetSettingKind::Color },
+    { "select", WidgetSettingKind::Select },
+    { "multiSelect", WidgetSettingKind::MultiSelect },
+    { "url", WidgetSettingKind::Url },
+    { "date", WidgetSettingKind::Date },
+    { "time", WidgetSettingKind::Time },
+    { "duration", WidgetSettingKind::Duration },
+    { "appSearch", WidgetSettingKind::AppSearch },
+    { "appReference", WidgetSettingKind::AppReference },
+    { "desktopItemReference", WidgetSettingKind::DesktopItemReference },
+    { "fileReference", WidgetSettingKind::FileReference },
+    { "folderReference", WidgetSettingKind::FolderReference },
+    { "fileHandle", WidgetSettingKind::FileHandle },
+    { "folderHandle", WidgetSettingKind::FolderHandle },
+};
+
+inline WidgetSettingKind WidgetSettingKindFromType(std::string_view type) noexcept
 {
-    if (type == "text") return WidgetSettingKind::Text;
-    if (type == "password") return WidgetSettingKind::Password;
-    if (type == "bool") return WidgetSettingKind::Boolean;
-    if (type == "int") return WidgetSettingKind::Integer;
-    if (type == "float") return WidgetSettingKind::FloatingPoint;
-    if (type == "range") return WidgetSettingKind::Range;
-    if (type == "color") return WidgetSettingKind::Color;
-    if (type == "select") return WidgetSettingKind::Select;
-    if (type == "multiSelect") return WidgetSettingKind::MultiSelect;
-    if (type == "url") return WidgetSettingKind::Url;
-    if (type == "date") return WidgetSettingKind::Date;
-    if (type == "time") return WidgetSettingKind::Time;
-    if (type == "duration") return WidgetSettingKind::Duration;
-    if (type == "appSearch") return WidgetSettingKind::AppSearch;
-    if (type == "appReference") return WidgetSettingKind::AppReference;
-    if (type == "desktopItemReference")
-        return WidgetSettingKind::DesktopItemReference;
-    if (type == "fileReference") return WidgetSettingKind::FileReference;
-    if (type == "folderReference") return WidgetSettingKind::FolderReference;
-    if (type == "fileHandle") return WidgetSettingKind::FileHandle;
-    if (type == "folderHandle") return WidgetSettingKind::FolderHandle;
+    for (const auto& [name, kind] : kWidgetSettingTypes)
+        if (type == name) return kind;
     return WidgetSettingKind::Unknown;
+}
+
+inline const std::string& WidgetSettingTypeList()
+{
+    static const std::string names = [] {
+        std::string result;
+        for (const auto& [name, kind] : kWidgetSettingTypes)
+        {
+            (void)kind;
+            if (!result.empty()) result += ", ";
+            result += name;
+        }
+        return result;
+    }();
+    return names;
 }
 
 inline WidgetSettingValueChannel WidgetSettingChannelForKind(

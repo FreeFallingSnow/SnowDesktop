@@ -56,7 +56,7 @@ inline std::string MakeWidgetRuntimeImageToken(
 
 inline bool IsWidgetRuntimeImageToken(std::string_view token) noexcept
 {
-    return (token.starts_with("@media:") ||
+    return (token.starts_with("@media:") || token.starts_with("@audio:") ||
             token.starts_with("@clipboard:") ||
             token.starts_with("@filesystem:")) &&
         token.size() <= 64;

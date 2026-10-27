@@ -35,7 +35,176 @@ int main()
 {
     using namespace snowdesktop::popup_animation_rules;
 
+    // Exercise the exact trajectory consumed by both native compositors and
+    // the UI fallback. The legacy fade/fan cases below remain independent.
+    for (const double speed : {0.1, 0.7, 1.0, 2.0, 4.0, 10.0})
+    {
+        State spring;
+        spring.Configure(false, speed, true);
+        spring.Open(1000);
+        Check(spring.UsesSpring() && spring.GetVisual().scale == 0.0f && OccludesSurface(spring),
+            "a zero-sized opening spring still owns its popup input surface");
+        const auto timeline = spring.RemainingTimeline();
+        Check(!timeline.segments.empty() && timeline.segments.size() <= 64,
+            "spring creates a bounded native track instead of UI frame callbacks");
+        const double clipAt = timeline.durationMilliseconds * .83;
+        const auto clipped = snowdesktop::popup_motion_curve::Remainder(timeline, clipAt);
+        for (const double fraction : {0.0, .25, .5, 1.0})
+        {
+            const double local = clipped.durationMilliseconds * fraction / 1000.0;
+            const auto full = snowdesktop::popup_motion_curve::Evaluate(timeline, clipAt / 1000.0 + local);
+            const auto remainder = snowdesktop::popup_motion_curve::Evaluate(clipped, local);
+            Check(std::abs(full.position - remainder.position) < .000001 &&
+                std::abs(full.velocity - remainder.velocity) < .000001,
+                "resuming in the smooth tail keeps its original position, velocity and completion deadline");
+        }
+        double previousPosition = 0.0;
+        for (const auto& segment : timeline.segments)
+        {
+            Check(std::isfinite(segment.StartControl()) && std::isfinite(segment.EndControl()),
+                "glass Bezier controls remain finite at every spring segment");
+            for (unsigned step = 0; step <= 32; ++step)
+            {
+                const double local = segment.durationSeconds * step / 32.0;
+                const double seconds = segment.startSeconds + local;
+                const double duration = timeline.durationMilliseconds / 1000.0;
+                const double tailStart = duration * .75, tailSpan = duration - tailStart;
+                const double frequency = 6.638352067994 / tailStart;
+                auto exact = snowdesktop::popup_motion_curve::Evaluate({}, 1.0, frequency, seconds);
+                if (seconds >= tailStart)
+                {
+                    const auto start = snowdesktop::popup_motion_curve::Evaluate({}, 1.0, frequency, tailStart);
+                    const double u = std::clamp((seconds - tailStart) / tailSpan, 0.0, 1.0);
+                    exact.position = (2*u*u*u - 3*u*u + 1)*start.position +
+                        (u*u*u - 2*u*u + u)*tailSpan*start.velocity + (-2*u*u*u + 3*u*u);
+                }
+                const auto native = segment.EvaluateLocal(local);
+                Check(std::abs(native.position - exact.position) < 0.0002,
+                    "native spring and its bounded smooth tail stay within a subpixel error at a 1000px span");
+                Check(native.position >= previousPosition - 0.00001 && native.position <= 1.00001,
+                    "a spring started at rest opens monotonically without overshoot");
+                previousPosition = native.position;
+                const double u = step / 32.0, remaining = 1.0 - u;
+                const double bezier = 3.0 * remaining * remaining * u * segment.StartControl() +
+                    3.0 * remaining * u * u * segment.EndControl() + u * u * u;
+                const double from = segment.constant, to = segment.EvaluateLocal(segment.durationSeconds).position;
+                Check(std::abs((from + (to - from) * bezier) - native.position) < 0.000001,
+                    "glass and content backends evaluate the same spring trajectory");
+            }
+        }
+        spring.Advance(1000 + static_cast<std::uint64_t>(timeline.durationMilliseconds));
+        Check(!spring.IsAnimating() && spring.GetVisual().scale == 1.0f && spring.Velocity() == 0.0,
+            "spring reaches an exact full-size endpoint and retires its tail");
+        spring.Close(20000);
+        const auto closing = spring.RemainingTimeline();
+        const auto midClose = snowdesktop::popup_motion_curve::Evaluate(closing,
+            closing.durationMilliseconds * .0005);
+        Check(midClose.position > .30 && midClose.position < .55,
+            "a settled popup retains a visible size halfway through closing instead of disappearing in the first frames");
+        double previousClose = 1.0;
+        for (unsigned frame = 0; frame <= 110; ++frame)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(closing,
+                closing.durationMilliseconds * frame / 110000.0);
+            Check(sample.position >= -0.00001 && sample.position <= previousClose + 0.00001 &&
+                sample.velocity <= 0.00001,
+                "normal close shrinks monotonically to zero across speed settings without a rebound");
+            previousClose = sample.position;
+        }
+        spring.Advance(20000 + static_cast<std::uint64_t>(closing.durationMilliseconds));
+        Check(spring.IsHidden() && spring.GetVisual().scale == 0.0f && !OccludesSurface(spring),
+            "spring closes to exact zero and releases input occlusion");
+    }
+    {
+        State quick;
+        quick.Configure(false, 1.0, true);
+        quick.Open(1000);
+        quick.Advance(1016);
+        Check(quick.GetVisual().scale > .13f, "normal-speed spring has visible displacement within its first frame");
+        quick.Advance(1100);
+        Check(quick.GetVisual().scale > .91f, "opening covers most displacement within 100ms");
+        quick.Advance(1160);
+        Check(quick.GetVisual().scale == 1.0f && !quick.IsAnimating(),
+            "opening actually completes within 160ms without an invisible settling tail");
+        quick.ShowImmediately();
+        quick.Close(2000);
+        quick.Advance(2032);
+        Check(quick.GetVisual().scale > .60f && quick.GetVisual().scale < .75f,
+            "normal close keeps most of the popup visible through its first two 60Hz frames");
+        quick.Advance(2080);
+        Check(quick.GetVisual().scale > .15f && quick.GetVisual().scale < .30f,
+            "normal close still has meaningful displacement after 80ms instead of an invisible tail");
+        quick.Advance(2110);
+        Check(quick.IsHidden() && !quick.IsAnimating() && quick.GetVisual().scale == 0.0f,
+            "closing actually completes within 110ms and releases input");
+    }
+    {
+        State spring;
+        spring.Configure(false, 1.0, true);
+        spring.Open(1000);
+        spring.Advance(1060);
+        const auto before = spring.GetVisual();
+        const double velocity = spring.Velocity();
+        spring.Close(1060);
+        Check(spring.IsClosing() && spring.GetVisual().scale == before.scale && spring.Velocity() == velocity,
+            "reversing a spring preserves both position and velocity");
+        const auto closing = spring.RemainingTimeline();
+        Check(closing.segments.front().linear == velocity,
+            "native reverse starts with the current outward velocity");
+        spring.Advance(1061);
+        Check(spring.GetVisual().scale > before.scale,
+            "retargeted spring decelerates before turning instead of flipping velocity");
+        for (std::uint64_t now = 1080; now < 1400; now += 20)
+        {
+            const auto current = spring.GetVisual();
+            if (spring.IsInteractive()) spring.Close(now); else spring.Open(now);
+            Check(std::isfinite(spring.Velocity()) && spring.GetVisual().visible == current.visible,
+                "repeated retargeting keeps a finite uninterrupted visible track");
+        }
+        spring.Close(1500);
+        spring.Advance(1500 + static_cast<std::uint64_t>(spring.RemainingTimeline().durationMilliseconds));
+        Check(spring.IsHidden() && !spring.IsAnimating(), "repeated reversals cannot leave a zombie animation");
+        spring.ShowImmediately();
+        spring.Close(2000);
+        spring.Advance(2096);
+        const auto inward = spring.GetVisual();
+        const double inwardVelocity = spring.Velocity();
+        spring.Open(2096);
+        spring.Close(2096);
+        Check(spring.GetVisual().scale == inward.scale && spring.Velocity() == inwardVelocity,
+            "an immediate reopen-close preserves the incoming inward position and velocity");
+        const auto braking = spring.RemainingTimeline();
+        for (unsigned frame = 0; frame <= 110; ++frame)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(braking,
+                braking.durationMilliseconds * frame / 110000.0);
+            Check(sample.position >= -0.00001 && sample.position <= inward.scale + 0.00001 &&
+                sample.velocity <= 0.00001,
+                "closing with inherited inward momentum brakes without crossing zero or bouncing");
+        }
+        State fadeCompatibility;
+        fadeCompatibility.Configure(true, 1.0, true);
+        Check(!fadeCompatibility.UsesSpring(), "fade selection retains its existing fixed-geometry timing");
+    }
+
     PopupMouseLeaveController mouseLeave;
+    {
+        State bounded;
+        bounded.Configure(false, 1.0, true);
+        bounded.Open(1000); bounded.Advance(1150);
+        const double velocity = bounded.Velocity();
+        const auto pose = bounded.GetVisual();
+        bounded.Close(1150); bounded.Open(1150);
+        Check(bounded.GetVisual().scale == pose.scale && bounded.Velocity() == velocity,
+            "collection same-tick reversal preserves the endpoint approach velocity");
+        const auto track = bounded.RemainingTimeline();
+        for (unsigned ms = 0; ms <= 160; ++ms)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(track, ms / 1000.0);
+            Check(sample.position >= -.000001 && sample.position <= 1.000001,
+                "collection same-tick reversal at a soft endpoint stays within zero and full size");
+        }
+    }
     Check(!mouseLeave.Observe(1, false),
         "a newly opened popup stays reachable while the drag pointer is still on its opener");
     Check(!mouseLeave.Observe(1, true) && mouseLeave.Observe(1, false),
@@ -425,8 +594,11 @@ int main()
     Check(state.IsHidden(), "reset-hidden clears state");
 
     Check(ResolveExistingSourceAction(false, true) ==
+            ExistingSourceAction::OpenAfterExistingCloses,
+        "switching from an interactive collection must play its outgoing close");
+    Check(ResolveExistingSourceAction(false, false) ==
             ExistingSourceAction::OpenAtRequestedAnchor,
-        "a different collection may open at its requested anchor");
+        "an empty popup host can open at its requested anchor immediately");
     Check(ResolveExistingSourceAction(false, false, true) ==
             ExistingSourceAction::OpenAfterExistingCloses,
         "a desktop collection switch waits for the old close animation");

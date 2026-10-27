@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_settings_rules.h"
+#include "platform/runtime_module_policy.h"
 #include "dock_attention_dot.h"
 #include "dock_layout_settings.h"
 #include "dock_fullscreen_policy.h"
@@ -63,12 +64,13 @@ struct SystemTaskbarTargetAppearance
 
 inline void ConfigureSystemTaskbarTargetProtection(
     SystemTaskbarTargetAppearance& target,
-    bool suppressionRequested, bool protectActivation, bool hasDock) noexcept
+    bool suppressionRequested, bool protectActivation, bool hasDock,
+    bool allMonitors = false) noexcept
 {
-    // Permanent hiding follows Dock placement. Passive activation from a
-    // minimized application can reach any taskbar, including screens without
-    // a Dock; intentional shell-panel access still releases that protection.
-    target.suppressTaskbar = suppressionRequested && hasDock;
+    // Permanent hiding follows the selected monitor scope. Passive activation
+    // from a minimized application can reach taskbars on screens without a
+    // Dock; intentional shell-panel access still releases that protection.
+    target.suppressTaskbar = suppressionRequested && (allMonitors || hasDock);
     // Keep the controller attached while a shell panel is open. Its per-window
     // decision releases the current request without disabling future requests.
     target.protectAutoHideActivation = protectActivation;
@@ -95,6 +97,7 @@ struct DockSettings : DockLayoutSettings
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
+    bool startMenuKeepTaskbarHidden = false;
     bool followComponentAppearance = true;
     bool followComponentCornerRadius = true;
     float cornerRadius = 12.0f;
@@ -108,6 +111,7 @@ struct DockSettings : DockLayoutSettings
     int windowEffect = 1;
     bool systemTaskbarAutoHide = false;
     bool suppressSystemTaskbar = false;
+    bool suppressSystemTaskbarAllMonitors = false;
     int systemTaskbarAlignment = 1; // 0=靠左, 1=居中
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
@@ -121,6 +125,13 @@ struct DockSettings : DockLayoutSettings
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
 
+inline bool ShouldSuppressSystemTaskbar(const DockSettings& settings,
+    bool dockEnabled) noexcept
+{
+    return settings.suppressSystemTaskbar &&
+        (settings.suppressSystemTaskbarAllMonitors || dockEnabled);
+}
+
 inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 {
     return settings.showWindowsButton;
@@ -129,10 +140,10 @@ inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept
 {
-    // A minimizing application can activate a taskbar on any screen, regardless
-    // of Dock placement or animation. Permanent hiding also owns an auto-hide
-    // override even when the saved Windows preference was disabled.
-    return autoHideEnabled || (dockEnabled && settings.suppressSystemTaskbar);
+    // Protection belongs to an active Dock on any edge. Windows auto-hide
+    // alone must not activate integration. Permanent hiding also needs it
+    // when the original Windows auto-hide preference was disabled.
+    return snowdesktop::runtime_modules::ProtectAutoHide(dockEnabled, autoHideEnabled, settings.suppressSystemTaskbar);
 }
 
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
@@ -190,6 +201,10 @@ std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false);
+// Worker-only, bounded acknowledgement before sending the Start invocation.
+// Renewal and the 500ms closing hold expire independently in Explorer.
+// A new begin rearms even when the previous closing hold is still alive.
+bool UpdateSystemTaskbarStartMenuProtection(bool active, bool begin = false);
 bool IsSystemTaskbarAlignmentCentered();
 bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();

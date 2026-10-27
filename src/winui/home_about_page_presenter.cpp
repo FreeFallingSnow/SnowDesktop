@@ -96,6 +96,10 @@ struct HomeAboutPagePresenter::Impl
     muxc::StackPanel debugRoot{nullptr};
     muxc::Expander credits{nullptr};
 
+    Section advancedSection;
+    controls::SettingRow advancedRow;
+    muxc::ToggleSwitch advancedToggle{nullptr};
+    winrt::event_token advancedToken{};
     Section introductionSection;
     Section authorSection;
     Section copyrightSection;
@@ -118,6 +122,20 @@ struct HomeAboutPagePresenter::Impl
     muxc::Button versionButton{nullptr};
     muxc::Button checkUpdateButton{nullptr};
 
+    struct LogEntry
+    {
+        snowdesktop::diagnostics::ModuleDescriptor descriptor;
+        controls::SettingRow row;
+        muxc::ToggleSwitch toggle{nullptr};
+        winrt::event_token token{};
+    };
+    Section logSection;
+    muxc::TextBlock logHelp{nullptr};
+    controls::SettingRow allLogsRow;
+    muxc::ToggleSwitch allLogsToggle{nullptr};
+    winrt::event_token allLogsToken{};
+    std::vector<LogEntry> logEntries;
+    std::uint32_t logModules = 0;
     Section debugProfileSection;
     controls::SettingRow profileRow;
     controls::SettingRow desktopDirectoryRow;
@@ -255,7 +273,7 @@ struct HomeAboutPagePresenter::Impl
     {
 
         aboutRoot = muxc::StackPanel{};
-        aboutRoot.Spacing(24.0);
+        aboutRoot.Spacing(8.0);
         InitializeSection(introductionSection, cardStyle, aboutRoot);
         introductionText = MakeBodyText(0.78);
         introductionSection.content.Children().Append(introductionText);
@@ -363,6 +381,12 @@ struct HomeAboutPagePresenter::Impl
         credits.IsExpanded(false);
         credits.Content(creditGroups);
         aboutRoot.Children().Append(credits);
+        InitializeSection(advancedSection, cardStyle, aboutRoot);
+        advancedSection.title.Visibility(mux::Visibility::Collapsed);
+        advancedToggle = muxc::ToggleSwitch{};
+        advancedToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        advancedRow.Initialize(advancedToggle);
+        advancedSection.content.Children().Append(advancedRow.root);
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
@@ -397,6 +421,27 @@ struct HomeAboutPagePresenter::Impl
         debugProfileSection.content.Children().Append(profileDataPath);
         debugProfileSection.content.Children().Append(desktopDirectoryRow.root);
         debugProfileSection.content.Children().Append(clearProfileRow.root);
+
+        InitializeSection(logSection, cardStyle, debugRoot);
+        logHelp = MakeBodyText(0.72);
+        logSection.content.Children().Append(logHelp);
+        allLogsToggle = muxc::ToggleSwitch{};
+        allLogsToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        allLogsToggle.UseSystemFocusVisuals(true);
+        allLogsRow.Initialize(allLogsToggle, 180.0);
+        logSection.content.Children().Append(allLogsRow.root);
+        logEntries.reserve(snowdesktop::diagnostics::LogModules.size());
+        for (const auto& descriptor : snowdesktop::diagnostics::LogModules)
+        {
+            LogEntry entry;
+            entry.descriptor = descriptor;
+            entry.toggle = muxc::ToggleSwitch{};
+            entry.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            entry.toggle.UseSystemFocusVisuals(true);
+            entry.row.Initialize(entry.toggle, 180.0);
+            logSection.content.Children().Append(entry.row.root);
+            logEntries.push_back(std::move(entry));
+        }
 
         InitializeSection(demoModeSection, cardStyle, debugRoot);
         demoModeSection.title.Visibility(mux::Visibility::Collapsed);
@@ -470,6 +515,11 @@ struct HomeAboutPagePresenter::Impl
                 });
         }
 
+        advancedToken = advancedToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeAbout() || !actions.updateGeneral) return;
+            const bool value = advancedToggle.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [value](GeneralSettings& settings) { settings.showAdvancedSettings = value; });
+        });
         checkUpdateToken = checkUpdateButton.Click(
             [this](const auto&, const auto&) {
                 if (packaged)
@@ -491,6 +541,30 @@ struct HomeAboutPagePresenter::Impl
                         SettingsRoute::ForPage(SettingsPage::Debug));
                 }
             });
+        allLogsToken = allLogsToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.updateGeneral) return;
+            const bool enabled = allLogsToggle.IsOn();
+            actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                [enabled](GeneralSettings& settings) {
+                    settings.diagnosticLogModules = enabled
+                        ? snowdesktop::diagnostics::AllLogModules : 0u;
+                });
+        });
+        for (auto& entry : logEntries)
+        {
+            const auto module = entry.descriptor.module;
+            const auto toggle = entry.toggle;
+            entry.token = toggle.Toggled([this, module, toggle](const auto&, const auto&) {
+                if (updatingControls || !CanInvokeDebug() || !actions.updateGeneral) return;
+                const bool enabled = toggle.IsOn();
+                actions.updateGeneral(generation, SettingsUpdateMode::Commit,
+                    [module, enabled](GeneralSettings& settings) {
+                        const auto bit = snowdesktop::diagnostics::ModuleBit(module);
+                        if (enabled) settings.diagnosticLogModules |= bit;
+                        else settings.diagnosticLogModules &= ~bit;
+                    });
+            });
+        }
         profileToken = profileToggle.Toggled([this](const auto&, const auto&) {
             if (updatingControls || !CanInvokeDebug() || !actions.setDebugProfileEnabled) return;
             actions.setDebugProfileEnabled(generation, profileToggle.IsOn());
@@ -637,6 +711,10 @@ struct HomeAboutPagePresenter::Impl
         initializationToggle.IsEnabled(!profileEnabled);
         profileDataPath.Text(L("settings.debug.profile.data") + L"\n" + profileDirectory);
         desktopDirectoryRow.SetText(L("settings.debug.profile.desktop"), simulatedDesktop);
+        allLogsToggle.IsOn(snowdesktop::diagnostics::NormalizeLogModules(logModules) ==
+            snowdesktop::diagnostics::AllLogModules);
+        for (const auto& entry : logEntries)
+            entry.toggle.IsOn((logModules & snowdesktop::diagnostics::ModuleBit(entry.descriptor.module)) != 0);
         forceRestartToggle.IsOn(forceRestartEnabled);
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
@@ -684,6 +762,7 @@ struct HomeAboutPagePresenter::Impl
     {
         if (closed)
             return;
+        advancedRow.SetText(L("modules.showAdvanced"), L("modules.showAdvancedDescription"));
         credits.Header(winrt::box_value(L("settings.about.licensesAndCredits", L"Third-party notices and credits")));
 
         SetSectionTitle(introductionSection,
@@ -720,6 +799,18 @@ struct HomeAboutPagePresenter::Impl
             SetAutomation(link.button, text, HomeAboutLinkUri(link.target));
         }
 
+        SetSectionTitle(logSection, "settings.debug.logs.title", L"Detailed logs");
+        logHelp.Text(L("settings.debug.logs.description"));
+        allLogsRow.SetText(L("settings.debug.logs.all"));
+        SetAutomation(allLogsToggle, allLogsRow.label.Text());
+        muxa::AutomationProperties::SetAutomationId(allLogsToggle, L"debug.logs.all");
+        for (auto& entry : logEntries)
+        {
+            entry.row.SetText(L(entry.descriptor.labelKey));
+            SetAutomation(entry.toggle, entry.row.label.Text());
+            muxa::AutomationProperties::SetAutomationId(entry.toggle,
+                winrt::to_hstring("debug.logs." + std::string(entry.descriptor.id)));
+        }
         forceRestartToggleRow.SetText(L("settings.debug.forceRestartHotkey"),
             L("settings.debug.forceRestartHotkey.description"));
         SetAutomation(forceRestartToggle, forceRestartToggleRow.label.Text(),
@@ -807,6 +898,11 @@ struct HomeAboutPagePresenter::Impl
                 snapshot.domainRevisions.general)
         {
             generalRevision = snapshot.domainRevisions.general;
+            updatingControls = true;
+            advancedToggle.IsOn(snapshot.values.general.showAdvancedSettings);
+            updatingControls = false;
+            logModules = snapshot.values.general.diagnosticLogModules;
+            snowdesktop::diagnostics::SetLogModules(logModules);
             demoModeEnabled = snapshot.values.general.demoModeEnabled;
             forceRestartEnabled = snapshot.values.general.forceRestartHotkeyEnabled;
             forceRestartChord = {snapshot.values.general.forceRestartHotkeyModifiers,
@@ -859,6 +955,7 @@ struct HomeAboutPagePresenter::Impl
                     if (entry.target == target) return entry.button;
                 return versionButton;
             };
+            if (focusId == "about.showAdvancedSettings") return advancedToggle;
             if (focusId == "about.profile") return link(HomeAboutLink::Bilibili);
             if (focusId == "about.project") return link(HomeAboutLink::SourceRepository);
             if (focusId == "about.website") return link(HomeAboutLink::OfficialWebsite);
@@ -874,6 +971,9 @@ struct HomeAboutPagePresenter::Impl
             if (focusId == "debug.profile") return profileToggle;
             if (focusId == "debug.desktop") return chooseDesktopButton;
             if (focusId == "debug.clearProfile") return clearProfileButton;
+            for (const auto& entry : logEntries)
+                if (focusId == "debug.logs." + std::string(entry.descriptor.id)) return entry.toggle;
+            if (focusId == "debug.logs" || focusId == "debug.logs.all") return allLogsToggle;
             if (focusId == "debug.demo_mode") return demoModeToggle;
             if (focusId == "debug.initialization") return initializationToggle;
             if (focusId == "debug.animation") return animationToggle;
@@ -894,8 +994,11 @@ struct HomeAboutPagePresenter::Impl
         {
             for (LinkEntry& link : links)
                 link.button.Click(link.clickToken);
+            advancedToggle.Toggled(advancedToken);
             checkUpdateButton.Click(checkUpdateToken);
             versionButton.Click(versionClickToken);
+            allLogsToggle.Toggled(allLogsToken);
+            for (const auto& entry : logEntries) entry.toggle.Toggled(entry.token);
             profileToggle.Toggled(profileToken);
             chooseDesktopButton.Click(chooseDesktopToken);
             clearProfileButton.Click(clearProfileToken);

@@ -264,7 +264,7 @@ struct MenuPlacementGuard::Impl
                 haveGuiInfo ? 1u : 0u, reinterpret_cast<HWND>(popup.activeWindow),
                 reinterpret_cast<HWND>(popup.foregroundWindow), popup.bounds.left, popup.bounds.top,
                 popup.bounds.right, popup.bounds.bottom, position ? 1u : 0u);
-            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
         }
         if (!position) return;
         // Recheck process/style at the mutation boundary. Never activate,
@@ -277,7 +277,7 @@ struct MenuPlacementGuard::Impl
         { active->session.RejectCorrection(popup.window); return; }
         if (SetWindowPos(window, nullptr, position->x, position->y, 0, 0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS))
-            WriteDiagnosticLogEntry(L"Tray menu placement correction requested", DiagnosticLogLevel::Debug);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, L"Tray menu placement correction requested", DiagnosticLogLevel::Debug);
         else active->session.RejectCorrection(popup.window);
     }
     void Run(std::stop_token token)
@@ -314,7 +314,7 @@ struct MenuPlacementGuard::Impl
                         swprintf_s(message, L"Tray menu session pid=%lu target=%p thread=%lu started=%lu hook=%u context=%u rect=(%ld,%ld,%ld,%ld)",
                             process, target, targetThread, next.started, hook ? 1u : 0u, next.contextGesture ? 1u : 0u,
                             next.bounds.left, next.bounds.top, next.bounds.right, next.bounds.bottom);
-                        WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
                         const auto elapsed = static_cast<DWORD>(GetTickCount() - next.started);
                         expires = GetTickCount64() + (elapsed < MenuPlacementSession::kLifetimeMs ?
                             MenuPlacementSession::kLifetimeMs - elapsed : 0);
@@ -361,7 +361,7 @@ void MenuPlacementGuard::Cancel()
         wchar_t message[192]{};
         swprintf_s(message, L"Tray menu session canceled pid=%lu age=%lu", impl_->request.process,
             GetTickCount() - impl_->request.started);
-        WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message, DiagnosticLogLevel::Debug);
     }
     impl_->request = {}; impl_->popups = {}; ++impl_->requested; SetEvent(impl_->wake);
 }

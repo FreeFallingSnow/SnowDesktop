@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform/runtime_module_policy.h"
 #include "../platform/hook_entry_protocol.h"
 
 #include "taskbar_native.h"
@@ -77,6 +78,7 @@ inline DWORD ResumeTaskbarThreads(std::span<const HWND> taskbars, DWORD processI
     }
     for (HWND window : taskbars)
     {
+        if (!runtime_modules::Allowed(runtime_modules::Module::Taskbar)) return ERROR_ACCESS_DISABLED_BY_POLICY;
         if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return ERROR_CANCELLED;
         RemovePropW(window, kHookConnectionProperty);
         DWORD_PTR result = 0;
@@ -182,6 +184,7 @@ DWORD ConnectTaskbarRuntime(HWND primary, std::span<const HWND> taskbars,
     ConnectionStage* stage = nullptr)
 {
     const auto connect = [&](const std::wstring& path) -> DWORD {
+        if (!runtime_modules::Allowed(runtime_modules::Module::Taskbar)) return ERROR_ACCESS_DISABLED_BY_POLICY;
         if (stage) *stage = ConnectionStage::None;
         if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return ERROR_CANCELLED;
         if (explorer && WaitForSingleObject(explorer, 0) == WAIT_OBJECT_0) return ERROR_PROCESS_ABORTED;

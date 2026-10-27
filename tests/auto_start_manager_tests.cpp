@@ -115,16 +115,36 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* 
     struct Platform
     {
         launch::NativePlatform native{&ExecuteShellProbe};
+        int prompts = 0;
+        DWORD promptedError = ERROR_SUCCESS;
+        // Substitute only the parent's token state. Explorer COM, argument
+        // forwarding and the child's repeated native token check remain real.
+        bool IsElevated() { return true; }
+        bool IsExplorerElevated() { return native.IsExplorerElevated(); }
+        bool ConfirmContinue(const launch::Failure& failure)
+        {
+            ++prompts;
+            promptedError = failure.code;
+            return false;
+        }
         DWORD Relaunch(std::wstring_view command) { return native.Relaunch(command); }
     } platform;
     const auto report = directory / L"child report.txt";
     const std::wstring payload = L"保留 \"quoted\" trailing\\";
+    const std::wstring launchArgument = owner ?
+        std::wstring(L"--snowdesktop-autostart-owner=") + owner : L"--snowdesktop-autostart";
     const std::wstring command = launch::QuoteArgument(executable) +
         L" --autostart-permission-probe " + launch::QuoteArgument(report.wstring()) +
-        L" --snowdesktop-autostart-owner=" + owner + L" " + launch::QuoteArgument(payload);
+        L" " + launchArgument + L" " + launch::QuoteArgument(payload);
     const auto result = launch::Normalize(command, platform);
-    Require(result.handled && result.error == ERROR_SUCCESS && shellTestCalls == 1,
-        "login startup delegates once through the real desktop COM object");
+    if (platform.native.IsExplorerElevated())
+    {
+        Require(!result.handled && shellTestCalls == 0 && platform.prompts == 0,
+            "a real high-privilege Explorer preserves the current startup without handoff");
+        return;
+    }
+    Require(result.handled && result.error == ERROR_SUCCESS && shellTestCalls == 1 && platform.prompts == 0,
+        "login and elevated ordinary startup delegate once through the real desktop COM object");
     const ULONGLONG deadline = GetTickCount64() + 10000;
     while (!std::filesystem::exists(report) && GetTickCount64() < deadline) Sleep(20);
     std::ifstream input(report, std::ios::binary);
@@ -136,6 +156,7 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* 
     std::memcpy(observed.data(), bytes.data(), bytes.size());
     const std::wstring expected = L"--autostart-permission-probe\n" + report.wstring() +
         L"\n" + snowdesktop::kAutoStartBackgroundArgument + L"\n" + payload +
+        L"\n" + launch::kExplorerRelaunchArgument +
         L"\n" + std::filesystem::current_path().wstring() + L"\n0";
     Require(observed == expected && shellTestDirectory == std::filesystem::current_path().wstring(),
         "real Explorer child keeps background intent/arguments/cwd and observes the ordinary desktop identity");
@@ -143,7 +164,8 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable, const wchar_t* 
     shellTestFailure = ERROR_ACCESS_DENIED;
     shellTestCalls = 0;
     const auto denied = launch::Normalize(command, platform);
-    Require(denied.handled && denied.error == ERROR_ACCESS_DENIED && shellTestCalls == 1 &&
+    Require(denied.handled && denied.error == ERROR_CANCELLED && shellTestCalls == 1 &&
+        platform.prompts == 1 && platform.promptedError == ERROR_ACCESS_DENIED &&
         !std::filesystem::exists(report), "shell failure exits once without another creation method");
     std::cout << "Explorer COM launch: real hidden child, background intent, Unicode arguments, cwd and ordinary identity passed\n";
 }
@@ -289,6 +311,8 @@ struct DenyRegistryWrites
 
 int RunAutoStartLaunchProbe()
 {
+    const auto normalized = snowdesktop::auto_start_launch::Normalize();
+    if (normalized.handled) return static_cast<int>(normalized.error);
     int count = 0;
     LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!arguments) return ERROR_INVALID_DATA;
@@ -297,7 +321,7 @@ int RunAutoStartLaunchProbe()
         LPWSTR* value;
         ~Arguments() { LocalFree(value); }
     } cleanup{arguments};
-    if (count != 5) return ERROR_INVALID_DATA;
+    if (count != 7) return ERROR_INVALID_DATA;
     try
     {
         HANDLE token = nullptr;
@@ -311,7 +335,10 @@ int RunAutoStartLaunchProbe()
         if (!read) return static_cast<int>(error);
         std::wstring observed;
         for (int index = 1; index < count; ++index)
+        {
+            if (snowdesktop::auto_start_launch::IsExplorerAckArgument(arguments[index])) continue;
             observed += std::wstring(arguments[index]) + L"\n";
+        }
         observed += std::filesystem::current_path().wstring() + L"\n" +
             std::to_wstring(elevation.TokenIsElevated ? 1 : 0);
         const std::filesystem::path report(arguments[2]);
@@ -339,6 +366,7 @@ int RunAutoStartManagerTests()
 
         for (const wchar_t* owner : {L"portable", L"packaged", L"steam"})
             CheckAutoStartNativeHandoff(target.executable, owner);
+        CheckAutoStartNativeHandoff(target.executable, nullptr);
 
         bool failedWithDetails = false;
         std::thread uninitialized([&] {

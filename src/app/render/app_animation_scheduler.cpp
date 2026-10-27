@@ -28,15 +28,16 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
     motion::SetRuntimePreferences(generalSettings_.animationMode,
         generalSettings_.popupAnimationEffect, generalSettings_.animationSpeed,
         generalSettings_.animationFrameLimit, generalSettings_.animationEnergySaver,
-        generalSettings_.animationOnBattery, dockSettings_.windowEffect,
+        generalSettings_.animationOnBattery, (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize) ? dockSettings_.windowEffect : 0),
         static_cast<int>(dockSettings_.position));
 
     const bool fade = generalSettings_.popupAnimationEffect == motion::Fade;
     const double durationScale = motion::RuntimeDurationScale();
     const DesktopWidget* popupWidget = GetOpenPopupWidget();
     popupAnimation_.Configure(fade, durationScale *
-        (popupWidget && UsesCollectionPopupFan(*popupWidget) ? 2.4 : 1.0));
-    luaWidgetPanelAnimation_.Configure(fade, durationScale);
+        (popupWidget && UsesCollectionPopupFan(*popupWidget) ? 2.4 : 1.0),
+        !(popupWidget && UsesCollectionPopupFan(*popupWidget)));
+    luaWidgetPanelAnimation_.Configure(fade, durationScale, true);
 
     // Finish the old timeline when its duration/effect changes.
     // Closing finalizers also preserve queued actions and pending popup opens.
@@ -333,8 +334,12 @@ void DesktopApp::EnsureUiAnimationFrame()
     }
 
     if (!dockRunningAnimationFrameToken_ &&
-        std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
-            [](const auto& app) { return app.presence.IsAnimating(); }))
+        (std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
+            [](const auto& app) { return app.presence.IsAnimating(); }) ||
+         std::any_of(containers_.begin(), containers_.end(), [](const auto& container) {
+            const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+            return dock && dock->IsEntryRemovalAnimating();
+         })))
     {
         dockRunningAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
             snowdesktop::UiAnimationSurface::FloatingDock,

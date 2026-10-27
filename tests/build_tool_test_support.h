@@ -40,6 +40,7 @@ std::string read(const fs::path& path);
 void write(const fs::path& path, const std::string& text, bool bom = false);
 void atomic(const fs::path& path, const std::string& text);
 void copy(const fs::path& repo, const fs::path& root, const std::vector<std::string>& files);
+void copy_persistent_entry(const fs::path& repo, const fs::path& root);
 std::string utf8(const std::wstring& value);
 std::wstring wide(const std::string& value);
 std::wstring environment(const wchar_t* name);
@@ -48,7 +49,7 @@ std::string ps_literal(const fs::path& value);
 std::string ps_literal(const std::string& value);
 std::string base64(const std::string& value);
 std::string unbase64(const std::string& value);
-fs::path temporary(const std::string& label);
+fs::path temporary(const std::string& label, const fs::path& parent = {});
 fs::path executable();
 fs::path powershell(bool legacy = false);
 fs::path production_python();
@@ -58,7 +59,7 @@ void until(const std::function<bool()>& predicate, int seconds = 25);
 struct Result { int code = -1; std::string out, err; };
 class Child {
 public:
-    Child(const std::vector<std::wstring>& args, const fs::path& cwd, const Env& env = {}, bool input = false, bool outputPipes = false);
+    Child(const std::vector<std::wstring>& args, const fs::path& cwd, const Env& env = {}, bool input = false, bool outputPipes = false, bool allowBreakaway = false);
     ~Child();
     Child(const Child&) = delete;
     Child& operator=(const Child&) = delete;
@@ -70,16 +71,16 @@ public:
     std::string out() const;
     std::string err() const;
 private:
-    HANDLE process_ = nullptr, input_ = nullptr, outRead_ = nullptr, errRead_ = nullptr;
+    HANDLE process_ = nullptr, input_ = nullptr, outRead_ = nullptr, errRead_ = nullptr, parentJob_ = nullptr;
     DWORD pid_ = 0;
     fs::path out_, err_;
     bool outputPipes_ = false;
 };
-Result run(const std::vector<std::wstring>& args, const fs::path& root, int seconds = 25, const Env& env = {});
+Result run(const std::vector<std::wstring>& args, const fs::path& root, int seconds = 25, const Env& env = {}, bool allowBreakaway = false);
 void init_git(const fs::path& root);
 class Bridge {
 public:
-    Bridge(const fs::path& repo, const fs::path& root, bool legacy = false);
+    Bridge(const fs::path& repo, const fs::path& root, bool legacy = false, bool allowBreakaway = false);
     ~Bridge();
     Result invoke(const fs::path& script, const std::vector<std::string>& args = {}, const Env& env = {}, int seconds = 25);
     Json call(const fs::path& script, const std::vector<std::string>& args, int code = 0, const Env& env = {});
@@ -101,7 +102,9 @@ public:
     fs::path root, scripts, stateRoot;
     std::unique_ptr<Bridge> bridge;
     std::vector<Json> workers;
-    Coordinator(const fs::path& repo, const std::string& label);
+    // Existing fixtures exercise retained v2 semantics. New lifecycle tests
+    // explicitly keep production's default durable protocol.
+    Coordinator(const fs::path& repo, const std::string& label, bool durableBatches = false, const fs::path& fixtureParent = {});
     ~Coordinator();
     Json call(std::vector<std::string> args, int code = 0);
     std::unique_ptr<Child> start(std::vector<std::string> args);
@@ -118,5 +121,7 @@ public:
     int calls() const;
     void gate(const std::string& name, bool present = true);
     Result git(const std::vector<std::wstring>& args);
+private:
+    bool durableBatches_ = false;
 };
 }

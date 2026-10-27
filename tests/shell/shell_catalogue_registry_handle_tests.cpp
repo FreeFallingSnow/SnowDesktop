@@ -7,6 +7,8 @@
 #include <condition_variable>
 #include <cstdio>
 #include <future>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
@@ -82,11 +84,11 @@ struct PrivateRegistry
 };
 
 // RegOverridePredefKey affects this test process only. No existing association
-// or user security descriptor is changed; both hives refer to our GUID tree.
+// or user security descriptor is changed; supplied hives refer to our GUID tree.
 struct RegistryOverrides
 {
-    bool classes = false, user = false;
-    RegistryOverrides(HKEY classKey, HKEY userKey)
+    bool classes = false, user = false, machine = false;
+    RegistryOverrides(HKEY classKey, HKEY userKey, HKEY machineKey = nullptr)
     {
         Check(RegOverridePredefKey(HKEY_CURRENT_USER, userKey) == ERROR_SUCCESS,
             "override user within the fixture process");
@@ -97,9 +99,25 @@ struct RegistryOverrides
             throw std::runtime_error("override classes within the fixture process");
         }
         classes = true;
+        if (machineKey)
+        {
+            if (RegOverridePredefKey(HKEY_LOCAL_MACHINE, machineKey) != ERROR_SUCCESS)
+            {
+                RegOverridePredefKey(HKEY_CLASSES_ROOT, nullptr); classes = false;
+                RegOverridePredefKey(HKEY_CURRENT_USER, nullptr); user = false;
+                throw std::runtime_error("override machine within the fixture process");
+            }
+            machine = true;
+        }
     }
     void Restore()
     {
+        if (machine)
+        {
+            Check(RegOverridePredefKey(HKEY_LOCAL_MACHINE, nullptr) == ERROR_SUCCESS,
+                "restore predefined machine mapping");
+            machine = false;
+        }
         if (classes)
         {
             Check(RegOverridePredefKey(HKEY_CLASSES_ROOT, nullptr) == ERROR_SUCCESS,
@@ -115,6 +133,7 @@ struct RegistryOverrides
     }
     ~RegistryOverrides()
     {
+        if (machine) RegOverridePredefKey(HKEY_LOCAL_MACHINE, nullptr);
         if (classes) RegOverridePredefKey(HKEY_CLASSES_ROOT, nullptr);
         if (user) RegOverridePredefKey(HKEY_CURRENT_USER, nullptr);
     }
@@ -299,7 +318,12 @@ void CheckCataloguePauseProgress()
     const bool waiting = work.wait_for(std::chrono::milliseconds(80)) == std::future_status::timeout;
     const bool unchanged = completed.load() == progress;
     fullscreen.store(false);
-    if (work.wait_for(std::chrono::seconds(3)) != std::future_status::ready) demand.Cancel();
+    // Each of the forty 20 ms batches can now incur up to 100 ms of
+    // cooperative background rest. Keep all queue/pause assertions, but allow
+    // that intentional idle time plus two seconds for scheduling and probing.
+    constexpr auto resumeAllowance = 40 * std::chrono::milliseconds(20 + 100) +
+        std::chrono::seconds(2);
+    if (work.wait_for(resumeAllowance) != std::future_status::ready) demand.Cancel();
     const bool successful = work.get();
     Check(stopped && waiting && unchanged && successful && completed.load() == 40,
         "a fullscreen change pauses an active single-worker scan and resumes its existing queue exactly once");
@@ -327,10 +351,197 @@ void CheckPausedRegistryCatalogue(const ext::Catalogue& expected)
         snowdesktop::settings_ipc::Pack(expected),
         "the real registry inventory waits while fullscreen and resumes without losing associations or fingerprints");
 }
+void CheckScopeReaderCancellation(HKEY classes)
+{
+    for (int scope = 0; scope < 3; ++scope)
+    {
+        const auto read = [&](ext::CatalogueForegroundDemand *demand) {
+            return scope == 0 ? ext::ReadFolderCatalogueRevision(classes, false, demand) :
+                ext::ReadBackgroundCatalogueRevision(scope == 1 ? ext::Context::FolderBackground : ext::Context::Desktop,
+                    classes, false, demand);
+        };
+        const auto original = read(nullptr);
+        ext::CatalogueForegroundDemand foreground{true};
+        Check(read(&foreground) == original,
+            "per-scope cancellation token preserves an uncancelled production proof");
+        std::promise<void> paused;
+        auto entered = paused.get_future();
+        bool announced = false;
+        ext::CatalogueForegroundDemand cancelled{false, [&] {
+            if (!announced) { announced = true; paused.set_value(); }
+            return true;
+        }};
+        auto work = std::async(std::launch::async, [&] {
+            try { (void)read(&cancelled); return false; }
+            catch (const std::runtime_error &) { return true; }
+        });
+        const bool observed = entered.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+        cancelled.Cancel();
+        const bool completed = work.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+        const bool rejected = completed && work.get();
+        Check(observed && completed && rejected,
+            "cancelled production scope reader exits without returning valid complete proof");
+        cancelled.Reset(true);
+        Check(read(&cancelled) == original,
+            "next scope generation can reset its own completed cancellation token");
+    }
+}
+void CheckSelectedCatalogueSources()
+{
+    PrivateRegistry registry;
+    wchar_t temporary[MAX_PATH]{};
+    const auto temporaryLength = GetTempPathW(MAX_PATH, temporary);
+    Check(temporaryLength && temporaryLength < MAX_PATH, "get selected-source private resource parent");
+    const auto directory = std::filesystem::path(temporary) /
+        (L"SnowDesktopSelectedCatalogue-" + registry.path.substr(registry.path.find_last_of(L'\\') + 1));
+    Check(std::filesystem::create_directory(directory), "create new selected-source private resource directory");
+    struct DirectoryCleanup
+    {
+        std::filesystem::path path;
+        ~DirectoryCleanup() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
+    } cleanup{directory};
+    const auto resource = directory / L"command-resource.bin";
+    std::ofstream(resource, std::ios::binary) << "private";
+    {
+        OwnedKey classes(registry.value, L"Classes"), user(registry.value, L"User"), machine(registry.value, L"Machine");
+        RegistryOverrides overrides(classes.value, user.value, machine.value);
+        const std::wstring clsid = L"{6C6FC463-71EF-47AD-8148-6FF213EE19D8}";
+        const std::wstring verbPath = L"Selected.Type\\shell\\inspect";
+        const std::wstring handlerPath = L"Directory\\shellex\\ContextMenuHandlers\\Selected";
+        const std::wstring guidPath = L"Directory\\shellex\\ContextMenuHandlers\\" + clsid;
+        const std::wstring policy = L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\";
+        const std::wstring command = L"\"" + resource.wstring() + L"\" \"%1\"";
+        Put(classes.value, L".selected", nullptr, L"Selected.Type");
+        Put(classes.value, verbPath, L"MUIVerb", L"Selected command");
+        Put(classes.value, verbPath + L"\\command", nullptr, command);
+        Put(classes.value, handlerPath, nullptr, clsid);
+        Put(classes.value, guidPath, nullptr, L"");
+        Put(classes.value, L"Selected.Type\\shellex\\ContextMenuHandlers\\Selected", nullptr, clsid);
+        Put(classes.value, L"CLSID\\" + clsid, nullptr, L"Selected handler");
+        Put(classes.value, L"CLSID\\" + clsid + L"\\InprocServer32", nullptr, resource.wstring());
+        Put(classes.value, L"Unrelated.Type\\shell\\ignored\\command", nullptr, L"unused.exe");
+        const auto full = ext::ReadCatalogue(HKEY_CLASSES_ROOT, false);
+        CheckScopeReaderCancellation(HKEY_CLASSES_ROOT);
+        std::vector<ext::Registration> seeds;
+        for (const auto &row : full.rows)
+            if (row.id == "reg:selected.type\\shell\\inspect" || row.kind == ext::RegistrationKind::Handler)
+                seeds.push_back(row);
+        Check(seeds.size() == 2, "select exact static and merged handler seeds from full metadata");
+        const auto limited = ext::ReadCatalogueSources(seeds);
+        Check(limited.rows.size() == seeds.size() && limited.revision && limited.revision != full.revision &&
+            !limited.folderRevision && !limited.backgroundRevisions[0] && !limited.backgroundRevisions[1],
+            "selected proof never advertises complete inventory or scope verification");
+        for (const auto &row : limited.rows)
+        {
+            const auto original = std::find_if(seeds.begin(), seeds.end(), [&](const auto &seed) { return seed.id == row.id; });
+            Check(original != seeds.end() && snowdesktop::settings_ipc::Pack(row) == snowdesktop::settings_ipc::Pack(*original) &&
+                row.menuRevision == original->menuRevision,
+                "exact rows share full-reader command and resource signature construction");
+        }
+        HKEY queryRoot = nullptr;
+        Check(RegOpenKeyExW(registry.value, L"Classes", 0, KEY_QUERY_VALUE, &queryRoot) == ERROR_SUCCESS,
+            "open exact classes root without enumeration rights");
+        struct CloseQueryRoot { HKEY value; ~CloseQueryRoot() { RegCloseKey(value); } } closeQueryRoot{queryRoot};
+        wchar_t childName[64]{}; DWORD childLength = 64;
+        Check(RegEnumKeyExW(queryRoot, 0, childName, &childLength, nullptr, nullptr, nullptr, nullptr) == ERROR_ACCESS_DENIED,
+            "provided classes root cannot enumerate file types");
+        Check(ext::ReadCatalogueSources(seeds, nullptr, queryRoot).revision ==
+            ext::ReadCatalogueSources(seeds, nullptr, classes.value).revision,
+            "exact source reading does not require enumerating the classes root");
+        // A whole-class reader cannot enumerate this shell parent. The exact
+        // child remains readable through its full path under the private DACL.
+        OwnedKey shellParent(classes.value, L"Selected.Type\\shell");
+        RestrictedKey noEnumeration(shellParent.value, CurrentUserSid(), L"0x8");
+        HKEY denied = nullptr;
+        const auto deniedStatus = RegOpenKeyExW(HKEY_CLASSES_ROOT, L"Selected.Type\\shell", 0, KEY_ENUMERATE_SUB_KEYS, &denied);
+        if (denied) RegCloseKey(denied);
+        Check(deniedStatus == ERROR_ACCESS_DENIED, "private shell parent rejects enumeration");
+        Check(ext::ReadCatalogueSources(seeds).revision == limited.revision,
+            "selected source reading succeeds while shell-parent enumeration is denied");
+        Put(classes.value, L"Unrelated.Type\\shell\\new-unselected\\command", nullptr, L"changed.exe");
+        Check(ext::ReadCatalogueSources(seeds).revision == limited.revision,
+            "unrelated registration changes cannot alter selected-source proof");
+        noEnumeration.Restore();
+        auto direct = seeds.front(); direct.sources.clear();
+        if (direct.kind != ext::RegistrationKind::Verb) direct = seeds.back();
+        direct.sources.clear(); direct.types.clear(); direct.contexts = ext::ContextBit(ext::Context::File);
+        const auto explicitVerb = ext::ReadCatalogueSources({direct});
+        Check(explicitVerb.rows.size() == 1 && explicitVerb.rows.front().types == std::vector<std::wstring>{L"progid:selected.type"},
+            "explicit reg IDs can be read without inventing unproven file-type coverage");
+        auto handler = *std::find_if(seeds.begin(), seeds.end(), [](const auto &seed) { return seed.kind == ext::RegistrationKind::Handler; });
+        handler.sources = {guidPath}; handler.types.clear(); handler.contexts = ext::ContextBit(ext::Context::Folder);
+        const auto scoped = ext::ReadCatalogueSources({handler});
+        Check(scoped.rows.size() == 1 && scoped.rows.front().sources.size() == 1 &&
+            scoped.rows.front().contexts == ext::ContextBit(ext::Context::Folder),
+            "same CLSID proof is restricted to supplied paths and selection scope");
+        Put(user.value, policy + L"Blocked", clsid.c_str(), L"");
+        const auto blocked = ext::ReadCatalogueSources({handler});
+        Check(blocked.rows.size() == 1 && !blocked.rows.front().systemEnabled && blocked.revision != scoped.revision,
+            "selected handler observes current Blocked policy");
+        OwnedKey blockedKey(user.value, policy + L"Blocked");
+        Check(RegDeleteValueW(blockedKey.value, clsid.c_str()) == ERROR_SUCCESS, "remove only owned blocked policy");
+        OwnedKey policyKey(machine.value, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer");
+        const DWORD enforce = 1;
+        Check(RegSetValueExW(policyKey.value, L"EnforceShellExtensionSecurity", 0, REG_DWORD,
+            reinterpret_cast<const BYTE *>(&enforce), sizeof(enforce)) == ERROR_SUCCESS, "set isolated approval requirement");
+        Check(!ext::ReadCatalogueSources({handler}).rows.front().systemEnabled,
+            "selected handler enforces approval policy");
+        Put(machine.value, policy + L"Approved", clsid.c_str(), L"");
+        Check(ext::ReadCatalogueSources({handler}).rows.front().systemEnabled,
+            "selected handler rechecks current Approved registration");
+        std::ofstream(resource, std::ios::binary | std::ios::app) << " changed";
+        const auto resourceChanged = ext::ReadCatalogueSources(seeds);
+        Check(resourceChanged.revision != limited.revision,
+            "local command and DLL resource changes invalidate selected proof without registry mutation");
+        Put(classes.value, verbPath + L"\\command", nullptr, command + L" --changed");
+        const auto commandChanged = ext::ReadCatalogueSources(seeds);
+        Check(commandChanged.revision != resourceChanged.revision,
+            "selected command payload changes invalidate proof");
+        Put(classes.value, L".selected", nullptr, L"Other.Type");
+        Check(ext::ReadCatalogueSources(seeds).revision != commandChanged.revision,
+            "exact seed extension associations are read live");
+        Check(RegDeleteTreeW(classes.value, guidPath.c_str()) == ERROR_SUCCESS, "delete owned GUID-named registration");
+        Check(ext::ReadCatalogueSources({handler}).rows.empty(),
+            "a deleted GUID-named handler cannot be recreated from its cached key name");
+        ext::Registration packaged; packaged.kind = ext::RegistrationKind::Packaged;
+        packaged.id = "package:unknown"; packaged.sources = {L"package:unknown:verb"};
+        Check(ext::ReadCatalogueSources({packaged}).rows.empty(),
+            "unsupported packaged provenance never falls back to package discovery");
+        overrides.Restore();
+    }
+    registry.Cleanup();
+}
 }
 
 void TestCatalogueRegistryHandles()
 {
+    CheckSelectedCatalogueSources();
+    // Real subscriptions: nested browse-state writes must not signal menu
+    // invalidation, including when a genuine registration changes concurrently.
+    {
+        PrivateRegistry fixture;
+        {
+            const std::wstring packages = L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages";
+            Put(fixture.value, L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU", L"state", L"one");
+            Put(fixture.value, packages + L"\\Example", L"PackageRootFolder", L"private");
+            Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr, L"unused.exe");
+            ext::detail::MenuRegistryWatch watch(fixture.value, L"Classes", 0, true);
+            Check(watch.armed, "split Classes notifications are armed");
+            Put(fixture.value, L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU", L"state", L"two");
+            Check(!watch.Changed(), "browse state alone cannot invalidate menu registration");
+            Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr, L"changed.exe");
+            Check(watch.Changed(), "a real registration is retained alongside browse noise");
+            Put(fixture.value, packages + L"\\Example", L"PackageRootFolder", L"changed");
+            Check(watch.Changed(), "package metadata remains watched under Local Settings");
+            Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"new");
+            Check(watch.Changed(), "a new class root is detected and subscribed");
+            Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"edited");
+            Check(watch.Changed(), "a newly subscribed root retains nested value coverage");
+            Check(RegDeleteTreeW(fixture.value, L"Classes\\New.Type") == ERROR_SUCCESS, "remove owned type");
+            Check(watch.Changed(), "class root removal remains observable");
+        }
+        fixture.Cleanup();
+    }
     // The production watch previously invalidated the complete catalogue for
     // any value under the parent of a missing optional registration.
     {
@@ -365,6 +576,31 @@ void TestCatalogueRegistryHandles()
     CheckCatalogueWorkerBudget(false, false, 1, true);
     for (int action = 0; action < 3; ++action) CheckCataloguePauseWake(action);
     CheckCataloguePauseProgress();
+    for (bool cancel : {false, true})
+    {
+        ext::CatalogueForegroundDemand budget;
+        std::atomic_bool entered = false;
+        auto work = std::async(std::launch::async, [&] {
+            try {
+                budget.WaitUntilAllowed();
+                // Simulate an indivisible system call exceeding one work slice.
+                std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                entered = true; budget.WaitUntilAllowed(); return 1;
+            } catch (const std::runtime_error &) { return 0; }
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while ((!entered || !budget.BudgetWaitMilliseconds()) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        const bool throttled = budget.BudgetWaitMilliseconds() > 0;
+        if (cancel) budget.Cancel(); else budget.Promote();
+        const bool woke = work.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready;
+        if (!woke) budget.Cancel();
+        const int result = work.get();
+        Check(throttled && woke && result == (cancel ? 0 : 1),
+            "background soft budget yields after a long batch and foreground/cancel wakes it");
+        budget.Reset(true); budget.WaitUntilAllowed();
+        Check(budget.BudgetWaitMilliseconds() == 0, "new foreground scan resets the background budget");
+    }
     PrivateRegistry registry;
     {
         OwnedKey classes(registry.value, L"Classes"), user(registry.value, L"User");

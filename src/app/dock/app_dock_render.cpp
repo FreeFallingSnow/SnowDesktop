@@ -3,8 +3,73 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "icons/icon_render_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Dock controls, entries and running-application rendering.
+
+void DesktopApp::OnDockFolderIconLoaded(const std::wstring& iconCacheKey,
+    std::uint64_t ticket, HBITMAP source, bool refined)
+{
+    auto bitmap = source ? CreateD2DBitmapFromHBitmap(source, false) : ComPtr<ID2D1Bitmap1>{};
+    if (bitmap)
+    {
+        if (!dockFolderBitmapCache_.Publish(iconCacheKey, ticket, std::move(bitmap), refined)) return;
+    }
+    else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
+
+    bool refreshDocks = false;
+    bool recollectGlass = iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled;
+    std::vector<RECT> desktopFrames;
+    for (const auto& widget : widgets_)
+    {
+        if (ToUpperInvariant(widget.id + L"\n" + widget.sourceFolderPath) != iconCacheKey)
+            continue;
+        const auto style = ResolveIconAppearance(L"widget:" + widget.id);
+        recollectGlass = recollectGlass || (style.enabled && style.glassEnabled);
+        // Only this folder's derived source depends on the completed bitmap.
+        // The other appearance images, and their style/glass metadata, stay valid.
+        const auto appearanceKey = L"widget:" + widget.id + L":" +
+            std::to_wstring(snowdesktop::icon_render_rules::kMaximumSourcePixels);
+        const auto appearance = dockAppearanceImages_.find(appearanceKey);
+        if (appearance != dockAppearanceImages_.end())
+        {
+            const auto glass = iconGlassBackdrop_.find(appearance->second.bitmap.Get());
+            recollectGlass = recollectGlass || (glass != iconGlassBackdrop_.end() && glass->second);
+            iconGlassBackdrop_.erase(appearance->second.bitmap.Get());
+            iconBitmapStyles_.erase(appearance->second.bitmap.Get());
+            dockAppearanceImages_.erase(appearance);
+        }
+        refreshDocks = refreshDocks || std::any_of(dockEntries_.begin(), dockEntries_.end(),
+            [&](const DockEntry& entry) {
+                return entry.type == DockEntryType::FolderMapping && entry.reference == widget.id;
+            });
+        // Widget::Draw uses the same folder cache for standalone icon entrances.
+        // Group/pop-up contents and expanded mappings use their own entry icons.
+        if (widget.type == DesktopWidgetType::FolderMapping &&
+            snowdesktop::single_cell_widget::IsIconMode(widget) && !IsGroupedWidget(widget))
+        {
+            const RECT frame = GetStandaloneWidgetFrameRect(widget);
+            if (!IsRectEmptyRect(frame)) desktopFrames.push_back(frame);
+        }
+    }
+    // Bitmap content cannot move the scene. Retire drag snapshots without
+    // forcing unrelated root icons and widget surfaces through a full draw.
+    // Native glass can change when a source gains/loses its own plate; keep
+    // the complete owner recollection for both the old and requested style.
+    if (recollectGlass) InvalidateDragStaticScene();
+    else
+    {
+        dragSession_.InvalidateStaticScene();
+        dragRenderCache_.Reset();
+    }
+    // Every mirrored Dock can consume the same entry. Retain the existing
+    // persistent-host immediate presentation and desktop-Dock damage route.
+    if (refreshDocks) InvalidateDockRects();
+    if (hwnd_)
+        for (const RECT& frame : desktopFrames)
+            InvalidateRect(hwnd_, &frame, FALSE);
+}
 
 bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey)
@@ -383,7 +448,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     const auto started = GetTickCount64();
                     auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                     result->bitmap = GetLocalIconResourceBitmap(path, result->size, requestedSize);
-                    WriteDiagnosticLogEntry((L"Dock local folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock local folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
                         L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                         std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                     return result;
@@ -391,23 +456,13 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     const auto started = GetTickCount64();
                     auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                     result->bitmap = CreateDockShellIconBitmap(path, result->size, requestedSize);
-                    WriteDiagnosticLogEntry((L"Dock Shell folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock Shell folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
                         L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                         std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                     return result;
                 }, [this, iconCacheKey, ticket = local.ticket](auto result, bool refined) {
-                    auto bitmap = result && result->bitmap
-                        ? CreateD2DBitmapFromHBitmap(result->bitmap, false)
-                        : ComPtr<ID2D1Bitmap1>{};
-                    if (bitmap)
-                    {
-                        if (!dockFolderBitmapCache_.Publish(iconCacheKey, ticket, std::move(bitmap), refined)) return;
-                    }
-                    else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
-                    ClearDockAppearanceImages();
-                    InvalidateDragStaticScene();
-                    InvalidateDockRects();
-                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                    OnDockFolderIconLoaded(iconCacheKey, ticket,
+                        result ? result->bitmap : nullptr, refined);
                 }, hwnd_, kBackgroundShellReadyMessage);
         }
         if (local.value && local.value->Get())

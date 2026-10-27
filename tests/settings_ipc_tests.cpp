@@ -1,4 +1,5 @@
 #include "settings/settings_ipc_channel.h"
+#include "settings/settings_ipc_services.h"
 #include "settings/settings_ipc_values.h"
 #include "settings/icon_library_ipc_paging.h"
 #include "system/status_bar/status_bar_appearance.h"
@@ -10,6 +11,8 @@
 #include "settings/settings_process.h"
 #include "shell/shell_extension_service.h"
 #include "app/lifecycle/settings_external_state_refresh.h"
+#include "settings/bar_settings_rules.h"
+#include "winui/window_support_ipc_values.h"
 
 #include <atomic>
 #include <future>
@@ -37,7 +40,7 @@ HANDLE CurrentProcessHandle()
 {
     HANDLE result = nullptr;
     if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(),
-        GetCurrentProcess(), &result, SYNCHRONIZE, FALSE, 0))
+        GetCurrentProcess(), &result, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0))
         throw std::runtime_error("test process handle failed");
     return result;
 }
@@ -115,11 +118,45 @@ void TestCodec()
     }
     {
         snowdesktop::StatusBarSettings statusBar;
+        Check(!statusBar.showOnlyWhenSummoned && statusBar.edgeRevealGesture == 1,
+            "independent bars default to persistent display and hover reveal");
+        for (const bool summoned : {false, true}) for (const int gesture : {0, 1})
+        {
+            auto selected = statusBar;
+            selected.showOnlyWhenSummoned = summoned;
+            selected.edgeRevealGesture = gesture;
+            Check(Unpack<snowdesktop::StatusBarSettings>(Pack(selected)) == selected,
+                "both reveal choices cross the settings process IPC boundary without loss");
+            JsonValue stored;
+            snowdesktop::StatusBarSettings restored;
+            Check(ParseJson(snowdesktop::EncodeStatusBarSettings(selected), stored) &&
+                snowdesktop::DecodeStatusBarSettings(stored, restored) &&
+                restored.showOnlyWhenSummoned == summoned && restored.edgeRevealGesture == gesture,
+                "all independent reveal preferences survive persistence round trips");
+        }
+        for (const auto* json : {"{\"showOnlyWhenSummoned\":1}", "{\"edgeRevealGesture\":true}",
+            "{\"edgeRevealGesture\":-1}", "{\"edgeRevealGesture\":2}", "{\"edgeRevealGesture\":0.5}"})
+        {
+            JsonValue invalid;
+            const auto before = statusBar;
+            Check(ParseJson(json, invalid) && !snowdesktop::DecodeStatusBarSettings(invalid, statusBar) && statusBar == before,
+                "invalid reveal settings are rejected without partially replacing valid preferences");
+        }
+        for (const bool show : {false, true}) for (const bool single : {false, true})
+        {
+            auto selected = statusBar;
+            selected.controlCenter = show; selected.controlCenterSingleIcon = single;
+            selected.notifications = !show; selected.clock = !single;
+            Check(Unpack<snowdesktop::StatusBarSettings>(Pack(selected)) == selected,
+                "bar display choices cross the real settings serialization boundary independently");
+        }
         Check(!statusBar.batteryPercentage, "new profiles keep battery percentage hidden");
         JsonValue legacy;
         Check(ParseJson("{\"enabled\":true}", legacy), "legacy status bar JSON parses");
         statusBar.batteryPercentage = true;
-        Check(snowdesktop::DecodeStatusBarSettings(legacy, statusBar) && !statusBar.batteryPercentage,
+        statusBar.showOnlyWhenSummoned = true; statusBar.edgeRevealGesture = 0;
+        Check(snowdesktop::DecodeStatusBarSettings(legacy, statusBar) && !statusBar.batteryPercentage &&
+            !statusBar.showOnlyWhenSummoned && statusBar.edgeRevealGesture == 1,
             "existing profiles without the new flag retain compact control-center icons");
         for (const bool enabled : {false, true})
         {
@@ -171,6 +208,22 @@ void TestCodec()
         companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
         "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        snowdesktop::SetTaskbarDisplayMode(dockSpace, mode);
+        const auto restoredDock = Unpack<DockSettings>(Pack(dockSpace));
+        Check(restoredDock == dockSpace && snowdesktop::TaskbarDisplayMode(restoredDock) == mode,
+            "all taskbar visibility modes retain their monitor scope across settings IPC");
+    }
+    snowdesktop::SetTaskbarDisplayMode(dockSpace, 0);
+    Check(!dockSpace.startMenuKeepTaskbarHidden, "native Start behavior remains the default");
+    for (const bool enabled : {false, true})
+    {
+        DockSettings start = dockSpace;
+        start.startMenuKeepTaskbarHidden = enabled;
+        Check(Unpack<DockSettings>(Pack(start)) == start,
+            "Dock Start placement preference survives settings-process IPC");
+    }
     dockSpace.edgeDistanceScale = 5.f;
     dockSpace.reserveScreenSpace = true;
     dockSpace.lastMonitorUseHomeSize = false;
@@ -198,7 +251,29 @@ void TestCodec()
     const auto restoredRoute = Unpack<snowdesktop::SettingsRoute>(Pack(styleRoute));
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
+    snowdesktop::runtime_modules::Snapshot moduleStatus;
+    moduleStatus.policyRevision = 7;
+    snowdesktop::runtime_modules::Status resident;
+    resident.module = snowdesktop::runtime_modules::Module::Taskbar;
+    resident.allowed = false; resident.active = 0; resident.residencyKnown = false;
+    resident.targets.push_back({123, L"explorer.exe", true}); moduleStatus.modules.push_back(resident);
+    const auto statusCopy = Unpack<snowdesktop::runtime_modules::Snapshot>(Pack(moduleStatus));
+    Check(statusCopy.policyRevision == 7 && statusCopy.modules.size() == 1 && !statusCopy.modules[0].allowed &&
+        !statusCopy.modules[0].active && !statusCopy.modules[0].residencyKnown && statusCopy.modules[0].targets[0].explorer && statusCopy.modules[0].targets[0].process == 123,
+        "disabled behavior, unknown residency and an Explorer image remain distinct across IPC");
+    GeneralSettings moduleSettings;
+    moduleSettings.showAdvancedSettings = true;
+    moduleSettings.runtimeModules.allowed = {false, true, false, false, true};
+    const auto moduleCopy = Unpack<GeneralSettings>(Pack(moduleSettings));
+    Check(moduleCopy.showAdvancedSettings && moduleCopy.runtimeModules == moduleSettings.runtimeModules,
+        "five independent module policies and About visibility cross the private settings process boundary");
     GeneralSettings extensions;
+    for (const auto& descriptor : snowdesktop::diagnostics::LogModules)
+    {
+        extensions.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(descriptor.module);
+        Check(Unpack<GeneralSettings>(Pack(extensions)).diagnosticLogModules == extensions.diagnosticLogModules,
+            "each independent logging switch crosses the settings-process IPC boundary");
+    }
     for (const bool enabled : {false, true})
     for (const UINT key : {UINT{'R'}, UINT{0}})
     {
@@ -717,6 +792,16 @@ void TestChannel()
             throw std::runtime_error("test pipe creation failed");
         Channel parent;
         parent.Open(mainRead, mainWrite, CurrentProcessHandle());
+        Check(parent.PeerProcessId() == GetCurrentProcessId(), "settings channel retains the process identity needed for foreground handoff");
+        const HWND owner = CreateWindowExW(0, L"STATIC", L"Settings authorization owner fixture", WS_POPUP,
+            0, 0, 10, 10, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Check(owner && parent.OwnsPeerWindow(owner) && !parent.OwnsPeerWindow(nullptr),
+            "authorization accepts only a live window owned by the connected settings process");
+        if (owner)
+        {
+            DestroyWindow(owner);
+            Check(!parent.OwnsPeerWindow(owner), "a closed settings window cannot own another UAC prompt");
+        }
         parent.Bind<int, int>("host.preview", [](int value) { return value + 1; });
         std::promise<HWND> started;
         std::atomic<bool> childFailed = false;
@@ -793,6 +878,85 @@ void TestChannel()
     if (handlesAfter > handlesBefore)
         std::cerr << "IPC handles: " << handlesBefore << " -> " << handlesAfter << '\n';
     Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
+}
+
+void TestContextMenuInspectionLifetime()
+{
+    HANDLE clientRead = nullptr, serverWrite = nullptr, serverRead = nullptr, clientWrite = nullptr;
+    if (!CreatePipe(&clientRead, &serverWrite, nullptr, 0))
+        throw std::runtime_error("menu inspection pipe creation failed");
+    if (!CreatePipe(&serverRead, &clientWrite, nullptr, 0))
+    {
+        CloseHandle(clientRead); CloseHandle(serverWrite);
+        throw std::runtime_error("menu inspection reply pipe creation failed");
+    }
+    Channel client;
+    client.Open(clientRead, clientWrite, CurrentProcessHandle());
+    std::promise<bool> ready;
+    std::atomic<bool> hostFailed = false;
+    std::thread host([&] {
+        try
+        {
+            Channel server;
+            server.Open(serverRead, serverWrite, CurrentProcessHandle());
+            bool active = false;
+            unsigned inspections = 0, closures = 0;
+            ContextMenuInspectionCallbacks callbacks;
+            callbacks.inspect = [&](const snowdesktop::shell_extensions::Request& request, bool refresh) {
+                active = true;
+                snowdesktop::shell_extensions::CatalogueView view;
+                view.selection = request;
+                view.menu.revision = ++inspections;
+                view.menu.pending = refresh;
+                view.catalogue.revision = closures;
+                return view;
+            };
+            callbacks.closed = [&] { active = false; ++closures; };
+            BindContextMenuInspection(server, std::move(callbacks));
+            server.Bind<std::pair<bool, unsigned>>("test.menu.state", [&] { return std::pair{active, closures}; });
+            server.Bind<void>("test.menu.exit", [] { PostQuitMessage(0); });
+            server.SetDisconnected([] { PostQuitMessage(0); });
+            ready.set_value(true);
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        }
+        catch (...)
+        {
+            hostFailed = true;
+            try { ready.set_value(false); } catch (...) {}
+        }
+    });
+    const bool started = ready.get_future().get();
+    try
+    {
+        Check(started, "the real menu-page backend pipe becomes ready");
+        if (started)
+        {
+            auto remote = CreateContextMenuInspectionProxy(client);
+            snowdesktop::shell_extensions::Request request;
+            request.paths = {L"C:\\Private\\菜单范围"};
+            request.context = snowdesktop::shell_extensions::Context::Folder;
+            const auto first = remote.inspect(request, true);
+            Check(first.selection == request && first.menu.revision == 1 && first.menu.pending && first.catalogue.revision == 0,
+                "the production remote menu options preserve selection and refresh intent through actual pipes");
+            remote.closed();
+            Check(client.Call<std::pair<bool, unsigned>>("test.menu.state") == std::pair{false, 1u},
+                "leaving the menu page delivers its close notification to the actual backend before the next request");
+            const auto reopened = remote.inspect(request, false);
+            Check(reopened.selection == request && reopened.menu.revision == 2 && !reopened.menu.pending && reopened.catalogue.revision == 1 &&
+                    client.Call<std::pair<bool, unsigned>>("test.menu.state") == std::pair{true, 1u},
+                "a later menu-page inspection reopens after the prior close rather than being closed by stale IPC");
+            remote.closed();
+            Check(client.Call<std::pair<bool, unsigned>>("test.menu.state") == std::pair{false, 2u},
+                "each explicit menu-page departure reaches the host without another menu read");
+        }
+    }
+    catch (const std::exception& error) { Check(false, error.what()); }
+    try { if (client.Connected()) client.Notify("test.menu.exit"); } catch (...) {}
+    client.Close();
+    PostThreadMessageW(GetThreadId(host.native_handle()), WM_QUIT, 0, 0);
+    host.join();
+    Check(!hostFailed, "the menu lifetime backend remains healthy through close and reopen");
 }
 
 void TestIconLibraryPaging()
@@ -1208,15 +1372,46 @@ void TestProcessLifecycle()
 void TestMenuHelperStartupFeedback()
 {
     using namespace snowdesktop::settings_ipc;
-    for (const auto command : {L"--settings-ui", L"--shell-menu-helper"})
+    PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY parentPolicy{};
+    const bool parentPolicyKnown = GetProcessMitigationPolicy(GetCurrentProcess(), ProcessExtensionPointDisablePolicy,
+        &parentPolicy, sizeof(parentPolicy)) != FALSE;
+    Check(parentPolicyKnown, "read the original process extension-point policy for role isolation checks");
+    for (const auto command : {L"--settings-ui", L"--shell-menu-helper", L"--start-menu-helper"})
     {
         Channel channel;
         SettingsProcess process;
         process.Start(channel, command);
         const auto flags = channel.Call<DWORD>("test.startup-flags");
-        const bool menuHelper = std::wstring_view(command) == L"--shell-menu-helper";
+        const bool menuHelper = std::wstring_view(command) != L"--settings-ui";
         Check(((flags & STARTF_FORCEOFFFEEDBACK) != 0) == menuHelper,
-            "the real launcher suppresses startup cursor feedback only for background menu helpers");
+            "the real launcher suppresses startup cursor feedback for both private background menu modes");
+        HANDLE childPolicyProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, process.ProcessId());
+        PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY childPolicy{};
+        const bool childPolicyKnown = childPolicyProcess && GetProcessMitigationPolicy(childPolicyProcess,
+            ProcessExtensionPointDisablePolicy, &childPolicy, sizeof(childPolicy)) != FALSE;
+        if (childPolicyProcess) CloseHandle(childPolicyProcess);
+        Check(childPolicyKnown, "read extension-point mitigation from the actual supervised child process");
+        if (parentPolicyKnown && childPolicyKnown)
+        {
+            const bool shellMenu = std::wstring_view(command) == L"--shell-menu-helper";
+            Check((childPolicy.DisableExtensionPoints != 0) == (shellMenu || parentPolicy.DisableExtensionPoints != 0),
+                "only Shell menu helpers add legacy extension-point isolation; settings and Start retain their original baseline");
+        }
+        if (std::wstring_view(command) == L"--start-menu-helper")
+        {
+            Check(channel.CallWithTimeout<std::pair<LONG, bool>>(500, "start.state") == std::pair<LONG, bool>{S_OK, true},
+                "the Start helper exchanges launcher state through the real inherited process channel");
+            Check(channel.CallWithTimeout<LONG>(500, "start.dismiss") == S_OK &&
+                    channel.CallWithTimeout<std::pair<LONG, bool>>(500, "start.state") == std::pair<LONG, bool>{S_OK, false},
+                "the Start helper can acknowledge one-way dismissal and report closed state");
+            HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, process.ProcessId());
+            Reject([&] { (void)channel.CallWithTimeout<LONG>(100, "start.stall"); },
+                "a stuck Start Shell operation has a bounded host IPC deadline");
+            process.Stop();
+            Check(child && WaitForSingleObject(child, 3000) == WAIT_OBJECT_0,
+                "retiring a stalled Start helper terminates only the supervised child");
+            if (child) CloseHandle(child);
+        }
         channel.Close();
         process.Stop();
     }
@@ -1226,11 +1421,17 @@ int RunSettingsIpcChildIfRequested()
 {
     using namespace snowdesktop::settings_ipc;
     const bool menuHelper = IsSettingsProcessCommand(L"--shell-menu-helper");
-    if (!menuHelper && !IsSettingsProcessCommand()) return -1;
+    const bool startHelper = IsSettingsProcessCommand(L"--start-menu-helper");
+    if (!menuHelper && !startHelper && !IsSettingsProcessCommand()) return -1;
     try
     {
         Channel channel;
-        OpenInheritedSettingsChannel(channel, menuHelper ? L"--shell-menu-helper" : L"--settings-ui");
+        OpenInheritedSettingsChannel(channel, startHelper ? L"--start-menu-helper" :
+            menuHelper ? L"--shell-menu-helper" : L"--settings-ui");
+        bool startVisible = true;
+        channel.Bind<std::pair<LONG, bool>>("start.state", [&] { return std::pair<LONG, bool>{S_OK, startVisible}; });
+        channel.Bind<LONG>("start.dismiss", [&] { startVisible = false; return S_OK; });
+        channel.Bind<LONG>("start.stall", [] { Sleep(10000); return S_OK; });
         channel.Bind<DWORD>("test.startup-flags", [] {
             STARTUPINFOW startup{};
             startup.cb = sizeof(startup);
@@ -1365,11 +1566,31 @@ void TestLargeIconEditing()
 
 int RunSettingsIpcTests()
 {
+    {
+        using namespace snowdesktop::window_support;
+        SupportStatus status{{Mask(Capability::WindowPin), Mask(Capability::PointerObservation), ProviderState::Ready, 57},
+            AuthorizationState::Registered, false, ERROR_NOT_SUPPORTED};
+        const auto copy = Unpack<SupportStatus>(Pack(status));
+        Check(copy.capabilities.inProcess == status.capabilities.inProcess && copy.capabilities.helper == status.capabilities.helper &&
+            copy.capabilities.helperState == ProviderState::Ready && copy.capabilities.generation == 57 &&
+            copy.authorization == AuthorizationState::Registered && !copy.hostElevated && copy.error == ERROR_NOT_SUPPORTED,
+            "settings IPC preserves independent capabilities, authorization and real host elevation");
+        for (const auto phase : {AuthorizationState::AwaitingConsent, AuthorizationState::Configuring,
+                 AuthorizationState::NotRegistered, AuthorizationState::Invalid})
+        {
+            status.authorization = phase;
+            status.capabilities.helperState = ProviderState::Absent;
+            const auto progress = Unpack<SupportStatus>(Pack(status));
+            Check(progress.authorization == phase && progress.capabilities.helperState == ProviderState::Absent,
+                "the settings process distinguishes Windows consent, setup, cancellation and failure without inventing helper readiness");
+        }
+    }
     TestCodec();
     TestPermissionAndRelocatedRoutesCodec();
     TestLargeIconEditing();
     TestCustomCategoryCreation();
     TestChannel();
+    TestContextMenuInspectionLifetime();
     TestIconLibraryPaging();
     TestAsyncOpening();
     TestOverlappingSettingsRefresh();

@@ -41,6 +41,7 @@
 struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
+namespace snowdesktop::group_tab_drag_preview { struct Layout; }
 class WidgetEngine;
 struct GridPage;
 namespace snowdesktop
@@ -193,6 +194,13 @@ public:
     bool IsSingleCellPresentation() const;
     bool IsSingleCellDesktopPoint(POINT point) const;
     bool IsSingleCellIconMode() const;
+    bool IsLargeFolderMode() const;
+    // A large-folder Collection draws its name inside the final grid cell once
+    // that cell becomes the Show all mosaic. Only then may the chrome bottom
+    // bar omit the title; otherwise the bottom title remains the collection's
+    // only visible name and its rename anchor. The bar overlays the content edge
+    // and never reserves height, so the grid keeps the complete frame.
+    virtual bool HidesBottomBarTitle() const { return false; }
     RECT GetSingleCellIconRect() const;
     void DrawSingleCellContents(ID2D1DeviceContext* context, RECT body);
     RECT GetCollapseButtonRect() const;
@@ -380,7 +388,7 @@ public:
     bool HandleSearchKey(WPARAM key);
     void BeginSearchPointerSelection(
         POINT point, bool extendSelection);
-    void UpdateSearchPointerSelection(POINT point);
+    bool UpdateSearchPointerSelection(POINT point);
     void EndSearchPointerSelection();
     bool IsSearchPointerSelecting() const
     {
@@ -419,8 +427,8 @@ public:
         int availableWidth) const;
     /**
      * @brief 绘制统一样式的单个分类标签。
-     * @param visibleTabRect 裁剪后的背景与命中矩形。
-     * @param layoutTabRect 未裁剪的文字布局矩形。
+     * @param visibleTabRect 裁剪后的可见与命中矩形，仅用于判空。
+     * @param layoutTabRect 未裁剪的背景、边框与文字布局矩形。
      */
     void DrawCategorizedTab(
         ID2D1DeviceContext* context,
@@ -449,7 +457,7 @@ public:
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
     std::vector<std::wstring> GetCategoryTabOrder() const;
     bool BeginCategoryTabDrag(POINT point);
-    bool UpdateCategoryTabDrag(POINT point);
+    bool UpdateCategoryTabDrag(POINT point, bool* orderChanged = nullptr);
     bool EndCategoryTabDrag(bool commit);
     bool HasCategoryTabPress() const { return !pressedCategoryTab_.empty(); }
     virtual bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) { (void)pt; (void)delta; if (changed) *changed = false; return false; }
@@ -462,6 +470,7 @@ public:
 
 protected:
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
+    snowdesktop::ScrollContentFadeCache tabContentFadeCache_;
     std::wstring searchText_;
     snowdesktop::text_input::History searchHistory_;
     wchar_t searchHighSurrogate_ = 0;
@@ -563,6 +572,8 @@ public:
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     RECT GetAllButtonRect() const;
+    RECT GetTitleCellRect() const;
+    bool HidesBottomBarTitle() const override;
 
 private:
     RECT GetThumbnailIconRect(RECT rect) const;
@@ -601,6 +612,12 @@ public:
     }
     bool CollectTopLevelDesktopItems();
     bool PruneUncollectableItems();
+    /**
+     * @brief 判断指定桌面项当前是否仍由本组件的自动收纳管理。
+     * @param layoutKey 桌面项布局键
+     * @return 仍在自动收纳范围内返回 true；已保留但类别不再收纳时返回 false
+     */
+    bool AutoCollectsItem(const std::wstring& layoutKey) const;
     std::vector<std::unique_ptr<Slot>> BuildSlots() override;
     void OnItemsDropped(const std::vector<Item*>& sourceItems, Container* origin,
         Slot* targetSlot, HitRegion region, int mods) override;
@@ -667,6 +684,8 @@ private:
 
     void EnsureCategorySnapshot() const;
     void InvalidateCategorySnapshot() const;
+    /** @brief 在分类快照中查找布局键所属分类；未收录时返回空。 */
+    std::wstring CachedCategoryIdForKey(const std::wstring& layoutKey) const;
 
     mutable CategorySnapshot categorySnapshot_;
     mutable std::vector<LayoutSegment> layoutCache_;
@@ -857,6 +876,7 @@ public:
     std::wstring GetActiveCollectionId() const;
     CollectionGroupEntryItem* GetTabItemAtPoint(POINT pt) const;
     RECT GetTabRectById(const std::wstring& collectionId) const;
+    snowdesktop::group_tab_drag_preview::Layout GetTabDragPreviewLayout() const;
     void EnsureTabVisible(size_t tabIndex);
     void InvalidateFilterCache();
 
@@ -959,6 +979,7 @@ public:
     std::wstring SourceIdAtPoint(POINT pt) const;
     FileGroupEntryItem* GetSourceTabItemAtPoint(POINT pt) const;
     RECT GetSourceTabRectById(const std::wstring& childId) const;
+    snowdesktop::group_tab_drag_preview::Layout GetTabDragPreviewLayout() const;
     void EnsureSourceTabVisible(size_t tabIndex);
     void EnsureCategoryTabVisible(size_t index) override;
     void InvalidateHostedView();

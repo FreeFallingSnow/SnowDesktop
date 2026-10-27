@@ -542,7 +542,16 @@ void DesktopApp::ShowItemContextMenu(
         info.wID = id; info.dwTypeData = const_cast<wchar_t*>(action.label.c_str());
         info.fState = action.enabled ? MFS_ENABLED : MFS_GRAYED;
         InsertMenuItemW(menu, kContextPropertiesCommand, FALSE, &info);
-        SetMenuItemIcon(menu, id, id == kContextNamespaceActionFirst + 1 ? L"\uF2ED" : id == kContextNamespaceActionFirst ? L"\uF085" : L"\uF6FF");
+        // Use the same Fluent size, optical weight and centering as the
+        // surrounding rows; the legacy cogs/network glyphs use a wider solid font.
+        const wchar_t* glyph = snowdesktop::menu_fluent_glyphs::kComputerManage;
+        switch (id - kContextNamespaceActionFirst)
+        {
+        case 1: glyph = L"\uF34C"; break; // empty Recycle Bin
+        case 2: glyph = snowdesktop::menu_fluent_glyphs::kNetworkConnect; break;
+        case 3: glyph = snowdesktop::menu_fluent_glyphs::kNetworkDisconnect; break;
+        }
+        SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
     }
     if (namespaceItem && namespaceProperty == namespaceActions.end()) DeleteMenu(menu, kContextPropertiesCommand, MF_BYCOMMAND);
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
@@ -720,7 +729,7 @@ void DesktopApp::ShowItemContextMenu(
             popupAnimation_.ShowImmediately();
             popupAnimation_.Configure(
                 snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-                snowdesktop::animation::RuntimeDurationScale() * (dockFolderEntry->fanPopup ? 2.4 : 1.0));
+                snowdesktop::animation::RuntimeDurationScale() * (dockFolderEntry->fanPopup ? 2.4 : 1.0), !dockFolderEntry->fanPopup);
         }
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
@@ -1193,11 +1202,7 @@ void DesktopApp::ShowShellContextMenu(
     const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     std::vector<LPCITEMIDLIST> pidls;
     std::vector<std::wstring> invocationPaths;
-    std::wstring customIconIdentity;
-    bool ordinarySelection = true;
-    const auto collectPath = [&](const DesktopItem& item) {
-        if (invocationPaths.empty()) customIconIdentity = item.layoutKey;
-        ordinarySelection = ordinarySelection && !item.largeIcon;
+    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
         PWSTR path = nullptr;
         if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
                 SIGDN_FILESYSPATH, &path)) && path)
@@ -1252,7 +1257,6 @@ void DesktopApp::ShowShellContextMenu(
             }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
-    if (ordinarySelection && selectionSnapshot.size() == 1) AppendIconOverrideMenu(menu, customIconIdentity);
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 
@@ -1275,8 +1279,6 @@ void DesktopApp::ShowShellContextMenu(
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 
-    if (ExecuteIconOverrideMenu(cmd, customIconIdentity))
-    { DestroyMenu(menu); ClearMenuIcons(); RestoreDesktopWindowLayer(); return; }
     if (cmd != 0)
     {
         UINT commandOffset = cmd - kFirstCmd;
@@ -1393,7 +1395,7 @@ void DesktopApp::ShowShellContextMenu(
             wchar_t message[96]{};
             swprintf_s(message, L"Shell Start pin command result=0x%08lX",
                 static_cast<unsigned long>(*startPin));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, FAILED(*startPin) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
         else
             InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);

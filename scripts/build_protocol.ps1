@@ -7,6 +7,78 @@ function Get-Field($Object, [string]$Name, $Default = $null) {
 function Set-Field($Object, [string]$Name, $Value) {
     $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
+function Get-VerificationTextDigest([string]$Text) {
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {return [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))).Replace('-','').ToLowerInvariant()}
+    finally {$sha.Dispose()}
+}
+# ConvertFrom-Json returns strings in Windows PowerShell and can return typed
+# dates in PowerShell 7. Never stringify a typed date: that drops its UTC kind.
+function ConvertTo-UtcTimestamp($Value) {
+    if ($Value -is [DateTimeOffset]) { return $Value.UtcDateTime }
+    if ($Value -is [DateTime]) {
+        if ($Value.Kind -eq [DateTimeKind]::Unspecified) { throw 'Timestamp has no time zone.' }
+        return $Value.ToUniversalTime()
+    }
+    if ($Value -isnot [string] -or $Value -notmatch '(Z|[+-][0-9]{2}:[0-9]{2})$') { throw 'Timestamp requires an explicit time zone.' }
+    return [DateTimeOffset]::Parse($Value, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+}
+function Get-TimestampAge($Value) {
+    return [Math]::Max(0, ([DateTime]::UtcNow - (ConvertTo-UtcTimestamp $Value)).TotalSeconds)
+}
+
+# Investigation presence and durable messages share the coordinator's atomic
+# state transaction. Neither grants editing authority nor joins its barrier.
+function Get-TaskLedger($State) {
+    $ledger = Get-Field $State 'taskLedger'
+    if (-not $ledger) {
+        $ledger = [pscustomobject]@{schemaVersion=1; sequence=[long]0; tasks=@(); events=@()}
+        Set-Field $State 'taskLedger' $ledger
+    }
+    if ($ledger.schemaVersion -ne 1) { throw 'Unknown task ledger version; preserve state.' }
+    return $ledger
+}
+function Find-VisibleTask($Ledger, [string]$Id) {
+    $found = @($Ledger.tasks | Where-Object id -eq $Id)
+    if ($found.Count -ne 1) { throw 'Task is not registered. Use task-open before investigation.' }
+    return $found[0]
+}
+function Assert-TaskRevision($Task, [long]$Expected) {
+    if ($Expected -lt 0 -or $Task.revision -ne $Expected) { throw "Stale/missing task revision; current revision is $($Task.revision). Read task-list and re-evaluate." }
+}
+function Open-VisibleTask($Ledger, [string]$Id, [string]$Name, [string]$Adapter, [string]$Origin) {
+    $found = @($Ledger.tasks | Where-Object id -eq $Id)
+    if ($found.Count) {
+        if ($found[0].phase -in 'completed','cancelled') { throw 'Task ID is closed; use a new ID for a new task.' }
+        return $found[0]
+    }
+    if (@($Ledger.tasks).Count -ge 2000) { throw 'Task ledger is full; archive through a reviewed migration. No task was removed.' }
+    if ([string]::IsNullOrWhiteSpace($Name)) { $Name=$Id }
+    $now=[DateTime]::UtcNow.ToString('o')
+    $task=[pscustomobject]@{id=$Id; displayName=$Name; phase='investigating'; revision=[long]0; requirementsRevision=[long]0;
+        openedUtc=$now; lastHeartbeatUtc=$now; lastProgressUtc=$now; progress=''; blocker=''; closedUtc=$null;
+        registrationOrigin=$Origin; adapter=$Adapter;
+        capabilities=[pscustomobject]@{taskRegistration=$true; beforeWriteGate=$false; boundedWait=$false; liveProgress=$false; activeTurnSteering=$false; idleWake=$false}}
+    $Ledger.tasks=@($Ledger.tasks)+@($task)
+    return $task
+}
+function Set-TaskCapabilities($Task,[string]$Names) {
+    $supported=@('beforeWriteGate','boundedWait','liveProgress','activeTurnSteering','idleWake')
+    $declared=@($Names.Split(',')|Where-Object {$_}|Sort-Object -Unique)
+    if(-not $declared.Count -or ($declared -contains 'none' -and $declared.Count -ne 1) -or
+        @($declared|Where-Object {$_ -ne 'none' -and $_ -cnotin $supported}).Count){throw 'Capabilities must be supported literal names or none.'}
+    $value=[ordered]@{taskRegistration=$true}
+    foreach($name in $supported){$value[$name]=$declared -ccontains $name}
+    # Adapter declarations are metadata, never an edit grant or message receipt.
+    $Task.capabilities=[pscustomobject]$value
+}
+function Get-TaskEvents($Ledger, [string]$Id, [long]$After=0, [switch]$UrgentUnacknowledged) {
+    if(-not $Ledger){return @()}
+    return @($Ledger.events | Where-Object {
+        $_.sequence -gt $After -and $_.recipients -contains $Id -and
+        (-not $UrgentUnacknowledged -or ($_.importance -eq 'urgent' -and @($_.receipts | Where-Object { $_.task -eq $Id -and $_.level -eq 'agent' }).Count -eq 0))
+    })
+}
 function Get-EditRevision($Entry) { return [long](Get-Field $Entry 'editRevision' 0) }
 function Assert-EditRevision($Entry, [long]$Expected) {
     $actual = Get-EditRevision $Entry
@@ -20,6 +92,88 @@ function Reopen-Entry($Entry) {
     Set-Field $Entry 'reopenedUtc' ([DateTime]::UtcNow.ToString('o'))
     $check = Get-Field $Entry 'check'
     if ($check) { $check.status = 'invalidated'; Set-Field $check 'reason' 'Registration reopened; evidence belongs to an older edit revision.' }
+}
+function Get-RepairSources($Batch) {
+    $sources=@(Get-Field $Batch 'repairSources' @())
+    if($sources.Count){return $sources}
+    $parent=Get-Field $Batch 'repairOf'
+    if($parent){return @([pscustomobject]@{parentBatchId=$parent;logicalBatchId=(Get-Field $Batch 'logicalBatchId' $parent);attempt=(Get-Field $Batch 'attempt' 2);reason=(Get-Field $Batch 'repairReason' '')})}
+    return @()
+}
+function Find-RepairBatches($State,[string]$Parent) {
+    return @(@($State.current)+@(Get-Field $State 'activeCandidates' @())|Where-Object {
+        $_ -and @(Get-RepairSources $_|Where-Object parentBatchId -eq $Parent).Count
+    })
+}
+function Get-EffectiveTaskPlan($Entry) {
+    $primary=Get-Field $Entry 'testPlan'
+    if(-not $primary){$primary=Default-TaskPlan $Entry}
+    $extra=@(Get-Field $Entry 'repairRequirements' @())
+    if(-not $extra.Count){return $primary}
+    # Keep the live registration/claim/revision intact. Other parents add
+    # obligations rather than replacing that member's own declared plan.
+    $plan=$primary|ConvertTo-Json -Depth 20|ConvertFrom-Json
+    $requirements=@($primary)+@($extra|ForEach-Object {$_.requirement})
+    $plan.tests=@($requirements|ForEach-Object {$_.tests}|Sort-Object -Unique)
+    $plan.suites=@($requirements|ForEach-Object {$_.suites}|Sort-Object -Unique)
+    if($plan.suites.Count -gt 1){$plan.suites=@($plan.suites|Where-Object {$_ -ne 'none'})}
+    $plan.inputs=@(if(-not @($requirements|Where-Object {@($_.inputs).Count -eq 0}).Count){$requirements|ForEach-Object {$_.inputs}|Sort-Object -Unique})
+    $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}else{'component'}
+    $plan.source='repair-carried';$plan.requiredFull=$plan.suites -contains 'full'
+    Set-Field $plan 'mergedRepairRequirements' $extra
+    $resources=@($requirements|Where-Object {$_.suites -notcontains 'none'}|ForEach-Object {Get-Field $_ 'projectResources'}|Where-Object {$_})
+    $selected=@($requirements|Where-Object {$_.suites -notcontains 'none'})
+    if($resources.Count -ne $selected.Count){$plan.PSObject.Properties.Remove('projectResources')}
+    elseif($resources.Count){
+        $first=$resources[0]
+        if(@($resources|Where-Object {$_.policy -ne $first.policy -or $_.policyHash -ne $first.policyHash -or $_.commonGitDirectory -ne $first.commonGitDirectory}).Count){throw 'Merged repair resource policies differ; update the affected plans.'}
+        $binding=$first|ConvertTo-Json -Depth 8|ConvertFrom-Json
+        $binding.cpuSlots=[int](($resources|Measure-Object cpuSlots -Maximum).Maximum)
+        $binding.memoryMiB=[int](($resources|Measure-Object memoryMiB -Maximum).Maximum)
+        $binding.reservedMemoryMiB=[int]([Math]::Ceiling($binding.memoryMiB/256.0)*256)
+        if(@($resources|Where-Object compatibilityMode -ne 'shared').Count){$binding.compatibilityMode='exclusive'}
+        Set-Field $plan 'projectResources' $binding
+    }
+    return $plan
+}
+function Add-RepairSource($Current,$Result,[string]$Parent,[string]$Requester,[string]$Reason) {
+    $known=@(Get-RepairSources $Current)
+    if(@($known|Where-Object parentBatchId -eq $Parent).Count){return}
+    if($Current.phase -ne 'editing'){throw 'Repair attempt is frozen. Observe it; no edit permission granted.'}
+    if((Get-Field $Current 'protocolVersion' 1) -lt (Get-Field $Result 'protocolVersion' 1)){throw 'An older active protocol cannot import a newer failed batch; wait for its editing window to close.'}
+    if(@($Current.participants|Where-Object id -eq $Requester).Count){throw 'This requester already has another active registration; use its current batch/revision instead of reopening it from another parent.'}
+    $now=[DateTime]::UtcNow.ToString('o')
+    foreach($old in @($Result.participants|Where-Object state -ne 'withdrawn')){
+        $previous=Get-EffectiveTaskPlan $old
+        $plan=$previous|ConvertTo-Json -Depth 20|ConvertFrom-Json
+        $existing=@($Current.participants|Where-Object id -eq $old.id)
+        if($existing.Count){
+            $entry=$existing[0]
+            if($entry.state -eq 'withdrawn'){throw 'A withdrawn registration cannot be silently restored by another repair source.'}
+            $requirements=@(Get-Field $entry 'repairRequirements' @())+@([pscustomobject]@{parentBatchId=$Parent;editRevision=(Get-EditRevision $old);requirement=$plan})
+            Set-Field $entry 'repairRequirements' $requirements
+            # Supersede any in-flight check by replacing its operation record.
+            # Its late completion cannot publish against the new obligations.
+            if($entry.state -eq 'finished'){
+                Set-Field $entry.testPlan 'inputIdentity' $null
+                Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=(Get-EditRevision $entry);reason='Another repair source added requirements; check the merged inputs.'})
+            }
+        }else{
+            $entry=[pscustomobject]@{id=$old.id;state='finished';editRevision=((Get-EditRevision $old)+1);registeredUtc=$now;finishedUtc=$now;withdrawalReason=$null;carriedFrom=$Parent;repairRequested=$false}
+            $plan.source='repair-carried';$plan.editRevision=Get-EditRevision $entry;$plan.inputIdentity=$null
+            $plan.requiredFull=$plan.suites -contains 'full'
+            Set-Field $plan 'originalRequirement' (Get-Field $previous 'originalRequirement' $previous)
+            Set-Field $entry 'testPlan' $plan
+            Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=(Get-EditRevision $entry);reason='Prior ready evidence is not reused for repaired inputs.'})
+            $Current.participants=@($Current.participants)+@($entry)
+        }
+    }
+    $source=[pscustomobject]@{parentBatchId=$Parent;logicalBatchId=(Get-Field $Result 'logicalBatchId' $Parent);attempt=([int](Get-Field $Result 'attempt' 1)+1);reason=$Reason}
+    Set-Field $Current 'repairSources' @($known+@($source))
+    if(-not $known.Count){
+        Set-Field $Current 'repairOf' $Parent;Set-Field $Current 'logicalBatchId' $source.logicalBatchId
+        Set-Field $Current 'attempt' $source.attempt;Set-Field $Current 'repairReason' $Reason
+    }
 }
 function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason) {
     $suiteList = @($Suites.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
@@ -107,11 +261,10 @@ function Checks-BlockFreeze($Current) {
     }).Count -gt 0
 }
 function New-FrozenPlan($Current) {
-    $tasks=@(); $full=$false; $build=$false
+    $tasks=@(); $full=$false; $build=$false; $testing=$false;$resources=@();$exclusive=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
-        $plan=Get-Field $entry 'testPlan'
-        if (-not $plan) { $plan=Default-TaskPlan $entry }
+        $plan=Get-EffectiveTaskPlan $entry
         if ($plan.editRevision -ne (Get-EditRevision $entry)) { throw "Plan is stale for $($entry.id); reopen/update plan before ready." }
         if ($plan.source -eq 'task-declared' -and $plan.inputIdentity -and (Get-TaskIdentity $plan).digest -ne $plan.inputIdentity.digest) { throw "Declared inputs changed after ready for $($entry.id); reopen and update plan." }
         $check=Get-Field $entry 'check'
@@ -120,13 +273,34 @@ function New-FrozenPlan($Current) {
         # explicit full suite can select whole-product coverage now.
         $plan.requiredFull = $plan.suites -contains 'full'
         if ($plan.requiredFull) { $full=$true }
-        if ($plan.suites -notcontains 'none') { $build=$true }
+        if ($plan.suites -notcontains 'none') {
+            $testing=$true
+            $request=Get-Field $plan 'projectResources'
+            if($request){$resources+=@($request)}else{$exclusive=$true}
+            # Test selection and a complete host build are distinct needs.
+            # Targeted test builds still use the inventory's real dependencies.
+            if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}
+        }
         $tasks += [pscustomobject]@{ participant=$entry.id; editRevision=(Get-EditRevision $entry); requirement=$plan }
     }
     $names=@($tasks | ForEach-Object { $_.requirement.tests } | Sort-Object -Unique)
     $suites=@($tasks | ForEach-Object { $_.requirement.suites } | Where-Object { $_ -ne 'none' } | Sort-Object -Unique)
-    return [pscustomobject]@{ schemaVersion=1; batchId=$Current.id; configuration='Release'; tasks=$tasks; tests=$names; suites=$suites; buildRequired=$build;
-        mode=$(if($full){'full'}elseif($build){'selected'}else{'skipped'}); createdUtc=[DateTime]::UtcNow.ToString('o') }
+    $result=[pscustomobject]@{ schemaVersion=1; batchId=$Current.id; configuration='Release'; tasks=$tasks; tests=$names; suites=$suites; buildRequired=$build;
+        mode=$(if($full){'full'}elseif($testing){'selected'}else{'skipped'}); createdUtc=[DateTime]::UtcNow.ToString('o') }
+    Set-Field $result 'repairSources' @(Get-RepairSources $Current)
+    if($resources.Count -and -not $exclusive){
+        $first=$resources[0]
+        if(@($resources|Where-Object {$_.policy -ne 'project-weighted-v1' -or $_.policyHash -ne $first.policyHash -or $_.commonGitDirectory -ne $first.commonGitDirectory}).Count){throw 'Participant resource policies differ; reopen and update the affected plans.'}
+        # The aggregate pipeline has one CPU ceiling and one committed-memory
+        # ceiling. Use the largest member need, not additive nested budgets.
+        $binding=($first|ConvertTo-Json -Depth 8)|ConvertFrom-Json
+        if($build -or @($resources|Where-Object compatibilityMode -ne 'shared').Count){$binding.compatibilityMode='exclusive'}
+        $binding.cpuSlots=[int](($resources|Measure-Object cpuSlots -Maximum).Maximum)
+        $binding.memoryMiB=[int](($resources|Measure-Object memoryMiB -Maximum).Maximum)
+        $binding.reservedMemoryMiB=[int]([Math]::Ceiling($binding.memoryMiB/256.0)*256)
+        Set-Field $result 'projectResources' $binding
+    }
+    return $result
 }
 function Resolve-PlanTests($Plan, $Inventory) {
     $selected=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)

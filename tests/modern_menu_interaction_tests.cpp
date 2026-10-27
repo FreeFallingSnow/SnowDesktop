@@ -530,8 +530,9 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
     Expect(probe.invoked.size() == 9 && probe.invoked[7].action == StatusBarAction::InputMethodPanel &&
-        probe.invoked[8].action == StatusBarAction::MenuControlCenter,
-        "the separate layout button opens the picker, with visibility and panel options in its control-center context menu");
+        probe.invoked[8].action == StatusBarAction::MenuInputMethod &&
+        IsStatusBarContextMenuAction(probe.invoked[8].action),
+        "the layout button opens the picker normally and routes right-click to its own input-method settings");
     Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
     // A real no-activate bar used to keep desktop/Dock selection because tray
     // and blank presses bypass action activation. Record only the host effect;
@@ -571,7 +572,9 @@ void CheckStatusBarKeyboardMessages()
     // item's identity, making its own quick settings impossible to select.
     const std::pair<StatusBarAction, StatusBarAction> contexts[]{
         {StatusBarAction::Calendar, StatusBarAction::MenuTime},
-        {StatusBarAction::Notifications, StatusBarAction::MenuTime},
+        {StatusBarAction::Notifications, StatusBarAction::MenuNotifications},
+        {StatusBarAction::SystemCalendar, StatusBarAction::MenuTime},
+        {StatusBarAction::SystemInputMethodPanel, StatusBarAction::MenuInputMethod},
         {StatusBarAction::Network, StatusBarAction::MenuNetwork},
         {StatusBarAction::Audio, StatusBarAction::MenuAudio},
         {StatusBarAction::Power, StatusBarAction::MenuPower},
@@ -580,6 +583,7 @@ void CheckStatusBarKeyboardMessages()
         {StatusBarAction::Gpu, StatusBarAction::MenuGpu},
         {StatusBarAction::Traffic, StatusBarAction::MenuTraffic},
         {StatusBarAction::ControlCenter, StatusBarAction::MenuControlCenter},
+        {StatusBarAction::SystemControlCenter, StatusBarAction::MenuControlCenter},
         {StatusBarAction::QuickSearch, StatusBarAction::MenuQuickSearch},
         {StatusBarAction::TaskView, StatusBarAction::MenuTaskView},
         {StatusBarAction::Tray, StatusBarAction::MenuTray}};
@@ -591,7 +595,7 @@ void CheckStatusBarKeyboardMessages()
         SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(16, 16));
         SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
         Expect(probe.invoked.size() == count + 2 && probe.invoked[count].action == context &&
-            probe.invoked[count + 1].action == context,
+            probe.invoked[count + 1].action == context && IsStatusBarContextMenuAction(context),
             "pointer and keyboard context menus preserve the same clicked information/button identity");
         SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
         Expect(probe.invoked.back().action == normal, "quick context settings do not replace normal activation");
@@ -2825,7 +2829,7 @@ int wmain(int argc, wchar_t** argv)
     // stationary pointer. The original action must keep its screen bounds and
     // click identity after both updates, while shifted footer updates wait.
     for (const auto scenario : {std::pair{false, 0}, std::pair{true, 0},
-                               std::pair{false, 1}, std::pair{false, 2}})
+                               std::pair{false, 1}, std::pair{false, 2}, std::pair{false, 3}})
     {
         const bool movesHoveredRow = scenario.first;
         const int rowKind = scenario.second;
@@ -2868,12 +2872,22 @@ int wmain(int argc, wchar_t** argv)
             }
             else
             {
+                if (rowKind == 3)
+                    updated.front().children.push_back(loaded);
                 updated.push_back(loaded);
                 if (++streams == 2)
                 {
                     finished = true;
-                    PostMessageW(root, WM_LBUTTONDOWN, 0, MAKELPARAM(20, 20));
-                    PostMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(20, 20));
+                    if (rowKind == 3)
+                    {
+                        PostMessageW(root, WM_KEYDOWN, VK_END, 0);
+                        PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+                    }
+                    else
+                    {
+                        PostMessageW(root, WM_LBUTTONDOWN, 0, MAKELPARAM(20, 20));
+                        PostMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(20, 20));
+                    }
                 }
             }
             return updated;
@@ -2894,7 +2908,12 @@ int wmain(int argc, wchar_t** argv)
         gMenuScript = [&](HWND) { incremental.eventPump.flushPresentation(); };
         Item stable; stable.command = 8270; stable.label = L"Open";
         std::vector<Item> stationaryItems{stable};
-        if (rowKind)
+        if (rowKind == 3)
+        {
+            Item child; child.command = 8280; child.label = L"Initial child";
+            stationaryItems.front().children = {child};
+        }
+        else if (rowKind)
         {
             Item peer; peer.command = 8279; peer.label = L"Copy";
             if (rowKind == 1)
@@ -2911,9 +2930,10 @@ int wmain(int argc, wchar_t** argv)
         KillTimer(owner, kWatchdogTimer); KillTimer(owner, kDriveTimer); gMenuScript = {};
         if (!movesHoveredRow)
         {
-            if (streams != 2 || gWatchdogFired || incrementalResult.command != 8270 || !EqualRect(&original, &after))
+            const UINT expected = rowKind == 3 ? 8272 : 8270;
+            if (streams != 2 || gWatchdogFired || incrementalResult.command != expected || !EqualRect(&original, &after))
                 std::cerr << "stationary row kind=" << rowKind << " streams=" << streams << " watchdog=" << gWatchdogFired << '\n';
-            Expect(streams == 2 && !gWatchdogFired && incrementalResult.command == 8270 && EqualRect(&original, &after),
+            Expect(streams == 2 && !gWatchdogFired && incrementalResult.command == expected && EqualRect(&original, &after),
                 "ordinary rows, quick actions and inline groups load both streams under a stationary pointer without moving its click target");
         }
         else

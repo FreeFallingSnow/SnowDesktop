@@ -42,6 +42,9 @@ SnowDesktop's embedded Regular font:
 | `developer.svg` | Window Dev Tools 24 Regular + Filled |
 | `debug.svg` | Bug 24 Regular + Filled |
 
+The Advanced settings group reuses `general.svg`; Module loading reuses `widgets.svg`.
+Their page-heading icons use the same resources and existing high-contrast glyph fallbacks.
+
 ## Desktop style preview artwork
 
 The following assets are used only inside the desktop layout illustration, not

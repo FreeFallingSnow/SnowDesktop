@@ -265,6 +265,7 @@ struct WidgetMediaTimelineDataSnapshot
     std::int64_t minimumSeekMs = 0;
     std::int64_t maximumSeekMs = 0;
     std::int64_t updatedAtMs = 0;
+    std::optional<double> playbackRate;
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;
     std::string error;
@@ -279,6 +280,9 @@ struct WidgetMediaSessionDataSnapshot
     std::string album;
     std::string playbackStatus = "closed";
     bool current = false;
+    std::optional<bool> shuffle;
+    std::optional<std::string> repeatMode;
+    std::optional<double> playbackRate;
     WidgetMediaControlsDataSnapshot controls;
     WidgetMediaTimelineDataSnapshot timeline;
 };

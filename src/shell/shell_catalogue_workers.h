@@ -30,6 +30,7 @@ public:
         paused_ = false;
         pausedTime_ = {};
         nextProbe_ = {};
+        workStarted_ = {}; budgetWaiting_ = false; budgetWait_ = {};
     }
     void Promote()
     {
@@ -51,7 +52,25 @@ public:
         {
             if (cancelled_.load(std::memory_order_acquire))
                 throw std::runtime_error("catalogue scan cancelled");
-            if (Requested() || !pauseProbe_ || !BackgroundPaused()) return;
+            if (Requested()) return;
+            if (!pauseProbe_ || !BackgroundPaused())
+            {
+                // Cooperative soft budget: normally 4 ms work / 16 ms rest.
+                // Checkpoints bound batches, not an individual OS/Shell call.
+                // Longer batches repay their elapsed wall time, capped at 100 ms
+                // so foreground demand and cancellation always wake promptly.
+                std::unique_lock lock(pauseMutex_);
+                const auto now = Clock::now();
+                if (workStarted_ == Clock::time_point{}) workStarted_ = now;
+                if (now - workStarted_ < std::chrono::milliseconds(4)) return;
+                const auto rest = std::min((now - workStarted_) * 4,
+                    std::chrono::duration_cast<Clock::duration>(std::chrono::milliseconds(100)));
+                const auto started = Clock::now(); budgetWaiting_ = true; budgetStarted_ = started;
+                pauseChanged_.wait_for(lock, rest, [&] { return Requested() || cancelled_.load(std::memory_order_acquire); });
+                budgetWait_ += Clock::now() - started; budgetWaiting_ = false;
+                workStarted_ = Clock::now();
+                continue;
+            }
             std::unique_lock lock(pauseMutex_);
             pauseChanged_.wait_for(lock, std::chrono::milliseconds(250), [&] {
                 return Requested() || cancelled_.load(std::memory_order_acquire);
@@ -62,6 +81,12 @@ public:
     {
         std::lock_guard lock(pauseMutex_);
         const auto total = pausedTime_ + (paused_ ? Clock::now() - pauseStarted_ : Clock::duration{});
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(total).count());
+    }
+    std::uint64_t BudgetWaitMilliseconds() const
+    {
+        std::lock_guard lock(pauseMutex_);
+        const auto total = budgetWait_ + (budgetWaiting_ ? Clock::now() - budgetStarted_ : Clock::duration{});
         return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(total).count());
     }
     bool Requested() const { return foreground_.load(std::memory_order_acquire); }
@@ -87,6 +112,9 @@ private:
     bool paused_ = false;
     Clock::duration pausedTime_{};
     Clock::time_point pauseStarted_{}, nextProbe_{};
+    Clock::time_point workStarted_{}, budgetStarted_{};
+    Clock::duration budgetWait_{};
+    bool budgetWaiting_ = false;
     void SetPaused(bool paused)
     {
         if (paused_ == paused) return;

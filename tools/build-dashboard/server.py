@@ -5,17 +5,19 @@ import ctypes
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import secrets
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 HEX = re.compile(r"^[a-f0-9]{32}$")
-SECRET = re.compile(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization)(\s*[:=]\s*)[^\s,;]+")
+SECRET = re.compile(r'''(?i)\b(password|passwd|token|secret|api[_-]?key|authorization|nonce)(["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)''')
 ASSETS = {"/app-icon.png": "app-icon.png", "/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
 MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png"}
 # Full-test results include coverage and retry evidence that can exceed 256 KiB.
@@ -25,6 +27,9 @@ MAX_METADATA_BYTES = 8 * 1024 * 1024
 def redact(text):
     return SECRET.sub(r"\1\2[redacted]", str(text))[:4000]
 
+def redact_log(text):
+    return SECRET.sub(r"\1\2[redacted]", text)
+
 def safe_path(root, name):
     path = root / name
     if path.parent != root or path.is_symlink():
@@ -33,6 +38,58 @@ def safe_path(root, name):
         if part.exists() and getattr(part.stat(), "st_file_attributes", 0) & 0x400:
             raise ValueError("Reparse points are not served")
     return path
+
+def plain_path(path):
+    """Check every existing ancestor before reading a private output directly."""
+    path = Path(os.path.abspath(path))
+    for part in (path, *path.parents):
+        try:
+            info = part.lstat()
+        except FileNotFoundError:
+            continue
+        if part.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("Reparse points are not served")
+    return path
+
+
+def candidate_common_git_directory(checkout):
+    # Match Get-CandidateStore without executing Git. Linked worktrees share
+    # their common Git directory's slots, rather than the worktree's .build.
+    git_dir = plain_path(checkout / ".git")
+    if git_dir.is_file():
+        with shared_open(git_dir) as stream:
+            text = stream.read(4097).decode("utf-8-sig").strip()
+        if len(text) > 4096 or not text.startswith("gitdir: "):
+            raise ValueError("Invalid worktree Git directory")
+        git_dir = plain_path(checkout / text[8:].strip())
+        with shared_open(safe_path(git_dir, "commondir")) as stream:
+            text = stream.read(4097).decode("utf-8-sig").strip()
+        if not text or len(text) > 4096:
+            raise ValueError("Invalid common Git directory")
+        git_dir = plain_path(git_dir / text)
+    return git_dir
+
+
+def candidate_slots_root(checkout):
+    common = candidate_common_git_directory(checkout)
+    parent = common.parent if common.name == ".git" else checkout
+    return plain_path(parent / ".build" / "candidate-slots")
+
+
+def candidate_workspace_directory(checkout):
+    slots = candidate_slots_root(checkout)
+    default = slots.parent / "build-workspace"
+    binding = read_json(slots.parent, "candidate-workspace.json")
+    if binding is None:
+        return plain_path(default)
+    if (not isinstance(binding, dict) or binding.get("schemaVersion") != 1
+            or Path(binding.get("commonGitDirectory", "")) != candidate_common_git_directory(checkout)):
+        raise ValueError("Invalid compiler workspace binding")
+    path = Path(binding.get("directory", ""))
+    if path != default and (path.parent != slots or not re.fullmatch(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}", path.name)):
+        raise ValueError("Compiler workspace escaped its fixed output scope")
+    return plain_path(path)
+
 
 def shared_open(path):
     # File.Replace must remain possible while the monitor reads. Python's
@@ -102,19 +159,69 @@ def owner_state(owner):
     except (KeyError, ValueError, OSError):
         return "unknown"
 
-def age(value):
+def timestamp(value):
     try:
+        # PowerShell records seven fractional digits; Python 3.8 accepts six.
+        value = re.sub(r"(\.\d{6})\d+(?=Z|[+-]\d{2}:\d{2}$)", r"\1", value)
         parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return max(0, int((dt.datetime.now(dt.timezone.utc) - parsed).total_seconds()))
-    except (ValueError, TypeError):
+        return parsed if parsed.tzinfo is not None else None
+    except (ValueError, TypeError, AttributeError):
         return None
+
+def age(value, observed=None):
+    parsed = timestamp(value)
+    end = timestamp(observed) if observed else dt.datetime.now(dt.timezone.utc)
+    return max(0, int((end - parsed).total_seconds())) if parsed and end else None
+
+def coverage_view(coverage, references=()):
+    selected = coverage.get("selected") or []
+    results = {}
+    for item in coverage.get("completed") or []:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            results[item["name"]] = item
+    counts = collections.Counter(item.get("status", "unknown") for item in results.values())
+    passed = sum(counts[x] for x in ("passed", "passed-after-retry"))
+    failed = sum(counts[x] for x in ("failed", "exhausted-failed"))
+    not_run = {name for name, item in results.items() if item.get("status") in ("not-run", "notrun", "environment-blocked")}
+    for task in coverage.get("tasks") or []:
+        if task.get("status") in ("not-run", "notrun", "environment-blocked"):
+            not_run.update(name for name in task.get("requested", []) if name not in results)
+    referenced = {item["test"] for item in references if item.get("status") == "recorded"}
+    completed = []
+    for name, item in list(results.items())[:300]:
+        try:
+            seconds = float(item["seconds"])
+            if not math.isfinite(seconds) or seconds < 0:
+                seconds = None
+        except (KeyError, TypeError, ValueError):
+            seconds = None
+        completed.append({"name": redact(name), "status": redact(item.get("status", "unknown")), "seconds": seconds})
+    return {"selectedCount": len(selected), "completed": completed,
+            "summary": {"selected": len(selected), "executed": passed + failed, "passed": passed, "failed": failed,
+                        "referenced": len(referenced), "notRun": len(not_run), "skipped": counts["skipped"], "flaky": counts["passed-after-retry"],
+                        "unreported": len(set(selected) - set(results) - not_run - referenced)},
+            "completedTruncated": len(results) > len(completed)}
 
 def identity(value):
     if not isinstance(value, dict):
         return None
     return {k: value.get(k) for k in ("algorithm", "digest", "fileCount", "head")}
 
-def task_view(entry):
+def activation_view(record, run_id):
+    value, artifact = record.get("activation"), record.get("artifact")
+    if not isinstance(value, dict):
+        return None
+    if (not isinstance(artifact, dict) or value.get("runId") != run_id
+            or not HEX.fullmatch(str(value.get("candidate")))
+            or not re.fullmatch(r"[a-f0-9]{64}", str(value.get("artifactDigest")))
+            or value.get("candidate") != artifact.get("candidate")
+            or value.get("artifactDigest") != artifact.get("manifestDigest")):
+        return {"status": "unavailable", "error": "Activation record does not match this Run artifact."}
+    return {**{key: value.get(key) for key in ("runId", "candidate", "artifactDigest", "completedUtc", "sourceCapturedUtc", "artifactCreatedUtc")},
+            **{key: redact(value.get(key) or "") for key in ("status", "path", "error")},
+            "sha256": value.get("sha256") if re.fullmatch(r"[a-fA-F0-9]{64}", str(value.get("sha256"))) else None}
+
+def task_view(entry, observed=None):
     check = entry.get("check") or {}
     state = entry.get("state", "unknown")
     check_status = check.get("status", "not-recorded")
@@ -124,8 +231,10 @@ def task_view(entry):
         "attention" if state == "finished" and check_status in ("failed", "invalidated", "interrupted") else (
         "waiting" if state == "finished" else state))
     plan = entry.get("testPlan") or {}
-    seconds = age(entry.get("registeredUtc"))
+    seconds = age(entry.get("registeredUtc"), observed)
     return {"id": redact(entry.get("id", "unknown")), "state": state, "display": display,
+            "name": redact(entry.get("displayName") or entry.get("id", "unknown")),
+            "registeredUtc": entry.get("registeredUtc"),
             "editRevision": entry.get("editRevision", 0), "ageSeconds": seconds,
             "stale": seconds is not None and seconds > 86400,
             "reopenedUtc": entry.get("reopenedUtc"), "finishedUtc": entry.get("finishedUtc"),
@@ -134,6 +243,7 @@ def task_view(entry):
             "unclaimedPeers": entry.get("unclaimedPeers", [])[:80],
             "withdrawalReason": redact(entry.get("withdrawalReason") or ""),
             "check": {"status": check_status, "source": check.get("source"),
+                      "startedUtc": check.get("startedUtc"), "completedUtc": check.get("completedUtc"),
                       "editRevision": check.get("editRevision"), "reason": redact(check.get("reason", "")),
                       "inputStart": identity(check.get("inputStart")), "inputEnd": identity(check.get("inputEnd")),
                       "issues": [redact(x) for x in (check.get("summary") or {}).get("issues", [])[:40]]},
@@ -150,13 +260,17 @@ class LogReader:
         self.targets = set()
         self.skipped_prefix = False
         self.last_modified = None
+        self.file_identity = None
 
     def read(self, path):
         try:
             with shared_open(path) as stream:
+                info = os.fstat(stream.fileno())
+                identity = (info.st_dev, info.st_ino, info.st_ctime_ns if os.name == "nt" else None)
                 size = stream.seek(0, 2)
-                if size < self.offset:
+                if size < self.offset or self.file_identity != identity:
                     self.__init__()
+                self.file_identity = identity
                 # First read of a very long log starts at a bounded tail.
                 if not self.offset and size > 262144:
                     self.offset = size - 262144
@@ -191,6 +305,252 @@ class LogReader:
         except FileNotFoundError:
             return {"lines": [], "stage": "unknown", "testCompleted": None, "testTotal": None}
 
+def record_seconds(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+        return number if math.isfinite(number) and number >= 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+def acceptance_view(ledger, batch_id=None):
+    records = (ledger or {}).get("acceptances") or []
+    if not isinstance(records, list):
+        raise ValueError("Invalid acceptance records")
+    result = []
+    for entry in records[-100:]:
+        if not isinstance(entry, dict) or not HEX.fullmatch(str(entry.get("id", ""))):
+            raise ValueError("Invalid acceptance identity")
+        if batch_id and entry.get("batchId") != batch_id:
+            continue
+        result.append({**{key: entry.get(key) for key in ("id", "task", "batchId", "runId", "status", "requirementsRevision", "editRevision", "startedUtc", "completedUtc", "durationStatus", "reporter", "sourceDigest")},
+                       **{key: redact(entry.get(key, "")) for key in ("criterion", "reference", "notes")},
+                       "elapsedSeconds": record_seconds(entry.get("elapsedSeconds")),
+                       "artifactCount": len(entry.get("artifacts") or []),
+                       "artifacts": [{key: redact(x.get(key, "")) for key in ("file", "sha256", "sourceAssociation")} for x in (entry.get("artifacts") or [])[:64]]})
+    return result
+
+def evidence_dependencies(entry):
+    def obj(value):
+        return value if isinstance(value, dict) else {}
+
+    def digest(value):
+        return value.lower() if isinstance(value, str) and re.fullmatch(r"[a-fA-F0-9]{64}", value) else None
+
+    def count(value):
+        number = record_seconds(value)
+        return int(number) if number is not None and number.is_integer() and number <= 2**53 else None
+
+    def state(value):
+        return redact(value)[:160] if isinstance(value, str) and value else "not-recorded"
+
+    def issues(value):
+        values = value if isinstance(value, list) else []
+        return {"issues": [redact(item)[:800] for item in values[:12]], "issueCount": len(values)}
+
+    dependency = obj(entry.get("dependencies"))
+    observation = obj(dependency.get("observation"))
+    inputs = obj(entry.get("runtimeInputs"))
+    modules = obj(entry.get("runtimeModules"))
+    return {
+        "dependencies": {
+            "status": state(observation.get("status", dependency.get("status"))),
+            "sourceClosure": state(observation.get("sourceClosure")),
+            "manifestSha256": digest(dependency.get("manifestSha256")),
+            **{key: count(observation.get(key)) for key in ("compilerReadLogs", "linkerReadLogs", "sourceReports")},
+            **issues(observation.get("issues")),
+        },
+        "runtimeInputs": {
+            **{key: state(inputs.get(key)) for key in ("status", "runtimeClosure")},
+            **{key: digest(inputs.get(key)) for key in ("beforeDigest", "afterDigest")},
+            **issues(inputs.get("issues")),
+        },
+        "runtimeModules": {
+            **{key: state(modules.get(key)) for key in ("status", "runtimeClosure")},
+            **{key: digest(modules.get(key)) for key in ("digest", "reportSha256")},
+            **{key: count(modules.get(key)) for key in ("imageCount", "processCount", "rootExitCode")},
+            "timingComparableToUnobservedRun": modules.get("timingComparableToUnobservedRun") if isinstance(modules.get("timingComparableToUnobservedRun"), bool) else None,
+            **issues(modules.get("issues")),
+        },
+    }
+
+
+def evidence_view(value):
+    value = value or {}
+    if value.get("schemaVersion") != 1:
+        return {"status": "not-recorded", "tests": [], "totalCount": 0}
+    entries = value.get("tests") or []
+    if not isinstance(entries, list):
+        raise ValueError("Invalid per-test evidence")
+    rows = []
+    for entry in entries[:300]:
+        if not isinstance(entry, dict) or not HEX.fullmatch(str(entry.get("id", ""))):
+            raise ValueError("Invalid per-test evidence identity")
+        rows.append({**{key: entry.get(key) for key in ("id", "test", "status", "batchId", "runId", "logicalBatchId", "attempt", "bindingDigest", "inputCheck", "identityStatus")},
+                     **evidence_dependencies(entry),
+                     "seconds": record_seconds(entry.get("seconds")), "requesters": [redact(x) for x in (entry.get("requesters") or [])[:80]],
+                     "binding": {key: (entry.get("binding") or {}).get(key) for key in ("sourceDigest", "configuration", "assertionBinary", "invocationDigest", "environmentDigest")},
+                     "reuseAllowed": entry.get("reuseAllowed") is True,
+                     "attempts": [{key: x.get(key) for key in ("attempt", "status", "exitCode", "runnerExitCode", "seconds", "reportSha256")} for x in (entry.get("attempts") or [])[:10]]})
+    return {"status": value.get("status", "not-recorded"), "tests": rows, "totalCount": len(entries)}
+
+def reference_receipt_matches(saved, recorded):
+    if not isinstance(saved, dict) or not isinstance(recorded, dict):
+        return False
+    # Historical receipts remain immutable. Only normalize an equivalent UTC
+    # representation of checkedUtc; retain all seven fractional digits when
+    # they are significant and compare every other field exactly.
+    def checked_time(value):
+        if not isinstance(value, str):
+            raise ValueError("Reference check time is invalid")
+        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,7}))?Z", value)
+        if not match:
+            raise ValueError("Reference check time is invalid")
+        dt.datetime.fromisoformat(match[1])
+        fraction = (match[2] or "").rstrip("0")
+        return match[1] + ("." + fraction if fraction else "") + "Z"
+    first, second = dict(saved), dict(recorded)
+    first["checkedUtc"] = checked_time(first.get("checkedUtc"))
+    second["checkedUtc"] = checked_time(second.get("checkedUtc"))
+    return first == second
+
+
+def verification_references(root, run_id, key, entries, record):
+    # Display historical receipts, never a current reuse authorization. The
+    # execution and its original Evidence remain separate from later callers.
+    values = entries.get("references") or []
+    if not isinstance(values, list):
+        raise ValueError("Invalid completed-reference list")
+    rows = []
+    origin = None
+    for item in values[:128]:
+        row = {"status": "unavailable", "reason": "Reference metadata is invalid"}
+        try:
+            if not isinstance(item, dict) or not HEX.fullmatch(str(item.get("id", ""))):
+                raise ValueError("Invalid reference identity")
+            row.update({k: item.get(k) for k in ("id", "sourceRunId", "baseline", "checkedUtc")})
+            row["task"] = redact(item.get("task", ""))
+            row["requirementsRevision"] = record_seconds(item.get("requirementsRevision"))
+            scope = item.get("scope")
+            origin_key = item.get("originKey", item.get("key"))
+            if (item.get("schemaVersion") != 1 or item.get("kind") != "completed-verification-reference"
+                    or item.get("sourceRunId") != run_id or origin_key != key
+                    or not HEX.fullmatch(str(item.get("baseline", "")))
+                    or item.get("execution") != "referenced" or item.get("newExecution") is not False
+                    or item.get("reuseAllowed") is not True
+                    or scope not in ("exact-candidate-reviewed-binary", "candidate-compatible-reviewed-binary")):
+                raise ValueError("Reference does not match its original execution")
+            if scope == "exact-candidate-reviewed-binary" and item.get("key") != key:
+                raise ValueError("Exact reference context differs from its original execution")
+            review = item.get("review")
+            if not isinstance(review, dict) or review.get("policy") != "reviewed-native-files-v1":
+                raise ValueError("Reference review policy is unavailable")
+            if scope == "candidate-compatible-reviewed-binary":
+                candidates = (item.get("currentCandidate"), item.get("originCandidate"))
+                compatible = item.get("compatibleTests")
+                if (not re.fullmatch(r"[a-f0-9]{64}", str(item.get("key", ""))) or item["key"] == origin_key
+                        or any(not isinstance(candidate, dict) or not HEX.fullmatch(str(candidate.get("snapshot", ""))) for candidate in candidates)
+                        or not isinstance(compatible, list) or not 1 <= len(compatible) <= 128
+                        or any(not isinstance(test, dict) or not re.fullmatch(r"[a-f0-9]{64}", str(test.get("key", ""))) for test in compatible)
+                        or review.get("candidateCompatibility") != "same-output-reviewed-inputs-v1"):
+                    raise ValueError("Candidate compatibility proof is unavailable")
+            tests = item.get("tests")
+            if (not isinstance(tests, list) or not 1 <= len(tests) <= 128
+                    or any(not isinstance(test, dict) or not HEX.fullmatch(str(test.get("evidenceId", ""))) for test in tests)):
+                raise ValueError("Reference test evidence is invalid")
+            directory = safe_path(safe_path(root.parent, "verification"), "references")
+            if not reference_receipt_matches(read_json(directory, item["id"] + ".json"), item):
+                raise ValueError("Reference receipt is missing or differs from the ledger")
+            if origin is None:
+                origin = []
+                runs = safe_path(root, "runs")
+                coverage_file = safe_path(runs, run_id + ".verification.json")
+                if entries.get("kind") == "compiled-test-origin-v1":
+                    intent_path = safe_path(runs, run_id + ".test-intent.json")
+                    intent = read_json(runs, run_id + ".test-intent.json") or {}
+                    request = read_json(runs, run_id + ".request.json") or {}
+                    with shared_open(intent_path) as stream:
+                        intent_sha = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                    with shared_open(safe_path(runs, run_id + ".request.json")) as stream:
+                        request_sha = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                    if (intent.get("runId") != run_id or intent.get("nonce") != record.get("nonce")
+                            or intent_sha != entries.get("intentSha256") or intent.get("requestSha256") != request_sha
+                            or request.get("action") != "batch" or request.get("batch") != intent.get("batchId")
+                            or not HEX.fullmatch(str(intent.get("batchId", "")))
+                            or not any(test.get("key") == key for test in intent.get("tests", []))):
+                        raise ValueError("Compiled origin intent is unavailable or changed")
+                    coverage_file = safe_path(root, intent["batchId"] + ".coverage.json")
+                for filename in (safe_path(runs, run_id + ".json"), coverage_file):
+                    with shared_open(filename) as stream:
+                        data = stream.read(MAX_METADATA_BYTES + 1)
+                    if len(data) > MAX_METADATA_BYTES:
+                        raise ValueError("Reference origin exceeds the metadata budget")
+                    origin.append(hashlib.sha256(data).hexdigest())
+            if (record.get("status") != "passed" or record.get("exitCode") != 0
+                    or origin != [item.get("sourceRunSha256"), item.get("coverageSha256")]):
+                raise ValueError("Original execution evidence is unavailable or has changed")
+            row.update({"status": "recorded", "reason": "", "newExecution": False,
+                        "tests": [{"test": redact(test.get("test", "")), "evidenceId": test["evidenceId"]} for test in tests],
+                        "scope": item["scope"], "sourceRunSha256": item["sourceRunSha256"],
+                        "coverageSha256": item["coverageSha256"],
+                        "reviewPolicy": redact((item.get("review") or {}).get("policy", ""))})
+            if scope == "candidate-compatible-reviewed-binary":
+                row.update({"originKey": origin_key, "currentKey": item["key"],
+                            "currentSnapshot": candidates[0]["snapshot"], "originSnapshot": candidates[1]["snapshot"]})
+        except (ValueError, OSError, TypeError) as error:
+            row["reason"] = redact(error)
+        rows.append(row)
+    return {"references": rows, "referenceCount": len(values), "referencesOmitted": max(0, len(values) - len(rows))}
+
+
+def compiled_references(root, coverage):
+    values = coverage.get("references") or []
+    if not isinstance(values, list) or len(values) > 128:
+        raise ValueError("Invalid compiled reference inventory")
+    if not values:
+        return []
+    state = read_json(root, "state.json") or {}
+    entries = (state.get("verificationLedger") or {}).get("entries") or []
+    selected = coverage.get("selected") or []
+    executed = {item.get("name") for item in coverage.get("completed", [])}
+    rows, seen = [], set()
+    for item in values:
+        row = {"test": redact(item.get("test", "")), "status": "unavailable", "newExecution": False}
+        try:
+            name = item.get("test")
+            if (name not in selected or name in seen or name in executed or item.get("newExecution") is not False
+                    or not HEX.fullmatch(str(item.get("sourceRunId", "")))):
+                raise ValueError("Reference selection is inconsistent")
+            seen.add(name)
+            matches = [entry for entry in entries if entry.get("runId") == item["sourceRunId"] and entry.get("key") == item.get("originKey")]
+            if len(matches) != 1:
+                raise ValueError("Reference origin index is unavailable")
+            entry = matches[0]
+            record = read_json(safe_path(root, "runs"), item["sourceRunId"] + ".json") or {}
+            receipts = item.get("receipts") or []
+            if not receipts or len(receipts) > 80:
+                raise ValueError("Reference has no request receipt")
+            for receipt in receipts:
+                if not HEX.fullmatch(str(receipt.get("id", ""))):
+                    raise ValueError("Reference receipt identity is invalid")
+                directory = safe_path(safe_path(root.parent, "verification"), "references")
+                with shared_open(safe_path(directory, receipt["id"] + ".json")) as stream:
+                    receipt_sha = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                saved = [value for value in entry.get("references", []) if value.get("id") == receipt["id"]]
+                if receipt_sha != receipt.get("sha256") or len(saved) != 1:
+                    raise ValueError("Reference receipt changed or is missing")
+                projected = verification_references(root, item["sourceRunId"], entry["key"], dict(entry, references=saved), record)["references"][0]
+                if projected["status"] != "recorded" or name not in [test["test"] for test in projected["tests"]]:
+                    raise ValueError(projected.get("reason") or "Reference test proof is unavailable")
+            row.update({key: projected.get(key) for key in ("sourceRunId", "checkedUtc", "scope", "sourceRunSha256", "coverageSha256")})
+            row.update(status="recorded", reason="", receipts=[{"id": receipt["id"], "task": redact(receipt.get("task", ""))} for receipt in receipts])
+        except (ValueError, OSError, TypeError, KeyError) as error:
+            row["reason"] = redact(error)
+        rows.append(row)
+    return rows
+
+
 class Store:
     def __init__(self, root, fixture):
         self.root = root
@@ -200,10 +560,303 @@ class Store:
         self.cache_time = 0
         self.lock = threading.Lock()
 
+    def candidate_log_scope(self, run_id, request, record):
+        context = record.get("candidateExecution")
+        if context is None:
+            return None
+        checkout = self.root.parent.parent
+        if not isinstance(context, dict):
+            raise ValueError("Invalid candidate execution")
+        binding = record.get("candidateBinding") if request.get("action") == "batch" else request
+        if (not isinstance(binding, dict) or not HEX.fullmatch(str(binding.get("snapshot")))
+                or not re.fullmatch(r"[a-f0-9]{64}", str(context.get("manifestDigest")))
+                or context.get("schemaVersion") != 1 or context.get("runId") != run_id
+                or context.get("nonce") != request.get("nonce") or context.get("runRoot") != request.get("repositoryRoot")
+                or context.get("snapshot") != binding.get("snapshot")
+                or context.get("manifestDigest") != binding.get("manifestDigest", binding.get("snapshotManifestDigest"))
+                or context.get("configuration") != request.get("configuration")):
+            raise ValueError("Candidate log identity mismatch")
+        if request.get("action") == "batch":
+            if (binding.get("runId") != run_id or binding.get("nonce") != request.get("nonce")
+                    or binding.get("batchId") != request.get("batch") or context.get("batchId") != request.get("batch")):
+                raise ValueError("Candidate batch log identity mismatch")
+            slot_name = "batches"
+        else:
+            slot_name = request.get("candidateSlot", "default")
+        slot = context.get("slot")
+        if slot == "workspace":
+            directory = candidate_workspace_directory(checkout)
+        else:
+            if (not re.fullmatch(r"[a-f0-9]{16}-[a-z0-9][a-z0-9-]{0,31}", str(slot))
+                    or slot[17:] != slot_name):
+                raise ValueError("Candidate log slot mismatch")
+            directory = safe_path(candidate_slots_root(checkout), slot)
+        source, output = plain_path(directory / "source"), plain_path(directory / "output")
+        if Path(context.get("source", "")) != source or Path(context.get("output", "")) != output:
+            raise ValueError("Candidate log output mismatch")
+        archive = plain_path(self.root / "workspace-archive" / directory.name)
+        return source, plain_path(output / "collaboration"), archive
+
+    def pipeline_log_path(self, hint, scope):
+        path = Path(hint)
+        if not re.fullmatch(r"entry-[a-f0-9]{32}\.log", path.name):
+            raise ValueError("Invalid pipeline log name")
+        if scope is None:
+            if path.parent != self.root:
+                raise ValueError("Pipeline log escaped its Run")
+            return safe_path(self.root, path.name)
+        source, output, archive = scope
+        archived = safe_path(archive, path.name)
+        if path.parent != output:
+            aliases = (source / ".build", source / ".build_debug")
+            alias = next((item for item in aliases if path.parent == item / "collaboration"), None)
+            # The one permitted alias is checked, but never followed for reads.
+            if alias is None or (alias.resolve() != output.parent and not (not os.path.lexists(alias) and archived.is_file())):
+                raise ValueError("Pipeline log escaped its candidate slot")
+        original = safe_path(output, path.name)
+        return original if original.is_file() or not archived.is_file() else archived
+
+    def run(self, run_id, log_paths=None):
+        if not HEX.fullmatch(str(run_id)):
+            raise ValueError("Invalid Run identity")
+        directory = safe_path(self.root, "runs")
+        record = read_json(directory, run_id + ".json")
+        if not record:
+            return None
+        request = read_json(directory, run_id + ".request.json")
+        checkout = self.root.parent.parent
+        if not isinstance(record, dict) or not isinstance(request, dict) or record.get("schemaVersion") != 1 or request.get("schemaVersion") != 1 or not HEX.fullmatch(str(request.get("nonce"))) or record.get("id") != run_id or request.get("id") != run_id or record.get("nonce") != request.get("nonce") or Path(request.get("repositoryRoot", "")).resolve() != checkout or record.get("repositoryRoot") != request.get("repositoryRoot"):
+            raise ValueError("Run request/result identity mismatch")
+        scope = self.candidate_log_scope(run_id, request, record)
+        def number(value):
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
+        operations = {}
+        collectors = 0
+        finished_collectors = 0
+        unfinished = 0
+        limited = False
+        pending_line = False
+        total_bytes = 0
+        paths = sorted(directory.glob(run_id + ".stages.*.jsonl")) + sorted(directory.glob(run_id + ".msbuild.*.jsonl"))
+        if len(paths) > 100:
+            raise ValueError("Run observation file budget exceeded")
+        pipeline_logs = []
+        for path in paths:
+            with shared_open(safe_path(directory, path.name)) as stream:
+                content = stream.read(4 * 1024 * 1024 + 1)
+            total_bytes += len(content)
+            if total_bytes > 4 * 1024 * 1024:
+                raise ValueError("Run observation byte budget exceeded")
+            lines = content.decode("utf-8-sig").split("\n")
+            pending_line = pending_line or bool(lines[-1])
+            for line in lines[:-1]:
+                if not line:
+                    continue
+                event = json.loads(line)
+                if event.get("schemaVersion") != 1 or event.get("runId") != run_id:
+                    raise ValueError("Run observation identity mismatch")
+                kind = event.get("kind")
+                if kind == "collector":
+                    collectors += 1
+                elif kind == "collector-end":
+                    finished_collectors += 1
+                    unfinished += event.get("unfinishedTasks", 0)
+                elif kind == "collector-limit":
+                    limited = True
+                elif kind in ("start", "end"):
+                    eid = event.get("id")
+                    if not HEX.fullmatch(str(eid)):
+                        raise ValueError("Invalid Run stage identity")
+                    pair = operations.setdefault(eid, {})
+                    if kind in pair:
+                        raise ValueError("Duplicate Run stage identity")
+                    pair[kind] = event
+                    if kind == "start" and event.get("logPath") and event.get("name", "").endswith("-pipeline"):
+                        path = self.pipeline_log_path(event["logPath"], scope)
+                        pipeline_logs.append((event.get("utc", ""), path))
+        segments = []
+        summaries = {}
+        units = 0
+        unknown_units = 0
+        for eid, pair in operations.items():
+            start, end = pair.get("start"), pair.get("end")
+            if not start:
+                raise ValueError("Run stage ended without an observed start")
+            if end and end.get("name") != start.get("name"):
+                raise ValueError("Run stage name mismatch")
+            elapsed = number((end or {}).get("elapsedSeconds"))
+            name = redact(start.get("name", "unknown"))
+            row = {"id": eid, "name": name, "parentId": start.get("parentId"), "startedUtc": start.get("utc"),
+                   "sourceUtc": start.get("sourceUtc"), "elapsedSeconds": elapsed, "exitCode": (end or {}).get("exitCode"),
+                   "status": "running" if not end else "passed" if end.get("exitCode") == 0 else "failed",
+                   "project": redact(start.get("project", "")), "task": redact(start.get("task", "")),
+                   "measurement": redact((end or {}).get("measurement", "producer monotonic interval"))}
+            segments.append(row)
+            summary = summaries.setdefault(name, {"name": name, "tasks": 0, "completed": 0, "running": 0, "incomplete": 0, "failed": 0, "taskSeconds": 0})
+            summary["tasks"] += 1
+            summary["running" if not end else "completed"] += 1
+            summary["failed"] += bool(end and end.get("exitCode") != 0)
+            if elapsed is not None:
+                summary["taskSeconds"] += elapsed
+            if name == "compile":
+                if end and end.get("unitCountKnown") is True and number(end.get("attemptedUnits")) is not None:
+                    units += end["attemptedUnits"]
+                else:
+                    unknown_units += 1
+        process = owner_state(record.get("owner"))
+        terminal = record.get("status") in ("passed", "failed", "cancelled", "start-failed", "invalidated", "interrupted")
+        status = "interrupted" if not terminal and process == "exited" else record.get("status", "unknown")
+        if terminal or status == "interrupted":
+            for row in segments:
+                if row["status"] == "running":
+                    row["status"] = "incomplete"
+            for summary in summaries.values():
+                summary["incomplete"] = summary["running"]
+                summary["running"] = 0
+        resources = read_json(directory, run_id + ".resources.json") or {}
+        accounting = resources.get("accountingAvailable")
+        resource_view = {**{k: number(resources.get(k)) if accounting is not False else None for k in ("cpuSeconds", "peakJobMemoryBytes", "activeProcesses", "totalProcesses", "ioReadBytes", "ioWriteBytes")},
+                         **{k: number(resources.get(k)) for k in ("requestedCpuSlots", "requestedMemoryMiB", "cpuLimitBasisPoints", "committedMemoryLimitBytes")},
+                         "sampledUtc": resources.get("sampledUtc"), "finished": resources.get("finished") is True,
+                         "accountingAvailable": accounting if isinstance(accounting, bool) else None}
+        if not resources:
+            resource_view["status"] = "unrecorded"
+        elif accounting is False:
+            resource_view["status"] = "unavailable"
+        elif accounting is not True:
+            resource_view["status"] = "unknown"
+        elif resource_view["cpuSeconds"] is None or resource_view["peakJobMemoryBytes"] is None:
+            resource_view["status"] = "unavailable"
+        elif resource_view["finished"]:
+            resource_view["status"] = "complete"
+        else:
+            resource_view["status"] = "incomplete" if terminal or status == "interrupted" else "sampling"
+        waits = record.get("waitIntervals") or []
+        admission = record.get("resourceAdmission")
+        admission_view = None
+        if isinstance(admission, dict):
+            observation = admission.get("lastObservation")
+            admission_view = {"policy": redact(admission.get("policy", "")),
+                              "compatibilityMode": admission.get("compatibilityMode") if admission.get("compatibilityMode") in ("shared", "exclusive") else None,
+                              "bindingValid": admission.get("bindingValid") if isinstance(admission.get("bindingValid"), bool) else None,
+                              **{k: admission.get(k) for k in ("acquiredUtc", "releasedUtc")},
+                              **{k: number(admission.get(k)) for k in ("cpuSlots", "memoryMiB", "reservedMemoryMiB", "logicalProcessors", "cpuCapacity", "memoryCapacityMiB", "headroomMiB")},
+                              "lastObservation": {"observedUtc": observation.get("observedUtc"), "reason": redact(observation.get("reason", "")),
+                                                  **{k: number(observation.get(k)) for k in ("occupiedCpuSlots", "occupiedMemoryMiB", "availablePhysicalBytes")}} if isinstance(observation, dict) else None}
+        log_key = run_id + ".stdout.log"
+        log_root = directory
+        if pipeline_logs:
+            path = sorted(pipeline_logs, key=lambda item: (item[0], str(item[1])))[-1][1]
+            log_root, log_key = path.parent, path.name
+        action = request.get("candidateAction") if request.get("action") == "candidate" else request.get("action")
+        key, title = ("product", "产品构建") if action in ("release", "debug") else (("tests", "测试构建与执行") if action == "tests" else ("execution", "执行"))
+        sources = [(key, title, log_root, log_key)]
+        batch_id = request.get("batch")
+        if request.get("action") == "batch" and HEX.fullmatch(str(batch_id)):
+            sources = [("product", "产品构建", self.root, batch_id + ".log.product.log"),
+                       ("tests", "测试构建与执行", self.root, batch_id + ".log")]
+        sources += [("stdout", "执行器输出", directory, run_id + ".stdout.log"),
+                    ("stderr", "执行器诊断", directory, run_id + ".stderr.log")]
+        logs = []
+        for key, title, base, name in sources:
+            path = safe_path(base, name)
+            if not path.is_file():
+                continue
+            if log_paths is not None:
+                log_paths[key] = path
+            cache_key = "run:" + run_id + ":" + key
+            if cache_key not in self.logs:
+                if len(self.logs) > 150:
+                    self.logs.clear()
+                self.logs[cache_key] = LogReader()
+            logs.append({"key": key, "title": title, "downloadUrl": "/api/runs/" + run_id + "/logs/" + key,
+                         "log": self.logs[cache_key].read(path)})
+        primary = [item for item in logs if item["key"] in ("product", "tests", "execution") and item["log"].get("lines")]
+        if not primary:
+            primary = [item for item in logs if item["log"].get("lines")]
+        combined = dict(primary[-1]["log"]) if primary else {"lines": [], "stage": "unknown"}
+        combined["lines"] = [line for item in primary for line in (["=== " + item["title"] + " ==="] + item["log"]["lines"])]
+        if primary:
+            combined.update(bytesRead=sum(item["log"].get("bytesRead", 0) for item in primary),
+                            bytesTotal=sum(item["log"].get("bytesTotal", 0) for item in primary),
+                            prefixOmitted=any(item["log"].get("prefixOmitted") for item in primary))
+        segments.sort(key=lambda item: (str(item["startedUtc"]), item["id"]))
+        verification = None
+        if request.get("mode") == "verify":
+            intent = request.get("verification") or {}
+            binding = intent.get("binding") or {}
+            if not re.fullmatch(r"[a-f0-9]{64}", str(intent.get("key"))) or not HEX.fullmatch(str(request.get("planBatch"))):
+                raise ValueError("Invalid standalone verification identity")
+            state = read_json(self.root, "state.json") or {}
+            entries = [x for x in (state.get("verificationLedger") or {}).get("entries", []) if x.get("runId") == run_id]
+            if len(entries) != 1 or entries[0].get("key") != intent["key"]:
+                raise ValueError("Verification subscription identity mismatch")
+            verification = {"baseline": request["planBatch"], "key": intent["key"], "names": [redact(x) for x in binding.get("names", [])[:128]],
+                            "noBuild": True, "reuseAllowed": False,
+                            **verification_references(self.root, run_id, intent["key"], entries[0], record),
+                            "subscriptions": [{**{k: x.get(k) for k in ("id", "task", "requirementsRevision", "baseline", "subscribedUtc", "withdrawnUtc")}, "reason": redact(x.get("reason", ""))} for x in entries[0].get("subscriptions", [])[:128]]}
+        return {"id": run_id, "batchId": request.get("batch"), "task": redact(request.get("task", "")),
+                "artifact": ({key: record["artifact"].get(key) for key in
+                              ("id", "candidate", "manifestDigest", "runtime", "profile", "files", "bytes", "productRuntime", "publicationComplete", "reuseAllowed")}
+                             if isinstance(record.get("artifact"), dict) else None),
+                "activation": activation_view(record, run_id),
+                "verification": verification, "evidence": evidence_view(record.get("evidence")),
+                "action": request.get("action"), "mode": request.get("mode"), "configuration": request.get("configuration"),
+                "status": status, "persistedStatus": record.get("status"), "ownerState": process, "ownerPid": (record.get("owner") or {}).get("pid"),
+                "createdUtc": record.get("createdUtc"), "updatedUtc": record.get("updatedUtc"), "completedUtc": record.get("completedUtc"),
+                "exitCode": record.get("exitCode"), "error": redact(record.get("error", "")), "waitingFor": redact(record.get("waitingFor", "")) if not terminal and status != "interrupted" else "",
+                "stages": [{**{k: stage.get(k) for k in ("id", "name", "startedUtc", "completedUtc", "exitCode")}, "elapsedSeconds": number(stage.get("elapsedSeconds"))} for stage in (record.get("stages") or [])[:40]],
+                "waitIntervals": [{**{k: interval.get(k) for k in ("resource", "startedUtc", "completedUtc")}, "reason": redact(interval.get("reason", "")), "elapsedSeconds": number(interval.get("elapsedSeconds"))} for interval in waits[:100]],
+                "waitIntervalsTruncated": record.get("waitIntervalsTruncated") is True,
+                "resources": resource_view, "admission": admission_view,
+                "phaseSummary": list(summaries.values()), "segments": segments[-80:], "segmentCount": len(segments), "segmentsOmitted": max(0, len(segments)-80),
+                "compiler": {"collectorCount": collectors, "attemptedUnits": units if collectors else None, "unknownTasks": unknown_units,
+                             "complete": bool(terminal and collectors and finished_collectors == collectors and not unknown_units and not unfinished and not limited and not pending_line)},
+                "collectionLimited": limited, "pendingLine": pending_line, "unfinishedTasks": unfinished,
+                "log": combined, "logs": logs,
+                "limitation": "Task intervals may overlap; taskSeconds is accumulated task time, not Run wall time. Compiler counts are attempted source units from observed CL commands; missing projections remain unknown."}
+
+    def download_log(self, run_id, key):
+        # Resolve through the same verified Run/request identity and fixed names.
+        paths = {}
+        run = self.run(run_id, paths)
+        if not run or key not in paths:
+            return None
+        path = paths[key]
+        with shared_open(path) as stream:
+            data = stream.read(64 * 1024 * 1024 + 1)
+        if len(data) > 64 * 1024 * 1024:
+            raise ValueError("Log download exceeds 64 MiB; original retained locally")
+        return redact_log(data.decode("utf-8-sig", "replace")).encode("utf-8")
+
+    def runs(self):
+        directory = safe_path(self.root, "runs")
+        files = []
+        for path in directory.glob("*.json"):
+            if not HEX.fullmatch(path.stem):
+                continue
+            try:
+                files.append((path.stat().st_mtime, path.stem))
+            except FileNotFoundError:
+                continue
+        result = []
+        for _, rid in sorted(files, reverse=True)[:8]:
+            try:
+                value = self.run(rid)
+                if value:
+                    result.append(value)
+            except (ValueError, OSError) as error:
+                result.append({"id": rid, "status": "unavailable", "error": redact(error)})
+        return result
+
     def batch(self, batch_id, current=None):
         result = read_json(self.root, batch_id + ".json")
         if result and result.get("batchId") != batch_id:
             raise ValueError("Result batch mismatch")
+        if current is None and result is None:
+            state = read_json(self.root, "state.json") or {}
+            attempts = [state.get("current")] + (state.get("activeCandidates") or [])
+            current = next((item for item in attempts if isinstance(item, dict) and item.get("id") == batch_id), None)
         data = result or current
         if not data:
             return None
@@ -222,13 +875,22 @@ class Store:
         coverage = read_json(self.root, batch_id + ".coverage.json") or data.get("coverage") or {}
         if coverage and coverage.get("batchId") != batch_id:
             raise ValueError("Coverage batch mismatch")
+        references = compiled_references(self.root, coverage)
         issues = read_json(self.root, batch_id + ".issues.json") or {}
-        tasks = [task_view(x) for x in data.get("participants", [])[:80]]
+        tasks = [task_view(x, data.get("completedUtc") if result else None) for x in data.get("participants", [])[:80]]
         if result:
             for task in tasks:
                 task["stale"] = False
                 if task["state"] == "finished":
                     task["display"] = "verified" if outcome == "passed" else ("exempt" if outcome == "skipped" else "batch-ended")
+        run = None
+        if data.get("runId"):
+            try:
+                run = self.run(data["runId"])
+                if run is None:
+                    run = {"id": data["runId"], "status": "unavailable", "error": "Associated Run record is not readable yet."}
+            except (ValueError, OSError, TypeError) as error:
+                run = {"id": data["runId"], "status": "unavailable", "error": redact(error)}
         return {"id": batch_id, "phase": phase, "outcome": outcome, "historical": current is None,
                 "protocolVersion": data.get("protocolVersion", 1), "ownerState": owner,
                 "createdUtc": data.get("createdUtc"), "completedUtc": data.get("completedUtc"),
@@ -242,6 +904,8 @@ class Store:
                               "owners": [{k: x.get(k) for k in ("pid", "name", "kind")} for x in (data.get("preflight") or {}).get("owners", [])[:20]],
                               "observedUtc": (data.get("preflight") or {}).get("observedUtc")},
                 "coverage": {"mode": coverage.get("mode"), "status": coverage.get("status", "not-recorded"),
+                             **coverage_view(coverage, references),
+                             "references": references,
                              "selected": coverage.get("selected", [])[:300],
                              "tasks": [{k: x.get(k) for k in ("participant", "requested", "status", "failed", "reason")} for x in coverage.get("tasks", [])[:80]],
                              "error": redact(coverage.get("error", ""))},
@@ -250,6 +914,10 @@ class Store:
                                    "buildStagePassed": (data.get("binaryEvidence") or {}).get("buildStagePassed"),
                                    "executables": (data.get("binaryEvidence") or {}).get("executables", [])[:20]},
                 "logicalBatchId":data.get("logicalBatchId",batch_id),"attempt":data.get("attempt",1),"repairOf":data.get("repairOf"),
+                "runId": data.get("runId"),
+                "run": run,
+                "evidence": evidence_view(data.get("evidence")),
+                "acceptances": acceptance_view((read_json(self.root, "state.json") or {}).get("taskLedger"), batch_id),
                 "retry": self.retry_view(batch_id),
                 "log": log}
 
@@ -299,6 +967,26 @@ class Store:
                 if not HEX.fullmatch(str(current.get("id", ""))):
                     raise ValueError("Invalid current batch identity")
                 active = self.batch(current["id"], current)
+            candidates = []
+            attempts = state.get("activeCandidates", [])
+            if not isinstance(attempts, list) or len(attempts) > 32:
+                raise ValueError("Invalid active candidate registry")
+            task_names = {item.get("id"): item.get("displayName") for item in ((state.get("taskLedger") or {}).get("tasks") or [])}
+            for attempt in attempts:
+                if not isinstance(attempt, dict) or not HEX.fullmatch(str(attempt.get("id", ""))) or not HEX.fullmatch(str(attempt.get("runId", ""))):
+                    raise ValueError("Invalid active candidate identity")
+                record = read_json(safe_path(self.root, "runs"), attempt["runId"] + ".json") or {}
+                if record and record.get("id") != attempt["runId"]:
+                    raise ValueError("Candidate Run identity mismatch")
+                owner = owner_state(record.get("owner") or attempt.get("owner"))
+                status = record.get("status", "starting")
+                if status not in ("passed", "failed", "cancelled", "invalidated", "interrupted") and owner == "exited":
+                    status = "interrupted"
+                binding = attempt.get("candidateBinding") or {}
+                candidates.append({"id": attempt["id"], "runId": attempt["runId"], "status": status, "ownerState": owner,
+                                   "waitingFor": redact(record.get("waitingFor", "")), "capturedUtc": attempt.get("capturedUtc"),
+                                   "snapshot": binding.get("snapshot"), "sourceDigest": binding.get("sourceDigest"),
+                                   "tasks": [redact(task_names.get(member.get("id")) or member.get("id", "")) for member in attempt.get("participants", []) if member.get("state") != "withdrawn"]})
             files = sorted((x for x in self.root.glob("*.json") if HEX.fullmatch(x.stem) and not x.is_symlink()),
                            key=lambda x: x.stat().st_mtime, reverse=True)[:20]
             history = []
@@ -307,10 +995,33 @@ class Store:
                     continue
                 data = read_json(self.root, file.name) or {}
                 if data.get("batchId") == file.stem:
-                    history.append({k: data.get(k) for k in ("batchId", "outcome", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")})
+                    history.append({**{k: data.get(k) for k in ("batchId", "outcome", "createdUtc", "buildStartedUtc", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")},
+                                    "participants": [redact(x.get("displayName") or x.get("id", "unknown")) for x in data.get("participants", [])[:8]]})
+            ledger = state.get("taskLedger") or {}
+            presence = []
+            for task in (ledger.get("tasks") or [])[-200:]:
+                presence.append({**{key: redact(str(task.get(key) or "")) for key in
+                                    ("id", "displayName", "phase", "progress", "blocker", "adapter", "registrationOrigin")},
+                                 **{key: task.get(key) for key in ("revision", "requirementsRevision", "openedUtc", "lastHeartbeatUtc", "lastProgressUtc", "closedUtc")},
+                                 "heartbeatAgeSeconds": age(task.get("lastHeartbeatUtc")),
+                                 "capabilities": {key: (task.get("capabilities") or {}).get(key) is True for key in
+                                                  ("taskRegistration", "beforeWriteGate", "boundedWait", "liveProgress", "activeTurnSteering", "idleWake")}})
+            events = []
+            for event in (ledger.get("events") or [])[-100:]:
+                recipients = event.get("recipients") or []
+                receipts = event.get("receipts") or []
+                events.append({**{key: redact(str(event.get(key) or "")) for key in ("key", "sender", "target", "kind", "importance", "text")},
+                               **{key: event.get(key) for key in ("sequence", "createdUtc", "requirementsRevision")},
+                               "delivery": "persisted", "recipientCount": len(recipients),
+                               "recipients": [redact(str(who)) for who in recipients[:200]],
+                               "adapterReceived": sum(any(r.get("task") == who and r.get("level") == "adapter" for r in receipts) for who in recipients),
+                               "agentAcknowledged": sum(any(r.get("task") == who and r.get("level") == "agent" for r in receipts) for who in recipients)})
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
-                          "current": active, "history": history, "waits": self.waits(),
-                          "limitation": "Only registered cooperating tasks are visible. Stale age is diagnostic; it never completes an editor. Build and link stages are inferred from logs; counts remain unknown until reported."}
+                          "current": active, "activeCandidates": candidates, "history": history, "waits": self.waits(),
+                          "taskPresence": presence, "taskPresenceTotal": len(ledger.get("tasks") or []),
+                          "events": events, "eventTotal": len(ledger.get("events") or []), "runs": self.runs(),
+                          "acceptances": acceptance_view(ledger),
+                          "limitation": "Only registered cooperating tasks are visible. Stale age never completes an editor. Run task intervals and compiler counts come from producer observations; unobserved phases remain unknown."}
             self.cache_time = time.monotonic()
             return self.cache
 
@@ -318,13 +1029,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def send(self, status, content, kind="application/json"):
+    def send(self, status, content, kind="application/json", filename=None):
         self.send_response(status)
         self.send_header("Content-Type", kind + "; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        if filename:
+            self.send_header("Content-Disposition", 'attachment; filename="' + filename + '"')
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         self.end_headers()
         self.wfile.write(content)
@@ -352,6 +1065,13 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.server.store.snapshot()
             elif path == "/api/history":
                 data = self.server.store.snapshot()["history"]
+            elif re.fullmatch(r'/api/runs/[a-f0-9]{32}/logs/(product|tests|execution|stdout|stderr)', path):
+                _, _, _, rid, _, key = path.split('/')
+                with self.server.store.lock:
+                    content = self.server.store.download_log(rid, key)
+                if content is None:
+                    return self.send(404, b'{"error":"Unknown Run log"}')
+                return self.send(200, content, "text/plain", rid + "." + key + ".log")
             elif re.fullmatch(r'/api/retries/[a-f0-9]{32}/(build_dashboard|build_dashboard_browser)/[23]/log',path):
                 parts=path.split('/')
                 with self.server.store.lock:data=self.server.store.retry_log(parts[3],parts[4],int(parts[5]))
@@ -374,6 +1094,17 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = do_POST
     do_PATCH = do_POST
 
+class DashboardHTTPServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR permits two live listeners to bind the same port.
+    # Reserve it before bind so a concurrent launch cannot replace our receipt.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
@@ -390,7 +1121,7 @@ def main():
             parser.error("State directory must not be a reparse point")
     nonce = secrets.token_hex(16)
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        server = DashboardHTTPServer(("127.0.0.1", args.port), Handler)
     except OSError:
         parser.exit(3, "Port unavailable; no existing listener was stopped.\n")
     server.daemon_threads = True

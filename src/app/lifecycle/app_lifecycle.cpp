@@ -1,10 +1,12 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "desktop/desktop_keyboard_rules.h"
 #include "desktop/desktop_input_activation.h"
+#include "desktop/desktop_layer_recovery.h"
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "widget/settings/widget_settings_service.h"
 #include "platform/http_runtime.h"
@@ -19,6 +21,8 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::window_support::WindowSupport().Stop();
+    FlushQueuedLayoutSave();
     snowdesktop::EmergencyRestartHotkey().Stop();
     StopRecycleBinWatcher();
     dockExternalMinimize_.reset();
@@ -36,6 +40,8 @@ DesktopApp::~DesktopApp()
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();
     if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
+    floatingDockPromotionInputToken_ = 0;
+    floatingDockInputDeactivated_ = false;
     dockWindowActivationObservationToken_ = 0;
     dockWindowActivationObservations_.clear();
     popupAnimationFrameToken_ = 0;
@@ -158,7 +164,7 @@ void DesktopApp::RestoreExplorerIconsOnExit()
 {
     if (!explorerIconVisibility_.RestoreWhenReady(
             [] { return FindDesktopWindows().listView; }))
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
             L"Explorer icon restoration incomplete at exit: current desktop layer is not visible",
             DiagnosticLogLevel::Warning);
 }
@@ -370,7 +376,7 @@ bool DesktopApp::CreateDesktopInputWindow(HWND host)
             inputHwnd_, GetParent(inputHwnd_),
             static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_STYLE)),
             static_cast<unsigned>(GetWindowLongPtrW(inputHwnd_, GWL_EXSTYLE)));
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, buf);
     }
     return true;
 }
@@ -401,7 +407,7 @@ void DesktopApp::FocusDesktopInputWindow()
         : nullptr;
     if (!target)
     {
-        WriteDiagnosticLogEntry(L"Desktop input proxy unavailable; render child activation refused",
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Desktop input proxy unavailable; render child activation refused",
             DiagnosticLogLevel::Warning);
         return;
     }
@@ -419,6 +425,11 @@ bool DesktopApp::FocusKeyboardWindow(
     HWND activationWindow = GetAncestor(target, GA_ROOT);
     if (!activationWindow)
         activationWindow = target;
+    // Only the popup presenter may reveal this host after a usable frame.
+    // Generic Shell/focus requests must not revive a closed or failed popup.
+    if (activationWindow == floatingPopupHwnd_ &&
+        !IsWindowVisible(activationWindow))
+        return false;
     const DWORD currentThread = GetCurrentThreadId();
 
     struct FocusObservation
@@ -459,16 +470,23 @@ bool DesktopApp::FocusKeyboardWindow(
                 observation.foreground == activationWindow);
         return observation;
     };
+    bool foregroundAttempted = false, foregroundAccepted = false;
+    const HWND previousActive = GetActiveWindow(), previousFocus = GetFocus();
     const auto requestFocus = [this, target, activationWindow,
-                                  requestForeground, deliberateFullscreenExit]() {
+                                  requestForeground, deliberateFullscreenExit,
+                                  &foregroundAttempted, &foregroundAccepted]() {
         const bool deliberateExitAllowed = deliberateFullscreenExit &&
             !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr);
         return snowdesktop::fullscreen::GuardFocusRequest(deliberateExitAllowed,
-            snowdesktop::fullscreen::ObserveForeground, [=]() {
+            snowdesktop::fullscreen::ObserveForeground, [=, &foregroundAttempted, &foregroundAccepted]() {
                 if (requestForeground)
                 {
                     ShowWindow(target, SW_SHOWNOACTIVATE);
-                    (void)SetForegroundWindow(activationWindow);
+                    foregroundAttempted = true;
+                    foregroundAccepted = SetForegroundWindow(activationWindow) != FALSE;
+                    // Local activation/focus cannot grant global foreground.
+                    // Do not leave the background queue focused on a rejected proxy.
+                    if (GetForegroundWindow() != activationWindow) return;
                     (void)SetActiveWindow(activationWindow);
                 }
                 (void)SetFocus(target);
@@ -485,7 +503,7 @@ bool DesktopApp::FocusKeyboardWindow(
     if (!requestFocus())
     {
         TraceDesktopInteraction(L"focus-suppressed-fullscreen", target);
-        WriteDiagnosticLogEntry(L"Keyboard focus request suppressed: foreground fullscreen");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Keyboard focus request suppressed: foreground fullscreen");
         return false;
     }
     observation = observeFocus();
@@ -493,49 +511,25 @@ bool DesktopApp::FocusKeyboardWindow(
     if (observation.ready)
         return true;
 
-    // GetFocus only reports the calling thread's queue and can therefore
-    // claim success while Explorer or Settings still owns the foreground
-    // queue receiving physical keyboard input. Retry whenever the observed
-    // foreground queue is different, then validate that queue with
-    // GetGUIThreadInfo instead of trusting the local queue again.
-    const DWORD attachedThread = observation.foregroundThread;
-    const bool shouldAttach =
-        ((deliberateFullscreenExit && !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) ||
-            !snowdesktop::fullscreen::ObserveForeground()) &&
-        snowdesktop::desktop_keyboard_rules::
-            ShouldAttachForegroundInputQueue(
-                currentThread, attachedThread,
-                observation.ready);
-    const bool attached = shouldAttach &&
-        AttachThreadInput(
-            currentThread, attachedThread, TRUE) != FALSE;
-    if (attached)
-    {
-        TraceDesktopInteraction(L"focus-attached-retry", target);
-        const bool attempted = requestFocus();
-        AttachThreadInput(
-            currentThread, attachedThread, FALSE);
-        if (!attempted) return false;
-    }
-    observation = observeFocus();
-    TraceDesktopInteraction(L"focus-retry-result", target);
-    if (observation.ready)
-        return true;
+    // Activation permission and cross-thread delivery belong to User32. A
+    // failed/queued foreground request must not couple our input queue to an
+    // unrelated application: synchronous activation can then block both.
 
-    wchar_t message[384]{};
+    wchar_t message[544]{};
     swprintf_s(
         message,
         L"%ls focus FAILED target=%p activation=%p foreground=%p "
         L"foregroundThread=%lu foregroundFocus=%p focusKnown=%d "
-        L"localFocus=%p attachRequested=%d attached=%d",
+        L"localFocus=%p requested=%d accepted=%d callerThread=%lu targetThread=%lu "
+        L"previousActive=%p previousFocus=%p",
         diagnosticLabel ? diagnosticLabel : L"Keyboard window",
         target, activationWindow, observation.foreground,
         observation.foregroundThread,
         observation.foregroundFocus,
         observation.foregroundFocusKnown ? 1 : 0,
-        GetFocus(), shouldAttach ? 1 : 0,
-        attached ? 1 : 0);
-    WriteDiagnosticLogEntry(message);
+        GetFocus(), foregroundAttempted ? 1 : 0, foregroundAccepted ? 1 : 0,
+        currentThread, GetWindowThreadProcessId(target, nullptr), previousActive, previousFocus);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -559,6 +553,8 @@ bool DesktopApp::EnsureFloatingDockInputWindow()
 
 void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
+    for (const auto& host : persistentDockHosts_) if (host) host->promotionInputBorrowedFocus = false;
+    floatingDockInputDeactivated_ = false;
     if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
     if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
         return;
@@ -567,6 +563,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
         RefocusFloatingDockKeyboardSession(deliberateFullscreenExit);
         return;
     }
+
+    floatingDockInputForegroundSeen_ = false;
 
     HWND foreground = GetForegroundWindow();
     if (foreground)
@@ -606,8 +604,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 
     if (!EnsureFloatingDockInputWindow())
     {
-        WriteDiagnosticLogEntry(
-            L"Floating Dock input proxy creation FAILED");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
+            L"Floating Dock input proxy creation FAILED", DiagnosticLogLevel::Warning);
         return;
     }
     floatingDockKeyboardSessionActive_ = true;
@@ -640,11 +638,16 @@ void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExi
 
     (void)FocusKeyboardWindow(floatingDockInputHwnd_, true,
         L"Floating Dock input proxy", deliberateFullscreenExit);
+    if (floatingDockKeyboardSessionActive_ && GetForegroundWindow() == floatingDockInputHwnd_)
+        floatingDockInputForegroundSeen_ = true;
 }
 
 void DesktopApp::EndFloatingDockKeyboardSession(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
+    for (const auto& host : persistentDockHosts_) if (host) host->promotionInputBorrowedFocus = false;
+    floatingDockInputDeactivated_ = false;
+    floatingDockInputForegroundSeen_ = false;
     if (!floatingDockKeyboardSessionActive_)
     {
         floatingDockLogicalForegroundWindow_ = nullptr;
@@ -873,13 +876,13 @@ bool DesktopApp::CreateDesktopOverlayWindow()
     if (desktopBackdropCompositor_.Initialize(hwnd_))
     {
         nativeGlassPanelReadyLogged_ = false;
-        WriteDiagnosticLogEntry(L"Native desktop CompositionBackdropBrush initialized");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Native desktop CompositionBackdropBrush initialized");
     }
     else
     {
         std::wstring message = L"Native desktop CompositionBackdropBrush unavailable: ";
         message += desktopBackdropCompositor_.LastError();
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Warning);
     }
 
     if (HICON appIcon = LoadAppIcon())
@@ -1063,6 +1066,41 @@ void DesktopApp::WatchDesktopHost()
         desktopWindows_ = current;
         HideExplorerIcons();
     }
+
+    // Explorer can raise its still-valid DefView without changing our parent,
+    // HWND or bounds. Hiding its ListView alone leaves that view in front of
+    // the renderer and capable of receiving the desktop's mouse input.
+    namespace layer = snowdesktop::desktop_layer_recovery;
+    const bool interactionActive = mouseDown_ || marqueeActive_ ||
+        middleButtonWidgetMove_ || detailColumnResizeActive_ ||
+        luaWidgetPanelMouseDown_ || widgetAction_ != WidgetAction::None ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        GetCapture() != nullptr || HasActiveContextMenuSession();
+    const auto recovery = layer::TryRestore(hwnd_, currentHost, current.defView,
+        {customDesktopVisible_, !desktopPassthroughActive_ &&
+            !compositionPaintInProgress_ && !updatingDisplayTopology_ && !reloading_,
+            interactionActive});
+    if (recovery.status == layer::Status::Restored)
+    {
+        desktopBackdropCompositor_.Reattach(hwnd_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        BeginDesktopInteractionTrace(L"desktop-layer-recovered");
+    }
+    static ULONGLONG nextFailureDiagnostic = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (recovery.status == layer::Status::Restored ||
+        (recovery.status == layer::Status::Failed && now >= nextFailureDiagnostic))
+    {
+        const bool restored = recovery.status == layer::Status::Restored;
+        nextFailureDiagnostic = restored ? 0 : now + 30000;
+        wchar_t message[384]{};
+        swprintf_s(message,
+            L"DesktopLayerRecovery result=%ls render=%p host=%p defView=%p previous=%p insertAfter=%p error=%lu",
+            restored ? L"restored" : L"failed", hwnd_, currentHost,
+            current.defView, recovery.previous, recovery.insertAfter, recovery.error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, message,
+            restored ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
+    }
 }
 
 /**
@@ -1109,7 +1147,7 @@ void DesktopApp::CompleteExitRequest()
     // A confirmation may be pumping messages inside task dispatch. Invalidate
     // tasks now, keeping the engine alive until that modal stack has unwound.
     if (widgetEngine_) widgetEngine_->BeginTaskShutdown();
-    WriteDiagnosticLogEntry((L"Application exit begin: pid=" +
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, (L"Application exit begin: pid=" +
         std::to_wstring(GetCurrentProcessId()) + L" restart=" +
         std::to_wstring(preparedRestart_ != nullptr)).c_str());
     shellLaunchWorker_.Stop();
@@ -1169,7 +1207,7 @@ bool DesktopApp::RequestRestart()
         return false;
     }
 
-    WriteDiagnosticLogEntry((L"Application restart prepared: pid=" +
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, (L"Application restart prepared: pid=" +
         std::to_wstring(GetCurrentProcessId()) + L" child=" +
         std::to_wstring(restart->ProcessId())).c_str());
     preparedRestart_ = std::move(restart);

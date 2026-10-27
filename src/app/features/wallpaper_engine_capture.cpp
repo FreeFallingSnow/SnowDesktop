@@ -3,6 +3,7 @@
  * @brief Request one clean Wallpaper Engine GPU frame for component previews.
  */
 #include "wallpaper_engine_capture.h"
+#include "platform/runtime_module_policy.h"
 
 #include "platform/deployment_context.h"
 #include "wallpaper_hook/wallpaper_hook_protocol.h"
@@ -20,6 +21,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -47,6 +49,23 @@ bool CanInjectCaptureHook(DWORD processId, std::wstring& error)
     return false;
 }
 
+namespace
+{
+thread_local std::optional<std::uint64_t> capturePolicyRevision;
+bool CaptureCancelled(const std::atomic_bool* cancelled)
+{
+    return !runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview) ||
+        (capturePolicyRevision && *capturePolicyRevision != runtime_modules::Revision(runtime_modules::Module::WallpaperPreview)) ||
+        (cancelled && cancelled->load(std::memory_order_relaxed));
+}
+struct CapturePolicyScope
+{
+    std::optional<std::uint64_t> previous = capturePolicyRevision;
+    CapturePolicyScope() { capturePolicyRevision = runtime_modules::Revision(runtime_modules::Module::WallpaperPreview); }
+    ~CapturePolicyScope() { capturePolicyRevision = previous; }
+};
+}
+
 CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
     DWORD timeoutMs, const std::atomic_bool* cancelled)
 {
@@ -55,17 +74,14 @@ CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
     const ULONGLONG deadline = GetTickCount64() + timeoutMs;
     for (;;)
     {
-        if (cancelled &&
-            cancelled->load(std::memory_order_relaxed))
+        if (CaptureCancelled(cancelled))
             return CancellableWaitResult::Cancelled;
         const ULONGLONG now = GetTickCount64();
         if (now >= deadline)
             return CancellableWaitResult::TimedOut;
         const DWORD remaining = static_cast<DWORD>(
             std::min<ULONGLONG>(deadline - now, MAXDWORD));
-        const DWORD slice = cancelled
-            ? std::min<DWORD>(remaining, 20)
-            : remaining;
+        const DWORD slice = std::min<DWORD>(remaining, 20);
         const DWORD result = WaitForSingleObject(handle, slice);
         if (result == WAIT_OBJECT_0)
             return CancellableWaitResult::Signaled;
@@ -119,7 +135,7 @@ std::wstring FormatHresult(const wchar_t* stage, HRESULT result)
 
 bool IsCancelled(const std::atomic_bool* cancelled)
 {
-    return cancelled && cancelled->load(std::memory_order_relaxed);
+    return CaptureCancelled(cancelled);
 }
 
 std::int64_t IntersectionArea(const RECT& left, const RECT& right)
@@ -490,6 +506,7 @@ bool InjectDirect(DWORD processId, const std::filesystem::path& dllPath,
     DWORD waitMs, const std::atomic_bool* cancelled,
     std::wstring& error)
 {
+    if (IsCancelled(cancelled)) return false;
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD |
         PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
         PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, processId);
@@ -510,7 +527,7 @@ bool InjectDirect(DWORD processId, const std::filesystem::path& dllPath,
     HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
     const auto loadLibrary = reinterpret_cast<LPTHREAD_START_ROUTINE>(
         kernel32 ? GetProcAddress(kernel32, "LoadLibraryW") : nullptr);
-    HANDLE thread = wrotePath && loadLibrary
+    HANDLE thread = !IsCancelled(cancelled) && wrotePath && loadLibrary
         ? CreateRemoteThread(process, nullptr, 0,
             loadLibrary, remotePath, 0, nullptr)
         : nullptr;
@@ -555,6 +572,7 @@ bool Inject32(DWORD processId, const std::filesystem::path& dllPath,
     DWORD waitMs, const std::atomic_bool* cancelled,
     std::wstring& error)
 {
+    if (IsCancelled(cancelled)) return false;
     const std::filesystem::path injector =
         snowdesktop::deployment::GetRuntimeFilePath(
             L"SnowDesktopWallpaperInjector32.exe");
@@ -1060,6 +1078,10 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     DWORD timeoutMs, const std::atomic_bool* cancelled)
 {
     Result result;
+    CapturePolicyScope policyScope;
+    if (!runtime_modules::Allowed(runtime_modules::Module::WallpaperPreview)) return result;
+    runtime_modules::Activity activity(runtime_modules::Module::WallpaperPreview);
+    runtime_modules::SetError(runtime_modules::Module::WallpaperPreview, ERROR_SUCCESS);
     const int monitorWidth = monitorBounds.right - monitorBounds.left;
     const int monitorHeight = monitorBounds.bottom - monitorBounds.top;
     if (monitorWidth <= 0 || monitorHeight <= 0 || timeoutMs == 0)
@@ -1119,6 +1141,7 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
             if (session.TryReadBestFrame(monitorBounds,
                     allowCloneRemap, result.backdrop, sessionError))
             {
+                if (IsCancelled(cancelled)) return {};
                 result.error.clear();
                 return result;
             }
@@ -1129,6 +1152,7 @@ Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     }
     if (result.error.empty() && !IsCancelled(cancelled))
         result.error = L"Timed out waiting for Wallpaper Engine Present";
+    if (!result.error.empty() && !IsCancelled(cancelled)) runtime_modules::SetError(runtime_modules::Module::WallpaperPreview, ERROR_GEN_FAILURE);
     return result;
 }
 

@@ -97,8 +97,9 @@ bool ScrollingItemWidget::BeginCategoryTabDrag(POINT point)
     return true;
 }
 
-bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point)
+bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point, bool* orderChanged)
 {
+    if (orderChanged) *orderChanged = false;
     if (!HasCategoryTabPress()) return false;
     auto* source = CategoryTabSource(this);
     if (!source || !source->GetWidgetData() ||
@@ -116,7 +117,7 @@ bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point)
     {
         source->GetWidgetData()->categoryTabOrder = std::move(order);
         InvalidateCategoryTabSource(this);
-        if (app_) InvalidateRect(app_->hwnd_, nullptr, FALSE);
+        if (orderChanged) *orderChanged = true;
     }
     return true;
 }
@@ -668,6 +669,10 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 RECT WidgetContainer::GetBodyRect() const
 {
     if (popupFrameActive_) return hostedFrame_;
+    // Large folders keep the complete frame: their bottom title (when the
+    // inline grid does not own it) overlays the content edge on hover and must
+    // not shrink the grid.
+    if (IsLargeFolderMode()) return GetLayoutFrameRect();
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -678,8 +683,18 @@ RECT WidgetContainer::GetBodyRect() const
  */
 RECT WidgetContainer::GetMoveHandleRect() const
 {
+    // Keep the bottom move target even when its title and gradient are hidden.
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).titleBar;
+}
+
+bool WidgetContainer::IsLargeFolderMode() const
+{
+    return data_ && data_->type == DesktopWidgetType::Collection &&
+        !IsPopupHosted() &&
+        snowdesktop::widget_item_layout::CollectionUsesFullFrame(
+            data_->scrollContainerMode,
+            data_->gridSpan.columns, data_->gridSpan.rows);
 }
 
 /**
@@ -1285,7 +1300,7 @@ void ScrollingItemWidget::DrawCategorizedTab(
         return;
     const bool light = UsesLightContentTheme();
     app_->DrawD2DRoundedRectangle(
-        context, visibleTabRect,
+        context, layoutTabRect,
         static_cast<float>(Cu(8.0f)),
         active
             ? (light
@@ -1322,9 +1337,9 @@ void ScrollingItemWidget::DrawCategorizedTab(
             CategorizedControlOutlineWidth(
                 keyboardSelected));
 
-    // The background follows the visible segment so its remaining corners stay
-    // rounded. Text keeps the full tab geometry and is clipped by the tab strip,
-    // preventing a partially visible label from being re-centered.
+    // Preserve the full tab geometry. The strip's opacity mask fades the
+    // background, outline and text together without inventing a rounded end
+    // or re-centering a partially visible label at the viewport boundary.
     RECT textRect = layoutTabRect;
     InflateRect(&textRect, -Cu(7.0f), 0);
     IDWriteTextFormat* tabFormat =
@@ -1782,13 +1797,16 @@ void ScrollingItemWidget::BeginSearchPointerSelection(
     searchPointerSelecting_ = true;
 }
 
-void ScrollingItemWidget::UpdateSearchPointerSelection(
+bool ScrollingItemWidget::UpdateSearchPointerSelection(
     POINT point)
 {
     if (!searchPointerSelecting_)
-        return;
-    searchCursorPos_ =
-        HitTestSearchTextPosition(point);
+        return false;
+    const size_t position = HitTestSearchTextPosition(point);
+    if (position == searchCursorPos_)
+        return false;
+    searchCursorPos_ = position;
+    return true;
 }
 
 void ScrollingItemWidget::EndSearchPointerSelection()
@@ -3050,6 +3068,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         if (clipGeo) context->PopLayer();
     }
 
+    const bool largeFolder = IsLargeFolderMode();
+    // Large folders omit the bottom title only while the inline Show all cell
+    // (or a titleless grid) already owns the name; an ordinary final cell keeps
+    // the bottom title as the collection's only visible name. The bar overlays
+    // the content edge instead of reserving height.
+    const bool bottomBarTitle = !HidesBottomBarTitle();
     const bool tinyCollection = data_->type == DesktopWidgetType::Collection &&
         data_->gridSpan.columns <= 1 && data_->gridSpan.rows <= 1;
     const bool persistentBottomBar = tinyCollection ||
@@ -3060,8 +3084,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         (data_->type == DesktopWidgetType::Collection && data_->scrollContainerMode);
 
     // ── 3. Gradient bottom bar (reuses cached geometry for clip) ──
-    bool showGradient = persistentBottomBar ||
-        !data_->bottomBarHover || hovered;
+    const bool showGradient = bottomBarTitle &&
+        (persistentBottomBar || !data_->bottomBarHover || hovered);
     if (showGradient)
     {
         const bool topTitle = UsesTopTitleBar();
@@ -3107,8 +3131,11 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── 4. Bottom-bar items (on top of gradient, visibility per bottomBarHover) ──
-    bool showHandle = persistentBottomBar ||
-        (data_->bottomBarHover ? hovered : true);
+    // Large folders without a bottom title show only the resize dot over their
+    // content on hover. Otherwise the regular title-bar rules apply, so an
+    // exactly filled collection keeps its bottom title and rename anchor.
+    const bool showHandle = largeFolder && !bottomBarTitle ? hovered :
+        persistentBottomBar || !data_->bottomBarHover || hovered;
 
     if (showHandle)
     {
@@ -3118,7 +3145,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         const std::wstring displayTitle = demoCollectionTitle
             ? app_->GetDemoCollectionCategoryTitle(*data_)
             : data_->title;
-        if (!displayTitle.empty() && data_->showTitle)
+        if (bottomBarTitle && !displayTitle.empty() && data_->showTitle)
         {
             RECT titleRect = GetTitleRect();
             LONG tw = titleRect.right - titleRect.left;
@@ -3211,7 +3238,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
-            if (!IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
+            if (!largeFolder && !IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
         }
     }
 

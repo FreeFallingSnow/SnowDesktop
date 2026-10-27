@@ -1,6 +1,9 @@
 #pragma once
 #include "theme/theme_library_settings.h"
 #include "data/layout_storage.h"
+#include "native_icon_cold_pixels_cases.h"
+#include "native_system_icon_refresh_cases.h"
+#include "../diagnostics/native_trace_observation.h"
 
 namespace native_icon_customization_cases
 {
@@ -137,8 +140,75 @@ inline void Run()
         "actual host upload renders the reported tiny thumbnail theme at full resolution while opt-out preserves its source size");
     Require(beautified.width == 96 && beautified.height == 96 && original.width == 96 && original.height == 40,
         "the actual host upload uses a square selected shape only while beautification is enabled");
+    native_icon_cold_pixels_cases::Run(app, renderContext.Get(), profile.root);
     Require(Access::NoPresentationWindows(app), "icon lifecycle and upload regression never starts a desktop presentation host");
     Access::StopModel(app);
+    auto& routingApp = profile.Model(false, profile.root / L"system-icon-routing");
+    native_system_icon_refresh_cases::Run(routingApp, renderContext.Get());
+    Require(Access::NoPresentationWindows(routingApp), "system-icon completion regression never starts a desktop presentation host");
+    Access::StopModel(routingApp);
+    auto& resourceApp = profile.Model(false, profile.root / L"icon-resource-sample");
+    std::map<std::string, double> emptyCounters;
+    {
+        snowdesktop::test::NativeTraceObservation trace([&](const auto& event) {
+            if (event.kind == snowdesktop::test::NativeTraceEvent::Counter && event.module.starts_with("native."))
+                emptyCounters[event.module + ":" + event.name] = event.value;
+        });
+        Access::RecordIconResourceSample(resourceApp);
+    }
+    Require(emptyCounters.contains("native.bitmap.memory:observed_unique_count") &&
+            emptyCounters.at("native.bitmap.memory:observed_unique_count") == 0 &&
+            emptyCounters.contains("native.icon.memory:prepared_payload_bytes") &&
+            emptyCounters.at("native.icon.memory:prepared_payload_bytes") == 0,
+        "the production sampler publishes empty cache gauges rather than omitting them");
+    Access::SeedIconResourceSample(resourceApp, renderContext.Get());
+    Access::RecordIconResourceSample(resourceApp); // Disabled observation must leave caches untouched.
+    Require(Access::IconResourceSampleUnchanged(resourceApp), "disabled resource observation preserves source and prepared pixels");
+    std::map<std::string, double> resourceCounters;
+    {
+        snowdesktop::test::NativeTraceObservation trace([&](const auto& event) {
+            if (event.kind == snowdesktop::test::NativeTraceEvent::Counter && event.module.starts_with("native."))
+                resourceCounters[event.module + ":" + event.name] = event.value;
+        });
+        Access::RecordIconResourceSample(resourceApp);
+        Access::RecordIconResourceSample(resourceApp);
+    }
+    const auto counter = [&](const char* key) {
+        const auto found = resourceCounters.find(key);
+        Require(found != resourceCounters.end(), "the real host resource sampler must serialize its native counter");
+        return found->second;
+    };
+    Require(counter("native.icon.memory:desktop_source_references") == 2 &&
+            counter("native.icon.memory:desktop_source_unique_count") == 2 &&
+            counter("native.icon.memory:desktop_source_unknown_size_count") == 1 &&
+            counter("native.icon.memory:desktop_source_bgra_bytes_estimate") == 512,
+        "source metadata distinguishes a known 16x8 image from an unknown-size source without reading pixels");
+    Require(counter("native.bitmap.memory:legacy_icon_bgra_bytes_estimate") == 200 &&
+            counter("native.bitmap.memory:styled_icon_bgra_bytes_estimate") == 200 &&
+            counter("native.bitmap.memory:grid_text_shadow_bgra_bytes_estimate") == 200 &&
+            counter("native.bitmap.memory:observed_unique_count") == 1 &&
+            counter("native.bitmap.memory:observed_unique_bgra_bytes_estimate") == 200,
+        "the 10x5 bitmap remains one observed allocation across icon, shadow, reflection and folder cache references");
+    Require(counter("native.icon.memory:prepared_payload_bytes") == 512 &&
+            counter("native.icon.memory:prepared_capacity_bytes") >= 1024 &&
+            counter("native.text.memory:grid_layout_input_bytes") == 6 &&
+            counter("native.text.memory:list_layout_input_bytes") == 4 &&
+            counter("native.text.memory:fan_layout_input_bytes") == 2,
+        "native sampling reports pixel payload/capacity separately from owned UTF-16 layout inputs");
+    Require(counter("native.icon.memory:mask_sample_available") == 1 &&
+            counter("native.icon.memory:mask_payload_bytes") > 0 &&
+            counter("native.icon.memory:mask_capacity_bytes") >= counter("native.icon.memory:mask_payload_bytes"),
+        "actual beautification masks expose a read-only payload/capacity snapshot");
+    Require(Access::IconResourceSampleUnchanged(resourceApp), "repeated production sampling does not consume or evict any cache resource");
+    snowdesktop::BoundedLruCache<int, int> observedLru(2);
+    observedLru.Insert(1, 10); observedLru.Insert(2, 20);
+    int observedSum = 0;
+    observedLru.VisitValues([&](const int& value) { observedSum += value; });
+    observedLru.Insert(3, 30);
+    Require(observedSum == 30 && !observedLru.Find(1) && observedLru.Find(2),
+        "the same const cache visitor used by resource sampling does not promote cold entries");
+    Require(Access::NoPresentationWindows(resourceApp), "resource sampling never starts a desktop presentation host");
+    Access::StopModel(resourceApp);
     std::cout << "Native icon customization lifecycle, storage, usage and non-square upload passed\n";
 }
 }

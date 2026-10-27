@@ -4,7 +4,34 @@
 #include <thread>
 using namespace build_test;
 namespace {
+void bytecode(const fs::path& repo,const std::string& oldOrder={}) {
+    auto root=temporary("helper-bytecode");
+    copy(repo,root,{"scripts/powershell_runtime.py","scripts/build_shared_resources.py","scripts/build_test_retry.py","scripts/build_wait_tasks.py"});
+    for(const auto& name:{std::string("build_shared_resources.py"),std::string("build_test_retry.py")}){
+        const auto helper=root/L"scripts"/name;
+        if(name==oldOrder){
+            auto source=read(helper);
+            replace(source,"sys.dont_write_bytecode = True","# Controlled former import order.");
+            replace(source,"from powershell_runtime import powershell_executable, run as run_process",
+                "from powershell_runtime import powershell_executable, run as run_process\nsys.dont_write_bytecode = True");
+            write(helper,source,true);
+        }
+        // -E removes inherited Python cache policy, so the production helper
+        // itself must keep imports from mutating its captured source tree.
+        const auto result=run({production_python().wstring(),L"-E",helper.wstring(),L"--help"},root,15);
+        require(result.code==0,"Actual helper import/help failed: "+result.out+result.err);
+        require(!fs::exists(root/L"scripts/__pycache__"),"Helper import created bytecode beside captured source: "+name);
+    }
+    if(oldOrder.empty()){
+        for(const auto& mode:{L"--bytecode-old-shared",L"--bytecode-old-retry"}){
+            const auto result=run({executable().wstring(),repo.wstring(),mode},root,25);
+            require(result.code==1&&result.err.find("Helper import created bytecode beside captured source")!=std::string::npos,
+                "Old import-order control did not reach the source-mutation assertion: "+result.out+result.err);
+        }
+    }
+}
 void test(const fs::path& repo) {
+    bytecode(repo);
     auto root=temporary("shared-resource");copy(repo,root,{"scripts/powershell_runtime.py","scripts/build_shared_resources.py","scripts/shared_resources.json","scripts/build_wait_tasks.py","scripts/build_ownership.ps1","tools/build-dashboard/server.py"});
     auto folder=root/L".build/collaboration";fs::create_directories(folder);auto file=root/L"lang/en-US.json";
     write(file,"{\r\n  \"Alpha\": \"old-a\",\r\n  \"Beta\": \"old-b\",\r\n  \"Unrelated\": \"keep\"\r\n}\r\n",true);
@@ -69,4 +96,9 @@ try{Set-Ownership $current $b $path $true;$accepted=$true}catch{$error=$_.Except
     std::cout<<"PASS simultaneous independent keys, BOM/CRLF/order, idempotency, stale/expired/frozen/uncertain-write rejection, ready peer requirements and actual ownership handoff"<<std::endl;
 }
 }
-int main(int argc,char** argv) {return test_main(argc,argv,test);}
+int main(int argc,char** argv) {return test_main(argc,argv,[&](const fs::path& repo){
+    const auto mode=argc>2?std::string(argv[2]):"";
+    if(mode=="--bytecode-old-shared")bytecode(repo,"build_shared_resources.py");
+    else if(mode=="--bytecode-old-retry")bytecode(repo,"build_test_retry.py");
+    else test(repo);
+});}

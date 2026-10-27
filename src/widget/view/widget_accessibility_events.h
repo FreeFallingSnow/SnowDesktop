@@ -2,6 +2,7 @@
 
 #include "widget_accessibility_snapshot.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -59,4 +60,25 @@ struct WidgetAccessibilityChange
 std::vector<WidgetAccessibilityChange> DiffWidgetAccessibilitySnapshots(
     const std::vector<LuaWidgetAccessibilitySnapshot>& previous,
     const std::vector<LuaWidgetAccessibilitySnapshot>& current);
+
+// Event-only state. Provider queries always capture the live runtime separately.
+class WidgetAccessibilityEventState final
+{
+public:
+    using Snapshots = std::vector<LuaWidgetAccessibilitySnapshot>;
+    using Capture = std::function<bool(Snapshots&)>;
+    using Listening = std::function<bool()>;
+    struct Update
+    {
+        Snapshots previous;
+        std::vector<WidgetAccessibilityChange> changes;
+    };
+
+    void Reset() noexcept;
+    Update Refresh(const Capture& capture, const Listening& clientsAreListening);
+    const Snapshots& Current() const noexcept { return current_; }
+
+private:
+    Snapshots current_;
+};
 }

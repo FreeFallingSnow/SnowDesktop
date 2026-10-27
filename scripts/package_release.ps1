@@ -12,7 +12,8 @@ param(
     [string]$CertificateThumbprint = "",
     [ValidateSet("CurrentUser", "LocalMachine")]
     [string]$CertificateStoreLocation = "CurrentUser",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$ArtifactRun = ''
 )
 
 Set-StrictMode -Version Latest
@@ -125,6 +126,7 @@ function Copy-Payload {
     New-Item -ItemType Directory -Path $runtimeDestination -Force |
         Out-Null
     foreach ($name in @(
+            "SnowDesktopWindowHelper.exe",
             "SnowDesktopHookEntry.dll",
             "SnowDesktopHookEntry32.dll",
             "SnowDesktopTaskbarHook.dll",
@@ -148,10 +150,10 @@ function Copy-Payload {
         -Destination $licensesDestination
 
     Copy-Directory `
-        -Source (Join-Path $repositoryRoot "widgets") `
+        -Source (Join-Path $buildOutput "widgets") `
         -Destination (Join-Path $Destination "widgets")
     Copy-Directory `
-        -Source (Join-Path $repositoryRoot "lang") `
+        -Source (Join-Path $buildOutput "lang") `
         -Destination (Join-Path $Destination "lang")
 
     $builtSkillCli = Join-Path $buildOutput `
@@ -163,7 +165,9 @@ function Copy-Payload {
     }
     $skillDestination = Join-Path $Destination `
         "widgets\snowdesktop-lua-widget\bin"
-    New-Item -ItemType Directory -Path $skillDestination -Force | Out-Null
+    # Built widgets also carry optional channel-specific publisher tools.
+    # Portable/Store retain their existing standalone-CLI-only contract.
+    Reset-Directory -Path $skillDestination
     Copy-Item -LiteralPath $builtSkillCli `
         -Destination (Join-Path $skillDestination "snowwidget.exe") -Force
 
@@ -329,7 +333,7 @@ function Escape-XmlAttribute {
 }
 
 function Get-PackageLanguages {
-    $languageDirectory = Join-Path $repositoryRoot "lang"
+    $languageDirectory = Join-Path $buildOutput "lang"
     $languageFiles = @(Get-ChildItem `
         -LiteralPath $languageDirectory `
         -Filter "*.json" `
@@ -356,6 +360,16 @@ function Get-PackageLanguages {
     return $languages
 }
 
+. (Join-Path $scriptDirectory 'packaging_input.ps1')
+$originalRepositoryRoot = $repositoryRoot
+if ($ArtifactRun) { $SkipBuild = $true }
+if (-not $SkipBuild) {
+    $ArtifactRun = Invoke-SnowDesktopPackagingBuild $originalRepositoryRoot
+}
+$packagingContext = Get-SnowDesktopPackagingContext $originalRepositoryRoot $ArtifactRun
+$repositoryRoot = $packagingContext.source
+$packagingDirectory = Join-Path $repositoryRoot 'packaging'
+$buildOutput = $packagingContext.runtime
 $version = (Get-Content `
     -LiteralPath (Join-Path $repositoryRoot "version.json") `
     -Encoding UTF8 `
@@ -377,14 +391,14 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $artifactsRoot "v$version"
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
-
-if (-not $SkipBuild) {
-    Write-Host "Running the repository-standard Release build."
-    Write-Host "The build will not stop SnowDesktop or restart Explorer."
-    & cmd.exe /d /c "call `"$repositoryRoot\scripts\build.bat`""
-    if ($LASTEXITCODE -ne 0) {
-        throw "scripts/build.bat failed with exit code $LASTEXITCODE."
-    }
+$versionOutputRoot = [IO.Path]::GetFullPath((Join-Path $artifactsRoot "v$version")).TrimEnd('\','/')
+if ($OutputDirectory -ne $versionOutputRoot -and -not $OutputDirectory.StartsWith($versionOutputRoot+'\',[StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Release artifacts must remain under the original repository version directory.'
+}
+foreach ($inputRoot in @($packagingContext.source,$packagingContext.runtime)) {
+    $destructiveStage = Join-Path $OutputDirectory 'staging'
+    if ($inputRoot -eq $destructiveStage -or $inputRoot.StartsWith($destructiveStage+'\',[StringComparison]::OrdinalIgnoreCase) -or
+        $destructiveStage.StartsWith($inputRoot+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Release staging overlaps a saved packaging input.' }
 }
 
 if ($Development) {
@@ -675,6 +689,7 @@ Move-Item -LiteralPath $msixUploadZipPath -Destination $msixUploadPath
 
 $packageInfo = [ordered]@{
     version = $version
+    buildProvenance = $packagingContext.provenance
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     architecture = "x64"
     supportedLanguages = $packageLanguages
@@ -721,12 +736,10 @@ $checksumLines = foreach ($packageFile in $packageFiles) {
 $checksumLines |
     Set-Content -LiteralPath $checksumPath -Encoding ascii
 
-$gitBranch = (& git -C $repositoryRoot branch --show-current 2>$null |
-    Select-Object -First 1)
-$gitCommit = (& git -C $repositoryRoot rev-parse HEAD 2>$null |
-    Select-Object -First 1)
-$gitDirty = [bool](& git -C $repositoryRoot status --porcelain 2>$null |
-    Select-Object -First 1)
+Assert-SnowDesktopPackagingContext $packagingContext
+$gitBranch = 'saved candidate ' + $packagingContext.provenance.runId
+$gitCommit = 'captured HEAD ' + $packagingContext.provenance.capturedHead + '; source digest ' + $packagingContext.provenance.sourceDigest
+$gitDirty = 'captured source; see buildProvenance'
 $summaryPath = Join-Path $OutputDirectory "release-summary.md"
 $summaryLines = @(
     "# SnowDesktop v$version 发布摘要",

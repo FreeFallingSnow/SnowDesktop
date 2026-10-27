@@ -1,14 +1,25 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "app/dock/dock_running_drag_state.h"
 #include "app/input/native_item_drag_source.h"
 #include "app/shell/shell_refresh_snapshot.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "app/widgets/widget_pair_drag_source.h"
+#include "diagnostics/input_diagnostics.h"
+#include "system/status_bar/status_bar_interaction.h"
+#include "widgets/single_cell_widget_rules.h"
+#include "widgets/group_tab_drag_preview.h"
+#include "../test_temporary_directory.h"
+#include "../dock/dock_entry_removal_cases.h"
+#include <fstream>
 
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <condition_variable>
 
 // This fixture supplies models and the initial gesture only. Target selection
 // executes DesktopApp -> controller -> actual container virtual hit methods.
@@ -561,6 +572,24 @@ struct NativeDragIntegrationAccess
         app.dragSession_.End();
     }
 
+    static void RequestSave(DesktopApp& app) { app.RequestLayoutSave(); }
+    static void UseSaveWindow(DesktopApp& app) { app.controlHwnd_ = completionWindow; }
+    static void SetSaveColumn(DesktopApp& app, int column) { app.items_[0].gridCell.column = column; }
+    static void SetSaveGesture(DesktopApp& app, bool active) {
+        if (active)
+            app.largeIconGesture_ = DesktopApp::LargeIconGesture{app.items_[0].layoutKey,
+                {}, app.items_[0].gridCell, false, true, true};
+        else app.largeIconGesture_.reset();
+    }
+    static bool PendingSave(const DesktopApp& app) { return app.layoutSavePending_; }
+    static bool ScrollSavePending(const DesktopApp& app) { return app.layoutScrollSave_.Pending(); }
+    static void DispatchSaveTimer(DesktopApp& app) { app.OnTimer(kLayoutScrollSaveTimerId); }
+    static void DueSaveTimer(DesktopApp& app) {
+        app.layoutScrollSave_.Request(snowdesktop::LayoutScrollSave::Clock::now() - std::chrono::seconds(2));
+    }
+    static void FlushSave(DesktopApp& app) { app.FlushQueuedLayoutSave(); }
+    static void DrainSave(DesktopApp& app) { app.layoutSaveQueue_.Drain(); }
+    static std::uint64_t LayoutRevision(const DesktopApp& app) { return app.layoutPassRevision_; }
     static bool Save(DesktopApp& app) { return app.SaveLayoutSlots(false); }
     static WidgetContainer* MemberContainer(DesktopApp& app, const std::wstring& id)
     {
@@ -1058,6 +1087,8 @@ struct NativeDragIntegrationAccess
     }
     static void StopModel(DesktopApp& app)
     {
+        app.FlushQueuedLayoutSave();
+        app.CancelDeferredLayoutSave();
         app.StopShellFileOperationWorker();
         app.StopUrlDropDownloadWorker();
         UnbindAsync(app);
@@ -1068,6 +1099,7 @@ struct NativeDragIntegrationAccess
         if (app.largeIconAssets_) app.largeIconAssets_->Stop();
         app.items_oo_.clear(); app.containers_.clear(); app.items_.clear(); app.widgets_.clear();
         app.hwnd_ = nullptr;
+        app.controlHwnd_ = nullptr;
     }
 #include "native_group_surface_access.inc"
 #include "native_ole_sequence_access.inc"
@@ -1082,9 +1114,18 @@ struct NativeDragIntegrationAccess
 #include "../icons/native_icon_customization_access.inc"
 #include "../dock/native_preview_order_access.inc"
 #include "../layout/native_list_hover_access.inc"
+#include "native_input_safety_access.inc"
+#include "../render/native_foreground_culling_access.inc"
+#include "native_drag_foreground_damage_access.inc"
+#include "../dock/native_dock_hover_access.inc"
+#include "../dock/native_dock_removal_access.inc"
+#include "../widget/native_widget_surface_handoff_access.inc"
+#include "../system/native_status_selection_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
+#include "native_drag_foreground_damage_cases.h"
+#include "native_async_layout_save_cases.h"
 #include "native_drag_reload_cases.h"
 #include "native_drag_async_reload_cases.h"
 #include "native_ole_file_cases.h"
@@ -1115,8 +1156,14 @@ struct NativeDragIntegrationAccess
 #include "native_external_namespace_cases.h"
 #include "../icons/native_icon_customization_cases.h"
 #include "../dock/native_preview_order_cases.h"
+#include "../dock/native_folder_icon_completion_cases.h"
 #include "../layout/native_list_hover_cases.h"
 #include "../layout/native_popup_display_menu_cases.h"
+#include "native_input_safety_cases.h"
+#include "../render/native_foreground_culling_cases.h"
+#include "../dock/native_dock_hover_cases.h"
+#include "../widget/native_widget_surface_handoff_cases.h"
+#include "../system/native_status_selection_cases.h"
 
 namespace
 {
@@ -1172,12 +1219,38 @@ int main(int argc, char** argv)
 {
     try
     {
-        if (argc == 1) { RunTargets(); native_preview_order_cases::Run(); }
+        if (argc == 1) {
+            native_foreground_culling_cases::Run();
+            native_drag_foreground_damage_cases::Run();
+            native_dock_hover_cases::Run();
+            native_widget_surface_handoff_cases::Run();
+            RunTargets();
+            native_preview_order_cases::Run();
+        }
+        else if (argc == 2 && std::string_view(argv[1]) == "--r05-full-reference")
+            native_drag_foreground_damage_cases::Run(true);
+        else if (argc == 2 && std::string_view(argv[1]) == "--foreground-culling")
+            native_foreground_culling_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover")
+            native_dock_hover_cases::Run();
+        else if (argc == 2 && (std::string_view(argv[1]) == "--dock-removal" ||
+            std::string_view(argv[1]) == "--dock-removal-no-retention"))
+        {
+            native_drag_commit_cases::Profile profile;
+            auto& app = profile.Model(false, profile.root / L"dock-removal");
+            NativeDragIntegrationAccess::CheckDockEntryRemoval(app,
+                std::string_view(argv[1]) == "--dock-removal-no-retention");
+        }
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover-legacy")
+            native_dock_hover_cases::Run(true);
+        else if (argc == 2 && std::string_view(argv[1]) == "--widget-surface-handoff")
+            native_widget_surface_handoff_cases::Run();
         else if (argc == 4 && std::string_view(argv[1]) == "--dock-preview-fixture")
             return native_preview_order_cases::RunFixture(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order") native_preview_order_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order-proxy") native_preview_order_cases::Run(1);
         else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--async-layout-save") native_async_layout_save_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-files") native_ole_file_cases::Run(argv[2]);
@@ -1202,6 +1275,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-sequences") native_ole_sequence_cases::RunAsync();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-generated-relations") native_content_dock_cases::RunDockRelations();
         else if (argc == 3 && std::string_view(argv[1]) == "--owned-content") {
+            native_owned_content_cases::RunShellFiles(argv[2]);
             native_owned_content_cases::Run(argv[2]); native_owned_content_rejection_cases::Run(argv[2]);
             native_owned_content_cases::Run(argv[2], false, true);
         }
@@ -1223,7 +1297,17 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-hover") native_list_hover_cases::RunHover();
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-fonts") native_list_hover_cases::RunFonts();
         else if (argc == 2 && std::string_view(argv[1]) == "--popup-display-menu") native_popup_display_menu_cases::Run();
-        else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") native_icon_customization_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--input-safety") {
+            native_input_safety_cases::Run();
+            native_status_selection_cases::Run();
+        }
+        else if (argc == 2 && std::string_view(argv[1]) == "--status-selection") native_status_selection_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-folder-icon-completion")
+            native_folder_icon_completion_cases::RunStandalone();
+        else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") {
+            native_icon_customization_cases::Run();
+            native_folder_icon_completion_cases::RunStandalone();
+        }
         else if (argc == 2 && std::string_view(argv[1]) == "--namespace-rejection") {
             native_namespace_rejection_cases::Run(); native_external_namespace_cases::Run();
         }

@@ -39,6 +39,11 @@ public:
     }
     void Clear() { values_.clear(); recency_.clear(); }
     std::size_t Size() const noexcept { return values_.size(); }
+    // Observation must not promote entries as Find does.
+    template<class Visitor> void VisitValues(Visitor visitor) const
+    {
+        for (const auto& [key, node] : values_) { (void)key; visitor(node.value); }
+    }
 private:
     struct Node { Value value; typename std::list<Key>::iterator position; };
     const std::size_t capacity_;

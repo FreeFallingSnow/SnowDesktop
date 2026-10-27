@@ -103,6 +103,11 @@ function M.duration(timeline)
     return math.max(0, maximum - minimum)
 end
 
+local function timelineRate(timeline)
+    local rate=finite(timeline.playbackRate,1)
+    return rate>0 and rate or 1
+end
+
 function M.position(timeline, playing, nowMs)
     local minimum, maximum = timelineBounds(timeline)
     if maximum <= minimum then return minimum end
@@ -110,7 +115,8 @@ function M.position(timeline, playing, nowMs)
     local updatedAt = math.max(0, finite(timeline.updatedAtMs, 0))
     local now = finite(nowMs, updatedAt)
     if playing == true and updatedAt > 0 and now > updatedAt then
-        position = M.clamp(position + now - updatedAt,
+        position = M.clamp(position + (now - updatedAt) *
+            timelineRate(timeline),
             minimum, maximum, minimum)
     end
     return position
@@ -139,7 +145,8 @@ function M.optimisticSeekPosition(timeline, targetMs, playing,
     local committedAt = math.max(0, finite(committedAtMs, 0))
     local now = finite(nowMs, committedAt)
     if playing == true and committedAt > 0 and now > committedAt then
-        position = M.clamp(position + now - committedAt,
+        position = M.clamp(position + (now - committedAt) *
+            timelineRate(timeline),
             minimum, maximum, minimum)
     end
     return position

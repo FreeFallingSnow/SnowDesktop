@@ -1,5 +1,7 @@
 #include "settings_ipc_backends.h"
+#include <thread>
 #include "settings_ipc_values.h"
+#include "settings/settings_ipc_services.h"
 #include "settings/icon_library_ipc_paging.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
@@ -288,13 +290,12 @@ struct BackendServer::Impl
         WidgetEngine* engineValue, SettingsWindowHostOptions configured)
         : channel(channelValue), controller(controllerValue), engine(engineValue), options(std::move(configured))
     {
-        channel.Bind<shell_extensions::CatalogueView, shell_extensions::Request, bool>("menu.inspect", [this](auto request, bool refresh) {
-            return options.contextMenu ? options.contextMenu(request, refresh) : shell_extensions::CatalogueView{};
-        });
+        BindContextMenuInspection(channel, {options.contextMenu, options.contextMenuClosed});
 #define SD_OPTION(Name, Return) \
         channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
         SD_OPTION(startupConflict, GeneralStartupConflict)
+        SD_OPTION(windowSupportStatus, window_support::SupportStatus)
         SD_OPTION(appliedFont, app_fonts::Selection)
         SD_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
         SD_OPTION(developerToolsVisible, bool)
@@ -327,6 +328,13 @@ struct BackendServer::Impl
         channel.Bind<bool, std::wstring>("options.ensureWidget", [this](std::wstring id) {
             return options.ensureWidgetSettingsInstance && options.ensureWidgetSettingsInstance(id);
         });
+        channel.BindDeferredRaw("options.runtimeModulesStatus", [](auto arguments, Channel::Completion reply) {
+            Reader(arguments).Finish();
+            std::thread([reply = std::move(reply)]() mutable {
+                try { reply(Pack(runtime_modules::Inspect()), {}); }
+                catch (...) { reply({}, std::current_exception()); }
+            }).detach();
+        });
         channel.BindDeferredRaw("options.refreshExternalState", [this](auto arguments, Channel::Completion reply) {
             Reader(arguments).Finish();
             auto complete = [reply = std::move(reply)]() { reply({}, {}); };
@@ -340,6 +348,12 @@ struct BackendServer::Impl
         });
         channel.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();
+        });
+        channel.Bind<void, bool, std::uint64_t>("options.configureWindowSupport", [this](bool enabled, std::uint64_t handle) {
+            const auto owner = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(handle));
+            if (!channel.OwnsPeerWindow(owner))
+                throw ProtocolError("window support owner does not belong to the settings connection");
+            if (options.configureWindowSupport) options.configureWindowSupport(enabled, owner);
         });
         channel.Bind<bool>("options.resetAdvancedFeatures", [this] {
             return options.resetAdvancedFeatures && options.resetAdvancedFeatures();
@@ -518,8 +532,14 @@ void BackendServer::ClosePages() noexcept { impl_->ClosePages(); }
 SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
 {
     SettingsWindowHostOptions options;
-    options.contextMenu = [&channel](const shell_extensions::Request &request, bool refresh) {
-        return channel.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
+    auto menu = CreateContextMenuInspectionProxy(channel);
+    options.contextMenu = std::move(menu.inspect);
+    options.contextMenuClosed = std::move(menu.closed);
+    options.runtimeModulesStatus = [&channel](auto completed) {
+        channel.RequestAsync("options.runtimeModulesStatus", Pack(), [completed = std::move(completed)](Bytes bytes, std::exception_ptr error) {
+            if (error) { completed({}); return; }
+            try { completed(Unpack<runtime_modules::Snapshot>(bytes)); } catch (...) { completed({}); }
+        });
     };
     options.windowTitle = channel.Call<std::wstring>("options.title");
     options.localize = [](std::string_view key) { return std::wstring(Locale::Instance().TrW(std::string(key).c_str())); };
@@ -528,6 +548,7 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.Name = [&channel] { return channel.Call<Return>("options." #Name); };
     SD_REMOTE_OPTION(searchInput, SettingsSearchIndexInput)
     SD_REMOTE_OPTION(startupConflict, GeneralStartupConflict)
+    SD_REMOTE_OPTION(windowSupportStatus, window_support::SupportStatus)
     SD_REMOTE_OPTION(appliedFont, app_fonts::Selection)
     SD_REMOTE_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
     SD_REMOTE_OPTION(developerToolsVisible, bool)
@@ -537,6 +558,12 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return channel.Call<bool>("options.ensureWidget", std::wstring(id)); };
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
+    options.configureWindowSupport = [&channel](bool enabled, HWND owner) {
+        // The user clicked in this foreground settings process. Transfer the
+        // foreground permission to the actual host before its worker invokes UAC.
+        AllowSetForegroundWindow(channel.PeerProcessId());
+        channel.Call<void>("options.configureWindowSupport", enabled, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(owner)));
+    };
     options.resetAdvancedFeatures = [&channel] { return channel.Call<bool>("options.resetAdvancedFeatures"); };
     options.widgetsPage.workshopAvailable = [&channel] { return channel.Call<bool>("options.workshopAvailable"); };
     options.widgetsPage.openWorkshop = [&channel](std::string_view) {

@@ -2,6 +2,7 @@
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_native.h"
+#include "diagnostics/performance_trace.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -10,12 +11,12 @@ void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
     snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);
     // Refresh all monitors, then synchronously cloak their taskbars before
     // either the Dock or the application lets Windows minimize the source.
-    if (ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+    if ((snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
             IsSystemTaskbarAutoHideEnabled()))
     {
         RefreshSystemTaskbarAppearance(false);
         if (!BeginSystemTaskbarMinimizeProtection(window))
-            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] not all taskbars acknowledged temporary cloaking",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarMinimizeProtection] not all taskbars acknowledged temporary cloaking",
                 DiagnosticLogLevel::Warning);
     }
     snowdesktop::dock_taskbar_diagnostics::Record(L"minimize-taskbar-protection-submitted", window);
@@ -31,7 +32,7 @@ void DesktopApp::StartDockForegroundMonitor()
         if (dockShellHookMessage_ && target && RegisterShellHookWindow(target))
             dockShellHookWindow_ = target;
         else
-            WriteDiagnosticLogEntry(L"Dock attention Shell hook registration failed");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"Dock attention Shell hook registration failed", DiagnosticLogLevel::Warning);
     }
     dockForegroundNotificationWindow_.store(
         controlHwnd_ && IsWindow(controlHwnd_)
@@ -80,6 +81,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    if (dockStartMenu_) dockStartMenu_->Cancel();
     if (dockShellHookWindow_)
         DeregisterShellHookWindow(dockShellHookWindow_);
     dockShellHookWindow_ = nullptr;
@@ -140,6 +142,7 @@ bool DesktopApp::IsShellDesktopForegroundWindow(HWND window) const
 
 void DesktopApp::HandleDockForegroundInteractionChanged()
 {
+    ClearSelectionForExternalWindow(GetForegroundWindow());
     ReconcileDesktopHoverState();
     UpdateSystemShowDesktopDockLayerGuard();
     RefreshDockForegroundState();
@@ -208,7 +211,7 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     snowdesktop::dock_taskbar_diagnostics::Record(
         guardTrace, foreground);
     ApplyFloatingDockLayerPolicy();
-    WriteDiagnosticLogEntry(guardTrace);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, guardTrace);
 }
 
 namespace
@@ -228,10 +231,15 @@ bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 
 bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
-    return (generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
-        AppearanceRequiresTaskbarHook(settings) ||
-        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
-            settings.systemTaskbarAutoHide);
+    namespace modules = snowdesktop::runtime_modules;
+    return modules::Allowed(modules::Module::Taskbar) &&
+        (ShouldSuppressSystemTaskbar(settings, generalSettings_.dockEnabled) ||
+         AppearanceRequiresTaskbarHook(settings) ||
+         (modules::Allowed(modules::Module::StartMenu) &&
+          snowdesktop::dock_settings_rules::ProtectDockStart(generalSettings_.dockEnabled,
+             settings.startMenuKeepTaskbarHidden, settings.systemTaskbarAutoHide || settings.suppressSystemTaskbar)) ||
+         (modules::Allowed(modules::Module::WindowMinimize) &&
+          ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled, settings.systemTaskbarAutoHide)));
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -314,6 +322,7 @@ bool IsSystemTaskbarShellUiWindow(HWND window)
 
 bool DesktopApp::RefreshSystemTaskbarWindowState()
 {
+    snowdesktop::performance::Scope trace("shared.taskbar", "window_state.scan");
     const auto previousStates = systemTaskbarMonitorWindowStates_;
     const bool previousShellUiActive =
         systemTaskbarShellUiActive_;
@@ -348,8 +357,11 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         knownMonitors.size() == static_cast<std::size_t>(monitorCount);
 
     ComPtr<IVirtualDesktopManager> virtualDesktopManager;
-    CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
-        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
+    {
+        snowdesktop::performance::Scope comTrace("shared.taskbar", "scan.com_setup");
+        CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
+    }
 
     struct EnumerationContext
     {
@@ -364,23 +376,26 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         SystemTaskbarWindowObservation> observations;
     context.observations = &observations;
 
-    const bool windowsKnown = EnumWindows([](HWND window, LPARAM value) -> BOOL {
-        auto* context = reinterpret_cast<EnumerationContext*>(value);
-        if (!IsSystemTaskbarCandidateWindow(window,
-            context->virtualDesktopManager))
+    const bool windowsKnown = [&context] {
+        snowdesktop::performance::Scope windowTrace("shared.taskbar", "scan.windows");
+        return EnumWindows([](HWND window, LPARAM value) -> BOOL {
+            auto* context = reinterpret_cast<EnumerationContext*>(value);
+            if (!IsSystemTaskbarCandidateWindow(window,
+                context->virtualDesktopManager))
+                return TRUE;
+            const HMONITOR monitor = MonitorFromWindow(window,
+                MONITOR_DEFAULTTONULL);
+            if (!monitor) return TRUE;
+            (*context->observations)[window] = {
+                monitor, IsZoomed(window) != FALSE
+            };
+            auto& state = (*context->states)[monitor];
+            state.visible = true;
+            if (IsZoomed(window))
+                state.maximized = true;
             return TRUE;
-        const HMONITOR monitor = MonitorFromWindow(window,
-            MONITOR_DEFAULTTONULL);
-        if (!monitor) return TRUE;
-        (*context->observations)[window] = {
-            monitor, IsZoomed(window) != FALSE
-        };
-        auto& state = (*context->states)[monitor];
-        state.visible = true;
-        if (IsZoomed(window))
-            state.maximized = true;
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&context)) != FALSE;
+        }, reinterpret_cast<LPARAM>(&context)) != FALSE;
+    }();
     if (!windowsKnown)
     {
         // A partial or failed scan is unknown, including on a monitor whose
@@ -402,32 +417,38 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
             std::move(observations);
     }
 
-    bool launcherVisible = false;
-    if (!taskbarAppVisibilityAttempted_)
     {
-        taskbarAppVisibilityAttempted_ = true;
-        CoCreateInstance(CLSID_AppVisibility, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&taskbarAppVisibility_));
-    }
-    if (taskbarAppVisibility_)
-    {
-        BOOL visible = FALSE;
-        if (SUCCEEDED(taskbarAppVisibility_->IsLauncherVisible(&visible)))
-            launcherVisible = visible != FALSE;
-    }
+        snowdesktop::performance::Scope shellTrace("shared.taskbar", "scan.shell_ui");
+        bool launcherVisible = false;
+        if (!taskbarAppVisibilityAttempted_)
+        {
+            taskbarAppVisibilityAttempted_ = true;
+            CoCreateInstance(CLSID_AppVisibility, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&taskbarAppVisibility_));
+        }
+        if (taskbarAppVisibility_)
+        {
+            BOOL visible = FALSE;
+            if (SUCCEEDED(taskbarAppVisibility_->IsLauncherVisible(&visible)))
+                launcherVisible = visible != FALSE;
+        }
 
-    const HWND foreground = GetForegroundWindow();
-    // ShellViewCoordinator is the preferred event source. On newer Windows
-    // 11 builds it may keep reporting Hidden for Search and the system
-    // sidebars, so retain their foreground identities as a narrow fallback.
-    const bool shellViewVisible =
-        (taskbarSearchVisibility_ &&
-            taskbarSearchVisibility_->IsVisible()) ||
-        IsSystemTaskbarShellUiWindow(foreground);
-    systemTaskbarShellUiActive_ = launcherVisible || shellViewVisible;
-    systemTaskbarShellUiMonitor_ = systemTaskbarShellUiActive_
-        ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
-        : nullptr;
+        const HWND foreground = GetForegroundWindow();
+        // ShellViewCoordinator is the preferred event source. On newer Windows
+        // 11 builds it may keep reporting Hidden for Search and the system
+        // sidebars, so retain their foreground identities as a narrow fallback.
+        const bool shellViewVisible =
+            (taskbarSearchVisibility_ &&
+                taskbarSearchVisibility_->IsVisible()) ||
+            IsSystemTaskbarShellUiWindow(foreground);
+        // A Dock-origin Start session owns its taskbar guard. Do not cache Start
+        // as a reason to unhide the bar immediately after that guard is released.
+        systemTaskbarShellUiActive_ = snowdesktop::dock_settings_rules::ShellPanelVisibility(
+            launcherVisible, IsDockStartMenuActive(), shellViewVisible);
+        systemTaskbarShellUiMonitor_ = systemTaskbarShellUiActive_
+            ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
+            : nullptr;
+    }
     systemTaskbarWindowStateObservedTick_ =
         systemTaskbarWindowStateChangedTick_.load();
 
@@ -454,6 +475,7 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
 bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
+    snowdesktop::performance::Scope trace("shared.taskbar", "refresh");
     const auto applyClassicSystemTheme = [this](bool enabled,
         const PersonalizationSettings& appearance) {
         if (!IsClassicSystemTaskbar()) return;
@@ -464,12 +486,18 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
             (void)RequestWindowsSystemLightThemeEnabled(*light);
     };
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
-        generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
-    const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
-    const bool hookRequired = appearanceRequired || protectActivation || suppressionRequested;
+    const bool autoHide = IsSystemTaskbarAutoHideEnabled();
+    const bool protectActivation = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) &&
+        ((snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize) &&
+            ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled, autoHide)) ||
+        (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::StartMenu) &&
+         snowdesktop::dock_settings_rules::ProtectDockStart(generalSettings_.dockEnabled,
+            dockSettings_.startMenuKeepTaskbarHidden, autoHide || dockSettings_.suppressSystemTaskbar)));
+    const bool suppressionRequested = ShouldSuppressSystemTaskbar(dockSettings_, generalSettings_.dockEnabled);
+    const bool hookRequired = snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && (appearanceRequired || protectActivation || suppressionRequested);
     if (!hookRequired)
     {
+        snowdesktop::performance::Value("shared.taskbar", "refresh.disabled", {}, 1);
         applyClassicSystemTheme(false, dockSettings_.systemTaskbarAppearance);
         ApplySystemTaskbarBackdrop(false, false,
             ResolveSystemTaskbarAppearance(dockSettings_));
@@ -480,12 +508,17 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const DWORD changedTick = systemTaskbarWindowStateChangedTick_.load();
     if (forceWindowScan || changedTick != systemTaskbarWindowStateObservedTick_)
     {
+        snowdesktop::performance::Value("shared.taskbar", forceWindowScan
+            ? "scan.request.forced" : "scan.request.dirty", {}, 1);
         const bool windowStateChanged =
             RefreshSystemTaskbarWindowState();
         systemTaskbarWindowScanTick_ = GetTickCount();
         if (skipUnchangedWindowState &&
             !windowStateChanged)
+        {
+            snowdesktop::performance::Value("shared.taskbar", "refresh.window_state_unchanged", {}, 1);
             return false;
+        }
     }
 
     struct TaskbarEnumerationContext
@@ -531,7 +564,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
     std::vector<HMONITOR> dockMonitors;
-    if (suppressionRequested && hwnd_)
+    if (suppressionRequested && !dockSettings_.suppressSystemTaskbarAllMonitors && hwnd_)
     {
         for (const auto& container : containers_)
         {
@@ -577,7 +610,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         // Panel access remains available even with all appearance rules off.
         target.shellPanelVisible = shellPanelVisible;
         ConfigureSystemTaskbarTargetProtection(
-            target, suppressionRequested, protectActivation, hasDock);
+            target, suppressionRequested, protectActivation, hasDock,
+            dockSettings_.suppressSystemTaskbarAllMonitors);
         if (selectedRule)
         {
             target.enabled =
@@ -607,15 +641,4 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
-}
-
-void DesktopApp::ToggleWindowsStartMenu()
-{
-    INPUT input[2]{};
-    input[0].type = INPUT_KEYBOARD;
-    input[0].ki.wVk = VK_LWIN;
-    input[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-    input[1] = input[0];
-    input[1].ki.dwFlags |= KEYEVENTF_KEYUP;
-    SendInput(static_cast<UINT>(std::size(input)), input, sizeof(INPUT));
 }

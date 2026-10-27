@@ -3,8 +3,14 @@ local json=module.require("modules/json.lua")
 local cities=module.require("modules/cities.lua")
 -- Reserve the fixed controls plus three complete city results in the panel.
 local cityPanelRows=16
-local skies={sky=resource.image("sky"),cloudy=resource.image("cloudy"),rain=resource.image("rain"),
-    snow=resource.image("snow"),fog=resource.image("fog"),night=resource.image("night")}
+local lazyImages=widget.hasFeature("resource.image.lazy")
+local function skyImage(name)
+    if lazyImages then return resource.image(name,{lazy=true}) end
+    return resource.image(name)
+end
+local skies={sky=skyImage("sky"),cloudy=skyImage("cloudy"),rain=skyImage("rain"),
+    snow=skyImage("snow"),fog=skyImage("fog"),night=skyImage("night")}
+local previousSky
 local weekdayKeys={"lua_widget.sky_weather.sun_day","lua_widget.sky_weather.mon_day",
     "lua_widget.sky_weather.tue_day","lua_widget.sky_weather.wed_day","lua_widget.sky_weather.thu_day",
     "lua_widget.sky_weather.fri_day","lua_widget.sky_weather.sat_day"}
@@ -127,7 +133,17 @@ local function background(_context,m)
     local scene=weather.background(data and data.code,nil)
     if data then scene=weather.background(data.code,data.night) end
     local bitmap=skies[scene.asset]
-    if bitmap then draw.imageFit(bitmap,0,0,w,h,"cover","center",1) end
+    if bitmap then
+        -- Drawing requests only this scene's decode. Keep the previous scene
+        -- while the host prepares its replacement on the background worker.
+        draw.imageFit(bitmap,0,0,w,h,"cover","center",1)
+        local imageStatus=lazyImages and resource.status(bitmap) or nil
+        if imageStatus and (imageStatus.state~="ready" or imageStatus.resident==false) then
+            if previousSky and previousSky~=bitmap then
+                draw.imageFit(previousSky,0,0,w,h,"cover","center",1)
+            end
+        else previousSky=bitmap end
+    end
     if scene.night then
         draw.gradientRect(0,0,w,h,0x101C4D,0x223D71,"vertical",0,0.85)
     elseif scene.asset=="rain" then draw.gradientRect(0,0,w,h,0x243B59,0x182D50,"vertical",0,scene.heavy and 0.64 or 0.47)

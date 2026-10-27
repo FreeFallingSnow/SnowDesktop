@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "app/render/foreground_paint_region.h"
 #include "settings/animation_settings.h"
 #include "widgets/widget_chrome_rules.h"
 #include "icons/large_icon_render_rules.h"
@@ -129,7 +130,7 @@ bool DesktopApp::HandleLargeIconPointerUp()
     return true;
 }
 
-void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
+void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context, const RECT* updateRect)
 {
     if (largeIconGesture_)
     {
@@ -146,19 +147,23 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         const auto rect = GetStandaloneWidgetFrameRect(geometry);
         const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
             gesture.config, CurrentPersonalization().cornerRadius);
-        snowdesktop::large_icon_renderer::DrawPlacementPreview(context, config, rect,
-            GetItemLayoutScale(geometry.bounds), gesture.valid, &geometry.bounds);
+        const RECT previewEnvelope = UnionCopy(rect, geometry.bounds);
+        if (snowdesktop::foreground_paint_region::Intersects(updateRect, previewEnvelope))
+            snowdesktop::large_icon_renderer::DrawPlacementPreview(context, config, rect,
+                GetItemLayoutScale(geometry.bounds), gesture.valid, &geometry.bounds);
         if (gesture.creating)
         {
+            const auto* page = FindGridPage(gridPages_, gesture.cell.pageId);
+            if (!page) return;
+            RECT hint = page->bounds; hint.left += 12; hint.right -= 12; hint.top = std::max(hint.top, hint.bottom - 66);
+            if (!snowdesktop::foreground_paint_region::Intersects(updateRect, hint)) return;
             ComPtr<IDWriteTextFormat> format;
             ComPtr<ID2D1SolidColorBrush> brush;
             snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL, 14.f, L"", &format);
             context->CreateSolidColorBrush(D2D1::ColorF(0xffffff), &brush);
-            const auto* page = FindGridPage(gridPages_, gesture.cell.pageId);
-            if (page && format && brush)
+            if (format && brush)
             {
-                RECT hint = page->bounds; hint.left += 12; hint.right -= 12; hint.top = std::max(hint.top, hint.bottom - 66);
                 DrawD2DRoundedRectangle(context, hint, 6, D2D1::ColorF(0x20242b, .95f), D2D1::ColorF(0xffffff, .2f));
                 const std::wstring message = _LW("largeIcon.placementHint");
                 format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER); format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -180,6 +185,9 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         GetLargeIconResizeHandleRect(item, &center);
         const float barHeight = CurrentPersonalization().barHeight;
         const int dot = ScaleWidgetCu(barHeight * .333f, geometry.cellScale);
+        const RECT handle{center.x - dot / 2, center.y - dot / 2,
+            center.x + (dot + 1) / 2, center.y + (dot + 1) / 2};
+        if (!snowdesktop::foreground_paint_region::Intersects(updateRect, handle)) continue;
         snowdesktop::large_icon_renderer::DrawResizeHandle(context, center, dot,
             static_cast<float>(ScaleWidgetCu(4.f * barHeight / 24.f, geometry.cellScale)), IsLightContentTheme(), item.selected);
     }
@@ -187,6 +195,9 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
 
 void DesktopApp::UpdateLargeIconHover()
 {
+    // An active track owns its clock. Sampling it from WM_PAINT would make
+    // unrelated partial paints consume its last pose and completion token.
+    if (compositionPaintInProgress_ && largeIconAnimationToken_) return;
     if (!CanEditLargeIcons())
     {
         CancelLargeIconGesture();
@@ -208,6 +219,9 @@ void DesktopApp::UpdateLargeIconHover()
         const auto& item = items_[index];
         const auto& config = EffectiveLargeIconConfig(item);
         auto& state = it->second;
+        const float previousHover = state.motion.hover, previousShine = state.motion.shine;
+        const float previousTiltX = state.motion.tiltX, previousTiltY = state.motion.tiltY;
+        const int previousEffect = state.motion.activeEffect;
         const auto frame = GetLargeIconFrameRect(item);
         const bool visible = IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_);
         if (state.visible != visible)
@@ -233,6 +247,18 @@ void DesktopApp::UpdateLargeIconHover()
             2 * (lastMousePoint_.y - frame.top) / height - 1, PtInRect(&frame, lastMousePoint_) != FALSE,
             visible && interactive && pointerInteractive, snowdesktop::animation::RuntimeAnimationsEnabled(),
             snowdesktop::animation::RuntimeDurationScale(), config) || moving;
+        if (!compositionPaintInProgress_ && (previousHover != state.motion.hover || previousShine != state.motion.shine ||
+            previousTiltX != state.motion.tiltX || previousTiltY != state.motion.tiltY))
+        {
+            // Dynamic titles stay clipped inside the fixed card. Keep the
+            // existing full path for effects with transformed extents.
+            if (config.effect == 2 && previousEffect == 2)
+            {
+                RECT dirty = frame; InflateRect(&dirty, 8, 8);
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            }
+            else InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         ++it;
     }
     if (!moving && largeIconAnimationToken_)
@@ -243,11 +269,7 @@ void DesktopApp::UpdateLargeIconHover()
     if (moving && !largeIconAnimationToken_)
         largeIconAnimationToken_ = uiAnimationScheduler_.StartAnimation(snowdesktop::UiAnimationSurface::Desktop,
             [this](double) {
-                // Clear before recomputing so the update can schedule the next
-                // finite transition; no animation survives a settled frame.
-                largeIconAnimationToken_ = 0;
                 UpdateLargeIconHover();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return false;
+                return largeIconAnimationToken_ != 0;
             });
 }

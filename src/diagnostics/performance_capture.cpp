@@ -1,23 +1,34 @@
 #include "performance_capture.h"
 #include "performance_trace.h"
+#include "performance_trace_control.h"
+#include "performance_control_pipe.h"
+#include "perfetto_session.h"
+#include "perfetto_categories.h"
+#include "performance_artifacts.h"
+#include "performance_analysis.h"
+#include "performance_compositor_clock.h"
+#include "performance_environment.h"
+#include "performance_process_resources.h"
+#include "common/json_value.h"
 
-#include <pdh.h>
-#include <pdhmsg.h>
+#include <bcrypt.h>
 #include <psapi.h>
-
+#include <shlobj.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <deque>
 #include <fstream>
 #include <iomanip>
-#include <map>
-#include <memory>
+#include <locale>
 #include <mutex>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
-#include <tuple>
 #include <vector>
 
 #ifndef SNOWDESKTOP_VERSION
@@ -29,818 +40,786 @@ namespace snowdesktop::performance
 namespace
 {
 using Clock = std::chrono::steady_clock;
-constexpr std::size_t MaximumGroups = 4096;
-thread_local ScopeToken* currentScope = nullptr;
-
-std::uint64_t Nanoseconds() noexcept
-{
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<
-        std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
-}
-std::uint64_t FileTimeValue(FILETIME value) noexcept
-{
-    return (static_cast<std::uint64_t>(value.dwHighDateTime) << 32) |
-        value.dwLowDateTime;
-}
-bool ThreadCpu(std::uint64_t& value) noexcept
-{
-    FILETIME created{}, exited{}, kernel{}, user{};
-    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
-        return false;
-    value = (FileTimeValue(kernel) + FileTimeValue(user)) * 100;
-    return true;
-}
 std::string Utf8(std::wstring_view value)
 {
     if (value.empty()) return {};
-    const int length = static_cast<int>(value.size());
-    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
-        value.data(), length, nullptr, 0, nullptr, nullptr);
-    if (size <= 0) return "invalid-utf16";
+    const auto length = static_cast<int>(value.size());
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), length, nullptr, 0, nullptr, nullptr);
+    if (size <= 0) throw std::runtime_error("invalidUtf16");
     std::string result(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), length,
-        result.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), length, result.data(), size, nullptr, nullptr);
+    return result;
+}
+std::wstring Wide(std::string_view value)
+{
+    if (value.empty()) return {};
+    const auto length = static_cast<int>(value.size());
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), length, nullptr, 0);
+    if (size <= 0) throw std::runtime_error("invalidUtf8");
+    std::wstring result(static_cast<std::size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), length, result.data(), size);
     return result;
 }
 std::string Quote(std::string_view value)
 {
-    std::string result = "\"";
+    std::string out = "\"";
     constexpr char hex[] = "0123456789abcdef";
-    for (unsigned char ch : value)
+    for (const unsigned char ch : value)
     {
-        if (ch == '\"' || ch == '\\')
-        {
-            result += '\\';
-            result += static_cast<char>(ch);
-        }
-        else if (ch < 32)
-        {
-            result += "\\u00";
-            result += hex[ch >> 4];
-            result += hex[ch & 15];
-        }
-        else result += static_cast<char>(ch);
+        if (ch == '\\' || ch == '"') { out.push_back('\\'); out.push_back(static_cast<char>(ch)); }
+        else if (ch < 32) { out += "\\u00"; out.push_back(hex[ch >> 4]); out.push_back(hex[ch & 15]); }
+        else out.push_back(static_cast<char>(ch));
     }
-    return result + '\"';
+    out.push_back('"');
+    return out;
 }
-
-struct Event
+bool ValidId(std::string_view value) noexcept
+{ return !value.empty() && value.size() <= 64 && value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") == value.npos; }
+const char* PhaseName(CapturePhase phase) noexcept
 {
-    std::uint64_t id = 0, parent = 0, correlation = 0, start = 0;
-    std::uint64_t wall = 0, selfWall = 0, cpu = 0, selfCpu = 0;
-    DWORD thread = 0;
-    std::string module, phase, owner;
-    bool gauge = false, cpuAvailable = false;
-    double value = 0;
-};
-struct Aggregate
-{
-    std::uint64_t count = 0, wall = 0, selfWall = 0, cpu = 0, selfCpu = 0;
-    std::uint64_t maximumWall = 0, cpuSamples = 0;
-    std::uint64_t firstAt = 0, lastAt = 0;
-    std::array<std::uint64_t, 32> histogram{};
-    double minimum = 0, maximum = 0, last = 0;
-};
-using GroupKey = std::tuple<bool, std::string, std::string, std::string>;
-
-using SummaryKey = std::tuple<std::string, std::string, std::wstring>;
-struct SummaryKeyLess
-{
-    using is_transparent = void;
-    template<typename A, typename B> bool operator()(const A& a, const B& b) const
+    switch (phase)
     {
-        const auto view = [](const auto& key) {
-            return std::tuple<std::string_view, std::string_view, std::wstring_view>{
-                std::get<0>(key), std::get<1>(key), std::get<2>(key) };
-        };
-        return view(a) < view(b);
+    case CapturePhase::Idle: return "idle"; case CapturePhase::Starting: return "starting";
+    case CapturePhase::Recording: return "recording"; case CapturePhase::Stopping: return "stopping";
+    case CapturePhase::Finalizing: return "finalizing"; case CapturePhase::Completed: return "completed";
+    case CapturePhase::Failed: return "failed";
     }
-};
-struct SummaryGroup
+    return "failed";
+}
+bool Running(CapturePhase phase) noexcept
+{ return phase == CapturePhase::Starting || phase == CapturePhase::Recording || phase == CapturePhase::Stopping || phase == CapturePhase::Finalizing; }
+const char* PresetName(CapturePreset preset) noexcept
 {
-    std::string ownerUtf8;
-    const std::wstring* owner = nullptr;
-    Aggregate aggregate;
-};
-struct SummaryBuffer
+    switch (preset) { case CapturePreset::Resource: return "idle"; case CapturePreset::Interaction: return "interaction"; case CapturePreset::Widget: return "widget-detail"; }
+    return "invalid";
+}
+const char* ProcessRole(CaptureProcessRole role) noexcept
+{ return role == CaptureProcessRole::WidgetPreview ? "widget-preview" : "host"; }
+std::string ModuleForCategory(std::string_view category)
 {
-    std::uint64_t generation = 0;
-    std::mutex mutex;
-    std::map<SummaryKey, SummaryGroup, SummaryKeyLess> groups;
+    if (category.starts_with("snow.lua.")) return "lua";
+    if (category.starts_with("snow.task")) return "task";
+    if (category == "snow.cache.detail") return "cache";
+    return std::string(category.substr(5));
+}
+std::string StringArray(const std::vector<std::string>& values)
+{
+    std::string result = "[";
+    for (const auto& value : values) { if (result.size() > 1) result += ','; result += Quote(value); }
+    return result + ']';
+}
+std::vector<std::string> Categories(CapturePreset preset, const std::vector<std::string>& modules = {})
+{
+    std::vector<std::string> result{ "snow.resource", "snow.lua.callback", "snow.task", "snow.frame", "snow.profiler" };
+    if (preset != CapturePreset::Resource)
+        for (const auto* item : { "snow.input", "snow.dock", "snow.popup", "snow.layout", "snow.render", "snow.icon" }) result.emplace_back(item);
+    if (preset == CapturePreset::Widget)
+        for (const auto* item : { "snow.lua.detail", "snow.cache.detail", "snow.task.detail" }) result.emplace_back(item);
+    if (!modules.empty()) std::erase_if(result, [&](const auto& category) {
+        return category != "snow.resource" && category != "snow.profiler" &&
+            std::find(modules.begin(), modules.end(), ModuleForCategory(category)) == modules.end();
+    });
+    return result;
+}
+std::string ConfigHash(const CaptureOptions& options)
+{
+    std::string canonical;
+    const auto add = [&](std::string_view part) { canonical += std::to_string(part.size()); canonical += ':'; canonical += part; };
+    add("snowdesktop.capture.config.v4"); add(ProcessRole(options.processRole)); add(PresetName(options.preset)); add(std::to_string(options.seconds));
+    add(std::to_string(options.bufferKiB)); add(std::to_string(options.maximumFileBytes)); add(options.scopeCpu ? "cpu" : "wall");
+    add(std::to_string(options.selectedInstances.size()));
+    for (const auto& owner : options.selectedInstances) add(Utf8(owner));
+    add(std::to_string(options.modules.size()));
+    for (const auto& module : options.modules) add(module);
+    add(std::to_string(options.inputSampleEvery));
+    std::array<unsigned char, 32> digest{};
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        throw std::runtime_error("configFingerprintFailed");
+    const auto status = BCryptHash(algorithm, nullptr, 0, reinterpret_cast<PUCHAR>(canonical.data()),
+        static_cast<ULONG>(canonical.size()), digest.data(), static_cast<ULONG>(digest.size()));
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (status < 0) throw std::runtime_error("configFingerprintFailed");
+    std::ostringstream out;
+    for (const auto byte : digest) out << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);
+    return out.str();
+}
+bool SameRequest(const CaptureOptions& a, const CaptureOptions& b)
+{
+    return a.session == b.session && a.requestId == b.requestId && a.output == b.output &&
+        a.seconds == b.seconds && a.bufferKiB == b.bufferKiB && a.maximumFileBytes == b.maximumFileBytes &&
+        a.preset == b.preset && a.processRole == b.processRole && a.scopeCpu == b.scopeCpu && a.selectedInstances == b.selectedInstances &&
+        a.modules == b.modules && a.inputSampleEvery == b.inputSampleEvery;
+}
+struct File
+{
+    HANDLE value = INVALID_HANDLE_VALUE;
+    ~File() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
-thread_local std::weak_ptr<SummaryBuffer> localSummary;
-std::atomic<std::uint64_t> summaryGeneration{ 0 };
-
+std::string HashFile(const std::filesystem::path& path)
+{
+    File file{ CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr) };
+    if (file.value == INVALID_HANDLE_VALUE) return {};
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
+    const auto finish = [&] { if (hash) BCryptDestroyHash(hash); BCryptCloseAlgorithmProvider(algorithm, 0); };
+    if (BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) < 0) { finish(); return {}; }
+    std::array<unsigned char, 65536> bytes{};
+    DWORD read = 0;
+    bool success = true;
+    while (true)
+    {
+        if (!ReadFile(file.value, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr)) { success = false; break; }
+        if (!read) break;
+        if (BCryptHashData(hash, bytes.data(), read, 0) < 0) { success = false; break; }
+    }
+    std::array<unsigned char, 32> digest{};
+    if (BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0) success = false;
+    finish();
+    if (!success) return {};
+    std::ostringstream out;
+    for (const auto byte : digest) out << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);
+    return out.str();
+}
+std::string ExecutableHash()
+{
+    wchar_t path[32768]{};
+    const auto length = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
+    return length && length < std::size(path) ? HashFile(path) : std::string{};
+}
+bool SafeDirectory(const std::filesystem::path& path, bool allowMissing)
+{
+    if (!IsLocalCapturePath(path)) return false;
+    auto current = path;
+    while (!current.empty())
+    {
+        const auto attributes = GetFileAttributesW(current.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const auto error = GetLastError();
+            if (!allowMissing || (error != ERROR_PATH_NOT_FOUND && error != ERROR_FILE_NOT_FOUND)) return false;
+        }
+        else if (!(attributes & FILE_ATTRIBUTE_DIRECTORY) || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+        const auto parent = current.parent_path();
+        if (parent == current) break;
+        current = parent;
+    }
+    return true;
+}
+std::uint64_t StorageRemaining(const std::filesystem::path& root)
+{
+    constexpr std::uint64_t quota = 1024ULL * 1024 * 1024;
+    std::uint64_t bytes = 0;
+    unsigned entries = 0, completed = 0;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(root))
+    {
+        if (++entries > 10000) throw std::runtime_error("captureStorageEntryLimit");
+        const auto attributes = GetFileAttributesW(item.path().c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) throw std::runtime_error("captureStoragePathRejected");
+        if (!item.is_regular_file()) continue;
+        const auto size = item.file_size();
+        if (size > quota - bytes) throw std::runtime_error("captureStorageQuota");
+        bytes += size;
+        if (item.path().filename() == L"session.json")
+        {
+            if (size > 65536) throw std::runtime_error("captureManifestLimit");
+            std::ifstream input(item.path(), std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(input)), {});
+            JsonValue manifest; std::string error;
+            if (!ParseJson(text, manifest, &error)) throw std::runtime_error("captureStorageManifestInvalid");
+            const auto* complete = manifest.Find("completion");
+            if (complete && complete->IsBoolean() && complete->boolean) ++completed;
+        }
+    }
+    if (completed >= 20 || bytes + 65536 >= quota) throw std::runtime_error("captureStorageQuota");
+    return quota - bytes - 65536; // Reserve bounded manifest/metadata space.
+}
+struct Record
+{
+    CaptureOptions options;
+    std::filesystem::path managedRoot;
+    std::function<void(bool)> gpuDemand;
+    CaptureSnapshot snapshot;
+    Clock::time_point started{};
+    std::string executableSha256, traceSha256;
+    std::string environment = "null";
+    std::vector<std::uint64_t> selectedOwners;
+    bool finalWidgetSample = false;
+    std::uint64_t firstTraceNs = 0, lastTraceNs = 0;
+    TraceQuality quality;
+};
 struct State
 {
-    std::mutex mutex;
-    std::mutex waitMutex;
+    std::mutex mutex, startMutex;
     std::condition_variable wake;
     std::thread worker;
-    std::atomic<LRESULT> status{ ProtocolIdle };
     std::atomic<bool> stopRequested{ false };
-    bool recording = false;
-    std::uint64_t generation = 0, nextId = 0, started = 0, ended = 0;
-    std::uint64_t droppedEvents = 0, droppedGroups = 0, probeErrors = 0;
-    CaptureOptions options;
-    std::vector<Event> events;
-    std::map<GroupKey, Aggregate> groups;
-    std::vector<std::shared_ptr<SummaryBuffer>> summaryBuffers;
-    std::atomic<std::size_t> summaryGroupCount{ 0 };
-    std::atomic<std::uint64_t> summaryDroppedGroups{ 0 };
-    std::map<std::pair<std::string, std::string>, std::vector<std::uint64_t>> drawOrigins;
-    std::uint64_t droppedLinks = 0;
-    HANDLE output = INVALID_HANDLE_VALUE;
-    std::filesystem::path partial;
-    ~State()
-    {
-        stopRequested.store(true);
-        wake.notify_all();
-        if (worker.joinable()) worker.join();
-    }
+    std::atomic<bool> analysisCancel{ false };
+    std::atomic<std::uint64_t> widgetSamples{0};
+    std::atomic<HWND> window{ nullptr };
+    std::shared_ptr<Record> current, pending, pendingAnalysis;
+    std::deque<std::shared_ptr<Record>> history;
+    std::filesystem::path root;
+    std::function<void(bool)> gpuDemand;
+    std::uint64_t generation = 0;
+    bool workerExit = false, analysisActive = false;
+    ~State() { { std::lock_guard lock(mutex); workerExit = true; stopRequested.store(true); analysisCancel.store(true); } wake.notify_all(); if (worker.joinable()) worker.join(); }
 };
 State state;
-
-void RecordLocked(Event event)
-{
-    const GroupKey key{ event.gauge, event.module, event.phase, event.owner };
-    auto found = state.groups.find(key);
-    if (found == state.groups.end() && state.groups.size() < MaximumGroups)
-        found = state.groups.emplace(key, Aggregate{}).first;
-    if (found == state.groups.end()) ++state.droppedGroups;
-    else
-    {
-        auto& group = found->second;
-        if (group.count == 0)
-        {
-            group.minimum = group.maximum = event.value;
-            group.firstAt = event.start;
-        }
-        group.lastAt = event.start;
-        ++group.count;
-        group.minimum = std::min(group.minimum, event.value);
-        group.maximum = std::max(group.maximum, event.value);
-        group.last = event.value;
-        group.wall += event.wall;
-        group.selfWall += event.selfWall;
-        group.maximumWall = std::max(group.maximumWall, event.wall);
-        if (event.cpuAvailable)
-        {
-            ++group.cpuSamples;
-            group.cpu += event.cpu;
-            group.selfCpu += event.selfCpu;
-        }
-        std::size_t bucket = 0;
-        std::uint64_t upper = 1000;
-        while (event.wall > upper && bucket + 1 < group.histogram.size())
-        {
-            ++bucket;
-            upper *= 2;
-        }
-        ++group.histogram[bucket];
-    }
-    if (state.options.mode == CaptureMode::Summary) return;
-    if (state.events.size() < state.options.maximumEvents)
-        state.events.push_back(std::move(event));
-    else ++state.droppedEvents;
-}
-
-void BeginScope(ScopeToken& token, std::string_view module,
-    std::string_view phase, std::wstring_view owner,
-    std::uint64_t correlation) noexcept
-{
-    try
-    {
-        std::lock_guard lock(state.mutex);
-        if (!state.recording) return;
-        token.module = std::string(module.substr(0, 256));
-        token.phase = std::string(phase.substr(0, 512));
-        token.owner = Utf8(owner.substr(0, 256));
-        token.previous = currentScope;
-        if (currentScope && currentScope->generation == state.generation)
-        {
-            token.parent = currentScope->id;
-            if (token.owner.empty() && module == "lua")
-                token.owner = currentScope->owner;
-            if (!correlation) correlation = currentScope->correlation;
-        }
-        token.generation = state.generation;
-        token.id = ++state.nextId;
-        token.correlation = correlation;
-        token.thread = GetCurrentThreadId();
-        token.cpuAvailable = state.options.scopeCpu && ThreadCpu(token.cpuStart);
-        token.start = Nanoseconds();
-        currentScope = &token;
-    }
-    catch (...) { token.generation = 0; }
-}
-
-void EndScope(ScopeToken& token) noexcept
-{
-    if (!token.generation) return;
-    const std::uint64_t ended = Nanoseconds();
-    std::uint64_t cpuEnd = 0;
-    const bool hasCpu = token.cpuAvailable && ThreadCpu(cpuEnd);
-    currentScope = token.previous;
-    const auto wall = ended - token.start;
-    const auto cpu = hasCpu && cpuEnd >= token.cpuStart
-        ? cpuEnd - token.cpuStart : 0;
-    if (token.previous && token.previous->generation == token.generation)
-    {
-        token.previous->childWall += wall;
-        token.previous->childCpu += cpu;
-    }
-    try
-    {
-        std::lock_guard lock(state.mutex);
-        // A scope crossing stop/start must never contaminate a later session.
-        if (!state.recording || token.generation != state.generation) return;
-        Event event;
-        event.id = token.id;
-        event.parent = token.parent;
-        event.correlation = token.correlation;
-        event.start = token.start - state.started;
-        event.wall = wall;
-        event.selfWall = wall - std::min(wall, token.childWall);
-        event.cpu = cpu;
-        event.selfCpu = cpu - std::min(cpu, token.childCpu);
-        event.cpuAvailable = hasCpu;
-        event.thread = token.thread;
-        event.module = std::move(token.module);
-        event.phase = std::move(token.phase);
-        event.owner = std::move(token.owner);
-        RecordLocked(std::move(event));
-    }
-    catch (...) { /* Probes must not change application behavior. */ }
-}
-
-void RecordValue(std::string_view module, std::string_view phase,
-    std::wstring_view owner, double value, std::uint64_t correlation) noexcept
-{
-    try
-    {
-        std::lock_guard lock(state.mutex);
-        if (!state.recording || !std::isfinite(value)) return;
-        Event event;
-        event.id = ++state.nextId;
-        event.start = Nanoseconds() - state.started;
-        event.module = std::string(module.substr(0, 256));
-        event.phase = std::string(phase.substr(0, 512));
-        event.owner = Utf8(owner.substr(0, 256));
-        event.gauge = true;
-        event.value = value;
-        event.thread = GetCurrentThreadId();
-        event.correlation = correlation;
-        if (currentScope && currentScope->generation == state.generation)
-        {
-            event.parent = currentScope->id;
-            if (!correlation) event.correlation = currentScope->correlation;
-        }
-        RecordLocked(std::move(event));
-    }
-    catch (...) { /* A diagnostic allocation failure cannot fail a callback. */ }
-}
-void RecordDrawLink(std::string_view surface, std::wstring_view owner,
-    bool consume) noexcept
-{
-    try
-    {
-        std::lock_guard lock(state.mutex);
-        if (!state.recording || !currentScope ||
-            currentScope->generation != state.generation) return;
-        const auto key = std::make_pair(std::string(surface.substr(0, 64)), Utf8(owner.substr(0, 256)));
-        if (!consume)
-        {
-            auto found = state.drawOrigins.find(key);
-            if (found == state.drawOrigins.end() && state.drawOrigins.size() < 1024)
-                found = state.drawOrigins.emplace(key, std::vector<std::uint64_t>{}).first;
-            if (found == state.drawOrigins.end() || found->second.size() >= 16)
-            { ++state.droppedLinks; return; }
-            found->second.push_back(currentScope->id);
-            return;
-        }
-        auto found = state.drawOrigins.find(key);
-        if (found == state.drawOrigins.end()) return;
-        for (auto source : found->second)
-        {
-            Event event;
-            event.id = ++state.nextId;
-            event.parent = currentScope->id;
-            event.start = Nanoseconds() - state.started;
-            event.module = "widget.draw.source";
-            event.phase = key.first;
-            event.owner = key.second;
-            event.thread = GetCurrentThreadId();
-            event.gauge = true;
-            event.value = static_cast<double>(source);
-            RecordLocked(std::move(event));
-        }
-        state.drawOrigins.erase(found);
-    }
-    catch (...) { /* Best-effort causality must not affect invalidation. */ }
-}
-void BeginSummary(ScopeToken& token, std::string_view module,
-    std::string_view phase, std::wstring_view owner, std::uint64_t) noexcept
-{
-    try
-    {
-        const auto generation = summaryGeneration.load(std::memory_order_acquire);
-        if (!generation) return;
-        auto bufferRef = localSummary.lock();
-        if (!bufferRef || bufferRef->generation != generation)
-        {
-            std::lock_guard lock(state.mutex);
-            if (!state.recording || state.generation != generation) return;
-            if (state.summaryBuffers.size() >= 64)
-            { ++state.summaryDroppedGroups; return; }
-            auto buffer = std::make_shared<SummaryBuffer>();
-            buffer->generation = generation;
-            state.summaryBuffers.push_back(buffer);
-            bufferRef = std::move(buffer);
-            localSummary = bufferRef;
-        }
-        module = module.substr(0, 256);
-        phase = phase.substr(0, 512);
-        owner = owner.substr(0, 256);
-        if (owner.empty() && module == "lua" && currentScope &&
-            currentScope->generation == generation && currentScope->summaryGroup)
-            owner = *static_cast<SummaryGroup*>(currentScope->summaryGroup)->owner;
-        auto& buffer = *bufferRef;
-        std::lock_guard lock(buffer.mutex);
-        if (summaryGeneration.load(std::memory_order_relaxed) != generation) return;
-        auto found = buffer.groups.find(std::tuple{ module, phase, owner });
-        if (found == buffer.groups.end())
-        {
-            if (state.summaryGroupCount.fetch_add(1) >= MaximumGroups)
-            {
-                --state.summaryGroupCount;
-                ++state.summaryDroppedGroups;
-                return;
-            }
-            found = buffer.groups.try_emplace(SummaryKey{
-                std::string(module), std::string(phase), std::wstring(owner) }).first;
-            found->second.owner = &std::get<2>(found->first);
-            found->second.ownerUtf8 = Utf8(owner);
-        }
-        token.generation = generation;
-        token.summaryGroup = &found->second;
-        token.summaryBuffer = &buffer;
-        token.summaryStorage = std::move(bufferRef);
-        token.previous = currentScope;
-        token.start = Nanoseconds();
-        currentScope = &token;
-    }
-    catch (...) { ++state.summaryDroppedGroups; }
-}
-
-void EndSummary(ScopeToken& token) noexcept
-{
-    if (!token.generation) return;
-    const auto ended = Nanoseconds();
-    currentScope = token.previous;
-    if (summaryGeneration.load(std::memory_order_acquire) != token.generation) return;
-    const auto wall = ended - token.start;
-    if (token.previous && token.previous->generation == token.generation)
-        token.previous->childWall += wall;
-    try
-    {
-        auto& buffer = *static_cast<SummaryBuffer*>(token.summaryBuffer);
-        std::lock_guard lock(buffer.mutex);
-        if (summaryGeneration.load(std::memory_order_relaxed) != token.generation) return;
-        auto& group = static_cast<SummaryGroup*>(token.summaryGroup)->aggregate;
-        ++group.count;
-        group.wall += wall;
-        group.selfWall += wall - std::min(wall, token.childWall);
-        group.maximumWall = std::max(group.maximumWall, wall);
-        std::size_t bucket = 0;
-        std::uint64_t upper = 1000;
-        while (wall > upper && bucket + 1 < group.histogram.size())
-        { ++bucket; upper *= 2; }
-        ++group.histogram[bucket];
-    }
-    catch (...) { ++state.summaryDroppedGroups; }
-}
-
-// Summary scopes retain per-thread aggregates only. Labels are interned once
-// per group; hot calls do not allocate, transcode UTF-16, query thread CPU or
-// contend on the global trace lock. A buffer lock protects stop/export races.
-void MergeSummariesLocked()
-{
-    state.droppedGroups += state.summaryDroppedGroups.load();
-    for (const auto& buffer : state.summaryBuffers)
-    {
-        std::lock_guard lock(buffer->mutex);
-        for (const auto& [key, source] : buffer->groups)
-        {
-            if (!source.aggregate.count) continue;
-            GroupKey targetKey{ false, std::get<0>(key), std::get<1>(key), source.ownerUtf8 };
-            auto found = state.groups.find(targetKey);
-            if (found == state.groups.end() && state.groups.size() >= MaximumGroups)
-            { state.droppedGroups += source.aggregate.count; continue; }
-            if (found == state.groups.end())
-                found = state.groups.emplace(std::move(targetKey), Aggregate{}).first;
-            auto& target = found->second;
-            const auto& group = source.aggregate;
-            target.count += group.count;
-            target.wall += group.wall;
-            target.selfWall += group.selfWall;
-            target.maximumWall = std::max(target.maximumWall, group.maximumWall);
-            for (std::size_t i = 0; i < group.histogram.size(); ++i)
-                target.histogram[i] += group.histogram[i];
-        }
-        // Scope tokens own their buffer across stop; inactive threads retain
-        // only a weak reference, so stopping releases unused group storage.
-    }
-}
-
-void IgnoreDrawLink(std::string_view, std::wstring_view, bool) noexcept {}
-const Hooks traceHooks{ BeginScope, EndScope, RecordValue, RecordDrawLink };
-const Hooks summaryHooks{ BeginSummary, EndSummary, RecordValue, IgnoreDrawLink };
-
-class GpuSampler
-{
-public:
-    GpuSampler()
-    {
-        Scope setup("profiler", "gpu.initialize");
-        if (PdhOpenQueryW(nullptr, 0, &query_) != ERROR_SUCCESS) return;
-        Add(L"\\GPU Engine(*)\\Utilization Percentage", engine_);
-        Add(L"\\GPU Process Memory(*)\\Dedicated Usage", dedicated_);
-        Add(L"\\GPU Process Memory(*)\\Shared Usage", shared_);
-        baseline_ = PdhCollectQueryData(query_) == ERROR_SUCCESS;
-    }
-    ~GpuSampler() { if (query_) PdhCloseQuery(query_); }
-    void Sample()
-    {
-        if (!query_ || PdhCollectQueryData(query_) != ERROR_SUCCESS)
-        {
-            Value("process", "gpu_query_available", {}, 0);
-            return;
-        }
-        if (!baseline_) { baseline_ = true; return; }
-        const auto engineCount = Emit(engine_, "gpu_engine_percent");
-        const auto dedicatedCount = Emit(dedicated_, "gpu_dedicated_bytes");
-        const auto sharedCount = Emit(shared_, "gpu_shared_bytes");
-        // No matching PID instance is unavailable, not a fabricated zero.
-        Value("process", "gpu_engine_instances", {}, engineCount);
-        Value("process", "gpu_dedicated_instances", {}, dedicatedCount);
-        Value("process", "gpu_shared_instances", {}, sharedCount);
-    }
-private:
-    void Add(const wchar_t* path, PDH_HCOUNTER& counter)
-    {
-        if (PdhAddEnglishCounterW(query_, path, 0, &counter) != ERROR_SUCCESS)
-            counter = nullptr;
-    }
-    unsigned Emit(PDH_HCOUNTER counter, const char* name)
-    {
-        if (!counter) return 0;
-        DWORD bytes = 0, count = 0;
-        if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
-                &bytes, &count, nullptr) != PDH_MORE_DATA ||
-            bytes > 16 * 1024 * 1024) return 0;
-        std::vector<std::uint64_t> storage((bytes + 7) / 8);
-        auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(storage.data());
-        if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
-                &bytes, &count, items) != ERROR_SUCCESS) return 0;
-        const std::wstring prefix = L"pid_" +
-            std::to_wstring(GetCurrentProcessId()) + L"_";
-        unsigned matches = 0;
-        for (DWORD i = 0; i < count; ++i)
-        {
-            const auto& item = items[i];
-            if (!item.szName || !std::wstring_view(item.szName).starts_with(prefix) ||
-                (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA &&
-                 item.FmtValue.CStatus != PDH_CSTATUS_NEW_DATA)) continue;
-            Value("process", name, item.szName, item.FmtValue.doubleValue);
-            ++matches;
-        }
-        return matches;
-    }
-    PDH_HQUERY query_ = nullptr;
-    PDH_HCOUNTER engine_ = nullptr, dedicated_ = nullptr, shared_ = nullptr;
-    bool baseline_ = false;
-};
+UINT SampleMessage() noexcept
+{ static const auto message = RegisterWindowMessageW(L"FreeFallingSnow.SnowDesktop.Performance.Sample.v3"); return message; }
+UINT ControlMessage() noexcept
+{ static const auto message = RegisterWindowMessageW(ControlMessageName); return message; }
+UINT StateMessage() noexcept
+{ static const auto message = RegisterWindowMessageW(L"FreeFallingSnow.SnowDesktop.Performance.State.v3"); return message; }
+void NotifyState() noexcept
+{ const auto window = state.window.load(); if (window && StateMessage()) PostMessageW(window, StateMessage(), 0, 0); }
+void SetPhase(const std::shared_ptr<Record>& record, CapturePhase phase)
+{ { std::lock_guard lock(state.mutex); record->snapshot.phase = phase; } NotifyState(); }
 
 void SampleProcess()
 {
     Scope scope("profiler", "sample.process");
-    FILETIME created{}, exited{}, kernel{}, user{};
-    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
-        Value("process", "cpu_total_ms", {},
-            static_cast<double>(FileTimeValue(kernel) + FileTimeValue(user)) / 10000.0);
-    PROCESS_MEMORY_COUNTERS_EX memory{};
-    memory.cb = sizeof(memory);
-    if (K32GetProcessMemoryInfo(GetCurrentProcess(),
-            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory)))
-    {
-        Value("process", "private_commit_bytes", {}, static_cast<double>(memory.PrivateUsage));
-        Value("process", "working_set_bytes", {}, static_cast<double>(memory.WorkingSetSize));
-        Value("process", "page_fault_count", {}, memory.PageFaultCount);
-    }
-    DWORD handles = 0;
-    if (GetProcessHandleCount(GetCurrentProcess(), &handles))
-        Value("process", "handle_count", {}, handles);
+    process_resources::RecordHostCounters();
 }
 
-std::string Report()
-{
-    std::ostringstream out;
-    out.imbue(std::locale::classic());
-    out << std::setprecision(12);
-    out << "{\"schemaVersion\":1,\"session\":" << Quote(state.options.session)
-        << ",\"captureMode\":" << Quote(state.options.mode == CaptureMode::Summary ? "summary" : "trace")
-        << ",\"scopeCpuEnabled\":" << (state.options.scopeCpu ? "true" : "false")
-        << ",\"timelinePolicy\":" << Quote(state.options.mode == CaptureMode::Summary ? "none" : "prefix")
-        << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
-        << ",\"processId\":" << GetCurrentProcessId()
-        << ",\"logicalProcessors\":" << GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)
-        << ",\"durationMs\":" << static_cast<double>(state.ended - state.started) / 1e6
-        << ",\"stopReason\":" << Quote(state.stopRequested.load() ? "requested" : "duration")
-        << ",\"eventLimit\":" << state.options.maximumEvents
-        << ",\"droppedEvents\":" << state.droppedEvents
-        << ",\"droppedGroups\":" << state.droppedGroups
-        << ",\"droppedLinks\":" << state.droppedLinks
-        << ",\"probeErrors\":" << state.probeErrors
-        << ",\"limitations\":["
-           "\"Scope CPU is optional; cpuSamples=0 means unavailable, not zero CPU. Enabled short-call CPU can quantize to zero.\","
-           "\"Self timings exclude instrumented synchronous children only; inclusive rows overlap.\","
-           "\"Task correlations are lifecycle links, not asynchronous CPU ownership.\","
-           "\"GPU counters are per process/engine; shared DWM work and per-widget GPU time are not attributed.\","
-           "\"Lua bytes exclude native heaps, textures and shared caches; surface bytes are estimates.\","
-           "\"Trace mode retains a bounded timeline prefix; summary mode intentionally omits events and draw-source links.\","
-           "\"Scopes spanning capture boundaries are omitted; counters are sampled, not exact peaks.\","
-           "\"Profiler overhead is included in process totals; instrumentation itself is not fully timed.\"],\"groups\":[";
-    bool comma = false;
-    for (const auto& [key, group] : state.groups)
-    {
-        const auto& [gauge, module, phase, owner] = key;
-        if (comma) out << ',';
-        comma = true;
-        out << "{\"kind\":" << Quote(gauge ? "gauge" : "scope")
-            << ",\"module\":" << Quote(module) << ",\"phase\":" << Quote(phase)
-            << ",\"owner\":" << Quote(owner) << ",\"count\":" << group.count;
-        if (gauge)
-            out << ",\"min\":" << group.minimum << ",\"max\":" << group.maximum
-                << ",\"last\":" << group.last
-                << ",\"firstAtMs\":" << static_cast<double>(group.firstAt) / 1e6
-                << ",\"lastAtMs\":" << static_cast<double>(group.lastAt) / 1e6;
-        else
-        {
-            std::uint64_t cumulative = 0, upper = 1000;
-            for (std::size_t i = 0; i < group.histogram.size(); ++i)
-            {
-                cumulative += group.histogram[i];
-                if (cumulative >= (group.count * 95 + 99) / 100) break;
-                upper *= 2;
-            }
-            out << ",\"wallMs\":" << static_cast<double>(group.wall) / 1e6
-                << ",\"selfWallMs\":" << static_cast<double>(group.selfWall) / 1e6
-                << ",\"maxWallMs\":" << static_cast<double>(group.maximumWall) / 1e6
-                << ",\"p95WallUpperMs\":" << static_cast<double>(upper) / 1e6
-                << ",\"cpuMs\":" << static_cast<double>(group.cpu) / 1e6
-                << ",\"selfCpuMs\":" << static_cast<double>(group.selfCpu) / 1e6
-                << ",\"cpuSamples\":" << group.cpuSamples;
-        }
-        out << '}';
-    }
-    out << "],\"events\":[";
-    comma = false;
-    for (const auto& event : state.events)
-    {
-        if (comma) out << ',';
-        comma = true;
-        out << "{\"id\":" << event.id << ",\"parent\":" << event.parent
-            << ",\"correlation\":" << event.correlation
-            << ",\"thread\":" << event.thread
-            << ",\"atMs\":" << static_cast<double>(event.start) / 1e6
-            << ",\"module\":" << Quote(event.module)
-            << ",\"phase\":" << Quote(event.phase)
-            << ",\"owner\":" << Quote(event.owner)
-            << ",\"kind\":" << Quote(event.gauge ? "gauge" : "scope");
-        if (event.gauge) out << ",\"value\":" << event.value;
-        else out << ",\"wallMs\":" << static_cast<double>(event.wall) / 1e6
-            << ",\"selfWallMs\":" << static_cast<double>(event.selfWall) / 1e6
-            << ",\"cpuMs\":" << static_cast<double>(event.cpu) / 1e6
-            << ",\"selfCpuMs\":" << static_cast<double>(event.selfCpu) / 1e6
-            << ",\"cpuAvailable\":" << (event.cpuAvailable ? "true" : "false");
-        out << '}';
-    }
-    return out.str() + "]}";
-}
 
-void Worker() noexcept
+
+void SampleIo()
 {
-    bool succeeded = false;
+    IO_COUNTERS counters{};
+    if (!GetProcessIoCounters(GetCurrentProcess(), &counters)) return;
+    Value("process", "io_read_bytes", {}, static_cast<double>(counters.ReadTransferCount));
+    Value("process", "io_write_bytes", {}, static_cast<double>(counters.WriteTransferCount));
+    Value("process", "io_other_bytes", {}, static_cast<double>(counters.OtherTransferCount));
+    Value("process", "io_read_operations", {}, static_cast<double>(counters.ReadOperationCount));
+    Value("process", "io_write_operations", {}, static_cast<double>(counters.WriteOperationCount));
+}
+bool RequestWidgetSample(std::uint64_t generation)
+{
+    const auto window = state.window.load();
+    return window && SampleMessage() && PostMessageW(window, SampleMessage(), static_cast<WPARAM>(generation), 0);
+}
+std::string Manifest(const Record& record, bool complete)
+{
+    SYSTEM_INFO system{}; GetSystemInfo(&system);
+    const auto allProcessors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    std::ostringstream out; out.imbue(std::locale::classic()); out << std::setprecision(12);
+    out << "{\"schemaVersion\":2,\"probeSchemaVersion\":2,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
+        << ",\"generation\":" << record.snapshot.generation << ",\"requestId\":" << Quote(record.snapshot.requestId)
+        << ",\"state\":" << Quote(complete ? "completed" : "failed") << ",\"completion\":" << (complete ? "true" : "false")
+        << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
+        << ",\"managedStorage\":" << (record.managedRoot.empty() ? "false" : "true")
+        << ",\"finalWidgetSampleConfirmed\":" << (record.finalWidgetSample ? "true" : "false")
+        << ",\"processId\":" << GetCurrentProcessId() << ",\"processRole\":" << Quote(ProcessRole(record.options.processRole)) << ",\"sourceCommit\":null,\"executableSha256\":"
+        << (record.executableSha256.empty() ? "null" : Quote(record.executableSha256))
+        << ",\"traceSha256\":" << (record.traceSha256.empty() ? "null" : Quote(record.traceSha256))
+        << ",\"logicalProcessors\":" << (allProcessors ? allProcessors : system.dwNumberOfProcessors) << ",\"preset\":" << Quote(PresetName(record.options.preset))
+        << ",\"configHash\":" << Quote(record.snapshot.configHash) << ",\"scopeCpuEnabled\":" << (record.options.scopeCpu ? "true" : "false")
+        << ",\"moduleFilter\":" << StringArray(record.options.modules)
+        << ",\"enabledCategories\":" << StringArray(Categories(record.options.preset, record.options.modules))
+        << ",\"inputSampleEvery\":" << record.options.inputSampleEvery << ",\"inputSamplingAlgorithm\":\"operation-hash-v1\""
+        << ",\"probeFiltering\":{\"categoryFilteredCalls\":" << record.quality.filteredProbeCalls
+        << ",\"ownerFilteredCalls\":" << record.quality.ownerFilteredProbeCalls
+        << ",\"inputOperationsObserved\":" << record.quality.inputOperationsObserved
+        << ",\"inputOperationsSelected\":" << record.quality.inputOperationsSelected << '}'
+        << ",\"environment\":" << record.environment << ",\"selectedInstances\":[";
+    for (std::size_t i = 0; i < record.selectedOwners.size(); ++i)
+    {
+        if (i) out << ',';
+        std::ostringstream owner; owner << std::hex << std::setw(16) << std::setfill('0') << record.selectedOwners[i];
+        out << "{\"ordinal\":" << i + 1 << ",\"owner\":" << Quote(owner.str()) << '}';
+    }
+    out << ']'
+        << ",\"threadCpuSource\":" << (record.options.scopeCpu ? "\"perfetto.thread_time\"" : "null")
+        << ",\"requestedSeconds\":" << record.options.seconds << ",\"bufferKiB\":" << record.options.bufferKiB
+        << ",\"firstTraceNs\":" << Quote(std::to_string(record.firstTraceNs)) << ",\"lastTraceNs\":" << Quote(std::to_string(record.lastTraceNs))
+        << ",\"durationMs\":" << record.snapshot.elapsedMs << ",\"traceFile\":" << Quote(Utf8(record.snapshot.trace.filename().wstring()))
+        << ",\"processResourceStatistics\":{\"version\":1,\"basicIntervalMs\":1000,\"addressSpaceIntervalMs\":10000,"
+           "\"familyScope\":\"validated-installed-program-descendants-os-counters\",\"familyEnabled\":"
+        << (record.options.processRole == CaptureProcessRole::Host ? "true" : "false")
+        << ",\"childExecutionCaptured\":false,\"heapAttribution\":false}"
+        << ",\"coverage\":\"pending-analysis\",\"participants\":[{\"role\":" << Quote(ProcessRole(record.options.processRole)) << ",\"pid\":" << GetCurrentProcessId()
+        << ",\"included\":true},{\"role\":\"settings\",\"included\":false}],\"probeQuality\":{\"droppedOwners\":" << record.quality.droppedOwners
+        << ",\"droppedCounters\":" << record.quality.droppedCounters << ",\"droppedLinks\":" << record.quality.droppedLinks
+        << ",\"droppedTracks\":" << record.quality.droppedTracks
+        << ",\"probeErrors\":" << record.quality.probeErrors << "}}";
+    return out.str();
+}
+void Worker(std::shared_ptr<Record> record) noexcept
+{
+    std::string error;
+    bool complete = false;
+    bool gpuDemandStarted = false;
+    File manifest, storageLease;
+    std::filesystem::path partialManifest;
     try
     {
-        const auto deadline = Clock::now() + std::chrono::seconds(state.options.seconds);
-        SampleProcess();
+        if (record->snapshot.trace.empty())
         {
-            // The query is session-local and is closed before report export.
-            GpuSampler gpu;
+            auto root = record->managedRoot;
+            if (root.empty())
+            {
+                PWSTR local = nullptr;
+                if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, nullptr, &local)))
+                    throw std::runtime_error("captureUserDirectoryUnavailable");
+                try { root = std::filesystem::path(local) / L"SnowDesktop/diagnostics/performance"; }
+                catch (...) { CoTaskMemFree(local); throw; }
+                CoTaskMemFree(local);
+                record->managedRoot = root;
+            }
+            const auto trace = root / Wide(record->options.session) / L"trace.pftrace";
+            std::lock_guard lock(state.mutex);
+            record->snapshot.trace = trace;
+            record->snapshot.manifest = trace.parent_path() / L"session.json";
+        }
+        partialManifest = std::filesystem::path(record->snapshot.manifest.wstring() + L".partial");
+        const auto directory = record->snapshot.trace.parent_path();
+        if (!SafeDirectory(directory, true)) throw std::runtime_error("capturePathRejected");
+        std::filesystem::create_directories(directory);
+        if (!SafeDirectory(directory, false)) throw std::runtime_error("capturePathRejected");
+        std::uint64_t fileLimit = record->options.maximumFileBytes;
+        const auto& managedRoot = record->managedRoot;
+        if (!managedRoot.empty() && directory.parent_path() == managedRoot)
+        {
+            const auto leasePath = managedRoot / L".capture-storage.lock";
+            const auto leaseAttributes = GetFileAttributesW(leasePath.c_str());
+            if (leaseAttributes != INVALID_FILE_ATTRIBUTES && (leaseAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                throw std::runtime_error("captureStoragePathRejected");
+            storageLease.value = CreateFileW(leasePath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (storageLease.value == INVALID_HANDLE_VALUE) throw std::runtime_error("captureStorageBusy");
+            LARGE_INTEGER leaseSize{};
+            if (!GetFileSizeEx(storageLease.value, &leaseSize) || leaseSize.QuadPart != 0) throw std::runtime_error("captureStorageLockInvalid");
+            fileLimit = std::min(fileLimit, StorageRemaining(managedRoot));
+        }
+        if (std::filesystem::exists(record->snapshot.manifest)) throw std::runtime_error("manifestAlreadyExists");
+        manifest.value = CreateFileW(partialManifest.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (manifest.value == INVALID_HANDLE_VALUE) throw std::runtime_error("cannotReserveManifest");
+        record->executableSha256 = ExecutableHash();
+        record->environment = CaptureEnvironmentJson();
+        PerfettoSession session;
+        PerfettoSessionOptions native;
+        native.output = record->snapshot.trace;
+        native.bufferKiB = record->options.bufferKiB;
+        native.maximumFileBytes = fileLimit;
+        native.threadCpu = record->options.scopeCpu;
+        native.categories = Categories(record->options.preset, record->options.modules);
+        if (!session.Start(native, error)) throw std::runtime_error(error);
+        std::uint64_t salt = 0;
+        if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&salt), sizeof(salt), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+            throw std::runtime_error("captureIdentityRandomFailed");
+        ActivateTrace(record->snapshot.generation, salt, record->options.selectedInstances, record->options.inputSampleEvery);
+        for (const auto& instance : record->options.selectedInstances) record->selectedOwners.push_back(OwnerId(instance));
+        record->firstTraceNs = native_trace::TrackEvent::GetTraceTimeNs();
+        {
+            std::lock_guard lock(state.mutex);
+            record->started = Clock::now();
+            record->snapshot.phase = CapturePhase::Recording;
+        }
+        NotifyState();
+        { Scope marker("profiler", "capture.start"); }
+        if (record->gpuDemand) { gpuDemandStarted = true; record->gpuDemand(true); }
+        process_resources::Sampler processResources;
+        SampleProcess(); SampleIo(); RequestWidgetSample(record->snapshot.generation);
+        processResources.Sample(record->options.processRole == CaptureProcessRole::Host);
+        const auto deadline = record->started + std::chrono::seconds(record->options.seconds);
+        {
+            std::unique_ptr<CompositorClock> compositor;
+            if (record->options.processRole == CaptureProcessRole::Host && record->options.preset != CapturePreset::Resource) compositor = std::make_unique<CompositorClock>();
             while (!state.stopRequested.load() && Clock::now() < deadline)
             {
-                {
-                    std::unique_lock lock(state.waitMutex);
-                    state.wake.wait_until(lock, std::min(deadline,
-                        Clock::now() + std::chrono::seconds(1)),
-                        [] { return state.stopRequested.load(); });
-                }
-                SampleProcess();
-                { Scope sample("profiler", "sample.gpu"); gpu.Sample(); }
+                std::unique_lock lock(state.mutex);
+                state.wake.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::seconds(1)), [] { return state.stopRequested.load(); });
+                lock.unlock();
+                SampleProcess(); SampleIo();
+                processResources.Sample(record->options.processRole == CaptureProcessRole::Host);
+                if (compositor) compositor->Sample();
+                RequestWidgetSample(record->snapshot.generation);
             }
         }
+        const auto sampleBefore = state.widgetSamples.load();
+        if (RequestWidgetSample(record->snapshot.generation))
+        {
+            std::unique_lock lock(state.mutex);
+            state.wake.wait_for(lock, std::chrono::milliseconds(250), [&] { return state.workerExit || state.widgetSamples.load() > sampleBefore; });
+            record->finalWidgetSample = state.widgetSamples.load() > sampleBefore;
+        }
+        { Scope marker("profiler", "capture.stop"); }
+        record->lastTraceNs = native_trace::TrackEvent::GetTraceTimeNs();
+        record->quality = DeactivateTrace();
+        {
+            std::lock_guard lock(state.mutex);
+            record->snapshot.elapsedMs = static_cast<double>(record->lastTraceNs - record->firstTraceNs) / 1e6;
+        }
+        SetPhase(record, CapturePhase::Finalizing);
+        if (gpuDemandStarted) { record->gpuDemand(false); gpuDemandStarted = false; }
+        complete = session.Stop(error);
+        if (complete)
+        {
+            record->traceSha256 = HashFile(record->snapshot.trace);
+            if (record->traceSha256.empty()) { complete = false; error = "traceFingerprintFailed"; }
+        }
     }
-    catch (...) { ++state.probeErrors; }
-    summaryGeneration.store(0, std::memory_order_release);
-    captureHooks.store(nullptr, std::memory_order_release);
+    catch (const std::exception& failure)
+    {
+        const std::string_view detail = failure.what();
+        error = detail.size() <= 80 && detail.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") == detail.npos
+            ? std::string(detail) : "captureWorkerFailed";
+    }
+    catch (...) { error = "captureWorkerFailed"; }
+    if (gpuDemandStarted) { try { record->gpuDemand(false); } catch (...) { error = "captureGpuCleanupFailed"; } }
+    if (Enabled()) record->quality = DeactivateTrace();
     {
         std::lock_guard lock(state.mutex);
-        state.recording = false;
-        state.ended = Nanoseconds();
-        state.status.store(ProtocolFinishing);
-        if (state.options.mode == CaptureMode::Summary) MergeSummariesLocked();
+        record->snapshot.error = error;
     }
     try
     {
-        const auto report = Report();
-        DWORD written = 0;
-        succeeded = report.size() <= MAXDWORD &&
-            WriteFile(state.output, report.data(), static_cast<DWORD>(report.size()),
-                &written, nullptr) && written == report.size();
-        if (succeeded) succeeded = FlushFileBuffers(state.output) != FALSE;
-    }
-    catch (...) { succeeded = false; }
-    CloseHandle(state.output);
-    state.output = INVALID_HANDLE_VALUE;
-    if (succeeded)
-        succeeded = MoveFileW(state.partial.c_str(), state.options.output.c_str()) != FALSE;
-    // The final name is published only when the complete report is durable.
-    // A failed partial is retained as evidence and never overwrites a report.
-    {
-        std::lock_guard lock(state.mutex);
-        std::vector<Event>().swap(state.events);
-        state.groups.clear();
-        state.summaryBuffers.clear();
-        state.drawOrigins.clear();
-    }
-    state.status.store(succeeded ? ProtocolIdle : ProtocolFailed);
-}
-
-UINT ControlMessage() noexcept
-{
-    static const UINT message = RegisterWindowMessageW(ControlMessageName);
-    return message;
-}
-}
-
-LRESULT Status() noexcept { return state.status.load(); }
-
-bool Start(const CaptureOptions& options, std::string& error)
-{
-    error.clear();
-    if (Status() == ProtocolRecording || Status() == ProtocolFinishing)
-    { error = "captureBusy"; return false; }
-    if (options.session.empty() || options.session.size() > 64 ||
-        options.session.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != std::string::npos ||
-        options.seconds < 1 || options.seconds > 600 ||
-        options.maximumEvents < 1 || options.maximumEvents > 65536 ||
-        (options.mode != CaptureMode::Trace && options.mode != CaptureMode::Summary) ||
-        (options.mode == CaptureMode::Summary && options.scopeCpu) ||
-        !options.output.is_absolute() || options.output.extension() != L".json")
-    { error = "invalidCaptureOptions"; return false; }
-    if (state.worker.joinable()) state.worker.join();
-    std::error_code filesystemError;
-    if (!std::filesystem::is_directory(options.output.parent_path(), filesystemError) ||
-        std::filesystem::exists(options.output, filesystemError) || filesystemError)
-    { error = "outputMustBeNewInExistingDirectory"; return false; }
-    const auto partial = std::filesystem::path(options.output.wstring() + L".partial");
-    HANDLE output = CreateFileW(partial.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
-        nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (output == INVALID_HANDLE_VALUE)
-    { error = "cannotReserveOutput"; return false; }
-    try
-    {
-        std::lock_guard lock(state.mutex);
-        state.options = options;
-        state.partial = partial;
-        state.events.clear();
-        if (options.mode == CaptureMode::Trace) state.events.reserve(options.maximumEvents);
-        state.groups.clear();
-        state.summaryBuffers.clear();
-        state.summaryGroupCount.store(0);
-        state.summaryDroppedGroups.store(0);
-        state.drawOrigins.clear();
-        state.droppedLinks = 0;
-        state.droppedEvents = state.droppedGroups = state.probeErrors = 0;
-        ++state.generation;
-        state.nextId = 0;
-        state.started = Nanoseconds();
-        state.stopRequested.store(false);
-        state.output = output;
-        state.recording = true;
-        state.status.store(ProtocolRecording);
-        summaryGeneration.store(options.mode == CaptureMode::Summary ? state.generation : 0,
-            std::memory_order_release);
-        captureHooks.store(options.mode == CaptureMode::Summary ? &summaryHooks : &traceHooks,
-            std::memory_order_release);
-        state.worker = std::thread(Worker);
-        return true;
+        if (manifest.value != INVALID_HANDLE_VALUE)
+        {
+            const auto json = Manifest(*record, complete);
+            DWORD written = 0;
+            const bool saved = json.size() <= MAXDWORD && WriteFile(manifest.value, json.data(), static_cast<DWORD>(json.size()), &written, nullptr) &&
+                written == json.size() && FlushFileBuffers(manifest.value);
+            CloseHandle(manifest.value); manifest.value = INVALID_HANDLE_VALUE;
+            if (!saved || !MoveFileExW(partialManifest.c_str(), record->snapshot.manifest.c_str(), MOVEFILE_WRITE_THROUGH))
+                throw std::runtime_error("manifestPublishFailed");
+        }
     }
     catch (...)
     {
-        captureHooks.store(nullptr);
-        summaryGeneration.store(0);
-        state.recording = false;
-        state.output = INVALID_HANDLE_VALUE;
-        state.status.store(ProtocolFailed);
-        CloseHandle(output);
-        error = "captureAllocationFailed";
-        return false;
+        std::lock_guard lock(state.mutex);
+        complete = false;
+        record->snapshot.error = "manifestPublishFailed";
+    }
+    // Terminal status is published only after SDK export and the immutable
+    // manifest are finished. The final record is cached for idempotent callers.
+    if (storageLease.value != INVALID_HANDLE_VALUE) { CloseHandle(storageLease.value); storageLease.value = INVALID_HANDLE_VALUE; }
+    {
+        std::lock_guard lock(state.mutex);
+        record->snapshot.phase = complete ? CapturePhase::Completed : CapturePhase::Failed;
+        state.history.push_back(record);
+        if (state.history.size() > 20) state.history.pop_front();
+    }
+    NotifyState();
+}
+void WorkerLoop() noexcept
+{
+    for (;;)
+    {
+        std::shared_ptr<Record> record;
+        bool analysis = false;
+        {
+            std::unique_lock lock(state.mutex);
+            state.wake.wait(lock, [] { return state.workerExit || state.pending || state.pendingAnalysis; });
+            if (!state.pending && !state.pendingAnalysis && state.workerExit) return;
+            if (state.pending) record = std::move(state.pending);
+            else { record = std::move(state.pendingAnalysis); analysis = true; record->snapshot.analysis = "running"; }
+        }
+        if (!analysis) Worker(std::move(record));
+        else
+        {
+            NotifyState();
+            const auto result = AnalyzeCapture(record->snapshot.manifest, &state.analysisCancel);
+            {
+                std::lock_guard lock(state.mutex);
+                record->snapshot.analysis = result.error.empty() ? "completed" : "failed";
+                record->snapshot.report = result.report;
+                record->snapshot.analysisError = result.error;
+                record->snapshot.quality = result.quality;
+                state.analysisActive = false;
+            }
+            NotifyState();
+        }
     }
 }
+}
 
-bool RequestStop(std::string_view session) noexcept
+bool Start(const CaptureOptions& requested, std::string& error)
 {
-    std::lock_guard lock(state.mutex);
-    if (!state.recording || session != state.options.session) return false;
-    state.stopRequested.store(true);
-    state.wake.notify_all();
+    error.clear();
+    std::lock_guard startLock(state.startMutex);
+    auto options = requested;
+    std::sort(options.modules.begin(), options.modules.end());
+    if (options.requestId.empty()) options.requestId = options.session;
+    if ((options.processRole != CaptureProcessRole::Host && options.processRole != CaptureProcessRole::WidgetPreview) ||
+        !ValidId(options.session) || !ValidId(options.requestId) || options.seconds < 1 || options.seconds > 600 ||
+        options.bufferKiB < 64 || options.bufferKiB > 65536 || options.maximumFileBytes < 1024 ||
+        options.maximumFileBytes > 256ULL * 1024 * 1024 || options.selectedInstances.size() > 8 ||
+        (options.preset != CapturePreset::Resource && options.preset != CapturePreset::Interaction && options.preset != CapturePreset::Widget) ||
+        (options.preset == CapturePreset::Widget && options.selectedInstances.empty()) ||
+        std::any_of(options.selectedInstances.begin(), options.selectedInstances.end(), [](const auto& id) { return id.empty() || id.size() > 256; }))
+    { error = "invalidCaptureOptions"; return false; }
+    const auto available = Categories(options.preset);
+    if (!options.inputSampleEvery || options.inputSampleEvery > 1000 || options.modules.size() > CaptureModules.size() ||
+        std::adjacent_find(options.modules.begin(), options.modules.end()) != options.modules.end() ||
+        std::any_of(options.modules.begin(), options.modules.end(), [&](const auto& module) {
+            return std::find(CaptureModules.begin(), CaptureModules.end(), module) == CaptureModules.end() ||
+                std::none_of(available.begin(), available.end(), [&](const auto& category) { return ModuleForCategory(category) == module; });
+        }))
+    { error = "invalidCaptureFilter"; return false; }
+    if (!options.output.empty() && (!IsLocalCapturePath(options.output) || options.output.extension() != L".pftrace"))
+    { error = "invalidOutputPath"; return false; }
+    try
+    {
+        std::lock_guard lock(state.mutex);
+        if (state.current && state.current->snapshot.requestId == options.requestId)
+        {
+            if (SameRequest(options, state.current->options)) return true;
+            error = "requestIdConflict"; return false;
+        }
+        for (const auto& old : state.history)
+            if (old->snapshot.requestId == options.requestId)
+            {
+                if (SameRequest(options, old->options)) return true;
+                error = "requestIdConflict"; return false;
+            }
+        if (state.analysisActive) { error = "analysisBusy"; return false; }
+        if (state.current && Running(state.current->snapshot.phase)) { error = "captureBusy"; return false; }
+        if (std::any_of(state.history.begin(), state.history.end(), [&](const auto& old) { return old->snapshot.session == options.session; }) ||
+            (state.current && state.current->snapshot.session == options.session))
+        { error = "sessionAlreadyExists"; return false; }
+        auto record = std::make_shared<Record>();
+        record->options = options;
+        record->gpuDemand = state.gpuDemand;
+        if (options.output.empty()) record->managedRoot = state.root;
+        record->snapshot.session = options.session;
+        record->snapshot.requestId = options.requestId;
+        record->snapshot.configHash = ConfigHash(options);
+        record->snapshot.trace = options.output;
+        if (!options.output.empty()) record->snapshot.manifest = options.output.parent_path() / L"session.json";
+        record->snapshot.requestedSeconds = options.seconds;
+        record->snapshot.preset = static_cast<unsigned>(options.preset); record->snapshot.bufferKiB = options.bufferKiB;
+        record->snapshot.selectedInstances = options.selectedInstances;
+        record->snapshot.scopeCpu = options.scopeCpu;
+        record->snapshot.modules = options.modules;
+        record->snapshot.inputSampleEvery = options.inputSampleEvery;
+        record->snapshot.phase = CapturePhase::Starting;
+        if (!state.worker.joinable())
+        {
+            state.workerExit = false;
+            state.worker = std::thread(WorkerLoop);
+        }
+        record->snapshot.generation = ++state.generation;
+        state.current = record;
+        state.pending = record;
+        state.stopRequested.store(false);
+        state.wake.notify_all();
+        NotifyState();
+    }
+    catch (...)
+    {
+        error = "captureWorkerStartFailed"; return false;
+    }
     return true;
 }
+bool RequestStop(std::string_view session, std::uint64_t generation) noexcept
+{
+    std::lock_guard lock(state.mutex);
+    if (!state.current || state.current->snapshot.session != session ||
+        (generation && generation != state.current->snapshot.generation))
+    {
+        return std::any_of(state.history.begin(), state.history.end(), [&](const auto& old) {
+            return old->snapshot.session == session && (!generation || old->snapshot.generation == generation) && !Running(old->snapshot.phase);
+        });
+    }
+    if (state.current->snapshot.phase == CapturePhase::Completed || state.current->snapshot.phase == CapturePhase::Failed) return true;
+    state.stopRequested.store(true);
+    if (state.current->snapshot.phase == CapturePhase::Recording) state.current->snapshot.phase = CapturePhase::Stopping;
+    state.wake.notify_all();
+    NotifyState();
+    return true;
+}
+bool RequestAnalysis(std::string_view session, std::uint64_t generation, std::string& error)
+{
+    error.clear();
+    std::lock_guard lock(state.mutex);
+    auto record = state.current;
+    if (!record || record->snapshot.session != session || record->snapshot.generation != generation)
+    { error = "sessionMismatch"; return false; }
+    if (record->snapshot.phase != CapturePhase::Completed || state.analysisActive)
+    { error = "captureBusy"; return false; }
+    if (record->snapshot.analysis == "completed") return true;
+    record->snapshot.analysis = "queued"; record->snapshot.analysisError.clear();
+    state.analysisCancel.store(false);
+    state.pendingAnalysis = record; state.analysisActive = true;
+    state.wake.notify_all(); NotifyState(); return true;
+}
+CaptureSnapshot Snapshot(std::string_view session)
+{
+    std::lock_guard lock(state.mutex);
+    if (state.current && (session.empty() || state.current->snapshot.session == session))
+    {
+        auto result = state.current->snapshot;
+        if ((result.phase == CapturePhase::Recording || result.phase == CapturePhase::Stopping) && state.current->started != Clock::time_point{})
+            result.elapsedMs = std::chrono::duration<double, std::milli>(Clock::now() - state.current->started).count();
+        return result;
+    }
+    for (const auto& old : state.history) if (old->snapshot.session == session) return old->snapshot;
+    CaptureSnapshot result;
+    result.found = session.empty(); result.session = session;
+    if (!result.found) { result.phase = CapturePhase::Failed; result.error = "unknownSession"; }
+    return result;
+}
+std::string SnapshotJson(const CaptureSnapshot& snapshot, std::string_view replyRequestId)
+{
+    std::ostringstream out; out.imbue(std::locale::classic());
+    out << "{\"protocolVersion\":3,\"requestId\":" << Quote(replyRequestId.empty() ? snapshot.requestId : replyRequestId)
+        << ",\"captureRequestId\":" << Quote(snapshot.requestId) << ",\"sessionId\":" << Quote(snapshot.session)
+        << ",\"generation\":" << snapshot.generation << ",\"state\":" << Quote(PhaseName(snapshot.phase))
+        << ",\"processId\":" << GetCurrentProcessId() << ",\"elapsedMs\":" << snapshot.elapsedMs
+        << ",\"requestedSeconds\":" << snapshot.requestedSeconds << ",\"configHash\":" << Quote(snapshot.configHash)
+        << ",\"analysis\":" << Quote(snapshot.analysis) << ",\"analysisError\":" << Quote(snapshot.analysisError)
+        << ",\"quality\":" << Quote(snapshot.quality) << ",\"preset\":" << Quote(PresetName(static_cast<CapturePreset>(snapshot.preset)))
+        << ",\"bufferKiB\":" << snapshot.bufferKiB << ",\"scopeCpuEnabled\":" << (snapshot.scopeCpu ? "true" : "false")
+        << ",\"moduleFilter\":" << StringArray(snapshot.modules) << ",\"inputSampleEvery\":" << snapshot.inputSampleEvery
+        << ",\"errorCode\":" << Quote(snapshot.error) << ",\"retryable\":" << (snapshot.error == "captureBusy" ? "true" : "false")
+        << ",\"paths\":{\"trace\":" << Quote(Utf8(snapshot.trace.wstring())) << ",\"manifest\":" << Quote(Utf8(snapshot.manifest.wstring()))
+        << ",\"report\":" << Quote(Utf8(snapshot.report.wstring()))
+        << "},\"capabilities\":{\"backend\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"hostOnly\":true,\"protocol\":3,\"moduleFilter\":true,\"inputSampling\":true},"
+        << "\"participants\":[{\"role\":\"host\",\"pid\":" << GetCurrentProcessId() << ",\"included\":true}]}";
+    return out.str();
+}
+std::string ProcessControlRequest(std::string_view request) noexcept
+{
+    CaptureSnapshot failure; failure.phase = CapturePhase::Failed;
+    try
+    {
+        JsonValue value; std::string parseError;
+        if (request.size() > 16384 || !ParseJson(request, value, &parseError) || !value.IsObject()) throw std::runtime_error("invalidControlRequest");
+        constexpr std::array<std::string_view, 12> fields{
+            "protocolVersion", "requestId", "sessionId", "command", "generation", "preset", "seconds", "bufferKiB", "threadCpu", "widgetIds", "modules", "inputSampleEvery" };
+        for (const auto& [field, ignored] : value.object)
+        {
+            (void)ignored;
+            if (std::find(fields.begin(), fields.end(), field) == fields.end()) throw std::runtime_error("unsupportedControlField");
+        }
+        const auto string = [&](std::string_view name, bool required = false) {
+            const auto* item = value.Find(name);
+            if (!item && !required) return std::string{};
+            if (!item || !item->IsString() || item->string.size() > 256) throw std::runtime_error("invalidControlField");
+            return item->string;
+        };
+        const auto number = [&](std::string_view name, std::uint64_t fallback, std::uint64_t maximum) {
+            const auto* item = value.Find(name);
+            if (!item) return fallback;
+            if (!item->IsNumber() || !std::isfinite(item->number) || item->number < 0 || item->number > static_cast<double>(maximum) || std::floor(item->number) != item->number)
+                throw std::runtime_error("invalidControlNumber");
+            return static_cast<std::uint64_t>(item->number);
+        };
+        if (number("protocolVersion", 0, 3) != 3) throw std::runtime_error("unsupportedProtocol");
+        failure.requestId = string("requestId", true);
+        if (!ValidId(failure.requestId)) throw std::runtime_error("invalidRequestId");
+        failure.session = string("sessionId");
+        if (!failure.session.empty() && !ValidId(failure.session)) throw std::runtime_error("invalidSessionId");
+        const auto command = string("command", true);
+        if (command == "status") return SnapshotJson(Snapshot(failure.session), failure.requestId);
+        if (command == "stop")
+        {
+            const auto generation = number("generation", 0, 9007199254740991ULL);
+            if (!generation || !RequestStop(failure.session, generation)) throw std::runtime_error("sessionMismatch");
+            return SnapshotJson(Snapshot(failure.session), failure.requestId);
+        }
+        if (command != "start") throw std::runtime_error("unsupportedCommand");
+        CaptureOptions options;
+        options.session = failure.session; options.requestId = failure.requestId;
+        options.seconds = static_cast<unsigned>(number("seconds", 120, 600));
+        options.bufferKiB = static_cast<unsigned>(number("bufferKiB", 32768, 65536));
+        options.inputSampleEvery = static_cast<unsigned>(number("inputSampleEvery", 1, 1000));
+        const auto preset = string("preset", true);
+        if (preset == "idle") options.preset = CapturePreset::Resource;
+        else if (preset == "interaction") options.preset = CapturePreset::Interaction;
+        else if (preset == "widget-detail") options.preset = CapturePreset::Widget;
+        else throw std::runtime_error("invalidPreset");
+        if (const auto* cpu = value.Find("threadCpu"))
+        { if (!cpu->IsBoolean()) throw std::runtime_error("invalidThreadCpu"); options.scopeCpu = cpu->boolean; }
+        if (const auto* widgets = value.Find("widgetIds"))
+        {
+            if (!widgets->IsArray() || widgets->array.size() > 8) throw std::runtime_error("invalidWidgetFilter");
+            for (const auto& item : widgets->array)
+            { if (!item.IsString() || item.string.empty() || item.string.size() > 256) throw std::runtime_error("invalidWidgetFilter"); options.selectedInstances.push_back(Wide(item.string)); }
+        }
+        if (const auto* modules = value.Find("modules"))
+        {
+            if (!modules->IsArray() || modules->array.size() > CaptureModules.size()) throw std::runtime_error("invalidCaptureFilter");
+            for (const auto& item : modules->array)
+            { if (!item.IsString() || item.string.size() > 16) throw std::runtime_error("invalidCaptureFilter"); options.modules.push_back(item.string); }
+        }
+        std::string error;
+        if (!Start(options, error)) throw std::runtime_error(error);
+        return SnapshotJson(Snapshot(options.session), failure.requestId);
+    }
+    catch (const std::exception& error) { failure.error = error.what(); }
+    catch (...) { failure.error = "controlRequestFailed"; }
+    try { return SnapshotJson(failure); } catch (...) { return "{\"protocolVersion\":3,\"state\":\"failed\",\"errorCode\":\"controlAllocationFailed\"}"; }
+}
+void ConfigureControl(HWND window, const std::filesystem::path& root)
+{
+    std::lock_guard lock(state.mutex);
+    state.root = root;
+    state.window.store(window);
+}
+void ConfigureGpuDemand(std::function<void(bool)> demand)
+{ std::lock_guard lock(state.mutex); state.gpuDemand = std::move(demand); }
 void Shutdown() noexcept
 {
-    state.stopRequested.store(true);
+    state.window.store(nullptr);
+    StopControlPipe();
+    std::lock_guard startLock(state.startMutex);
+    { std::lock_guard lock(state.mutex); state.workerExit = true; state.stopRequested.store(true); state.analysisCancel.store(true); }
     state.wake.notify_all();
     if (state.worker.joinable()) state.worker.join();
+    {
+        std::lock_guard lock(state.mutex);
+        state.gpuDemand = {};
+        if (state.current) state.current->gpuDemand = {};
+        for (const auto& record : state.history) record->gpuDemand = {};
+    }
 }
-
+LRESULT Status() noexcept
+{
+    std::lock_guard lock(state.mutex);
+    if (!state.current) return ProtocolIdle;
+    switch (state.current->snapshot.phase)
+    {
+    case CapturePhase::Starting: return ProtocolStarting;
+    case CapturePhase::Recording: return ProtocolRecording;
+    case CapturePhase::Stopping: case CapturePhase::Finalizing: return ProtocolFinishing;
+    case CapturePhase::Failed: return ProtocolFailed;
+    default: return ProtocolIdle;
+    }
+}
+bool IsStateChangeMessage(UINT message) noexcept { return message && message == StateMessage(); }
 bool IsControlMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept
 {
-    if (message == ControlMessage() && message != 0) return true;
+    if ((message == ControlMessage() && message) || (message == SampleMessage() && message)) return true;
     if (message == WM_TIMER && wParam == SampleTimer) return true;
     if (message != WM_COPYDATA || !lParam) return false;
     return reinterpret_cast<const COPYDATASTRUCT*>(lParam)->dwData == CopyDataTag;
 }
-
-LRESULT HandleControlMessage(HWND window, UINT message, WPARAM,
-    LPARAM lParam, void (*sampleWidgets)(void*), void* context) noexcept
+LRESULT HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM,
+    void (*sampleWidgets)(void*), void* owner) noexcept
 {
     try
     {
-        if (message == ControlMessage()) return Status();
-        if (message == WM_TIMER)
+        if (message == ControlMessage()) return EnsureControlPipe() ? Status() : ProtocolFailed;
+        if (message == WM_TIMER) { KillTimer(window, SampleTimer); return 0; }
+        if (message == SampleMessage())
         {
-            if (!Enabled()) KillTimer(window, SampleTimer);
-            else if (sampleWidgets) sampleWidgets(context);
+            const auto snapshot = Snapshot();
+            if (Enabled() && snapshot.generation == static_cast<std::uint64_t>(wParam) && sampleWidgets)
+            {
+                sampleWidgets(owner);
+                state.widgetSamples.fetch_add(1); state.wake.notify_all();
+            }
             return 1;
         }
-        const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
-        if (!data || data->dwData != CopyDataTag || !data->lpData ||
-            data->cbData < sizeof(wchar_t) || data->cbData > 16384 ||
-            data->cbData % sizeof(wchar_t) != 0) return 0;
-        const auto* text = static_cast<const wchar_t*>(data->lpData);
-        const auto length = data->cbData / sizeof(wchar_t);
-        if (text[length - 1] != L'\0') return 0;
-        std::wstring_view request(text, length - 1);
-        if (request.find(L'\0') != std::wstring_view::npos) return 0;
-        std::vector<std::wstring> fields;
-        while (true)
-        {
-            const auto split = request.find(L'\n');
-            fields.emplace_back(request.substr(0, split));
-            if (fields.size() > 7) return 0;
-            if (split == std::wstring_view::npos) break;
-            request.remove_prefix(split + 1);
-        }
-        const bool version2 = fields.size() == 7 && fields[0] == L"2";
-        if (!version2 && (fields.size() != 5 || fields[0] != L"1")) return 0;
-        const auto session = Utf8(fields[2]);
-        if (fields[1] == L"stop") return RequestStop(session) ? 1 : 0;
-        if (fields[1] != L"start" || fields[3].empty() ||
-            fields[3].size() > 3 ||
-            fields[3].find_first_not_of(L"0123456789") != std::wstring::npos) return 0;
-        CaptureOptions options;
-        if (version2)
-        {
-            if ((fields[5] != L"summary" && fields[5] != L"trace") ||
-                (fields[6] != L"0" && fields[6] != L"1")) return 0;
-            options.mode = fields[5] == L"summary" ? CaptureMode::Summary : CaptureMode::Trace;
-            options.scopeCpu = fields[6] == L"1";
-        }
-        options.session = session;
-        options.seconds = static_cast<unsigned>(std::stoul(fields[3]));
-        options.output = fields[4];
-        std::string error;
-        if (!Start(options, error)) return 0;
-        if (!SetTimer(window, SampleTimer, 1000, nullptr))
-        {
-            (void)RequestStop(session);
-            return 0;
-        }
-        if (sampleWidgets) sampleWidgets(context);
-        return 1;
+        // Old WM_COPYDATA starts cannot authenticate the caller and cannot
+        // preserve the new native format contract. No SDK work runs here.
+        return 0;
     }
     catch (...) { return 0; }
 }

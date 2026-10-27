@@ -8,12 +8,26 @@
 #include "settings/animation_settings.h"
 #include "diagnostics/performance_trace.h"
 
+#include <cmath>
+
 // Running-window discovery, visual state and activation behavior.
 
 namespace
 {
 
 constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
+
+void IssueDockNativeMinimize(HWND target)
+{
+    snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
+    snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
+    const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
+    wchar_t minimizeDiagnostic[128]{};
+    swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
+        minimizeAccepted ? 1 : 0,
+        snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
+    snowdesktop::dock_taskbar_diagnostics::Record(minimizeDiagnostic, target);
+}
 
 bool IsDockConsentActivationProxy(HWND window)
 {
@@ -26,6 +40,7 @@ bool IsDockConsentActivationProxy(HWND window)
 void LogDockWindowActivation(HWND target, const wchar_t* phase,
     int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock)) return;
     DWORD process = 0, foregroundProcess = 0;
     const DWORD thread = GetWindowThreadProcessId(target, &process);
     const HWND foreground = GetForegroundWindow();
@@ -43,7 +58,7 @@ void LogDockWindowActivation(HWND target, const wchar_t* phase,
         foreground, foregroundProcess, foregroundThread,
         IsIconic(target), IsWindowVisible(target), IsHungAppWindow(target),
         placementKnown, placement.showCmd, placement.flags, showCommand, accepted, error);
-    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Debug);
 }
 
 HWND ResolveDockWindowActivationTarget(HWND target)
@@ -233,6 +248,25 @@ void DesktopApp::BeginDockWindowActivationObservation(
         dockWindowActivationObservations_.clear();
 }
 
+bool DesktopApp::ObserveDockPromotionActivation(HWND foreground)
+{
+    if (!foreground || foreground != GetForegroundWindow()) return false;
+    for (const auto& [target, observation] : dockWindowActivationObservations_)
+    {
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(target, &process);
+        if (!observation.Matches(process, thread) || IsIconic(target) ||
+            !IsDockWindowActivationForeground(target, target)) continue;
+        // Stop the activation retry before borrowing foreground back. A live
+        // retry otherwise reactivates the app and undoes the successful loss.
+        CancelDockWindowActivationObservation(target);
+        floatingDockInputDeactivated_ = false;
+        RefreshFloatingDockPromotionInputs(true);
+        return true;
+    }
+    return false;
+}
+
 void DesktopApp::UpdateDockWindowActivationObservation(
     HWND target,
     const DockWindowActivationOutcome& outcome)
@@ -249,6 +283,8 @@ void DesktopApp::UpdateDockWindowActivationObservation(
     {
         LogDockWindowActivation(target,
             outcome.foreground ? L"foreground-observed" : L"unresponsive");
+        if (outcome.foreground)
+            (void)ObserveDockPromotionActivation(GetForegroundWindow());
         CancelDockWindowActivationObservation(target);
         return;
     }
@@ -337,6 +373,7 @@ void DesktopApp::OnDockWindowActivationObservationTimer(
             LogDockWindowActivation(target, retryExpired ? L"observation-timeout" :
                 foreground ? L"foreground-observed" :
                 !valid ? L"target-changed" : L"observation-cancelled");
+            if (foreground) (void)ObserveDockPromotionActivation(GetForegroundWindow());
             CancelDockWindowActivationObservation(target);
             continue;
         }
@@ -481,13 +518,13 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
-        ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+        (snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
             IsSystemTaskbarAutoHideEnabled()))
     {
         snowdesktop::dock_taskbar_diagnostics::Begin(window, L"system-minimize");
         RefreshSystemTaskbarAppearance(false);
         if (!BeginSystemTaskbarMinimizeProtection(window, true))
-            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] observed minimize protection was not acknowledged by all taskbars",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"[TaskbarMinimizeProtection] observed minimize protection was not acknowledged by all taskbars",
                 DiagnosticLogLevel::Warning);
         snowdesktop::dock_taskbar_diagnostics::Record(L"system-minimize-taskbar-protection-observed", window);
     }
@@ -569,6 +606,43 @@ void DesktopApp::RefreshDockRunningWindows(
         return;
     }
     snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
+    // GetBounds reads the running model directly. Retain the currently
+    // displayed envelope before replacing it, including the old title chip.
+    const auto visualBounds = [this](DockContainer& dock) {
+        const RECT content = dock.GetAnimationVisualBounds();
+        RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+            content, dockSettings_.position);
+        // A constrained reserved area can be thinner than its actual icons.
+        // Include their paint and the largest running/selection indicator,
+        // while excluding scroll slots far outside the displayed Dock.
+        for (const auto& slot : dock.GetSlots())
+        {
+            const RECT base = slot->GetBounds();
+            const RECT visual = dock.GetElementVisualRect(base, lastMousePoint_);
+            const int size = dock.GetElementIconSize(base, visual);
+            RECT icon{
+                visual.left + (visual.right - visual.left - size) / 2,
+                visual.top + (visual.bottom - visual.top - size) / 2,
+                visual.left + (visual.right - visual.left + size) / 2,
+                visual.top + (visual.bottom - visual.top + size) / 2};
+            const int indicatorPadding = static_cast<int>(std::ceil(
+                std::max(3.0f, size * 0.06f) + std::max(6.0f, size * 0.14f)));
+            InflateRect(&icon, indicatorPadding, indicatorPadding);
+            RECT intersection{};
+            if (IntersectRect(&intersection, &icon, &content))
+                UnionRect(&bounds, &bounds, &icon);
+        }
+        const RECT title = dock.GetHoveredTitleBounds(lastMousePoint_);
+        if (!IsRectEmpty(&title)) UnionRect(&bounds, &bounds, &title);
+        if (!IsRectEmpty(&bounds)) InflateRect(&bounds, 4, 4);
+        return bounds;
+    };
+    std::vector<std::pair<DockContainer*, RECT>> desktopDocks;
+    if (invalidateChanged && hwnd_)
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get());
+                dock && !IsDockHostedByPersistentHost(dock))
+                desktopDocks.emplace_back(dock, visualBounds(*dock));
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
     snowdesktop::dock_window_order::Current().Prune();
@@ -951,7 +1025,7 @@ void DesktopApp::RefreshDockRunningWindows(
                         if (!process || current != process) return nullptr;
                         return CreateDockWindowProvidedIconBitmap(window, result->size, requestSize);
                     });
-                WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
@@ -963,7 +1037,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 if (current == process)
                     result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
                         result->size, requestSize);
-                WriteDiagnosticLogEntry((L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, (L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
@@ -1046,9 +1120,18 @@ void DesktopApp::RefreshDockRunningWindows(
         UpdateFloatingDockWindowBounds(false);
     }
 
-    if ((changed || runningVisualChanged) && invalidateChanged && hwnd_)
+    if ((changed || runningVisualChanged || runningLayoutChanged) && invalidateChanged && hwnd_)
     {
-        InvalidateRect(hwnd_, nullptr, runningLayoutChanged ? TRUE : FALSE);
+        // Titles also change the host's input/visible region. Preserve its
+        // existing asynchronous content presentation even at identical bounds.
+        if (!runningLayoutChanged) UpdateFloatingDockWindowBounds(false);
+        for (const auto& [dock, previous] : desktopDocks)
+        {
+            const RECT current = visualBounds(*dock);
+            const BOOL erase = runningLayoutChanged ? TRUE : FALSE;
+            if (!IsRectEmpty(&previous)) InvalidateRect(hwnd_, &previous, erase);
+            if (!IsRectEmpty(&current)) InvalidateRect(hwnd_, &current, erase);
+        }
     }
     dockRunningWindowsForegroundTick_ =
         dockForegroundChangedTick_.load();
@@ -1186,31 +1269,24 @@ bool DesktopApp::ActivateOrToggleDockItem(
                 DockWindowTransitionDirection::Restore;
         const bool shouldMinimize =
             !IsIconic(target) || reverseRestore;
+        bool transitionStarted = false;
         if (shouldMinimize)
+        {
             PrepareDockWindowMinimize(target, L"dock-minimize");
+            CancelDockWindowActivationObservation(target);
+        }
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            const bool started = dockWindowTransition_->StartMinimize(
+            transitionStarted = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
-                transitionKeepBelowWindow);
-            if (started && !dockSettings_.summonOnAppMinimize)
+                transitionKeepBelowWindow, IssueDockNativeMinimize);
+            if (transitionStarted && !dockSettings_.summonOnAppMinimize)
                 KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
-        if (shouldMinimize)
-        {
-            CancelDockWindowActivationObservation(target);
-            snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
-            snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
-            const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
-            wchar_t minimizeDiagnostic[128]{};
-            swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
-                minimizeAccepted ? 1 : 0,
-                snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
-            snowdesktop::dock_taskbar_diagnostics::Record(
-                minimizeDiagnostic, target);
-        }
+        if (shouldMinimize && !transitionStarted)
+            IssueDockNativeMinimize(target);
         found->second.minimized = true;
         found->second.foreground = false;
     }
@@ -1330,31 +1406,24 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 DockWindowTransitionDirection::Restore;
         const bool shouldMinimize =
             !minimized || reverseRestore;
+        bool transitionStarted = false;
         if (shouldMinimize)
+        {
             PrepareDockWindowMinimize(target, L"dock-minimize");
+            CancelDockWindowActivationObservation(target);
+        }
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            const bool started = dockWindowTransition_->StartMinimize(
+            transitionStarted = dockWindowTransition_->StartMinimize(
                 target, *pressedAnchorScreen,
-                transitionKeepBelowWindow);
-            if (started && !dockSettings_.summonOnAppMinimize)
+                transitionKeepBelowWindow, IssueDockNativeMinimize);
+            if (transitionStarted && !dockSettings_.summonOnAppMinimize)
                 KeepDockTopmostForAction(*pressedAnchorScreen, false);
         }
-        if (shouldMinimize)
-        {
-            CancelDockWindowActivationObservation(target);
-            snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
-            snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
-            const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
-            wchar_t minimizeDiagnostic[128]{};
-            swprintf_s(minimizeDiagnostic, L"native-minimize accepted=%d route=%ls",
-                minimizeAccepted ? 1 : 0,
-                snowdesktop::dock_window_rules::DockWindowMinimizeRequestRouteName(minimizeRoute));
-            snowdesktop::dock_taskbar_diagnostics::Record(
-                minimizeDiagnostic, target);
-        }
+        if (shouldMinimize && !transitionStarted)
+            IssueDockNativeMinimize(target);
         nowMinimized = true;
     }
     else
@@ -1615,6 +1684,9 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
             UnionRect(&desktopDirty, &desktopDirty, &bounds);
         }
     bool keep = false;
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            keep |= dock->AdvanceEntryRemovalAnimation(nowMilliseconds);
     for (auto& app : dockUnpinnedRunningApps_)
     {
         if (snowdesktop::animation::RuntimeAnimationsEnabled())

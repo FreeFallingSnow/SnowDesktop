@@ -1,4 +1,5 @@
 #include "widget_filesystem_task_executor.h"
+#include "diagnostics/performance_trace.h"
 
 #include "data/atomic_file.h"
 
@@ -652,6 +653,7 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
         try
         {
             std::stop_callback shutdownSignal(stopToken, [stop = request.stop] { stop->request_stop(); });
+            performance::TaskExecution trace(request.id, "filesystem");
             if (!canceledBeforeRun) result = runner_(request.request, request.stop->get_token());
         }
         catch (...)

@@ -1,6 +1,8 @@
 #pragma once
 
+#include "widget_author_profile.h"
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -26,6 +28,7 @@ struct PreviewRenderRequest
     int hoverX = -1;
     int hoverY = -1;
     std::unordered_map<std::string, std::string> storage;
+    std::optional<PreviewProfileOptions> profile;
 };
 
 struct PreviewRenderResult
@@ -57,6 +60,7 @@ struct PreviewRenderResult
     std::filesystem::path backgroundImage;
     bool contentOnly = false;
 
+    std::optional<PreviewProfileResult> performance;
     std::string ToJson() const;
 };
 

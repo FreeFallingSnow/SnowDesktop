@@ -4,9 +4,14 @@
 #include <ctime>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
+#include "dock/dock_process_discovery.h"
 #include "dock/dock_window_source_cloak.h"
+#include "platform/window_support/window_support_runtime.h"
+
+
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
@@ -240,7 +245,7 @@ inline std::wstring QueryDockWindowExecutablePath(HWND window)
 }
 
 using DockProcessParentMap =
-    std::unordered_map<DWORD, DWORD>;
+    snowdesktop::dock_process_discovery::Snapshot;
 
 inline DockProcessParentMap QueryDockProcessParentMap()
 {
@@ -256,7 +261,7 @@ inline DockProcessParentMap QueryDockProcessParentMap()
     {
         do
         {
-            parents.insert_or_assign(
+            parents.parents.insert_or_assign(
                 entry.th32ProcessID,
                 entry.th32ParentProcessID);
         } while (Process32NextW(snapshot, &entry));
@@ -270,22 +275,10 @@ QueryDockProcessAncestorExecutablePaths(
     DWORD processId,
     const DockProcessParentMap& parents)
 {
-    std::vector<std::wstring> paths;
-    std::unordered_set<DWORD> visited{ processId };
-    for (size_t depth = 0; depth < 32; ++depth)
-    {
-        const auto found = parents.find(processId);
-        if (found == parents.end() || !found->second ||
-            !visited.insert(found->second).second)
-            break;
-        processId = found->second;
-        std::wstring path =
-            QueryDockProcessExecutablePath(processId);
-        if (path.empty())
-            break;
-        paths.push_back(std::move(path));
-    }
-    return paths;
+    return snowdesktop::dock_process_discovery::AncestorPaths(
+        processId, parents.parents, [&](DWORD ancestor) {
+            return parents.executablePaths.Read(ancestor, &NormalizeDockExecutablePath);
+        });
 }
 
 inline std::wstring QueryDockProcessAppUserModelId(DWORD processId)
@@ -591,18 +584,8 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
 
 inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)
 {
-    if (!window || !IsWindow(window))
-        return false;
     return snowdesktop::dock_window_rules::
-        IsTaskbarDocumentProxyCandidateEligible(
-            GetAncestor(window, GA_ROOT) == window,
-            IsWindowVisible(window) != FALSE,
-            GetWindow(window, GW_OWNER) != nullptr,
-            GetWindowTextLengthW(window) > 0,
-            GetWindowLongPtrW(window, GWL_STYLE),
-            GetWindowLongPtrW(window, GWL_EXSTYLE),
-            snowdesktop::dock_window_rules::
-                IsTaskWindowExplicitlyExcluded(window));
+        IsTaskbarDocumentProxyCandidate(window);
 }
 
 inline int DockRestoreShowCommand(HWND window)
@@ -628,6 +611,14 @@ inline bool RequestDockWindowMinimize(HWND window,
         *route = Route::None;
     if (!window || !IsWindow(window))
         return false;
+    auto& support = snowdesktop::window_support::WindowSupport();
+    if (support.Resolve(snowdesktop::window_support::Capability::WindowControl, window).provider == snowdesktop::window_support::Provider::Helper)
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::MinimizeWindow;
+        request.target = snowdesktop::window_support::protocol::Capture(window);
+        if (support.Submit(request)) return true;
+    }
     const Route dispatched = snowdesktop::dock_window_rules::ApplyDockMinimizeRequest(
         [window](WPARAM command) {
             // Match the system minimize command path so the application can
@@ -671,6 +662,14 @@ inline bool RequestDockWindowClose(HWND window)
 {
     if (!window || !IsWindow(window))
         return false;
+    auto& support = snowdesktop::window_support::WindowSupport();
+    if (support.Resolve(snowdesktop::window_support::Capability::WindowControl, window).provider == snowdesktop::window_support::Provider::Helper)
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::CloseWindow;
+        request.target = snowdesktop::window_support::protocol::Capture(window);
+        if (support.Submit(request)) return true;
+    }
     const BOOL accepted =
         PostMessageW(window, WM_CLOSE, 0, 0);
     if (snowdesktop::dock_window_rules::

@@ -1977,6 +1977,7 @@ void LayoutNode(ViewNode& node, const ViewRect& frame)
         frame.y + margin.top + node.offsetY,
         resolved.width, resolved.height };
     node.clipFrame.reset();
+    node.scrollbarFrame.reset();
     node.scrollOffset = 0.0f;
     node.scrollViewportExtent = 0.0f;
     node.scrollContentExtent = 0.0f;
@@ -5626,6 +5627,36 @@ bool ValidateAndLayoutViewTree(ViewNode& root, float width, float height,
         ValidateTransforms(root, {}, error, ViewPresencePhase::Exit);
 }
 
+bool ViewLayoutCache::ValidateAndLayout(ViewNode& root,
+    float width, float height, std::string& error, bool* reused)
+{
+    if (reused) *reused = false;
+    if (snapshot_ && snapshot_->width == width &&
+        snapshot_->height == height && snapshot_->input == root)
+    {
+        root = snapshot_->output;
+        error.clear();
+        if (reused) *reused = true;
+        return true;
+    }
+
+    // Keep the pre-layout input: layout also resolves selection, grid placement
+    // and virtual indices, so the committed/presented tree is not a cache key.
+    ViewNode input = root;
+    if (!ValidateAndLayoutViewTree(root, width, height, error))
+    {
+        snapshot_.reset();
+        return false;
+    }
+    auto snapshot = std::make_shared<Snapshot>();
+    snapshot->input = std::move(input);
+    snapshot->output = root;
+    snapshot->width = width;
+    snapshot->height = height;
+    snapshot_ = std::move(snapshot);
+    return true;
+}
+
 bool ValidateViewLogicalSlots(const ViewNode& root,
     const LogicalSlotModel& model, std::string& error)
 {
@@ -5920,6 +5951,58 @@ bool ApplyViewScrollOffsets(ViewNode& root,
             viewport.frame.height <= 0.0f;
     });
     return true;
+}
+
+void ApplyViewSurfaceScrollbarGutters(ViewNode& root,
+    std::vector<ViewScrollViewport>& viewports,
+    const ViewRect& contentBounds, const ViewRect& trackBounds)
+{
+    const auto visit = [&](auto&& self, ViewNode& node) -> void {
+        node.scrollbarFrame.reset();
+        if (!node.visible || node.visibility != ViewVisibility::Visible ||
+            node.transform || node.transition || node.enterTransition ||
+            node.exitTransition)
+            return;
+        if (IsScrollContainer(node.type))
+        {
+            const auto sameEdge = [](float a, float b) {
+                return std::abs(a - b) < 0.5f;
+            };
+            const bool vertical = node.orientation == ViewOrientation::Vertical;
+            const bool atSurfaceEdge = vertical
+                ? sameEdge(node.frame.x, contentBounds.x) &&
+                    sameEdge(node.frame.width, contentBounds.width) &&
+                    node.frame.y >= contentBounds.y - 0.5f &&
+                    node.frame.y + node.frame.height <=
+                        contentBounds.y + contentBounds.height + 0.5f
+                : sameEdge(node.frame.y, contentBounds.y) &&
+                    sameEdge(node.frame.height, contentBounds.height) &&
+                    node.frame.x >= contentBounds.x - 0.5f &&
+                    node.frame.x + node.frame.width <=
+                        contentBounds.x + contentBounds.width + 0.5f;
+            if (!node.showScrollbar || !node.clipFrame ||
+                node.scrollContentExtent <= node.scrollViewportExtent ||
+                !atSurfaceEdge)
+                return;
+            ViewRect track = *node.clipFrame;
+            if (vertical)
+                track.width = std::max(track.width,
+                    trackBounds.x + trackBounds.width - track.x);
+            else
+                track.height = std::max(track.height,
+                    trackBounds.y + trackBounds.height - track.y);
+            node.scrollbarFrame = track;
+            for (auto& viewport : viewports)
+                if (viewport.key == node.key && !viewport.selectPopup)
+                    viewport.scrollbarFrame = track;
+            return; // A child scrollbar cannot escape this content clip.
+        }
+        if (node.clipFrame)
+            return;
+        for (auto& child : node.children)
+            self(self, child);
+    };
+    visit(visit, root);
 }
 
 bool ComputeViewVirtualRange(std::size_t itemCount, float itemExtent,

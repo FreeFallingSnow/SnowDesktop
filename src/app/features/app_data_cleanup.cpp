@@ -68,7 +68,7 @@ void DesktopApp::ScheduleDataCleanup()
         const auto icons = snowdesktop::website_icon::CollectUnused(data / L"website-icons", paths, stop);
         const auto transient = snowdesktop::data_cleanup::Collect(data, paths, stop);
         if ((icons || transient) && !stop.stop_requested())
-            WriteDiagnosticLogEntry((L"Data cleanup: website-icons=" + std::to_wstring(icons) +
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Data, (L"Data cleanup: website-icons=" + std::to_wstring(icons) +
                 L" transient=" + std::to_wstring(transient)).c_str());
     });
 }

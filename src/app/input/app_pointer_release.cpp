@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "app/layout/interactive_layout_save.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "desktop/desktop_hover_rules.h"
 #include "drag_drop/drag_input_rules.h"
@@ -12,6 +13,17 @@
 
 namespace
 {
+bool RetainStartButtonHover(const auto& hosts, HMONITOR monitor, int left, int top)
+{
+    POINT cursor{};
+    if (!monitor || !GetCursorPos(&cursor)) return false;
+    cursor.x -= left; cursor.y -= top;
+    return std::any_of(hosts.begin(), hosts.end(), [&](const auto& host) {
+        return host && host->active && host->monitor == monitor && host->container &&
+            host->container->IsWindowsButtonPoint(cursor);
+    });
+}
+
 bool OpenMissingWidgetWorkshopPage(HWND owner,
     const DesktopWidget& widget)
 {
@@ -48,18 +60,37 @@ void DesktopApp::OnMouseLeave()
     }
     else DockTrayPopupPointerMove({LONG_MIN, LONG_MIN});
     POINT hoverPoint{};
-    if (TryGetDesktopHoverPointFromCursor(hoverPoint)) UpdatePopupHover(hoverPoint);
+    const bool hoverPointAvailable = TryGetDesktopHoverPointFromCursor(hoverPoint);
+    if (hoverPointAvailable) UpdatePopupHover(hoverPoint);
     else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
-    if (HasActiveContextMenuSession() ||
-        snowdesktop::desktop_hover_rules::
-            ShouldHoldHoverDuringNativeShellPopup(
-                shellPopupMenuLayerDepth_ > 0))
+    POINT hoverScreenPoint = hoverPoint;
+    const HWND hoverWindow = hoverPointAvailable &&
+        ClientToScreen(hwnd_, &hoverScreenPoint)
+        ? WindowFromPoint(hoverScreenPoint) : nullptr;
+    const HWND hoverRoot = hoverWindow
+        ? GetAncestor(hoverWindow, GA_ROOT) : nullptr;
+    // A leave belongs to an HWND, not the logical Dock. Capture release or
+    // insertion can transfer the pointer to its replacement content/backdrop
+    // before that HWND's move arrives. Popups and menus remain separate input
+    // surfaces even when their screen rectangle overlaps the Dock.
+    const bool pointerOnDockSurface = hoverWindow &&
+        (IsBaseDesktopHoverSurfaceWindow(hoverWindow) ||
+         IsPersistentDockHostWindow(hoverWindow) ||
+         IsPersistentDockHostWindow(hoverRoot) ||
+         IsPersistentDockBackdropWindow(hoverWindow) ||
+         IsPersistentDockBackdropWindow(hoverRoot));
+    const bool retainDockHover = pointerOnDockSurface &&
+        GetDockContainerAtPoint(hoverPoint);
+    if ((IsDockStartMenuActive() && RetainStartButtonHover(
+            persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
+        retainDockHover)
     {
-        // Popup windows temporarily own pointer input. Preserve the complete
-        // Dock hover frame until the menu session unwinds; subsequent live
-        // sampling reconciles the real pointer location.
+        if (retainDockHover) lastMousePoint_ = hoverPoint;
+        // Retain the live sample without replaying input or painting. The
+        // rebuilt Dock resolves its current item from that sample, so newly
+        // inserted content can take over the existing magnification progress.
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
@@ -174,7 +205,18 @@ void DesktopApp::ReconcileDesktopHoverState(
     const HWND shellDialogOwner = ShellDialogOwnerHwnd();
     const bool shellDialogOwnerAvailable =
         shellDialogOwner && IsWindow(shellDialogOwner);
-    if (HasActiveContextMenuSession() ||
+    if (HasActiveContextMenuSession())
+    {
+        // Modal menus can consume the original WM_MOUSELEAVE. Keep this
+        // deactivation path live without replaying passive hover into a menu.
+        if (lastMousePoint_.x != LONG_MIN || lastMousePoint_.y != LONG_MIN)
+            OnMouseLeave();
+        desktopHoverForegroundObservedTick_ = foregroundTick;
+        RecordShellHoverTrace(ShellHoverTraceEvent::ReconcileSuspended);
+        return;
+    }
+    if ((IsDockStartMenuActive() && RetainStartButtonHover(
+            persistentDockHosts_, dockStartMenuHeldMonitor_, virtualLeft_, virtualTop_)) ||
         !snowdesktop::desktop_hover_rules::
             ShouldReconcileFromSurfaceSample(
                 shellPopupMenuLayerDepth_ > 0,
@@ -543,13 +585,16 @@ void DesktopApp::FlushShellHoverTrace()
         report += line;
     }
     report += L"Shell hover trace end";
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input,
         report.c_str(),
         DiagnosticLogLevel::Debug);
 }
 
 bool DesktopApp::HandleDockClickRelease(POINT point)
 {
+    // Crossing the drag threshold owns the complete gesture, including a
+    // release back on its source or at an unchanged insertion boundary.
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive()) return false;
     DockContainer* dock = dockPressedContainer_;
     if (!dock) dock = GetDockContainerAtPoint(point);
     if (!dock) return false;
@@ -870,7 +915,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
                 }
             }
-            SaveLayoutSlots();
+            RequestLayoutSave();
         }
         else view->EndSearchPointerSelection();
         mouseDown_ = false;
@@ -894,7 +939,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             return;
         }
     if (HandleUsageGuidePointerUp(upPoint)) return;
-    if (HandleLargeIconPointerUp()) return;
+    {
+        snowdesktop::InteractiveLayoutSave save(this);
+        if (HandleLargeIconPointerUp()) return;
+    }
     if (middleButtonWidgetMove_) return;
     (void)wp;
     int dropPreviewMods = 0;
@@ -965,7 +1013,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         ReleaseCapture();
-        SaveLayoutSlots();
+        RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -989,7 +1037,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (dockFolderPopupResize)
             CommitDockFolderPopupStateToSource();
         else
-            SaveLayoutSlots();
+            RequestLayoutSave();
         if (popupResize)
         {
             if (DesktopWidget* popupWidget = GetOpenPopupWidget())
@@ -1250,7 +1298,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                         (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
                     CommitDockDrop({ &dockSource }, nullptr, dock,
                         widgetDockInsertIndex_, mods);
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     LayoutItems();
                 }
                 else
@@ -1259,6 +1307,14 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         }
         else
         {
+            // The native move entry ignores stale samples after physical
+            // release. Resize, like Move above, must resolve its final geometry
+            // from this real button-up rather than the last preview sample.
+            if (completedWidgetAction == WidgetAction::Resize)
+            {
+                OnMouseMoveAt(wp, upPoint);
+                HideDragHintWindow();
+            }
             widgetAction_ = WidgetAction::None;
             if (completedWidgetAction == WidgetAction::Resize)
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
@@ -1415,10 +1471,6 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         dropPreviewMods = static_cast<int>(releaseKeyState & (MK_CONTROL | MK_ALT | MK_SHIFT));
     }
 
-    // Dock 项轻微拖动后仍落回原项时，按单击处理而不是吞掉本次操作。
-    if (!rightDrop && HandleDockClickRelease(upPoint))
-        goto cleanup;
-
     if (IsExternalDropWindowAt(upPoint))
     {
         dragSession_.UpdatePoint(upPoint);
@@ -1448,8 +1500,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         EndDragSession();
         if (removed)
         {
-            SaveLayoutSlots();
-            RebuildContainersAndItems();
+            RequestLayoutSave();
             LayoutItems();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
@@ -1533,8 +1584,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 {
                     ClearSelection();
                     EndDragSession();
-                    SaveLayoutSlots();
-                    RebuildContainersAndItems();
+                    RequestLayoutSave();
                     LayoutItems();
                     InvalidateRect(
                         hwnd_, nullptr, FALSE);
@@ -1544,12 +1594,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 {
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget, mods);
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     EndDragSession();
                     if (executed)
                     {
-                        RebuildContainersAndItems();
                         LayoutItems();
                         InvalidateRect(hwnd_, nullptr, FALSE);
                     }
@@ -1567,7 +1616,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     ResolveDesktopRequestCell(
                         dragSession_.SourceList(),
                         dragSession_.CurrentPoint()));
-                SaveLayoutSlots();
+                RequestLayoutSave();
                 ClearSelection();
                 EndDragSession();
                 goto cleanup;
@@ -1618,7 +1667,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                         fileSources, targetPath, action,
                         std::move(finished)))
                 {
-                    SaveLayoutSlots();
+                    RequestLayoutSave();
                     ClearSelection();
                     EndDragSession();
                     goto cleanup;
@@ -1652,7 +1701,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                             RefreshDockFolderPopup();
                     }))
             {
-                SaveLayoutSlots();
+                RequestLayoutSave();
                 ClearSelection();
                 EndDragSession();
                 goto cleanup;
@@ -1700,7 +1749,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     }
                 }
             }
-            SaveLayoutSlots();
+            RequestLayoutSave();
             ClearSelection();
             EndDragSession();
             if (dockFolderPopupTarget ||
@@ -1712,6 +1761,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
 
         Container* targetContainer = dragSession_.TargetContainer();
         bool needsReload = targetContainer->NeedsShellReloadAfterDrop();
+        const bool desktopTarget = dynamic_cast<DesktopGrid*>(targetContainer) != nullptr;
+        const auto layoutBeforeDrop = layoutPassRevision_;
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
                 targetContainer,
@@ -1725,7 +1776,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         targetContainer->OnItemsDropped(dragSession_.Items(), dragSession_.Source(),
             dragSession_.TargetSlot(), dragSession_.TargetRegion(), mods);
 
-        SaveLayoutSlots();
+        RequestLayoutSave();
         ClearSelection();
         EndDragSession();
         if (dockFolderPopupTarget ||
@@ -1740,8 +1791,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         {
             // 内容变更可能使某些溢出页变空（后面有非空页时应立即清理顺延）
             // 先 ApplyPageMapping（可能重排 pageId），再由 LayoutItems 重建运行时对象
-            ApplyPageMapping();
-            LayoutItems();
+            if (!desktopTarget || layoutPassRevision_ == layoutBeforeDrop)
+            {
+                ApplyPageMapping();
+                LayoutItems();
+            }
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }

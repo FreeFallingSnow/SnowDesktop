@@ -518,7 +518,7 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
         ? "app.settings.auto_start_enable_failed"
         : "app.settings.auto_start_disable_failed");
     result.message += L"\n" + error;
-    WriteDiagnosticLogEntry(result.message.c_str(), DiagnosticLogLevel::Error);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, result.message.c_str(), DiagnosticLogLevel::Error);
     return result;
 }
 
@@ -631,6 +631,13 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     if (!flushed.Succeeded())
         return flushed;
 
+    // Finish every queued layout write before replacing the live file with a
+    // backup. No earlier snapshot may race the restore or its rollback.
+    if (layoutSavePending_ && !SaveLayoutSlots())
+        return SettingsActionResult::Failure(_LW("settings.backup.restoreLayout.commitFailed"));
+    CancelDeferredLayoutSave();
+    FlushQueuedLayoutSave();
+
     std::string validationError;
     if (!snowdesktop::layout_storage::ValidateDocument(
             payload.layoutDocument, &validationError))
@@ -718,7 +725,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         }
         if (!layoutRolledBack || !storageRolledBack)
         {
-            WriteDiagnosticLogEntry(L"Layout restore rollback failed",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, L"Layout restore rollback failed",
                 DiagnosticLogLevel::Error);
         }
         return SettingsActionResult::Failure(
@@ -769,7 +776,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
         settingsController_->SynchronizeDock(dockSettings_);
     if (!generalSynchronized || !desktopSynchronized || !dockSynchronized)
     {
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings,
             L"Layout restored but settings mirror synchronization failed",
             DiagnosticLogLevel::Error);
     }
@@ -779,7 +786,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
         generalSettings_.dockEnabled, floatingDockEdgeSwipeHwnd_ != nullptr,
         floatingDockHotkeyRegistered_,
         generalSynchronized && desktopSynchronized && dockSynchronized);
-    WriteDiagnosticLogEntry(state);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, state);
     return generalSynchronized && desktopSynchronized && dockSynchronized;
 }
 
@@ -910,6 +917,8 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
 
     // Dispose writes belong to the current storage file. Retire previews too,
     // before switching the global Lua store to the other data set.
+    CancelDeferredLayoutSave();
+    FlushQueuedLayoutSave();
     if (widgetEngine_)
     {
         std::vector<std::wstring> instances;
@@ -1095,6 +1104,17 @@ public:
             return snowdesktop::SettingsActionResult::Success(domains);
         }
         if (domains == SettingsDomain::General &&
+            snowdesktop::settings_update_rules::IsGeneralLoggingOnlyCommit(
+                app_.generalSettings_, snapshot.values.general))
+        {
+            app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::diagnostics::SetLogModules(app_.generalSettings_.diagnosticLogModules);
+            const auto message = L"Detailed log modules changed mask=" +
+                std::to_wstring(app_.generalSettings_.diagnosticLogModules);
+            WriteDiagnosticLogEntry(message.c_str());
+            return snowdesktop::SettingsActionResult::Success(domains);
+        }
+        if (domains == SettingsDomain::General &&
             snowdesktop::settings_update_rules::IsGeneralShortcutOnlyCommit(
                 app_.generalSettings_, snapshot.values.general))
         {
@@ -1210,6 +1230,7 @@ public:
         }
         if (generalCommitted)
         {
+            app_.ApplyRuntimeModulePolicy();
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
@@ -1801,7 +1822,7 @@ void DesktopApp::InitializeSettingsController()
             message += L": ";
             message += result.message;
         }
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message.c_str(), DiagnosticLogLevel::Warning);
     }
 }
 
@@ -1886,14 +1907,14 @@ void DesktopApp::CompleteSettingsWindowOpen(const snowdesktop::SettingsRoute& ro
             settingsHwnd && IsWindowVisible(settingsHwnd) ? 1 : 0,
             foregroundHwnd,
             settingsHwnd && foregroundHwnd == settingsHwnd ? 1 : 0);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message);
         if (postOpenAction ==
                 snowdesktop::settings_window_open_rules::PostOpenAction::
                     ShowExitConfirmation &&
             !settingsWindow_->ShowExitConfirm())
         {
-            WriteDiagnosticLogEntry(
-                L"SettingsWindow exit confirmation failed after show");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings,
+                L"SettingsWindow exit confirmation failed after show", DiagnosticLogLevel::Warning);
         }
         return;
     }
@@ -1912,14 +1933,14 @@ void DesktopApp::CompleteSettingsWindowOpen(const snowdesktop::SettingsRoute& ro
                 message += L": ";
                 message += settingsWindow_->LastError();
             }
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message.c_str(), DiagnosticLogLevel::Warning);
             return;
         }
         wchar_t message[192]{};
         swprintf_s(message,
             L"SettingsWindow retry timer failed (error=%lu)",
             GetLastError());
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message, DiagnosticLogLevel::Warning);
     }
 
     std::wstring message =
@@ -1929,7 +1950,7 @@ void DesktopApp::CompleteSettingsWindowOpen(const snowdesktop::SettingsRoute& ro
         message += L": ";
         message += settingsWindow_->LastError();
     }
-    WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message.c_str(), DiagnosticLogLevel::Error);
     settingsWindowOpenRequest_.Cancel();
     snowdesktop::operation_feedback::Report({"settings.process.startFailed", message});
 }
@@ -2018,7 +2039,7 @@ void DesktopApp::ToggleDesktopPassthrough()
             desktopPassthroughHotkeyHwnd_, kDesktopPassthroughExitMessage,
             _LW("app.desktop_passthrough.exit_hint"), dcompDevice_.Get(), dwriteFactory_.Get()))
     {
-        WriteDiagnosticLogEntry(L"Desktop passthrough edge indicator creation failed");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, L"Desktop passthrough edge indicator creation failed", DiagnosticLogLevel::Warning);
         return;
     }
 
@@ -2083,13 +2104,13 @@ void DesktopApp::ApplyDesktopPassthroughHotkey()
     if (desktopPassthroughHotkeyRegistered_)
     {
         desktopPassthroughHotkeyHwnd_ = target;
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings,
             L"Desktop passthrough toggle hotkey registered");
     }
     else
     {
-        WriteDiagnosticLogEntry(
-            L"Desktop passthrough toggle hotkey registration failed");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings,
+            L"Desktop passthrough toggle hotkey registration failed", DiagnosticLogLevel::Warning);
     }
 }
 
@@ -2105,6 +2126,8 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    ApplyRuntimeModulePolicy();
+    snowdesktop::diagnostics::SetLogModules(settings.diagnosticLogModules);
     snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
     SyncStatusBar();
     snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);

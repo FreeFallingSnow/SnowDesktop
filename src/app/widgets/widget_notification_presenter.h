@@ -1,5 +1,6 @@
 #pragma once
 
+#include "widget_notification_image.h"
 #include "widget/tasks/widget_notification_runtime.h"
 
 #include <windows.h>
@@ -47,12 +48,10 @@ private:
         HWND hwnd = nullptr;
         HWND owner = nullptr;
         snowdesktop::widget_runtime::WidgetNotificationHostRequest request;
-        HBITMAP image = nullptr;
+        snowdesktop::notification_detail::Image image;
         RECT closeRect{};
         std::vector<RECT> actionRects;
         int height = 0;
-
-        ~Toast();
     };
 
     static LRESULT CALLBACK WindowProc(

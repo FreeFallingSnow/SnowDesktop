@@ -5,6 +5,8 @@
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
 #include "platform/shell_overlay_window.h"
+#include "diagnostics/performance_trace.h"
+#include "platform/window_support/window_support_runtime.h"
 
 #include <array>
 #include <bit>
@@ -14,6 +16,9 @@ namespace
 {
 constexpr UINT_PTR kPopupMouseLeaveTimerId = 1;
 constexpr UINT kPopupMouseLeavePollIntervalMs = 50;
+constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
+constexpr UINT kPopupPresentationRetryIntervalMs = 100;
+constexpr unsigned kPopupPresentationRetryLimit = 5;
 
 RECT UnionRects(const RECT& first, const RECT& second)
 {
@@ -107,7 +112,7 @@ void TraceMenuHostZOrderTransition(
          << L" menuNext=" << current.menuNext
          << L" hostPrev=" << current.hostPrevious
          << L" hostNext=" << current.hostNext;
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
         line.str().c_str(), DiagnosticLogLevel::Debug);
 }
 
@@ -168,6 +173,18 @@ LRESULT CALLBACK DesktopApp::FloatingPopupMouseHookProc(
 
 bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
 {
+    if (snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::PointerObservation).Available())
+    {
+        if (!floatingPopupMouseHookNotificationWindow_.load())
+        {
+            ++floatingPopupMouseHookGeneration_;
+            floatingPopupPointerGenerationStartedAt_ = GetTickCount();
+            floatingPopupMouseHookNotificationWindow_.store(floatingPopupHwnd_);
+        }
+        if (floatingPopupMouseHook_) floatingPopupMouseHook_.Stop();
+        return true;
+    }
     if (floatingPopupMouseHook_)
         return true;
     if (!floatingPopupHwnd_ ||
@@ -187,8 +204,8 @@ bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
 
     floatingPopupMouseHookNotificationWindow_.store(nullptr);
     floatingPopupMouseHookActiveGeneration_.store(0);
-    WriteDiagnosticLogEntry(
-        L"Floating popup outside-click hook FAILED");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
+        L"Floating popup outside-click hook FAILED", DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -210,6 +227,10 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
 
 void DesktopApp::AdvanceFloatingPopupContentGeneration()
 {
+    floatingPopupPointerGenerationStartedAt_ = GetTickCount();
+    floatingPopupPresentationRetryCount_ = 0;
+    if (floatingPopupHwnd_)
+        KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
     popupMouseLeaveController_.Reset();
     ++floatingPopupMouseHookGeneration_;
     if (floatingPopupMouseHookGeneration_ == 0)
@@ -313,7 +334,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
             IsLuaPanelHostedByFloatingWindow() ? 1 : 0,
             dismissCollection ? 1 : 0,
             dismissLuaPanel ? 1 : 0);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
     if (dismissCollection)
     {
@@ -349,6 +370,31 @@ RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
         bounds = UnionRects(bounds, panelBounds);
     }
     return bounds;
+}
+
+bool DesktopApp::WarmFloatingPopupResources()
+{
+    if (exitRequested_ || graphicsDeviceRecovery_.Pending() || !dcompDevice_ ||
+        ShouldShowFloatingPopupWindow())
+        return false;
+    snowdesktop::performance::Scope scope("popup", "infrastructure.warmup.ui");
+    if (collectionPopupGlassTheme_)
+        (void)collectionPopupBackdropCompositor_.PrepareBlurFactoryInBackground(collectionPopupBlurRadius_);
+    if (!CreateFloatingPopupWindow() ||
+        FAILED(CreateOrResizeFloatingPopupCompositionSurface()))
+        return false;
+    // A fresh DComp surface has no valid content until EndDraw. Initialize its
+    // tiny hidden target without touching popup models, input regions or hooks.
+    ComPtr<ID2D1DeviceContext> context;
+    POINT offset{};
+    const HRESULT draw = floatingPopupDcompSurface_->BeginDraw(nullptr,
+        __uuidof(ID2D1DeviceContext), reinterpret_cast<void**>(context.GetAddressOf()), &offset);
+    if (FAILED(draw)) return false;
+    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+    context.Reset();
+    if (FAILED(floatingPopupDcompSurface_->EndDraw())) return false;
+
+    return CommitCompositionAnimationFrame() && FlushPendingCompositionCommit();
 }
 
 bool DesktopApp::CreateFloatingPopupWindow()
@@ -442,7 +488,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
                         L"hr=0x%08X after remove hr=0x%08X",
                         static_cast<unsigned>(restoreHr),
                         static_cast<unsigned>(hr));
-                    WriteDiagnosticLogEntry(message);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
                 }
                 return hr;
             }
@@ -508,7 +554,7 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
                 L"hr=0x%08X after add hr=0x%08X",
                 static_cast<unsigned>(restoreHr),
                 static_cast<unsigned>(addFailure));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
         }
         return addFailure;
     }
@@ -517,11 +563,24 @@ HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
 
 void DesktopApp::ResetFloatingPopupCompositionResources()
 {
+    // A transparent DComp frame does not make its native HWND click-through.
+    // Retire input before discarding the last usable pixels.
+    collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupDcompVisual_)
         floatingPopupDcompVisual_->SetContent(nullptr);
     floatingPopupDcompSurface_.Reset();
     floatingPopupCompWidth_ = 0;
     floatingPopupCompHeight_ = 0;
+}
+
+void DesktopApp::SuspendFloatingPopupPresentation()
+{
+    collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
+    if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_) &&
+        ShouldShowFloatingPopupWindow() &&
+        floatingPopupPresentationRetryCount_ < kPopupPresentationRetryLimit)
+        SetTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId,
+            kPopupPresentationRetryIntervalMs, nullptr);
 }
 
 void DesktopApp::RecoverFloatingPopupCompositionFailure(
@@ -535,7 +594,7 @@ void DesktopApp::RecoverFloatingPopupCompositionFailure(
         L"FloatingPopup %s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render",
         static_cast<unsigned>(hr));
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, DiagnosticLogLevel::Warning);
     ResetFloatingPopupCompositionResources();
     if (!floatingPopupCompositionRenderRecoveryPending_ &&
         floatingPopupHwnd_ &&
@@ -731,12 +790,23 @@ bool DesktopApp::PresentFloatingPopupComposition()
     if (floatingPopupCompositionPaintInProgress_)
     {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
-        return true;
+        return false;
     }
     if (!RenderFloatingPopupCompositionFrame())
+    {
+        SuspendFloatingPopupPresentation();
         return false;
+    }
     ValidateRect(floatingPopupHwnd_, nullptr);
-    return FlushPendingCompositionCommit();
+    if (!FlushPendingCompositionCommit())
+    {
+        ResetFloatingPopupCompositionResources();
+        SuspendFloatingPopupPresentation();
+        return false;
+    }
+    KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
+    floatingPopupPresentationRetryCount_ = 0;
+    return true;
 }
 
 void DesktopApp::InvalidateFloatingPopupWindow(
@@ -858,6 +928,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
 
 void DesktopApp::UpdateCollectionPopupBackdrop()
 {
+    snowdesktop::performance::Scope scope("popup", "backdrop.update");
     const DesktopWidget* popup = GetOpenPopupWidget();
     if (!collectionPopupGlassTheme_ || (popup && UsesCollectionPopupFan(*popup)))
     {
@@ -894,10 +965,10 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
             std::wstring message =
                 L"Collection popup native backdrop unavailable: ";
             message += collectionPopupBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message.c_str(), DiagnosticLogLevel::Warning);
             return;
         }
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
             L"Collection popup native CompositionBackdropBrush initialized");
     }
     else
@@ -927,11 +998,13 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
 }
 
 void DesktopApp::UpdateFloatingPopupWindowBounds(
-    bool immediatePresent)
+    bool immediatePresent, bool refreshStableContent)
 {
     SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
     {
+        if (floatingPopupHwnd_) KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
+        floatingPopupPresentationRetryCount_ = 0;
         StopFloatingPopupOutsideClickMonitor();
         collectionPopupBackdropCompositor_.HidePopupWindowPair(
             floatingPopupHwnd_);
@@ -943,8 +1016,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
     if (!CreateFloatingPopupWindow())
     {
-        WriteDiagnosticLogEntry(
-            L"Floating popup window creation FAILED");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus,
+            L"Floating popup window creation FAILED", DiagnosticLogLevel::Warning);
         return;
     }
     StartFloatingPopupOutsideClickMonitor();
@@ -1044,17 +1117,33 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             menuZOrderBefore,
             CaptureMenuHostZOrder(floatingPopupHwnd_),
             positioned == FALSE);
+        if (!positioned)
+        {
+            floatingPopupWindowBounds_ = {};
+            SuspendFloatingPopupPresentation();
+            return;
+        }
     }
     else
     {
         ApplyFloatingPopupLayerPolicy();
     }
 
-    UpdateCollectionPopupBackdrop();
+    const DesktopWidget* collection = GetOpenPopupWidget();
+    const bool backdropRecovery = collectionPopupGlassTheme_ && collection &&
+        !UsesCollectionPopupFan(*collection) &&
+        !collectionPopupBackdropCompositor_.IsAvailable();
+    const bool refreshContent = refreshStableContent || !wasVisible ||
+        boundsChanged || regionChanged || backdropRecovery ||
+        !floatingPopupDcompSurface_ || !floatingPopupDcompVisual_ ||
+        graphicsDeviceRecovery_.Pending();
+    if (refreshContent)
+        UpdateCollectionPopupBackdrop();
 
     if (!wasVisible || boundsChanged || regionChanged)
     {
         HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
+        bool regionReady = windowRegion != nullptr;
         auto appendRegion = [&](RECT desktopRect, float radius) {
             if (!windowRegion || IsRectEmpty(&desktopRect))
                 return;
@@ -1066,11 +1155,13 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
                 desktopRect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
             if (added)
             {
-                CombineRgn(
+                if (CombineRgn(
                     windowRegion, windowRegion,
-                    added, RGN_OR);
+                    added, RGN_OR) == ERROR)
+                    regionReady = false;
                 DeleteObject(added);
             }
+            else regionReady = false;
         };
         const auto* popup = GetOpenPopupWidget();
         appendRegion(floatingPopupCollectionRegion_, popup ?
@@ -1078,17 +1169,34 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         appendRegion(
             floatingPopupLuaPanelRegion_,
             floatingPopupModalRegion_ ? 0.f : 18.f);
-        if (windowRegion &&
-            !SetWindowRgn(
-                floatingPopupHwnd_, windowRegion, FALSE))
-            DeleteObject(windowRegion);
+        if (!regionReady || !SetWindowRgn(floatingPopupHwnd_, windowRegion, FALSE))
+        {
+            if (windowRegion) DeleteObject(windowRegion);
+            // Retry identical geometry too; failed native clipping must not
+            // become a successful cached input region.
+            floatingPopupWindowBounds_ = {};
+            SuspendFloatingPopupPresentation();
+            return;
+        }
     }
 
     const bool rendered = immediatePresent
         ? PresentFloatingPopupComposition()
         : false;
-    if (!rendered)
+    if (!rendered && refreshContent)
+    {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        if (immediatePresent)
+        {
+            // A nested provider callback can ask for presentation while the
+            // outer frame owns BeginDraw. It is deferred, not failed: preserve
+            // an existing usable frame and let the outer presenter reveal a
+            // hidden host only after that frame completes.
+            if (!floatingPopupCompositionPaintInProgress_)
+                SuspendFloatingPopupPresentation();
+            return;
+        }
+    }
 
     if (snowdesktop::floating_popup_rules::ShouldRevealHost(
             wasVisible, immediatePresent))
@@ -1118,7 +1226,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             nextBounds.right + virtualLeft_,
             nextBounds.bottom + virtualTop_,
             topmost != false);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
     else if (boundsChanged && !immediatePresent)
     {
@@ -1131,6 +1239,22 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
     ApplyDragPreviewLayerPolicy();
     SyncPopupMouseLeaveTimer();
+}
+
+void DesktopApp::PresentFloatingPopupPointerFrame(
+    bool dragPreviewAlreadySynced)
+{
+    const auto* view = GetCategorizedPopupView();
+    const bool stableCategorizedInput = view &&
+        (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()) &&
+        !dragSession_.IsActive() && !dragDropController_.IsTransportActive() &&
+        widgetAction_ != WidgetAction::Move && widgetAction_ != WidgetAction::Resize &&
+        !marqueeActive_ && !popupAnimation_.IsAnimating() &&
+        !luaWidgetPanelAnimation_.IsAnimating();
+    // Pointer mutation already queued any changed content. Still reconcile
+    // geometry, native regions and layer policy before the synchronous paint.
+    UpdateFloatingPopupWindowBounds(false, !stableCategorizedInput);
+    PresentPointerInteractionFrame(dragPreviewAlreadySynced);
 }
 
 void DesktopApp::SyncPopupMouseLeaveTimer()
@@ -1172,11 +1296,13 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize || largeIconGesture_;
     const HWND dialogOwner = ShellDialogOwnerHwnd();
+    const auto observedButtons = snowdesktop::window_support::WindowSupport().PointerButtons();
     const bool pointerPressed = GetCapture() || mouseDown_ ||
         dragSession_.HasContext() || middleButtonWidgetMove_ ||
         widgetAction_ != WidgetAction::None ||
-        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON)) & 0x8000);
+        (observedButtons ? (*observedButtons & 7u) != 0 :
+            ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+                GetAsyncKeyState(VK_MBUTTON)) & 0x8000) != 0);
     const bool interactionBusy = HasActiveContextMenuSession() ||
         renameController_.IsActive() ||
         detailColumnResizeActive_ || luaWidgetPanelMouseDown_ ||
@@ -1209,7 +1335,7 @@ void DesktopApp::PaintFloatingPopupWindow(HWND hwnd)
         RenderFloatingPopupCompositionFrame();
     EndPaint(hwnd, &paint);
     if (ShouldShowFloatingPopupWindow() && !rendered)
-        InvalidateRect(hwnd, nullptr, FALSE);
+        SuspendFloatingPopupPresentation();
 }
 
 POINT DesktopApp::FloatingPopupClientToDesktop(
@@ -1297,12 +1423,12 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         TrackMouseEvent(&tracking);
         handlingFloatingPopupInput_ = true;
         bool dragPreviewSynced = false;
-        OnMouseMoveAt(
+        const bool pointerUpdated = OnNativeMouseMoveAt(
             wp, latestDesktopPointer(),
             &dragPreviewSynced);
         handlingFloatingPopupInput_ = false;
-        UpdateFloatingPopupWindowBounds(false);
-        PresentPointerInteractionFrame(
+        if (!pointerUpdated) return 0;
+        PresentFloatingPopupPointerFrame(
             dragPreviewSynced);
         return 0;
     }
@@ -1316,6 +1442,17 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     }
     case WM_TIMER:
+        if (wp == kPopupPresentationRetryTimerId)
+        {
+            KillTimer(hwnd, kPopupPresentationRetryTimerId);
+            if (ShouldShowFloatingPopupWindow() &&
+                floatingPopupPresentationRetryCount_ < kPopupPresentationRetryLimit)
+            {
+                ++floatingPopupPresentationRetryCount_;
+                UpdateFloatingPopupWindowBounds(true);
+            }
+            return 0;
+        }
         if (wp == kPopupMouseLeaveTimerId)
         {
             SyncPopupMouseLeaveTimer();
@@ -1363,6 +1500,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         {
             CancelPointerPressWithoutCaptureRelease();
         }
+        if (msg == WM_CANCELMODE && GetCapture() == hwnd)
+            ReleaseCapturePreservingPointerState();
         return 0;
     case WM_LBUTTONDBLCLK:
     {

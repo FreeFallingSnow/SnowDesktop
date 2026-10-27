@@ -3,6 +3,7 @@
 #include "system/controls/system_control_bluetooth_sampling.h"
 #include "system/controls/system_control_wifi_presentation.h"
 #include "system/controls/system_control_wifi_sampling.h"
+#include "system/controls/system_control_wifi_profile.h"
 #include "system/controls/system_control_audio_presentation.h"
 #include "system/controls/system_control_brightness_identity.h"
 #include "system/controls/system_control_windows.h"
@@ -23,6 +24,74 @@ using namespace std::chrono_literals;
 using namespace snowdesktop::system_control;
 void Require(bool condition, const char* text)
 { if (!condition) { std::cerr << "FAIL: " << text << '\n'; std::exit(1); } }
+void WifiProfilesKeepTheNetworkName()
+{
+    using snowdesktop::system_control::windows::CreateWifiProfile;
+    const auto ssid = [](std::string_view bytes) {
+        DOT11_SSID value{}; value.uSSIDLength = static_cast<ULONG>(bytes.size());
+        std::copy(bytes.begin(), bytes.end(), value.ucSSID); return value;
+    };
+    const auto keepGoing = [] { return false; };
+    std::wstring profile, xml;
+    const auto capture = [&](const wchar_t* text) -> DWORD { xml = text; return ERROR_SUCCESS; };
+    // This is the production XML/write path; only the native WLAN write is
+    // replaced, so this regression never changes the machine's saved networks.
+    Require(CreateWifiProfile(ssid("HIT-WLAN"), "open", {}, false, profile, keepGoing, capture) == ERROR_SUCCESS &&
+        profile == L"HIT-WLAN" && xml.find(L"<name>HIT-WLAN</name>") != std::wstring::npos &&
+        xml.find(L"<SSID><hex>4849542D574C414E</hex></SSID>") != std::wstring::npos &&
+        xml.find(L"<sharedKey>") == std::wstring::npos,
+        "new Wi-Fi profiles expose the real network name and preserve the exact SSID bytes");
+
+    std::vector<std::wstring> writes;
+    Require(CreateWifiProfile(ssid("HIT-WLAN"), "open", {}, false, profile, keepGoing,
+        [&](const wchar_t* text) -> DWORD {
+            writes.emplace_back(text); return writes.size() < 3 ? ERROR_ALREADY_EXISTS : ERROR_SUCCESS;
+        }) == ERROR_SUCCESS && profile == L"HIT-WLAN (3)" && writes.size() == 3 &&
+        writes[0].find(L"<name>HIT-WLAN</name>") != std::wstring::npos &&
+        writes[1].find(L"<name>HIT-WLAN (2)</name>") != std::wstring::npos &&
+        writes[2].find(L"<SSID><hex>4849542D574C414E</hex></SSID>") != std::wstring::npos,
+        "name collisions preserve existing profiles and retry recognizable names for the same SSID");
+    unsigned calls = 0;
+    profile = L"unchanged";
+    Require(CreateWifiProfile(ssid("HIT-WLAN"), "open", {}, false, profile, keepGoing,
+        [&](const wchar_t*) -> DWORD { ++calls; return ERROR_ACCESS_DENIED; }) == ERROR_ACCESS_DENIED &&
+        calls == 1 && profile == L"unchanged", "permission failures do not retry or publish an uncreated profile");
+    Require(CreateWifiProfile(ssid("HIT-WLAN"), "open", {}, false, profile, [] { return true; }, capture) == ERROR_CANCELLED &&
+        profile == L"unchanged", "cancellation prevents profile creation");
+    bool cancelled = false;
+    calls = 0;
+    Require(CreateWifiProfile(ssid("HIT-WLAN"), "open", {}, false, profile, [&] { return cancelled; },
+        [&](const wchar_t*) -> DWORD { ++calls; cancelled = true; return ERROR_ALREADY_EXISTS; }) == ERROR_CANCELLED &&
+        calls == 1 && profile == L"unchanged", "cancellation after a collision stops further native writes");
+
+    Require(CreateWifiProfile(ssid("\xE6\xA0\xA1\xE5\x9B\xAD<&\"'>"), "wpa2", L"safe<&\"'>key", true, profile, keepGoing, capture) == ERROR_SUCCESS &&
+        profile == L"\u6821\u56ED<&\"'>" && xml.find(L"<name>\u6821\u56ED&lt;&amp;&quot;&apos;&gt;</name>") != std::wstring::npos &&
+        xml.find(L"<keyMaterial>safe&lt;&amp;&quot;&apos;&gt;key</keyMaterial>") != std::wstring::npos &&
+        xml.find(L"<authentication>WPA2PSK</authentication>") != std::wstring::npos &&
+        xml.find(L"<nonBroadcast>true</nonBroadcast>") != std::wstring::npos,
+        "Unicode names and XML metacharacters survive protected hidden-network profile creation");
+    Require(CreateWifiProfile(ssid("WPA3"), "wpa3", L"safe-password", false, profile, keepGoing, capture) == ERROR_SUCCESS &&
+        xml.find(L"<authentication>WPA3SAE</authentication>") != std::wstring::npos,
+        "profile naming retains WPA3 authentication");
+    const std::vector<std::pair<std::string, std::wstring>> binaryNames = {
+        {std::string("A\0B", 3), L"410042"}, {std::string("\xFF\x80", 2), L"FF80"}, {std::string("A\x01", 2), L"4101"}
+    };
+    for (const auto& [bytes, expected] : binaryNames)
+        Require(CreateWifiProfile(ssid(bytes), "open", {}, false, profile, keepGoing, capture) == ERROR_SUCCESS &&
+            profile == expected && xml.find(L"<hex>" + expected + L"</hex>") != std::wstring::npos,
+            "binary or XML-invalid SSIDs use a lossless hex label without changing connection identity");
+    const std::string maximum(32, 'A');
+    Require(CreateWifiProfile(ssid(maximum), "open", {}, false, profile, keepGoing, capture) == ERROR_SUCCESS &&
+        profile == std::wstring(32, L'A'), "32-byte SSIDs retain their complete profile names");
+    DOT11_SSID invalid{};
+    calls = 0;
+    const auto mustNotWrite = [&](const wchar_t*) -> DWORD { ++calls; return ERROR_SUCCESS; };
+    Require(CreateWifiProfile(invalid, "open", {}, false, profile, keepGoing, mustNotWrite) == ERROR_INVALID_PARAMETER,
+        "empty SSIDs cannot create profiles");
+    invalid.uSSIDLength = 33;
+    Require(CreateWifiProfile(invalid, "open", {}, false, profile, keepGoing, mustNotWrite) == ERROR_INVALID_PARAMETER && calls == 0,
+        "oversized SSIDs fail before native profile writes");
+}
 struct FakeBackend final : Backend
 {
     std::mutex mutex;
@@ -1082,6 +1151,7 @@ void TestSystemControls()
     BluetoothPowerAndDeviceReadFailures();
     AudioPresentationKeepsRealEndpoints();
     WifiOffStillHasManageableInterface();
+    WifiProfilesKeepTheNetworkName();
     WifiPresentationPrioritizesSavedConnectableNetworks();
     ControlReadbackMustReallySettle();
     NewSliderCancelsExecutingOldTarget();

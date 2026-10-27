@@ -1,6 +1,17 @@
 local player = module.require("modules/player.lua")
 
 return {
+    ["system timelines preserve positive rates outside local playback bounds"] = function()
+        local timeline={positionMs=5000,durationMs=60000,maximumSeekMs=60000,updatedAtMs=1000,playbackRate=8}
+        assert(player.position(timeline,true,2000)==13000)
+        assert(player.optimisticSeekPosition(timeline,10000,true,1000,2000)==18000)
+        timeline.playbackRate=0.125
+        assert(player.position(timeline,true,2000)==5125)
+        for _,rate in ipairs({0,-1,math.huge,0/0}) do
+            timeline.playbackRate=rate
+            assert(player.position(timeline,true,2000)==6000)
+        end
+    end,
     ["missing and closed media sessions stay inactive"] = function()
         assert(player.session({ available = false }) == nil)
         assert(player.session({ available = true, value = {

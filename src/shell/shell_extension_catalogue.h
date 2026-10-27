@@ -53,12 +53,26 @@ Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
 class CatalogueForegroundDemand;
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
                                             CatalogueForegroundDemand &foreground);
+// Recheck only exact, already known Verb/Handler registration paths and the
+// extension associations named by those seeds. No class/package enumeration or
+// extension activation. Missing/unsupported registrations are omitted.
+// Types and contexts prove only the seed's scope; revision is domain-separated
+// limited proof, never a complete inventory or folder/background baseline.
+// Command validity uses each returned row's menuRevision, not revision (which
+// also reflects display metadata such as decoded icon pixels).
+Catalogue ReadCatalogueSources(const std::vector<Registration> &sources,
+                               CatalogueForegroundDemand *foreground = nullptr,
+                               HKEY classes = HKEY_CLASSES_ROOT);
 // Same complete folder registration inputs as the full scan, without
 // enumerating unrelated file classes. Metadata only; no handler activation.
-std::uint64_t ReadFolderCatalogueRevision(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Optional per-scope demand supports cooperative cancellation; a cancelled
+// read throws instead of returning a usable complete proof.
+std::uint64_t ReadFolderCatalogueRevision(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true,
+                                         CatalogueForegroundDemand *foreground = nullptr);
 // Background scope includes shared Directory\Background registrations and,
 // for Desktop, DesktopBackground. Uses the same live inputs as ReadCatalogue.
-std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes = HKEY_CLASSES_ROOT, bool packages = true,
+                                             CatalogueForegroundDemand *foreground = nullptr);
 // Internal menu compatibility path uses the same Blocked/Approved policy as
 // discovery. Alternate roots are for isolated registry policy tests only.
 bool HandlerEnabled(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE);

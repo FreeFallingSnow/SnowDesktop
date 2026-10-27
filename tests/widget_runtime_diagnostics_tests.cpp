@@ -1,10 +1,14 @@
 #include "widget/runtime/widget_runtime_diagnostics.h"
 
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <string>
 
 void RunPerformanceCaptureTests();
+void RunProcessResourceStatisticsTests();
+int RunProcessResourceChild();
+void RunPerfettoSessionTests();
 int RunPerformanceControlFixture();
 int RunPerformanceOverheadBenchmark(const char* directory);
 
@@ -66,13 +70,25 @@ void TestBoundedHistory()
 
 int main(int argc, char** argv)
 {
-    if (argc == 3 && std::string(argv[1]) == "--performance-overhead")
-        return RunPerformanceOverheadBenchmark(argv[2]);
-    if (argc == 2 && std::string(argv[1]) == "--performance-control-fixture")
-        return RunPerformanceControlFixture();
-    TestLevelNormalizationAndFiltering();
-    TestBoundedHistory();
-    RunPerformanceCaptureTests();
-    std::cout << "widget runtime diagnostics tests passed\n";
-    return 0;
+    try
+    {
+        if (argc == 3 && std::string(argv[1]) == "--performance-overhead")
+            return RunPerformanceOverheadBenchmark(argv[2]);
+        if (argc == 2 && std::string(argv[1]) == "--performance-control-fixture")
+            return RunPerformanceControlFixture();
+        if (argc == 2 && std::string(argv[1]) == "--resource-statistics-child")
+            return RunProcessResourceChild();
+        TestLevelNormalizationAndFiltering();
+        TestBoundedHistory();
+        RunPerfettoSessionTests();
+        RunProcessResourceStatisticsTests();
+        RunPerformanceCaptureTests();
+        std::cout << "widget runtime diagnostics tests passed\n";
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "Diagnostics fixture failed: " << error.what() << '\n';
+        return EXIT_FAILURE;
+    }
 }

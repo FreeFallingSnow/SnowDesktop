@@ -53,6 +53,11 @@ int main()
             WidgetSettingKindFromType(type) == expected;
     Check(allKindsMapped,
         "every v2 setting type maps to a backend-neutral kind");
+    Check(WidgetSettingKindFromType("textArea") == WidgetSettingKind::Unknown &&
+        WidgetSettingTypeList().find("multiSelect") != std::string::npos &&
+        WidgetSettingTypeList().find("fileHandle") != std::string::npos &&
+        WidgetSettingTypeList().find("textArea") == std::string::npos,
+        "the diagnostic alternatives advertise supported fields without treating a view textArea as a setting");
 
     WidgetSettingFieldSchema derived;
     derived.rawType = "password";

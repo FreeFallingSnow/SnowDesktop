@@ -124,7 +124,7 @@ struct NativeTooltip::Impl
     UINT width = 0, height = 0;
     float measuredWidth = 0, measuredHeight = 0;
     bool contentDirty = true, paintDirty = true, highContrast = false, visible = false;
-    bool dragFeedback = false, hidingWindow = false;
+    bool dragFeedback = false, menuFeedback = false, hidingWindow = false;
     HRESULT lastError = S_OK;
     std::shared_ptr<AccessibleState> accessible = std::make_shared<AccessibleState>();
     ComPtr<IRawElementProviderSimple> provider;
@@ -197,7 +197,7 @@ struct NativeTooltip::Impl
         {
             wchar_t message[160]{};
             swprintf_s(message, L"NativeTooltip drawing failed HRESULT=0x%08X", static_cast<unsigned>(result));
-            WriteDiagnosticLogEntry(message); lastError = result;
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning); lastError = result;
         }
         Hide(); ReleaseGraphics();
     }
@@ -294,7 +294,7 @@ struct NativeTooltip::Impl
             (input.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE));
         if (state.key.empty() || state.text.empty() || !owner || !IsWindowVisible(owner) || !composition || !text)
         { Hide(); return; }
-        if ((!dragFeedback && GetCapture()) || inMenu) { Hide(); return; }
+        if ((!dragFeedback && !menuFeedback && GetCapture()) || (!menuFeedback && inMenu)) { Hide(); return; }
         if (!EnsureWindow()) return;
         MONITORINFO monitor{sizeof(monitor)};
         const auto handle = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
@@ -363,19 +363,24 @@ struct NativeTooltip::Impl
             paintDirty = false; lastError = S_OK;
         }
         PublishName();
+        if (show || visible)
+        {
+            // A reused tooltip can already be paired in the TOPMOST band
+            // behind a newer popup. Pair synchronization preserves that
+            // order, so explicitly raise the content before repairing glass.
+            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            backdrop.SetPopupWindowPairZOrder(window, HWND_TOPMOST, true);
+        }
         if (show && !visible)
         {
             KillTimer(window, kHoverTimer);
-            backdrop.SetPopupWindowPairZOrder(window, HWND_TOPMOST, true);
             backdrop.ShowPopupWindowPair(window);
             visible = IsWindowVisible(window) != FALSE;
             { std::lock_guard guard(accessible->mutex); accessible->visible = visible; }
             if (visible && provider && UiaClientsAreListening()) UiaRaiseAutomationEvent(provider.Get(), UIA_ToolTipOpenedEventId);
         }
         else if (visible && glass) backdrop.SetVisible(true);
-        if (visible && dragFeedback)
-            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     }
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
@@ -473,6 +478,7 @@ void NativeTooltip::Close() { impl_->Close(); }
 bool NativeTooltip::Visible() const { return impl_->visible; }
 HWND NativeTooltip::Window() const { return impl_->window; }
 void NativeTooltip::SetDragFeedback(bool enabled) { impl_->dragFeedback = enabled; }
+void NativeTooltip::SetMenuFeedback(bool enabled) { impl_->menuFeedback = enabled; }
 void NativeTooltip::Invalidate()
 {
     impl_->format.Reset(); impl_->measured = {};

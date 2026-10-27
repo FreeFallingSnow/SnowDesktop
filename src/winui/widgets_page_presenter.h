@@ -239,6 +239,12 @@ struct WidgetAgentSkillTargetSnapshot
     bool operator==(const WidgetAgentSkillTargetSnapshot&) const = default;
 };
 
+struct WidgetNativeHelperSnapshot
+{
+    std::wstring id, path, sha256, purpose, operations, reason, denied;
+    bool operator==(const WidgetNativeHelperSnapshot&) const = default;
+};
+
 /** One installed package, including its active source and desktop instances. */
 struct InstalledWidgetPackageSnapshot
 {
@@ -254,6 +260,7 @@ struct InstalledWidgetPackageSnapshot
     std::wstring workshopExternalItemId;
     /** Exact identity reviewed by the permission editor. */
     std::wstring permissionScopeFingerprint;
+    std::vector<WidgetNativeHelperSnapshot> nativeHelpers;
     bool builtIn = false;
     bool development = false;
     bool valid = true;
@@ -301,11 +308,13 @@ struct WidgetPermissionEditorRequest
     std::wstring sourceId;
     std::wstring sourceExternalItemId;
     std::wstring scopeFingerprint;
+    std::vector<WidgetNativeHelperSnapshot> nativeHelpers;
     WidgetPackagePermissionState permissionState =
         WidgetPackagePermissionState::LegacyImplicit;
     bool canRevoke = false;
     std::vector<WidgetPermissionSnapshot> permissions;
     std::vector<std::wstring> declaredNetworkDomains;
+    std::wstring author;
 };
 
 struct WidgetPermissionEditorResult
@@ -314,6 +323,7 @@ struct WidgetPermissionEditorResult
         WidgetPermissionEditorAction::Cancel;
     std::vector<std::wstring> grantedPermissions;
     std::vector<std::wstring> grantedNetworkDomains;
+    bool nativeAcknowledged = false;
 };
 
 /** A result supplied by a catalog or Workshop source worker owned by the host. */
@@ -473,6 +483,7 @@ struct WidgetsPageRequest
     std::vector<std::wstring> grantedPermissions;
     std::vector<std::wstring> grantedNetworkDomains;
     int agentSkillTargetMask = 0;
+    bool nativeAcknowledged = false;
 };
 
 struct WidgetsPageActions
@@ -564,6 +575,8 @@ public:
     /** Reveals only the requested package's access controls; never edits access. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusPackagePermissions(std::wstring_view packageId);
+    [[nodiscard]] bool CanOpenPackagePermissions(std::wstring_view packageId) const noexcept;
+    void OpenPackagePermissions(std::wstring_view packageId);
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         DeveloperToolsFocusTarget(std::string_view focusId) const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement

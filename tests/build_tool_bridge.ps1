@@ -69,7 +69,11 @@ public static class NativeTestBridge {
       command.Runspace=space;
       command.AddScript("Set-Location -LiteralPath "+Literal(Environment.CurrentDirectory),true).Invoke();command.Commands.Clear();command.Streams.ClearStreams();
       string expression="& "+Literal(Decode(fields[2]));
-      foreach(string argument in fields[3].Split(','))if(argument.Length>0) {string value=Decode(argument);expression+=" "+(System.Text.RegularExpressions.Regex.IsMatch(value,@"^-[A-Za-z][A-Za-z0-9]*(?::\$(?:true|false))?$")?value:Literal(value));}
+      // The producer terminates every argument with a comma. Only the final
+      // field is framing; an empty interior field is a real empty argument.
+      string[] arguments=fields[3].Split(',');
+      if(arguments[arguments.Length-1].Length!=0)throw new FormatException("Invalid argument framing");
+      for(int argumentIndex=0;argumentIndex<arguments.Length-1;argumentIndex++) {string value=Decode(arguments[argumentIndex]);expression+=" "+(System.Text.RegularExpressions.Regex.IsMatch(value,@"^-[A-Za-z][A-Za-z0-9]*(?::\$(?:true|false))?$")?value:Literal(value));}
       foreach(PSObject value in command.AddScript(expression,true).Invoke())if(value!=null)output.WriteLine(value.ToString());
       foreach(ErrorRecord value in command.Streams.Error)error.WriteLine(value.ToString());
       object nativeExit=space.SessionStateProxy.GetVariable("LASTEXITCODE");

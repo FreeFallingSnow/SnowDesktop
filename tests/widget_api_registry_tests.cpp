@@ -245,6 +245,8 @@ void TestVersionedRegistration()
 
 void TestV2Contract()
 {
+    Check(snowdesktop::widget_api::SupportsFeature("resource.image.lazy"),
+        "lazy package images must be independently discoverable on API v2 hosts");
     const auto v2Libraries =
         snowdesktop::widget_api::SandboxLibraries();
     const auto hasV2Library = [&](std::string_view name) {
@@ -267,6 +269,8 @@ void TestV2Contract()
                 v2Libraries.end(),
         "the executable sandbox catalog must not expose removed libraries");
 
+    Check(snowdesktop::widget_api::SupportsFeature("task.native.diagnostics"),
+        "native diagnostic metadata is discoverable without changing the API version");
     Check(snowdesktop::widget_api::SupportsFeature(
                 "animation.frame") &&
             snowdesktop::widget_api::SupportsFeature(

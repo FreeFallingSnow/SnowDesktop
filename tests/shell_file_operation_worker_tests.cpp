@@ -3,6 +3,7 @@
 #include "shell/shell_file_operation_progress.h"
 #include "shell/shell_file_operation_worker.h"
 #include "shell/shell_file_operation_worker_boundary.h"
+#include "shell/file_history_cases.h"
 #include "drag_drop/external_drop_resources.h"
 #include "layout/item_location.h"
 #include "../src/app/shell/shell_change_notification.h"
@@ -822,7 +823,13 @@ int wmain(int argc, wchar_t** argv)
         if (mode == L"--allowed-effect-request-tests") return RunFileBackedDropRegression(false, true);
         if (mode == L"--tracked-path-alias-tests")
         {
-            try { TestTrackedDropPathAliases(); }
+            try {
+                TestTrackedDropPathAliases();
+                const auto root = CreateTemporaryDirectory();
+                try { file_history_cases::Run(root); }
+                catch (...) { std::filesystem::remove_all(root); throw; }
+                std::filesystem::remove_all(root);
+            }
             catch (const std::exception& error) { Expect(false, error.what()); }
             return 0;
         }

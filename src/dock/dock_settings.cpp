@@ -18,6 +18,7 @@
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/operation_feedback.h"
+#include "diagnostics/performance_trace.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -489,6 +490,9 @@ public:
         const PersonalizationSettings& appearance,
         const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
     {
+        snowdesktop::performance::Scope trace("shared.taskbar", "controller.apply");
+        hookEnabled = hookEnabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar);
+        if (!hookEnabled) snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 0);
         // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
         if (!injectionInFlight_.load(std::memory_order_acquire) &&
@@ -515,7 +519,7 @@ public:
         {
             const std::wstring diagnostic = L"[TaskbarAppearance] failed; explorerPid=" + std::to_wstring(explorerProcessId) +
                 L" stage=" + std::to_wstring(state_->diagnosticStage) + L" error=" + std::to_wstring(state_->lastError);
-            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Error);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, diagnostic.c_str(), DiagnosticLogLevel::Error);
             appearanceFailureReported_ = true; reportedFailureExplorer_ = explorerProcessId;
             reportedFailureError_ = static_cast<DWORD>(state_->lastError);
             const snowdesktop::taskbar_hook::AppearanceFailureKey failure{
@@ -532,6 +536,7 @@ public:
             state_->minimizeSequence = 0;
             state_->minimizeStarted = 0;
             state_->minimizeSource = 0;
+            state_->dockStartMenuUntil = 0;
             InterlockedExchange(&state_->minimizeCancelled, 0);
         }
         state_->enabled = hookEnabled ? TRUE : FALSE;
@@ -620,6 +625,7 @@ public:
         }
         MemoryBarrier();
         InterlockedIncrement(&state_->generation); // even: snapshot complete
+        snowdesktop::performance::Value("shared.taskbar", "publish", {}, 1);
 
         const bool watchMinimizeInput = hookEnabled && std::any_of(targets.begin(), targets.end(), [](const auto& target) {
             return target.protectAutoHideActivation;
@@ -637,7 +643,7 @@ public:
             wchar_t diagnostic[160]{};
             swprintf_s(diagnostic, L"[TaskbarMinimizeInput] dedicated observer ready=%d error=%lu",
                 error == ERROR_SUCCESS, error);
-            WriteDiagnosticLogEntry(diagnostic, error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, diagnostic, error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         }
 
         const UINT applyMessage = RegisterWindowMessageW(
@@ -657,7 +663,9 @@ public:
         {
             if (hookEnabled)
             {
-                PostMessageW(taskbar, applyMessage, 0, 0);
+                const BOOL posted = PostMessageW(taskbar, applyMessage, 0, 0);
+                snowdesktop::performance::Value("shared.taskbar", posted
+                    ? "apply.post.success" : "apply.post.failure", {}, 1);
                 continue;
             }
 
@@ -665,8 +673,10 @@ public:
             // still alive. The Explorer-side owner watcher remains a crash
             // fallback, but graceful exit must not race an asynchronous post.
             DWORD_PTR ignored = 0;
-            SendMessageTimeoutW(taskbar, applyMessage, 0, 0,
+            const auto sent = SendMessageTimeoutW(taskbar, applyMessage, 0, 0,
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored);
+            snowdesktop::performance::Value("shared.taskbar", sent
+                ? "restore.send.success" : "restore.send.failure", {}, 1);
         }
 
         if (!hookEnabled)
@@ -696,7 +706,10 @@ public:
         const bool retryAppearance = appearanceEnabled &&
             state_->status == snowdesktop::taskbar_hook::kStatusFailed;
         if (alreadyInjected && !retryAppearance)
+        {
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar, 1);
             return true;
+        }
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
         if ((!alreadyInjected || retryAppearance) &&
@@ -716,6 +729,7 @@ public:
         }
         if (injectionCancelEvent_)
             ResetEvent(injectionCancelEvent_);
+        snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, ERROR_IO_PENDING);
         injectionInFlight_.store(true, std::memory_order_release);
         try
         {
@@ -766,7 +780,7 @@ public:
                 exempt ? L"exempt" : L"protect", source, observed, minimizeInput_.Running(),
                 static_cast<DWORD>(input.kind), input.time, static_cast<DWORD>(now) - input.time, recipient,
                 input.point.x, input.point.y);
-            WriteDiagnosticLogEntry(diagnostic);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, diagnostic);
             if (exempt)
             {
                 // Also release any earlier request: a missing Explorer input
@@ -799,6 +813,45 @@ public:
                 result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
                 GetPropW(taskbar, native::kAttachedProperty) != nullptr;
         }
+        return applied;
+    }
+
+    bool StartMenuProtection(bool active, bool begin)
+    {
+        using namespace snowdesktop::taskbar_hook;
+        std::vector<HWND> taskbars;
+        bool renewal = false;
+        {
+            std::lock_guard lock(mutex_);
+            Snapshot snapshot;
+            if (!ReadSharedSnapshot(state_, snapshot) || snapshot.ownerProcessId != GetCurrentProcessId())
+                return false;
+            if (active && !HasMinimizeProtection(snapshot)) return false;
+            renewal = active && !begin && snapshot.dockStartMenuUntil > GetTickCount64();
+            for (LONG i = 0; i < snapshot.targetCount; ++i)
+                if (snapshot.targets[i].protectAutoHideActivation)
+                    taskbars.push_back(reinterpret_cast<HWND>(snapshot.targets[i].taskbar));
+            InterlockedIncrement(&state_->generation);
+            state_->dockStartMenuUntil = snowdesktop::dock_settings_rules::StartMenuLeaseDeadline(active, GetTickCount64());
+            MemoryBarrier();
+            InterlockedIncrement(&state_->generation);
+        }
+        if (renewal && !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [](HWND taskbar) {
+            return IsWindow(taskbar) && GetPropW(taskbar, native::kAttachedProperty) != nullptr;
+        })) return true;
+        bool applied = !taskbars.empty();
+        const UINT message = RegisterWindowMessageW(kApplyMessageName);
+        for (HWND taskbar : taskbars)
+        {
+            DWORD_PTR result = 0;
+            applied &= SendMessageTimeoutW(taskbar, message,
+                active && !renewal ? GetCurrentProcessId() : 0,
+                active && !renewal ? kStartMenuBeginCommand : 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &result) != 0 &&
+                result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
+                GetPropW(taskbar, native::kAttachedProperty) != nullptr;
+        }
+        if (active && !applied) StartMenuProtection(false, false);
         return applied;
     }
 
@@ -856,17 +909,21 @@ private:
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
         const std::vector<HWND>& taskbars)
     {
+        if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar)) return false;
         const DWORD resumed = snowdesktop::taskbar_hook::ResumeTaskbarThreads(
             taskbars, expectedExplorerProcessId, GetCurrentProcessId(), injectionCancelEvent_);
         if (resumed == ERROR_SUCCESS)
         {
             if (!residentRuntimeLogged_)
             {
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] compatible resident instance resumed without Hook registration; DLL updates take effect after Explorer exits naturally");
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarHookConnection] compatible resident instance resumed without Hook registration; DLL updates take effect after Explorer exits naturally");
                 residentRuntimeLogged_ = true;
             }
             std::lock_guard lock(mutex_);
             if (!state_ || state_->explorerProcessId != expectedExplorerProcessId) return false;
+            snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, ERROR_SUCCESS);
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar,
+                state_->enabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) ? 1u : 0u);
             injectedExplorerProcessId_ = expectedExplorerProcessId;
             return true;
         }
@@ -890,12 +947,13 @@ private:
             expectedExplorerProcessId);
 
         snowdesktop::taskbar_hook::ConnectionStage stage{};
+        if (!snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar)) return false;
         const DWORD error = snowdesktop::taskbar_hook::ConnectTaskbarRuntime(taskbar, taskbars,
             expectedExplorerProcessId, GetCurrentProcessId(), selectedHookPath_, explorerProcess,
             injectionCancelEvent_, [this] {
                 if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath())
                 { SetLastError(ERROR_SUCCESS); return std::wstring{}; }
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] instance did not acknowledge; selecting another reusable slot");
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarHookConnection] instance did not acknowledge; selecting another reusable slot");
                 return snowdesktop::deployment::GetIsolatedTaskbarHookPath();
             }, &stage);
         if (explorerProcess)
@@ -906,7 +964,7 @@ private:
                 std::to_wstring(expectedExplorerProcessId) + L" error=" + std::to_wstring(error) +
                 L" stage=" + snowdesktop::taskbar_hook::ConnectionStageName(stage) +
                 L" runtime=" + selectedHookPath_;
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, message.c_str(), DiagnosticLogLevel::Warning);
         }
 
         if (error == ERROR_CANCELLED) return false;
@@ -915,7 +973,7 @@ private:
         {
             const std::wstring message = L"[TaskbarHookConnection] fresh native host acknowledgement; explorerPid=" +
                 std::to_wstring(expectedExplorerProcessId) + L" runtime=" + selectedHookPath_;
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, message.c_str());
             residentRuntimeLogged_ = true;
         }
 
@@ -924,12 +982,18 @@ private:
             state_->explorerProcessId == expectedExplorerProcessId &&
             snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
                 taskbars, expectedExplorerProcessId, GetCurrentProcessId());
-        if (connected) injectedExplorerProcessId_ = expectedExplorerProcessId;
+        if (connected)
+        {
+            injectedExplorerProcessId_ = expectedExplorerProcessId;
+            snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::Taskbar,
+                state_->enabled && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) ? 1u : 0u);
+        }
         return connected;
     }
 
     bool Fail(DWORD expectedExplorerProcessId, DWORD error)
     {
+        snowdesktop::runtime_modules::SetError(snowdesktop::runtime_modules::Module::Taskbar, error);
         std::lock_guard lock(mutex_);
         if (state_ && state_->explorerProcessId == expectedExplorerProcessId)
         {
@@ -1002,6 +1066,11 @@ bool IsSystemTaskbarAutoHideEnabled()
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed)
 {
     return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed);
+}
+
+bool UpdateSystemTaskbarStartMenuProtection(bool active, bool begin)
+{
+    return GetTaskbarBackdropController().StartMenuProtection(active, begin);
 }
 
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled)
@@ -1221,6 +1290,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         }
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
+    ReadBoolField(text, "startMenuKeepTaskbarHidden", settings.startMenuKeepTaskbarHidden);
     ReadBoolField(text, "showQuickSearchButton", settings.showQuickSearchButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
@@ -1276,6 +1346,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     ReadBoolField(text, "suppressSystemTaskbar", settings.suppressSystemTaskbar);
+    // A legacy hidden preference always retains its Dock-display scope.
+    settings.suppressSystemTaskbarAllMonitors = false;
+    ReadBoolField(text, "suppressSystemTaskbarAllMonitors", settings.suppressSystemTaskbarAllMonitors);
     if (ReadDoubleField(text, "systemTaskbarAlignment", value))
         settings.systemTaskbarAlignment = std::clamp(static_cast<int>(value), 0, 1);
     ReadBoolField(text, "systemTaskbarBackdropEnabled",
@@ -1403,6 +1476,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
+    file << "  \"startMenuKeepTaskbarHidden\": "
+         << (settings.startMenuKeepTaskbarHidden ? "true" : "false") << ",\n";
     file << "  \"showQuickSearchButton\": "
          << (settings.showQuickSearchButton ? "true" : "false") << ",\n";
     // Preserve the legacy keys for downgrade compatibility while migrating
@@ -1435,6 +1510,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"windowEffect\": " << snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect) << ",\n";
     file << "  \"suppressSystemTaskbar\": "
          << (settings.suppressSystemTaskbar ? "true" : "false") << ",\n";
+    file << "  \"suppressSystemTaskbarAllMonitors\": "
+         << (settings.suppressSystemTaskbarAllMonitors ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAlignment\": " << settings.systemTaskbarAlignment << ",\n";

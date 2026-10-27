@@ -408,9 +408,11 @@ void TestImageDownsampling(const std::filesystem::path& snowwidget,
       "resources":{"stripes":{"type":"image","path":"stripes.png"},
         "alpha":{"type":"image","path":"alpha.png"}}
     })json");
-    for (const bool declarative : { false, true })
+    for (int variant = 0; variant < 4; ++variant)
     {
-        Write(source / L"main.lua", declarative ? R"lua(
+        const bool declarative = (variant & 1) != 0;
+        const bool lazy = (variant & 2) != 0;
+        std::string script = declarative ? R"lua(
 local stripes, alpha = resource.image("stripes"), resource.image("alpha")
 return widget.define({
   view = function()
@@ -430,8 +432,35 @@ return widget.define({render=function()
   draw.imageFit(stripes,48,8,32,32,"contain","center",1,"linear")
   draw.imageFit(stripes,88,8,32,32,"contain","center",1,"nearest")
 end})
-)lua");
-        const auto output = root / (declarative ? L"sampling-view.png" : L"sampling-draw.png");
+)lua";
+        if (lazy)
+        {
+            for (const auto* name : {"stripes", "alpha"})
+            {
+                const std::string original = "resource.image(\"" + std::string(name) + "\")";
+                const std::string deferred = "resource.image(\"" + std::string(name) + "\",{lazy=true})";
+                std::size_t position = 0;
+                while ((position = script.find(original, position)) != std::string::npos)
+                {
+                    script.replace(position, original.size(), deferred);
+                    position += deferred.size();
+                }
+            }
+            script.insert(0, "assert(widget.hasFeature(\"resource.image.lazy\"))\n");
+            script.insert(0,
+                "for _,options in ipairs({{lazy=\"yes\"},{unknown=true},true,{[1]=true}}) do\n"
+                "  local ok,message=pcall(resource.image,\"stripes\",options)\n"
+                "  assert(not ok and tostring(message):find(\"resource.image: invalidOptions\",1,true))\n"
+                "end\n");
+        }
+        const auto definition = script.find("return widget.define");
+        Check(definition != std::string::npos, "image fixture has a real widget definition");
+        script.insert(definition, lazy ?
+              "assert(resource.status(stripes).state==\"pending\" and resource.status(stripes).resident==false)\n" :
+              "assert(resource.status(stripes).state==\"ready\" and resource.status(stripes).resident==true)\n");
+        Write(source / L"main.lua", script);
+        const auto output = root / (std::wstring(declarative ? L"sampling-view" : L"sampling-draw") +
+            (lazy ? L"-lazy" : L"") + L".png");
         const auto [code, result] = Run(snowwidget, {L"preview", source.wstring(), output.wstring(),
             L"--host", host.wstring(), L"--dpi", L"96", L"--content-only"});
         if (code != 0) std::cerr << result << '\n';
@@ -724,6 +753,54 @@ void CheckRuntimeBoundaryRegressions(const std::filesystem::path& snowwidget,
         catch (const std::exception& error) { failures.emplace_back(std::string(name) + ": " + error.what()); }
     };
     const auto noFiles = [](const std::filesystem::path&) {};
+    preview("audio-volume-coalesce-type", R"lua(
+assert(widget.hasFeature("task.audio.output.coalescedVolume"))
+return widget.define({setup=function()
+local ok=pcall(task.start,"audio.output.setVolume",{volume=0.5,coalesce=true})
+assert(ok,"the typed task parser accepts an optional coalesce boolean")
+local invalid=pcall(task.start,"audio.output.setVolume",{volume=0.5,coalesce="true"})
+assert(not invalid,"coalesce must not accept a string")
+end,render=function() draw.text(8,8,"volume arguments",14,0xFFFFFF) end})
+)lua", [](const std::filesystem::path& source) {
+        Write(source/L"widget.json",R"json({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"0512c95b-d176-4aa9-aa91-89d76015e7e6","slug":"volume-coalesce-type",
+            "version":"1.0.0","entry":"main.lua","minHostVersion":"1.0.12.0",
+            "name":"Volume arguments","description":"Typed continuous volume arguments",
+            "author":"SnowDesktop","license":"MIT","defaultSize":{"columns":2,"rows":1},
+            "permissions":["audio.output.control"],"requiredFeatures":["draw.immediate","lifecycle.model",
+                "task.audio.output.control","task.audio.output.coalescedVolume"]})json");
+    });
+    preview("media-playback-modes", R"lua(
+local current,sessions,timeline
+return widget.define({
+    setup=function()
+        current=data.subscribe("media.current")
+        sessions=data.subscribe("media.sessions")
+        timeline=data.subscribe("media.timeline")
+    end,
+    render=function()
+        local item=current:value().value.session
+        local list=sessions:value().value.sessions
+        local clock=timeline:value().value.timeline
+        assert(item.shuffle==false,"reported shuffle false must survive Lua serialization")
+        assert(item.repeatMode=="list" and item.playbackRate==1.25,"SMTC modes are serialized")
+        assert(list[1].id==item.id and list[1].shuffle==false and list[1].repeatMode=="list")
+        assert(item.timeline.playbackRate==1.25 and clock.playbackRate==1.25 and clock.sessionId==item.id,
+            "session and timeline share the same rate")
+        draw.text(8,8,"media state",14,0xFFFFFF)
+    end,
+})
+)lua", [](const std::filesystem::path& source) {
+        Write(source / L"widget.json", R"json({
+            "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"fb85c0d5-1e03-4ae2-8f15-05a80052447b","slug":"media-playback-modes",
+            "version":"1.0.0","entry":"main.lua","minHostVersion":"1.0.12.0",
+            "name":"Media playback states","author":"SnowDesktop","license":"MIT",
+            "defaultSize":{"columns":2,"rows":1},"permissions":["media.read"],
+            "requiredFeatures":["draw.immediate","lifecycle.model","data.subscribe","data.media.current",
+                "data.media.sessions","data.media.timeline"]
+        })json");
+    });
     preview("translation-linear-substitution", R"lua(
 assert(l10n.tr("{0}/{1}", "{1}", "done") == "{1}/done",
     "inserted values must not be interpreted as another template")

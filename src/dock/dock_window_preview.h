@@ -2,6 +2,7 @@
 
 #include "dock_settings.h"
 #include "dock_window_pin.h"
+#include "dock_window_peek.h"
 
 #include <dwmapi.h>
 #include <windows.h>
@@ -9,6 +10,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct DockWindowPreviewItem
@@ -105,7 +107,8 @@ public:
     using ActivateCallback = std::function<void(HWND)>;
     using CloseCallback = std::function<void(HWND)>;
 
-    DockWindowPreview() = default;
+    explicit DockWindowPreview(snowdesktop::dock_peek::Api peekApi =
+        snowdesktop::dock_peek::Api::Load()) : windowPeek_(peekApi) {}
     ~DockWindowPreview();
 
     DockWindowPreview(const DockWindowPreview&) = delete;
@@ -120,6 +123,14 @@ public:
         HWND dockLayerOwner = nullptr);
     void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void SetPinBorderAppearance(const PersonalizationSettings& settings) { windowPins_.SetAppearance(settings); }
+    void SetPeekActivateCallback(ActivateCallback callback)
+    {
+        if (!callback) { peekActivateCallback_ = {}; return; }
+        peekActivateCallback_ = [this, callback = std::move(callback)](HWND window) {
+            windowPeek_.PrepareActivation();
+            callback(window);
+        };
+    }
     void Hide();
     void ScheduleHide();
     void KeepVisible();
@@ -133,6 +144,8 @@ public:
 
 private:
     static constexpr UINT_PTR kHideTimerId = 1;
+    static constexpr UINT_PTR kPeekTimerId = 2;
+    static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
 
     static LRESULT CALLBACK WindowProc(
@@ -150,6 +163,9 @@ private:
     void OnMouseLeave(HWND window);
     void OnLeftButtonUp(POINT point);
     void OnMiddleButtonUp(POINT point);
+    void UpdatePeekTarget(HWND target);
+    void OnPeekTimer();
+    void CancelPeek(bool suppressUntilLeave = false);
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
@@ -160,13 +176,26 @@ private:
     HWND hwnd_ = nullptr;
     std::vector<HWND> windows_;
     ActivateCallback activateCallback_;
+    ActivateCallback peekActivateCallback_;
     CloseCallback closeCallback_;
     DockWindowPin windowPins_;
+    snowdesktop::dock_peek::Session windowPeek_;
+    snowdesktop::dock_peek::WindowIdentity peekCandidate_;
+    HWND peekOwner_ = nullptr;
+    HWND peekTimerWindow_ = nullptr;
+    HWND peekSuppressedWindow_ = nullptr;
+    HWND peekPendingForeground_ = nullptr;
+    ULONGLONG peekDue_ = 0;
+    ULONGLONG peekLeaveDue_ = 0;
+    bool peekSurfacesReady_ = false;
+    bool peekCommitting_ = false;
+    ULONGLONG peekCommitDeadline_ = 0;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;
     std::vector<HTHUMBNAIL> thumbnails_;
+    std::vector<HTHUMBNAIL> measuredThumbnails_;
     SIZE panelSize_{};
     RECT anchorScreen_{};
     DockPosition dockPosition_ = DockPosition::Bottom;

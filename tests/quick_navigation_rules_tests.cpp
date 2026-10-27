@@ -583,6 +583,100 @@ void TestTabDragWhileScrolling()
         "the drop frame must scroll with the destination slot rather than the floating tab");
 }
 
+void TestResponsiveAnimationRules()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    for (const auto effect : {Effect::Scale, Effect::Fade})
+    for (const double speed : {.7, 1.0, 1.4, 4.0})
+    {
+        State state;
+        state.Configure(effect, speed, false, true);
+        state.Open(1000);
+        Check(state.UsesResponsiveMotion() && state.GetVisual().visible,
+            "non-Dock responsive reveal owns its surface from the first frame");
+        const auto reveal = state.RemainingTimeline(), scale = state.RemainingScaleTimeline();
+        Check(reveal.durationMilliseconds == std::ceil(160.0 * speed) && reveal.segments.size() <= 64,
+            "responsive opening has a bounded native track and an actual completion deadline");
+        for (unsigned step = 0; step <= 64; ++step)
+        {
+            const double seconds = reveal.durationMilliseconds * step / 64000.0;
+            const auto opacity = snowdesktop::popup_motion_curve::Evaluate(reveal, seconds);
+            const auto geometry = snowdesktop::popup_motion_curve::Evaluate(scale, seconds);
+            const double hidden = effect == Effect::Scale ? kMinimumScale : 1.0;
+            Check(std::abs(geometry.position - (hidden + (1.0 - hidden) * opacity.position)) < .000001 &&
+                opacity.position >= -.00001 && opacity.position <= 1.00001,
+                "content scale, glass scale and opacity share one non-overshooting reveal curve");
+        }
+        state.Advance(1000 + static_cast<std::uint64_t>(reveal.durationMilliseconds));
+        Check(!state.IsAnimating() && state.GetVisual().scale == 1.0f && state.GetVisual().opacity == 1.0f,
+            "responsive opening ends at full size and opacity without a settling tail");
+        state.Close(10000);
+        const auto close = state.RemainingTimeline();
+        Check(close.durationMilliseconds == std::ceil(110.0 * speed),
+            "responsive closing retains the normal close duration");
+        const auto midClose = snowdesktop::popup_motion_curve::Evaluate(close,
+            close.durationMilliseconds * .0005);
+        Check(midClose.position > .30 && midClose.position < .55,
+            "quick panel and shared sliding surfaces keep meaningful size halfway through closing");
+        state.Advance(10000 + static_cast<std::uint64_t>(close.durationMilliseconds));
+        Check(state.IsHidden(), "responsive closing reaches zero and retires its surface");
+    }
+    State state;
+    state.Configure(Effect::Scale, 1.0, false, true);
+    state.Open(1000); state.Advance(1016);
+    Check(state.GetVisual().opacity > .13f, "responsive reveal makes visible progress within the first 16ms");
+    state.Advance(1060);
+    const auto before = state.GetVisual();
+    const double velocity = state.Velocity();
+    state.Close(1060);
+    Check(state.GetVisual().scale == before.scale && state.Velocity() == velocity &&
+        state.RemainingTimeline().segments.front().linear == velocity,
+        "rapid reversal preserves position and velocity in the native and UI tracks");
+    state.Advance(1061);
+    Check(state.GetVisual().scale > before.scale, "a reversal decelerates before changing direction");
+    state.Configure(Effect::Scale, 1.0, true, true);
+    Check(!state.UsesResponsiveMotion() && state.DurationMilliseconds(true) == 240.0,
+        "Dock invocation keeps its existing timing even when responsive motion is requested");
+    state.Configure(Effect::None, 1.0, false, true); state.Open(2000);
+    Check(!state.IsAnimating() && state.GetVisual().opacity == 1.0f,
+        "disabled motion still opens immediately");
+    for (const auto effect : {Effect::Scale, Effect::Fade})
+    {
+        State bounded;
+        bounded.Configure(effect, 1.0, false, true);
+        bounded.Open(1000); bounded.Advance(1150);
+        const auto pose = bounded.GetVisual();
+        const double currentVelocity = bounded.Velocity();
+        bounded.Close(1150); bounded.Open(1150);
+        Check(bounded.GetVisual().scale == pose.scale && bounded.Velocity() == currentVelocity,
+            "same-tick reversal keeps its actual position and velocity rather than clamping the handoff");
+        const auto track = bounded.RemainingTimeline();
+        for (unsigned ms = 0; ms <= 160; ++ms)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(track, ms / 1000.0);
+            Check(sample.position >= -.000001 && sample.position <= 1.000001,
+                "same-tick reversal near the soft endpoint cannot overshoot the reveal range");
+        }
+    }
+    for (const double speed : {.7, 1.0, 1.4, 4.0})
+    for (unsigned beforeEnd = 1; beforeEnd <= 20; ++beforeEnd)
+    {
+        State bounded;
+        bounded.Configure(Effect::Scale, speed, false, true);
+        const auto duration = static_cast<std::uint64_t>(bounded.DurationMilliseconds(true));
+        const auto reverseAt = 1000 + duration - beforeEnd;
+        bounded.Open(1000); bounded.Close(reverseAt); bounded.Open(reverseAt);
+        const auto track = bounded.RemainingTimeline();
+        for (unsigned step = 0; step <= 128; ++step)
+        {
+            const auto sample = snowdesktop::popup_motion_curve::Evaluate(track,
+                track.durationMilliseconds * step / 128000.0);
+            Check(sample.position >= -.000001 && sample.position <= 1.000001,
+                "native curve fitting also stays bounded when the remaining endpoint distance is tiny");
+        }
+    }
+}
+
 void TestAnimationRules()
 {
     using namespace
@@ -700,8 +794,9 @@ void TestResizeAnimation()
     Check(resize.IsAnimating() && resize.Advance(1000, true) == expanded,
         "collapse begins at the currently displayed bounds");
     const auto halfway = resize.Advance(1090, true);
-    Check(halfway.left == 150 && halfway.right == 690 && halfway.bottom == 465,
-        "collapse smoothly interpolates width and height");
+    Check(halfway.left > 150 && halfway.left < collapsed.left &&
+        halfway.right < 690 && halfway.bottom < 465 && halfway.bottom > collapsed.bottom,
+        "responsive collapse covers most width and height change before its soft finish");
     Check(halfway.top == expanded.top && halfway.left + halfway.right == expanded.left + expanded.right,
         "resize preserves the search header anchor and horizontal center");
     Check(resize.Envelope() == expanded,
@@ -717,17 +812,29 @@ void TestResizeAnimation()
         "reverse transition reaches exact final bounds and stops requesting frames");
 
     resize.Start(collapsed, expanded, 2000, true, 2.0);
-    Check(resize.Advance(2180, true) == halfway && resize.IsAnimating(),
+    const auto scaled = resize.Advance(2180, true);
+    Check(scaled.left < 150 && scaled.bottom > 465 && resize.IsAnimating(),
         "resize follows the global duration scale");
     Check(resize.Advance(2360, true) == expanded && !resize.IsAnimating(),
         "scaled expansion completes at the requested size");
 
     resize.Start(expanded, collapsed, 3000, true, 1.0);
     const auto beforeResults = resize.Advance(3045, true);
+    const auto velocity = resize.Velocity();
     const ResizeRect newResults{200, 80, 640, 400};
     resize.Retarget(newResults, 3045);
     Check(resize.Advance(3045, true) == beforeResults,
         "new search results retarget an active resize without a discontinuity");
+    Check(resize.Velocity() == velocity,
+        "new search results preserve the current resize velocity instead of restarting at rest");
+    const auto retained = resize.Envelope();
+    for (std::uint64_t time = 3045; time <= 3225; ++time)
+    {
+        const auto frame = resize.Advance(time, true);
+        Check(frame.left >= retained.left && frame.top >= retained.top &&
+            frame.right <= retained.right && frame.bottom <= retained.bottom,
+            "retargeted resize inertia remains inside its retained native surface");
+    }
     Check(resize.Advance(3225, true) == newResults && !resize.IsAnimating(),
         "resize settles at the updated search result height");
 
@@ -745,8 +852,8 @@ void TestResizeAnimation()
     const ResizeRect centeredExpanded{-420, -400, 220, 200};
     resize.Start(centeredCollapsed, centeredExpanded, 6500, true, 1.0);
     const auto centered = resize.Advance(6590, true);
-    Check(centered.left == -370 && centered.top == -300 &&
-        centered.right == 170 && centered.bottom == 100,
+    Check(centered.left < -370 && centered.left > centeredExpanded.left &&
+        centered.top < -300 && centered.right > 170 && centered.bottom > 100,
         "centered transitions interpolate position as well as size on negative-coordinate monitors");
     Check(resize.Envelope() == centeredExpanded &&
         resize.Advance(6680, true) == centeredExpanded,
@@ -762,6 +869,48 @@ void TestResizeAnimation()
     state.ResetHidden();
     Check(!state.Resize().IsAnimating() && state.IsHidden(),
         "destroying the panel clears resize state before the next opening");
+}
+
+void TestSearchHeightFollow()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const ResizeRect initial{100, 80, 740, 280}, results{100, 80, 740, 680};
+    for (const double speed : {.7, 1.0, 1.4, 4.0})
+    {
+        ResizeState follow;
+        follow.StartResultFollow(initial, results, 1000, true, speed);
+        const auto firstFrame = follow.Advance(1016, true);
+        Check(firstFrame.bottom > 450 && firstFrame.top == initial.top &&
+            firstFrame.left == initial.left && firstFrame.right == initial.right,
+            "search height follows immediately within the first frame without moving its header or width");
+        const auto middle = follow.Advance(1032, true);
+        Check(middle.bottom > 600,
+            "search height covers most displacement within 32ms instead of trailing live input");
+        follow.Retarget(results, 1040);
+        Check(follow.Advance(1080, true) == results && !follow.IsAnimating(),
+            "search height settles within 80ms even with a slow preset or duplicate result notification");
+    }
+    ResizeState follow;
+    follow.StartResultFollow(initial, results, 2000, true, 1.0);
+    ResizeRect latest = results;
+    for (std::uint64_t time = 2016; time <= 2112; time += 16)
+    {
+        const auto before = follow.Advance(time, true);
+        const auto velocity = follow.Velocity();
+        latest.bottom = time % 32 ? 500 : 800;
+        follow.Retarget(latest, time);
+        const auto handoff = follow.Advance(time, true);
+        const auto handoffVelocity = follow.Velocity();
+        // Normalizing and restoring double coefficients may differ by one ULP.
+        Check(handoff == before && std::equal(velocity.begin(), velocity.end(), handoffVelocity.begin(),
+            [](double expected, double actual) { return std::abs(actual - expected) <= 1e-9; }),
+            "streaming search results retarget the current frame and velocity without queueing old heights");
+    }
+    Check(follow.Advance(2192, true) == latest && !follow.IsAnimating(),
+        "only the latest streamed height owns the final 80ms deadline");
+    follow.StartResultFollow(initial, results, 3000, false, 1.0);
+    Check(!follow.IsAnimating() && follow.Advance(3000, false) == results,
+        "disabled motion applies result height immediately");
 }
 
 void TestResizePresentationLifetime()
@@ -1287,6 +1436,19 @@ void TestGenieDestinationPixelCoverage()
 
 void TestDeactivateRules()
 {
+    rules::OutsidePress openFromHeldButton(1);
+    Check(!openFromHeldButton.Observe(1, false, false) &&
+            !openFromHeldButton.Observe(0, false, false),
+        "the search opener's held button and release cannot dismiss its own panel");
+    Check(openFromHeldButton.Observe(1, false, false),
+        "an outside application press dismisses search even when it never acquired activation");
+    Check(!openFromHeldButton.Observe(1, false, false), "a held outside button is not another press");
+    rules::OutsidePress idle(0);
+    Check(!idle.Observe(1, true, false), "clicking search content keeps it open");
+    idle.Observe(0, false, false);
+    Check(!idle.Observe(1, false, true), "source buttons, editing menus and active drags retain their input route");
+    idle.Observe(0, false, false);
+    Check(idle.Observe(2, false, false), "a later outside right-button press dismisses an unfocused panel");
     Check(!rules::ShouldCloseOnDeactivate(
             true),
         "an owned context menu must keep quick navigation open");
@@ -1570,7 +1732,9 @@ int main()
     TestSectionLayout();
     TestTabDragWhileScrolling();
     TestAnimationRules();
+    TestResponsiveAnimationRules();
     TestResizeAnimation();
+    TestSearchHeightFollow();
     TestResizePresentationLifetime();
     TestResizeHostOrigin();
     TestAnimationEffects();

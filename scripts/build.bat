@@ -7,6 +7,21 @@ set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
 cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
+if /i "%~1"=="run" goto persistent
+if /i "%~1"=="candidate" goto candidate
+if /i "%~1"=="task-open" goto collaboration
+if /i "%~1"=="task-stage" goto collaboration
+if /i "%~1"=="task-close" goto collaboration
+if /i "%~1"=="task-list" goto collaboration
+if /i "%~1"=="evidence-list" goto collaboration
+if /i "%~1"=="acceptance-list" goto collaboration
+if /i "%~1"=="acceptance-start" goto collaboration
+if /i "%~1"=="acceptance-complete" goto collaboration
+if /i "%~1"=="event-post" goto collaboration
+if /i "%~1"=="event-read" goto collaboration
+if /i "%~1"=="event-wait" goto collaboration
+if /i "%~1"=="event-ack" goto collaboration
+if /i "%~1"=="edit-verify" goto collaboration
 if /i "%~1"=="watch" goto localwait
 if /i "%~1"=="resource" goto resource
 if /i "%~1"=="ready-and-wait" goto collaboration
@@ -51,6 +66,12 @@ rem Acquire execution authority before any preflight/process action or output wr
 if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
 exit /b %ERRORLEVEL%
+:persistent
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_run.ps1" %*
+exit /b %ERRORLEVEL%
+:candidate
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_candidate.ps1" %*
+exit /b %ERRORLEVEL%
 :leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action verify
 if %ERRORLEVEL% NEQ 0 exit /b 2
@@ -69,7 +90,7 @@ if %ERRORLEVEL% NEQ 0 exit /b 3
 
 :configure
 echo === Configuring CMake (Release preset) ===
-cmake --preset release
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation configure -Preset release
 if %ERRORLEVEL% NEQ 0 (
     echo CMake configure FAILED
     exit /b 1
@@ -77,7 +98,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building SnowDesktop.exe, Steam launcher, Workshop Manager, Steam Bridge and snowwidget.exe ===
-cmake --build --preset release
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Preset release
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
     exit /b 1
@@ -85,7 +106,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Configuring 32-bit Wallpaper Engine one-shot capture helper ===
-cmake -B .build\wallpaper_hook32 -S src\wallpaper_hook -A Win32 "-DSNOWDESKTOP_OUTPUT_DIR=%CD%/.build/Release"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation configure -Directory .build\wallpaper_hook32 -Source src\wallpaper_hook -Architecture Win32 -Output "%CD%/.build/Release"
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper configure FAILED
     exit /b 1
@@ -93,7 +114,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building 32-bit Wallpaper Engine Hook and injector ===
-cmake --build .build\wallpaper_hook32 --config Release --target SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Directory .build\wallpaper_hook32 -Configuration Release -Targets SnowDesktopWallpaperCapture32
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper build FAILED
     exit /b 1
@@ -101,7 +122,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory ===
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation arrange -Output "%CD%\.build\Release"
 if %ERRORLEVEL% NEQ 0 (
     echo Build output arrangement FAILED
     exit /b 1

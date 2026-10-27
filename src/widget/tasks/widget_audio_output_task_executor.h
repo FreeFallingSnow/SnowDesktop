@@ -34,6 +34,7 @@ struct WidgetAudioOutputTaskRequest
     std::string action;
     std::optional<double> volume;
     std::optional<bool> muted;
+    bool coalesce = false;
 };
 
 struct WidgetAudioOutputTaskStartResult
@@ -98,6 +99,7 @@ private:
     std::unordered_set<std::uint64_t> active_;
     std::unordered_set<std::uint64_t> canceled_;
     std::unordered_map<std::string, Clock::time_point> lastStarts_;
+    std::unordered_map<std::string, Clock::time_point> lastVolumeRuns_;
     std::vector<WidgetAudioOutputTaskCompletion> completions_;
     std::jthread worker_;
     bool stopping_ = false;

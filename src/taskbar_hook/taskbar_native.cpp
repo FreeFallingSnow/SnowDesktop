@@ -41,9 +41,11 @@ struct WindowState
     bool classic = false;
     bool primary = false, ownsAutoHide = false, updatingAutoHide = false;
     AppBarMessage appBarMessage = nullptr;
+    CursorPosition cursorPosition = &GetCursorPos;
     std::mutex mutex;
     bool cloaked = false, styled = false;
     MinimizeProtection minimize;
+    StartMenuProtection startMenu;
     UINT timerInterval = 250;
     BOOL restoreCloak = FALSE;
     AccentPolicy restoreAccent{}, accent{};
@@ -349,7 +351,8 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                     // message arrives, so Explorer's own reveal is not blocked.
                     enforce = (ReadSharedSnapshot(state->mapping, snapshot)
                             ? snapshot.ownerProcessId == state->ownerId &&
-                                (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window)) ||
+                                (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window),
+                                        GetTickCount64(), state->startMenu.suppress) ||
                                     (state->minimize.active &&
                                         state->minimize.sequence == snapshot.minimizeSequence &&
                                         snapshot.minimizeCancelled != snapshot.minimizeSequence &&
@@ -563,7 +566,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     RECT rect{};
     POINT cursor{};
     MONITORINFO monitor{sizeof(monitor)};
-    const bool geometryValid = GetWindowRect(window, &rect) && GetCursorPos(&cursor) &&
+    const bool geometryValid = GetWindowRect(window, &rect) && state->cursorPosition(&cursor) &&
         GetMonitorInfoW(snowdesktop::taskbar_monitor::Resolve(window), &monitor);
     const HWND source = reinterpret_cast<HWND>(snapshot.minimizeSource);
     const bool sourceMinimized = source && (!IsWindow(source) || IsIconic(source) || !IsWindowVisible(source));
@@ -573,12 +576,20 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         snapshot.minimizeCancelled == snapshot.minimizeSequence,
         contextMenu || (geometryValid && IsTaskbarRevealEdge(rect, monitor.rcMonitor, cursor)),
         sourceMinimized, geometryValid && IsAutoHiddenTaskbar(rect, monitor.rcMonitor)};
-    bool temporary = false, temporaryChanged = false;
+    const bool startLease = snapshot.dockStartMenuUntil > protection.now &&
+        snapshot.dockStartMenuUntil - protection.now <= 3000;
+    const bool permanent = snapshot.suppressTaskbar &&
+        std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount, [window](const auto& target) {
+            return target.taskbar == reinterpret_cast<std::uintptr_t>(window) && target.suppressTaskbar;
+        });
+    bool temporary = false, temporaryChanged = false, protectStart = false;
     {
         std::lock_guard lock(state->mutex);
         const bool wasActive = state->minimize.active;
         temporary = state->minimize.Update(protection);
         temporaryChanged = temporary != wasActive;
+        protectStart = state->startMenu.Update(startLease, permanent, geometryValid,
+            geometryValid && IsTaskbarRevealEdge(rect, monitor.rcMonitor, cursor), cursor, protection.now);
     }
     if (temporaryChanged)
     {
@@ -595,12 +606,13 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         record.request = snapshot.minimizeSequence;
         AppendAutoHideTrace(state->mapping->autoHideTrace, record);
     }
-    const UINT interval = temporary ? 50 : 250;
+    const UINT interval = temporary || (startLease && protectStart) ? 50 : 250;
     if (interval != state->timerInterval)
     {
         if (SetTimer(window, kTimer, interval, nullptr)) state->timerInterval = interval;
     }
-    const bool suppress = (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window)) || temporary) && !contextMenu;
+    const bool suppress = (ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window),
+        protection.now, protectStart) || temporary) && !contextMenu;
     bool cloakChanged = false;
     BOOL restoreCloak = FALSE;
     {
@@ -719,6 +731,7 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         if (ReadSharedSnapshot(state->mapping, snapshot) && snapshot.ownerProcessId == state->ownerId)
         {
             InterlockedExchange(&state->mapping->minimizeCancelled, snapshot.minimizeSequence);
+            { std::lock_guard lock(state->mutex); state->startMenu.Reveal(GetTickCount64()); }
             // Other taskbars may belong to different UI threads. Cancel their
             // matching request too without synchronous cross-thread recursion.
             std::lock_guard lock(windowsMutex);
@@ -761,6 +774,8 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     const UINT apply = RegisterWindowMessageW(kApplyMessageName);
     if (message == apply)
     {
+        if (wParam == state->ownerId && lParam == kStartMenuBeginCommand)
+        { std::lock_guard lock(state->mutex); state->startMenu.Reset(); }
         const bool updated = Update(window, state, false);
         DefSubclassProc(window, message, wParam, lParam);
         return updated && state->mapping->suppressionStatus >= kStatusIdle
@@ -870,7 +885,7 @@ void ObserveMenuMessage(HWND source, UINT message) noexcept try
 }
 catch (...) {}
 
-bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBarMessage) try
+bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBarMessage, CursorPosition cursorPosition) try
 {
     if (auto existing = Find(window)) return Update(window, existing, false);
     DWORD process = 0;
@@ -885,6 +900,7 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     state->mapping = mapping; state->classic = classic; state->ownerId = snapshot.ownerProcessId;
     state->primary = wcscmp(name, L"Shell_TrayWnd") == 0;
     state->appBarMessage = appBarMessage;
+    state->cursorPosition = cursorPosition ? cursorPosition : &GetCursorPos;
     state->owner = OpenProcess(SYNCHRONIZE, FALSE, state->ownerId);
     if (!state->owner || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return false;
     HMODULE pinned = nullptr;

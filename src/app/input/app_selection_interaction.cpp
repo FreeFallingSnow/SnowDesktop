@@ -243,6 +243,39 @@ void DesktopApp::ClearSelection()
     keyboardNavFileGroupCategoryTabs_ = false;
 }
 
+void DesktopApp::ClearSelectionForExternalWindow(HWND window)
+{
+    // Focus can move between our non-activating surfaces and input proxies.
+    // Menus and drag transports still need the original selected objects.
+    if (!window || !IsWindow(window) ||
+        IsDesktopInteractionSurfaceWindow(window) ||
+        IsShellDesktopForegroundWindow(window) ||
+        IsSameWindowTree(floatingDockInputHwnd_, window) ||
+        IsSameWindowTree(renameInputWindow_, window) ||
+        HasActiveContextMenuSession() || mouseDown_ ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive())
+        return;
+
+    const auto revision = selectionController_.Revision();
+    const bool keyboardFocus = keyboardNavVisualFocus_;
+    ClearSelection();
+    bool popupSelection = false;
+    for (auto& entry : dockFolderPopupWidget_.folderEntries)
+    {
+        popupSelection = popupSelection || entry.selected;
+        entry.selected = false;
+    }
+    if (revision == selectionController_.Revision() &&
+        !keyboardFocus && !popupSelection)
+        return;
+
+    // Expanded selected titles and keyboard frames can extend beyond their
+    // ordinary bounds, including projections into a separate Dock or popup.
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidatePersistentDockHosts();
+    InvalidateFloatingPopupWindow();
+}
+
 bool DesktopApp::OwnsWidgetKeyboardNavigation(
     const ScrollingItemWidget* widget) const
 {

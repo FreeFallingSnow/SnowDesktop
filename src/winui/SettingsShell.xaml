@@ -192,6 +192,11 @@
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
                 <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
+                <NavigationViewItem x:Name="AdvancedSettingsItem" Tag="group-advanced" Visibility="Collapsed" IsExpanded="False" SelectsOnInvoked="False">
+                    <NavigationViewItem.MenuItems>
+                        <NavigationViewItem x:Name="RuntimeModulesItem" Tag="runtime-modules" />
+                    </NavigationViewItem.MenuItems>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem x:Name="AboutItem" Tag="about" />

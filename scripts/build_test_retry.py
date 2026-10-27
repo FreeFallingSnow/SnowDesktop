@@ -8,12 +8,12 @@ import re
 import secrets
 import shutil
 import subprocess
-from powershell_runtime import powershell_executable, run as run_process
 import sys
 import time
 import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
+from powershell_runtime import powershell_executable, run as run_process
 from build_wait_tasks import atomic, lease, process_owner, reader, utc
 
 # Reviewed tests only. A label by itself cannot opt an arbitrary test into retries.
@@ -88,7 +88,7 @@ def source_identity(repo, work):
 
 def export_coverage(path, coverage, ledger):
     completed = []
-    for name in coverage.get('selected', []):
+    for name in coverage.get('executedSelection', coverage.get('selected', [])):
         item = ledger['tests'].get(name, {'status': 'not-run', 'finalReason': 'No matching execution evidence'})
         completed.append({'name': name, 'status': item['status'], 'reason': item.get('finalReason'),
                           'failureCount': item.get('failureCount', 0), 'attemptCount': len(item.get('attempts', []))})
@@ -104,9 +104,10 @@ def export_coverage(path, coverage, ledger):
         if task.get('status') == 'not-required':
             continue
         actual = [x for x in completed if x['name'] in task.get('requested', [])]
+        references = [x for x in coverage.get('references', []) if x.get('test') in task.get('requested', [])]
         task['failed'] = [x['name'] for x in actual if x['status'] not in ('passed', 'passed-after-retry')]
-        task['status'] = ('invalidated' if ledger['status']=='invalidated' else 'failed' if task['failed'] else 'not-run' if len(actual) != len(task['requested']) else
-                          'passed-after-retry' if any(x['status'] == 'passed-after-retry' for x in actual) else 'passed')
+        task['status'] = ('invalidated' if ledger['status']=='invalidated' else 'failed' if task['failed'] else 'not-run' if len(actual) + len(references) != len(task['requested']) else
+                          'passed-after-retry' if any(x['status'] == 'passed-after-retry' for x in actual) else 'fulfilled' if references else 'passed')
         check = coverage.get('postChecks', {}).get('outputIsolation', {})
         if task.get('requiresOutputIsolation', coverage.get('mode') == 'full') and task['status'] in ('passed', 'passed-after-retry') and check.get('status') != 'passed':
             task['status'] = 'failed' if check.get('status') == 'failed' else 'not-run'
@@ -117,7 +118,7 @@ def retry_failed(ledger, coverage, metadata, baseline, identity, stable_artifact
     """Inject only process/time/input boundaries in fixtures; policy and scheduling stay real."""
     deadline = time.monotonic() + budget
     record = work.parent/(ledger['batchId'] + '.retry.json')
-    for name in coverage['selected']:
+    for name in coverage.get('executedSelection', coverage['selected']):
         item = ledger['tests'][name]
         if item['status'] != 'failed':
             continue
@@ -305,12 +306,20 @@ def main():
         ledger['initialReport'] = coverage.get('report')
         actual = cases(coverage.get('report'))
         ledger['selected'] = coverage.get('selected', [])
-        for name in ledger['selected']:
+        executed = coverage.get('executedSelection', ledger['selected'])
+        references = coverage.get('references', [])
+        referenced = [x.get('test') for x in references]
+        ledger['executedSelection'] = executed
+        ledger['references'] = references
+        for name in executed:
             observed = actual.get(name, {'status': 'not-run', 'reason': 'No execution evidence'})
             ledger['tests'][name] = {'name': name, 'status': observed['status'], 'firstReason': observed['reason'],
                                     'finalReason': observed['reason'], 'failureCount': int(observed['status'] == 'failed'),
                                     'attempts': [{'attempt': 1, 'status': observed['status'], 'report': ledger['initialReport'], 'exitCode': code}]}
-        if not ledger['selected'] or set(actual) != set(ledger['selected']):
+        if (not ledger['selected'] or set(actual) != set(executed) or len(executed) != len(set(executed)) or
+                len(referenced) != len(set(referenced)) or set(executed) & set(referenced) or
+                set(executed) | set(referenced) != set(ledger['selected']) or
+                (references and (coverage.get('compiledIntent') or {}).get('policyVersion') != 1)):
             ledger.update(status='environment-blocked', reason='Configure/build/report/inventory failure; no automatic retry.', exitCode=code or 1, completedUtc=utc())
             atomic(path, ledger); return ledger['exitCode']
         artifacts = coverage.get('testExecutablesBeforeRun', [])
@@ -334,7 +343,14 @@ def main():
                 return subprocess.call(['ctest', '--preset', 'all-tests', '-R', '^' + re.escape(name) + '$',
                                         '--output-junit', str(report), '--timeout', str(timeout)], cwd=str(repo), env=retry_env,
                                        stdout=stream, stderr=subprocess.STDOUT)
-        result = retry_failed(ledger, coverage, metadata, baseline, identity, stable_artifacts, execute, work)
+        if executed:
+            result = retry_failed(ledger, coverage, metadata, baseline, identity, stable_artifacts, execute, work)
+        elif references and coverage.get('status') == 'fulfilled' and code == 0:
+            ledger.update(status='fulfilled', reason='All selected tests reference independently validated original evidence; no new execution.')
+            result = 0
+        else:
+            ledger.update(status='environment-blocked', reason='Zero executions have no complete validated reference coverage.')
+            result = 1
         check = coverage.get('postChecks', {}).get('outputIsolation', {})
         if code and result == 0 and not any(x['status'] == 'passed-after-retry' for x in ledger['tests'].values()) and check.get('status') != 'failed':
             ledger.update(status='environment-blocked', reason='Initial CTest pipeline failed without a retryable failing case.')

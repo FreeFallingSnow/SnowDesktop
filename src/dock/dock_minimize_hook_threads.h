@@ -1,10 +1,12 @@
 #pragma once
 
 #include <windows.h>
+#include "../platform/runtime_module_policy.h"
 #include <span>
 #include <unordered_map>
 #include <algorithm>
 #include <string>
+#include <vector>
 #include "dock_cloak_dispatcher.h"
 
 namespace snowdesktop::dock_minimize
@@ -19,6 +21,7 @@ public:
     explicit ThreadHooks(HookApi api = {}) : api_(api) {}
     bool Start(const std::wstring& path)
     {
+        if (!runtime_modules::Allowed(runtime_modules::Module::WindowMinimize)) return false;
         if (module_) return true;
         module_ = LoadLibraryExW(path.c_str(), nullptr,
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
@@ -39,9 +42,11 @@ public:
 
     void Sync(std::span<const DWORD> threads)
     {
+        std::vector<DWORD> desired(threads.begin(), threads.end());
+        std::sort(desired.begin(), desired.end());
         for (auto it = hooks_.begin(); it != hooks_.end();)
         {
-            if (std::find(threads.begin(), threads.end(), it->first) == threads.end())
+            if (!std::binary_search(desired.begin(), desired.end(), it->first))
             {
                 api_.remove(it->second);
                 it = hooks_.erase(it);
@@ -49,11 +54,12 @@ public:
             else ++it;
         }
         for (auto it = retries_.begin(); it != retries_.end();)
-            if (std::find(threads.begin(), threads.end(), it->first) == threads.end()) it = retries_.erase(it);
+            if (!std::binary_search(desired.begin(), desired.end(), it->first)) it = retries_.erase(it);
             else ++it;
         if (!procedure_) return;
         for (const DWORD thread : threads)
         {
+            if (!runtime_modules::Allowed(runtime_modules::Module::WindowMinimize)) break;
             if (thread && !hooks_.contains(thread))
             {
                 auto& retry = retries_[thread];

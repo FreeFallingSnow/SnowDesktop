@@ -2,6 +2,7 @@
 #include "icons/icon_bitmap_renderer.h"
 #include "app/app.h"
 #include "desktop_backdrop_update_rules.h"
+#include "diagnostics/performance_trace.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
@@ -471,6 +472,7 @@ std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) cons
 void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 {
     if (!hbm) return;
+    preparedIconPixels_.Erase(hbm);
     ClearDockAppearanceImages();
     for (auto it = styledIconCache_.begin(); it != styledIconCache_.end();)
         if (std::get<0>(it->first) == reinterpret_cast<std::uintptr_t>(hbm))
@@ -498,32 +500,17 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
     if (!hbm || !d2dContext_)
         return nullptr;
 
-    snowdesktop::icon_bitmap_pixels::Buffer buffer;
-    if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer, !managedAlpha))
+    snowdesktop::icon_styled_pixels::Prepared prepared;
+    if (!snowdesktop::icon_styled_pixels::Prepare(hbm, style, managedAlpha, nativeControlSource, prepared))
         return nullptr;
+    return UploadStyledIconPixels(prepared);
+}
 
-    bool needsGlassBackdrop = false;
-    if (style.enabled)
-    {
-        if (!snowdesktop::icon_beautify::PrepareCanvas(buffer.pixels, buffer.width, buffer.height, true)) return nullptr;
-        std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
-        if (style.mode == 0)
-        {
-            IconBackgroundColor detected{};
-            if (DetectSolidEdgeBackground(
-                    buffer.pixels, buffer.width, buffer.height, detected))
-            {
-                edgeFill = snowdesktop::icon_beautify::EdgeColor{
-                    detected.r, detected.g, detected.b };
-            }
-        }
-        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill;
-        buffer.pixels = snowdesktop::icon_beautify::Render(
-            buffer.pixels, buffer.width, buffer.height,
-            style, edgeFill, nativeControlSource ? snowdesktop::icon_beautify::SourceKind::NativeControl :
-                snowdesktop::icon_beautify::SourceKind::Image);
-    }
-
+ComPtr<ID2D1Bitmap1> DesktopApp::UploadStyledIconPixels(
+    const snowdesktop::icon_styled_pixels::Prepared& prepared)
+{
+    if (!d2dContext_) return nullptr;
+    const auto& buffer = prepared.buffer;
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
         D2D1_BITMAP_OPTIONS_NONE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
@@ -539,9 +526,28 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
         return nullptr;
     }
 
-    iconGlassBackdrop_[bitmap.Get()] = needsGlassBackdrop;
-    iconBitmapStyles_[bitmap.Get()] = style;
+    iconGlassBackdrop_[bitmap.Get()] = prepared.needsGlassBackdrop;
+    iconBitmapStyles_[bitmap.Get()] = prepared.style;
     return bitmap;
+}
+
+void DesktopApp::WarmStyledIconBitmap(HBITMAP bitmap,
+    const std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared>& prepared,
+    const snowdesktop::IconBeautifySettings& currentStyle,
+    bool managedAlpha, bool nativeControlSource)
+{
+    if (!bitmap || !prepared || prepared->source != bitmap ||
+        prepared->managedAlpha != managedAlpha || prepared->nativeControlSource != nativeControlSource)
+        return;
+    try
+    {
+        const auto token = iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(currentStyle));
+        // StyleIdentities compares every normalized field exactly. Equal's float
+        // tolerance would admit pixels from a slightly older preview.
+        if (iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(prepared->style)) == token)
+            preparedIconPixels_.Put(prepared);
+    }
+    catch (...) { /* Optional prewarming must not interrupt model acceptance. */ }
 }
 
 /**
@@ -611,10 +617,12 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     const auto glass = iconGlassBackdrop_.find(bitmap);
     const auto styled = iconBitmapStyles_.find(bitmap);
     const auto& style = styled == iconBitmapStyles_.end() ? iconBeautifySettings_ : styled->second;
-    if (glass != iconGlassBackdrop_.end() && glass->second && style.enabled && style.glassEnabled)
+    const bool translucentMaterial = glass != iconGlassBackdrop_.end() && glass->second &&
+        style.enabled && style.glassEnabled;
+    if (translucentMaterial)
         RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
 
-    snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity);
+    snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity, translucentMaterial);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
@@ -670,6 +678,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
 
 void DesktopApp::ClearStyledIconCache()
 {
+    preparedIconPixels_.Clear();
     for (const auto& [key, bitmap] : styledIconCache_)
     { (void)key; iconGlassBackdrop_.erase(bitmap.Get()); iconBitmapStyles_.erase(bitmap.Get()); }
     ClearDockAppearanceImages();
@@ -684,7 +693,12 @@ ID2D1Bitmap* DesktopApp::GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP 
     const auto key = std::tuple{reinterpret_cast<std::uintptr_t>(bitmap), token, managedAlpha, nativeControlSource};
     const auto found = styledIconCache_.find(key);
     if (found != styledIconCache_.end()) return found->second.Get();
-    auto uploaded = CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);
+    const auto prepared = preparedIconPixels_.Take(bitmap);
+    const bool preparedMatches = prepared && prepared->source == bitmap &&
+        prepared->managedAlpha == managedAlpha && prepared->nativeControlSource == nativeControlSource &&
+        iconStyleCache_.Get(snowdesktop::icon_beautify::Normalize(prepared->style)) == token;
+    auto uploaded = preparedMatches ? UploadStyledIconPixels(*prepared) :
+        CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);
     if (!uploaded) return nullptr;
     auto* result = uploaded.Get(); styledIconCache_[key] = std::move(uploaded); return result;
 }
@@ -692,4 +706,145 @@ ID2D1Bitmap* DesktopApp::GetTargetIconBitmap(ID2D1RenderTarget* context, HBITMAP
     std::wstring_view identity, bool media)
 {
     return GetStyledD2DBitmap(context, bitmap, ResolveIconAppearance(identity, media));
+}
+
+namespace
+{
+// Identities exist only during this UI-thread snapshot. No resource is retained
+// and no pointer is treated as an identity across samples.
+struct IconMemorySample
+{
+    size_t references = 0, unknownSize = 0;
+    std::uint64_t bytes = 0;
+    std::unordered_set<const void*> unique;
+
+    void Add(HBITMAP bitmap, SIZE size)
+    {
+        if (!bitmap) return;
+        ++references;
+        if (!unique.insert(bitmap).second) return;
+        if (size.cx <= 0 || size.cy <= 0) ++unknownSize;
+        else bytes += static_cast<std::uint64_t>(size.cx) * size.cy * 4;
+    }
+    void Add(ID2D1Bitmap* bitmap)
+    {
+        if (!bitmap) return;
+        ++references;
+        if (!unique.insert(bitmap).second) return;
+        const auto size = bitmap->GetPixelSize();
+        bytes += static_cast<std::uint64_t>(size.width) * size.height * 4;
+    }
+};
+}
+
+void DesktopApp::RecordIconTextResources() const
+{
+    using snowdesktop::performance::Value;
+    if (!snowdesktop::performance::Enabled()) return;
+    snowdesktop::performance::Scope sample("profiler", "sample.icon_text_resources");
+    const auto value = [](std::string_view module, const std::string& name, auto amount) {
+        Value(module, name, {}, static_cast<double>(amount));
+    };
+    const auto sources = [&](const char* name, auto visit) {
+        IconMemorySample usage;
+        visit([&](HBITMAP bitmap, SIZE size) { usage.Add(bitmap, size); });
+        const std::string prefix(name);
+        value("native.icon.memory", prefix + "_source_references", usage.references);
+        value("native.icon.memory", prefix + "_source_unique_count", usage.unique.size());
+        value("native.icon.memory", prefix + "_source_unknown_size_count", usage.unknownSize);
+        value("native.icon.memory", prefix + "_source_bgra_bytes_estimate", usage.bytes);
+    };
+    sources("desktop", [&](auto add) {
+        for (const auto& item : items_) add(item.iconBitmap, item.iconBitmapSize);
+    });
+    sources("folder", [&](auto add) {
+        for (const auto& widget : widgets_)
+            for (const auto& entry : widget.folderEntries) add(entry.iconBitmap, entry.iconBitmapSize);
+        for (const auto& entry : dockFolderPopupWidget_.folderEntries) add(entry.iconBitmap, entry.iconBitmapSize);
+    });
+    sources("dock_running", [&](auto add) {
+        for (const auto& app : dockUnpinnedRunningApps_) add(app.iconBitmap, app.iconBitmapSize);
+    });
+    sources("quick_nav_app", [&](auto add) {
+        for (const auto& app : quickNavigationAppEntries_) add(app.iconBitmap, app.iconBitmapSize);
+    });
+    sources("control", [&](auto add) {
+        for (const auto& [key, source] : iconControlSources_)
+        { (void)key; if (source) add(source->bitmap, source->size); }
+    });
+    sources("large_runtime", [&](auto add) {
+        const auto asset = [&](const auto& source) {
+            if (source) add(source->bitmap, SIZE{source->width, source->height});
+        };
+        for (const auto& [key, runtime] : largeIconRuntime_)
+        { (void)key; asset(runtime.asset); for (const auto& preview : runtime.previews) asset(preview); }
+    });
+    sources("menu", [&](auto add) {
+        for (const auto& entry : menuIconPool_) if (entry) add(entry->imageBitmap, SIZE{});
+    });
+    RecordIconLibraryResources();
+
+    IconMemorySample allBitmaps;
+    const auto bitmaps = [&](const char* name, auto visit) {
+        IconMemorySample usage;
+        visit([&](ID2D1Bitmap* bitmap) { usage.Add(bitmap); allBitmaps.Add(bitmap); });
+        const std::string prefix(name);
+        value("native.bitmap.memory", prefix + "_references", usage.references);
+        value("native.bitmap.memory", prefix + "_unique_count", usage.unique.size());
+        value("native.bitmap.memory", prefix + "_bgra_bytes_estimate", usage.bytes);
+    };
+    const auto mapBitmaps = [&](const char* name, const auto& cache) {
+        bitmaps(name, [&](auto add) { for (const auto& [key, bitmap] : cache) { (void)key; add(bitmap.Get()); } });
+    };
+    mapBitmaps("legacy_icon", d2dIconCache_);
+    mapBitmaps("styled_icon", styledIconCache_);
+    mapBitmaps("placeholder", placeholderIconCache_);
+    mapBitmaps("quick_nav_system", quickNavSysIconCache_);
+    mapBitmaps("quick_nav_app", quickNavAppIconCache_);
+    mapBitmaps("grid_text_shadow", itemTextShadowCache_);
+    mapBitmaps("list_text_shadow", componentListTextShadowCache_);
+    bitmaps("dock_appearance", [&](auto add) {
+        for (const auto& [key, image] : dockAppearanceImages_) { (void)key; add(image.bitmap.Get()); }
+    });
+    bitmaps("dock_folder", [&](auto add) {
+        dockFolderBitmapCache_.VisitValues([&](const auto& bitmap) { add(bitmap.Get()); });
+    });
+    bitmaps("reflection", [&](auto add) {
+        iconReflectionCache_.VisitValues([&](const auto& bitmap) { add(bitmap.Get()); });
+    });
+    bitmaps("fixed", [&](auto add) {
+        for (const auto& bitmap : quickNavActionIconCache_) add(bitmap.Get());
+        for (const auto& bitmap : demoIdentityIconBitmaps_) add(bitmap.Get());
+        add(privacyFileIconBitmap_.Get()); add(privacyFolderIconBitmap_.Get()); add(shortcutArrowBitmap_.Get());
+    });
+    value("native.bitmap.memory", "observed_unique_count", allBitmaps.unique.size());
+    value("native.bitmap.memory", "observed_unique_bgra_bytes_estimate", allBitmaps.bytes);
+    value("native.icon.memory", "prepared_entries", preparedIconPixels_.Size());
+    value("native.icon.memory", "prepared_payload_bytes", preparedIconPixels_.Bytes());
+    value("native.icon.memory", "prepared_capacity_bytes", preparedIconPixels_.CapacityBytes());
+    value("native.icon.memory", "style_metadata_entries", iconBitmapStyles_.size());
+    value("native.icon.memory", "glass_metadata_entries", iconGlassBackdrop_.size());
+    value("native.icon.memory", "fan_command_entries", popupFanIconDrawings_.size());
+
+    size_t gridInput = 0, listInput = 0, fanInput = 0;
+    for (const auto& [key, entry] : itemTextLayoutCache_)
+        gridInput += key.size() * sizeof(wchar_t) + entry.fullWidth.RetainedTextBytes();
+    for (const auto& [key, layout] : componentListTextLayoutCache_)
+    { (void)layout; listInput += key.size() * sizeof(wchar_t); }
+    for (const auto& [key, layout] : popupFanTextLayouts_)
+    { (void)layout; fanInput += key.size() * sizeof(wchar_t); }
+    value("native.text.memory", "grid_layout_entries", itemTextLayoutCache_.size());
+    value("native.text.memory", "grid_layout_input_bytes", gridInput);
+    value("native.text.memory", "list_layout_entries", componentListTextLayoutCache_.size());
+    value("native.text.memory", "list_layout_input_bytes", listInput);
+    value("native.text.memory", "fan_layout_entries", popupFanTextLayouts_.size());
+    value("native.text.memory", "fan_layout_input_bytes", fanInput);
+    const auto masks = snowdesktop::icon_beautify::TryGetMaskCacheStatistics();
+    value("native.icon.memory", "mask_sample_available", masks.available ? 1 : 0);
+    if (masks.available)
+    {
+        value("native.icon.memory", "mask_entries", masks.entries);
+        value("native.icon.memory", "mask_payload_bytes", masks.payloadBytes);
+        value("native.icon.memory", "mask_capacity_bytes", masks.capacityBytes);
+    }
 }

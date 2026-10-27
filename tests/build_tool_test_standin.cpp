@@ -10,13 +10,53 @@ bool contains(const std::vector<std::string>& args,const std::string& value) {re
 std::string argument(const std::vector<std::string>& args,const std::string& key) {auto item=std::find(args.begin(),args.end(),key);require(item!=args.end()&&item+1!=args.end(),"Stand-in missing argument "+key);return *(item+1);}
 void append(const fs::path& path,const std::string& value) {fs::create_directories(path.parent_path());std::ofstream output(path,std::ios::binary|std::ios::app);output<<value;}
 std::string target(const std::string& name) {return name=="theme_workflow"?"SnowDesktopThemeWorkflowTests":name=="widget_author_preview_cli"?"SnowDesktopWidgetAuthorPreviewCliTests":"SnowDesktop"+name+"Tests";}
+class CompilerCounter {
+    fs::path path_;
+    HANDLE mutex_=nullptr;
+    void update(int delta) {
+        const auto wait=WaitForSingleObject(mutex_,10000);
+        require(wait==WAIT_OBJECT_0||wait==WAIT_ABANDONED,"Compiler counter mutex timeout");
+        try {
+            auto data=fs::exists(path_)?Json::parse(read(path_)):Json::object({{"active",0},{"maximum",0},{"starts",0}});
+            const int active=data.at("active").integer()+delta;
+            require(active>=0,"Compiler counter underflow");data["active"]=active;
+            data["maximum"]=std::max(active,data.at("maximum").integer());
+            if(delta>0)data["starts"]=data.at("starts").integer()+1;
+            write(path_,data.dump());ReleaseMutex(mutex_);
+        }catch(...){ReleaseMutex(mutex_);throw;}
+    }
+public:
+    explicit CompilerCounter(const fs::path& root):path_(root/L"counter.json") {
+        mutex_=CreateMutexW(nullptr,FALSE,(L"Local\\SnowDesktopCompilerProbe."+root.filename().wstring()).c_str());
+        require(mutex_!=nullptr,"Cannot create compiler counter mutex");
+        try{update(1);}catch(...){CloseHandle(mutex_);mutex_=nullptr;throw;}
+    }
+    ~CompilerCounter(){try{update(-1);}catch(...){}if(mutex_)CloseHandle(mutex_);}
+};
 int execute(const std::vector<std::string>& args) {
     auto root=fs::current_path();auto name=utf8(executable().stem().wstring());
+    if(contains(args,"--budget-build-gate")){
+        const auto folder=fs::path(environment(L"SNOWDESKTOP_COMPILER_PROBE"));
+        require(!folder.empty(),"Missing compiler gate directory");
+        write(folder/(L"gate-"+environment(L"SNOWDESKTOP_COMPILER_PROJECT")),"ready");
+        until([&]{return fs::exists(folder/L"gate-left")&&fs::exists(folder/L"gate-right");},30);return 0;
+    }
+    if(name=="cl-budget"){
+        const auto folder=fs::path(environment(L"SNOWDESKTOP_COMPILER_PROBE"));
+        const auto compiler=fs::path(wide(read(fs::path(environment(L"SNOWDESKTOP_REAL_CL_FILE")))));
+        require(!folder.empty()&&compiler.is_absolute()&&fs::is_regular_file(compiler),"Missing actual compiler or probe directory");
+        CompilerCounter counter(folder);
+        // Keep two real MSBuild schedules overlapping long enough to observe
+        // their shared limit; the actual cl.exe still produces every object.
+        Sleep(700);
+        std::vector<std::wstring> command={compiler.wstring()};for(const auto& item:args)command.push_back(wide(item));
+        const auto result=run(command,root,30);std::cout<<result.out;std::cerr<<result.err;return result.code;
+    }
     if(contains(args,"--shell-descendant")){Sleep(60000);return 0;}
     if(contains(args,"--selected-probe")){auto selected=argument(args,"--selected-probe");append(root/L"executed.txt",selected+"\n");return selected=="Gamma"?23:selected=="Beta"&&fs::exists(root/L"fail-beta")?31:0;}
     if(name=="python") {
         auto mode=utf8(environment(L"SNOWDESKTOP_STANDIN_MODE"));
-        if(contains(args,"-c"))return mode=="old"?78:0;
+        if(contains(args,"-c")){if(mode=="dashboard")append(root/L"python-probe.count","once\n");return mode=="old"?78:0;}
         append(root/L"enhancement.count","once\n");
         if(mode=="watch") {Json forwarded=Json::array({});for(size_t i=1;i<args.size();++i)forwarded.items.push_back(args[i]);std::cout<<forwarded.dump();return 23;}
         return 19;
@@ -34,6 +74,7 @@ int execute(const std::vector<std::string>& args) {
             write(root/L"native-started","started");if(fs::exists(root/L"hold-native"))Sleep(60000);return 0;
         }
         if(contains(args,"--build")){append(root/L"build.count","build\n");std::string joined;for(const auto& item:args)joined+=item+" ";append(root/L"build-args.txt",joined+"\n");}
+        else append(root/L".build/configure.count","configure\n");
         for(const auto& item:{"Alpha","Beta","theme_workflow","widget_author_preview_cli"})write(root/L".build/Release/tests"/wide(target(item)+".exe"),"fixture binary "+std::string(item));
         fs::create_directories(root/L".build/Release/SnowDesktop.Runtime");std::cout<<"mock configure/build\n";return 0;
     }
@@ -53,11 +94,16 @@ int execute(const std::vector<std::string>& args) {
                 test["properties"].items.push_back(Json::object({{"name","LABELS"},{"value",labels}}));
                 auto path=utf8((root/L".build/Release/tests"/wide(target(item)+".exe")).wstring());
                 test["properties"].items.push_back(Json::object({{"name","REQUIRED_FILES"},{"value",Json::array({path})}}));
+                if(fs::exists(root/L".build/known-runtime.txt"))test["properties"].items.back()["value"].items.push_back(utf8((root/L".build/known-runtime.txt").wstring()));
+                test["properties"].items.push_back(Json::object({{"name","COST"},{"value",fs::exists(root/L".build/learned-cost")?7:1}}));
                 if(mode!="cold"&&!retry){test["command"]=Json::array({path});if(host)test["command"].items.push_back(utf8((root/L".build/Release/SnowDesktop.exe").wstring()));}
                 inventory["tests"].items.push_back(test);
             }
             std::cout<<inventory.dump()<<std::endl;return 0;
         }
+        append(root/L".build/verification-exec.count","execute\n");
+        write(root/L".build/verification-started","started");
+        until([&]{return !fs::exists(root/L".build/hold-verification");},90);
         auto report=fs::path(wide(argument(args,"--output-junit")));
         auto pattern=std::regex(argument(args,"-R"));std::string xml="<testsuites><testsuite>";
         bool failed=retry?(mode=="always"||mode=="change"):mode=="failed";
@@ -82,4 +128,4 @@ int execute(const std::vector<std::string>& args) {
     return 0;
 }
 }
-int main(int argc,char** argv) {try {std::vector<std::string> args;for(int i=1;i<argc;++i)args.emplace_back(argv[i]);return execute(args);}catch(const std::exception& error){std::cerr<<error.what()<<std::endl;return 1;}}
+int wmain(int argc,wchar_t** argv) {try {std::vector<std::string> args;for(int i=1;i<argc;++i)args.emplace_back(utf8(argv[i]));return execute(args);}catch(const std::exception& error){std::cerr<<error.what()<<std::endl;return 1;}}

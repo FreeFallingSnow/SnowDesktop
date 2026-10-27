@@ -206,4 +206,25 @@ std::unique_ptr<ISettingsController> CreateControllerProxy(Channel& channel, Loc
 {
     return std::make_unique<ControllerProxy>(channel, std::move(localize));
 }
+
+void BindContextMenuInspection(Channel& channel, ContextMenuInspectionCallbacks callbacks)
+{
+    channel.Bind<shell_extensions::CatalogueView, shell_extensions::Request, bool>("menu.inspect",
+        [inspect = std::move(callbacks.inspect)](auto request, bool refresh) {
+            return inspect ? inspect(request, refresh) : shell_extensions::CatalogueView{};
+        });
+    channel.Bind<void>("menu.inspect.close", [closed = std::move(callbacks.closed)] {
+        if (closed) closed();
+    });
+}
+
+ContextMenuInspectionCallbacks CreateContextMenuInspectionProxy(Channel& channel)
+{
+    return {
+        [&channel](const shell_extensions::Request& request, bool refresh) {
+            return channel.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
+        },
+        [&channel] { channel.Notify("menu.inspect.close"); }
+    };
+}
 } // namespace snowdesktop::settings_ipc

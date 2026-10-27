@@ -314,6 +314,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::DesktopStyle:
     case SettingsPage::WidgetBehavior:
     case SettingsPage::ThemeManager:
+    case SettingsPage::RuntimeModules:
     case SettingsPage::IconLibrary:
     case SettingsPage::QuickNavigation:
         break;
@@ -364,6 +365,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::DesktopStyle: return "desktop-style";
     case SettingsPage::WidgetBehavior: return "widget-behavior";
     case SettingsPage::ThemeManager: return "theme-manager";
+    case SettingsPage::RuntimeModules: return "runtime-modules";
     case SettingsPage::IconLibrary: return "icon-library";
     case SettingsPage::QuickNavigation: return "quick-navigation";
     }

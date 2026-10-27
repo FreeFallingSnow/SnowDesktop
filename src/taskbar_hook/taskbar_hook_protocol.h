@@ -11,15 +11,15 @@
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 15;
+inline constexpr std::uint32_t kSharedStateVersion = 16;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v15";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v16";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v15";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v16";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v15";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v16";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -48,6 +48,7 @@ inline constexpr LONG kStatusConnected = 2;
 inline constexpr LONG kStatusApplied = 3;
 inline constexpr LONG kStatusFailed = -1;
 inline constexpr LRESULT kMinimizeApplyAcknowledged = 0x53444d50; // "SDMP"
+inline constexpr LPARAM kStartMenuBeginCommand = 0x5344534d; // "SDSM"
 
 inline constexpr LONG kStyleGlassBackdrop = 1 << 0;
 inline constexpr LONG kStyleAcrylicBackdrop = 1 << 1;
@@ -156,6 +157,7 @@ struct SharedState
     ULONGLONG minimizeStarted = 0;
     std::uintptr_t minimizeSource = 0;
     volatile LONG minimizeCancelled = 0;
+    ULONGLONG dockStartMenuUntil = 0;
 };
 
 struct SharedRegistryQueryState
@@ -202,6 +204,7 @@ struct Snapshot
     ULONGLONG minimizeStarted = 0;
     std::uintptr_t minimizeSource = 0;
     LONG minimizeCancelled = 0;
+    ULONGLONG dockStartMenuUntil = 0;
 };
 inline bool HasMinimizeProtection(const Snapshot& snapshot) noexcept
 {
@@ -219,13 +222,17 @@ inline bool ProtectsTaskbarMinimize(const Snapshot& snapshot, std::uintptr_t tas
                 snapshot.targets[index].shellPanelVisible == FALSE;
     return false;
 }
-inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskbar) noexcept
+inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskbar,
+    ULONGLONG now = GetTickCount64(), bool protectStart = true) noexcept
 {
-    if (!snapshot.enabled || !snapshot.suppressTaskbar) return false;
+    if (!snapshot.enabled) return false;
     for (LONG index = 0; index < snapshot.targetCount; ++index)
         if (snapshot.targets[index].taskbar == taskbar)
-            return snapshot.targets[index].suppressTaskbar != FALSE &&
-                snapshot.targets[index].shellPanelVisible == FALSE;
+            return (protectStart && snapshot.dockStartMenuUntil > now &&
+                    snapshot.dockStartMenuUntil - now <= 3000 &&
+                    snapshot.targets[index].protectAutoHideActivation != FALSE) ||
+                (snapshot.suppressTaskbar && snapshot.targets[index].suppressTaskbar != FALSE &&
+                    snapshot.targets[index].shellPanelVisible == FALSE);
     // An unknown/recreated taskbar has no confirmed Dock on its monitor yet.
     return false;
 }
@@ -274,6 +281,7 @@ inline bool ReadSharedSnapshot(const SharedState* state, Snapshot& snapshot)
         snapshot.minimizeStarted = state->minimizeStarted;
         snapshot.minimizeSource = state->minimizeSource;
         snapshot.minimizeCancelled = state->minimizeCancelled;
+        snapshot.dockStartMenuUntil = state->dockStartMenuUntil;
         MemoryBarrier();
         if (generation == state->generation &&
             (generation & 1) == 0)

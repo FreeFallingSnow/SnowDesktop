@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
+#include "app/dock/dock_input_diagnostics.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_hover_rules.h"
@@ -30,11 +33,11 @@ bool DesktopApp::RequestWindowsShutdownDialog()
         wsprintfW(message,
             L"Desktop Alt+F4 shutdown dialog request failed hr=0x%08X",
             static_cast<unsigned>(result));
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
         return false;
     }
 
-    WriteDiagnosticLogEntry(
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
         L"Desktop Alt+F4 requested the Windows shutdown dialog");
     return true;
 }
@@ -89,6 +92,28 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (dockTrayService_ && dockTrayService_->AcknowledgeChange(hwnd, wp)) RefreshDockTrayPopup();
         return 0;
     }
+    if (msg >= 0xC000 && msg == snowdesktop::window_support::BeforeNativeMinimizeMessage())
+    {
+        const HWND source = reinterpret_cast<HWND>(wp);
+        const DWORD deadline = static_cast<DWORD>(lp);
+        snowdesktop::dock_input_diagnostics::RecordLayer(L"native-minimize-notice", nullptr, floatingDockVisible_);
+        if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+            !IsWindowVisible(source) || IsIconic(source) ||
+            snowdesktop::window_support::WindowSupport().Resolve(
+                snowdesktop::window_support::Capability::MinimizeAnimation, source).provider !=
+                snowdesktop::window_support::Provider::Helper) return 0;
+        floatingDockOutsidePress_.Cancel(source);
+        dockSystemMinimizeStartedTick_.store(GetTickCount64());
+        snowdesktop::dock_input_diagnostics::RecordLayer(L"native-minimize-accepted", nullptr, floatingDockVisible_,
+            0, 0, dockSystemMinimizeStartedTick_.load());
+        floatingDockInputDeactivated_ = false;
+        CancelDockWindowActivationObservation(source);
+        PrepareDockWindowMinimize(source, L"helper-application-minimize");
+        if (dockWindowTransition_ && snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+            if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(source))
+                KeepDockTopmostForAction(target->anchor, dockSettings_.summonOnAppMinimize);
+        return 1;
+    }
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
         return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::CancelMessage())
@@ -110,6 +135,38 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     if (HandleShellContextMenuMessage(
             msg, wp, lp, shellMenuResult))
         return shellMenuResult;
+
+    // A delivered desktop press is already authoritative. Do not ask global
+    // key polling to rediscover it: cross-integrity input can hide that state.
+    if (hwnd == hwnd_ && floatingDockVisible_ &&
+        (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN ||
+         msg == WM_LBUTTONDBLCLK || msg == WM_RBUTTONDBLCLK || msg == WM_MBUTTONDBLCLK))
+    {
+        const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        POINT screen = point;
+        ClientToScreen(hwnd_, &screen);
+        RECT preview{};
+        if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
+        {
+            preview = dockWindowPreview_->GetBounds();
+            MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&preview), 2);
+        }
+        if (!IsPointInPromotedDockLayer(point) &&
+            !(dockStartMenu_ && dockStartMenu_->ContainsPoint(screen)) &&
+            !(statusBar_ && statusBar_->ContainsPoint(screen)) &&
+            snowdesktop::floating_dock_rules::ShouldDismissForPointerDown(
+                dragSession_.IsActive() || dragDropController_.IsTransportActive(),
+                HasActiveContextMenuSession(), point, RECT{},
+                snowdesktop::floating_dock_rules::DockAssociatedPopupInteractionRect(
+                    popupAnchoredToDock_, floatingPopupCollectionRegion_),
+                preview, quickNavigationOpen_ ? quickNavigationRect_ : RECT{}))
+        {
+            snowdesktop::dock_input_diagnostics::RecordLayer(L"desktop-down-close", hwnd_, floatingDockVisible_,
+                static_cast<UINT>(msg));
+            CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+            floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+        }
+    }
 
     switch (msg)
     {
@@ -359,7 +416,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool primaryButtonDown =
             latencySensitivePointerActive &&
             !middleButtonWidgetMove_ &&
-            (GetAsyncKeyState(rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         const bool middleButtonDown =
             latencySensitivePointerActive &&
             middleButtonWidgetMove_ &&
@@ -458,7 +515,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         bool dragPreviewSynced = false;
-        OnMouseMoveAt(wp, pt, &dragPreviewSynced);
+        if (!OnNativeMouseMoveAt(wp, pt, &dragPreviewSynced))
+            return 0;
         // Internal drags capture this HWND. Commit the cheap cached drag frame
         // synchronously so a dense WM_MOUSEMOVE queue cannot starve WM_PAINT.
         // Keep this synchronous; routing pointer feedback through
@@ -739,6 +797,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             RECT dockBounds = dock->GetInteractiveBounds();
             if (dock->ContainsInteractivePoint(pt))
             {
+                if (dock->IsWindowsButtonPoint(pt) || dock->IsSearchPoint(pt))
+                {
+                    // Double-click replaces the second down, including for
+                    // toggle buttons that have no DockEntryItem.
+                    OnLeftButtonDown(wp, lp);
+                    return 0;
+                }
                 if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
                 {
                     const DWORD elapsed = GetTickCount() - dockPendingDoubleClickTick_;
@@ -1194,6 +1259,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        ClearSelectionForExternalWindow(
+            wp ? reinterpret_cast<HWND>(wp) : GetForegroundWindow());
         typeToSelectSession_.Reset();
         typeToSelectImeComposing_ = false;
         typeToSelectSuppressChar_ = false;

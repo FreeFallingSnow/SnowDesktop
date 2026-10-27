@@ -36,11 +36,7 @@
       "configuration": "Release",
       "jobs": 4,
       "targets": [
-        "SnowDesktop",
-        "SnowDesktopLauncher",
-        "SnowDesktopSteamBridge",
-        "SnowDesktopWorkshopManager",
-        "snowwidget"
+        "SnowDesktopReleaseBuild"
       ]
     },
     {
@@ -49,9 +45,7 @@
       "configuration": "Debug",
       "jobs": 4,
       "targets": [
-        "SnowDesktop",
-        "SnowDesktopSteamBridge",
-        "SnowDesktopWorkshopManager"
+        "SnowDesktopDebugBuild"
       ]
     },
     {

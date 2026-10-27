@@ -209,7 +209,7 @@ void DesktopApp::ResetLuaWidgetPanelAnimationCache()
     luaWidgetPanelAnimationCompositorDriven_ = false;
     ResetCompositionAnimationOverlay(
         luaWidgetPanelAnimationOverlay_);
-    luaWidgetPanelAnimationRenderCache_.Reset();
+    luaWidgetPanelAnimationRenderCache_.Invalidate();
     luaWidgetPanelAnimationCacheRect_ = {};
 }
 
@@ -406,12 +406,16 @@ void DesktopApp::DrawLuaWidgetPanel(
     }
     widgetEngine_->EnsureWidgetLoaded(
         source->id, source->packageId);
+    // Preserve Lua content metrics while letting outer tracks use host gutters.
+    RECT scrollbarBounds = content;
+    scrollbarBounds.right = luaWidgetPanelRect_.right - 4;
+    scrollbarBounds.bottom = luaWidgetPanelRect_.bottom - 4;
     ctx->PushAxisAlignedClip(
-        ToD2DRect(content),
+        ToD2DRect(scrollbarBounds),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     widgetEngine_->RenderWidgetPanel(
         source->id, ctx, content,
-        luaWidgetPanelRequest_.surface);
+        luaWidgetPanelRequest_.surface, &scrollbarBounds);
     ctx->PopAxisAlignedClip();
     if (animationApplied)
         ctx->SetTransform(previousTransform);

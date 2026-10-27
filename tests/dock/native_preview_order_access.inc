@@ -19,3 +19,4 @@
     {
         return app.CollectDockWindowPreviewItems(app.ReadDockAppIdentity(executable));
     }
+#include "native_running_refresh_access.inc"

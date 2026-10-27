@@ -1,4 +1,6 @@
 #include "dock_window_pin.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "platform/operation_feedback.h"
 #include "theme/personalization.h"
 
 #include <dwmapi.h>
@@ -241,7 +243,7 @@ struct DockWindowPin::State
             if (cleanup->operation) DestroyWindow(cleanup->operation);
         }
 
-        bool MaintainPin(const BorderAppearance& appearance)
+        bool MaintainPin(const BorderAppearance& appearance, HWND peekTarget)
         {
             if (!OwnsTarget()) return false;
             const ULONGLONG now = GetTickCount64();
@@ -258,8 +260,23 @@ struct DockWindowPin::State
             {
                 ShowWindow(border, SW_HIDE);
                 if (requestPending)
-                    return now < requestDeadline;
-                if (!ChangeTopmost(target, true)) return false;
+                {
+                    if (now < requestDeadline) return true;
+                    snowdesktop::window_support::WindowSupport().RecordFailure(
+                        snowdesktop::window_support::Capability::WindowPin, target,
+                        snowdesktop::window_support::Provider::InProcess, ERROR_TIMEOUT);
+                    snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, ERROR_TIMEOUT});
+                    return false;
+                }
+                if (!ChangeTopmost(target, true))
+                {
+                    const DWORD error = GetLastError() ? GetLastError() : ERROR_GEN_FAILURE;
+                    snowdesktop::window_support::WindowSupport().RecordFailure(
+                        snowdesktop::window_support::Capability::WindowPin, target,
+                        snowdesktop::window_support::Provider::InProcess, error);
+                    snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+                    return false;
+                }
                 requestPending = !IsTopmost(target);
                 pinInFlight = requestPending;
                 cleanup->pinInFlight = pinInFlight;
@@ -272,13 +289,14 @@ struct DockWindowPin::State
             requestPending = false;
             pinInFlight = false;
             cleanup->pinInFlight = false;
-            UpdateBorder(appearance);
+            UpdateBorder(appearance, peekTarget);
             return true;
         }
 
-        void UpdateBorder(const BorderAppearance& appearance)
+        void UpdateBorder(const BorderAppearance& appearance, HWND peekTarget)
         {
-            if (!appearance.enabled || appearance.opacity <= 0.0f)
+            if (!appearance.enabled || appearance.opacity <= 0.0f ||
+                (peekTarget && target != peekTarget))
             {
                 if (IsWindowVisible(border)) ShowWindow(border, SW_HIDE);
                 return;
@@ -393,6 +411,7 @@ struct DockWindowPin::State
 
     HWND manager = nullptr;
     BorderAppearance appearance;
+    HWND peekTarget = nullptr;
     std::vector<std::unique_ptr<Entry>> entries;
     std::vector<HWINEVENTHOOK> hooks;
     bool refreshQueued = false;
@@ -426,7 +445,7 @@ struct DockWindowPin::State
         refreshing = true;
         if (entry->OwnsTarget())
         {
-            if (!entry->MaintainPin(appearance)) QueueRefresh();
+            if (!entry->MaintainPin(appearance, peekTarget)) QueueRefresh();
         }
         else
             QueueRefresh();
@@ -592,7 +611,7 @@ struct DockWindowPin::State
         if (refreshing) return;
         refreshing = true;
         std::erase_if(entries, [this](const auto& entry) {
-            return !entry->MaintainPin(appearance);
+            return !entry->MaintainPin(appearance, peekTarget);
         });
         if (entries.empty())
         {
@@ -604,7 +623,7 @@ struct DockWindowPin::State
 };
 
 DockWindowPin::DockWindowPin() = default;
-DockWindowPin::~DockWindowPin() = default;
+DockWindowPin::~DockWindowPin() { Clear(); }
 
 bool DockWindowPin::IsPinned(HWND window)
 {
@@ -617,10 +636,22 @@ void DockWindowPin::Refresh()
     if (state_) state_->Refresh();
 }
 
+void DockWindowPin::SetPeekTarget(HWND window)
+{
+    snowdesktop::window_support::WindowSupport().SetPinPeek(window);
+    if (!state_ || state_->peekTarget == window) return;
+    state_->peekTarget = window;
+    state_->Refresh();
+}
+
 void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
 {
     auto normalized = settings;
     NormalizeWindowPinBorderAppearance(normalized);
+    snowdesktop::window_support::WindowSupport().SetPinAppearance({
+        normalized.windowPinBorderEnabled ? 1u : 0u, normalized.windowPinBorderWidth,
+        normalized.windowPinBorderR, normalized.windowPinBorderG, normalized.windowPinBorderB,
+        normalized.windowPinBorderOpacity});
     const auto channel = [](float value) { return static_cast<UINT32>(std::lround(value * 255.0f)); };
     const BorderAppearance appearance{normalized.windowPinBorderEnabled, normalized.windowPinBorderWidth,
         (channel(normalized.windowPinBorderR) << 16) | (channel(normalized.windowPinBorderG) << 8) |
@@ -633,6 +664,9 @@ void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
 
 void DockWindowPin::Clear()
 {
+    snowdesktop::window_support::protocol::Request request;
+    request.command = snowdesktop::window_support::protocol::Command::ClearPins;
+    snowdesktop::window_support::WindowSupport().Submit(request);
     state_.reset();
 }
 
@@ -640,6 +674,22 @@ bool DockWindowPin::Toggle(HWND window)
 {
     const ScopedPhysicalCoordinates physicalCoordinates;
     if (!IsWindow(window) || GetAncestor(window, GA_ROOT) != window) return false;
+    const auto route = snowdesktop::window_support::WindowSupport().Resolve(
+        snowdesktop::window_support::Capability::WindowPin, window);
+    if (route.provider == snowdesktop::window_support::Provider::Helper)
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::TogglePin;
+        request.target = snowdesktop::window_support::protocol::Capture(window);
+        return snowdesktop::window_support::WindowSupport().Submit(request);
+    }
+    if (!route.Available())
+    {
+        if (snowdesktop::window_support::WindowSupport().RequestPinAuthorization(window)) return true;
+        snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, ERROR_NOT_SUPPORTED});
+        return false;
+    }
+    const bool accepted = [&]() -> bool {
     if (state_)
     {
         if (auto* entry = state_->FindEntry(window); entry && entry->OwnsTarget())
@@ -666,17 +716,28 @@ bool DockWindowPin::Toggle(HWND window)
     // target the same native window; an old inverse must not undo a new pin.
     if (const HWND retiringBorder = static_cast<HWND>(GetPropW(window, kUndoProperty)))
     {
+        const HWND border = static_cast<HWND>(GetPropW(window, kPinProperty));
+        if (!IsWindow(retiringBorder) && (!border || !IsWindow(border)))
+        {
+            // A crashed helper cannot run its retirement window. Only reclaim
+            // our stale markers after both owning HWNDs have disappeared.
+            RemovePropW(window, kUndoProperty);
+            if (border) RemovePropW(window, kPinProperty);
+        }
+        else
+        {
         DWORD ownerProcess = 0;
         wchar_t className[64]{};
         if (GetWindowThreadProcessId(retiringBorder, &ownerProcess) != GetCurrentThreadId() ||
             ownerProcess != GetCurrentProcessId() ||
             !GetClassNameW(retiringBorder, className, static_cast<int>(std::size(className))) ||
-            lstrcmpW(className, kOperationClass) != 0) return false;
+            lstrcmpW(className, kOperationClass) != 0) { SetLastError(ERROR_BUSY); return false; }
         auto* cleanup = reinterpret_cast<PinRetirement*>(
             GetWindowLongPtrW(retiringBorder, GWLP_USERDATA));
         if (!cleanup || cleanup->target != window || cleanup->operation != retiringBorder ||
-            !cleanup->retired || !cleanup->Advance()) return false;
+            !cleanup->retired || !cleanup->Advance()) { SetLastError(ERROR_BUSY); return false; }
         DestroyWindow(retiringBorder);
+        }
     }
     if (IsTopmost(window))
     {
@@ -727,8 +788,26 @@ bool DockWindowPin::Toggle(HWND window)
     entry->cleanup->pinInFlight = entry->pinInFlight;
     entry->requestDeadline = GetTickCount64() + kPinConfirmationTimeoutMs;
     if (!SetTimer(state_->manager, kRefreshTimer, kRefreshIntervalMs, nullptr)) return false;
-    entry->UpdateBorder(state_->appearance);
+    entry->UpdateBorder(state_->appearance, state_->peekTarget);
     state_->entries.push_back(std::move(entry));
     state_->Subscribe();
     return true;
+    }();
+    if (accepted) return true;
+    const DWORD error = GetLastError() ? GetLastError() : ERROR_GEN_FAILURE;
+    if (error == ERROR_BUSY) return false;
+    auto& support = snowdesktop::window_support::WindowSupport();
+    support.RecordFailure(snowdesktop::window_support::Capability::WindowPin, window,
+        snowdesktop::window_support::Provider::InProcess, error);
+    if (support.Resolve(snowdesktop::window_support::Capability::WindowPin, window).provider ==
+            snowdesktop::window_support::Provider::Helper)
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::TogglePin;
+        request.target = snowdesktop::window_support::protocol::Capture(window);
+        if (support.Submit(request)) return true;
+    }
+    snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+    SetLastError(error);
+    return false;
 }

@@ -18,6 +18,7 @@
 #include "shell/shell_launch_process.h"
 #include "shell/shell_extension_menu.h"
 #include "shell/shell_start_pin.h"
+#include "shell/start_menu_launcher.h"
 #include "diagnostics/crashlog.h"
 #include "platform/application_crash_watchdog.h"
 #include "platform/application_restart_policy.h"
@@ -50,11 +51,7 @@ namespace
 constexpr wchar_t kCurrentVersion[] =
     SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 
-enum class ExistingInstanceResolution
-{
-    ExitNewInstance,
-    RetryLaunch
-};
+using ExistingInstanceResolution = snowdesktop::single_instance::StartupResolution;
 
 enum class VersionConflictChoice
 {
@@ -76,6 +73,29 @@ void InitializeStartupLocale()
         L"SnowDesktop.general.json";
     if (LoadGeneralSettings(settingsPath.c_str(), settings))
         Locale::Instance().SetLanguage(settings.language);
+}
+
+bool ConfirmStartupRecovery(const char* key, std::string_view detail = {}, DWORD error = 0) noexcept
+{
+    const auto& fallback = snowdesktop::auto_start_launch::StartupMessages();
+    try
+    {
+        InitializeStartupLocale();
+        std::wstring message = Locale::Instance().TrW(key);
+        if (message == Utf8ToWide(key)) message = fallback.warning;
+        if (!detail.empty()) message += L"\n\n" + Utf8ToWide(std::string(detail));
+        if (error) message += L"\n\n" + std::to_wstring(error);
+        const wchar_t* start = _LW("app.startup.startAnyway");
+        const wchar_t* cancel = _LW("settings.dialog.cancel");
+        if (wcscmp(start, L"app.startup.startAnyway") == 0) start = fallback.startAnyway;
+        if (wcscmp(cancel, L"settings.dialog.cancel") == 0) cancel = fallback.cancel;
+        return snowdesktop::auto_start_launch::ConfirmStartupContinuation(message.c_str(), {start, cancel});
+    }
+    catch (...)
+    {
+        return snowdesktop::auto_start_launch::ConfirmStartupContinuation(fallback.warning,
+            {fallback.startAnyway, fallback.cancel});
+    }
 }
 
 std::wstring DisplayDataDirectory(const std::wstring& path)
@@ -193,6 +213,8 @@ ExistingInstanceResolution ResolveExistingInstance(
         HandleExistingInstanceLaunch(running, requested, intent);
     if (action == ExistingLaunchAction::ExitNewInstance)
         return ExistingInstanceResolution::ExitNewInstance;
+    if (action == ExistingLaunchAction::ActivationFailed)
+        return ExistingInstanceResolution::RetryLaunch;
     if (action == ExistingLaunchAction::ReplaceManagedRuntime)
     {
         if (snowdesktop::single_instance::RequestExistingInstanceExit(
@@ -309,12 +331,36 @@ static bool LaunchRestartAfterProcess(DWORD processId)
 {
     const std::wstring selfPath = GetCurrentExecutablePath();
     if (selfPath.empty())
+    {
+        SetLastError(ERROR_FILE_NOT_FOUND);
         return false;
+    }
+    const HRESULT initialized = CoInitializeEx(nullptr,
+        COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
+    {
+        SetLastError(static_cast<DWORD>(initialized));
+        return false;
+    }
+    struct ComScope
+    {
+        bool uninitialize;
+        ~ComScope()
+        {
+            const DWORD error = GetLastError();
+            if (uninitialize) CoUninitialize();
+            SetLastError(error);
+        }
+    } com{SUCCEEDED(initialized)};
     wchar_t parameters[64]{};
     swprintf_s(parameters, L"--wait-for-pid=%lu", processId);
-    return reinterpret_cast<INT_PTR>(ShellExecuteW(
-        nullptr, L"open", selfPath.c_str(), parameters,
-        nullptr, SW_SHOWNORMAL)) > 32;
+    SHELLEXECUTEINFOW launch{sizeof(launch)};
+    launch.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+    launch.lpVerb = L"open";
+    launch.lpFile = selfPath.c_str();
+    launch.lpParameters = parameters;
+    launch.nShow = SW_SHOWNORMAL;
+    return ShellExecuteExW(&launch) != FALSE;
 }
 
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
@@ -357,24 +403,40 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
+    if (const auto result = snowdesktop::start_menu::TryRunLauncherHelper()) return *result;
     if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
-    // Normalize login-task privileges before the Steam startup channel, data
+    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
+    const bool inheritedHelper =
+        snowdesktop::settings_ipc::IsSettingsProcessCommand() ||
+        snowdesktop::settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper") ||
+        snowdesktop::settings_ipc::IsSettingsProcessCommand(L"--shell-open-helper") ||
+        snowdesktop::auto_start_launch::IsPreviewHostCommand(GetCommandLineW()) ||
+        snowdesktop::application_restart_policy::ParseWatchProcessHandle(
+            commandLine ? commandLine : L"") != 0;
+    // Normalize every desktop launch before the Steam startup channel, data
     // discovery and the single-instance mutex acquire any process identity.
-    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
-    if (autoStartLaunch.handled)
+    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize(!inheritedHelper,
+        !inheritedHelper && snowdesktop::steam_runtime::startup::CurrentPrivilegesAcceptedFromEnvironment());
+    if (autoStartLaunch.handled || autoStartLaunch.error)
     {
         const std::wstring message = std::wstring(autoStartLaunch.operation) +
             L" error=" + std::to_wstring(autoStartLaunch.error) +
-            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId);
-        WriteDiagnosticLogEntry(message.c_str(), autoStartLaunch.error
-            ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
-        return static_cast<int>(autoStartLaunch.error);
+            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId) +
+            (autoStartLaunch.currentPrivilegesAccepted ? L"; continuing with current privileges" : L"");
+        WriteDiagnosticLogEntry(message.c_str(), autoStartLaunch.currentPrivilegesAccepted
+            ? DiagnosticLogLevel::Warning : autoStartLaunch.error
+                ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
+        if (autoStartLaunch.handled) return static_cast<int>(autoStartLaunch.error);
     }
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.
     snowdesktop::steam_runtime::startup::BeginDataAccess();
-    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
+    // Read once before startup probes and helper branches; the active profile's
+    // normal settings path also keeps portable/installed data isolated.
+    GeneralSettings diagnosticSettings;
+    if (LoadGeneralSettings(GetGeneralSettingsPath().c_str(), diagnosticSettings))
+        snowdesktop::diagnostics::SetLogModules(diagnosticSettings.diagnosticLogModules);
     if (const auto result = snowdesktop::shell_extensions::TryRunHelper({}, {},
             [](snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {
                 return snowdesktop::shell_start_pin::Invoke(
@@ -434,7 +496,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
             snowdesktop::application_crash_watchdog::WatchProcess(
                 reinterpret_cast<HANDLE>(watchedProcessHandle),
                 ShouldPreventAutoRestart,
-                LaunchRestartAfterProcess);
+                LaunchRestartAfterProcess,
+                [](const snowdesktop::application_crash_watchdog::WatchResult& failed) {
+                    const char* key = failed.restartAttempted ?
+                        "app.startup.recoveryFailed" : "app.startup.recoveryStopped";
+                    return ConfirmStartupRecovery(key, {}, failed.error);
+                });
         return static_cast<int>(result.error);
     }
 
@@ -457,94 +524,54 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     const auto requestedInstance =
         snowdesktop::single_instance::DescribeCurrentInstance(
             kCurrentVersion);
-    auto acquisition =
-        snowdesktop::single_instance::AcquireResult::Existing;
     snowdesktop::single_instance::InstanceInfo switchTarget;
     bool switchHandoff = false;
-    for (int attempt = 0; attempt < 3; ++attempt)
-    {
-        // Older builds do not own the mutex but do expose the stable control
-        // window. Inspect that window first so cross-version launches can
-        // explain and offer a controlled switch.
-        if (const auto running =
-                snowdesktop::single_instance::
-                    FindExistingInstance(0))
-        {
-            if (switchHandoff && SameDeployment(*running, switchTarget))
+    const auto acquisition = snowdesktop::single_instance::AcquireForStartup(singleInstance,
+        [](DWORD timeout) { return snowdesktop::single_instance::FindExistingInstance(timeout); },
+        [&](const snowdesktop::single_instance::InstanceInfo& running) {
+            // Older builds do not own the mutex but do expose the stable control
+            // window. Resolve it before acquiring the stable mutex.
+            if (switchHandoff && SameDeployment(running, switchTarget))
             {
                 if (snowdesktop::single_instance::RequestExistingInstanceExit(
-                        *running, 30000))
-                    continue;
+                        running, 30000))
+                    return ExistingInstanceResolution::RetryLaunch;
 
                 const std::wstring message = _LFW(
                     "app.run.other_version_switch_failed",
-                    running->version,
-                    DeploymentSuffix(*running));
+                    running.version,
+                    DeploymentSuffix(running));
                 MessageBoxW(nullptr, message.c_str(),
                     _LW("app.run.other_version_title"),
                     MB_OK | MB_ICONERROR);
-                return 0;
+                return ExistingInstanceResolution::ExitNewInstance;
             }
 
             const auto resolution = ResolveExistingInstance(
-                *running, requestedInstance, launchIntent, &switchTarget);
+                running, requestedInstance, launchIntent, &switchTarget);
             if (resolution == ExistingInstanceResolution::ExitNewInstance)
             {
-                return 0;
+                return resolution;
             }
             switchHandoff =
                 resolution == ExistingInstanceResolution::RetryLaunch;
             // The user chose to close the running version. Retry the
             // stable lock after its process has fully exited.
-            continue;
-        }
-
-        acquisition = singleInstance.Acquire();
-        if (acquisition ==
-            snowdesktop::single_instance::AcquireResult::Primary)
-        {
-            break;
-        }
-        if (acquisition ==
-            snowdesktop::single_instance::AcquireResult::Error)
-        {
-            break;
-        }
-
-        // The owner can acquire the mutex before its control window exists.
-        // Give startup time to publish the window, then resolve it on the
-        // next pass with full version information.
-        if (!snowdesktop::single_instance::
-                FindExistingInstance(5000))
-        {
-            continue;
-        }
-    }
-    if (acquisition ==
-        snowdesktop::single_instance::AcquireResult::Error)
-    {
-        wchar_t diagnostic[160]{};
-        swprintf_s(diagnostic,
-            L"SnowDesktop: single-instance lock failed (error %lu).\n",
-            singleInstance.LastError());
-        InitializeStartupLocale();
-        ShowStartupFailure({"app.operation.startFailed", diagnostic, singleInstance.LastError()});
-        return static_cast<int>(singleInstance.LastError());
-    }
-    if (acquisition !=
-        snowdesktop::single_instance::AcquireResult::Primary)
-    {
-        return 0;
-    }
+            return resolution;
+        },
+        [](DWORD error) {
+            InitializeStartupLocale();
+            const char* key = error == ERROR_BUSY ? "app.startup.instanceUnavailable" : "app.operation.startFailed";
+            if (Locale::Instance().TrW(key) == Utf8ToWide(key)) key = "app.operation.startFailed";
+            ShowStartupFailure({key, L"Single-instance startup coordination failed", error});
+        });
+    if (!acquisition.primary) return static_cast<int>(acquisition.error);
 
     std::string profileError;
     if (!InitializeDebugProfile(profileError))
     {
-        InitializeStartupLocale();
-        const std::wstring message = std::wstring(_LW("settings.debug.profile.recover")) +
-            L"\n\n" + Utf8ToWide(profileError);
-        if (MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_YESNO | MB_ICONERROR) != IDYES)
-            return ERROR_INVALID_DATA;
+        if (!ConfirmStartupRecovery("settings.debug.profile.recover", profileError))
+            return ERROR_CANCELLED;
         const auto paths = snowdesktop::debug_profile::ResolvePaths(GetDataDirectoryPath());
         snowdesktop::debug_profile::Configuration config;
         std::string recoveryError;
@@ -555,8 +582,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         if (!snowdesktop::debug_profile::Write(paths, config, recoveryError) ||
             !InitializeDebugProfile(recoveryError))
         {
-            MessageBoxW(nullptr, _LW("settings.debug.profile.recoveryFailed"), L"SnowDesktop", MB_OK | MB_ICONERROR);
-            return ERROR_WRITE_FAULT;
+            if (!ConfirmStartupRecovery("settings.debug.profile.recoveryFailed", recoveryError))
+                return ERROR_CANCELLED;
+            // A failed persistent recovery must not force the optional debug
+            // environment on this run. Preserve its files and retry next time.
+            auto& profile = snowdesktop::debug_profile::runtimeSession;
+            profile.configuration.enabled = false;
+            profile.initialized = false;
+            WriteDiagnosticLogEntry(L"Debug-profile recovery was not saved; continuing in normal mode for this process",
+                DiagnosticLogLevel::Warning);
         }
     }
 

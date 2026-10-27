@@ -5,6 +5,7 @@
 #include "layout/popup_scrollbar_layout.h"
 #include "settings/animation_settings.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "app/layout/interactive_layout_save.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -54,14 +55,26 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             CloseCollectionPopup(false);
     }
     if (HandleUsageGuidePointerDown(pt)) return;
-    if (HandleLargeIconPointerDown(pt)) return;
+    {
+        snowdesktop::InteractiveLayoutSave save(this);
+        if (HandleLargeIconPointerDown(pt)) return;
+    }
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
     {
         const RECT panel = GetLuaWidgetPanelRect();
         if (!PtInRect(&panel, pt))
         {
-            if (luaWidgetPanelRequest_.dismissOnOutside)
+            // Keep a nonmodal surface alive while its owning widget handles
+            // the click. Its opener can then reuse the current surface, or a
+            // different control can request a different panel without a
+            // close/reopen cycle caused by this same press.
+            const size_t owner = HitTestStandaloneWidgetIndex(pt);
+            const bool onOwnerContent = !luaWidgetPanelRequest_.modal &&
+                owner < widgets_.size() &&
+                widgets_[owner].id == luaWidgetPanelRequest_.widgetId &&
+                HitTestStandaloneWidget(owner, pt) == WidgetHit::Content;
+            if (luaWidgetPanelRequest_.dismissOnOutside && !onOwnerContent)
                 CloseLuaWidgetPanel(
                     luaWidgetPanelRequest_.widgetId,
                     "outside");
@@ -82,14 +95,20 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             const RECT content =
                 GetLuaWidgetPanelContentRect();
-            if (!PtInRect(&content, pt))
-                return;
             const int localX =
                 pt.x - content.left;
             const int localY =
                 pt.y - content.top;
             const std::string& surface =
                 luaWidgetPanelRequest_.surface;
+            // The host track can lie in the gutter outside Lua content bounds.
+            const bool onContent = PtInRect(&content, pt) != FALSE;
+            const bool gutterHandled = !onContent && widgetEngine_ &&
+                widgetEngine_->HandleHostUiPointer(
+                    luaWidgetPanelRequest_.widgetId,
+                    localX, localY, 0, false, surface);
+            if (!onContent && !gutterHandled)
+                return;
             if (widgetEngine_ &&
                 widgetEngine_->HasFocusedHostInput() &&
                 !widgetEngine_->IsFocusedHostInputAt(
@@ -111,10 +130,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             SetCapture(panelCaptureHost);
             if (GetCapture() == panelCaptureHost)
                 luaWidgetPanelCaptureHwnd_ = panelCaptureHost;
-            if (!widgetEngine_ ||
+            if (!gutterHandled && (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
                     luaWidgetPanelRequest_.widgetId,
-                    localX, localY, 0, false, surface))
+                    localX, localY, 0, false, surface)))
             {
                 if (widgetEngine_)
                 {
@@ -666,17 +685,20 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
-                CloseFloatingDockThen(
-                    [this]() {
-                        ToggleWindowsStartMenu();
-                    },
-                    FloatingDockCloseFocusPolicy::PreserveCurrent);
+                if (IsOwnedPointerCaptureWindow(GetCapture()))
+                {
+                    WriteDiagnosticLogEntry(L"[DockStartMenu] releasing owned pointer capture before Start action");
+                    ReleaseCapturePreservingPointerState();
+                }
+                ToggleWindowsStartMenu(dock);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
             if (dock->IsSearchPoint(pt))
             {
                 mouseDown_ = false;
+                if (IsOwnedPointerCaptureWindow(GetCapture()))
+                    ReleaseCapturePreservingPointerState();
                 if (snowdesktop::quick_navigation_rules::
                         ShouldOpenFromDockSearchPress(
                             quickNavigationDismissedByThisPress))

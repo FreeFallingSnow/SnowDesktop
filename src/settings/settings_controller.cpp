@@ -112,6 +112,7 @@ SettingsActionResult SettingsController::Initialize()
         return loadResult;
 
     values_ = std::move(loaded);
+    diagnostics::SetLogModules(values_.general.diagnosticLogModules);
     NormalizeDockSettings(values_.dock);
     dirtyDomains_ = SettingsDomain::None;
     pendingPreviewDomains_ = SettingsDomain::None;
@@ -148,6 +149,7 @@ SettingsActionResult SettingsController::Reload(SettingsReloadPolicy policy)
         return loadResult;
 
     values_ = std::move(loaded);
+    diagnostics::SetLogModules(values_.general.diagnosticLogModules);
     NormalizeDockSettings(values_.dock);
     dirtyDomains_ = SettingsDomain::None;
     pendingPreviewDomains_ = SettingsDomain::None;
@@ -182,6 +184,8 @@ SettingsActionResult SettingsController::Open(SettingsRoute route)
             return result;
     }
 
+    if (route.page == SettingsPage::RuntimeModules && !values_.general.showAdvancedSettings)
+        route = SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings");
     const bool openingSession = !sessionActive_;
     sessionActive_ = true;
     if (openingSession)
@@ -309,7 +313,11 @@ void SettingsController::UpdateGeneral(
     NormalizeStatusBarSettings(settings.statusBar);
     calendar::Normalize(settings.calendarDisplay);
     shell_extensions::Normalize(settings.shellExtensions);
+    settings.diagnosticLogModules = diagnostics::NormalizeLogModules(settings.diagnosticLogModules);
+    diagnostics::SetLogModules(settings.diagnosticLogModules);
     values_.general = std::move(settings);
+    if (!values_.general.showAdvancedSettings && route_.page == SettingsPage::RuntimeModules)
+        route_ = SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings");
     MarkChanged(SettingsDomain::General, mode);
 }
 
@@ -644,6 +652,8 @@ bool SettingsController::SynchronizeGeneral(GeneralSettings settings)
     return SynchronizeDomain(
         SettingsDomain::General,
         [this, settings = std::move(settings)]() mutable {
+            settings.diagnosticLogModules = diagnostics::NormalizeLogModules(settings.diagnosticLogModules);
+            diagnostics::SetLogModules(settings.diagnosticLogModules);
             values_.general = std::move(settings);
         });
 }

@@ -6,7 +6,7 @@ void DesktopApp::LoadUsageGuidePreferences()
     std::string error;
     if (!snowdesktop::usage_guide::LoadExpanded(
         GetDataFilePath(L"SnowDesktop.guide.json"), usageGuideExpanded_, &error))
-        WriteDiagnosticLogEntry((L"Usage guide preference load failed: " + Utf8ToWide(error)).c_str(),
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, (L"Usage guide preference load failed: " + Utf8ToWide(error)).c_str(),
             DiagnosticLogLevel::Warning);
 }
 
@@ -17,7 +17,7 @@ snowdesktop::SettingsActionResult DesktopApp::SetUsageGuideExpanded(bool expande
         GetDataFilePath(L"SnowDesktop.guide.json"), expanded, &error);
     if (saved) usageGuideExpanded_ = expanded;
     else if (!error.empty())
-        WriteDiagnosticLogEntry((L"Usage guide preference save failed: " + Utf8ToWide(error)).c_str(),
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, (L"Usage guide preference save failed: " + Utf8ToWide(error)).c_str(),
             DiagnosticLogLevel::Warning);
     PublishHomeAboutStatus(); // On failure, restore the previously saved value in the UI.
     return saved ? snowdesktop::SettingsActionResult::Success() :

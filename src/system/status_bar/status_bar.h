@@ -25,10 +25,12 @@ struct TrayDragFeedback
     std::function<void()> end;
 };
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
-    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel, ShowDesktop };
+    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel, ShowDesktop,
+    MenuInputMethod, MenuNotifications };
 inline bool IsStatusBarContextMenuAction(StatusBarAction action)
 {
-    return action == StatusBarAction::Menu ||
+    return action == StatusBarAction::Menu || action == StatusBarAction::MenuInputMethod ||
+        action == StatusBarAction::MenuNotifications ||
         (action >= StatusBarAction::MenuTime && action <= StatusBarAction::MenuTraffic);
 }
 struct StatusBarMonitor
@@ -79,7 +81,7 @@ public:
     bool PostActivation(HWND owner, std::function<void()> callback);
     // UI-thread summon boundary: sample before any Dock window/focus changes.
     void PrepareDockReveal(HMONITOR monitor);
-    // Separate fullscreen bars dismiss from their own interaction, not Dock close.
+    // Independent edge/fullscreen reveals dismiss from their own interaction.
     bool HasTemporaryReveal(HMONITOR monitor) const;
     void DismissTemporaryReveal(HMONITOR monitor);
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
@@ -110,6 +112,7 @@ public:
     RECT MergedSizingWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
     HRESULT ShowInputMethod(RECT anchor, bool context, bool layoutPanel = false);
     std::shared_ptr<tray::Service> Tray() const;
+    void SetSharedTray(std::shared_ptr<tray::Service> service);
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);
     bool DropTrayIcon(std::string_view key, POINT screen);

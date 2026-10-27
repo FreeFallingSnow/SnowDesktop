@@ -15,9 +15,15 @@ function(webp_check_compiler_flag WEBP_SIMD_FLAG ENABLE_SIMD)
     set(WEBP_HAVE_${WEBP_SIMD_FLAG} 0 PARENT_SCOPE)
     return()
   endif()
-  unset(WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG} CACHE)
   cmake_push_check_state()
   set(CMAKE_REQUIRED_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR})
+  set(WEBP_PROBE_RESULT WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG})
+  if(COMMAND snowdesktop_webp_probe_key)
+    snowdesktop_webp_probe_key(WEBP_PROBE_RESULT ${WEBP_SIMD_FLAG})
+  endif()
+  if(WEBP_PROBE_RESULT STREQUAL "WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG}")
+    unset(${WEBP_PROBE_RESULT} CACHE)
+  endif()
   check_c_source_compiles(
     "
       #include \"${CMAKE_CURRENT_LIST_DIR}/../src/dsp/dsp.h\"
@@ -28,7 +34,10 @@ function(webp_check_compiler_flag WEBP_SIMD_FLAG ENABLE_SIMD)
         return 0;
       }
     "
-    WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG})
+    ${WEBP_PROBE_RESULT})
+  set(WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG} "${${WEBP_PROBE_RESULT}}")
+  set(WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG} "${${WEBP_PROBE_RESULT}}"
+      CACHE INTERNAL "WebP SIMD compiler result" FORCE)
   cmake_pop_check_state()
   if(WEBP_HAVE_FLAG_${WEBP_SIMD_FLAG})
     set(WEBP_HAVE_${WEBP_SIMD_FLAG} 1 PARENT_SCOPE)

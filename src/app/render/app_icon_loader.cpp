@@ -4,6 +4,7 @@
 #include "app/shell/shell_icon_request.h"
 #include "app/shell/initial_icon_bitmap.h"
 #include "shell/shell_call_diagnostics.h"
+#include "icons/icon_load_diagnostics.h"
 #include "diagnostics/performance_trace.h"
 
 #include "layout/popup_icon_load_rules.h"
@@ -124,7 +125,7 @@ void DesktopApp::StartDemoIconLoader()
                 if (!snowdesktop::icon_beautify::PrepareCanvas(result->pixels, result->width, result->height, true))
                     result->pixels.clear();
                 const auto edge = task.beautify.mode == 0
-                    ? snowdesktop::icon_beautify::DetectEdgeFill(
+                    ? snowdesktop::icon_beautify::DetectPlateFill(
                         result->pixels, result->width, result->height)
                     : std::nullopt;
                 result->needsGlassBackdrop = task.beautify.enabled && task.beautify.glassEnabled && !edge;
@@ -258,6 +259,7 @@ void DesktopApp::StartIconLoader() {}
 
 void DesktopApp::DrainBackgroundShellWork()
 {
+    layoutSaveQueue_.Drain();
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
         HasActiveContextMenuSession() || renameController_.IsActive() ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
@@ -296,6 +298,29 @@ void DesktopApp::DrainBackgroundShellWork()
 void DesktopApp::QueueIconTask(IconLoadTask value)
 {
     auto input = std::make_shared<IconLoadTask>(std::move(value));
+    const auto& identity = input->isDesktopItem ? input->layoutKey : input->folderPath;
+    // Resolve UI-owned appearance/preview state before entering the worker.
+    // Thumbnail classification is only known after extraction.
+    const std::array styles{
+        snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, false)),
+        snowdesktop::icon_beautify::Normalize(ResolveIconAppearance(identity, true))};
+    const auto preparePixels = [styles, preparation = preparedIconPixels_.Preparation()](const std::shared_ptr<IconLoadResult>& result) {
+        if (!result->bitmap) return;
+        try
+        {
+            preparation->Run([&] {
+                auto prepared = std::make_shared<snowdesktop::icon_styled_pixels::Prepared>();
+                if (snowdesktop::icon_styled_pixels::Prepare(result->bitmap,
+                        styles[result->iconIsMediaThumbnail ? 1 : 0], false, false, *prepared))
+                    result->preparedPixels = std::move(prepared);
+            });
+        }
+        catch (...)
+        {
+            // Prewarming is optional: retain the successfully extracted image
+            // and its normal delivery/fallback even if CPU preparation fails.
+        }
+    };
     const auto key = input->requestKey;
     const auto queuedAt = GetTickCount64();
     // Share first pixels across desktop/mapping/popup consumers, independent of
@@ -325,7 +350,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         result->folderPath = input->folderPath;
         return result;
     };
-    auto image = [input, queuedAt, makeResult, cache, cacheKey] {
+    auto image = [input, queuedAt, makeResult, cache, cacheKey, preparePixels] {
         auto& task = *input;
         const auto& tracePath = task.parsingName.empty() ? task.folderPath : task.parsingName;
         shellCalls::Context trace(
@@ -406,19 +431,12 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             iconIsThumbnail, shellFolder);
         if (!result->iconIsMediaThumbnail)
             cache->Put(cacheKey, result->bitmap, result->bitmapSize, task.phase == IconLoadPhase::Phase2);
+        preparePixels(result);
         const auto finished = GetTickCount64();
-        if (finished - queuedAt >= 250)
-        {
-            wchar_t timing[512]{};
-            swprintf_s(
-                timing,
-                L"Shell icon slow: phase=%u queueMs=%llu metadataMs=%llu "
-                L"pidlMs=%llu bitmapMs=%llu shortcutMs=0 totalMs=%llu bitmap=%d trace=%llu path=",
-                task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
-                metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
-                finished - queuedAt, result->bitmap ? 1 : 0, trace.Id());
-            WriteDiagnosticLogEntry((std::wstring(timing) + std::wstring(representationName)).c_str());
-        }
+        snowdesktop::icon_diagnostics::LogShellIconLoadTiming({
+            task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
+            metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
+            finished - queuedAt, result->bitmap != nullptr, trace.Id(), representationName});
         return result;
     };
     auto apply = [this, key, queuedAt](std::shared_ptr<IconLoadResult> result) {
@@ -435,14 +453,14 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                 std::to_wstring(GetTickCount64() - beforeApply) + L" accepted=" +
                 std::to_wstring(accepted ? 1 : 0) + L" widget=" + result->widgetId +
                 L" path=" + result->folderPath;
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, message.c_str());
         }
         return accepted;
     };
     bool submitted = false;
     if (input->phase == IconLoadPhase::Phase1)
     {
-        auto localImage = [input, queuedAt, makeResult, cache, cacheKey] {
+        auto localImage = [input, queuedAt, makeResult, cache, cacheKey, preparePixels] {
             const auto& path = input->parsingName.empty() ? input->folderPath : input->parsingName;
             shellCalls::Context trace(L"icon.local", path);
             const auto started = GetTickCount64();
@@ -456,13 +474,15 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             }
             else result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
             if (result->bitmap) ClampAlphaToColorKey(result->bitmap, kTransparentKey);
-            // Record successes as well as misses during rollout so a startup
-            // log distinguishes local delivery from waiting for Shell fallback.
-            wchar_t timing[256]{};
-            swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d cached=%d trace=%llu path=",
-                started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0,
-                cached ? 1 : 0, trace.Id());
-            WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+            preparePixels(result);
+            if (snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Icons))
+            {
+                wchar_t timing[256]{};
+                swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d cached=%d trace=%llu path=",
+                    started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0,
+                    cached ? 1 : 0, trace.Id());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + path).c_str());
+            }
             return result;
         };
         auto classify = [input, makeResult] {
@@ -537,14 +557,14 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                     ToUpperInvariant(PathFindExtensionW(path.c_str())), false, {}, result->shortcutTarget);
             result->shortcutTarget.application = result->isApplicationShortcut;
             const auto elapsed = GetTickCount64() - started;
-            if (elapsed >= 250)
+            if (elapsed >= 250 && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Icons))
             {
                 wchar_t timing[256]{};
                 swprintf_s(timing,
                            L"Shell shortcut slow: loadMs=%llu classifyMs=%llu targetMs=%llu "
                            L"totalMs=%llu trace=%llu path=",
                            loadMs, classifyMs, targetMs, elapsed, trace.Id());
-                WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, (std::wstring(timing) + path).c_str());
             }
             return result;
         };
@@ -654,6 +674,7 @@ void DesktopApp::RefreshIconBitmapResolution()
 
 void DesktopApp::StopIconLoader()
 {
+    preparedIconPixels_.Preparation()->Close();
     iconWork_.Stop();
     dockIconWork_.Stop();
     dockIdentityWork_.Stop();
@@ -741,7 +762,7 @@ void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
         if (desktopBackdropCompositor_.Initialize(hwnd_))
         {
             nativeGlassPanelReadyLogged_ = false;
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons,
                 L"Native desktop CompositionBackdropBrush initialized");
         }
         else
@@ -749,7 +770,7 @@ void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
             std::wstring message =
                 L"Native desktop CompositionBackdropBrush unavailable: ";
             message += desktopBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Icons, message.c_str(), DiagnosticLogLevel::Warning);
         }
     }
     desktopBackdropCompositor_.SetVisible(true);

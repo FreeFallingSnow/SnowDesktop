@@ -60,7 +60,7 @@ bool IsValidUtf8(std::string_view value) noexcept
 
 WidgetStorageTransaction::WidgetStorageTransaction(
     const StorageMap& source, std::string instancePrefix)
-    : original_(source), candidate_(source),
+    : candidate_(source),
       instancePrefix_(std::move(instancePrefix))
 {
 }
@@ -108,6 +108,14 @@ std::string WidgetStorageTransaction::FullKey(std::string_view key) const
     return result;
 }
 
+void WidgetStorageTransaction::RememberOriginal(const std::string& fullKey,
+    StorageMap::const_iterator found)
+{
+    if (originals_.contains(fullKey)) return;
+    if (found == candidate_.end()) originals_.emplace(fullKey, std::nullopt);
+    else originals_.emplace(fullKey, found->second);
+}
+
 std::optional<std::string> WidgetStorageTransaction::Get(
     std::string_view key, std::string& error) const
 {
@@ -133,6 +141,7 @@ bool WidgetStorageTransaction::Set(std::string key, std::string value,
     const std::string fullKey = FullKey(key);
     const auto found = candidate_.find(fullKey);
     if (found != candidate_.end() && found->second == value) return true;
+    RememberOriginal(fullKey, found);
     candidate_[fullKey] = std::move(value);
     changed = true;
     return true;
@@ -144,7 +153,12 @@ bool WidgetStorageTransaction::Remove(std::string_view key,
     changed = false;
     error.clear();
     if (!ConsumeOperation(error) || !ValidateKey(key, error)) return false;
-    changed = candidate_.erase(FullKey(key)) != 0;
+    const std::string fullKey = FullKey(key);
+    const auto found = candidate_.find(fullKey);
+    if (found == candidate_.end()) return true;
+    RememberOriginal(fullKey, found);
+    candidate_.erase(found);
+    changed = true;
     return true;
 }
 
@@ -175,6 +189,7 @@ bool WidgetStorageTransaction::SetHostMetadata(
     const std::string fullKey = FullKey(key);
     const auto found = candidate_.find(fullKey);
     if (found != candidate_.end() && found->second == value) return true;
+    RememberOriginal(fullKey, found);
     candidate_[fullKey] = std::move(value);
     changed = true;
     return true;
@@ -187,7 +202,12 @@ bool WidgetStorageTransaction::RemoveHostMetadata(
     error.clear();
     if (!ValidateHostMetadataKey(key, error))
         return false;
-    changed = candidate_.erase(FullKey(key)) != 0;
+    const std::string fullKey = FullKey(key);
+    const auto found = candidate_.find(fullKey);
+    if (found == candidate_.end()) return true;
+    RememberOriginal(fullKey, found);
+    candidate_.erase(found);
+    changed = true;
     return true;
 }
 
@@ -217,7 +237,17 @@ bool WidgetStorageTransaction::ValidateCommit(std::string& error) const
 
 bool WidgetStorageTransaction::Changed() const noexcept
 {
-    return original_ != candidate_;
+    for (const auto& [key, original] : originals_)
+    {
+        const auto found = candidate_.find(key);
+        if (original)
+        {
+            if (found == candidate_.end() || found->second != *original)
+                return true;
+        }
+        else if (found != candidate_.end()) return true;
+    }
+    return false;
 }
 
 StorageMap WidgetStorageTransaction::TakeCandidate()

@@ -1,4 +1,5 @@
 #include "platform/single_instance.h"
+
 #include "platform/application_restart_policy.h"
 #include "common/constants.h"
 #include "steam/steam_runtime_context.h"
@@ -10,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -279,6 +281,52 @@ void TestRecoveryRegistration()
     }
     Check(SUCCEEDED(UnregisterApplicationRestart()),
         "the isolated test process removes its recovery registration");
+}
+
+void TestStartupAcquisitionFeedback()
+{
+    using namespace snowdesktop::single_instance;
+    const auto name = L"Local\\SnowDesktop.StartupFeedback.Test." +
+        std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(GetTickCount64());
+    auto owner = std::make_unique<Guard>();
+    Check(owner->Acquire(name.c_str()) == AcquireResult::Primary, "isolated startup mutex owner exists");
+    Guard requested;
+    int reports = 0, waits = 0, resolutions = 0;
+    DWORD reported = ERROR_SUCCESS;
+    const auto missing = [&](DWORD timeout) -> std::optional<InstanceInfo> {
+        if (timeout) ++waits;
+        return std::nullopt;
+    };
+    const auto resolve = [&](const InstanceInfo&) { ++resolutions; return StartupResolution::ExitNewInstance; };
+    const auto report = [&](DWORD error) { ++reports; reported = error; };
+    const auto blocked = AcquireForStartup(requested, missing, resolve, report, name.c_str());
+    Check(!blocked.primary && blocked.error == ERROR_BUSY && reports == 1 && reported == ERROR_BUSY &&
+        waits == 3 && resolutions == 0,
+        "a real occupied mutex without a control window reports failure after the bounded wait instead of exiting successfully");
+    Guard stillBlocked;
+    Check(stillBlocked.Acquire(name.c_str()) == AcquireResult::Existing,
+        "missing-window feedback never bypasses the live owner's mutex");
+    reports = waits = 0;
+    const auto findThenRelease = [&](DWORD timeout) -> std::optional<InstanceInfo> {
+        if (timeout) { ++waits; owner.reset(); }
+        return std::nullopt;
+    };
+    const auto recovered = AcquireForStartup(requested, findThenRelease, resolve, report, name.c_str());
+    Check(recovered.primary && recovered.error == ERROR_SUCCESS && reports == 0 && waits == 1,
+        "startup proceeds when the real predecessor exits during its bounded wait");
+    const auto failed = AcquireForStartup(stillBlocked, missing, resolve, report, L"");
+    Check(!failed.primary && failed.error == ERROR_INVALID_PARAMETER && reports == 1,
+        "native mutex acquisition errors always report a nonzero startup failure");
+    reports = 0;
+    const auto known = AcquireForStartup(stillBlocked,
+        [](DWORD) { return std::optional<InstanceInfo>{InstanceInfo{}}; }, resolve, report, name.c_str());
+    Check(!known.primary && known.error == ERROR_SUCCESS && resolutions == 1 && reports == 0,
+        "a resolved existing instance remains an intentional successful handoff");
+    InstanceInfo inaccessible;
+    inaccessible.version = L"1.0.12.0";
+    Check(HandleExistingInstanceLaunch(inaccessible, inaccessible, LaunchIntent::Interactive) ==
+        ExistingLaunchAction::ActivationFailed,
+        "a failed native activation notification cannot silently claim an existing-instance handoff");
 }
 
 void TestStartupSettingsActivation()
@@ -579,6 +627,7 @@ int wmain(int argc, wchar_t** argv)
         TestLaunchIntent();
         TestRecoveryRegistration();
         TestStartupSettingsActivation();
+        TestStartupAcquisitionFeedback();
         TestRestartHandoff();
         TestCleanupPreservesQuit();
     }

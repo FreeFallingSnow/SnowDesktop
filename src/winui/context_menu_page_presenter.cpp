@@ -667,7 +667,13 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         if (!snapshot.sessionActive) Deactivate();
     }
-    void Deactivate() { active = false; Cancel(); }
+    void Deactivate()
+    {
+        const bool wasActive = std::exchange(active, false);
+        Cancel();
+        if (wasActive)
+            try { if (actions.contextMenuClosed) actions.contextMenuClosed(); } catch (...) {}
+    }
     void Close()
     {
         if (closed) return;

@@ -12,6 +12,12 @@ class IconLibraryBitmapCache
 public:
     explicit IconLibraryBitmapCache(size_t capacity = 256) : capacity_(capacity) {}
     bool Contains(const std::string& key) const { return entries_.contains(key); }
+    size_t Size() const noexcept { return entries_.size(); }
+    template<class Visitor> void VisitBitmaps(Visitor visitor) const
+    {
+        for (const auto& [key, entry] : entries_)
+        { (void)key; visitor(entry.bitmap.get(), entry.pending); }
+    }
 
     template<class Release>
     std::uint64_t Begin(const std::string& key, const std::string& asset,

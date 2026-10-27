@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <tuple>
+#include <utility>
 
 namespace snowdesktop
 {
@@ -85,6 +86,52 @@ bool SameRect(const snowdesktop::widget_runtime::ViewRect& left,
         left.width == right.width && left.height == right.height;
 }
 
+bool SameEventInputs(
+    const std::vector<LuaWidgetAccessibilitySnapshot>& previous,
+    const std::vector<LuaWidgetAccessibilitySnapshot>& current) noexcept
+{
+    if (previous.size() != current.size()) return false;
+    for (std::size_t i = 0; i < current.size(); ++i)
+    {
+        const auto& oldWidget = previous[i];
+        const auto& widget = current[i];
+        if (oldWidget.widgetId != widget.widgetId ||
+            oldWidget.packageId != widget.packageId ||
+            oldWidget.name != widget.name ||
+            !SameRect(oldWidget.bounds, widget.bounds) ||
+            oldWidget.nodes.size() != widget.nodes.size())
+            return false;
+        for (std::size_t n = 0; n < widget.nodes.size(); ++n)
+        {
+            const auto& old = oldWidget.nodes[n];
+            const auto& now = widget.nodes[n];
+            // Exact comparison avoids hashing collisions and covers both the
+            // structure signature and every property/focus input below. Runtime
+            // TextAccess objects are intentionally excluded: events never read
+            // them, and provider queries continue to capture fresh adapters.
+            if (!SameRect(old.bounds, now.bounds) ||
+                std::tie(old.semanticId, old.parentIndex, old.controlType,
+                    old.patterns, old.labelledBySemanticId,
+                    old.describedBySemanticId, old.focused, old.name, old.role,
+                    old.helpText, old.valueText, old.headingLevel, old.live,
+                    old.positionInSet, old.setSize, old.enabled, old.required,
+                    old.offscreen, old.checked, old.value, old.expanded,
+                    old.scrollHorizontal, old.scrollOffset,
+                    old.scrollViewportExtent, old.scrollContentExtent) !=
+                std::tie(now.semanticId, now.parentIndex, now.controlType,
+                    now.patterns, now.labelledBySemanticId,
+                    now.describedBySemanticId, now.focused, now.name, now.role,
+                    now.helpText, now.valueText, now.headingLevel, now.live,
+                    now.positionInSet, now.setSize, now.enabled, now.required,
+                    now.offscreen, now.checked, now.value, now.expanded,
+                    now.scrollHorizontal, now.scrollOffset,
+                    now.scrollViewportExtent, now.scrollContentExtent))
+                return false;
+        }
+    }
+    return true;
+}
+
 void AddNodeChange(std::vector<WidgetAccessibilityChange>& changes,
     WidgetAccessibilityChangeKind kind, const NodeKey& key)
 {
@@ -126,6 +173,8 @@ std::vector<WidgetAccessibilityChange> DiffWidgetAccessibilitySnapshots(
     const std::vector<LuaWidgetAccessibilitySnapshot>& previous,
     const std::vector<LuaWidgetAccessibilitySnapshot>& current)
 {
+    // Unchanged frames need no structure strings, node-key copies or maps.
+    if (SameEventInputs(previous, current)) return {};
     std::vector<WidgetAccessibilityChange> changes;
     if (StructureSignature(previous) != StructureSignature(current))
         changes.push_back({ WidgetAccessibilityChangeKind::Structure,
@@ -291,5 +340,26 @@ std::vector<WidgetAccessibilityChange> DiffWidgetAccessibilitySnapshots(
         }
     }
     return changes;
+}
+
+void WidgetAccessibilityEventState::Reset() noexcept
+{
+    current_.clear();
+}
+
+WidgetAccessibilityEventState::Update WidgetAccessibilityEventState::Refresh(
+    const Capture& capture, const Listening& clientsAreListening)
+{
+    Snapshots next;
+    if (!capture(next)) return {};
+    Update update;
+    // Keep the baseline live even without listeners: a client can subscribe
+    // before the next paint and must receive changes made after subscribing.
+    // Capturing only once listening resumes would silently absorb that change.
+    if (clientsAreListening())
+        update.changes = DiffWidgetAccessibilitySnapshots(current_, next);
+    if (!update.changes.empty()) update.previous = std::move(current_);
+    current_ = std::move(next);
+    return update;
 }
 }

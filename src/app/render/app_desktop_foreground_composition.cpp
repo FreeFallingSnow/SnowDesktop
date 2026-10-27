@@ -68,7 +68,7 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                         L"hr=0x%08X after remove hr=0x%08X",
                         static_cast<unsigned>(restoreHr),
                         static_cast<unsigned>(hr));
-                    WriteDiagnosticLogEntry(message);
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
                 }
                 return hr;
             }
@@ -136,7 +136,7 @@ HRESULT DesktopApp::SyncDesktopCompositionRootZOrder()
                 L"hr=0x%08X after add hr=0x%08X",
                 static_cast<unsigned>(restoreHr),
                 static_cast<unsigned>(addFailure));
-            WriteDiagnosticLogEntry(message);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
         }
         return addFailure;
     }
@@ -196,6 +196,7 @@ HRESULT DesktopApp::CreateOrResizeDesktopForegroundCompositionSurface()
     desktopForegroundCompositionSurface_ = std::move(surface);
     desktopForegroundCompositionWidth_ = width;
     desktopForegroundCompositionHeight_ = height;
+    ResetPointerInteractionDamage();
     return S_OK;
 }
 
@@ -203,17 +204,24 @@ bool DesktopApp::RenderDesktopForegroundComposition(
     const RECT* updateRect,
     bool hiddenMode)
 {
-    if (FAILED(CreateOrResizeDesktopForegroundCompositionSurface()) ||
-        !desktopForegroundCompositionSurface_)
+    bool surfaceRecreated = false;
     {
-        return false;
+        // Retain the old identity only across allocation, preventing address
+        // reuse from disguising a replacement. Release it before painting.
+        const auto previousSurface = desktopForegroundCompositionSurface_;
+        if (FAILED(CreateOrResizeDesktopForegroundCompositionSurface()) ||
+            !desktopForegroundCompositionSurface_)
+            return false;
+        surfaceRecreated = previousSurface.Get() != desktopForegroundCompositionSurface_.Get();
     }
 
     RECT client{};
     GetClientRect(hwnd_, &client);
     RECT clippedUpdate{};
     const RECT* dcompUpdate = nullptr;
-    if (updateRect &&
+    // A replacement surface has no retained pixels. Its first draw must
+    // initialize the entire allocation even for a local input request.
+    if (!surfaceRecreated && updateRect &&
         IntersectRect(&clippedUpdate, updateRect, &client) &&
         !IsRectEmpty(&clippedUpdate))
     {
@@ -254,7 +262,7 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             ~TooltipDrawScope() { damage.EndDraw(); }
         };
         { TooltipDrawScope tooltipDraw(desktopForegroundTooltipDamage_);
-          DrawDesktopForeground(context.Get(), hiddenMode); }
+          DrawDesktopForeground(context.Get(), hiddenMode, dcompUpdate); }
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
         brushCache_.clear();
@@ -275,6 +283,10 @@ bool DesktopApp::RenderDesktopForegroundComposition(
             }
         }
         desktopForegroundTooltipDamage_.AcceptDraw();
+        // Another transaction may change interaction pixels on this same
+        // allocation. Only an actual pointer frame can retain its footprint.
+        if (!presentingPointerInteractionFrame_)
+            ResetPointerInteractionDamage();
         return true;
     }
     return false;

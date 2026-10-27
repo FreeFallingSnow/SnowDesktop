@@ -1,4 +1,5 @@
 #include "dock/dock_minimize_hook_threads.h"
+#include "dock/dock_external_minimize.h"
 #include "dock/dock_minimize_protocol.h"
 #include "dock/dock_window_source_cloak.h"
 #include <atomic>
@@ -19,6 +20,8 @@ int failures = 0;
 constexpr wchar_t kRaceFixture[] = L"SnowDesktop.Dock.LeaseRaceFixture";
 HANDLE raceEntered = nullptr, raceRelease = nullptr;
 std::atomic<bool> pauseRaceInstall{false};
+std::function<LRESULT(HWND, DWORD)> minimizeRequest;
+unsigned minimizeCancels = 0;
 HHOOK WINAPI RaceInstall(int, HOOKPROC, HINSTANCE, DWORD)
 {
     if (pauseRaceInstall.exchange(false))
@@ -40,9 +43,29 @@ HHOOK WINAPI Install(int type, HOOKPROC callback, HINSTANCE module, DWORD thread
 }
 BOOL WINAPI Remove(HHOOK hook) { ++removed; return UnhookWindowsHookEx(hook); }
 HHOOK WINAPI Deny(int, HOOKPROC, HINSTANCE, DWORD) { SetLastError(ERROR_MOD_NOT_FOUND); return nullptr; }
-struct Fixture { HWND window = nullptr; };
+constexpr UINT kRestoreFixture = WM_APP + 73;
+struct Fixture { HWND window = nullptr; LONG requests = 0, completed = 0, iconicAfter = 0, restored = 0; DWORD completedAt = 0; };
+Fixture* targetFixture = nullptr;
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
+    if (targetFixture && message == kRestoreFixture)
+    {
+        ShowWindow(window, SW_SHOWNOACTIVATE);
+        InterlockedExchange(&targetFixture->restored, static_cast<LONG>(wp));
+        return 0;
+    }
+    if (targetFixture && message == WM_SYSCOMMAND && (wp & 0xfff0u) == SC_MINIMIZE)
+    {
+        InterlockedIncrement(&targetFixture->requests);
+        const LRESULT result = DefWindowProcW(window, message, wp, lp);
+        targetFixture->iconicAfter = IsIconic(window);
+        targetFixture->completedAt = GetTickCount();
+        InterlockedIncrement(&targetFixture->completed);
+        return result;
+    }
+    if (message == RequestMessage() && minimizeRequest)
+        return minimizeRequest(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+    if (message == CancelMessage()) { ++minimizeCancels; return 0; }
     if (message == WM_COPYDATA && GetPropW(window, kRaceFixture))
     {
         CWPSTRUCT payload{};
@@ -74,6 +97,71 @@ bool WaitFor(const std::function<bool()>& predicate, DWORD timeout = 4000)
         Sleep(5);
     }
     return true;
+}
+#include "dock_minimize_target_cases.h"
+void RunPendingPresentationTests(HWND source, HWND receiver, const Fixture& fixture)
+{
+    for (const int outcome : {0, 1, 2})
+    {
+        // Waiting only for !IsIconic does not acknowledge ShowWindowAsync when
+        // the window was already restored. A still-queued restore can undo the
+        // minimize being tested. Acknowledge it on the actual source thread.
+        PostMessageW(source, kRestoreFixture, static_cast<WPARAM>(outcome + 1), 0);
+        Check(WaitFor([&] { return fixture.restored == outcome + 1 && !IsIconic(source) && IsWindowVisible(source); }),
+            "external pending fixture has a visible restored source");
+        DWORD requestDeadline = 0;
+        unsigned requests = 0;
+        const unsigned cancelsBefore = minimizeCancels;
+        minimizeRequest = [&](HWND target, DWORD deadline) -> LRESULT {
+            Check(target == source && !IsIconic(source) && RequestIsCurrent(deadline, GetTickCount()),
+                "actual CBT export reaches the host before native minimization");
+            ++requests;
+            requestDeadline = deadline;
+            Check(SetPropW(source, kPresentationPendingProperty, receiver) != FALSE,
+                "host publishes a generation-bound pending presentation");
+            return 1;
+        };
+        const ULONGLONG start = GetTickCount64();
+        PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+        Check(WaitFor([&] { return requests == 1; }, 1000) && !IsIconic(source),
+            "host returns to its message loop while the original native action remains pending");
+        DWORD_PTR ignored = 0;
+        Check(SendMessageTimeoutW(source, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 80, &ignored) != 0,
+            "pending CBT continues servicing sent messages without consuming posted input");
+        bool acquired = false;
+        if (outcome == 0)
+        {
+            Check(SUCCEEDED(snowdesktop::dock_source_cloak::Acquire(source, receiver, acquired)) && acquired &&
+                !IsIconic(source), "cross-process source cloak is applied before releasing the pending original action");
+            RemovePropW(source, kPresentationPendingProperty);
+        }
+        else if (outcome == 2) RemovePropW(receiver, kRevisionProperty);
+        const bool completed = WaitFor([&] { return IsIconic(source); }, 700) && requests == 1;
+        if (!completed)
+            std::cerr << "pending minimize outcome=" << outcome << " hostRequests=" << requests << " nativeRequests=" << fixture.requests
+                << " nativeCompleted=" << fixture.completed << " iconicAfter=" << fixture.iconicAfter << " nowIconic=" << IsIconic(source)
+                << " elapsed=" << GetTickCount64() - start << " pending=" << GetPropW(source, kPresentationPendingProperty) << '\n';
+        Check(completed,
+            "acknowledgement, timeout and host loss all retain exactly one original native action");
+        if (outcome == 0)
+        {
+            Check(minimizeCancels == cancelsBefore &&
+                SUCCEEDED(snowdesktop::dock_source_cloak::Release(source, receiver)),
+                "acknowledged minimize finishes without timeout notification or a stranded source cloak");
+        }
+        else
+        {
+            Check(WaitFor([&] { return minimizeCancels == cancelsBefore + 1; }, 500) &&
+                GetTickCount64() - start < 700 &&
+                (outcome == 2 || !RequestIsCurrent(requestDeadline, GetTickCount())),
+                "unacknowledged presentation releases at its original deadline or owner loss and reports cancellation");
+        }
+        SetPropW(receiver, kRevisionProperty, ULongToHandle(1));
+        RemovePropW(source, kPresentationPendingProperty);
+        minimizeRequest = {};
+    }
+    PostMessageW(source, kRestoreFixture, 4, 0);
+    Check(WaitFor([&] { return fixture.restored == 4 && !IsIconic(source); }), "pending Hook fixture restores its own target");
 }
 void RunLeaseMessageRaceTests()
 {
@@ -165,6 +253,7 @@ int Target(const wchar_t* name)
     if (!mapping) return 1;
     auto* fixture = static_cast<Fixture*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Fixture)));
     if (!fixture) return 2;
+    targetFixture = fixture;
     fixture->window = CreateWindowFixture();
     ShowWindow(fixture->window, SW_SHOWNOACTIVATE);
     MSG message{};
@@ -176,6 +265,7 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--target") return Target(argv[2]);
     if (argc != 2) return 2;
+    RunProcessBitnessCacheTests();
     RunLeaseMessageRaceTests();
     if (std::wstring_view(argv[1]) == L"--lease-race-only") return failures ? 1 : 0;
     auto library = std::filesystem::path(argv[1]);
@@ -226,14 +316,25 @@ int wmain(int argc, wchar_t** argv)
         }
         Check(cloak==16 && removed==16 && hooks.CloakStatistics().successes==16,
             "each command registers and immediately releases its hook");
+        RunPendingPresentationTests(fixture->window, receiver, *fixture);
         RemovePropW(fixture->window,kCloakDispatcherProperty);
         hooks.Stop();
-        Check(removed==17,"stop removes the one resident CBT hook");
+        Check(removed==cloak+1,"stop removes the one resident CBT hook after every temporary cloak hook");
     }
     RemovePropW(fixture->window,kTargetProperty);
-    DestroyWindow(receiver);
+    DockExternalMinimize monitor;
+    Check(monitor.Start(receiver, library.wstring(), {}, {}), "real external minimize monitor starts");
+    RunTargetMaintenanceTests(monitor, receiver, fixture->window);
     PostMessageW(fixture->window,WM_CLOSE,0,0);
     Check(WaitFor([&] {return WaitForSingleObject(target.hProcess,0)==WAIT_OBJECT_0;}),"owned target exits");
+    const std::array<HWND, 1> exited{fixture->window};
+    monitor.UpdateTargets(exited);
+    Check(!monitor.OwnsTarget(fixture->window) && monitor.HookCount() == 0,
+        "exited process and thread are removed even if the snapshot still contains the old HWND");
+    monitor.Stop();
+    Check(!GetPropW(receiver, kOwnerProperty) && !GetPropW(receiver, kRevisionProperty),
+        "stopping maintenance removes the host ownership protocol");
+    DestroyWindow(receiver);
     if(WaitForSingleObject(target.hProcess,0)!=WAIT_OBJECT_0) TerminateProcess(target.hProcess,99);
     CloseHandle(target.hThread);CloseHandle(target.hProcess);UnmapViewOfFile(fixture);CloseHandle(mapping);
     std::cout<<(failures?"FAIL":"PASS")<<" idleCBT="<<cbt<<" cloakCommands="<<cloak<<" unregistered="<<removed<<'\n';

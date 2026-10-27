@@ -150,26 +150,8 @@ bool ActivateSettingsWindow(HWND window) noexcept
         SetActiveWindow(window);
     };
     requestActivation();
-    if (GetForegroundWindow() == window)
-        return true;
-
-    // The tray and single-instance messages can be dispatched after Windows
-    // has transferred foreground ownership to another process. Match the
-    // existing Dock activation policy: briefly share input queues only for a
-    // retry against SnowDesktop's own responsive window, then always detach.
-    const HWND foreground = GetForegroundWindow();
-    const DWORD foregroundThread = foreground
-        ? GetWindowThreadProcessId(foreground, nullptr)
-        : 0;
-    const DWORD currentThread = GetCurrentThreadId();
-    const bool attached = foregroundThread != 0 &&
-        foregroundThread != currentThread &&
-        AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
-    if (attached)
-    {
-        requestActivation();
-        AttachThreadInput(currentThread, foregroundThread, FALSE);
-    }
+    // Observe the normal request without joining an arbitrary foreground
+    // thread's input queue. Delivery may finish asynchronously in User32.
     return GetForegroundWindow() == window;
 }
 
@@ -417,6 +399,7 @@ struct SettingsWindowHost::Impl
     muw::AppWindowTitleBar appWindowTitleBar{nullptr};
     SettingsSearchIndex searchIndex;
     int searchContextMenuStyle = -1;
+    bool searchAdvancedSettings = false;
     std::shared_ptr<CallbackState> callbacks;
     std::unique_ptr<IWidgetsPageBackend> widgetsPageBackend;
     std::unique_ptr<IBackupDataPageBackend> backupDataPageBackend;
@@ -487,7 +470,7 @@ struct SettingsWindowHost::Impl
                 if (placeholder != std::wstring::npos) detail.replace(placeholder, 3, Utf8ToWide(error));
                 result.message += L"\n" + detail;
             }
-            WriteDiagnosticLogEntry((L"SettingsUI theme operation=" +
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI theme operation=" +
                 std::to_wstring(static_cast<int>(task->request.command)) +
                 L" error=" + Utf8ToWide(error)).c_str(), DiagnosticLogLevel::Error);
         }
@@ -753,7 +736,7 @@ struct SettingsWindowHost::Impl
     void SetError(std::wstring message)
     {
         lastError = std::move(message);
-        WriteDiagnosticLogEntry((L"SettingsUI pid=" + std::to_wstring(GetCurrentProcessId()) +
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI pid=" + std::to_wstring(GetCurrentProcessId()) +
             L" error: " + lastError).c_str(), DiagnosticLogLevel::Error);
     }
 
@@ -1105,6 +1088,7 @@ struct SettingsWindowHost::Impl
         input.developerToolsVisible = options.developerToolsVisible &&
             options.developerToolsVisible();
         input.debugVisible = DebugPageVisible();
+        input.advancedSettingsVisible = snapshot && snapshot->values.general.showAdvancedSettings;
         const bool advancedFeaturesVisible =
             options.advancedFeatureStatus &&
             options.advancedFeatureStatus().cardVisible;
@@ -1150,6 +1134,7 @@ struct SettingsWindowHost::Impl
             SettingsSearchIndexInput input = BuildSearchInput();
             searchIndex.Rebuild(input);
             const auto snapshot = controller ? controller->Snapshot() : nullptr;
+            searchAdvancedSettings = snapshot && snapshot->values.general.showAdvancedSettings;
             searchContextMenuStyle = snapshot ? snapshot->values.personalization.contextMenuStyle : 0;
             if (shell)
             {
@@ -1231,7 +1216,7 @@ struct SettingsWindowHost::Impl
         {
             if (!shell->ApplySnapshot(*snapshot))
                 return;
-            if (searchContextMenuStyle != snapshot->values.personalization.contextMenuStyle)
+            if (searchContextMenuStyle != snapshot->values.personalization.contextMenuStyle || searchAdvancedSettings != snapshot->values.general.showAdvancedSettings)
                 RebuildSearchIndex();
             // Ordinary controller revisions must not touch the Island's window-
             // level backdrop. In particular, continuous Slider/ColorPicker
@@ -1978,6 +1963,20 @@ struct SettingsWindowHost::Impl
             }
             return state->owner->options.startupConflict();
         };
+        general.queryWindowSupport = [weak]() {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner && state->owner->options.windowSupportStatus
+                ? state->owner->options.windowSupportStatus() : window_support::SupportStatus{};
+        };
+        general.configureWindowSupport = [weak](bool enabled) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner && state->owner->options.configureWindowSupport)
+            {
+                const auto owner = state->owner->window;
+                (void)ActivateSettingsWindow(owner);
+                state->owner->options.configureWindowSupport(enabled, owner);
+            }
+        };
         general.queryAdvancedFeatureStatus = [weak]() {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner ||
@@ -2155,6 +2154,7 @@ struct SettingsWindowHost::Impl
             return state->owner->ThemeOperation(generation, request);
         };
         personalization.contextMenu = options.contextMenu;
+        personalization.contextMenuClosed = options.contextMenuClosed;
         personalization.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
             const auto state = weak.lock();
             if (state && state->alive.load() && state->owner)
@@ -2369,6 +2369,17 @@ struct SettingsWindowHost::Impl
                 std::move(request), std::move(completion));
         };
         shell->SetDockPageActions(std::move(dock));
+        if (options.runtimeModulesStatus) shell->SetRuntimeModulesQuery(options.runtimeModulesStatus);
+        else
+        {
+            const auto dispatcher = callbacks->dispatcher;
+            shell->SetRuntimeModulesQuery([dispatcher](auto completed) {
+                std::thread([dispatcher, completed = std::move(completed)]() mutable {
+                    auto result = runtime_modules::Inspect();
+                    dispatcher.TryEnqueue([completed = std::move(completed), result = std::move(result)]() mutable { completed(std::move(result)); });
+                }).detach();
+            });
+        }
 
         HomeAboutPageActions homeAbout;
         homeAbout.probeHotkey = probeHotkey;
@@ -2884,7 +2895,7 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings.navigate", SettingsPageKey(route.page));
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
-        WriteDiagnosticLogEntry((L"SettingsUI navigate pid=" +
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI navigate pid=" +
             std::to_wstring(GetCurrentProcessId()) + L" page=" +
             std::to_wstring(static_cast<int>(route.page))).c_str());
         if ((route.page == SettingsPage::DeveloperTools &&
@@ -3701,7 +3712,7 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings", "hide");
         if (!controller || !window || shuttingDown)
             return false;
-        WriteDiagnosticLogEntry((L"SettingsUI close begin pid=" +
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, (L"SettingsUI close begin pid=" +
             std::to_wstring(GetCurrentProcessId())).c_str());
         if (!FlushPendingChanges())
             return false;
@@ -3960,6 +3971,11 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         impl_->SetError(L"Settings host window remained hidden after show");
         return false;
     }
+
+    // Reopening the same destination must replay its locator after the HWND
+    // is visible, including when a previous visit already consumed the pulse.
+    if (impl_->shell && route.page == SettingsPage::General && route.focusId == "general.windowSupport")
+        (void)impl_->shell->Navigate(route, false);
 
     if (snapshot && impl_->shell &&
         route.page == SettingsPage::General &&

@@ -586,6 +586,31 @@ constexpr bool IsTaskbarDocumentProxyCandidateEligible(
 }
 
 /**
+ * Probe foreign document proxies without sending title messages to our workers.
+ * GetWindowTextLengthW synchronously dispatches WM_GETTEXTLENGTH for windows in
+ * this process. MediaPlayer and other worker-owned hidden windows need not pump
+ * messages, so process and structural filters must precede that call.
+ */
+inline bool IsTaskbarDocumentProxyCandidate(HWND window)
+{
+    DWORD processId = 0;
+    if (!window || !GetWindowThreadProcessId(window, &processId) ||
+        !processId || processId == GetCurrentProcessId())
+        return false;
+    if (!IsTaskbarDocumentProxyCandidateEligible(
+            GetAncestor(window, GA_ROOT) == window,
+            IsWindowVisible(window) != FALSE,
+            GetWindow(window, GW_OWNER) != nullptr,
+            true, GetWindowLongPtrW(window, GWL_STYLE),
+            GetWindowLongPtrW(window, GWL_EXSTYLE),
+            IsTaskWindowExplicitlyExcluded(window)))
+        return false;
+    // For a foreign top-level window User32 reads its cached caption, without
+    // waiting for the target's window procedure.
+    return GetWindowTextLengthW(window) > 0;
+}
+
+/**
  * @brief 判断同签名候选组是否足以代表多文档任务栏代理。
  *
  * 单文档状态继续使用可见主窗口；只有至少两个不同标题的同组候选才

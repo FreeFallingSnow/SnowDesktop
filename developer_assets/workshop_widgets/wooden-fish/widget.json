@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.5.0",
+  "minHostVersion": "1.0.12.0",
   "author": "SnowDesktop Community",
   "license": "GPL-3.0-only",
   "name": "Wooden Fish",
   "nameKey": "lua_widget.wooden_fish.name",
-  "version": "1.0.16",
+  "version": "1.0.18",
   "description": "A calming wooden fish counter with tactile visual feedback.",
   "descriptionKey": "lua_widget.wooden_fish.description",
   "preview": "workshop-preview.png",
@@ -29,7 +29,8 @@
       "lua_widget.wooden_fish.custom_term": "好运名称",
       "lua_widget.wooden_fish.custom_hint": "底部文案",
       "lua_widget.wooden_fish.custom_term_invalid": "名称不能超过 12 个字符",
-      "lua_widget.wooden_fish.custom_hint_invalid": "底部文案不能超过 40 个字符"
+      "lua_widget.wooden_fish.custom_hint_invalid": "底部文案不能超过 40 个字符",
+      "lua_widget.wooden_fish.sound": "敲击音效"
     },
     "en-US": {
       "lua_widget.wooden_fish.name": "Wooden Fish",
@@ -45,7 +46,8 @@
       "lua_widget.wooden_fish.custom_term": "Luck label",
       "lua_widget.wooden_fish.custom_hint": "Bottom caption",
       "lua_widget.wooden_fish.custom_term_invalid": "Use 12 characters or fewer",
-      "lua_widget.wooden_fish.custom_hint_invalid": "Use 40 characters or fewer"
+      "lua_widget.wooden_fish.custom_hint_invalid": "Use 40 characters or fewer",
+      "lua_widget.wooden_fish.sound": "Strike sound"
     },
     "zh-TW": {
       "lua_widget.wooden_fish.name": "敲木魚",
@@ -61,7 +63,8 @@
       "lua_widget.wooden_fish.custom_term": "好運名稱",
       "lua_widget.wooden_fish.custom_hint": "底部文案",
       "lua_widget.wooden_fish.custom_term_invalid": "名稱不能超過 12 個字元",
-      "lua_widget.wooden_fish.custom_hint_invalid": "底部文案不能超過 40 個字元"
+      "lua_widget.wooden_fish.custom_hint_invalid": "底部文案不能超過 40 個字元",
+      "lua_widget.wooden_fish.sound": "敲擊音效"
     },
     "ja-JP": {
       "lua_widget.wooden_fish.name": "木魚をたたく",
@@ -77,7 +80,8 @@
       "lua_widget.wooden_fish.custom_term": "幸運の呼び名",
       "lua_widget.wooden_fish.custom_hint": "下部の文言",
       "lua_widget.wooden_fish.custom_term_invalid": "12文字以内で入力してください",
-      "lua_widget.wooden_fish.custom_hint_invalid": "40文字以内で入力してください"
+      "lua_widget.wooden_fish.custom_hint_invalid": "40文字以内で入力してください",
+      "lua_widget.wooden_fish.sound": "打音"
     },
     "ko-KR": {
       "lua_widget.wooden_fish.name": "목탁 두드리기",
@@ -93,7 +97,8 @@
       "lua_widget.wooden_fish.custom_term": "행운 이름",
       "lua_widget.wooden_fish.custom_hint": "하단 문구",
       "lua_widget.wooden_fish.custom_term_invalid": "12자 이내로 입력하세요",
-      "lua_widget.wooden_fish.custom_hint_invalid": "40자 이내로 입력하세요"
+      "lua_widget.wooden_fish.custom_hint_invalid": "40자 이내로 입력하세요",
+      "lua_widget.wooden_fish.sound": "타격음"
     },
     "de-DE": {
       "lua_widget.wooden_fish.name": "Holzfisch",
@@ -109,7 +114,8 @@
       "lua_widget.wooden_fish.custom_term": "Bezeichnung für Glück",
       "lua_widget.wooden_fish.custom_hint": "Unterer Hinweis",
       "lua_widget.wooden_fish.custom_term_invalid": "Höchstens 12 Zeichen verwenden",
-      "lua_widget.wooden_fish.custom_hint_invalid": "Höchstens 40 Zeichen verwenden"
+      "lua_widget.wooden_fish.custom_hint_invalid": "Höchstens 40 Zeichen verwenden",
+      "lua_widget.wooden_fish.sound": "Schlagton"
     },
     "fr-FR": {
       "lua_widget.wooden_fish.name": "Poisson de bois",
@@ -125,7 +131,8 @@
       "lua_widget.wooden_fish.custom_term": "Nom de la chance",
       "lua_widget.wooden_fish.custom_hint": "Texte inférieur",
       "lua_widget.wooden_fish.custom_term_invalid": "Utilisez au maximum 12 caractères",
-      "lua_widget.wooden_fish.custom_hint_invalid": "Utilisez au maximum 40 caractères"
+      "lua_widget.wooden_fish.custom_hint_invalid": "Utilisez au maximum 40 caractères",
+      "lua_widget.wooden_fish.sound": "Son de frappe"
     },
     "es-ES": {
       "lua_widget.wooden_fish.name": "Pez de madera",
@@ -141,7 +148,8 @@
       "lua_widget.wooden_fish.custom_term": "Nombre de la suerte",
       "lua_widget.wooden_fish.custom_hint": "Texto inferior",
       "lua_widget.wooden_fish.custom_term_invalid": "Usa 12 caracteres como máximo",
-      "lua_widget.wooden_fish.custom_hint_invalid": "Usa 40 caracteres como máximo"
+      "lua_widget.wooden_fish.custom_hint_invalid": "Usa 40 caracteres como máximo",
+      "lua_widget.wooden_fish.sound": "Sonido de golpe"
     },
     "es-419": {
       "lua_widget.wooden_fish.name": "Pez de madera",
@@ -157,7 +165,8 @@
       "lua_widget.wooden_fish.custom_term": "Nombre de la suerte",
       "lua_widget.wooden_fish.custom_hint": "Texto inferior",
       "lua_widget.wooden_fish.custom_term_invalid": "Usa 12 caracteres como máximo",
-      "lua_widget.wooden_fish.custom_hint_invalid": "Usa 40 caracteres como máximo"
+      "lua_widget.wooden_fish.custom_hint_invalid": "Usa 40 caracteres como máximo",
+      "lua_widget.wooden_fish.sound": "Sonido de golpe"
     },
     "pt-BR": {
       "lua_widget.wooden_fish.name": "Peixe de madeira",
@@ -173,7 +182,8 @@
       "lua_widget.wooden_fish.custom_term": "Nome da sorte",
       "lua_widget.wooden_fish.custom_hint": "Texto inferior",
       "lua_widget.wooden_fish.custom_term_invalid": "Use no máximo 12 caracteres",
-      "lua_widget.wooden_fish.custom_hint_invalid": "Use no máximo 40 caracteres"
+      "lua_widget.wooden_fish.custom_hint_invalid": "Use no máximo 40 caracteres",
+      "lua_widget.wooden_fish.sound": "Som de batida"
     }
   },
   "defaultSize": {
@@ -207,9 +217,13 @@
     "settings.validation",
     "storage.typed",
     "storage.writeBudget",
-    "time.basic"
+    "time.basic",
+    "resource.audio"
   ],
-  "optionalFeatures": [],
+  "optionalFeatures": [
+    "task.audio.playback",
+    "task.start"
+  ],
   "resources": {
     "wooden-fish": {
       "type": "image",
@@ -218,9 +232,15 @@
     "mallet": {
       "type": "image",
       "path": "assets/mallet.png"
+    },
+    "sound": {
+      "type": "audio",
+      "path": "assets/strike.wav"
     }
   },
   "slots": {},
   "permissions": [],
-  "optionalPermissions": []
+  "optionalPermissions": [
+    "audio.playback"
+  ]
 }

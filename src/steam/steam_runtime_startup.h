@@ -19,6 +19,33 @@ struct SharedState
     volatile LONG phase;
 };
 
+// Keep the version-1 prefix intact for older hosts. The optional extension is
+// readable before attachment and authorizes only the child PID in this channel.
+struct StartupEnvelope
+{
+    SharedState startup;
+    DWORD currentPrivilegesAccepted;
+};
+
+inline bool CurrentPrivilegesAcceptedFromEnvironment() noexcept
+{
+    wchar_t name[128]{};
+    const DWORD length = GetEnvironmentVariableW(kChannelEnvironment, name, 128);
+    if (!length || length >= 128 ||
+        !std::wstring_view(name).starts_with(L"Local\\SnowDesktop.Startup.")) return false;
+    const HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, name);
+    if (!mapping) return false;
+    const auto envelope = static_cast<const StartupEnvelope*>(MapViewOfFile(
+        mapping, FILE_MAP_READ, 0, 0, sizeof(StartupEnvelope)));
+    const bool accepted = envelope && envelope->startup.magic == kMagic &&
+        envelope->startup.version == 1 &&
+        envelope->startup.childProcessId == GetCurrentProcessId() &&
+        envelope->currentPrivilegesAccepted == 1;
+    if (envelope) UnmapViewOfFile(envelope);
+    CloseHandle(mapping);
+    return accepted;
+}
+
 class Channel
 {
 public:
@@ -31,7 +58,7 @@ public:
         if (mapping_) CloseHandle(mapping_);
         if (ready_) CloseHandle(ready_);
     }
-    bool Create()
+    bool Create(bool currentPrivilegesAccepted = false)
     {
         std::array<UCHAR, 16> random{};
         if (BCryptGenRandom(nullptr, random.data(), static_cast<ULONG>(random.size()),
@@ -45,11 +72,12 @@ public:
             name_.push_back(hex[value & 15]);
         }
         mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
-            0, sizeof(SharedState), name_.c_str());
+            0, sizeof(StartupEnvelope), name_.c_str());
         if (!mapping_ || GetLastError() == ERROR_ALREADY_EXISTS) return false;
         state_ = static_cast<SharedState*>(MapViewOfFile(mapping_, FILE_MAP_ALL_ACCESS,
-            0, 0, sizeof(SharedState)));
+            0, 0, sizeof(StartupEnvelope)));
         if (!state_) return false;
+        reinterpret_cast<StartupEnvelope*>(state_)->currentPrivilegesAccepted = currentPrivilegesAccepted ? 1 : 0;
         state_->magic = kMagic;
         state_->version = 1;
         state_->childProcessId = 0;

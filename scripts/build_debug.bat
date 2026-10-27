@@ -34,7 +34,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 :configure
 echo === Configuring CMake (Debug preset) ===
-cmake --preset debug
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation configure -Preset debug
 if %ERRORLEVEL% NEQ 0 (
     echo CMake configure FAILED
     exit /b 1
@@ -42,7 +42,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building SnowDesktop.exe and SnowDesktopSteamBridge.exe (Debug) ===
-cmake --build --preset debug
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Preset debug
 if %ERRORLEVEL% NEQ 0 (
     echo SnowDesktop build FAILED
     exit /b 1
@@ -50,7 +50,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Configuring 32-bit Wallpaper Engine one-shot capture helper (Debug) ===
-cmake -B .build_debug\wallpaper_hook32 -S src\wallpaper_hook -A Win32 "-DSNOWDESKTOP_OUTPUT_DIR=%CD%/.build_debug/Debug"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation configure -Directory .build_debug\wallpaper_hook32 -Source src\wallpaper_hook -Architecture Win32 -Output "%CD%/.build_debug/Debug"
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper configure FAILED
     exit /b 1
@@ -58,7 +58,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Building 32-bit Wallpaper Engine Hook and injector (Debug) ===
-cmake --build .build_debug\wallpaper_hook32 --config Debug --target SnowDesktopWallpaperHook32 SnowDesktopWallpaperInjector32
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation build -Directory .build_debug\wallpaper_hook32 -Configuration Debug -Targets SnowDesktopWallpaperCapture32
 if %ERRORLEVEL% NEQ 0 (
     echo 32-bit Wallpaper Engine helper build FAILED
     exit /b 1
@@ -66,7 +66,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory (Debug) ===
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build_debug\Debug"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_command.ps1 -Operation arrange -Output "%CD%\.build_debug\Debug"
 if %ERRORLEVEL% NEQ 0 (
     echo Debug build output arrangement FAILED
     exit /b 1

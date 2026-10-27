@@ -1046,6 +1046,10 @@ struct WidgetsPageBackend::Impl final
         snapshot.description = Utf8ToWide(manifest.description);
         snapshot.version = Utf8ToWide(manifest.version);
         snapshot.author = Utf8ToWide(manifest.author);
+        for (const auto& helper : manifest.nativeHelpers)
+            snapshot.nativeHelpers.push_back({ Utf8ToWide(helper.id), Utf8ToWide(helper.path),
+                Utf8ToWide(helper.sha256), Utf8ToWide(helper.purpose), Utf8ToWide(helper.operations),
+                Utf8ToWide(helper.reason), Utf8ToWide(helper.denied) });
         const std::string sourceId = display
             ? display->source.providerId
             : firstInvalid ? firstInvalid->source.providerId
@@ -1200,10 +1204,7 @@ struct WidgetsPageBackend::Impl final
         snapshot.permissionState = widgets_page_backend_detail::
             PermissionStateFor(display->permissionState, grant.runtimeBlock);
         snapshot.permissionScopeFingerprint = Utf8ToWide(
-            snowdesktop::widget::WidgetPermissionBroker::ScopeFingerprint(
-                display->manifest.permissions,
-                display->manifest.optionalPermissions,
-                display->manifest.networkDomains));
+            snowdesktop::widget::PackagePermissionReviewFingerprint(*display));
         const auto declared =
             snowdesktop::widget::DeclaredPermissions(display->manifest);
         using snowdesktop::widget::PermissionDecisionState;
@@ -1898,7 +1899,7 @@ struct WidgetsPageBackend::Impl final
             // This pending operation is executed only by the confirmed callback.
             install.allowUnlockedReview = true;
             const std::wstring diagnostic = L"Component install review lock unavailable: " + lockWarning;
-            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, diagnostic.c_str(), DiagnosticLogLevel::Warning);
         }
         const bool sourceChange = std::any_of(
             dialogRequest.reasons.begin(), dialogRequest.reasons.end(),
@@ -1989,7 +1990,7 @@ struct WidgetsPageBackend::Impl final
                                 return;
                             }
                             if (install.allowUnlockedReview)
-                                WriteDiagnosticLogEntry(L"Component install: user confirmed continuing without the review lock.",
+                                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, L"Component install: user confirmed continuing without the review lock.",
                                     DiagnosticLogLevel::Info);
                             owner->RunInstall(std::move(install));
                         });
@@ -2061,7 +2062,7 @@ struct WidgetsPageBackend::Impl final
             if (!snapshot.lockWarning.empty()) snapshot.lockWarning += L"\n\n";
             snapshot.lockWarning += packageLock.Details();
             const auto diagnostic = L"Component package review lock unavailable: " + packageLock.Details();
-            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, diagnostic.c_str(), DiagnosticLogLevel::Warning);
         }
         const auto hashBefore = snowdesktop::widget::detail::HashPackageFile(snapshot.path, true);
         if (hashBefore.empty())
@@ -2580,10 +2581,7 @@ struct WidgetsPageBackend::Impl final
         const std::string expectedScopeFingerprint =
             WideToUtf8(request.scopeFingerprint);
         const std::string currentScopeFingerprint =
-            snowdesktop::widget::WidgetPermissionBroker::ScopeFingerprint(
-                package->manifest.permissions,
-                package->manifest.optionalPermissions,
-                package->manifest.networkDomains);
+            snowdesktop::widget::PackagePermissionReviewFingerprint(*package);
         if (expectedVersion.empty() || expectedSourceId.empty() ||
             expectedScopeFingerprint.empty() ||
             package->manifest.version != expectedVersion ||
@@ -2634,6 +2632,13 @@ struct WidgetsPageBackend::Impl final
         }
 
         std::vector<std::string> grantedDomains;
+        if (IsGranted(grantedPermissions, "native.execute") && !request.nativeAcknowledged)
+        {
+            SetFeedback(WidgetsPageFeedbackSeverity::Error,
+                L("app.settings.widgets_error_permission_invalid", L"The requested permission decision is invalid."));
+            Publish();
+            return false;
+        }
         const bool grantsDeclaredNetwork =
             IsGranted(grantedPermissions, "network.http") ||
             IsGranted(grantedPermissions, "network.internet");
@@ -2663,7 +2668,7 @@ struct WidgetsPageBackend::Impl final
         std::string error;
         const bool applied = engine.ApplyWidgetPermissionDecision(
             request.packageId, stateValue, grantedPermissions,
-            grantedDomains, error);
+            grantedDomains, error, request.nativeAcknowledged, expectedScopeFingerprint);
         FinishTask(applied
                 ? WidgetsPageHostOperationResult::Success()
                 : WidgetsPageHostOperationResult::Failure(Utf8ToWide(error)),

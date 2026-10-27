@@ -93,6 +93,21 @@ foreach ($line in @(Get-Content -LiteralPath $FileList -Encoding UTF8)) {
     $entries.Add($relative, $record)
 }
 
+$performanceRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools/performance'
+$performanceFiles = @('scripts/profile.bat','scripts/profile.ps1','scripts/profile_analyze.ps1')
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+foreach ($file in Get-ChildItem -LiteralPath $performanceRoot -File -Recurse) {
+    if ($file.Extension -in '.ps1','.sql') { $performanceFiles += $file.FullName.Substring($repositoryRoot.Length + 1).Replace('\','/') }
+}
+foreach ($relative in $performanceFiles) {
+    $destinationRelative = 'performance/' + $relative
+    $source = Join-Path $repositoryRoot $relative
+    $destination = Join-Path $TargetDirectory $destinationRelative
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)) | Out-Null
+    Copy-Item -LiteralPath $source -Destination $destination -Force
+    $entries.Add($destinationRelative,[ordered]@{path=$destinationRelative;sha256=(Get-Sha256 $destination);source='SnowDesktop'})
+}
+
 $required = @(
     "App.xbf",
     "SettingsShell.xbf",
@@ -176,7 +191,8 @@ $noticeSpecs = @(
     @($WebView2NoticePath, "WebView2-NOTICE.txt"),
     @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/yasb/LICENSE"), "YASB-LICENSE.txt"),
     @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/misans/LICENSE.pdf"), "MiSans-LICENSE.pdf"),
-    @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/harmonyos-sans/LICENSE.txt"), "HarmonyOS-Sans-LICENSE.txt")
+    @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/harmonyos-sans/LICENSE.txt"), "HarmonyOS-Sans-LICENSE.txt"),
+    @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/perfetto/LICENSE"), "Perfetto-LICENSE.txt")
 )
 $notices = foreach ($spec in $noticeSpecs) {
     $source = [System.IO.Path]::GetFullPath([string]$spec[0])

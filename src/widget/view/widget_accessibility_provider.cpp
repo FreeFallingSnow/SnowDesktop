@@ -29,6 +29,12 @@ using AccessibilityNode =
 using AccessibilityPattern =
     snowdesktop::widget_runtime::ViewAccessibilityPattern;
 
+// The host creates every provider in its OLE STA. UIA must marshal callbacks
+// back to that apartment: snapshots, actions and text access all use live
+// widget state owned by the GUI thread.
+constexpr ProviderOptions kProviderOptions = static_cast<ProviderOptions>(
+    ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
+
 enum class ElementKind
 {
     Widget,
@@ -688,7 +694,7 @@ public:
         ProviderOptions* result) override
     {
         if (!result) return E_POINTER;
-        *result = ProviderOptions_ServerSideProvider;
+        *result = kProviderOptions;
         return S_OK;
     }
 
@@ -931,7 +937,7 @@ public:
         ProviderOptions* result) override
     {
         if (!result) return E_POINTER;
-        *result = ProviderOptions_ServerSideProvider;
+        *result = kProviderOptions;
         return S_OK;
     }
 
@@ -2015,7 +2021,7 @@ struct WidgetAccessibilityProviderHost::Impl
     ActionProvider actionProvider;
     std::shared_ptr<ProviderState> state;
     Microsoft::WRL::ComPtr<IRawElementProviderSimple> root;
-    std::vector<LuaWidgetAccessibilitySnapshot> lastSnapshots;
+    WidgetAccessibilityEventState events;
 };
 
 WidgetAccessibilityProviderHost::WidgetAccessibilityProviderHost(
@@ -2058,8 +2064,10 @@ bool WidgetAccessibilityProviderHost::AttachWindow(HWND window)
     if (!root) return false;
     impl_->state = std::move(state);
     impl_->root.Attach(static_cast<IRawElementProviderSimple*>(root));
-    impl_->lastSnapshots.clear();
-    (void)impl_->state->Capture(impl_->lastSnapshots);
+    impl_->events.Reset();
+    (void)impl_->events.Refresh(
+        [this](auto& snapshots) { return impl_->state->Capture(snapshots); },
+        [] { return false; });
     return true;
 }
 
@@ -2072,7 +2080,7 @@ void WidgetAccessibilityProviderHost::DetachWindow(HWND window) noexcept
     impl_->state->connected = false;
     impl_->root.Reset();
     impl_->state.reset();
-    impl_->lastSnapshots.clear();
+    impl_->events.Reset();
 }
 
 bool WidgetAccessibilityProviderHost::TryHandleGetObject(
@@ -2090,14 +2098,10 @@ bool WidgetAccessibilityProviderHost::TryHandleGetObject(
 void WidgetAccessibilityProviderHost::RefreshEvents() noexcept
 {
     if (!impl_ || !impl_->state || !impl_->root) return;
-    std::vector<LuaWidgetAccessibilitySnapshot> current;
-    if (!impl_->state->Capture(current)) return;
-    std::vector<LuaWidgetAccessibilitySnapshot> previous =
-        std::move(impl_->lastSnapshots);
-    impl_->lastSnapshots = current;
-    const auto changes = DiffWidgetAccessibilitySnapshots(
-        previous, impl_->lastSnapshots);
-    if (changes.empty() || !UiaClientsAreListening()) return;
+    const auto update = impl_->events.Refresh(
+        [this](auto& snapshots) { return impl_->state->Capture(snapshots); },
+        [] { return UiaClientsAreListening() != FALSE; });
+    if (update.changes.empty()) return;
 
     Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> root;
     if (FAILED(impl_->root.As(&root)) || !root) return;
@@ -2114,7 +2118,7 @@ void WidgetAccessibilityProviderHost::RefreshEvents() noexcept
         return SUCCEEDED(fragment.As(&provider)) && provider;
     };
 
-    for (const auto& change : changes)
+    for (const auto& change : update.changes)
     {
         if (change.kind == WidgetAccessibilityChangeKind::Structure)
         {
@@ -2143,9 +2147,9 @@ void WidgetAccessibilityProviderHost::RefreshEvents() noexcept
         VariantInit(&oldValue);
         VariantInit(&newValue);
         if (SUCCEEDED(SetChangeVariant(&oldValue, change.kind,
-                impl_->state->window, previous, change)) &&
+                impl_->state->window, update.previous, change)) &&
             SUCCEEDED(SetChangeVariant(&newValue, change.kind,
-                impl_->state->window, impl_->lastSnapshots, change)))
+                impl_->state->window, impl_->events.Current(), change)))
         {
             (void)UiaRaiseAutomationPropertyChangedEvent(
                 provider.Get(), *propertyId, oldValue, newValue);

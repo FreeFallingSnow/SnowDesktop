@@ -1,10 +1,185 @@
 #include "build_tool_test_support.h"
+#include <algorithm>
+#include <future>
 #include <iostream>
+#include <syncstream>
 using namespace build_test;
 namespace {
 Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return result.out.empty()?Json{}:Json::parse(result.out);}
 void equal(const Json& a,const Json& b){require(equivalent_results(a,b),"Waiters did not receive equivalent persisted results\n"+a.dump()+"\n"+b.dump());}
-void run_tests(const fs::path& repo){
+Json registration_semantics(Json value){
+    for(auto& [name,item]:value.fields){
+        if(name.ends_with("Utc")&&item.kind==Json::Kind::String){
+            auto& text=item.text;
+            if(text.size()>21&&text[10]=='T'&&text[19]=='.'&&text.back()=='Z'&&
+                std::all_of(text.begin()+20,text.end()-1,[](char c){return c>='0'&&c<='9';})){
+                // Date coercion may omit zero fractional digits. Retain every
+                // nonzero digit and every other registration/execution field.
+                while(text.size()>21&&text[text.size()-2]=='0')text.erase(text.size()-2,1);
+                if(text.size()==21)text.erase(19,1);
+            }
+        }
+        item=registration_semantics(std::move(item));
+    }
+    for(auto& item:value.items)item=registration_semantics(std::move(item));
+    return value;
+}
+void run_progress_notices(const fs::path& repo,bool legacy,bool former=false){
+    Coordinator progress(repo,legacy?"progress-ps5":"progress-ps7");
+    if(former){
+        auto script=read(progress.scripts/L"build_manager.ps1");
+        replace(script,"if($Command -eq 'task-stage') { # Active progress must surface pending urgent notices.",
+            "if($false) { # Controlled former progress response omits pending notices.");
+        write(progress.scripts/L"build_manager.ps1",script,true);
+    }
+    if(legacy)progress.bridge=std::make_unique<Bridge>(repo,progress.root,true);
+    for(const auto& id:{"sender","receiver","other"})progress.call({"task-open",id});
+    progress.call({"event-post","sender","-Target","receiver","-EventKey","ordinary","-Text","Ordinary progress"});
+    progress.call({"event-post","sender","-Target","other","-EventKey","other-urgent","-Importance","urgent","-Text","Another task's event"});
+    const auto urgent=progress.call({"event-post","sender","-Target","receiver","-EventKey","target-urgent","-EventKind","requirements","-Importance","urgent","-RequirementsRevision","2","-Text","Read the revised requirement before continuing"});
+    const auto stage=[&](int revision){return progress.call({"task-stage","receiver","-TaskRevision",std::to_string(revision),"-TaskPhase","investigating","-Progress","Reviewing queue"});};
+    auto response=stage(0);
+    require(response.has("urgentEvents")&&response.has("pendingUrgentCount")&&response.at("pendingUrgentCount").integer()==1&&
+        response.at("urgentEvents").items.size()==1&&response.at("urgentEvents").items[0].at("sequence").integer()==urgent.at("sequence").integer(),
+        "Active progress hid an addressed urgent event until a separate wait");
+    require(response.at("task").at("progress").str()=="Reviewing queue"&&response.at("task").at("requirementsRevision").integer()==0&&
+        !response.at("editingAuthority").boolean&&progress.state().at("current").kind==Json::Kind::Null,
+        "An urgent progress notice changed business progress, requirements or editing authority");
+    require(progress.state().at("taskLedger").at("events").items[2].at("receipts").items.empty(),
+        "Returning an urgent progress notice acknowledged unread content");
+    const auto messages=progress.call({"event-read","receiver"});
+    require(messages.at("events").items.size()==2&&messages.at("events").items[1].at("text").str()==urgent.at("text").str(),
+        "Progress notice did not retain the existing full-message read path or recipient boundary");
+    const auto sequence=std::to_string(urgent.at("sequence").integer());
+    progress.call({"event-ack","receiver","-Sequence",sequence,"-AckLevel","adapter"});
+    require(stage(1).at("pendingUrgentCount").integer()==1,"Adapter receipt hid an unacknowledged urgent event");
+    progress.call({"event-ack","receiver","-Sequence",sequence,"-AckLevel","agent"});
+    response=stage(2);
+    require(response.at("pendingUrgentCount").integer()==0&&response.at("urgentEvents").kind==Json::Kind::Array&&response.at("urgentEvents").items.empty(),
+        "Acknowledged, ordinary or other-recipient events kept the progress alert active");
+    progress.call({"event-post","sender","-EventKey","unscoped-urgent","-Importance","urgent","-Text","No batch"},2);
+    const auto activeBatch=progress.begin("sender").at("batchId").str();progress.begin("receiver");
+    // A recently opened investigation is still unrelated; age never grants
+    // membership. The intended receiver remains eligible even with an old heartbeat.
+    auto state=progress.state();
+    for(auto& task:state["taskLedger"]["tasks"].items)if(task.at("id").str()=="receiver")task["lastHeartbeatUtc"]="2000-01-01T00:00:00Z";
+    atomic(progress.stateRoot/L"state.json",state.dump());
+    const auto broadcast=progress.call({"event-post","sender","-EventKey","urgent-broadcast","-Importance","urgent","-Text","Project coordination"});
+    require(broadcast.at("batchId").str()==activeBatch&&broadcast.at("recipients").dump()==Json::array({"sender","receiver"}).dump(),
+        "Urgent broadcast included an unrelated investigation or dropped an older active batch member");
+    progress.call({"task-open","coordinator"});
+    const auto explicitBatch=progress.call({"event-post","coordinator","-Batch",activeBatch,"-EventKey","explicit-batch","-Importance","urgent","-Text","Explicit batch"});
+    require(explicitBatch.at("recipients").dump()==broadcast.at("recipients").dump(),"Explicit urgent broadcast widened the selected batch");
+    progress.call({"event-ack","receiver","-Sequence",std::to_string(explicitBatch.at("sequence").integer()),"-AckLevel","agent"});
+    progress.call({"event-post","sender","-Batch",std::string(32,'f'),"-EventKey","wrong-batch","-Importance","urgent","-Text","Wrong batch"},2);
+    response=stage(4);
+    require(response.at("pendingUrgentCount").integer()==1&&response.at("urgentEvents").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),
+        "Active progress missed an addressed urgent broadcast");
+    progress.call({"event-ack","receiver","-Sequence",std::to_string(broadcast.at("sequence").integer()),"-AckLevel","agent"});
+    for(int index=0;index<9;++index)progress.call({"event-post","sender","-Target","receiver","-EventKey","bounded-"+std::to_string(index),"-Importance","urgent","-Text","Long payload "+std::string(2000,'x')});
+    response=stage(5);
+    require(response.at("pendingUrgentCount").integer()==9&&response.at("urgentEvents").items.size()==8&&response.at("urgentEventsTruncated").boolean&&response.dump().size()<6000,
+        "Active progress inlined an unbounded event backlog or hid its remainder");
+    for(const auto& notice:response.at("urgentEvents").items)require(!notice.has("text")&&!notice.has("receipts")&&!notice.has("recipients"),
+        "Progress notice included full event payload instead of its bounded index");
+    require(progress.state().at("taskLedger").at("events").items.back().at("receipts").items.empty(),
+        "Truncated progress notices acknowledged unseen events");
+    if(!legacy&&!former){
+        const auto negative=run({executable().wstring(),repo.wstring(),L"--progress-events-old"},progress.root,45,{},true);
+        require(negative.code==1&&negative.err.find("Active progress hid an addressed urgent event")!=std::string::npos,
+            "Former progress response did not fail its actual pending-message assertion: "+negative.out+negative.err);
+    }
+}
+void run_presence(const fs::path& repo,bool legacy,bool fixedCapabilities=false){
+        Coordinator presence(repo,legacy?"presence-ps5":"presence-ps7");
+        if(fixedCapabilities){auto script=read(presence.scripts/L"build_manager.ps1");replace(script,"Set-TaskCapabilities $task $Capabilities","$null=$Capabilities");write(presence.scripts/L"build_manager.ps1",script,true);}
+        if(legacy)presence.bridge=std::make_unique<Bridge>(repo,presence.root,true);
+        auto empty=presence.call({"task-list"});
+        require(empty.at("tasks").items.empty()&&!fs::exists(presence.stateRoot/L"state.json"),"Read-only task list wrote state");
+        auto opened=presence.call({"task-open","reader","-TaskName","Investigate deadlock","-Adapter","dsh"});
+        require(opened.at("task").at("phase").str()=="investigating"&&!opened.at("editingAuthority").boolean&&presence.state().at("current").kind==Json::Kind::Null,"Investigation joined editing barrier");
+        require(equivalent_results(Json("2026-10-25T07:28:25.4447810Z"),Json("2026-10-25T07:28:25.444781Z"))&&
+            !equivalent_results(Json("2026-10-25T07:28:25.4447810Z"),Json("2026-10-25T07:28:25.4447811Z")),
+            "Progress timestamp comparison must ignore only insignificant zero ticks, not real progress");
+        const auto declared=presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","beforeWriteGate,boundedWait,idleWake"});
+        const auto& capabilities=declared.at("task").at("capabilities");
+        require(capabilities.at("beforeWriteGate").boolean&&capabilities.at("boundedWait").boolean&&capabilities.at("idleWake").boolean&&
+            !capabilities.at("liveProgress").boolean&&!declared.at("editingAuthority").boolean&&declared.at("task").at("revision").integer()==0&&
+            equivalent_results(declared.at("task").at("lastProgressUtc"),opened.at("task").at("lastProgressUtc"))&&presence.state().at("current").kind==Json::Kind::Null,
+            "Adapter capability declaration was lost or granted editing/business progress");
+        require(presence.call({"task-open","reader"}).at("task").at("capabilities").at("idleWake").boolean,"An omitted declaration silently revoked adapter capabilities");
+        presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","madeUp"},2);
+        presence.call({"task-open","reader","-Adapter","cli","-Capabilities","idleWake"},2);
+        require(!presence.call({"task-open","reader","-Adapter","dsh","-Capabilities","none"}).at("task").at("capabilities").at("idleWake").boolean,"Explicit capability withdrawal was ignored");
+        if(!legacy&&!fixedCapabilities){const auto control=run({executable().wstring(),repo.wstring(),L"--capabilities-fixed-false"},presence.root,25,{},true);
+            require(control.code==1&&control.err.find("Adapter capability declaration was lost")!=std::string::npos,"Fixed-false control did not reach the capability behavior assertion: "+control.out+control.err);}
+        presence.call({"edit-verify","reader","-Files","src/a.txt"},2);
+        auto batch=presence.begin("editor").at("batchId").str();
+        auto state=presence.state();
+        write(presence.scripts/L"clock.ps1", ". $PSScriptRoot/build_protocol.ps1\n$now=[DateTime]::UtcNow\n$invalid=$false;try{ConvertTo-UtcTimestamp ([DateTime]::SpecifyKind($now,[DateTimeKind]::Unspecified))|Out-Null}catch{$invalid=$true}\n[pscustomobject]@{utc=(Get-TimestampAge $now);local=(Get-TimestampAge $now.ToLocalTime());offset=(Get-TimestampAge ([DateTimeOffset]$now));text=(Get-TimestampAge $now.ToString('o'));invalid=$invalid}|ConvertTo-Json\n");
+        const auto ages=presence.bridge->call(presence.scripts/L"clock.ps1",{});
+        for(const auto& field:{"utc","local","offset","text"})require(ages.at(field).number>=0&&ages.at(field).number<5,"UTC type conversion introduced timezone offset");
+        require(ages.at("invalid").boolean,"Ambiguous timestamp silently used local zone");
+        auto status=presence.call({"status"});
+        require(status.at("current").at("registrationAgesSeconds").items[0].at("ageSeconds").number<15,"JSON date coercion inflated registration age");
+        auto claim=presence.bound("claim","editor",batch);claim.insert(claim.end(),{"-Files","src/a.txt"});presence.call(claim);
+        auto verify=presence.bound("edit-verify","editor",batch);verify.insert(verify.end(),{"-Files","src/a.txt"});
+        require(presence.call(verify).at("allowed").boolean,"Valid path grant rejected");verify.back()="src/not-owned.txt";presence.call(verify,2);
+        presence.gate("hold-build");auto worker=presence.start(presence.bound("finish","editor",batch));
+        until([&]{return fs::exists(presence.root/L"build-started");});
+        presence.call({"task-open","reader-while-building"});
+        require(presence.state().at("current").at("participants").items.size()==1,"Task open altered frozen participants");
+        presence.gate("hold-build",false);complete(*worker);
+        require(presence.calls()==2&&presence.state().at("taskLedger").at("tasks").items.size()==3,"Investigation delayed build or was lost at retirement");
+        auto updated=presence.call({"task-stage","reader","-TaskRevision","0","-TaskPhase","blocked","-Progress","Located delay","-Blocker","Waiting for dependency"});
+        require(updated.at("task").at("revision").integer()==1,"Task progress revision missing");
+        const auto heartbeat=presence.call({"task-open","reader","-TaskName","Do not replace report","-Adapter","cli"});
+        auto retained=heartbeat.at("task"),reported=updated.at("task");
+        require(retained.at("lastHeartbeatUtc").str()!=reported.at("lastHeartbeatUtc").str(),"Repeated task-open did not refresh the heartbeat");
+        retained.fields.erase("lastHeartbeatUtc");reported.fields.erase("lastHeartbeatUtc");
+        require(registration_semantics(retained).dump()==registration_semantics(reported).dump()&&!heartbeat.at("editingAuthority").boolean,
+                "Heartbeat changed meaningful progress, phase, revision, identity or edit authority");
+        presence.call({"task-stage","reader","-TaskRevision","0"},2);
+        auto waiting=presence.begin("waiter").at("batchId").str();presence.begin("peer");
+        auto waiter=presence.start(presence.bound("finish","waiter",waiting));
+        until([&]{return presence.state().at("current").at("participants").items[0].at("state").str()=="finished";});
+        HANDLE timestampLease=INVALID_HANDLE_VALUE;
+        until([&]{timestampLease=CreateFileW((presence.stateRoot/L"state.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);return timestampLease!=INVALID_HANDLE_VALUE;},5);
+        try{
+            auto controlled=presence.state();controlled["current"]["participants"].items[0]["finishedUtc"]="2026-10-21T11:43:44.5345720Z";
+            atomic(presence.stateRoot/L"state.json",controlled.dump());
+        }catch(...){CloseHandle(timestampLease);throw;}
+        CloseHandle(timestampLease);
+        const auto beforeState=presence.state().at("current");const auto before=beforeState.dump();
+        const std::vector<std::string> post={"event-post","reader","-Target","waiter","-EventKey","requirement-1","-EventKind","requirements","-Importance","urgent","-Text","Review changed requirement","-RequirementsRevision","2"};
+        auto event=presence.call(post);require(event.at("delivery").str()=="persisted"&&event.at("receipts").items.empty()&&event.at("recipients").items.size()==1&&event.at("recipients").items[0].str()=="waiter","Persistence claimed delivery or singleton recipient lost array identity");
+        require(presence.call(post).at("sequence").integer()==event.at("sequence").integer(),"Retried event was duplicated");
+        require(complete(*waiter,6).at("registrationRetained").boolean,"Urgent wait did not retain registration");
+        const auto afterState=presence.state().at("current");const auto after=afterState.dump();
+        write(presence.stateRoot/L"urgent-before.json",before);write(presence.stateRoot/L"urgent-after.json",after);
+        require(registration_semantics(afterState).dump()==registration_semantics(beforeState).dump(),"Urgent wait return changed registration or execution\nBefore: "+before+"\nAfter: "+after);
+        auto changedTime=afterState;changedTime["participants"].items[0]["finishedUtc"]="2026-10-21T11:43:44.5345721Z";
+        require(registration_semantics(changedTime).dump()!=registration_semantics(beforeState).dump(),"Registration comparison lost a real UTC instant change");
+        presence.call({"event-ack","reader-while-building","-Sequence","1"},2);
+        auto received=presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","adapter"});
+        require(received.at("receipts").items.size()==1&&received.at("receipts").items[0].at("level").str()=="adapter","Adapter receipt became agent acknowledgement");
+        presence.call(presence.bound("wait","waiter",waiting),6);
+        presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","agent"});
+        auto timed=presence.call({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","1"});
+        require(timed.at("timedOut").boolean&&timed.at("events").items.empty(),"Bounded idle wait returned false messages");
+        auto messageWait=presence.start({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","5"});
+        auto broadcast=presence.call({"event-post","reader","-EventKey","broadcast-1","-Text","Project progress"});
+        require(complete(*messageWait).at("events").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),"Message wait failed to release metadata for broadcast writer");
+        presence.call({"task-open","late-reader"});
+        require(presence.call({"event-read","late-reader"}).at("events").items.empty(),"Broadcast silently changed recipient scope");
+        presence.call({"task-close","waiter","-TaskRevision","1","-TaskPhase","completed"},2);
+        auto shared=presence.finish("peer",waiting);require(shared.at("outcome").str()=="passed","Acknowledged event blocked resumed build");
+        presence.call({"task-close","reader","-TaskRevision","1","-TaskPhase","completed"});
+        presence.call({"task-open","reader"},2);
+        require(!presence.call({"task-list"}).at("tasks").items[0].at("capabilities").at("idleWake").boolean,"CLI falsely advertised host wake");
+        run_progress_notices(repo,legacy);
+}
+void run_contracts(const fs::path& repo){
     {
         Coordinator unplanned(repo,"explicit-selection");
         const auto registration=unplanned.call({"begin","missing-plan"});
@@ -30,7 +205,9 @@ void run_tests(const fs::path& repo){
     auto bid=c.begin("a").at("batchId").str();require(c.begin("b").at("batchId").str()==bid&&c.begin("a").at("batchId").str()==bid,"Overlapping/repeated begin split batch");
     auto scoped=c.plan("a",bid,0,"selected","Alpha","module","src/winui/presenter.cpp,src/core/desktop.cpp,scripts/build_protocol.ps1");require(!scoped.at("testPlan").at("requiredFull").boolean,"Module paths silently escalated coverage");auto empty=c.bound("plan","a",bid);empty.insert(empty.end(),{"-Scope","module","-Suites","selected"});c.call(empty,2);require(c.state().at("current").at("participants").items[0].at("testPlan").at("tests").dump()==Json::array({"Alpha"}).dump(),"Invalid plan replaced valid plan");
     for(const auto& risk:{"public","infrastructure","unknown"})require(!c.plan("a",bid,0,"selected","Alpha",risk).at("testPlan").at("requiredFull").boolean,"Scope silently escalated related tests to full coverage");require(c.plan("a",bid,0,"full","","unknown").at("testPlan").at("requiredFull").boolean,"Explicit justified full request was lost");c.finish("a",std::string(32,'0'),0,2);
-    c.gate("hold-build");c.gate("hold-test");auto first=c.start(c.bound("finish","a",bid));until([&]{return c.state().at("current").at("participants").items[0].at("state").str()=="finished";});require(first->running()&&c.calls()==0,"First finisher built while peer edits");auto timeout=c.bound("finish","a",bid);timeout.insert(timeout.end(),{"-WaitSeconds","1"});c.call(timeout,2);require(c.state().at("current").at("participants").items.size()==2,"Timeout cleared peer registration");auto duplicate=c.start(c.bound("finish","a",bid));until([&]{return duplicate->err().find("Waiting")!=std::string::npos;});auto registration=c.state().at("current").at("participants").items[0].at("registeredUtc").str();auto reopened=c.begin("a");require(reopened.at("editRevision").integer()==1&&registration==c.state().at("current").at("participants").items[0].at("registeredUtc").str(),"Reopen changed membership/registration identity");complete(*first,2);complete(*duplicate,2);require(c.calls()==0&&c.begin("a").at("editRevision").integer()==1,"Superseded finish finalized reopened editor");c.plan("a",bid,1,"full","","unknown");auto args=c.bound("finish","a",bid,1);args.push_back("-ReloadShell");first=c.start(args);until([&]{return c.state().at("current").at("participants").items[0].at("state").str()=="finished";});require(c.calls()==0&&!fs::exists(c.root/L"preflight-arguments.txt"),"Reload request caused early process action");duplicate=c.start(c.bound("finish","a",bid,1));auto last=c.start(c.bound("finish","b",bid));until([&]{return fs::exists(c.root/L"build-started");});require(c.calls()==1&&read(c.root/L"preflight-arguments.txt")=="--reload-shell"&&read(c.root/L"build-arguments.txt").empty(),"Outer owner reload/single-build boundary broken");auto pending=c.start({"begin","c"});c.call({"begin","d","-WaitSeconds","1"},2);require(pending->running()&&c.state().at("current").at("participants").items.size()==2,"New begin entered frozen batch");c.gate("hold-build",false);until([&]{return fs::exists(c.root/L"test-started");});require(pending->running()&&c.calls()==2,"New editor entered during testing");c.gate("hold-test",false);auto resultA=complete(*first);equal(resultA,complete(*last));equal(resultA,complete(*duplicate));equal(resultA,c.finish("a",bid,1));require(resultA.at("inputCheck").str()=="stable"&&resultA.at("inputStart").at("digest").str()==resultA.at("inputEnd").at("digest").str(),"Result did not bind stable input identity");auto next=complete(*pending).at("batchId").str();require(next!=bid,"Queued begin reused frozen batch");equal(resultA,c.call({"status","-Batch",bid}));require(c.state().at("current").at("participants").items.size()==1,"Historical read disturbed next registration");c.plan("c",next,0,"full","","module","src,scripts,CMakePresets.json,CMakeUserPresets.json");c.finish("c",next);require(c.calls()==4&&read(c.root/L"build-arguments.txt").empty(),"Next batch inherited reload/pipeline");
+    c.gate("hold-build");c.gate("hold-test");auto first=c.start(c.bound("finish","a",bid));until([&]{return c.state().at("current").at("participants").items[0].at("state").str()=="finished";});require(first->running()&&c.calls()==0,"First finisher built while peer edits");auto timeout=c.bound("finish","a",bid);timeout.insert(timeout.end(),{"-WaitSeconds","1"});c.call(timeout,2);require(c.state().at("current").at("participants").items.size()==2,"Timeout cleared peer registration");auto duplicate=c.start(c.bound("finish","a",bid));until([&]{return duplicate->err().find("Waiting")!=std::string::npos;});auto registration=c.state().at("current").at("participants").items[0].at("registeredUtc").str();auto reopened=c.begin("a");require(reopened.at("editRevision").integer()==1&&registration==c.state().at("current").at("participants").items[0].at("registeredUtc").str(),"Reopen changed membership/registration identity");complete(*first,2);complete(*duplicate,2);require(c.calls()==0&&c.begin("a").at("editRevision").integer()==1,"Superseded finish finalized reopened editor");c.plan("a",bid,1,"full","","unknown");auto args=c.bound("finish","a",bid,1);args.push_back("-ReloadShell");first=c.start(args);until([&]{return c.state().at("current").at("participants").items[0].at("state").str()=="finished";});require(c.calls()==0&&!fs::exists(c.root/L"preflight-arguments.txt"),"Reload request caused early process action");duplicate=c.start(c.bound("finish","a",bid,1));auto last=c.start(c.bound("finish","b",bid));until([&]{return fs::exists(c.root/L"build-started");});require(c.calls()==1&&read(c.root/L"preflight-arguments.txt")=="--reload-shell"&&read(c.root/L"build-arguments.txt").empty(),"Outer owner reload/single-build boundary broken");auto pending=c.start({"begin","c"});c.call({"begin","d","-WaitSeconds","1"},2);require(pending->running()&&c.state().at("current").at("participants").items.size()==2,"New begin entered frozen batch");c.gate("hold-build",false);until([&]{return fs::exists(c.root/L"test-started");});require(pending->running()&&c.calls()==2,"New editor entered during testing");c.gate("hold-test",false);auto resultA=complete(*first);equal(resultA,complete(*last));equal(resultA,complete(*duplicate));equal(resultA,c.finish("a",bid,1));require(resultA.at("inputCheck").str()=="stable"&&resultA.at("inputStart").at("digest").str()==resultA.at("inputEnd").at("digest").str(),"Result did not bind stable input identity");auto next=complete(*pending).at("batchId").str();
+    // The asynchronous begin bypasses Coordinator::call; retain this legacy fixture's protocol before finishing it.
+    c.call({"begin","c"});require(next!=bid,"Queued begin reused frozen batch");equal(resultA,c.call({"status","-Batch",bid}));require(c.state().at("current").at("participants").items.size()==1,"Historical read disturbed next registration");c.plan("c",next,0,"full","","module","src,scripts,CMakePresets.json,CMakeUserPresets.json");c.finish("c",next);require(c.calls()==4&&read(c.root/L"build-arguments.txt").empty(),"Next batch inherited reload/pipeline");
     auto race=c.begin("race-a").at("batchId").str();c.begin("race-b");first=c.start(c.bound("finish","race-a",race));last=c.start(c.bound("finish","race-b",race));equal(complete(*first),complete(*last));require(c.calls()==6,"Simultaneous last finishes repeated pipeline");
     for(const std::string phase:{"build","test"}){auto before=c.calls();write(c.root/("fail-"+phase),"7");auto task="failure-"+phase;auto failedId=c.begin(task).at("batchId").str();auto failure=c.finish(task,failedId,0,7);require(failure.at("outcome").str()=="failed"&&failure.at("error").str().find("code 7")!=std::string::npos&&read(wide(failure.at("logPath").str())).find("controlled "+phase+" failure")!=std::string::npos,"Failure receipt/log lost original code");equal(failure,c.finish(task,failedId,0,7));require(c.calls()-before==(phase=="build"?1:2),"Failure repeated/skipped wrong pipeline step");c.gate("fail-"+phase,false);task="after-"+phase;c.finish(task,c.begin(task).at("batchId").str());}
     auto stale=c.begin("stale").at("batchId").str();c.begin("live");auto state=c.state();state["current"]["participants"].items[0]["registeredUtc"]="2000-01-01T00:00:00Z";atomic(c.stateRoot/L"state.json",state.dump());auto before=c.calls();last=c.start(c.bound("finish","live",stale));until([&]{return c.state().at("current").at("participants").items[1].at("state").str()=="finished";});require(c.calls()==before,"Registration age bypassed barrier");c.call({"recover","stale","-Batch",stale,"-Reason","inspected"},2);c.call({"recover","live","-Batch",stale,"-ConfirmStopped","-Reason","inspected"},2);c.call({"recover","stale","-Batch",stale,"-ConfirmStopped","-Reason","inspected"});auto staleResult=complete(*last);require(staleResult.at("participants").items[0].at("state").str()=="withdrawn"&&staleResult.at("participants").items[1].at("state").str()=="finished","Targeted withdrawal lost live registration");auto cancelled=c.begin("abandoned").at("batchId").str();c.call({"recover","abandoned","-Batch",cancelled,"-ConfirmStopped","-Reason","inspected"});require(c.call({"status","-Batch",cancelled}).at("outcome").str()=="cancelled","All-withdrawn batch became success");
@@ -45,5 +222,31 @@ void run_tests(const fs::path& repo){
     c.finish("a",bid,1,2);auto newA=c.begin("a").at("batchId").str();c.finish("a",bid,1,2);require(c.state().at("current").at("id").str()==newA,"Old passed result finished new editor");auto fresh=c.finish("a",newA);require(fresh.at("inputCheck").str()=="stable"&&fresh.at("inputStart").at("digest").str()!=resultA.at("inputStart").at("digest").str(),"New result reused old input identity");equal(resultA,c.call({"status","-Batch",bid}));
     std::cout<<"PASS coordinator overlap, race, failure, crash, preflight and six input invalidations\n";
 }
+void run_tests(const fs::path& repo,bool sequential){
+    const auto measured=[&](const char* name,const auto& action){
+        const auto started=std::chrono::steady_clock::now();
+        const auto report=[&](const char* outcome){
+            const auto elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+            std::osyncstream(std::cout)<<"CASE "<<Json::object({{"name",name},{"mode",sequential?"sequential":"parallel"},{"outcome",outcome},{"elapsedSeconds",elapsed}}).dump()<<'\n';
+        };
+        try{action();report("passed");}catch(...){report("failed");throw;}
+    };
+    const auto ps7=[&]{measured("presence-ps7",[&]{run_presence(repo,false);});};
+    const auto ps5=[&]{measured("presence-ps5",[&]{run_presence(repo,true);});};
+    const auto contracts=[&]{measured("coordinator-contracts",[&]{run_contracts(repo);});};
+    if(sequential){ps7();ps5();contracts();return;}
+    // Each group owns its repository, metadata, processes and streams. Preserve
+    // every assertion and await all cleanup even when one group fails.
+    auto first=std::async(std::launch::async,ps7);
+    auto second=std::async(std::launch::async,ps5);
+    auto third=std::async(std::launch::async,contracts);
+    std::exception_ptr failure;
+    for(auto* group:{&first,&second,&third}){try{group->get();}catch(...){if(!failure)failure=std::current_exception();}}
+    if(failure)std::rethrow_exception(failure);
 }
-int main(int argc,char** argv){return test_main(argc,argv,run_tests);}
+}
+int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+    if(argc>2&&std::string(argv[2])=="--capabilities-fixed-false"){run_presence(repo,false,true);return;}
+    if(argc>2&&std::string(argv[2])=="--progress-events-old"){run_progress_notices(repo,false,true);return;}
+    run_tests(repo,argc>2&&std::string(argv[2])=="--sequential");
+});}

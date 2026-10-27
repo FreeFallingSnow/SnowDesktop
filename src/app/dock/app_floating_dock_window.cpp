@@ -2,6 +2,7 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "diagnostics/performance_trace.h"
+#include "platform/window_peek_policy.h"
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -22,6 +23,7 @@ bool DesktopApp::CreateFloatingDockWindow(
         nullptr, nullptr, instance_, &host);
     if (!host.hwnd)
         return false;
+    snowdesktop::ExcludeDesktopWindowFromPeek(host.hwnd);
 
     OleDragDropAdapter* oleAdapter = EnsureOleDragDropAdapter();
     host.dropTargetRegistered = oleAdapter &&
@@ -75,7 +77,7 @@ DesktopApp::FindPersistentDockHost(
 
 bool DesktopApp::IsPersistentDockHostWindow(HWND hwnd) const
 {
-    return FindPersistentDockHost(hwnd) != nullptr;
+    return hwnd != nullptr && FindPersistentDockHost(hwnd) != nullptr;
 }
 
 bool DesktopApp::IsPersistentDockBackdropWindow(HWND hwnd) const
@@ -190,8 +192,9 @@ bool DesktopApp::IsPointOnPromotedDock(
     for (const auto& host : persistentDockHosts_)
     {
         if (host &&
-            IsPersistentDockHostPromoted(*host) &&
-            PtInRect(&host->dockRect, point))
+            (IsPersistentDockHostPromoted(*host) || (host->active && host->passivelyRevealed)) &&
+            (PtInRect(&host->dockRect, point) || snowdesktop::floating_dock_rules::
+                IsPointOnExplicitDismiss(host->explicitDismissRect, point)))
         {
             return true;
         }
@@ -205,13 +208,13 @@ bool DesktopApp::IsPointInPromotedDockLayer(
     for (const auto& host : persistentDockHosts_)
     {
         if (host &&
-            IsPersistentDockHostPromoted(*host) &&
-            snowdesktop::floating_dock_rules::
+            (IsPersistentDockHostPromoted(*host) || (host->active && host->passivelyRevealed)) &&
+            (snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(host->explicitDismissRect, point) || snowdesktop::floating_dock_rules::
                 IsPointInVisibleLayer(
                     point,
                     host->dockRect,
                     host->popupRect,
-                    host->tooltipRect))
+                    host->tooltipRect)))
         {
             return true;
         }
@@ -391,8 +394,8 @@ bool DesktopApp::SyncPersistentDockHosts()
         if (!RenderFloatingDockCompositionFrame(host) ||
             !host.frameReady)
         {
-            WriteDiagnosticLogEntry(
-                L"Persistent DockHost initial frame unavailable; host disabled");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+                L"Persistent DockHost initial frame unavailable; host disabled", DiagnosticLogLevel::Warning);
             host.active = false;
             host.revealPending = false;
             host.backdrop.HidePopupWindowPair(host.hwnd);
@@ -488,6 +491,15 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
     if (host.updatingMergedPresentation) return;
+    struct PromotionInputScope
+    {
+        DesktopApp& app; HWND window;
+        ~PromotionInputScope()
+        {
+            if (auto* current = app.FindPersistentDockHost(window))
+                app.RefreshFloatingDockPromotionInput(*current);
+        }
+    } promotionInput{*this, host.hwnd};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
     if (host.mergedPresentationActive && host.presentationMerged != merged)
         ResetMergedDockPresentation(host);
@@ -516,10 +528,11 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         // full opacity. Animation never changes AppBar/work-area geometry.
         const bool shouldShow = ShouldShowPersistentDockHost(host);
         const bool immediateDrag = shouldShow && (dragSession_.IsActive() ||
+            (widgetAction_ == WidgetAction::Move && mouseDownWidgetIndex_ < widgets_.size()) ||
             dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active());
         const bool wasAnimating = host.mergedAnimation.IsAnimating();
         host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
-            ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()));
+            ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()), false, true);
         const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
         if (changed || (wasAnimating && !host.mergedAnimation.IsAnimating()))
         {
@@ -824,7 +837,8 @@ CalculateFloatingDockStableSourceRect(
             }
         }
     }
-    return sourceRect;
+    return snowdesktop::floating_dock_rules::UnionNonEmptyRects(sourceRect,
+        snowdesktop::floating_dock_rules::ExpandForBorderOverdraw(host.explicitDismissRect));
 }
 
 std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
@@ -927,6 +941,18 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             GetHoveredTitleBounds(
                 lastMousePoint_);
     const RECT nextPopupRect{};
+    RECT nextDismissRect{};
+    MONITORINFO dismissMonitor{sizeof(dismissMonitor)};
+    if (host.explicitDismissAvailable && GetMonitorInfoW(host.monitor, &dismissMonitor))
+    {
+        OffsetRect(&dismissMonitor.rcMonitor, -virtualLeft_, -virtualTop_);
+        const float scale = static_cast<float>(GetDpiForWindow(host.hwnd)) / 96.f;
+        nextDismissRect = snowdesktop::floating_dock_rules::ExplicitDismissBounds(
+            host.container->GetVisualPanelBounds(lastMousePoint_), dismissMonitor.rcMonitor,
+            static_cast<int>(std::ceil(24.f * scale)));
+    }
+    const bool dismissRegionChanged = !EqualRect(&nextDismissRect, &host.explicitDismissRect);
+    host.explicitDismissRect = nextDismissRect;
     // Collection and folder popups live in the shared floating popup host.
     // This window retains only the Dock and its hover-title layer.
     RECT requiredSourceRect =
@@ -980,6 +1006,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             host.presentationRevision + 1);
     }
     if (!dockGeometryChanged &&
+        !dismissRegionChanged &&
         !guideRegionChanged &&
         !animationRegionChanged &&
         !popupRegionChanged &&
@@ -1089,7 +1116,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 L"Floating Dock native backdrop unavailable: ";
             message += floatingDockBackdropCompositor_.
                 LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
         }
     }
     if (firstReveal)
@@ -1113,7 +1140,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             (GetWindowLongPtrW(
                 dockHostHwnd, GWL_EXSTYLE) &
                 WS_EX_TOPMOST) != 0);
-        WriteDiagnosticLogEntry(message);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message);
     }
     if (!renderedResizeFrame)
         InvalidateFloatingDockWindow(
@@ -1146,6 +1173,18 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
             host.sourceRect.bottom - host.sourceRect.top);
     }
     if (!region) return false;
+    if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
+    {
+        // D2D alpha supplies the visible circular edge. Reserve its complete
+        // bounds instead of rasterizing another binary ellipse over the AA rim.
+        // Hit testing still uses the original logical circle.
+        RECT button = snowdesktop::floating_dock_rules::ExpandForBorderOverdraw(host.explicitDismissRect);
+        OffsetRect(&button, -host.sourceRect.left, -host.sourceRect.top);
+        HRGN buttonRegion = CreateRectRgnIndirect(&button);
+        const bool combined = buttonRegion && CombineRgn(region, region, buttonRegion, RGN_OR) != ERROR;
+        if (buttonRegion) DeleteObject(buttonRegion);
+        if (!combined) { DeleteObject(region); return false; }
+    }
     RECT guide = host.guideOcclusionRect;
     if (!IsRectEmpty(&guide))
     {

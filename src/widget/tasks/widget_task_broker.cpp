@@ -1,10 +1,29 @@
 #include "widget_task_broker.h"
+#include "diagnostics/performance_trace.h"
 
 #include <algorithm>
+#include <atomic>
+#include <limits>
 #include <utility>
 
 namespace snowdesktop::widget_runtime
 {
+namespace
+{
+// Worker flows can outlive a broker. Never reuse an ID in another broker or
+// after recreation, even when an old worker has not acknowledged cancellation.
+std::atomic<std::uint64_t> lastTaskId{0};
+std::uint64_t NextTaskId() noexcept
+{
+    auto previous = lastTaskId.load(std::memory_order_relaxed);
+    // Public Lua handles must remain positive signed 64-bit integers.
+    while (previous < static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+        if (lastTaskId.compare_exchange_weak(previous, previous + 1,
+                std::memory_order_relaxed, std::memory_order_relaxed))
+            return previous + 1;
+    return 0;
+}
+}
 bool WidgetTaskBroker::RegisterTask(
     TaskDescriptor descriptor, std::string& error)
 {
@@ -64,8 +83,8 @@ TaskStartResult WidgetTaskBroker::Start(
     if (descriptorCount >= descriptor->second.maximumPerInstance)
         return { 0, "task concurrency limit exceeded" };
 
-    std::uint64_t id = ++nextId_;
-    if (id == 0) id = ++nextId_;
+    const std::uint64_t id = NextTaskId();
+    if (id == 0) return {0, "task ID space exhausted"};
     Task task{ id, options.ownerToken, std::move(instanceId),
         std::string(name),
         options.preview, false, std::move(options.arguments) };
@@ -74,6 +93,7 @@ TaskStartResult WidgetTaskBroker::Start(
         task.instanceId,
         task.name, task.preview, task.arguments });
     tasks_.emplace(id, std::move(task));
+    performance::TaskQueued(id, tasks_.at(id).instanceId);
     return { id, {} };
 }
 
@@ -127,6 +147,7 @@ bool WidgetTaskBroker::Complete(
     completions_.push_back({ id, found->second.ownerToken,
         found->second.instanceId,
         found->second.name, ok, std::move(error) });
+    performance::TaskCompleted(id, ok);
     tasks_.erase(found);
     return true;
 }

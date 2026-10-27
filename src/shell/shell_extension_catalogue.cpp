@@ -12,6 +12,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <mutex>
 #include <shlwapi.h>
 #include <shlobj.h>
@@ -551,75 +552,102 @@ struct Scanner
         ids[row.id] = result.rows.size();
         result.rows.push_back(std::move(row));
     }
+    void FinishRows()
+    {
+        for (auto &row : result.rows)
+        {
+            if (control) control->WaitUntilAllowed();
+            Unique(row.sources); Unique(row.types); Unique(row.verbs);
+            std::vector<std::wstring> associationValues;
+            for (const auto &type : row.types)
+                if (!type.empty() && type.front() == L'.')
+                {
+                    const auto &values = Associations(type);
+                    associationValues.insert(associationValues.end(), values.begin(), values.end());
+                }
+            row.revision = Hash(settings_ipc::Pack(row.revision, associationValues));
+            row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision, associationValues,
+                row.sources, row.types, row.verbs, row.contexts, row.systemEnabled,
+                row.display.label, row.commandIdentity, row.application));
+            row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
+        }
+        std::sort(result.rows.begin(), result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
+    }
+    void Verb(const std::wstring &path, unsigned contexts, const std::vector<std::wstring> &types)
+    {
+        const auto verb = path.substr(path.find_last_of(L'\\') + 1);
+        if (control) control->WaitUntilAllowed();
+        Key key(classes, path, KEY_QUERY_VALUE);
+        if (!key.value) return;
+        Key commandKey(classes, path + L"\\command", KEY_QUERY_VALUE);
+        KeyValues values(key.value);
+        const auto handler = values.String(L"ExplorerCommandHandler");
+        Registration row;
+        row.kind = RegistrationKind::Verb;
+        row.id = "reg:" + Utf8(Lower(path));
+        row.contexts = contexts; row.types = types; row.sources = {path};
+        row.verbs = {Utf8(Lower(verb))};
+        if (!handler.empty()) row.verbs.push_back(Utf8(Lower(handler)));
+        row.systemEnabled = !Has(key.value, L"", L"LegacyDisable") && !Has(key.value, L"", L"ProgrammaticAccessOnly") && !IsBlocked(handler);
+        auto label = values.String(L"MUIVerb");
+        if (label.empty()) label = values.String();
+        if (label.empty()) label = verb;
+        row.display.label = DecodeMenuLabel(Label(label)).text;
+        const auto command = Read(commandKey.value, L"");
+        const auto delegate = Read(commandKey.value, L"", L"DelegateExecute");
+        const auto subCommands = values.String(L"SubCommands");
+        row.application = !handler.empty() ? HandlerApplication(handler) :
+            !delegate.empty() ? HandlerApplication(delegate) : CommandApplication(command);
+        // Never infer equivalence from the caption, verb alone, or a bare
+        // SubCommands list. Keep arguments case-sensitive and compare the
+        // complete payload rather than a collision-prone display hash.
+        if (!command.empty() || !handler.empty() || !delegate.empty())
+        {
+            const auto identity = settings_ipc::Pack(Lower(verb), command, Lower(handler), Lower(delegate),
+                subCommands, values.String(L"ExtendedSubCommandsKey"));
+            row.commandIdentity.assign(reinterpret_cast<const char *>(identity.data()), identity.size());
+        }
+        auto icon = values.String(L"Icon");
+        if (icon.empty() && !handler.empty()) icon = Handler(handler).module;
+        if (icon.empty())
+        {
+            if (!command.empty()) { wchar_t exe[32768]{}; wcsncpy_s(exe, command.c_str(), _TRUNCATE); PathRemoveArgsW(exe); PathUnquoteSpacesW(exe); icon = exe; }
+        }
+        // Include values that affect applicability, not volatile registry write times.
+        row.revision = Hash(settings_ipc::Pack(command, handler, values.String(L"AppliesTo"), values.String(L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
+        const auto module = !handler.empty() ? Handler(handler).module :
+            !delegate.empty() ? Handler(delegate).module : CommandModule(command);
+        row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
+        Add(std::move(row), icon);
+    }
+    void HandlerRegistration(const std::wstring &path, unsigned contexts, const std::vector<std::wstring> &types)
+    {
+        const auto name = path.substr(path.find_last_of(L'\\') + 1);
+        if (control) control->WaitUntilAllowed();
+        Key key(classes, path, KEY_QUERY_VALUE);
+        if (!key.value) return;
+        auto clsid = Read(key.value, L"");
+        if (clsid.empty() && !name.empty() && name.front() == L'{') clsid = name;
+        GUID guid{};
+        if (FAILED(CLSIDFromString(clsid.c_str(), &guid))) return;
+        Registration row;
+        row.kind = RegistrationKind::Handler; row.id = "clsid:" + Utf8(Lower(clsid));
+        row.contexts = contexts; row.types = types; row.sources = {path}; row.verbs = {Utf8(Lower(clsid))};
+        row.systemEnabled = !IsBlocked(clsid);
+        const auto &info = Handler(clsid);
+        row.display.label = Label(info.label.empty() ? name : info.label);
+        row.application = info.application;
+        row.revision = Hash(settings_ipc::Pack(info.module));
+        row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(info.module)));
+        Add(std::move(row), info.icon.empty() ? info.module : info.icon);
+    }
     void Root(const std::wstring &root, unsigned contexts, const std::vector<std::wstring> &types = {})
     {
         if (control) control->WaitUntilAllowed();
         for (const auto &verb : Children(classes, root + L"\\shell", control))
-        {
-            if (control) control->WaitUntilAllowed();
-            const auto path = root + L"\\shell\\" + verb;
-            Key key(classes, path, KEY_QUERY_VALUE);
-            if (!key.value) continue;
-            Key commandKey(classes, path + L"\\command", KEY_QUERY_VALUE);
-            KeyValues values(key.value);
-            const auto handler = values.String(L"ExplorerCommandHandler");
-            Registration row;
-            row.kind = RegistrationKind::Verb;
-            row.id = "reg:" + Utf8(Lower(path));
-            row.contexts = contexts; row.types = types; row.sources = {path};
-            row.verbs = {Utf8(Lower(verb))};
-            if (!handler.empty()) row.verbs.push_back(Utf8(Lower(handler)));
-            row.systemEnabled = !Has(key.value, L"", L"LegacyDisable") && !Has(key.value, L"", L"ProgrammaticAccessOnly") && !IsBlocked(handler);
-            auto label = values.String(L"MUIVerb");
-            if (label.empty()) label = values.String();
-            if (label.empty()) label = verb;
-            row.display.label = DecodeMenuLabel(Label(label)).text;
-            const auto command = Read(commandKey.value, L"");
-            const auto delegate = Read(commandKey.value, L"", L"DelegateExecute");
-            const auto subCommands = values.String(L"SubCommands");
-            row.application = !handler.empty() ? HandlerApplication(handler) :
-                !delegate.empty() ? HandlerApplication(delegate) : CommandApplication(command);
-            // Never infer equivalence from the caption, verb alone, or a bare
-            // SubCommands list. Keep arguments case-sensitive and compare the
-            // complete payload rather than a collision-prone display hash.
-            if (!command.empty() || !handler.empty() || !delegate.empty())
-            {
-                const auto identity = settings_ipc::Pack(Lower(verb), command, Lower(handler), Lower(delegate),
-                    subCommands, values.String(L"ExtendedSubCommandsKey"));
-                row.commandIdentity.assign(reinterpret_cast<const char *>(identity.data()), identity.size());
-            }
-            auto icon = values.String(L"Icon");
-            if (icon.empty() && !handler.empty()) icon = Handler(handler).module;
-            if (icon.empty())
-            {
-                if (!command.empty()) { wchar_t exe[32768]{}; wcsncpy_s(exe, command.c_str(), _TRUNCATE); PathRemoveArgsW(exe); PathUnquoteSpacesW(exe); icon = exe; }
-            }
-            // Include values that affect applicability, not volatile registry write times.
-            row.revision = Hash(settings_ipc::Pack(command, handler, values.String(L"AppliesTo"), values.String(L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
-            const auto module = !handler.empty() ? Handler(handler).module :
-                !delegate.empty() ? Handler(delegate).module : CommandModule(command);
-            row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
-            Add(std::move(row), icon);
-        }
+            Verb(root + L"\\shell\\" + verb, contexts, types);
         for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers", control))
-        {
-            if (control) control->WaitUntilAllowed();
-            const auto path = root + L"\\shellex\\ContextMenuHandlers\\" + name;
-            auto clsid = Read(classes, path);
-            if (clsid.empty() && !name.empty() && name.front() == L'{') clsid = name;
-            GUID guid{};
-            if (FAILED(CLSIDFromString(clsid.c_str(), &guid))) continue;
-            Registration row;
-            row.kind = RegistrationKind::Handler; row.id = "clsid:" + Utf8(Lower(clsid));
-            row.contexts = contexts; row.types = types; row.sources = {path}; row.verbs = {Utf8(Lower(clsid))};
-            row.systemEnabled = !IsBlocked(clsid);
-            const auto &info = Handler(clsid);
-            row.display.label = Label(info.label.empty() ? name : info.label);
-            row.application = info.application;
-            row.revision = Hash(settings_ipc::Pack(info.module));
-            row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(info.module)));
-            Add(std::move(row), info.icon.empty() ? info.module : info.icon);
-        }
+            HandlerRegistration(root + L"\\shellex\\ContextMenuHandlers\\" + name, contexts, types);
     }
     void Packages()
     {
@@ -760,6 +788,68 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
     for (auto &result : results)
         for (auto &row : result) scanner.Add(std::move(row.first), row.second);
 }
+struct ExactSource
+{
+    std::wstring path, root;
+    RegistrationKind kind;
+    unsigned contexts;
+    std::vector<std::wstring> types;
+};
+unsigned RootContexts(const std::wstring &root)
+{
+    if (root == L"allfilesystemobjects") return ContextBit(Context::File) | ContextBit(Context::Folder);
+    if (root == L"directory" || root == L"folder" || root == L"drive") return ContextBit(Context::Folder);
+    if (root == L"directory\\background") return ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop);
+    if (root == L"desktopbackground") return ContextBit(Context::Desktop);
+    return ContextBit(Context::File);
+}
+bool CommonRoot(const std::wstring &root)
+{
+    return root == L"*" || root == L"allfilesystemobjects" || root == L"directory" ||
+        root == L"folder" || root == L"drive" || root == L"directory\\background" || root == L"desktopbackground";
+}
+std::vector<ExactSource> ExactSources(const std::vector<Registration> &seeds)
+{
+    std::vector<ExactSource> result;
+    for (const auto &seed : seeds)
+    {
+        if (seed.kind != RegistrationKind::Verb && seed.kind != RegistrationKind::Handler) continue;
+        auto paths = seed.sources;
+        if (paths.empty() && seed.kind == RegistrationKind::Verb && seed.id.starts_with("reg:"))
+        {
+            const auto text = std::string_view(seed.id).substr(4);
+            if (text.empty() || text.size() > 32767) continue;
+            const auto length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+            if (!length) continue;
+            std::wstring path(length, L'\0');
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), path.data(), length);
+            paths.push_back(std::move(path));
+        }
+        for (const auto &path : paths)
+        {
+            if (path.empty() || path.size() > 32767 || path.find(L'\0') != std::wstring::npos) continue;
+            const auto normal = Lower(path);
+            const std::wstring marker = seed.kind == RegistrationKind::Verb ? L"\\shell\\" : L"\\shellex\\contextmenuhandlers\\";
+            const auto at = normal.rfind(marker);
+            if (at == std::wstring::npos || at == 0 || at + marker.size() >= normal.size() ||
+                normal.find(L'\\', at + marker.size()) != std::wstring::npos) continue;
+            if (seed.kind == RegistrationKind::Verb && !seed.id.empty() && seed.id != "reg:" + Utf8(normal)) continue;
+            const auto root = normal.substr(0, at);
+            const unsigned contexts = RootContexts(root) & (seed.contexts ? seed.contexts : 15u);
+            if (!contexts) continue;
+            result.push_back({path, root, seed.kind, contexts, seed.types});
+        }
+    }
+    // Match the full reader's stable common-root priority for merged handlers.
+    // Other paths remain limited proof; discovering a newly registered alias
+    // of the same CLSID requires management inventory, never a hidden scan here.
+    const auto priority = [](const auto &root) {
+        const std::array<std::wstring_view, 7> roots{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"directory\\background", L"desktopbackground"};
+        return static_cast<size_t>(std::find(roots.begin(), roots.end(), std::wstring_view(root)) - roots.begin());
+    };
+    std::stable_sort(result.begin(), result.end(), [&](const auto &a, const auto &b) { return priority(a.root) < priority(b.root); });
+    return result;
+}
 }
 static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegroundDemand *foreground)
 {
@@ -787,24 +877,7 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
         fileRoots.push_back({L"SystemFileAssociations\\" + name, types[L"systemfileassociations\\" + Lower(name)]});
     ReadFileRoots(scanner, fileRoots, foreground);
     if (packages) scanner.Packages();
-    for (auto &row : scanner.result.rows)
-    {
-        if (foreground) foreground->WaitUntilAllowed();
-        Unique(row.sources); Unique(row.types); Unique(row.verbs);
-        std::vector<std::wstring> associations;
-        for (const auto &type : row.types)
-            if (!type.empty() && type.front() == L'.')
-            {
-                const auto &values = scanner.Associations(type);
-                associations.insert(associations.end(), values.begin(), values.end());
-            }
-        row.revision = Hash(settings_ipc::Pack(row.revision, associations));
-        row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision, associations,
-            row.sources, row.types, row.verbs, row.contexts, row.systemEnabled,
-            row.display.label, row.commandIdentity, row.application));
-        row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
-    }
-    std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
+    scanner.FinishRows();
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
     scanner.result.folderRevision = scanner.FolderRevision();
     scanner.result.backgroundRevisions = {scanner.BackgroundRevision(Context::FolderBackground), scanner.BackgroundRevision(Context::Desktop)};
@@ -820,26 +893,82 @@ Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
 {
     return ReadCatalogueImpl(classes, packages, &foreground);
 }
-std::uint64_t ReadFolderCatalogueRevision(HKEY classes, bool packages)
+Catalogue ReadCatalogueSources(const std::vector<Registration> &sources,
+                               CatalogueForegroundDemand *foreground, HKEY classes)
+{
+    snowdesktop::performance::Scope scope("shell.catalogue", "selected.sources");
+    MenuTiming timing("selected.catalogue");
+    if (foreground) foreground->WaitUntilAllowed();
+    Scanner scanner{classes}; scanner.control = foreground;
+    const auto exact = ExactSources(sources);
+    std::vector<std::wstring> extensions;
+    for (const auto &source : exact)
+    {
+        for (const auto &type : source.types)
+            if (!type.empty() && type.front() == L'.') extensions.push_back(Lower(type));
+        if (source.root.front() == L'.' && source.root.find(L'\\') == std::wstring::npos)
+            extensions.push_back(source.root);
+        constexpr std::wstring_view associationRoot = L"systemfileassociations\\";
+        if (source.root.starts_with(associationRoot) && source.root.size() > associationRoot.size() &&
+            source.root[associationRoot.size()] == L'.')
+            extensions.push_back(source.root.substr(associationRoot.size()));
+    }
+    Unique(extensions);
+    // These are exact seed extensions, not all classes. ReadTypeAssociations
+    // queries only their values/OpenWithProgids and live UserChoice keys.
+    const auto associated = ReadTypeAssociations(classes, extensions, scanner.associations, foreground);
+    for (const auto &source : exact)
+    {
+        auto types = source.types;
+        if (!CommonRoot(source.root))
+        {
+            types.erase(std::remove_if(types.begin(), types.end(), [](const auto &type) {
+                return !type.empty() && (type.front() == L'.' || type.starts_with(L"progid:"));
+            }), types.end());
+            if (const auto found = associated.find(source.root); found != associated.end())
+                types.insert(types.end(), found->second.begin(), found->second.end());
+            if (types.empty()) types.push_back(L"progid:" + source.root);
+        }
+        if (source.kind == RegistrationKind::Verb) scanner.Verb(source.path, source.contexts, types);
+        else scanner.HandlerRegistration(source.path, source.contexts, types);
+    }
+    scanner.FinishRows();
+    std::vector<std::uint64_t> commands;
+    for (const auto &row : scanner.result.rows) commands.push_back(row.menuRevision);
+    scanner.result.revision = Hash(settings_ipc::Pack(std::string("selected-registration-sources-v1"), scanner.result.rows, commands));
+    // Add() also collects scope rows for the full scanner, but a limited read
+    // must never advertise those as complete folder/background proofs.
+    timing.Record("complete", static_cast<unsigned>(scanner.result.rows.size()));
+    return std::move(scanner.result);
+}
+std::uint64_t ReadFolderCatalogueRevision(HKEY classes, bool packages, CatalogueForegroundDemand *foreground)
 {
     MenuTiming timing("folder.catalogue");
-    Scanner scanner{classes};
+    if (foreground) foreground->WaitUntilAllowed();
+    Scanner scanner{classes}; scanner.control = foreground;
     const auto folders = ContextBit(Context::Folder);
     scanner.Root(L"AllFilesystemObjects", ContextBit(Context::File) | folders);
     scanner.Root(L"Directory", folders); scanner.Root(L"Folder", folders); scanner.Root(L"Drive", folders);
     if (packages) scanner.Packages();
+    if (foreground) foreground->WaitUntilAllowed();
+    const auto revision = scanner.FolderRevision();
+    if (foreground) foreground->WaitUntilAllowed();
     timing.Record("complete", static_cast<unsigned>(scanner.folderRows.size()));
-    return scanner.FolderRevision();
+    return revision;
 }
-std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes, bool packages)
+std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes, bool packages,
+                                             CatalogueForegroundDemand *foreground)
 {
     if (scope != Context::FolderBackground && scope != Context::Desktop) return 0;
     MenuTiming timing(scope == Context::Desktop ? "desktop.catalogue" : "background.catalogue");
-    Scanner scanner{classes};
+    if (foreground) foreground->WaitUntilAllowed();
+    Scanner scanner{classes}; scanner.control = foreground;
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     if (scope == Context::Desktop) scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
     if (packages) scanner.Packages();
+    if (foreground) foreground->WaitUntilAllowed();
     const auto revision = scanner.BackgroundRevision(scope);
+    if (foreground) foreground->WaitUntilAllowed();
     timing.Record("complete", static_cast<unsigned>(scanner.backgroundRows[scope == Context::Desktop ? 1 : 0].size()));
     return revision;
 }

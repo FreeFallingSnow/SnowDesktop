@@ -9,6 +9,7 @@
 
 void DesktopApp::LayoutItems()
 {
+    ++layoutPassRevision_;
     snowdesktop::startup_diagnostics::Scope startup(L"LayoutItems");
     RefreshCollectedKeysCache();
     // Guide is a temporary empty-page placeholder. Do not mutate the model
@@ -301,6 +302,12 @@ void DesktopApp::RebuildContainersAndItems()
         ReleaseCapture();
     }
     InvalidateDragStaticScene();
+    // Deleting widgets/files or returning a pin need not refresh running
+    // windows or move the pointer. Arm retained exits at the model handoff.
+    if (std::any_of(containers_.begin(), containers_.end(), [](const auto& container) {
+            const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+            return dock && dock->IsEntryRemovalAnimating();
+        })) EnsureUiAnimationFrame();
 }
 
 /**

@@ -58,13 +58,24 @@ public:
         auto state = state_.load(std::memory_order_acquire);
         for (;;)
         {
+            auto next = state;
+            bool consume = true;
             if (down)
             {
-                if (!(state & kArmed) || !Contains(point)) return false;
-                if (Expired(now)) { Cancel(); return false; }
+                const bool expired = (state & kArmed) && Expired(now);
+                consume = (state & kArmed) && !expired && Contains(point);
+                if (expired) next &= ~kArmed;
+                // A fresh physical press replaces a missing release (for example,
+                // after switching devices). Never consume its release if its new
+                // press is delivered; other buttons still own their paired releases.
+                next = consume ? next | button : next & ~button;
             }
-            else if (!(state & button)) return false;
-            if (state_.compare_exchange_weak(state, down ? state | button : state & ~button)) return true;
+            else
+            {
+                if (!(state & button)) return false;
+                next &= ~button;
+            }
+            if (state_.compare_exchange_weak(state, next)) return consume;
         }
     }
 private:

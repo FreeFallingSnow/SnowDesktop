@@ -1,7 +1,9 @@
 #include "status_bar_input_method.h"
 #include "ui/menu/modern_menu.h"
 #include "status_bar_input_method_native.h"
+#include "status_bar_input_method_profiles.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include <cstring>
 #include "system/tray/tray_icon_pixels.h"
 #include <shellapi.h>
@@ -39,9 +41,10 @@ constexpr WPARAM kGetConversionMode = 0x0001, kGetOpenStatus = 0x0005;
 
 struct Apartment
 {
-    const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HRESULT result;
+    explicit Apartment(DWORD flags = COINIT_APARTMENTTHREADED)
+        : result(CoInitializeEx(nullptr, flags)) {}
     ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); }
-    Apartment() = default;
     Apartment(const Apartment&) = delete;
     Apartment& operator=(const Apartment&) = delete;
 };
@@ -95,7 +98,7 @@ void TraceTarget(const wchar_t* stage, const Snapshot& target, const Snapshot& o
         static_cast<void*>(target.layout), static_cast<void*>(observed.foreground),
         static_cast<void*>(observed.focus), observed.thread, static_cast<void*>(observed.layout),
         static_cast<unsigned>(observed.menuActive));
-    WriteDiagnosticLogEntry(message, FAILED(result) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(result) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
 }
 std::optional<ProfileIcon> ReadProfileIcon(const TF_INPUTPROCESSORPROFILE& profile)
 {
@@ -145,7 +148,7 @@ std::optional<ProfileIcon> ProfileImage(const TF_INPUTPROCESSORPROFILE& profile)
     }
     return image;
 }
-Snapshot Read()
+Snapshot Read(detail::ProfileReader& profiles)
 {
     Snapshot result = Target();
     if (!result.layout || result.menuActive) return {};
@@ -163,20 +166,15 @@ Snapshot Read()
         result.description = imeName;
     // TSF input programs may share a language/HKL. Prefer the active profile's
     // own name so the layout button is distinct from the IME conversion mode.
-    Microsoft::WRL::ComPtr<ITfInputProcessorProfiles> profiles;
-    Microsoft::WRL::ComPtr<ITfInputProcessorProfileMgr> manager;
     TF_INPUTPROCESSORPROFILE active{};
-    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&profiles))) && SUCCEEDED(profiles.As(&manager)) &&
-        manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active) == S_OK &&
+    if (profiles.Active(active) == S_OK &&
         active.langid == language)
     {
         result.profileKnown = true;
         if (active.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
         {
             BSTR description = nullptr;
-            if (SUCCEEDED(profiles->GetLanguageProfileDescription(active.clsid, active.langid,
-                    active.guidProfile, &description)) && description)
+            if (SUCCEEDED(profiles.Description(active, &description)) && description)
                 result.description.assign(description, SysStringLen(description));
             SysFreeString(description);
             result.layoutIcon = ProfileImage(active);
@@ -313,7 +311,7 @@ Selection CaptureSelection(const Snapshot& target)
     swprintf_s(message, L"StatusBar input method stage=profiles-ready choices=%zu activeKnown=%u target=%p focus=%p thread=%lu",
         result.choices.size(), static_cast<unsigned>(known), static_cast<void*>(target.foreground),
         static_cast<void*>(target.focus), target.thread);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message);
     return result;
 }
 HRESULT Select(const Selection& selection, const Choice& choice)
@@ -328,7 +326,7 @@ HRESULT Select(const Selection& selection, const Choice& choice)
         swprintf_s(message, L"StatusBar input method profile stage=%ls hr=0x%08lX type=%lu lang=0x%04X clsid=%ls guid=%ls hkl=%p substitute=%p",
             stage, static_cast<unsigned long>(hr), profile.dwProfileType, static_cast<unsigned>(profile.langid),
             clsid, guid, static_cast<void*>(profile.hkl), static_cast<void*>(profile.hklSubstitute));
-        WriteDiagnosticLogEntry(message, hr != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, hr != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
         return hr;
     };
     if (std::none_of(selection.choices.begin(), selection.choices.end(), [&](const auto& item) {
@@ -400,11 +398,14 @@ struct Service::Impl
     detail::DisplayCache display;
     std::shared_ptr<NativeState> native;
     std::wstring nativeModeName = native_menu::ModeButtonName();
-    struct ContextRequest { ULONGLONG deadline; Snapshot target; };
+    std::wstring nativeLayoutName = native_menu::LayoutButtonName();
+    struct ContextRequest { ULONGLONG deadline; Snapshot target; bool layoutPanel = false; };
     std::optional<ContextRequest> contextRequest;
     // Declared last so shutdown joins before its state/mutex are destroyed.
     std::jthread worker{[this](std::stop_token stop) {
-        const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        Apartment apartment{COINIT_MULTITHREADED};
+        // Destruction releases the interfaces before this thread uninitializes COM.
+        detail::ProfileReader profiles;
         while (!stop.stop_requested())
         {
             std::optional<ContextRequest> request;
@@ -414,25 +415,28 @@ struct Service::Impl
             }
             if (request && !stop.stop_requested())
             {
-                HRESULT hr = apartment;
+                HRESULT hr = apartment.result;
                 if (SUCCEEDED(hr))
                 {
-                    try { hr = native_menu::ShowContextMenu(nativeModeName, request->deadline, stop,
+                    try { hr = native_menu::ShowInputButton(request->layoutPanel ? nativeLayoutName : nativeModeName,
+                        request->layoutPanel, request->deadline, stop,
                         request->target.foreground, request->target.thread, request->target.layout); }
                     catch (...) { hr = E_UNEXPECTED; }
                 }
                 wchar_t message[128]{};
-                swprintf_s(message, L"StatusBar input method native context provider hr=0x%08lX",
-                    static_cast<unsigned long>(hr));
-                WriteDiagnosticLogEntry(message);
+                swprintf_s(message, L"StatusBar input method native %ls provider hr=0x%08lX",
+                    request->layoutPanel ? L"layout" : L"context", static_cast<unsigned long>(hr));
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, FAILED(hr) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
             }
             Snapshot next;
-            try { next = Read(); } catch (...) { /* Unavailable, never stale. */ }
+            {
+                performance::Scope trace("shared.status_bar", "input_method.sample");
+                try { next = Read(profiles); } catch (...) { /* Unavailable, never stale. */ }
+            }
             std::unique_lock lock(mutex);
             snapshot = std::move(next);
             wake.wait_for(lock, stop, std::chrono::milliseconds(200), [this] { return contextRequest.has_value(); });
         }
-        if (SUCCEEDED(apartment)) CoUninitialize();
     }};
 };
 Service::Service() : impl_(std::make_unique<Impl>()) {}
@@ -447,13 +451,14 @@ Snapshot Service::Current() const
 HRESULT Service::Show(RECT anchor, bool context, bool layoutPanel)
 {
     if (IsRectEmpty(&anchor)) return E_INVALIDARG;
-    if (context && !impl_->nativeModeName.empty() && native_menu::HasModernTaskbar())
+    if ((layoutPanel || (context && !impl_->nativeModeName.empty())) && native_menu::HasModernTaskbar())
     {
-        // New Windows shell IMEs require the native button's XAML anchor. The
-        // legacy coordinate call queues S_OK but does not open their menu.
+        // Modern Shell owns the language picker and the IME's XAML anchor.
+        // The legacy picker can fail with E_ACCESSDENIED; IME context calls
+        // can queue S_OK without displaying a menu. Invoke the matching button.
         // Keep Win10/classic-shell and mode-toggle behavior on the common ABI.
         std::lock_guard lock(impl_->mutex);
-        impl_->contextRequest = Impl::ContextRequest{GetTickCount64() + 1500, Target()};
+        impl_->contextRequest = Impl::ContextRequest{GetTickCount64() + 1500, Target(), layoutPanel};
         impl_->wake.notify_one();
         return S_OK; // Queued, not a claim that the popup has been displayed.
     }

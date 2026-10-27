@@ -506,6 +506,20 @@ std::string FirstValidationError(
     return "component package validation failed";
 }
 
+bool SaveProfileEvaluation(const std::filesystem::path& path, std::string_view json)
+{
+    if (json.size() > 65536) return false;
+    const auto partial = std::filesystem::path(path.wstring() + L".partial");
+    const auto file = CreateFileW(partial.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const bool saved = WriteFile(file, json.data(), static_cast<DWORD>(json.size()), &written, nullptr) &&
+        written == json.size() && FlushFileBuffers(file);
+    CloseHandle(file);
+    return saved && MoveFileExW(partial.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH);
+}
+
 void WriteResultFile(const std::filesystem::path& path,
     const PreviewRenderResult& result)
 {
@@ -544,8 +558,9 @@ std::string PreviewRenderResult::ToJson() const
         << ",\"dataState\":" << JsonString(dataState)
         << ",\"background\":"
         << JsonString(WideToUtf8(backgroundImage.wstring()))
-        << ",\"contentOnly\":" << (contentOnly ? "true" : "false")
-        << '}';
+        << ",\"contentOnly\":" << (contentOnly ? "true" : "false");
+    if (performance) output << ",\"performance\":" << performance->ToJson();
+    output << '}';
     return output.str();
 }
 
@@ -770,6 +785,16 @@ PreviewRenderResult RenderWidgetPreview(
         context->SetTarget(nullptr);
         return result;
     }
+    std::unique_ptr<WidgetAuthorProfile> profiler;
+    if (request.profile)
+    {
+        profiler = std::make_unique<WidgetAuthorProfile>(engine);
+        if (!profiler->Initialize(*request.profile, result.error))
+        {
+            result.stage = "performance.initialize";
+            engine.Shutdown(); context->SetTarget(nullptr); return result;
+        }
+    }
     LuaWidgetAuthorPreviewConfiguration previewConfiguration;
     previewConfiguration.bounds = {
         0, 0, result.componentWidth, result.componentHeight };
@@ -815,65 +840,69 @@ PreviewRenderResult RenderWidgetPreview(
     // Keep component theme APIs and declarative semantic tokens in sync with
     // the independently resolved custom material/foreground preview settings.
     engine.SetWidgetTheme(kPreviewWidgetId, resolvedStyle.theme);
-    context->BeginDraw();
-    if (request.hoverX >= 0 && request.hoverY >= 0)
-    {
-        // Register the real regions before routing pointer input through the host.
-        engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
-            request.columns, request.rows);
-        engine.UpdateInteractionHover(kPreviewWidgetId,
-            request.hoverX, request.hoverY);
-    }
-    context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    if (request.canvasSize == 0 && !request.contentOnly)
-    {
-        snowdesktop::widget_preview::DrawStage(context.Get(), componentBounds,
-            { resolvedStyle.lightStage,
-                resolvedStyle.material.glassEnabled,
-                resolvedStyle.material.glassBlurRadius,
-                std::max(0.0f,
-                    resolvedStyle.theme.cornerRadius * dpiScale) }, {},
-            background.pixels.empty() ? nullptr : &background);
-    }
-    const bool hasBackgroundLayer =
-        engine.HasBackgroundLayer(kPreviewWidgetId);
-    if (request.contentOnly)
-    {
-        if (hasBackgroundLayer)
+    const auto renderFrame = [&]() {
+        context->BeginDraw();
+        if (request.hoverX >= 0 && request.hoverY >= 0)
         {
+            // Register the real regions before routing pointer input through the host.
+            engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
+                request.columns, request.rows);
+            engine.UpdateInteractionHover(kPreviewWidgetId,
+                request.hoverX, request.hoverY);
+        }
+        context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        if (request.canvasSize == 0 && !request.contentOnly)
+        {
+            snowdesktop::widget_preview::DrawStage(context.Get(), componentBounds,
+                { resolvedStyle.lightStage,
+                    resolvedStyle.material.glassEnabled,
+                    resolvedStyle.material.glassBlurRadius,
+                    std::max(0.0f,
+                        resolvedStyle.theme.cornerRadius * dpiScale) }, {},
+                background.pixels.empty() ? nullptr : &background);
+        }
+        const bool hasBackgroundLayer =
+            engine.HasBackgroundLayer(kPreviewWidgetId);
+        if (request.contentOnly)
+        {
+            if (hasBackgroundLayer)
+            {
+                (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
+                    context.Get(), componentBounds, request.columns,
+                    request.rows, 0.0f,
+                    std::max(0.0f,
+                        resolvedStyle.theme.cornerRadius * dpiScale));
+            }
+        }
+        else if (hasBackgroundLayer)
+        {
+            DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+                dpiScale, true, false);
             (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
-                context.Get(), componentBounds, request.columns,
-                request.rows, 0.0f,
+                context.Get(), componentBounds, request.columns, request.rows,
+                resolvedStyle.material.glassEnabled
+                    ? resolvedStyle.material.glassBlurRadius : 0.0f,
                 std::max(0.0f,
                     resolvedStyle.theme.cornerRadius * dpiScale));
+            DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+                dpiScale, false, true);
         }
-    }
-    else if (hasBackgroundLayer)
-    {
-        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
-            dpiScale, true, false);
-        (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
-            context.Get(), componentBounds, request.columns, request.rows,
-            resolvedStyle.material.glassEnabled
-                ? resolvedStyle.material.glassBlurRadius : 0.0f,
-            std::max(0.0f,
-                resolvedStyle.theme.cornerRadius * dpiScale));
-        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
-            dpiScale, false, true);
-    }
-    else
-    {
-        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
-            dpiScale, true, true);
-    }
-    engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
-        request.columns, request.rows);
-    if (!request.contentOnly)
-    {
-        DrawHostEdgeHighlight(
-            context.Get(), resolvedStyle, componentBounds, dpiScale);
-    }
-    graphicsResult = context->EndDraw();
+        else
+        {
+            DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+                dpiScale, true, true);
+        }
+        engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
+            request.columns, request.rows);
+        if (!request.contentOnly)
+        {
+            DrawHostEdgeHighlight(
+                context.Get(), resolvedStyle, componentBounds, dpiScale);
+        }
+        graphicsResult = context->EndDraw();
+        return graphicsResult;
+    };
+    graphicsResult = renderFrame();
     if (FAILED(graphicsResult))
     {
         result.stage = "engine.render";
@@ -891,6 +920,19 @@ PreviewRenderResult RenderWidgetPreview(
         engine.Shutdown();
         context->SetTarget(nullptr);
         return result;
+    }
+    if (profiler)
+    {
+        engine.SetWidgetDesktopVisible(kPreviewWidgetId, true, true);
+        result.performance = profiler->Measure([&] {
+            return SUCCEEDED(renderFrame()) && !engine.GetWidgetRuntimeFailure(kPreviewWidgetId);
+        });
+        if (!result.performance->error.empty() || result.performance->quality == "invalid" || result.performance->report.empty())
+        {
+            result.stage = "performance.measure";
+            result.error = result.performance->error.empty() ? "profileDataInvalid" : result.performance->error;
+            engine.Shutdown(); context->SetTarget(nullptr); return result;
+        }
     }
     if (request.canvasSize > 0)
     {
@@ -992,6 +1034,11 @@ PreviewRenderResult RenderWidgetPreview(
     }
     result.ok = true;
     result.stage = "complete";
+    if (request.profile && !SaveProfileEvaluation(request.profile->directory / L"evaluation.json", result.ToJson()))
+    {
+        result.ok = false; result.stage = "performance.metadata";
+        result.error = "cannot publish evaluation metadata without overwriting existing evidence";
+    }
     return result;
 }
 
@@ -1053,6 +1100,37 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
             WriteResultFile(resultPath, result);
             releaseArguments();
             return 2;
+        }
+        if (pair.substr(0, equals).starts_with(L"@profile."))
+        {
+            if (!request.profile) request.profile.emplace();
+            const auto key = pair.substr(0, equals), value = pair.substr(equals + 1);
+            int number = 0;
+            if (key == L"@profile.directory") request.profile->directory = value;
+            else if (key == L"@profile.seconds" && ParsePositiveInteger(value, 1, 60, number)) request.profile->seconds = static_cast<unsigned>(number);
+            else if (key == L"@profile.warmup" && ParsePositiveInteger(value, 0, 30, number)) request.profile->warmupSeconds = static_cast<unsigned>(number);
+            else if (key == L"@profile.interval" && ParsePositiveInteger(value, 8, 1000, number)) request.profile->intervalMs = static_cast<unsigned>(number);
+            else if (key == L"@profile.input-sample-every" && ParsePositiveInteger(value, 1, 1000, number)) request.profile->inputSampleEvery = static_cast<unsigned>(number);
+            else if (key == L"@profile.modules")
+            {
+                std::size_t begin = 0;
+                do
+                {
+                    const auto end = value.find(L',', begin);
+                    request.profile->modules.push_back(WideToUtf8(value.substr(begin, end == value.npos ? value.npos : end - begin)));
+                    if (end == value.npos) break;
+                    begin = end + 1;
+                } while (begin <= value.size());
+            }
+            else if (key == L"@profile.workload" && (value == L"idle" || value == L"redraw")) request.profile->redraw = value == L"redraw";
+            else if (key == L"@profile.cpu" && value == L"1") request.profile->threadCpu = true;
+            else if (key == L"@profile.offline" && value == L"1") request.profile->offline = true;
+            else
+            {
+                result.stage = "performance.arguments"; result.error = "invalid performance evaluation option";
+                WriteResultFile(resultPath, result); releaseArguments(); return 2;
+            }
+            continue;
         }
         if (pair.substr(0, equals) == L"@preview.hoverX" ||
             pair.substr(0, equals) == L"@preview.hoverY")

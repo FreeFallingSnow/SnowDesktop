@@ -5,6 +5,27 @@
 
 namespace
 {
+HRESULT CreatePopupSpringAnimation(IDCompositionDesktopDevice* device,
+    const snowdesktop::popup_motion_curve::Timeline& timeline,
+    IDCompositionAnimation** animation)
+{
+    if (!device || !animation || timeline.segments.empty()) return E_INVALIDARG;
+    *animation = nullptr;
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> result;
+    HRESULT hr = device->CreateAnimation(&result);
+    for (const auto& segment : timeline.segments)
+    {
+        if (FAILED(hr)) break;
+        hr = result->AddCubic(segment.startSeconds,
+            static_cast<float>(segment.constant), static_cast<float>(segment.linear),
+            static_cast<float>(segment.quadratic), static_cast<float>(segment.cubic));
+    }
+    if (SUCCEEDED(hr)) hr = result->End(timeline.durationMilliseconds / 1000.0,
+        static_cast<float>(timeline.target));
+    if (SUCCEEDED(hr)) *animation = result.Detach();
+    return hr;
+}
+
 HRESULT CreateSmoothStepAnimation(
     IDCompositionDesktopDevice* device,
     float from, float to,
@@ -169,13 +190,15 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
         }
     }
 
-    HRESULT hr = dcompDevice_->CreateSurface(
-        width, height,
-        DXGI_FORMAT_B8G8R8A8_UNORM,
-        DXGI_ALPHA_MODE_PREMULTIPLIED,
-        &overlay.surface);
-    if (FAILED(hr) || !overlay.surface)
-        return false;
+    if (!overlay.surface || overlay.surfaceWidth != width || overlay.surfaceHeight != height)
+    {
+        overlay.surface.Reset();
+        const HRESULT hr = dcompDevice_->CreateSurface(width, height,
+            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &overlay.surface);
+        if (FAILED(hr) || !overlay.surface) return false;
+        overlay.surfaceWidth = width;
+        overlay.surfaceHeight = height;
+    }
 
     if (!UpdateCompositionAnimationOverlayContent(overlay, cache))
     {
@@ -241,7 +264,8 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
     POINT anchor,
     float fromOpacity, float toOpacity,
     UINT durationMilliseconds,
-    float normalizedScaleStartSlope)
+    float normalizedScaleStartSlope,
+    const snowdesktop::popup_motion_curve::Timeline* springTimeline)
 {
     if (!overlay.active || !overlay.visual ||
         !overlay.effect || !overlay.scaleTransform ||
@@ -253,10 +277,10 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
         static_cast<float>(anchor.y - overlay.bounds.top));
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
-    HRESULT hr = CreateSmoothStepAnimation(
-        dcompDevice_.Get(), fromScale, toScale,
-        durationMilliseconds, &scaleAnimation,
-        normalizedScaleStartSlope);
+    HRESULT hr = springTimeline
+        ? CreatePopupSpringAnimation(dcompDevice_.Get(), *springTimeline, &scaleAnimation)
+        : CreateSmoothStepAnimation(dcompDevice_.Get(), fromScale, toScale,
+            durationMilliseconds, &scaleAnimation, normalizedScaleStartSlope);
     if (SUCCEEDED(hr))
     {
         hr = CreateSmoothStepAnimation(
@@ -361,7 +385,7 @@ bool DesktopApp::WaitForCompositionPresentation(
         L"%s composition completion FAILED hr=0x%08X",
         diagnosticContext ? diagnosticContext : L"Dock handoff",
         static_cast<unsigned>(completionHr));
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message, DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -444,24 +468,29 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         ? 1.0f
         : quickNavigationAnimation_.HiddenScale();
     const float targetOpacity = opening ? 1.0f : 0.0f;
+    const bool responsive = quickNavigationAnimation_.UsesResponsiveMotion();
+    const auto revealTimeline = responsive ? quickNavigationAnimation_.RemainingTimeline()
+        : snowdesktop::popup_motion_curve::Timeline{};
+    const auto scaleTimeline = responsive ? quickNavigationAnimation_.RemainingScaleTimeline()
+        : snowdesktop::popup_motion_curve::Timeline{};
     const float normalizedStartSlope =
         snowdesktop::quick_navigation_animation_rules::
             SegmentNormalizedStartSlope(
                 visual.progress, opening);
     const float remaining = opening
         ? 1.0f - visual.progress : visual.progress;
-    const UINT duration = std::max<UINT>(
+    const UINT duration = responsive ? std::max<UINT>(1, static_cast<UINT>(std::ceil(revealTimeline.durationMilliseconds))) : std::max<UINT>(
         1, static_cast<UINT>(std::lround(
             remaining * static_cast<float>(quickNavigationAnimation_.DurationMilliseconds(opening)))));
 
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
-    HRESULT hr = CreateSmoothStepAnimation(
+    HRESULT hr = responsive ? CreatePopupSpringAnimation(quickNavDcompDevice_.Get(), scaleTimeline, &scaleAnimation) : CreateSmoothStepAnimation(
         quickNavDcompDevice_.Get(), visual.scale, targetScale,
         duration, &scaleAnimation, normalizedStartSlope);
     if (SUCCEEDED(hr))
     {
-        hr = CreateSmoothStepAnimation(
+        hr = responsive ? CreatePopupSpringAnimation(quickNavDcompDevice_.Get(), revealTimeline, &opacityAnimation) : CreateSmoothStepAnimation(
             quickNavDcompDevice_.Get(), visual.opacity, targetOpacity,
             duration, &opacityAnimation, normalizedStartSlope);
     }
@@ -492,7 +521,8 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
             static_cast<float>(quickNavigationAnimationAnchorPoint_.x -
                 quickNavigationHostRect_.left),
             static_cast<float>(quickNavigationAnimationAnchorPoint_.y -
-                quickNavigationHostRect_.top), duration, normalizedStartSlope))
+                quickNavigationHostRect_.top), duration, normalizedStartSlope,
+            responsive ? &scaleTimeline : nullptr, responsive ? &revealTimeline : nullptr))
     {
         ApplyQuickNavigationAnimationFrame();
         return false;
@@ -620,7 +650,11 @@ void DesktopApp::ResetCompositionAnimationOverlay(
         overlay.scaleTransform->SetCenterX(0.0f);
         overlay.scaleTransform->SetCenterY(0.0f);
     }
-    overlay.surface.Reset();
+    if (static_cast<std::uint64_t>(overlay.surfaceWidth) * overlay.surfaceHeight * 4 > 16 * 1024 * 1024)
+    {
+        overlay.surface.Reset();
+        overlay.surfaceWidth = overlay.surfaceHeight = 0;
+    }
     overlay.bounds = {};
     overlay.active = false;
 }
@@ -692,13 +726,14 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
 
     const auto visual = popupAnimation_.GetVisual();
     const bool opening = popupAnimation_.IsInteractive();
+    const auto springTimeline = popupAnimation_.UsesSpring() ? popupAnimation_.RemainingTimeline() : snowdesktop::popup_motion_curve::Timeline{};
     const float normalizedScaleStartSlope =
         snowdesktop::popup_animation_rules::
             ScaleSegmentNormalizedStartSlope(
                 visual.progress, opening);
     const float remaining = opening
         ? 1.0f - visual.progress : visual.progress;
-    const UINT duration = std::max<UINT>(
+    const UINT duration = popupAnimation_.UsesSpring() ? std::max<UINT>(1, static_cast<UINT>(springTimeline.durationMilliseconds)) : std::max<UINT>(
         1, static_cast<UINT>(std::lround(
             remaining * static_cast<float>(popupAnimation_.DurationMilliseconds(opening)))));
     POINT anchor{
@@ -717,7 +752,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
             visual.scale,
             opening ? 1.0f : popupAnimation_.HiddenScale(),
             anchor, visual.opacity, popupAnimation_.EndpointOpacity(opening), duration,
-            normalizedScaleStartSlope))
+            normalizedScaleStartSlope, popupAnimation_.UsesSpring() ? &springTimeline : nullptr))
     {
         UpdateCollectionPopupCompositionAnimation();
         return false;
@@ -728,7 +763,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
             visual.opacity, popupAnimation_.EndpointOpacity(opening),
             static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
             static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
-            duration, normalizedScaleStartSlope))
+            duration, normalizedScaleStartSlope, popupAnimation_.UsesSpring() ? &springTimeline : nullptr))
     {
         // If either animation cannot start, detach both native timelines.
         // The scheduler must own both layers during the fallback.
@@ -760,7 +795,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     opening ? 1 : 0, duration,
                     snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
                     popupAnimationContentPending_ ? 1 : 0);
-                WriteDiagnosticLogEntry(message);
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message);
                 // A hidden collection popup is retired by its own finalizer.
                 // Do not hide the backdrop helper here first: the finalizer
                 // closes it together with the shared popup host when no other
@@ -799,7 +834,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     swprintf_s(message,
         L"Popup animation start: driver=compositor opening=%d durationMs=%u folder=%d",
         opening ? 1 : 0, duration, dockFolderPopupOpen_ ? 1 : 0);
-    WriteDiagnosticLogEntry(message);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, message);
     return true;
 }
 
@@ -823,13 +858,14 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
     const auto visual = luaWidgetPanelAnimation_.GetVisual();
     const bool opening =
         luaWidgetPanelAnimation_.IsInteractive();
+    const auto springTimeline = luaWidgetPanelAnimation_.UsesSpring() ? luaWidgetPanelAnimation_.RemainingTimeline() : snowdesktop::popup_motion_curve::Timeline{};
     const float normalizedScaleStartSlope =
         snowdesktop::popup_animation_rules::
             ScaleSegmentNormalizedStartSlope(
                 visual.progress, opening);
     const float remaining = opening
         ? 1.0f - visual.progress : visual.progress;
-    const UINT duration = std::max<UINT>(
+    const UINT duration = luaWidgetPanelAnimation_.UsesSpring() ? std::max<UINT>(1, static_cast<UINT>(springTimeline.durationMilliseconds)) : std::max<UINT>(
         1, static_cast<UINT>(std::lround(
             remaining * static_cast<float>(luaWidgetPanelAnimation_.DurationMilliseconds(opening)))));
     const RECT panel = GetLuaWidgetPanelRect();
@@ -847,7 +883,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
             visual.scale,
             opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
             anchor, visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening), duration,
-            normalizedScaleStartSlope))
+            normalizedScaleStartSlope, luaWidgetPanelAnimation_.UsesSpring() ? &springTimeline : nullptr))
     {
         UpdateLuaWidgetPanelCompositionAnimation();
         return false;

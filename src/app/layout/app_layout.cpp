@@ -1,7 +1,10 @@
 #include "app/app.h"
+#include "app/widgets/widget_package_source_capture.h"
+#include "steam/steam_app_identity.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
+#include "interactive_layout_save.h"
 #include "icons/large_icon_backup.h"
 #include "icons/icon_appearance_codec.h"
 #include "platform/operation_recovery_dialog.h"
@@ -67,6 +70,7 @@ void DesktopApp::ReloadLayoutStateFromDisk()
 void DesktopApp::LoadLayoutSlots()
 {
     CancelDeferredLayoutSave();
+    FlushQueuedLayoutSave();
     initializeGridFromWindows_ = false;
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     snowdesktop::layout_storage::Document document;
@@ -83,7 +87,7 @@ void DesktopApp::LoadLayoutSlots()
     {
         const std::wstring message = L"Layout load rejected: " +
             Utf8ToWide(loadResult.error);
-        WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, message.c_str(), DiagnosticLogLevel::Error);
         snowdesktop::operation_feedback::Report({"app.operation.layoutLoadFailed", message});
         return;
     }
@@ -811,12 +815,13 @@ void DesktopApp::DeferScrollLayoutSave()
 {
     if (layoutReload_.Pending() || !desktopItemsReady_ || gridPages_.empty())
         return;
+    ++layoutSaveRevision_;
     layoutSavePending_ = true;
     const auto now = snowdesktop::LayoutScrollSave::Clock::now();
     const bool alreadyDue = layoutScrollSave_.Due(now);
     const unsigned delay = layoutScrollSave_.Request(now);
-    // Once the bounded deadline is due, leave its timer queued. Repeated
-    // wheel input must not continually reset it just before dispatch.
+    // Once due, leave its timer queued. Repeated scroll/commit requests must
+    // not continually reset it just before dispatch.
     if (alreadyDue) return;
     if (!controlHwnd_ || !SetTimer(controlHwnd_, kLayoutScrollSaveTimerId,
             delay, nullptr))
@@ -829,17 +834,60 @@ void DesktopApp::DeferScrollLayoutSave()
                 widgetAction_ != WidgetAction::None))
         {
             CancelDeferredLayoutSave();
-            WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"Scroll layout save timer unavailable; layout remains pending",
                 DiagnosticLogLevel::Warning);
         }
         else
-            SaveLayoutSlots();
+            SaveLayoutSlots(true, true);
     }
 }
 
-bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
+void DesktopApp::RequestLayoutSave()
 {
+    DeferScrollLayoutSave();
+}
+
+bool DesktopApp::FinishLayoutSave(const snowdesktop::LayoutSaveQueue::Result& result,
+    std::uint64_t revision, bool notifyFailure)
+{
+    if (revision != layoutSaveRevision_) return result.saved;
+    if (result.saved)
+    {
+        layoutSavePending_ = false;
+        layoutSaveFailureNotified_ = false;
+        return true;
+    }
+    layoutSavePending_ = true;
+    const auto detail = L"Layout save failed: " + Utf8ToWide(result.error);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, detail.c_str(), DiagnosticLogLevel::Error);
+    if (notifyFailure && !layoutSaveFailureNotified_)
+    {
+        layoutSaveFailureNotified_ = true;
+        snowdesktop::operation_feedback::Report({"app.operation.layoutUnsaved", detail});
+    }
+    return false;
+}
+
+void DesktopApp::FlushQueuedLayoutSave()
+{
+    if (const auto result = layoutSaveQueue_.Flush())
+        FinishLayoutSave(*result, queuedLayoutSaveRevision_, false);
+}
+
+bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
+{
+    // Only the explicitly scoped gesture setter may defer its next save.
+    // Session shutdown (notifyFailure=false) and all other transactions keep
+    // their synchronous result, even while a large-icon gesture exists.
+    if (!background && notifyFailure && !exitRequested_ && desktopItemsReady_ &&
+        !gridPages_.empty() && !layoutReload_.Pending() &&
+        snowdesktop::InteractiveLayoutSave::Consume(this))
+    {
+        RequestLayoutSave();
+        return true;
+    }
     CancelDeferredLayoutSave();
+    const auto revision = ++layoutSaveRevision_;
     // A backup may already be on disk while Shell still shows the old model.
     // Exit and unrelated settings commits must not overwrite that document.
     if (layoutReload_.Pending())
@@ -874,7 +922,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
 
     layoutSavePending_ = true;
     const auto failed = [this, notifyFailure](const std::wstring& detail) {
-        WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, detail.c_str(), DiagnosticLogLevel::Error);
         if (notifyFailure && !layoutSaveFailureNotified_)
         {
             layoutSaveFailureNotified_ = true;
@@ -907,11 +955,20 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         const auto ensureBackup = [&](int generation) {
             const auto identity = data;
             if (skippedBackups.contains(identity)) return true;
+            const auto key = std::make_tuple(state, data, generation);
+            if (largeIconUpgradeBackups_.contains(key)) return true;
+            // A first-time full backup must not copy the live layout while an
+            // earlier accepted snapshot is replacing that same file.
+            FlushQueuedLayoutSave();
             for (;;)
             {
                 const auto backup = snowdesktop::EnsureLargeIconUpgradeBackup(
                     state, data, SNOWDESKTOP_VERSION, generation);
-                if (backup.ok) return true;
+                if (backup.ok)
+                {
+                    largeIconUpgradeBackups_.insert(key);
+                    return true;
+                }
                 using snowdesktop::operation_feedback::RecoveryChoice;
                 const auto choice = snowdesktop::operation_feedback::ChooseRecovery(
                     hwnd_,
@@ -921,7 +978,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
                 if (choice == RecoveryChoice::Continue)
                 {
                     skippedBackups.insert(identity);
-                    WriteDiagnosticLogEntry(L"User chose to save without the additional layout upgrade backup",
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"User chose to save without the additional layout upgrade backup",
                         DiagnosticLogLevel::Warning);
                     return true;
                 }
@@ -1118,8 +1175,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
-    for (auto& widget : widgets_)
-        CaptureWidgetPackageSource(widget);
+    snowdesktop::widget_source_capture::CaptureForSave(widgets_,
+        WidgetEngine::ListWidgetPackages, WideToUtf8, Utf8ToWide,
+        snowdesktop::SnowDesktopSteamCommunityItemUrl);
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const DesktopWidget& w = widgets_[i];
@@ -1145,21 +1203,30 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     std::string saveError;
     const bool changedDesktop = snowdesktop::debug_profile::Enabled() &&
         snowdesktop::debug_profile::Current().configuration.pendingDesktopChange;
-    const bool saved = changedDesktop
-        ? snowdesktop::layout_storage::SaveClearedDocument(GetLayoutPath(), file.str(), &saveError)
-        : snowdesktop::layout_storage::SaveDocument(GetLayoutPath(), file.str(), &saveError);
-    if (!saved)
+    // Only copied paths and serialized data cross the worker boundary. Model
+    // access, rollback-sensitive callers and recovery prompts stay on the UI.
+    auto write = [path = std::filesystem::path(GetLayoutPath()), contents = file.str(), changedDesktop] {
+        snowdesktop::LayoutSaveQueue::Result result;
+        result.saved = changedDesktop
+            ? snowdesktop::layout_storage::SaveClearedDocument(path, contents, &result.error)
+            : snowdesktop::layout_storage::SaveDocument(path, contents, &result.error);
+        return result;
+    };
+    if (background && !changedDesktop)
     {
-        const std::wstring message = L"Layout save failed: " +
-            Utf8ToWide(saveError);
-        return failed(message);
+        queuedLayoutSaveRevision_ = revision;
+        if (layoutSaveQueue_.Submit(write, [this, revision, notifyFailure](auto result) {
+                FinishLayoutSave(result, revision, notifyFailure);
+            }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage))
+            return true; // Accepted snapshot; pending clears only on completion.
     }
+    if (!FinishLayoutSave(layoutSaveQueue_.SaveNow(std::move(write)), revision, notifyFailure))
+        return false;
     if (!snowdesktop::debug_profile::AcknowledgeDesktopChange(saveError))
     {
+        layoutSavePending_ = true;
         return failed(Utf8ToWide(saveError));
     }
-    layoutSavePending_ = false;
-    layoutSaveFailureNotified_ = false;
     return true;
 }
 

@@ -1,6 +1,6 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan")]
+    [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan", "verify")]
     [string]$Mode = "list",
     [string]$Filter = "",
     [ValidatePattern("^[a-f0-9]{32}$")][string]$PlanBatch
@@ -20,6 +20,9 @@ if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Pro
     & (Join-Path $PSScriptRoot 'build_entry.ps1') @entryOptions
     exit $LASTEXITCODE
 }
+. (Join-Path $PSScriptRoot 'build_entry.ps1')
+. (Join-Path $PSScriptRoot 'build_telemetry.ps1')
+. (Join-Path $PSScriptRoot 'build_preflight.ps1')
 
 function Invoke-Checked {
     param(
@@ -39,8 +42,11 @@ function Invoke-Checked {
         $Arguments += @("--output-junit", $reportPath)
     }
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
-    & $FilePath @Arguments
-    $commandExit = $LASTEXITCODE
+    $stageName=if($FilePath -eq 'ctest'){'test-execute'}elseif($FilePath -eq 'cmake' -and $Arguments -contains '--build'){'test-target-build'}elseif($FilePath -eq 'cmake'){'configure'}else{'arrange'}
+    $commandExit=2
+    $script:lastCommandExit=2
+    Invoke-BuildStageCommand $repositoryRoot $stageName $FilePath $Arguments ([ref]$commandExit)
+    $script:lastCommandExit=$commandExit
     $elapsed.Stop()
     Write-Host ("{0}: {1:N2}s, exit {2}" -f $FilePath, $elapsed.Elapsed.TotalSeconds, $commandExit)
     if ($reportPath) { Write-Host "CTest report: $reportPath" }
@@ -102,6 +108,11 @@ function Get-TestSelection {
             }
             $executable = [IO.Path]::GetFileName([string]$requiredExecutables[0])
         }
+        if($executable -eq 'SnowDesktopTestRuntimeObserver.exe'){
+            $observedExecutables=@($test.properties|Where-Object name -eq 'REQUIRED_FILES'|ForEach-Object value|Where-Object {[IO.Path]::GetFileName([string]$_) -match '^SnowDesktop.+Tests\.exe$'})
+            if($observedExecutables.Count -ne 1){throw "Cannot resolve observed native test target: $($test.name)"}
+            $executable=[IO.Path]::GetFileName([string]$observedExecutables[0])
+        }
         if ($executable -match "^SnowDesktop.+Tests\.exe$") {
             [IO.Path]::GetFileNameWithoutExtension($executable)
         }
@@ -113,14 +124,84 @@ function Get-TestSelection {
     }
 }
 
+function Get-TestExecutionContext {
+    return Get-VerificationEnvironment $repositoryRoot
+}
+
+function Get-TestBuildRoots([string]$Root,[string[]]$Targets) {
+    $original=@($Targets|Sort-Object -Unique)
+    $fallback=[pscustomobject]@{targets=$original;omitted=@();reason='original-targets'}
+    if($original.Count -lt 2 -or -not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process') -or
+       -not (Get-Command Read-BuildStageEvents -ErrorAction SilentlyContinue)){return $fallback}
+    try{
+        $context=Get-ConfiguredBuildContext $Root @('--build','--preset','tests')
+        if(-not $context -or $context.generator -notlike 'Visual Studio *'){return $fallback}
+        $directory=[IO.Path]::GetFullPath($context.directory).TrimEnd('\','/')
+        $pending=New-Object 'System.Collections.Generic.Queue[string]';$graph=@{};$selected=@{}
+        foreach($target in $original){
+            if($target -notmatch '^[A-Za-z0-9_]+$'){return $fallback}
+            $path=Join-Path $directory ($target+'.vcxproj');$selected[$target]=$path;$pending.Enqueue($path)
+        }
+        while($pending.Count){
+            $path=$pending.Dequeue();if($graph.ContainsKey($path)){continue}
+            if($graph.Count -ge 2048 -or -not $path.StartsWith($directory+'\',[StringComparison]::OrdinalIgnoreCase) -or
+               -not [IO.File]::Exists($path) -or (Get-Item -LiteralPath $path).Length -gt 8MB){return $fallback}
+            $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
+            $reader=[Xml.XmlReader]::Create($path,$settings)
+            try{$document=New-Object Xml.XmlDocument;$document.XmlResolver=$null;$document.Load($reader)}finally{$reader.Dispose()}
+            $edges=@()
+            foreach($reference in $document.SelectNodes('//*[local-name()="ProjectReference"][@Include]')){
+                $conditional=$false;$parent=$reference
+                while($parent -is [Xml.XmlElement]){if($parent.HasAttribute('Condition')){$conditional=$true;break};$parent=$parent.ParentNode}
+                if($conditional -or @($reference.SelectNodes('*[local-name()="BuildReference"]')|Where-Object InnerText -ne 'true').Count){continue}
+                $include=$reference.GetAttribute('Include')
+                $child=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($include)){$include}else{Join-Path ([IO.Path]::GetDirectoryName($path)) $include}))
+                $edges+=@($child);$pending.Enqueue($child)
+            }
+            $graph[$path]=$edges
+        }
+        $reach=@{}
+        foreach($target in $original){
+            $seen=@{};$pending.Enqueue($selected[$target])
+            while($pending.Count){$path=$pending.Dequeue();if($seen.ContainsKey($path)){continue};$seen[$path]=$true;foreach($child in $graph[$path]){$pending.Enqueue($child)}}
+            $reach[$target]=$seen
+        }
+        $roots=@();$omitted=@()
+        foreach($target in $original){
+            $parents=@($original|Where-Object {$_ -ne $target -and $reach[$_].ContainsKey($selected[$target])})
+            if(@($parents|Where-Object {$reach[$target].ContainsKey($selected[$_])}).Count){return $fallback}
+            if($parents.Count){$omitted+=@($target)}else{$roots+=@($target)}
+        }
+        if(-not $roots.Count){return $fallback}
+        return [pscustomobject]@{targets=$roots;omitted=$omitted;reason='generated-project-reference-roots'}
+    }catch{$fallback.reason='project-reference-graph-unavailable';return $fallback}
+}
+function Get-TestConfirmedBuildTargets([string]$Root,[string[]]$Targets) {
+    # A declared edge is only a scheduling hint. Confirm actual successful
+    # Release/x64 Build targets in this immutable Run before omitting a call.
+    try{
+        $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+        if($id -notmatch '^[a-f0-9]{32}$'){return @()}
+        $context=Get-ConfiguredBuildContext $Root @('--build','--preset','tests')
+        $events=@(Read-BuildStageEvents (Get-EntryRunRoot $Root) $id|Where-Object {
+            (Get-Field $_ 'kind') -eq 'project-build' -and (Get-Field $_ 'exitCode') -eq 0 -and
+            (Get-Field $_ 'configuration') -ceq 'Release' -and (Get-Field $_ 'platform') -ceq 'x64'})
+        $directories=@($context.directory);$candidate=Get-CandidateEntryContext $Root
+        if($candidate){$directories+=@($candidate.output)}
+        $built=@($events|ForEach-Object {Get-Field $_ 'projectFile'})
+        return @($Targets|Where-Object {$target=$_;@($directories|Where-Object {(Join-Path $_ ($target+'.vcxproj')) -in $built}).Count -gt 0})
+    }catch{return @()}
+}
+
 function Invoke-FilteredTests {
     param(
         [string[]]$CTestFilterArguments,
         [string]$BuildPreset = "",
-        [string]$TestPreset = "tests"
+        [string]$TestPreset = "tests",
+        [switch]$ExecutionOnly, $ExistingSelection=$null, $ResourceBudget=$null
     )
 
-    $selection = Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
+    $selection = if($ExecutionOnly){$ExistingSelection}else{Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset}
     if ($selection.Tests.Count -eq 0) {
         throw "The requested filter did not match any configured tests."
     }
@@ -142,21 +223,36 @@ function Invoke-FilteredTests {
         Assert-HostRuntimeAvailable
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($BuildPreset)) {
+    if ($ExecutionOnly) {
+        Write-Host '=== Existing artifacts verified; configure, build and arrangement are omitted ==='
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($BuildPreset)) {
         Write-Host "=== Building the aggregate target for $($selection.Tests.Count) selected test(s) ==="
         Invoke-Checked -FilePath "cmake" -Arguments @(
             "--build", "--preset", $BuildPreset)
     }
     elseif ($selection.Targets.Count -gt 0) {
-        Write-Host "=== Building $($selection.Targets.Count) target(s) for $($selection.Tests.Count) selected test(s) ==="
+        $buildRoots=Get-TestBuildRoots $repositoryRoot $selection.Targets
+        Write-Host "=== Building $($buildRoots.targets.Count) root target(s) for $($selection.Targets.Count) target(s) / $($selection.Tests.Count) selected test(s) ==="
         $buildArguments = @(
             "--build", "--preset", "tests", "--target"
-        ) + $selection.Targets
+        ) + $buildRoots.targets
         Invoke-Checked -FilePath "cmake" -Arguments $buildArguments
+        if($buildRoots.omitted.Count){
+            $confirmed=@(Get-TestConfirmedBuildTargets $repositoryRoot $buildRoots.omitted)
+            $remaining=@($buildRoots.omitted|Where-Object {$_ -notin $confirmed})
+            if($remaining.Count){
+                # A project can disable reference builds. After explicit
+                # dependency calls, its already-built parent may need relinking.
+                # Restore the entire original order instead of only children.
+                Write-Host "=== Restoring $($selection.Targets.Count) original target calls: $($remaining.Count) dependencies lack confirmed Build completion ==="
+                Invoke-Checked -FilePath 'cmake' -Arguments (@('--build','--preset','tests','--target')+$selection.Targets)
+            }
+        }
     }
 
     # The full aggregate already arranges its output in CMake.
-    if ($needsHostRuntime -and $BuildPreset -notin "tests", "all-tests") {
+    if (-not $ExecutionOnly -and $needsHostRuntime -and $BuildPreset -notin "tests", "all-tests") {
         Invoke-Checked -FilePath (Get-BuildPowerShell) -Arguments @(
             "-NoProfile",
             "-File", (Join-Path $PSScriptRoot "arrange_build_output.ps1"),
@@ -167,7 +263,13 @@ function Invoke-FilteredTests {
 
     Write-Host ""
     if($Mode -eq 'plan'){
+        # A first-build CTest inventory can omit command until its executable
+        # exists. Re-query declarations after building; never guess its argv.
+        $executed=Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
+        if(@(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Configured test selection changed before execution.'}
+        $selection=$executed
         $artifacts=@()
+        $definitions=@(Get-VerificationDefinitions $selection.Tests)
         foreach($test in $selection.Tests){
             $cmd=@(Get-Field $test 'command' @());if($cmd.Count -eq 0){continue}
             $path=[IO.Path]::GetFullPath([string]$cmd[0])
@@ -176,11 +278,78 @@ function Invoke-FilteredTests {
             }
         }
         Set-Field $coverage 'testExecutablesBeforeRun' $artifacts
+        Set-Field $coverage 'testDefinitionsBeforeRun' $definitions
+        Set-Field $coverage 'testRuntimeFilesBeforeRun' @(Get-VerificationRuntimeFiles $repositoryRoot $selection.Tests)
+        Set-Field $coverage 'executionContext' (Get-TestExecutionContext)
+    }
+    if($Mode -in 'plan','verify'){
+        # Verification already bound invocation/binaries at admission. Observe
+        # this execution's inputs instead of borrowing the baseline's reads.
+        $dependencyScript=Join-Path $PSScriptRoot 'build_test_dependencies.ps1'
+        if([IO.File]::Exists($dependencyScript)){
+            . $dependencyScript
+            Set-Field $coverage 'dependencyManifest' (Save-TestDependencyManifest $repositoryRoot $selection.Tests)
+        }else{Set-Field $coverage 'dependencyManifest' ([pscustomobject]@{status='unavailable';reason='Dependency observer is absent; result reuse remains disabled.'})}
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
-    Invoke-Checked -FilePath "ctest" -Arguments (
-        @("--preset", $TestPreset) + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+    $testArguments=if($ExecutionOnly){@('--preset','all-tests','--test-dir',(Join-Path $repositoryRoot '.build'),'-C','Release','--no-tests=error','--output-on-failure')}else{@('--preset',$TestPreset)}
+    $budget=$ResourceBudget
+    if($budget){
+        foreach($test in $selection.Tests){
+            $declared=@($test.properties|Where-Object name -eq 'PROCESSORS')
+            $slots=if($declared.Count){[int]$declared[0].value}else{1}
+            if($slots -lt 1 -or $slots -gt $budget.cpuSlots){throw ('Weighted CPU budget is below or incompatible with the declared CTest PROCESSORS for '+$test.name+'; no test execution started.')}
+            $shared=@($test.properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value})
+            if($shared.Count -and $budget.compatibilityMode -ne 'exclusive'){throw 'Shared test resources require exclusive project admission; no test execution started.'}
+        }
+        $testArguments+=@('--parallel',[string]$budget.cpuSlots)
+    }
+    $candidate=Get-CandidateEntryContext $repositoryRoot
+    if($candidate){
+        . (Join-Path $PSScriptRoot 'build_candidate.ps1')
+        . (Join-Path $PSScriptRoot 'build_candidate_execution.ps1')
+        # Query commands after the first build; CTest may omit them beforehand.
+        $executed=Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $(if($ExecutionOnly){'all-tests'}else{$TestPreset})
+        if($executed.Tests.Count -ne $selection.Tests.Count -or @(Compare-Object @($selection.Tests.name|Sort-Object) @($executed.Tests.name|Sort-Object)).Count){throw 'Candidate test selection changed before execution.'}
+        $selection=$executed
+    }
+    $executionFilter=$CTestFilterArguments
+    if($Mode -eq 'plan' -and $plan.mode -ne 'full' -and $candidate -and (Get-Command Get-CompiledTestSelection -ErrorAction SilentlyContinue)){
+        $automatic=Get-CompiledTestSelection $repositoryRoot $selection.Tests $coverage $budget
+        Set-Field $coverage 'references' @($automatic.references)
+        Set-Field $coverage 'compiledIntent' $automatic.intent
+        Set-Field $coverage 'executedSelection' @($automatic.tests|ForEach-Object name)
+        $selection=[pscustomobject]@{Tests=@($automatic.tests);Targets=@()}
+        $executionFilter=@('-R',('^('+(($selection.Tests|ForEach-Object {[regex]::Escape($_.name)}) -join '|')+')$'))
+        $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    }
+    $moduleDirectory=Join-Path $repositoryRoot ('.build/Testing/runtime-modules-'+[Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($moduleDirectory)
+    $previousModuleRoot=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT','Process')
+    [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$moduleDirectory,'Process')
+    $script:lastReportPath=$null;$script:lastCommandExit=2;$testCode=2
+    try {
+        if($selection.Tests.Count){
+            Invoke-Checked -FilePath "ctest" -Arguments ($testArguments + $executionFilter) -ExpectedTests @($selection.Tests.name)
+        }elseif($Mode -ne 'plan' -or -not $candidate -or
+            @(Get-Field $coverage 'references' @()).Count -ne @($coverage.selected).Count -or -not @($coverage.selected).Count){
+            throw 'Zero executed tests require complete independently validated references.'
+        }else{Write-Host '=== All selected tests fulfilled by original evidence; no CTest execution or JUnit created ==='}
+        if($Mode -in 'plan','verify' -and @(Get-Field $coverage 'references' @()).Count){Assert-CompiledTestReferences $repositoryRoot $coverage}
+        $testCode=0
+    }finally{
+        [Environment]::SetEnvironmentVariable('SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT',$previousModuleRoot,'Process')
+        if($Mode -in 'plan','verify'){
+            $runtimeCheck=if(Get-Command Compare-TestRuntimeInputs -ErrorAction SilentlyContinue){Compare-TestRuntimeInputs $repositoryRoot $selection.Tests (Get-Field $coverage 'dependencyManifest')}else{[pscustomobject]@{status='unavailable';tests=@();reason='Runtime input observer is unavailable.';reuseAllowed=$false}}
+            Set-Field $coverage 'runtimeInputCheck' $runtimeCheck
+            $moduleScript=Join-Path $PSScriptRoot 'build_test_runtime_modules.ps1'
+            $moduleCheck=if([IO.File]::Exists($moduleScript)){. $moduleScript;Get-TestRuntimeModuleObservations $repositoryRoot $selection.Tests $moduleDirectory}else{[pscustomobject]@{status='unavailable';tests=@();reason='Runtime module observer is unavailable.'}}
+            Set-Field $coverage 'runtimeModules' $moduleCheck
+            $coverage|ConvertTo-Json -Depth 15|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+        }
+        if($candidate -and $selection.Tests.Count){Write-CandidateTestCoverage $repositoryRoot $selection $script:lastReportPath $(if($testCode -eq 0){0}elseif($script:lastCommandExit -ne 0){$script:lastCommandExit}else{2})}
+    }
 }
 
 function Get-TestRunOptions {
@@ -204,24 +373,24 @@ function Get-TestRunOptions {
 }
 
 function Get-HostRuntimeLocks {
-    $releaseRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot ".build\Release"))
-    $runtimePrefix = (Join-Path $releaseRoot "SnowDesktop.Runtime") + [IO.Path]::DirectorySeparatorChar
+    $releaseRoots = @(Get-BuildOutputDirectories $repositoryRoot 'Release')
+    $runtimePrefixes = @($releaseRoots|ForEach-Object {(Join-Path $_ 'SnowDesktop.Runtime')+[IO.Path]::DirectorySeparatorChar})
+    $hooks = @($releaseRoots|ForEach-Object {Join-Path $_ 'SnowDesktopTaskbarHook.dll'})
     foreach ($process in @(Get-Process -Name SnowDesktop, snowwidget,
             SnowDesktopWorkshopManager, SnowDesktopSteamBridge, SnowDesktopLauncher,
             SnowDesktopWallpaperInjector32 -ErrorAction SilentlyContinue)) {
-        $path = $process.Path
+        # Use the same creation-time-checked image query as product preflight.
+        # A missing managed Path must not turn an unrelated helper into an owner.
+        $path = Get-PreflightProcessPath $process
         if ([string]::IsNullOrEmpty($path) -or
-            $path.StartsWith($releaseRoot + [IO.Path]::DirectorySeparatorChar,
-                [StringComparison]::OrdinalIgnoreCase)) {
+            @($releaseRoots|Where-Object {$path.StartsWith($_+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)}).Count) {
             "$($process.ProcessName) (PID $($process.Id))"
         }
     }
     foreach ($process in @(Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
         try {
             foreach ($module in $process.Modules) {
-                if ($module.FileName.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase) -or
-                    $module.FileName.Equals((Join-Path $releaseRoot "SnowDesktopTaskbarHook.dll"),
-                        [StringComparison]::OrdinalIgnoreCase)) {
+                if (@($runtimePrefixes|Where-Object {$module.FileName.StartsWith($_,[StringComparison]::OrdinalIgnoreCase)}).Count -or $hooks -contains $module.FileName) {
                     "Explorer (PID $($process.Id)): $($module.FileName)"
                 }
             }
@@ -242,11 +411,76 @@ function Assert-HostRuntimeAvailable {
 
 . (Join-Path $PSScriptRoot 'build_entry.ps1')
 $entryLease=$null
+$observerIdentity=[ordered]@{}
 try {
     try {$entryLease=Enter-BuildEntry $repositoryRoot}
     catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
+. (Join-Path $PSScriptRoot 'build_inputs.ps1')
+. (Join-Path $PSScriptRoot 'build_verification.ps1')
+foreach($name in @(Get-VerificationObserverVariables)){
+    $observerIdentity[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+    # PowerShell converts $null to an empty string for this .NET overload.
+    # Modern .NET preserves empty environment entries; pass an actual null.
+    [Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')
+}
 $script:lastReportPath=$null
+if($Mode -eq 'verify'){
+    $runId=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+    if($runId -notmatch '^[a-f0-9]{32}$'){throw 'Verification must execute inside its admitted durable Run.'}
+    $originRoot=Get-EntryRunRoot $repositoryRoot
+    $runRoot=Join-Path $originRoot '.build/collaboration/runs'
+    $request=Read-EntryJson (Join-Path $runRoot ($runId+'.request.json'))
+    $coveragePath=Join-Path $runRoot ($runId+'.verification.json')
+    $coverage=[pscustomobject]@{schemaVersion=1;runId=$runId;baseline=$PlanBatch;mode='verify';status='not-run';selected=@();completed=@();tasks=@();report=$null;error='';noBuild=$true}
+    $code=5;$admitted=$false
+    try {
+        if(-not $request -or $request.id -ne $runId -or $request.repositoryRoot -ne $originRoot -or $request.mode -ne 'verify' -or $request.planBatch -ne $PlanBatch -or $request.filter -ne $Filter){throw 'Verification Run request identity mismatch.'}
+        $verificationBudget=Get-EntryResourceBudget $repositoryRoot
+        $snapshot=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget
+        Set-Field $coverage 'observedExecutionContext' $snapshot.executionContext
+        Set-Field $coverage 'observedReviewContext' (Get-Field $snapshot.binding 'reviewedReuse')
+        if($snapshot.key -ne $request.verification.key){
+            $before=Get-Field $request.verification.executionContext 'environmentFields'
+            $after=$snapshot.executionContext.environmentFields
+            $keys=@(@($before.PSObject.Properties.Name)+@($after.Keys)|Sort-Object -Unique)
+            $changed=@($keys|Where-Object {(Get-Field $before $_) -ne $after[$_]})
+            throw ('Verification inputs or execution environment changed while queued. Changed environment fields (values withheld): '+($changed -join ', '))
+        }
+        $admitted=$true;$code=1
+        $coverage.selected=@($snapshot.binding.names)
+        $coverage.tasks=@([pscustomobject]@{participant=$request.task;requested=$coverage.selected})
+        Set-Field $coverage 'testDefinitionsBeforeRun' $snapshot.binding.definitions
+        Set-Field $coverage 'testExecutablesBeforeRun' $snapshot.binding.artifacts
+        Set-Field $coverage 'testRuntimeFilesBeforeRun' $snapshot.binding.runtimeFiles
+        Set-Field $coverage 'executionContext' $snapshot.executionContext
+        $coverage.status='running'
+        $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+        Invoke-FilteredTests -CTestFilterArguments @('-R',$snapshot.pattern) -ExecutionOnly -ExistingSelection ([pscustomobject]@{Tests=$snapshot.tests;Targets=@()}) -ResourceBudget $verificationBudget
+        $coverage.status='passed';$code=0
+    } catch {$coverage.status=if($admitted){'failed'}else{'invalidated'};$coverage.error=$_.Exception.Message}
+    finally {
+        $coverage.report=$script:lastReportPath
+        if($script:lastReportPath -and [IO.File]::Exists($script:lastReportPath)){
+            $report=[xml][IO.File]::ReadAllText($script:lastReportPath)
+            $coverage.completed=@($report.SelectNodes('//testcase')|ForEach-Object {
+                [pscustomobject]@{name=$_.GetAttribute('name');status=$(if($_.SelectSingleNode('failure|error')){'failed'}elseif($_.SelectSingleNode('skipped') -or $_.GetAttribute('status') -in 'notrun','disabled'){'not-run'}else{'passed'});seconds=$_.GetAttribute('time')}
+            })
+        }
+        if($admitted){
+            try {$after=Get-VerificationSnapshot $repositoryRoot $PlanBatch $Filter $verificationBudget;if($after.key -ne $snapshot.key){throw 'Verification context changed during execution.'}}
+            catch {$coverage.status='invalidated';$coverage.error=$_.Exception.Message;$code=5}
+            $changedRuntime=@(Get-Field (Get-Field $coverage 'runtimeInputCheck') 'tests' @()|Where-Object status -eq 'invalidated')
+            if($changedRuntime.Count){
+                $coverage.status='invalidated';$code=5
+                $coverage.error='Reviewed runtime file inputs changed during verification: '+(($changedRuntime|ForEach-Object test) -join ', ')
+            }
+        }
+        $coverage|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    }
+    if($coverage.error){[Console]::Error.WriteLine($coverage.error)}
+    exit $code
+}
 if($Mode -eq 'plan') {
     if(-not $PlanBatch){throw 'Plan mode requires a frozen batch ID.'}
     $initialPlanRoot=Join-Path $repositoryRoot '.build/collaboration'
@@ -279,6 +513,12 @@ if ($Mode -eq "plan") {
     $coveragePath=Join-Path $planRoot ($PlanBatch+'.coverage.json')
     $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     try {
+        if((Get-Field (Get-Field $plan 'projectResources') 'compatibilityMode' '') -eq 'shared'){
+            $unsafe=@($inventory.Tests|Where-Object {$names -contains $_.name -and (
+                @($_.properties|Where-Object {$_.name -in 'RESOURCE_LOCK','RESOURCE_GROUPS','RUN_SERIAL' -and $_.value}).Count -or
+                @($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -notcontains 'tools')})
+            if($unsafe.Count){throw ('Shared tool plan contains tests requiring exclusive or unreviewed resources: '+(@($unsafe|ForEach-Object name) -join ', '))}
+        }
         $blocked=@($inventory.Tests|Where-Object {$names -contains $_.name -and @($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -contains 'environment-blocked'}|ForEach-Object {$_.name})
         if($blocked.Count){
             $coverage.status='environment-blocked'
@@ -292,11 +532,11 @@ if ($Mode -eq "plan") {
         if ($plan.mode -eq 'full') {
             $includesTools=@($inventory.Tests | Where-Object {$names -contains $_.name -and @($_.properties | Where-Object name -eq 'LABELS' | ForEach-Object {$_.value}) -contains 'tools'}).Count -gt 0
             $fullBuildPreset=if($includesTools){'all-tests'}else{'tests'}
-            Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset $fullBuildPreset -TestPreset 'all-tests'
+            Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset $fullBuildPreset -TestPreset 'all-tests' -ResourceBudget (Get-EntryResourceBudget $repositoryRoot)
             Invoke-OutputIsolationCheck $repositoryRoot $coverage.postChecks.outputIsolation
         }
-        else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
-        $coverage.status='passed'
+        else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' -ResourceBudget (Get-EntryResourceBudget $repositoryRoot) }
+        $coverage.status=if(@(Get-Field $coverage 'references' @()).Count -and -not @($coverage.executedSelection).Count){'fulfilled'}else{'passed'}
     } catch { if($coverage.status -ne 'environment-blocked'){$coverage.status='failed'};$coverage.error=$_.Exception.Message; throw }
     finally {
         $coverage.report=$script:lastReportPath
@@ -315,9 +555,23 @@ if ($Mode -eq "plan") {
                 }
             }
         }
+        if(@(Get-Field $coverage 'references' @()).Count){
+            foreach($task in $coverage.tasks){
+                if($task.status -eq 'not-required'){continue}
+                $actual=@($coverage.completed|Where-Object {$task.requested -contains $_.name})
+                $references=@($coverage.references|Where-Object {$task.requested -contains $_.test})
+                if(-not @($actual|Where-Object status -ne 'passed').Count -and $actual.Count+$references.Count -eq $task.requested.Count){
+                    $task.status=if($references.Count){'fulfilled'}else{'passed'}
+                }
+            }
+        }
         foreach($artifact in @(Get-Field $coverage 'testExecutablesBeforeRun' @())){
             $path=Join-Path $repositoryRoot $artifact.executable
             if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $artifact.sha256){$coverage.status='invalidated';$coverage.error='Test executable changed during run.'}
+        }
+        foreach($artifact in @(Get-Field $coverage 'testRuntimeFilesBeforeRun' @())){
+            $path=if([IO.Path]::IsPathRooted($artifact.file)){$artifact.file}else{Join-Path $repositoryRoot $artifact.file}
+            if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $artifact.sha256){$coverage.status='invalidated';$coverage.error='Explicit test runtime file changed during run.'}
         }
         $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
         if($coverage.status -eq 'invalidated'){throw $coverage.error}
@@ -344,7 +598,7 @@ else {
     if ($Mode -in "full", "core", "fast") {
         Write-Host "Build tool regressions and manual diagnostics are excluded; select tools, name or label explicitly."
     }
-    Invoke-FilteredTests @options
+    Invoke-FilteredTests @options -ResourceBudget (Get-EntryResourceBudget $repositoryRoot)
     if ($Mode -eq "full") {
         Write-Host ""
         Write-Host "=== Verifying isolated test output ==="
@@ -355,4 +609,12 @@ else {
 Write-Host ""
 Write-Host "=== Tests complete ($Mode) ==="
 
-} finally {Exit-BuildEntry $entryLease}
+} finally {
+    try{Exit-BuildEntry $entryLease}
+    finally{
+        foreach($name in $observerIdentity.Keys){
+            if($null -eq $observerIdentity[$name]){[Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')}
+            else{[Environment]::SetEnvironmentVariable($name,$observerIdentity[$name],'Process')}
+        }
+    }
+}

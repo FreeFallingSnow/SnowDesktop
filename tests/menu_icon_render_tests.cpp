@@ -1028,11 +1028,14 @@ int wmain(int argc, wchar_t** argv)
         moreOptionsIconBounds) == 0,
         "disabled more-options row does not retain a blue accent");
 
-    const std::array<const wchar_t*, 11> alignedMenuGlyphs{
+    const std::array<const wchar_t*, 14> alignedMenuGlyphs{
         snowdesktop::menu_fluent_glyphs::kFanExpansion,
         L"\uF33A", L"\uF32B", L"\uF10C", L"\U000F0A39",
         L"\uF3DD", L"\uF34C", L"\uF6A9", L"\uF21D",
         L"\uF15B", L"\uF181",
+        snowdesktop::menu_fluent_glyphs::kComputerManage,
+        snowdesktop::menu_fluent_glyphs::kNetworkConnect,
+        snowdesktop::menu_fluent_glyphs::kNetworkDisconnect,
     };
     const std::array<UINT, 4> iconTestDpis{ 96, 120, 144, 192 };
     for (const UINT dpi : iconTestDpis)

@@ -14,6 +14,7 @@ enum class LuaResourceType : unsigned char
 {
     Image,
     Font,
+    Audio,
 };
 
 struct LuaResourceHandle
@@ -37,7 +38,7 @@ inline int LuaResourceHandleToString(lua_State* state)
     if (!handle)
         return luaL_error(state, "invalid package resource handle");
     const char* type = handle->type == LuaResourceType::Image
-        ? "image" : "font";
+        ? "image" : handle->type == LuaResourceType::Audio ? "audio" : "font";
     lua_pushfstring(state, "resource.%s(%s)", type, handle->name);
     return 1;
 }

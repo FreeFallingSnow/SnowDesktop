@@ -1,5 +1,6 @@
 #include "icons/icon_beautify.h"
 #include "icons/icon_beautify_preview.h"
+#include "icons/icon_backplate_tests.h"
 
 #include <algorithm>
 #include <array>
@@ -83,6 +84,7 @@ int CountPartiallyCovered(snowdesktop::IconBeautifyShape shape)
 
 int main()
 {
+    failures += RunIconBackplateTests();
     using snowdesktop::IconBeautifyFinish;
     using snowdesktop::IconBeautifyPreset;
     using snowdesktop::IconBeautifySettings;

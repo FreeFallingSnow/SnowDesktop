@@ -2,6 +2,7 @@
 #include "shell_icon_request.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "shell/shell_call_diagnostics.h"
+#include "diagnostics/performance_trace.h"
 
 #include "desktop/desktop_namespace_registry.h"
 
@@ -224,11 +225,11 @@ static bool ReadDesktopSource(
                         },
                         parsingName) != 0;
                 const auto elapsed = GetTickCount64() - started;
-                if (elapsed >= 250)
+                if (elapsed >= 250 && snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Shell))
                 {
                     const auto message = L"Shell desktop metadata slow: elapsed_ms=" +
                         std::to_wstring(elapsed) + L" path=" + parsingName;
-                    WriteDiagnosticLogEntry(message.c_str());
+                    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, message.c_str());
                 }
                 return success;
             });
@@ -357,6 +358,26 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
         desktopPidl_.reset(raw);
     }
     if (!snapshot) { RequestShellRefresh(); return; }
+    if (snapshot->desktopComplete && !snapshot->desktopIncremental)
+    {
+        std::unordered_set<std::wstring> observed;
+        for (const auto& item : snapshot->desktopItems) observed.insert(ToUpperInvariant(item.layoutKey));
+        // Explorer or the original desktop entrance can delete a mapped
+        // source without using our file-operation queue. Capture its artwork
+        // before replacing the old item model. Only confirmed pin pruning
+        // commits the exit; an enumeration gap alone never starts animation.
+        for (size_t i = 0; i < dockEntries_.size(); ++i)
+        {
+            const auto& entry = dockEntries_[i];
+            if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) continue;
+            for (const auto& container : containers_)
+                if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                {
+                    if (observed.contains(ToUpperInvariant(entry.reference))) dock->CancelEntryRemoval(entry);
+                    else if (FindItemIndexByKey(entry.reference) < items_.size()) dock->PrepareEntryRemoval(i);
+                }
+        }
+    }
     auto fresh = std::move(snapshot->desktopItems);
     auto previous = std::exchange(items_, std::move(fresh));
     std::unordered_map<std::wstring, size_t> previousByKey;
@@ -530,6 +551,7 @@ bool DesktopApp::DesktopWindowNeedsDisplaySynchronization() const
  */
 void DesktopApp::PollDisplayTopology()
 {
+    snowdesktop::performance::Scope trace("shared.maintenance", "display.poll");
     if (exitRequested_)
         return;
 
@@ -653,7 +675,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         DestroyWindow(previousWindow);
         if (!CreateDesktopOverlayWindow())
         {
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell,
                 L"Display topology overlay recreation failed",
                 DiagnosticLogLevel::Error);
             ScheduleDisplayTopologyRefresh();

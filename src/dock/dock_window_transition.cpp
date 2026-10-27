@@ -7,6 +7,7 @@
 #include "dock_window_source_cloak.h"
 #include "platform/shell_overlay_window.h"
 #include "settings/animation_settings.h"
+#include "platform/window_support/window_support_runtime.h"
 
 #include <algorithm>
 #include <array>
@@ -141,6 +142,7 @@ struct DockWindowTransition::PresentationBarrier
 {
     Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> device;
     std::function<HRESULT(IDCompositionDesktopDevice*)> wait;
+    bool minimize = false;
     std::atomic<bool> completed{false};
     HRESULT result = E_PENDING;
 };
@@ -272,7 +274,10 @@ void CALLBACK DockWindowTransition::RunPresentationBarrier(
             else
             {
                 state.result = state.device->WaitForCommitCompletion();
-                if (SUCCEEDED(state.result)) state.result = DwmFlush();
+                // Preserve each direction's acknowledgement contract. Minimize
+                // uses DWM only as the original failed-commit fallback.
+                if (state.minimize ? FAILED(state.result) : SUCCEEDED(state.result))
+                    state.result = DwmFlush();
             }
         }
         catch (...) { state.result = E_FAIL; }
@@ -298,6 +303,7 @@ bool DockWindowTransition::BeginPresentationBarrier(RestorePresentationPhase pha
         state = std::make_shared<PresentationBarrier>();
         state->device = compositionDevice_;
         state->wait = presentationWait_;
+        state->minimize = awaitingMinimizePresentation_;
     }
     catch (...)
     {
@@ -646,15 +652,72 @@ bool DockWindowTransition::EnsureWindow()
     return true;
 }
 
+struct DockWindowTransition::RemoteAnimation
+{
+    HWND source = nullptr;
+    DockWindowTransitionDirection direction = DockWindowTransitionDirection::Minimize;
+    bool pending = true;
+    ULONGLONG acceptedAt = GetTickCount64();
+};
+bool DockWindowTransition::StartHelperAnimation(HWND source, RECT anchor, HWND below, bool restore, RestoreCallback callback)
+{
+    namespace support = snowdesktop::window_support;
+    namespace wire = support::protocol;
+    auto& runtime = support::WindowSupport();
+    if (!snowdesktop::animation::RuntimeAnimationsEnabled() || snowdesktop::animation::RuntimeWindowEffect() == 0) return false;
+    if (!helperRouting_ || runtime.Resolve(support::Capability::MinimizeAnimation, source).provider != support::Provider::Helper)
+        return false;
+    if (IsActive() && !remoteAnimation_) Cancel();
+    auto state = std::make_shared<RemoteAnimation>();
+    state->source = source;
+    state->direction = restore ? DockWindowTransitionDirection::Restore : DockWindowTransitionDirection::Minimize;
+    wire::Request request;
+    request.command = restore ? wire::Command::StartRestore : wire::Command::StartMinimize;
+    request.target = wire::Capture(source);
+    request.animation = {request.target, anchor, reinterpret_cast<UINT_PTR>(below),
+        static_cast<std::uint32_t>(snowdesktop::animation::RuntimeWindowEffect()),
+        snowdesktop::animation::RuntimeAnimationsEnabled() ? 1u : 0u,
+        static_cast<std::uint32_t>(snowdesktop::animation::detail::speed.load()),
+        static_cast<std::uint32_t>(snowdesktop::animation::detail::frameLimit.load()),
+        static_cast<std::uint32_t>(snowdesktop::animation::detail::dockPosition.load())};
+    if (!runtime.Submit(request, [weak = std::weak_ptr<RemoteAnimation>(state), callback = std::move(callback), identity = request.target](const auto& response) {
+        const auto active = weak.lock();
+        if (!active) return;
+        active->pending = false;
+        if (callback && wire::Current(identity))
+            callback(wire::Window(identity), response.succeeded ? DockWindowRestoreTransitionPhase::ActivateRestored :
+                DockWindowRestoreTransitionPhase::FallbackWithoutAnimation);
+    })) return false;
+    remoteAnimation_ = std::move(state);
+    ObserveMinimize(source, anchor, true);
+    return true;
+}
 bool DockWindowTransition::StartMinimize(
     HWND sourceWindow, RECT dockRect,
-    HWND keepBelowWindow)
+    HWND keepBelowWindow, std::function<void(HWND)> minimizeRequest)
 {
+    if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false)) return true;
+    if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
+            snowdesktop::window_support::Provider::InProcess) return false;
     ObserveMinimize(sourceWindow, dockRect, true);
-    return Start(
+    const bool alreadyPending = IsActiveFor(sourceWindow) && (awaitingMinimizePresentation_ || externalMinimize_);
+    const bool started = Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Minimize,
         {}, keepBelowWindow);
+    if (started && minimizeRequest && !alreadyPending)
+    {
+        if (awaitingMinimizePresentation_) minimizeRequest_ = std::move(minimizeRequest);
+        else if (SourceIdentityCurrent()) minimizeRequest(sourceWindow_);
+    }
+    if (!started && helperRouting_ && SystemWindowAnimationsEnabled())
+    {
+        snowdesktop::window_support::WindowSupport().RecordFailure(snowdesktop::window_support::Capability::MinimizeAnimation,
+            sourceWindow, snowdesktop::window_support::Provider::InProcess, ERROR_NOT_SUPPORTED);
+        return StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false);
+    }
+    return started;
 }
 
 void DockWindowTransition::SetMinimizeCompletionCallbacks(MinimizeTargetProvider target,
@@ -724,8 +787,8 @@ void DockWindowTransition::PollMinimizeObservation()
         GetWindowThreadProcessId(source, &state.process);
         state.minimized = IsIconic(source) != FALSE;
         const bool active = IsActiveFor(source);
-        state.minimizing = active && direction_ == DockWindowTransitionDirection::Minimize;
-        state.restoring = active && direction_ == DockWindowTransitionDirection::Restore;
+        state.minimizing = active && GetDirection() == DockWindowTransitionDirection::Minimize;
+        state.restoring = active && GetDirection() == DockWindowTransitionDirection::Restore;
         return state;
     }, [this](const MinimizeTarget& target) {
         if (minimizeCompletedCallback_) minimizeCompletedCallback_(target);
@@ -742,19 +805,16 @@ bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRec
     if (!StartMinimize(sourceWindow, dockRect,
             keepBelowWindow))
         return false;
-    // The sender's timeout releases its original minimize request; it does
-    // not invalidate the live image acquired while that request was current.
-    // On slower DWM drivers the first commit can finish after the sender has
-    // resumed. Keep this successfully presented image and observe the native
-    // action separately, including an action that has already completed.
     externalMinimize_ = true;
     externalMinimizeObserved_ = IsIconic(sourceWindow) != FALSE;
     externalMinimizeDeadline_ = deadline;
     externalMinimizeObservationDeadline_ = GetTickCount() +
         snowdesktop::dock_minimize::kRequestTimeoutMs;
-    if (diagnosticCallback_ &&
-        !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
-        diagnosticCallback_(L"Dock minimize handoff: prepared after request deadline; observing native minimize");
+    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+    {
+        Finish();
+        return false;
+    }
     return true;
 }
 
@@ -762,6 +822,12 @@ void DockWindowTransition::CancelExternalMinimize(HWND sourceWindow, DWORD deadl
 {
     if (externalMinimize_ && sourceWindow_ == sourceWindow && externalMinimizeDeadline_ == deadline)
     {
+        if (awaitingMinimizePresentation_)
+        {
+            if (pendingExternalRestore_) CompleteImmediately();
+            else Finish();
+            return;
+        }
         // This message reports a SendMessageTimeout failure. The hook still
         // executes the original action, so cancellation is not a native veto.
         // Do not extend the observation deadline on repeated timeout reports.
@@ -774,13 +840,24 @@ bool DockWindowTransition::StartRestore(
     RestoreCallback restoreCallback,
     HWND keepBelowWindow)
 {
+    if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, true, restoreCallback)) return true;
+    if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
+            snowdesktop::window_support::Provider::InProcess) return false;
     if (!restoreCallback)
         return false;
-    return Start(
+    const bool started = Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Restore,
-        std::move(restoreCallback),
+        restoreCallback,
         keepBelowWindow);
+    if (!started && helperRouting_ && SystemWindowAnimationsEnabled())
+    {
+        snowdesktop::window_support::WindowSupport().RecordFailure(snowdesktop::window_support::Capability::MinimizeAnimation,
+            sourceWindow, snowdesktop::window_support::Provider::InProcess, ERROR_NOT_SUPPORTED);
+        return StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, true, std::move(restoreCallback));
+    }
+    return started;
 }
 
 bool DockWindowTransition::Start(
@@ -799,6 +876,20 @@ bool DockWindowTransition::Start(
     HWND root = GetAncestor(sourceWindow, GA_ROOT);
     sourceWindow = root ? root : sourceWindow;
     std::erase_if(lastVisibleRects_, [](const auto& entry) { return !IsWindow(entry.first); });
+    if (IsActiveFor(sourceWindow) && pendingExternalRestore_ &&
+        direction == DockWindowTransitionDirection::Minimize)
+    {
+        pendingExternalRestore_ = false;
+        restoreCallback_ = {};
+        if (!awaitingMinimizePresentation_ && !ScheduleAnimationWake()) CompleteImmediately();
+        return IsActive();
+    }
+    if (IsActiveFor(sourceWindow) && pendingExternalRestore_ &&
+        direction == DockWindowTransitionDirection::Restore)
+    {
+        restoreCallback_ = std::move(restoreCallback);
+        return true;
+    }
     const auto startAction =
         ResolveDockWindowTransitionStartAction(
             IsActive(),
@@ -820,6 +911,25 @@ bool DockWindowTransition::Start(
     if (startAction ==
         DockWindowTransitionStartAction::ReverseActive)
     {
+        if (awaitingMinimizePresentation_)
+        {
+            if (externalMinimize_)
+            {
+                // The CBT hook must still execute its original operation.
+                // Keep the aligned image, then reverse under the same cloak
+                // only after that native minimize has actually happened.
+                pendingExternalRestore_ = true;
+                restoreCallback_ = std::move(restoreCallback);
+                return true;
+            }
+            // No native minimize or cloak has occurred yet. Retire the exact
+            // aligned duplicate and activate the still-visible real window.
+            const bool current = SourceIdentityCurrent();
+            Finish();
+            if (current && restoreCallback)
+                restoreCallback(sourceWindow, DockWindowRestoreTransitionPhase::ActivateRestored);
+            return current;
+        }
         return Reverse(
             direction,
             std::move(restoreCallback));
@@ -844,6 +954,7 @@ bool DockWindowTransition::Start(
     Cancel();
     if (sourceCloaked_) return false;
     sourceWindow_ = sourceWindow;
+    sourceThread_ = GetWindowThreadProcessId(sourceWindow_, &sourceProcess_);
     direction_ = direction;
     restoreCallback_ = std::move(restoreCallback);
     effect_ = snowdesktop::animation::RuntimeWindowEffect();
@@ -940,9 +1051,7 @@ bool DockWindowTransition::Start(
             imageHostRect_.top);
     // The host callback keeps entire Dock content/backdrop pairs above us.
     // Only legacy callers without that callback use the single-window anchor.
-    const HWND insertAfter = !presentationCallback_ &&
-        keepBelowWindow && IsWindow(keepBelowWindow)
-        ? keepBelowWindow : HWND_TOPMOST;
+    const HWND insertAfter = ResolveDockWindowTransitionInsertAfter(keepBelowWindow, static_cast<bool>(presentationCallback_));
     SetWindowPos(
         hwnd_, insertAfter,
         imageHostRect_.left,
@@ -968,23 +1077,57 @@ bool DockWindowTransition::Start(
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     if (diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-after-show");
-    HRESULT presentationHr = S_OK;
     if (RequiresDockWindowTransitionCompositionBarrier(direction_))
     {
-        presentationHr = compositionImageActive_ &&
-                compositionDevice_
-            ? compositionDevice_->WaitForCommitCompletion()
-            : E_NOTIMPL;
-        if (FAILED(presentationHr))
-            presentationHr = DwmFlush();
+        // Keep the source visible and the overlay at its exact first frame.
+        // Neither a compositor timeline nor a native minimize runs until the
+        // worker acknowledges this commit. No worker owns an HWND or callback.
+        if (!GetWindowRect(sourceWindow_, &minimizeSourceWindowRect_) ||
+            !SetPropW(sourceWindow_, snowdesktop::dock_minimize::kPresentationPendingProperty, hwnd_))
+        {
+            Cancel();
+            return false;
+        }
+        awaitingMinimizePresentation_ = true;
+        if (!BeginPresentationBarrier(RestorePresentationPhase::None) || !ScheduleAnimationWake())
+        {
+            Cancel();
+            return false;
+        }
+        LogPresentation(requestedEffect, L"shared-window");
+        return true;
     }
-    if (FAILED(presentationHr))
+
+    if (!AcquireSourceCloak()) { Cancel(); return false; }
+    animationStartTimeMs_ = MonotonicTimeMilliseconds();
+    minimizeObserved_ = false;
+    minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
+    awaitingRestoreVisibility_ = false;
+    restoreCleanupDeadlineMs_ = 0.0;
+    restoreVisibleTimeMs_ = 0.0;
+    restoreFadeStartTimeMs_ = 0.0;
+    RequestRestoreForAnimation();
+    if (!ScheduleAnimationWake())
     {
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=presentation-barrier");
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=schedule");
         Cancel();
         return false;
     }
+    LogPresentation(requestedEffect, L"shared-window");
+    return true;
+}
 
+bool DockWindowTransition::SourceIdentityCurrent() const
+{
+    DWORD process = 0;
+    return sourceWindow_ && sourceThread_ &&
+        GetWindowThreadProcessId(sourceWindow_, &process) == sourceThread_ && process == sourceProcess_ &&
+        (!awaitingMinimizePresentation_ ||
+            GetPropW(sourceWindow_, snowdesktop::dock_minimize::kPresentationPendingProperty) == hwnd_);
+}
+
+bool DockWindowTransition::AcquireSourceCloak()
+{
     // The animation owns only its temporary app-cloak bit. DWM continues to
     // compose this window, so its shared image stays available. Avoid changing
     // the source's setter-only native transition policy, which cannot be read
@@ -1005,26 +1148,59 @@ bool DockWindowTransition::Start(
                 static_cast<unsigned>(cloakHr));
             diagnosticCallback_(diagnostic);
         }
-        Cancel();
         return false;
     }
+    return true;
+}
 
-    animationStartTimeMs_ =
-        MonotonicTimeMilliseconds();
-    minimizeObserved_ = false;
+void DockWindowTransition::ClearExternalPresentationWait()
+{
+    if (SourceIdentityCurrent() &&
+        GetPropW(sourceWindow_, snowdesktop::dock_minimize::kPresentationPendingProperty) == hwnd_)
+        RemovePropW(sourceWindow_, snowdesktop::dock_minimize::kPresentationPendingProperty);
+}
+
+bool DockWindowTransition::PrepareMinimizePresentation(double now)
+{
+    RECT frame{}, actual{};
+    if (!IsWindowVisible(sourceWindow_) || IsIconic(sourceWindow_) ||
+        !GetWindowRect(sourceWindow_, &actual) || !EqualRect(&actual, &minimizeSourceWindowRect_) ||
+        !ResolveVisibleWindowRect(sourceWindow_, frame) || !EqualRect(&frame, &windowRect_))
+    {
+        // A source that moved or changed state must not leave an old aligned
+        // duplicate visible until a slow compositor wait eventually finishes.
+        CompleteImmediately();
+        return false;
+    }
+    const auto result = PresentationBarrierResult(now);
+    if (!result) return false;
+    presentationBarrier_.reset();
+    const bool ready = SUCCEEDED(*result) && SourceIdentityCurrent() &&
+        IsWindowVisible(sourceWindow_) && !IsIconic(sourceWindow_) &&
+        ResolveVisibleWindowRect(sourceWindow_, frame) && EqualRect(&frame, &windowRect_) &&
+        (!externalMinimize_ || snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()));
+    if (!ready || !AcquireSourceCloak())
+    {
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=presentation-barrier");
+        CompleteImmediately();
+        return false;
+    }
+    awaitingMinimizePresentation_ = false;
+    ClearExternalPresentationWait();
+    animationStartTimeMs_ = MonotonicTimeMilliseconds();
+    if (externalMinimize_)
+        externalMinimizeObservationDeadline_ = GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs;
     minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
-    awaitingRestoreVisibility_ = false;
-    restoreCleanupDeadlineMs_ = 0.0;
-    restoreVisibleTimeMs_ = 0.0;
-    restoreFadeStartTimeMs_ = 0.0;
-    RequestRestoreForAnimation();
+    if (pendingExternalRestore_) return false; // Poll the original native action before reversal.
+    auto request = std::move(minimizeRequest_);
+    const HWND source = sourceWindow_;
     if (!ScheduleAnimationWake())
     {
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=schedule");
-        Cancel();
-        return false;
+        Finish();
     }
-    LogPresentation(requestedEffect, L"shared-window");
+    // The native route is unchanged; it now follows the acknowledged frame and
+    // source cloak. Move it first so reentrant cancellation cannot replay it.
+    if (request) request(source);
     return true;
 }
 
@@ -1863,7 +2039,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
     animationToken_ = 0;
 
     const bool retiring = awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0;
-    if (UsesCompositionImage() && !preparingRestore_)
+    if (UsesCompositionImage() && !preparingRestore_ && !awaitingMinimizePresentation_)
     {
         if (!StartCompositionTimeline(retiring))
             return false;
@@ -2030,20 +2206,28 @@ bool DockWindowTransition::OnAnimationFrame(
     double nowMilliseconds)
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "frame");
-    if (!sourceWindow_ || !IsWindow(sourceWindow_))
+    if (!SourceIdentityCurrent())
     {
         Finish();
         return false;
     }
     if (externalMinimize_)
     {
+        if (awaitingMinimizePresentation_ &&
+            !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()))
+        {
+            if (pendingExternalRestore_) CompleteImmediately();
+            else Finish();
+            return false;
+        }
         if (IsIconic(sourceWindow_)) externalMinimizeObserved_ = true;
         else if (externalMinimizeObserved_ ||
             !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeObservationDeadline_, GetTickCount()))
         {
             // Another hook can veto the original action; a restore can also
             // arrive before our image reaches the Dock. Do not cover it.
-            Finish();
+            if (pendingExternalRestore_) CompleteImmediately();
+            else Finish();
             return false;
         }
     }
@@ -2064,6 +2248,24 @@ bool DockWindowTransition::OnAnimationFrame(
     }
 
     const double now = nowMilliseconds;
+    if (awaitingMinimizePresentation_)
+    {
+        if (!PrepareMinimizePresentation(now)) return IsActive();
+        return false; // Preparation replaced this polling token with a timeline.
+    }
+    if (pendingExternalRestore_)
+    {
+        if (!IsIconic(sourceWindow_)) return true;
+        pendingExternalRestore_ = false;
+        animationStartTimeMs_ = now;
+        auto callback = std::move(restoreCallback_);
+        if (!Reverse(DockWindowTransitionDirection::Restore, std::move(callback)))
+        {
+            CompleteRestoreAfterRenderFailure();
+            Finish();
+        }
+        return false;
+    }
     if (preparingRestore_)
     {
         if (!PrepareRestoredWindow(now)) return IsActive();
@@ -2486,6 +2688,11 @@ void DockWindowTransition::ReleaseSourceCloak()
 void DockWindowTransition::Finish()
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "scene.retire");
+    ClearExternalPresentationWait();
+    awaitingMinimizePresentation_ = false;
+    pendingExternalRestore_ = false;
+    minimizeSourceWindowRect_ = {};
+    minimizeRequest_ = {};
     presentationBarrier_.reset();
     restorePresentationPhase_ = RestorePresentationPhase::None;
     presentationBarrierDeadlineMs_ = 0.0;
@@ -2571,6 +2778,7 @@ void DockWindowTransition::Finish()
     compositionImageActive_ = false;
     compositionTimelineActive_ = false;
     sourceWindow_ = nullptr;
+    sourceProcess_ = sourceThread_ = 0;
     fromRect_ = {};
     toRect_ = {};
     windowRect_ = {};
@@ -2605,13 +2813,34 @@ void DockWindowTransition::Finish()
 
 void DockWindowTransition::Cancel()
 {
-    Finish();
+    if (helperRouting_ && (remoteAnimation_ || snowdesktop::window_support::WindowSupport().HelperSnapshot().animationActive))
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::CancelAnimation;
+        snowdesktop::window_support::WindowSupport().Submit(request);
+        remoteAnimation_.reset();
+    }
+    // Cancellation used to run after the caller had already dispatched its
+    // native minimize. Preserve that accepted operation when only its first
+    // frame is pending; explicit reversal uses Finish to withdraw that intent.
+    if ((awaitingMinimizePresentation_ && minimizeRequest_) || pendingExternalRestore_) CompleteImmediately();
+    else Finish();
 }
 
 void DockWindowTransition::CompleteImmediately()
 {
-    // The source has already received the native minimize command. A restore
-    // starts underneath the overlay, so complete any pending source restoration
+    if (helperRouting_ && (remoteAnimation_ || snowdesktop::window_support::WindowSupport().HelperSnapshot().animationActive))
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::CompleteAnimation;
+        snowdesktop::window_support::WindowSupport().Submit(request);
+        remoteAnimation_.reset();
+    }
+    auto minimize = std::move(minimizeRequest_);
+    const HWND source = SourceIdentityCurrent() ? sourceWindow_ : nullptr;
+    auto externalRestore = pendingExternalRestore_ ? std::move(restoreCallback_) : RestoreCallback{};
+    // A pending first-frame minimize falls back after removing its overlay.
+    // A restore already starts underneath it, so complete that native handoff
     // explicitly before removing the presentation window.
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_ && sourceWindow_ && IsWindow(sourceWindow_))
@@ -2622,10 +2851,24 @@ void DockWindowTransition::CompleteImmediately()
             ActivateRestoredWindowForHandoff();
     }
     Finish();
+    if (minimize && source) minimize(source);
+    if (externalRestore && source)
+    {
+        // The host's existing asynchronous restore route queues behind the
+        // original CBT operation, retaining maximized placement and fallbacks.
+        externalRestore(source, DockWindowRestoreTransitionPhase::RequestRestore);
+        externalRestore(source, DockWindowRestoreTransitionPhase::ActivateRestored);
+    }
 }
 
 bool DockWindowTransition::IsActive() const
 {
+    if (helperRouting_)
+    {
+        if (remoteAnimation_ && remoteAnimation_->pending && GetTickCount64() - remoteAnimation_->acceptedAt < 2500) return true;
+        const auto snapshot = snowdesktop::window_support::WindowSupport().HelperSnapshot();
+        if (snapshot.animationActive && snowdesktop::window_support::protocol::Current(snapshot.animationTarget)) return true;
+    }
     return sourceWindow_ != nullptr && compositionSharedWindowActive_;
 }
 
@@ -2639,14 +2882,39 @@ bool DockWindowTransition::IsActiveFor(
     HWND root = GetAncestor(window, GA_ROOT);
     if (!root)
         root = window;
+    if (helperRouting_)
+    {
+        if (remoteAnimation_ && remoteAnimation_->pending && GetTickCount64() - remoteAnimation_->acceptedAt < 2500 && remoteAnimation_->source == root) return true;
+        const auto snapshot = snowdesktop::window_support::WindowSupport().HelperSnapshot();
+        if (snapshot.animationActive && snowdesktop::window_support::protocol::Current(snapshot.animationTarget) &&
+            snowdesktop::window_support::protocol::Window(snapshot.animationTarget) == root) return true;
+    }
     return sourceWindow_ == root;
 }
 
 DockWindowTransitionDirection
 DockWindowTransition::GetDirection() const
 {
-    return direction_;
+    if (helperRouting_)
+    {
+        if (remoteAnimation_ && remoteAnimation_->pending) return remoteAnimation_->direction;
+        const auto snapshot = snowdesktop::window_support::WindowSupport().HelperSnapshot();
+        if (snapshot.animationActive) return snapshot.direction == 1 ? DockWindowTransitionDirection::Restore : DockWindowTransitionDirection::Minimize;
+    }
+    return pendingExternalRestore_ ? DockWindowTransitionDirection::Restore : direction_;
 }
+
+HWND DockWindowTransition::GetPresentationWindow() const noexcept
+{
+    if (helperRouting_)
+    {
+        const auto snapshot = snowdesktop::window_support::WindowSupport().HelperSnapshot();
+        if (snapshot.animationActive) return reinterpret_cast<HWND>(static_cast<UINT_PTR>(snapshot.presentation));
+    }
+    return presenting_ ? hwnd_ : nullptr;
+}
+bool DockWindowTransition::IsPresentationWindow(HWND window) const noexcept
+{ return window && (window == hwnd_ || window == GetPresentationWindow()); }
 
 LRESULT CALLBACK DockWindowTransition::WindowProc(
     HWND window, UINT message,

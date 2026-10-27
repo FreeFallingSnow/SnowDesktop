@@ -30,6 +30,17 @@ described under "Optional Steamworks dependency" below.
 源码中。另行获取的 Steamworks SDK 仍受 Valve 的条款约束，详见下文
 “Optional Steamworks dependency”。
 
+## Perfetto
+
+- Upstream: <https://github.com/google/perfetto>, release v58.2
+- License: Apache License 2.0, included as `licenses/Perfetto-LICENSE.txt`
+- Original SDK sources: `third_party/perfetto/perfetto.h` and `perfetto.cc`
+- The build verifies the original SDK bytes and generates a compiler-only copy
+  with two explicit MSVC type corrections; see `cmake/SnowDesktop.Perfetto.cmake`.
+- Offline analysis optionally downloads the official v58.2 Windows x64 Trace
+  Processor, with its fixed SHA-256 verified before use. The shipped SQL and
+  analysis scripts perform local analysis.
+
 ## Third-party components
 
 | Component | Version | License | Copyright / source |

@@ -21,6 +21,9 @@ public:
     static bool IsPinned(HWND window);
     bool Toggle(HWND window);
     void SetAppearance(const PersonalizationSettings& settings);
+    // Hide other windows' owned rings while DWM fades their applications.
+    // Passing nullptr restores normal border visibility, retaining every pin.
+    void SetPeekTarget(HWND window);
     void Refresh();
     void Clear();
 

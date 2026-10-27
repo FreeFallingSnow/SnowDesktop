@@ -529,6 +529,52 @@ void TestTaskViewPointerGuard()
     Check(!expired.CanStop(0xf3u) && expired.CanStop(0xf4u) &&
         !expired.Filter(WM_LBUTTONDOWN, {16, 16}, 0xf4u, false),
         "deadline is bounded across Windows tick-counter wrap and wins before a new press");
+
+    // A device switch may omit a consumed release. The next delivered press
+    // must keep its own release, regardless of why the protection lets it pass.
+    struct Button { WPARAM down, up; DWORD data; };
+    const Button buttons[]{{WM_LBUTTONDOWN, WM_LBUTTONUP, 0}, {WM_RBUTTONDOWN, WM_RBUTTONUP, 0},
+        {WM_MBUTTONDOWN, WM_MBUTTONUP, 0}, {WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1 << 16},
+        {WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON2 << 16}};
+    for (const auto& button : buttons)
+    {
+        for (int scenario = 0; scenario < 4; ++scenario)
+        {
+            TaskViewPointerGuard resumed({{0, 0, 64, 32}});
+            resumed.Arm(100, 200);
+            Check(resumed.Filter(button.down, {16, 16}, 110, false, button.data),
+                "initial press is consumed before its release is lost");
+            if (scenario == 1) resumed.Cancel();
+            const DWORD now = scenario >= 2 ? 300 : 120;
+            const POINT point = scenario == 0 || scenario == 3 ? POINT{200, 200} : POINT{16, 16};
+            Check(!resumed.Filter(button.down, point, now, false, button.data),
+                "fresh press outside protection is delivered after a missing release");
+            Check(!resumed.Filter(button.up, point, now + 1, false, button.data),
+                "fresh delivered press keeps its matching release after a device switch");
+            if (scenario == 0)
+            {
+                Check(!resumed.CanStop(now + 1), "outside click does not cancel active bar protection");
+                Check(resumed.Filter(button.down, {16, 16}, now + 2, false, button.data) &&
+                    resumed.Filter(button.up, {200, 200}, now + 3, false, button.data),
+                    "later protected click still consumes both edges");
+                resumed.Cancel();
+            }
+            Check(resumed.CanStop(now + 4), "missing old release cannot retain the monitor after a fresh click");
+        }
+    }
+    TaskViewPointerGuard independent({{0, 0, 64, 32}});
+    independent.Arm(100, 200);
+    Check(independent.Filter(WM_LBUTTONDOWN, {16, 16}, 110, false) &&
+        independent.Filter(WM_RBUTTONDOWN, {16, 16}, 111, false), "two physical presses are protected");
+    independent.Cancel();
+    Check(!independent.Filter(WM_RBUTTONDOWN, {200, 200}, 120, true) &&
+        !independent.Filter(WM_RBUTTONUP, {200, 200}, 121, true),
+        "injected click cannot replace physical release ownership");
+    Check(!independent.Filter(WM_LBUTTONDOWN, {200, 200}, 122, false) &&
+        !independent.Filter(WM_LBUTTONUP, {200, 200}, 123, false) && !independent.CanStop(123),
+        "fresh left click preserves another button's outstanding release");
+    Check(independent.Filter(WM_RBUTTONUP, {200, 200}, 124, false) && independent.CanStop(124),
+        "other physical release still drains its original consumed press");
 }
 
 HWND taskViewHookFixtureWindow = nullptr;
@@ -599,6 +645,26 @@ void TestTaskViewInputMonitorLifetime()
     WaitAndDispatch(scheduler);
     Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
         "cancelled consumed press uninstalls immediately after its paired release");
+
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
+    Check(request != nullptr, "device-switch sequence installs the production handoff");
+    request->Begin(1500);
+    down.pt = {48, 16};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 1, "production hook consumes the old press before a missing release");
+    request->Cancel(); request.reset();
+    WaitAndDispatch(scheduler);
+    Check(scheduler.HasScheduledWork() && IsWindow(taskViewHookFixtureWindow),
+        "missing release keeps the cancelled monitor alive before the device returns");
+    down.pt = {200, 200};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 0, "production hook delivers a fresh press on another window");
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONUP,
+        reinterpret_cast<LPARAM>(&down)) == 0, "production hook delivers the fresh press's own release");
+    WaitAndDispatch(scheduler);
+    Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
+        "fresh complete click retires the stale monitor without waiting for the lost old release");
+
     // Preserve the real scheduler, chord construction, transition state and
     // hook callback together. Only OS installation/input/clock are replaced.
     TaskViewTransitionGuard transition;

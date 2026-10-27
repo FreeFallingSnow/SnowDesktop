@@ -23,6 +23,7 @@ bool SettingsShellNavigationFeedback::UpdateRoute(
 void SettingsShellNavigationFeedback::Restart() noexcept
 {
     highlightConsumed_ = false;
+    permissionEditorConsumed_ = false;
     returnDismissed_ = false;
 }
 
@@ -31,6 +32,15 @@ bool SettingsShellNavigationFeedback::ConsumeHighlight() noexcept
     if (!route_ || route_->focusId.empty() || highlightConsumed_)
         return false;
     highlightConsumed_ = true;
+    return true;
+}
+
+bool SettingsShellNavigationFeedback::ConsumePackagePermissionEditor(bool packageReady) noexcept
+{
+    if (!packageReady || !route_ || permissionEditorConsumed_ ||
+        route_->page != SettingsPage::Widgets || route_->focusId != "widgets.permissions" ||
+        route_->itemKey.empty()) return false;
+    permissionEditorConsumed_ = true;
     return true;
 }
 
@@ -55,6 +65,8 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
 {
     switch (page)
     {
+    case SettingsPage::RuntimeModules:
+        return advancedSettings;
     case SettingsPage::DeveloperTools:
         return developerTools;
     case SettingsPage::Debug:
@@ -138,7 +150,9 @@ bool SettingsShellNavigationState::ApplyControllerUpdate(
     std::uint64_t revision,
     std::uint64_t generation)
 {
-    const SettingsRoute canonicalRoute = CanonicalizeSettingsRoute(route);
+    const SettingsRoute canonicalRoute = route.page == SettingsPage::RuntimeModules && !visibility_.advancedSettings
+        ? SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings")
+        : CanonicalizeSettingsRoute(route);
     if (!IsRouteAvailable(canonicalRoute))
         return false;
 
@@ -187,7 +201,9 @@ std::optional<SettingsRoute> SettingsShellNavigationState::PeekBack() const
 
 bool SettingsShellNavigationState::Navigate(const SettingsRoute& route)
 {
-    const SettingsRoute canonicalRoute = CanonicalizeSettingsRoute(route);
+    const SettingsRoute canonicalRoute = route.page == SettingsPage::RuntimeModules && !visibility_.advancedSettings
+        ? SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings")
+        : CanonicalizeSettingsRoute(route);
     if (!IsRouteAvailable(canonicalRoute) || Route() == canonicalRoute)
         return false;
     Push(canonicalRoute);
@@ -223,6 +239,12 @@ std::optional<SettingsRoute> SettingsShellNavigationState::SetVisibility(
         SettingsPage fallbackPage = SettingsPage::General;
         if (active.page == SettingsPage::DeveloperTools)
             fallbackPage = SettingsPage::Widgets;
+        else if (active.page == SettingsPage::RuntimeModules)
+        {
+            history_.assign(1, SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"));
+            historyIndex_ = 0;
+            return Route();
+        }
         else if (active.page == SettingsPage::Debug)
             fallbackPage = SettingsPage::About;
         history_.assign(1, SettingsRoute::ForPage(fallbackPage));

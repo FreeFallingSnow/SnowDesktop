@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace snowdesktop::widget_runtime
 {
@@ -44,9 +45,13 @@ private:
         std::string_view key, std::string& error) const;
     bool ConsumeOperation(std::string& error);
     std::string FullKey(std::string_view key) const;
+    void RememberOriginal(const std::string& fullKey,
+        StorageMap::const_iterator found);
 
-    StorageMap original_;
     StorageMap candidate_;
+    // The candidate owns the complete snapshot. Only touched keys need a
+    // second copy to detect transactions that restore their original values.
+    std::unordered_map<std::string, std::optional<std::string>> originals_;
     std::string instancePrefix_;
     std::size_t operationCount_ = 0;
 };

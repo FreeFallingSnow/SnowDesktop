@@ -23,6 +23,7 @@
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Provider.h>
+#include <winrt/Microsoft.UI.Xaml.Documents.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Storage.Streams.h>
@@ -113,6 +114,110 @@ template<class Control> Control PreviewControl(const x::DependencyObject& root, 
     });
     if (!found) throw std::runtime_error("missing preview control: " + winrt::to_string(id));
     return found;
+}
+
+void InspectPackageInlineLayout(const x::FrameworkElement& root,
+    const std::filesystem::path& output, bool oldLineBoxes)
+{
+    namespace d = x::Documents;
+    Settle(root);
+    std::vector<c::RichTextBlock> rows;
+    Walk(root, [&](const x::DependencyObject& node) {
+        const auto text = node.try_as<c::RichTextBlock>();
+        if (!text || text.Blocks().Size() != 1) return;
+        const auto paragraph = text.Blocks().GetAt(0).try_as<d::Paragraph>();
+        if (paragraph && paragraph.Inlines().Size() > 0 &&
+            paragraph.Inlines().GetAt(0).try_as<d::InlineUIContainer>())
+            rows.push_back(text);
+    });
+    if (rows.size() != 3) throw std::runtime_error("expected three package inline preview rows");
+    if (oldLineBoxes)
+    {
+        // Isolated negative control: restore the preceding production line-box
+        // settings while retaining its real tag, font, text and wrapping path.
+        for (const auto& row : rows)
+        {
+            const auto paragraph = row.Blocks().GetAt(0).as<d::Paragraph>();
+            paragraph.LineStackingStrategy(x::LineStackingStrategy::MaxHeight);
+            paragraph.LineHeight(0.0);
+            row.LineStackingStrategy(x::LineStackingStrategy::MaxHeight);
+            row.LineHeight(0.0);
+            row.Padding({0, 0, 0, 0});
+        }
+        Settle(root);
+    }
+    std::ofstream metrics(output / L"package-inline-layout.tsv");
+    std::ofstream characters(output / L"package-inline-characters.tsv");
+    characters << "row\tindex\tcode_unit\toffset\tx\ty\twidth\theight\trow_baseline\traster_scale\tfont_size\n";
+    metrics << "row\ttag_bottom\trow_height\tbaseline_error\tsecond_line_top\tsecond_line_x\tgap\tline_height\tpadding_bottom\n";
+    bool foundWrappedDescription = false;
+    for (std::size_t index = 0; index < rows.size(); ++index)
+    {
+        const auto& row = rows[index];
+        const auto paragraph = row.Blocks().GetAt(0).as<d::Paragraph>();
+        double tagBottom = 0.0, baselineError = 0.0;
+        d::Run description{nullptr};
+        for (const auto& inlineElement : paragraph.Inlines())
+        {
+            if (const auto container = inlineElement.try_as<d::InlineUIContainer>())
+            {
+                const auto tag = container.Child().as<c::Border>();
+                const auto label = tag.Child().as<c::TextBlock>();
+                const auto bounds = tag.TransformToVisual(row).TransformBounds(
+                    {0, 0, static_cast<float>(tag.ActualWidth()), static_cast<float>(tag.ActualHeight())});
+                tagBottom = std::max(tagBottom, static_cast<double>(bounds.Y + bounds.Height));
+                const auto baseline = label.TransformToVisual(row).TransformPoint(
+                    {0, static_cast<float>(label.BaselineOffset())});
+                baselineError = std::max(baselineError,
+                    std::abs(static_cast<double>(baseline.Y) - row.BaselineOffset()));
+            }
+            else if (const auto run = inlineElement.try_as<d::Run>())
+                description = run;
+        }
+        double secondTop = -1.0, secondX = -1.0;
+        if (description && !description.Text().empty())
+        {
+            for (std::uint32_t offset = 0; offset < description.Text().size(); ++offset)
+            {
+                const auto pointer = description.ContentStart().GetPositionAtOffset(
+                    static_cast<int>(offset), d::LogicalDirection::Forward);
+                if (!pointer) break;
+                const auto bounds = pointer.GetCharacterRect(d::LogicalDirection::Forward);
+                characters << index << '\t' << offset << '\t'
+                    << static_cast<std::uint32_t>(description.Text()[offset]) << '\t'
+                    << pointer.Offset() << '\t' << bounds.X << '\t' << bounds.Y << '\t'
+                    << bounds.Width << '\t' << bounds.Height << '\t' << row.BaselineOffset() << '\t'
+                    << row.XamlRoot().RasterizationScale() << '\t' << row.FontSize() << '\n';
+            }
+            characters.flush();
+            const auto first = description.ContentStart().GetCharacterRect(d::LogicalDirection::Forward);
+            for (std::uint32_t offset = 1; offset < description.Text().size(); ++offset)
+            {
+                const auto pointer = description.ContentStart().GetPositionAtOffset(
+                    static_cast<int>(offset), d::LogicalDirection::Forward);
+                if (!pointer) break;
+                const auto bounds = pointer.GetCharacterRect(d::LogicalDirection::Forward);
+                if (bounds.Y > first.Y + 1.0f)
+                {
+                    secondTop = bounds.Y;
+                    secondX = bounds.X;
+                    foundWrappedDescription = true;
+                    break;
+                }
+            }
+        }
+        metrics << index << '\t' << tagBottom << '\t' << row.ActualHeight() << '\t'
+            << baselineError << '\t' << secondTop << '\t' << secondX << '\t'
+            << (secondTop < 0.0 ? -1.0 : secondTop - tagBottom) << '\t'
+            << row.LineHeight() << '\t' << row.Padding().Bottom << '\n';
+        metrics.flush();
+        if (baselineError > 0.75) throw std::runtime_error("package tag and description baselines do not align");
+        if (tagBottom > row.ActualHeight() + 0.75) throw std::runtime_error("package tag exceeds its line box");
+        if (secondTop >= 0.0 && secondTop - tagBottom < 2.0)
+            throw std::runtime_error("package tag overlaps the following description line");
+        if (secondX > 0.75) throw std::runtime_error("wrapped package description does not start at the full left edge");
+    }
+    if (!foundWrappedDescription) throw std::runtime_error("package preview did not exercise a wrapped description");
 }
 
 void InvokePreview(const x::FrameworkElement& element)
@@ -834,7 +939,7 @@ constexpr SettingsPage pages[] = {
     SettingsPage::DesktopPages, SettingsPage::WidgetBehavior, SettingsPage::DesktopCategories,
     SettingsPage::DesktopStyle, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
     SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
-    SettingsPage::IconLibrary,
+    SettingsPage::IconLibrary, SettingsPage::RuntimeModules,
     SettingsPage::AnimationPerformance, SettingsPage::ContextMenu, SettingsPage::ThemeManager,
     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::BackupAndData, SettingsPage::About,
     SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon,
@@ -844,7 +949,7 @@ constexpr SettingsPage pages[] = {
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
     const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled,
     bool scenarioRules, const std::string& focusId, std::string_view calendarScenario,
-    bool searching, bool restore, bool secretInput)
+    bool searching, bool restore, bool secretInput, bool generalNotices)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -879,6 +984,30 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     shell->SetLocalizer([](std::string_view key) { return std::wstring(_LW(std::string(key).c_str())); });
     shell->SetConditionalPagesVisible(true, true);
     shell->SetWidgetSettingsService(&widgets);
+    // The default preview shows a satisfied advanced-feature card. The
+    // general-notices render switches this fixture through every dormant
+    // warning/error variant so production notice layout is captured in place.
+    struct GeneralNoticeFixture
+    {
+        enum class Mode
+        {
+            Registered,
+            SteamInitFailed,
+            SteamOutdated,
+            SteamNotOwned,
+            SteamStorageFailed,
+            SteamSessionOnly,
+            VerificationFailed,
+            SteamUnavailable,
+            SteamOffline,
+            AppMismatch,
+            BridgeUnavailable,
+            StartupInstalled,
+            StartupOther,
+        };
+        Mode mode = Mode::Registered;
+    };
+    const auto generalNotice = std::make_shared<GeneralNoticeFixture>();
     GeneralPageActions general;
     general.onboarding.settingsIndex = [] {
         SettingsSearchIndexInput index; index.developerToolsVisible = index.debugVisible = true;
@@ -888,8 +1017,74 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     general.probeHotkey = [](SettingsHostActions::HotkeyTarget, HotkeyChord, std::uint64_t,
         std::uint64_t, HotkeyRecorder::AvailabilityCompletion complete) { complete(true, {}); };
     general.languageCatalog = [] { return std::vector<SettingsLanguageOption>{{"zh-CN", L"简体中文"}, {"en-US", L"English"}}; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
-    general.queryAdvancedFeatureStatus = [] { GeneralAdvancedFeatureStatus status; status.state = GeneralAdvancedFeatureState::Registered;
-        status.bridgeAvailable = status.registered = status.cardVisible = true; return status; };
+    general.queryAdvancedFeatureStatus = [generalNotice] {
+        GeneralAdvancedFeatureStatus status;
+        status.bridgeAvailable = status.cardVisible = true;
+        const auto mode = generalNotice->mode;
+        if (mode == GeneralNoticeFixture::Mode::Registered)
+        {
+            status.state = GeneralAdvancedFeatureState::Registered;
+            status.registered = true;
+            return status;
+        }
+        if (mode == GeneralNoticeFixture::Mode::SteamSessionOnly)
+        {
+            status.state = GeneralAdvancedFeatureState::Registered;
+            status.registered = true;
+            status.failure = GeneralAdvancedFeatureFailure::StorageError;
+            return status;
+        }
+        status.state = GeneralAdvancedFeatureState::RegistrationFailed;
+        switch (mode)
+        {
+        case GeneralNoticeFixture::Mode::SteamInitFailed:
+            status.connectionProblem = steam_bridge::SteamConnectionProblem::InitializationFailed;
+            break;
+        case GeneralNoticeFixture::Mode::SteamOutdated:
+            status.connectionProblem = steam_bridge::SteamConnectionProblem::ClientOutdated;
+            break;
+        case GeneralNoticeFixture::Mode::SteamNotOwned:
+            status.failure = GeneralAdvancedFeatureFailure::NotOwned;
+            break;
+        case GeneralNoticeFixture::Mode::SteamStorageFailed:
+            status.failure = GeneralAdvancedFeatureFailure::StorageError;
+            break;
+        case GeneralNoticeFixture::Mode::SteamUnavailable:
+            status.connectionProblem = steam_bridge::SteamConnectionProblem::ClientUnavailable;
+            break;
+        case GeneralNoticeFixture::Mode::SteamOffline:
+            status.connectionProblem = steam_bridge::SteamConnectionProblem::Offline;
+            break;
+        case GeneralNoticeFixture::Mode::AppMismatch:
+            status.connectionProblem = steam_bridge::SteamConnectionProblem::AppIdMismatch;
+            break;
+        case GeneralNoticeFixture::Mode::BridgeUnavailable:
+            status.connectionProblem = steam_bridge::SteamConnectionProblem::SteamworksUnavailable;
+            break;
+        default:
+            break;
+        }
+        status.errorDetail =
+            L"steam_api64.dll: SteamAPI_InitEx failed\n"
+            L"result=2 (k_ESteamAPIInitResult_NoSteamClient)\n"
+            L"AppID=3801230 Profile=public-v1.0.12.0\n"
+            L"client=2.10.91.91 (2026-09-18)";
+        return status;
+    };
+    general.queryStartupConflict = [generalNotice] {
+        GeneralStartupConflict conflict;
+        if (generalNotice->mode == GeneralNoticeFixture::Mode::StartupInstalled)
+        {
+            conflict.kind = GeneralStartupConflictKind::InstalledVersionOwnsStartup;
+            conflict.ownerCommand = L"SnowDesktop";
+        }
+        else if (generalNotice->mode == GeneralNoticeFixture::Mode::StartupOther)
+        {
+            conflict.kind = GeneralStartupConflictKind::NonPackagedVersionOwnsStartup;
+            conflict.ownerCommand = L"C:\\Program Files\\SnowDesktop\\SnowDesktop.exe";
+        }
+        return conflict;
+    };
     shell->SetGeneralPageActions(std::move(general));
     WidgetsPageActions widgetActions;
     widgetActions.invoke = [](std::uint64_t, WidgetsPageRequest) {};
@@ -934,6 +1129,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     appearance.appliedFont = [] { return app_fonts::Selection{}; };
     shell->SetPersonalizationPageActions(std::move(appearance));
     DockPageActions dock; dock.themeLibrary = themeLibrary; shell->SetDockPageActions(std::move(dock));
+    const auto modulePreviewPolicy = std::make_shared<runtime_modules::Policy>();
+    shell->SetRuntimeModulesQuery([modulePreviewPolicy](auto completed) {
+        runtime_modules::Snapshot snapshot;
+        for (std::size_t i = 0; i < runtime_modules::kCount; ++i)
+        {
+            runtime_modules::Status status; status.module = static_cast<runtime_modules::Module>(i);
+            status.allowed = modulePreviewPolicy->allowed[i]; status.active = status.allowed && i == 0 ? 1u : 0u;
+            if (i < 2) status.targets.push_back({42, L"explorer.exe", true});
+            snapshot.modules.push_back(std::move(status));
+        }
+        completed(std::move(snapshot));
+    });
     CalendarPageActions calendarActions;
     calendarActions.events = [english](std::uint64_t) -> std::optional<std::vector<calendar::CalendarEvent>> {
         std::vector<calendar::CalendarEvent> result;
@@ -1113,15 +1320,144 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     rows << "page\tlabel\tx\ty\twidth\theight\tpaddingLeft\tpaddingTop\tpaddingRight\tpaddingBottom\teditorX\teditorY\teditorWidth\teditorHeight\n";
     std::ofstream actions(output / L"actions.tsv");
     actions << "page\tgradientDetailsInvoked\tvisibleRemoveStopButtons\n";
+    // Diagnostic capture helpers for notices that are normally closed in the
+    // default preview state. The General notice fixture drives every dormant
+    // advanced-feature/startup warning, then this renders the production
+    // InfoBar in place so the exported PNG matches the real card layout.
+    const auto savePreviewElement = [&](const x::FrameworkElement& element, const std::wstring& name) {
+        x::Media::Imaging::RenderTargetBitmap bitmap;
+        Await(bitmap.RenderAsync(element));
+        const auto pixels = Await(bitmap.GetPixelsAsync());
+        BYTE* bytes = nullptr;
+        winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+        std::string error;
+        if (!preview_png::Save(output / name, bitmap.PixelWidth(), bitmap.PixelHeight(),
+            {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length() / 4}, error))
+            throw std::runtime_error(error);
+    };
+    const auto scrollPreviewElementIntoView = [&](const x::FrameworkElement& element) {
+        const auto scroll = shell->FindName(L"PageScrollViewer").as<c::ScrollViewer>();
+        const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        const double offset = element.TransformToVisual(cards).TransformPoint({0, 0}).Y;
+        (void)scroll.ChangeView(nullptr,
+            winrt::box_value(std::max(0.0, offset - 64.0)).as<winrt::Windows::Foundation::IReference<double>>(),
+            nullptr, true);
+        Settle(shell.as<x::FrameworkElement>());
+    };
+    const auto captureGeneralNotices = [&] {
+        const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        const auto findBars = [&] {
+            std::vector<c::InfoBar> bars;
+            Walk(cards, [&](const x::DependencyObject& node) {
+                if (const auto bar = node.try_as<c::InfoBar>()) bars.push_back(bar);
+            });
+            if (bars.size() < 2) throw std::runtime_error("general page notices are not mounted");
+            return bars;
+        };
+        std::ofstream report(output / L"general-notices.tsv");
+        report << "variant\tseverity\twidth\theight\tvisibleActions\n";
+        struct AdvancedVariant { const wchar_t* slug; GeneralNoticeFixture::Mode mode; };
+        const AdvancedVariant advanced[] = {
+            {L"notice-advanced-steam-init-failed", GeneralNoticeFixture::Mode::SteamInitFailed},
+            {L"notice-advanced-steam-update-required", GeneralNoticeFixture::Mode::SteamOutdated},
+            {L"notice-advanced-steam-not-owned", GeneralNoticeFixture::Mode::SteamNotOwned},
+            {L"notice-advanced-storage-failed", GeneralNoticeFixture::Mode::SteamStorageFailed},
+            {L"notice-advanced-session-only", GeneralNoticeFixture::Mode::SteamSessionOnly},
+            {L"notice-advanced-verification-failed", GeneralNoticeFixture::Mode::VerificationFailed},
+            {L"notice-advanced-steam-unavailable", GeneralNoticeFixture::Mode::SteamUnavailable},
+            {L"notice-advanced-steam-offline", GeneralNoticeFixture::Mode::SteamOffline},
+            {L"notice-advanced-app-mismatch", GeneralNoticeFixture::Mode::AppMismatch},
+            {L"notice-advanced-bridge-unavailable", GeneralNoticeFixture::Mode::BridgeUnavailable}};
+        for (const auto& variant : advanced)
+        {
+            generalNotice->mode = variant.mode;
+            shell->RefreshRuntimeState();
+            Settle(shell.as<x::FrameworkElement>());
+            auto bars = findBars();
+            auto bar = bars[1];
+            if (bar.Visibility() != x::Visibility::Visible || !bar.IsOpen())
+                throw std::runtime_error("advanced-feature notice did not open");
+            scrollPreviewElementIntoView(bar);
+            unsigned actions = 0;
+            Walk(bar, [&](const x::DependencyObject& node) {
+                if (const auto button = node.try_as<c::Button>();
+                    button && button.Visibility() == x::Visibility::Visible) ++actions;
+            });
+            std::wstring fileName = L"general-";
+            fileName += variant.slug;
+            fileName += L".png";
+            savePreviewElement(bar, fileName);
+            report << winrt::to_string(winrt::hstring{variant.slug}) << '\t'
+                   << static_cast<int>(bar.Severity()) << '\t' << bar.ActualWidth()
+                   << '\t' << bar.ActualHeight() << '\t' << actions << '\n';
+        }
+        // The hint asks users to share the details below; capture that state
+        // with the detail expander opened and the production text visible.
+        {
+            generalNotice->mode = GeneralNoticeFixture::Mode::SteamInitFailed;
+            shell->RefreshRuntimeState();
+            Settle(shell.as<x::FrameworkElement>());
+            auto bars = findBars();
+            auto bar = bars[1];
+            const auto cardContent = bar.Parent().try_as<x::FrameworkElement>();
+            if (cardContent)
+            {
+                Walk(cardContent, [&](const x::DependencyObject& node) {
+                    const auto expander = node.try_as<c::Expander>();
+                    if (!expander) return;
+                    bool stringHeader = true;
+                    try { (void)winrt::unbox_value<winrt::hstring>(expander.Header()); }
+                    catch (...) { stringHeader = false; }
+                    if (!stringHeader) return;
+                    expander.IsExpanded(true);
+                    expander.StartBringIntoView();
+                });
+                Settle(shell.as<x::FrameworkElement>());
+                scrollPreviewElementIntoView(cardContent);
+                savePreviewElement(cardContent, L"general-notice-advanced-steam-init-failed-details.png");
+                report << "advanced-steam-init-failed-details\t-1\t" << cardContent.ActualWidth()
+                       << '\t' << cardContent.ActualHeight() << '\t' << 0 << '\n';
+            }
+        }
+        struct StartupVariant { const wchar_t* slug; GeneralNoticeFixture::Mode mode; };
+        const StartupVariant startup[] = {
+            {L"notice-startup-installed-version", GeneralNoticeFixture::Mode::StartupInstalled},
+            {L"notice-startup-other-version", GeneralNoticeFixture::Mode::StartupOther}};
+        for (const auto& variant : startup)
+        {
+            generalNotice->mode = variant.mode;
+            shell->RefreshRuntimeState();
+            Settle(shell.as<x::FrameworkElement>());
+            auto bars = findBars();
+            auto bar = bars[0];
+            if (bar.Visibility() != x::Visibility::Visible || bar.Message().empty())
+                throw std::runtime_error("startup-ownership notice did not open");
+            scrollPreviewElementIntoView(bar);
+            std::wstring fileName = L"general-";
+            fileName += variant.slug;
+            fileName += L".png";
+            savePreviewElement(bar, fileName);
+            report << winrt::to_string(winrt::hstring{variant.slug}) << '\t'
+                   << static_cast<int>(bar.Severity()) << '\t' << bar.ActualWidth()
+                   << '\t' << bar.ActualHeight() << '\t' << 0 << '\n';
+        }
+        generalNotice->mode = GeneralNoticeFixture::Mode::Registered;
+        shell->RefreshRuntimeState();
+        Settle(shell.as<x::FrameworkElement>());
+    };
     std::uint64_t revision = 0;
     bool rendered = false;
     for (const auto page : pages)
     {
         const std::string key(SettingsPageKey(page));
+        if (generalNotices && page != SettingsPage::General) continue;
         if (selected != "all" && selected != key) continue;
         rendered = true;
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
+        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules;
+        snapshot.values.general.runtimeModules.allowed.fill(!disabled);
+        *modulePreviewPolicy = snapshot.values.general.runtimeModules;
         snapshot.values.general.dockEnabled = !disabled;
         snapshot.values.general.statusBar.enabled = !disabled;
         snapshot.values.general.statusBar.batteryPercentage = expanded;
@@ -1202,6 +1538,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 package.name = english ? L"Workspace overview and daily progress" : L"工作区概览与每日进度"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
                 package.name += L" " + std::to_wstring(index + 1);
                 package.description = english ? L"An example component with a longer description for layout review." : L"用于检查长名称、状态与操作排列的示例组件。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                if (index == 1)
+                    package.description = english ? L"A desktop clock inspired by Xiaomi HyperOS, displaying 17:27 as Chinese numerals and full hours in a separate format, with configurable ink color, opacity, horizontal or vertical layout, and handwritten fonts." : L"一个仿小米澎湃系统的桌面时钟，用汉字数字写时间：17:27 显示「十七 二七」，整点显示「十七时」；可配置墨色、透明度、横竖排列与手迹字体。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                if (index == 2 && focusId.starts_with("package-inline-layout"))
+                    package.description.clear();
                 package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
                 package.enabled = index != 2; packages.installed.push_back(std::move(package));
                 WidgetRuntimeDiagnosticSnapshot diagnostic;
@@ -1230,6 +1570,41 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        if (page == SettingsPage::General && focusId == "general.windowSupport")
+        {
+            c::Expander support{nullptr};
+            Walk(cards, [&](const x::DependencyObject& node) {
+                if (const auto candidate = node.try_as<c::Expander>(); candidate &&
+                    x::Automation::AutomationProperties::GetName(candidate) == _LW("settings.general.windowSupport.title"))
+                    support = candidate;
+            });
+            if (!support || !support.IsExpanded()) throw std::runtime_error("window support locator did not expand its card");
+            const auto features = support.Content().as<c::StackPanel>();
+            if (features.Children().Size() != 3) throw std::runtime_error("window support feature list is incomplete");
+            const auto settled = GetTickCount64() + 650;
+            PumpUntil([&] { shell.as<x::FrameworkElement>().UpdateLayout(); return GetTickCount64() >= settled; });
+            std::ofstream details(output / L"window-support.tsv");
+            details << "text\twidth\theight\topacity\n";
+            unsigned count = 0;
+            Walk(features, [&](const x::DependencyObject& node) {
+                if (const auto text = node.try_as<c::TextBlock>())
+                {
+                    if (text.Text().empty() || text.ActualWidth() <= 0 || text.ActualHeight() <= 0 ||
+                        text.Visibility() != x::Visibility::Visible)
+                        throw std::runtime_error("window support feature text is empty or has no visible layout");
+                    details << winrt::to_string(text.Text()) << '\t' << text.ActualWidth() << '\t'
+                        << text.ActualHeight() << '\t' << text.Opacity() << '\n';
+                    ++count;
+                }
+            });
+            if (count != 6) throw std::runtime_error("window support feature titles or descriptions are missing");
+            savePreviewElement(features, L"window-support-features.png");
+        }
+        if (generalNotices)
+        {
+            captureGeneralNotices();
+            return;
+        }
         if (page == SettingsPage::Dock)
         {
             int appearanceActionCount = 0;
@@ -1819,6 +2194,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 Settle(shell.as<x::FrameworkElement>());
             }
         }
+        if (page == SettingsPage::Widgets &&
+            (focusId == "package-inline-layout" || focusId == "package-inline-layout-old"))
+            InspectPackageInlineLayout(shell.as<x::FrameworkElement>(), output,
+                focusId == "package-inline-layout-old");
         if (secretInput && page == SettingsPage::WidgetSettings)
             ExerciseSecretInput(shell.as<x::FrameworkElement>(), widgets, output);
         if (controlsGallery && page == SettingsPage::WidgetSettings)
@@ -1975,6 +2354,349 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     shell->Close(); host.runtime.Detach(); shell = nullptr;
     if (!rendered) throw std::runtime_error("unknown settings page key");
 }
+
+// ---------------------------------------------------------------------------
+// Notice catalog: every InfoBar / inline hint that is hidden in the default
+// settings snapshot, rendered with the production localization strings,
+// severity, close button and action button. This is an isolated XAML gallery,
+// not a backend-driven state trace; the General page notices are additionally
+// rendered in place through `general-notices` so their real card layout can be
+// checked there.
+// ---------------------------------------------------------------------------
+struct NoticeCatalogSpec
+{
+    const wchar_t* page;
+    const wchar_t* name;
+    const wchar_t* slug;
+    c::InfoBarSeverity severity = c::InfoBarSeverity::Informational;
+    std::wstring title;
+    std::wstring message;
+    std::wstring action;
+    bool closable = true;
+    double width = 940.0;
+    double inlineOpacity = 0.0;
+    double inlineFontSize = 0.0;
+};
+
+std::wstring NoticeLocaleText(const char* key)
+{
+    return std::wstring(_LW(key));
+}
+
+std::wstring NoticeFormatFirst(std::wstring text, std::wstring_view marker,
+    std::wstring_view value)
+{
+    const auto position = text.find(marker);
+    if (position != std::wstring::npos) text.replace(position, marker.size(), value);
+    return text;
+}
+
+const wchar_t* NoticeSeverityLabel(c::InfoBarSeverity severity)
+{
+    switch (severity)
+    {
+    case c::InfoBarSeverity::Error: return L"Error";
+    case c::InfoBarSeverity::Warning: return L"Warning";
+    case c::InfoBarSeverity::Success: return L"Success";
+    default: return L"Information";
+    }
+}
+
+std::vector<NoticeCatalogSpec> BuildNoticeCatalog()
+{
+    std::vector<NoticeCatalogSpec> notices;
+    // Settings shell level notices.
+    notices.push_back({L"Settings shell", L"Error status", L"shell-status-error",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.status.error"),
+        NoticeLocaleText("settings.status.saveFailed"), {}, true, 1180.0});
+    notices.push_back({L"Settings shell", L"Advanced features locked", L"shell-advanced-locked",
+        c::InfoBarSeverity::Informational, NoticeLocaleText("settings.general.advancedFeatures"),
+        NoticeLocaleText("settings.general.advancedFeatures.unlockRequired"), {}, true, 1180.0});
+    notices.push_back({L"Settings shell", L"Focus prerequisite", L"shell-focus-prerequisite",
+        c::InfoBarSeverity::Informational, {},
+        NoticeFormatFirst(NoticeLocaleText("settings.search.prerequisite.enable"), L"{0}", L"Dock"),
+        {}, true, 1000.0});
+    // Personalization.
+    notices.push_back({L"Personalization", L"Restart to apply font", L"personalization-font-restart",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("font.restartRequired"),
+        NoticeLocaleText("font.restartNow"), false, 940.0});
+    // Components page feedback bars (main, developer and debug share layout).
+    notices.push_back({L"Components", L"Operation error", L"components-feedback-error",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.status.error"),
+        NoticeLocaleText("app.settings.widgets_error_state_read"), {}, true, 940.0});
+    notices.push_back({L"Components", L"Developer operation error", L"components-developer-error",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.status.error"),
+        NoticeLocaleText("app.settings.widgets_error_state_read"), {}, true, 940.0});
+    notices.push_back({L"Components", L"Debug operation error", L"components-debug-error",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.status.error"),
+        NoticeLocaleText("app.settings.widgets_error_state_read"), {}, true, 940.0});
+    // Dock and taskbar runtime notices.
+    notices.push_back({L"Dock", L"Taskbar hiding failed", L"dock-suppress-failed",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("settings.dock.suppressTaskbar.failed"),
+        {}, false, 940.0});
+    notices.push_back({L"Dock", L"Taskbar connecting", L"dock-suppress-connecting",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("app.settings.taskbar_connecting"),
+        {}, false, 940.0});
+    notices.push_back({L"Dock", L"Icon operation failed", L"dock-icon-status-error",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("iconLibrary.stale"), {}, true, 940.0});
+    notices.push_back({L"Dock", L"Tray target invalid", L"dock-tray-target-invalid",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("settings.dock.trayInvalidTarget"),
+        {}, false, 940.0});
+    notices.push_back({L"Taskbar", L"Connecting", L"taskbar-connecting",
+        c::InfoBarSeverity::Informational, NoticeLocaleText("settings.taskbar.defaultAppearance"),
+        NoticeLocaleText("app.settings.taskbar_connecting"), {}, true, 940.0});
+    notices.push_back({L"Taskbar", L"Unsupported system", L"taskbar-unsupported",
+        c::InfoBarSeverity::Warning, NoticeLocaleText("settings.taskbar.defaultAppearance"),
+        NoticeLocaleText("app.settings.taskbar_unsupported"), {}, true, 940.0});
+    notices.push_back({L"Taskbar", L"Connect failed", L"taskbar-connect-failed",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.taskbar.defaultAppearance"),
+        NoticeLocaleText("app.settings.taskbar_connect_failed"), {}, true, 940.0});
+    // Calendar notices (always Warning and not closable in production).
+    notices.push_back({L"Calendar", L"Edit conflict", L"calendar-conflict",
+        c::InfoBarSeverity::Warning, {}, NoticeLocaleText("settings.calendar.conflict"), {}, false, 940.0});
+    notices.push_back({L"Calendar", L"Unsaved draft", L"calendar-unsaved",
+        c::InfoBarSeverity::Warning, {}, NoticeLocaleText("settings.calendar.unsavedDraft"), {}, false, 940.0});
+    notices.push_back({L"Calendar", L"Invalid values", L"calendar-invalid",
+        c::InfoBarSeverity::Warning, {}, NoticeLocaleText("settings.calendar.invalid"), {}, false, 940.0});
+    // Pages and grid result notices.
+    notices.push_back({L"Pages & grid", L"Apply failed", L"pages-apply-failed",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.pages.status.error"),
+        NoticeLocaleText("settings.pages.status.failed"), {}, true, 940.0});
+    notices.push_back({L"Pages & grid", L"Stale layout", L"pages-stale",
+        c::InfoBarSeverity::Warning, NoticeLocaleText("settings.pages.status.changed"),
+        NoticeLocaleText("settings.pages.status.stale"), {}, true, 940.0});
+    notices.push_back({L"Pages & grid", L"Applied", L"pages-applied",
+        c::InfoBarSeverity::Success, NoticeLocaleText("settings.pages.status.success"),
+        NoticeLocaleText("settings.pages.added"), {}, true, 940.0});
+    // Backup and data result notice.
+    notices.push_back({L"Backup & data", L"Operation failed", L"backup-operation-error",
+        c::InfoBarSeverity::Error, NoticeLocaleText("settings.nav.backup"),
+        NoticeLocaleText("settings.backup.error.dispatcherUnavailable"), {}, true, 940.0});
+    // Icon library status variants.
+    notices.push_back({L"Icon library", L"Working", L"icon-library-working",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("iconLibrary.working"), {}, true, 940.0});
+    notices.push_back({L"Icon library", L"Workshop item published", L"icon-library-published",
+        c::InfoBarSeverity::Informational, {},
+        NoticeLocaleText("iconWorkshop.openItem") +
+            L": https://steamcommunity.com/sharedfiles/filedetails/?id=3801234567",
+        {}, true, 940.0});
+    notices.push_back({L"Icon library", L"Operation error", L"icon-library-error",
+        c::InfoBarSeverity::Error, {},
+        NoticeLocaleText("iconLibrary.unavailable") +
+            L"\nSample_Icon_01.png\nSample_Icon_02.png\n… (3)",
+        {}, true, 940.0});
+    // Large icon errors.
+    notices.push_back({L"Large icon", L"Locked", L"large-icon-locked",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("largeIcon.locked"), {}, false, 940.0});
+    notices.push_back({L"Large icon", L"Save failed", L"large-icon-save-failed",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("largeIcon.saveFailed"), {}, false, 940.0});
+    // Theme library feedback and save validation.
+    notices.push_back({L"Theme manager", L"Operation failed", L"theme-operation-failed",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("themeLibrary.operationFailed"), {}, true, 940.0});
+    notices.push_back({L"Theme manager", L"Name required", L"theme-name-required",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("themeLibrary.nameRequired"), {}, true, 940.0});
+    // Icon appearance page feedback: the presenter now marks failures as
+    // errors and clears the banner on a successful poll.
+    notices.push_back({L"Icon appearance", L"Operation error", L"icon-appearance-error",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("iconLibrary.unavailable"), {}, true, 940.0});
+    // Status bar device-control feedback.
+    notices.push_back({L"Status bar", L"Device operation failed", L"system-control-failed",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("controlCenter.failed"), {}, true, 940.0});
+    notices.push_back({L"Status bar", L"Device access denied", L"system-control-access-denied",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("controlCenter.accessDenied"), {}, true, 940.0});
+    // Quick navigation configuration validation.
+    notices.push_back({L"Quick navigation", L"Invalid configuration", L"quicknav-invalid",
+        c::InfoBarSeverity::Error, {}, NoticeLocaleText("quickNav.search.invalidConfiguration"),
+        {}, false, 940.0});
+    // Advanced-feature inline usage hints under the large-icon description.
+    notices.push_back({L"General", L"Large icon usage", L"inline-advanced-usage",
+        c::InfoBarSeverity::Informational, {},
+        NoticeLocaleText("settings.general.advancedFeatures.largeIconsUsage"), {}, true, 940.0, 0.68, 12.0});
+    notices.push_back({L"General", L"Advanced features unavailable", L"inline-advanced-unavailable",
+        c::InfoBarSeverity::Informational, {},
+        NoticeLocaleText("settings.general.advancedFeatures.availableAfterUnlock"), {}, true, 940.0, 0.68, 12.0});
+    // Context menu empty/error state text.
+    notices.push_back({L"Context menu", L"Load failed", L"inline-context-menu-failed",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("settings.contextMenu.failed"), {}, true, 940.0, 1.0});
+    notices.push_back({L"Context menu", L"Nothing available", L"inline-context-menu-empty",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("settings.contextMenu.empty"), {}, true, 940.0, 1.0});
+    // Font import error text on the personalization font card.
+    notices.push_back({L"Personalization", L"Font import failed", L"inline-font-import-failed",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("font.importFailed"), {}, true, 940.0, 1.0});
+    // Status bar Wi-Fi location denial text.
+    notices.push_back({L"Status bar", L"Wi-Fi location denied", L"inline-wifi-location-denied",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("controlCenter.locationDenied"), {}, true, 940.0, 1.0});
+    // Inline (non-InfoBar) conditional hints on settings pages.
+    notices.push_back({L"Large icon", L"Batch edit hint", L"inline-large-icon-batch-hint",
+        c::InfoBarSeverity::Informational, {},
+        NoticeFormatFirst(NoticeLocaleText("largeIcon.batchHint"), L"{count}", L"3"), {}, true, 940.0, 1.0});
+    notices.push_back({L"Widget settings", L"Field validation", L"inline-widget-validation",
+        c::InfoBarSeverity::Informational, {},
+        L"Value must be between 1 and 100. / 数值必须在 1 到 100 之间。", // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        {}, true, 940.0, 0.86});
+    notices.push_back({L"Widget settings", L"Unknown field diagnostic", L"inline-widget-diagnostic",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("app.settings.widget.unknown_type"),
+        {}, true, 940.0, 0.72});
+    notices.push_back({L"Widget settings", L"Reference unavailable", L"inline-widget-reference",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("iconAppearance.unavailable"),
+        {}, true, 940.0, 1.0, 12.0});
+    notices.push_back({L"Widget settings", L"Search has no results", L"inline-widget-search-empty",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("app.nav.no_results"), {}, true, 940.0, 1.0});
+    notices.push_back({L"Icon library", L"No matches", L"inline-icon-library-no-matches",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("iconLibrary.noMatches"), {}, true, 940.0, 1.0});
+    notices.push_back({L"Pages & grid", L"Monitor mapping hint", L"inline-pages-mapping",
+        c::InfoBarSeverity::Informational, {}, NoticeLocaleText("settings.pages.mapping.message"),
+        {}, true, 940.0, 0.68, 12.0});
+    return notices;
+}
+
+void ExportNoticeCatalog(const std::filesystem::path& output, bool dark,
+    const std::string& locale, int width, int height)
+{
+    Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
+    if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
+    Locale::Instance().SetLanguage(locale.c_str());
+    Apartment apartment; winrt::check_hresult(apartment.result);
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    RenderHost host;
+    if (!host.runtime.Initialize()) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
+    WNDCLASSW previewClass{};
+    previewClass.lpfnWndProc = RenderHost::Procedure;
+    previewClass.hInstance = GetModuleHandleW(nullptr);
+    previewClass.lpszClassName = L"SnowDesktop.SettingsRenderHost";
+    if (!RegisterClassW(&previewClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) winrt::throw_last_error();
+    host.window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
+        previewClass.lpszClassName, L"SnowDesktop offline notice catalog", WS_POPUP,
+        -32000, -32000, width, height, nullptr, nullptr, GetModuleHandleW(nullptr), &host.runtime);
+    if (!host.window) winrt::throw_last_error();
+    ShowWindow(host.window, SW_SHOWNOACTIVATE);
+    const double scale = GetDpiForWindow(host.window) / 96.;
+    SetWindowPos(host.window, nullptr, 0, 0, static_cast<int>(std::ceil(width * scale)),
+        static_cast<int>(std::ceil(height * scale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    auto cardStyle = x::Markup::XamlReader::Load(
+        LR"(<Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Border">
+              <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
+              <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+              <Setter Property="BorderThickness" Value="1"/>
+              <Setter Property="CornerRadius" Value="4"/>
+              <Setter Property="Padding" Value="16"/>
+            </Style>)").as<x::Style>();
+    auto root = x::Markup::XamlReader::Load(
+        LR"(<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                   Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+              <ScrollViewer x:Name="NoticeScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="NoticeList" Spacing="28" Margin="24,24,24,48" HorizontalAlignment="Center"/>
+              </ScrollViewer>
+            </Grid>)").as<c::Grid>();
+    root.RequestedTheme(dark ? x::ElementTheme::Dark : x::ElementTheme::Light);
+    const auto scroll = root.FindName(L"NoticeScroll").as<c::ScrollViewer>();
+    const auto list = root.FindName(L"NoticeList").as<c::StackPanel>();
+
+    const auto catalog = BuildNoticeCatalog();
+    if (catalog.empty()) throw std::runtime_error("notice catalog is empty");
+    std::vector<c::StackPanel> wrappers;
+    wrappers.reserve(catalog.size());
+    for (const auto& spec : catalog)
+    {
+        c::StackPanel wrapper;
+        wrapper.Spacing(6.0);
+        wrapper.Width(spec.width);
+        wrapper.HorizontalAlignment(x::HorizontalAlignment::Center);
+        c::TextBlock caption;
+        caption.FontSize(12.0);
+        caption.Opacity(0.7);
+        caption.TextWrapping(x::TextWrapping::Wrap);
+        std::wstring captionText = spec.page;
+        captionText += L" · ";
+        captionText += spec.name;
+        if (spec.inlineOpacity <= 0.0)
+        {
+            captionText += L"  [";
+            captionText += NoticeSeverityLabel(spec.severity);
+            captionText += L"]";
+        }
+        else
+        {
+            captionText += L"  [inline hint]";
+        }
+        caption.Text(captionText);
+        c::Border card;
+        card.Style(cardStyle);
+        if (spec.inlineOpacity > 0.0)
+        {
+            c::TextBlock hint;
+            hint.Text(spec.message);
+            hint.TextWrapping(x::TextWrapping::Wrap);
+            hint.Opacity(spec.inlineOpacity);
+            if (spec.inlineFontSize > 0.0) hint.FontSize(spec.inlineFontSize);
+            card.Child(hint);
+        }
+        else
+        {
+            c::InfoBar bar;
+            bar.Severity(spec.severity);
+            bar.IsClosable(spec.closable);
+            bar.IsOpen(true);
+            if (!spec.title.empty()) bar.Title(spec.title);
+            bar.Message(spec.message);
+            if (!spec.action.empty())
+            {
+                c::Button action;
+                action.Content(winrt::box_value(spec.action));
+                bar.ActionButton(action);
+            }
+            card.Child(bar);
+        }
+        wrapper.Children().Append(caption);
+        wrapper.Children().Append(card);
+        list.Children().Append(wrapper);
+        wrappers.push_back(std::move(wrapper));
+    }
+    if (!host.runtime.Attach(host.window, root)) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
+    PumpUntil([&] { root.UpdateLayout(); return root.ActualWidth() > 0; });
+    Settle(root);
+    std::ofstream manifest(output / L"notice-manifest.tsv");
+    manifest << "index\tslug\tpage\tname\tsurface\tseverity\tclosable\taction\twidthDip\theightDip\twidthPx\theightPx\n";
+    for (std::size_t index = 0; index < wrappers.size(); ++index)
+    {
+        const auto& spec = catalog[index];
+        const auto& wrapper = wrappers[index];
+        const double offset = wrapper.TransformToVisual(list).TransformPoint({0, 0}).Y;
+        (void)scroll.ChangeView(nullptr,
+            winrt::box_value(std::max(0.0, offset - 24.0)).as<winrt::Windows::Foundation::IReference<double>>(),
+            nullptr, true);
+        Settle(root);
+        x::Media::Imaging::RenderTargetBitmap bitmap;
+        Await(bitmap.RenderAsync(wrapper));
+        const auto pixels = Await(bitmap.GetPixelsAsync());
+        BYTE* bytes = nullptr;
+        winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+        std::wstring fileStamp = index + 1 < 10 ? L"0" : L"";
+        fileStamp += std::to_wstring(index + 1);
+        std::wstring fileName = fileStamp + L"-" + spec.slug + L".png";
+        std::string error;
+        if (!preview_png::Save(output / fileName, bitmap.PixelWidth(), bitmap.PixelHeight(),
+            {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length() / 4}, error))
+            throw std::runtime_error(error);
+        std::wstring message = spec.message;
+        std::replace(message.begin(), message.end(), L'\t', L' ');
+        std::replace(message.begin(), message.end(), L'\n', L' ');
+        manifest << index + 1 << '\t' << winrt::to_string(winrt::hstring{spec.slug}) << '\t'
+                 << winrt::to_string(winrt::hstring{spec.page}) << '\t'
+                 << winrt::to_string(winrt::hstring{spec.name}) << '\t'
+                 << (spec.inlineOpacity > 0.0 ? "inline" : "infobar") << '\t'
+                 << winrt::to_string(winrt::hstring{NoticeSeverityLabel(spec.severity)}) << '\t'
+                 << (spec.closable ? 1 : 0) << '\t'
+                 << winrt::to_string(winrt::hstring{spec.action}) << '\t'
+                 << spec.width << '\t' << wrapper.ActualHeight() << '\t'
+                 << bitmap.PixelWidth() << '\t' << bitmap.PixelHeight() << '\t'
+                 << winrt::to_string(winrt::hstring{message}) << '\n';
+    }
+    manifest.flush();
+    host.runtime.Detach();
+}
 }
 
 std::optional<int> TryRunSettingsVisualPreview()
@@ -1998,13 +2720,22 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
         const bool calendarState = state == L"calendar-dates" || state == L"calendar-weekly" ||
             state == L"calendar-monthly" || state == L"calendar-occurrence";
-        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && state != L"searching" && state != L"restore" && state != L"secret-input" && !calendarState) throw std::runtime_error("invalid disclosure state");
-        Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
-            state == L"expanded" || state == L"custom" || state == L"scenarios",
-            state == L"custom" || state == L"scenarios", state == L"disabled", state == L"scenarios",
-            count == 10 ? winrt::to_string(args[9]) : std::string{}, calendarState ? winrt::to_string(state) : std::string{},
-            state == L"searching", state == L"restore", state == L"secret-input");
-        std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
+        const bool notices = state == L"notices";
+        const bool generalNotices = state == L"general-notices";
+        if (!notices && !generalNotices && state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && state != L"searching" && state != L"restore" && state != L"secret-input" && !calendarState) throw std::runtime_error("invalid disclosure state");
+        if (notices)
+            ExportNoticeCatalog(output, theme == L"dark", winrt::to_string(args[5]), width, height);
+        else
+            Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
+                state == L"expanded" || state == L"custom" || state == L"scenarios",
+                state == L"custom" || state == L"scenarios", state == L"disabled", state == L"scenarios",
+                count == 10 ? winrt::to_string(args[9]) : std::string{}, calendarState ? winrt::to_string(state) : std::string{},
+                state == L"searching", state == L"restore", state == L"secret-input", generalNotices);
+        std::ofstream(output / L"result.txt")
+            << "passed\n"
+            << (notices
+                    ? "Isolated production XAML notice catalog; representative localized strings, no backend state trace.\n"
+                    : "Isolated production XAML, example data; no desktop material or interaction acceptance.\n");
         return 0;
     }
     catch (const winrt::hresult_error& error)

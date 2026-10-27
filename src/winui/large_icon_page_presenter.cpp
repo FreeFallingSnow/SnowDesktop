@@ -89,7 +89,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             reinterpret_cast<IUnknown**>(titleFonts.GetAddressOf()));
         return large_icon_render_rules::CanSelectTitleDirection(draft, direction, snapshot.frameWidth, snapshot.frameHeight,
             snapshot.imageWidth, snapshot.imageHeight, snapshot.unitScale,
-            large_icon_render_rules::MeasureTitleText(titleFonts.Get(), draft, snapshot.name, snapshot.unitScale));
+            large_icon_render_rules::MeasureTitleText(titleFonts.Get(), draft, snapshot.name, snapshot.unitScale,
+                snapshot.frameWidth, snapshot.frameHeight));
     }
     void Reload()
     {

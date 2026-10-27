@@ -11,10 +11,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <string>
 
 struct ID2D1Device;
+namespace snowdesktop::popup_motion_curve { struct Timeline; }
 
 /**
  * @brief 独立桌面玻璃合成窗口。
@@ -41,6 +43,8 @@ public:
     bool InitializePopup(
         HWND contentWindow, bool topmost = true,
         bool initiallyVisible = true);
+    /** @brief 从窗口线程发起后台效果工厂准备；future 仅用于观察，打开弹窗不等待。 */
+    std::shared_future<bool> PrepareBlurFactoryInBackground(float blurRadius);
     /**
      * @brief 安全同步 popup 内容与 backdrop 的 Z 序及 TOPMOST 状态。
      * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。
@@ -76,13 +80,15 @@ public:
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
-    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度。 */
+    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度；弹窗可提供与内容层共用的弹簧轨迹。 */
     [[nodiscard]] bool StartVisualTransformAnimation(
         float fromScale, float toScale,
         float fromOpacity, float toOpacity,
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
-        float normalizedStartSlope = 0.0f);
+        float normalizedStartSlope = 0.0f,
+        const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr,
+        const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
@@ -165,6 +171,8 @@ public:
     const std::wstring& LastError() const;
 
 private:
+    bool UpdatePanel(const RECT& frame, float cornerRadius, float blurRadius,
+        std::uintptr_t ownerKey, bool smoothCorners, bool customClip);
     bool SetDeformationTransform(const RECT& panelFrame, const RECT& dockFrame,
         int edge, float collapsed, float opacity, bool attraction);
     bool InitializeInternal(

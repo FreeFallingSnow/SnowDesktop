@@ -95,7 +95,7 @@ struct Fixture
     HANDLE process = nullptr;
     HWND target = nullptr;
     std::wstring executable;
-    void Start()
+    void Start(const wchar_t* desktop = nullptr)
     {
         SECURITY_ATTRIBUTES attributes{sizeof(attributes), nullptr, TRUE};
         mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0, sizeof(HWND), nullptr);
@@ -109,12 +109,19 @@ struct Fixture
             std::to_wstring(reinterpret_cast<std::uintptr_t>(mapping)) + L" " +
             std::to_wstring(reinterpret_cast<std::uintptr_t>(ready));
         STARTUPINFOW startup{sizeof(startup)};
+        startup.lpDesktop = const_cast<wchar_t*>(desktop);
         PROCESS_INFORMATION child{};
         Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
             CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != FALSE,
             "start owned preview fixture process");
         process = child.hProcess;
         CloseHandle(child.hThread);
+        // Process identity uses the resolved image path, including when the
+        // fixture was launched through a build-directory junction.
+        DWORD imagePathSize = static_cast<DWORD>(std::size(path));
+        Require(QueryFullProcessImageNameW(process, 0, path, &imagePathSize) != FALSE,
+            "resolve the actual owned preview fixture image path");
+        executable.assign(path, imagePathSize);
         const HANDLE waits[]{ready, process};
         Require(WaitForMultipleObjects(2, waits, FALSE, 10000) == WAIT_OBJECT_0,
             "owned preview fixture must signal readiness before exiting");
@@ -155,6 +162,8 @@ struct Fixture
         return window;
     }
 };
+
+#include "native_running_refresh_cases.h"
 
 inline void Run(int onlyVariant = -1)
 {
@@ -214,5 +223,6 @@ inline void Run(int onlyVariant = -1)
         expect({owned[0], owned[2], owned[3]}, "a newly opened window appends after survivors, including recycled HWNDs");
     }
     std::cout << "actual host preview opening-order cases passed\n";
+    if (onlyVariant != 1) RunRunningRefresh();
 }
 }

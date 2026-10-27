@@ -269,12 +269,19 @@ void TestShippedTaskVocabulary(const std::filesystem::path& projectRoot)
     struct Task { const char* language; const wchar_t* query; const char* focus; SettingsPage page; };
     const Task tasks[]{
         {"zh-CN", L"Dock自动隐藏", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {"zh-CN", L"状态栏 仅在唤起时显示", "statusBar.showOnlyWhenSummoned", SettingsPage::StatusBar},
+        {"zh-CN", L"状态栏 屏幕边缘唤起方式", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
+        {"zh-CN", L"状态栏 悬停", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
+        {"zh-CN", L"状态栏 扫动", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
+        {"en-US", L"Status bar screen edge reveal", "statusBar.edgeRevealGesture", SettingsPage::StatusBar},
         {"zh-CN", L"屏幕边缘悬停延时", "dock.edgeHoverDelayMs", SettingsPage::Dock},
         {"en-US", L"Screen edge hover delay", "dock.edgeHoverDelayMs", SettingsPage::Dock},
         {"zh-CN", L"多显示器布局", "pages.order", SettingsPage::DesktopPages},
         {"zh-CN", L"搜索框颜色", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
         {"zh-CN", L"组件缩放指针", "personalization.widgetTransformCursors", SettingsPage::WidgetBehavior},
         {"zh-CN", L"电量百分比", "statusBar.batteryPercentage", SettingsPage::StatusBar},
+        {"zh-CN", L"控制中心显示", "statusBar.controlCenterDisplay", SettingsPage::StatusBar},
+        {"zh-CN", L"通知中心", "statusBar.notifications", SettingsPage::StatusBar},
         {"zh-CN", L"悬停切换组标签", "personalization.groupTabHoverSwitch", SettingsPage::WidgetBehavior},
         {"zh-CN", L"悬停切换分类标签", "personalization.categoryTabHoverSwitch", SettingsPage::WidgetBehavior},
         {"zh-CN", L"分类与规则", "desktop.categoryRules", SettingsPage::DesktopCategories},
@@ -284,6 +291,8 @@ void TestShippedTaskVocabulary(const std::filesystem::path& projectRoot)
         {"en-US", L"automatically hide Dock", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
         {"en-US", L"multi monitor layout", "pages.order", SettingsPage::DesktopPages},
         {"en-US", L"battery percentage", "statusBar.batteryPercentage", SettingsPage::StatusBar},
+        {"en-US", L"Control center display", "statusBar.controlCenterDisplay", SettingsPage::StatusBar},
+        {"en-US", L"Notification center", "statusBar.notifications", SettingsPage::StatusBar},
         {"en-US", L"Tab hover delay", "personalization.tabHoverDelayMs", SettingsPage::WidgetBehavior},
         {"en-US", L"search panel color", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
         {"en-US", L"Type chip corner radius", "quickNav.layout.searchRadius", SettingsPage::QuickNavigation},
@@ -398,6 +407,16 @@ int main(int argc, char* argv[])
         Check(contains("contextMenu.expandQuickActions") == (style < 5) &&
             contains("contextMenu.hidePageManagement") && contains("contextMenu.hideMoreManagement"),
             "menu search exposes expansion only outside Win10 styles and always exposes page hiding");
+    }
+    {
+        SettingsSearchIndexInput modules;
+        StaticSettingSearchDescriptor descriptor;
+        descriptor.page = SettingsPage::RuntimeModules; descriptor.focusId = "runtimeModules.taskbar"; descriptor.label = L"ModuleLoadingProbe";
+        modules.staticSettings.push_back(descriptor);
+        SettingsSearchIndex hidden(modules);
+        Check(hidden.Search(L"ModuleLoadingProbe").empty(), "hidden advanced modules cannot leak through search");
+        modules.advancedSettingsVisible = true; hidden.Rebuild(modules);
+        Check(hidden.Search(L"ModuleLoadingProbe").size() == 1, "module search follows the About visibility preference");
     }
     TestNavigationAndFocus();
     TestConditionalPagesAndNoLeaks();

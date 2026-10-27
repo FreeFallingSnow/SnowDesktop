@@ -101,7 +101,8 @@ std::string ExecutableIdentity() { return FileIdentity(ExecutablePath()); }
 
 void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
 {
-    if (childCommand != L"--settings-ui" && childCommand != L"--shell-menu-helper")
+    if (childCommand != L"--settings-ui" && childCommand != L"--shell-menu-helper" &&
+        childCommand != L"--start-menu-helper")
         throw ProtocolError("invalid private child mode");
     if (Running()) throw ProtocolError("settings process is already running");
     impl_->Stop();
@@ -125,11 +126,13 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     if (!job.value || !SetInformationJobObject(job.value, JobObjectExtendedLimitInformation,
         &limits, sizeof(limits))) throw ProtocolError("cannot supervise settings process");
 
+    const bool isolateExtensionPoints = childCommand == L"--shell-menu-helper";
+    const DWORD attributeCount = isolateExtensionPoints ? 2u : 1u;
     SIZE_T attributeBytes = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
+    InitializeProcThreadAttributeList(nullptr, attributeCount, 0, &attributeBytes);
     std::vector<std::byte> storage(attributeBytes);
     auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
-    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attributeBytes))
+    if (!InitializeProcThreadAttributeList(attributes, attributeCount, 0, &attributeBytes))
         throw ProtocolError("cannot initialize settings handle allowlist");
     struct AttributeGuard
     {
@@ -138,7 +141,7 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     } attributeGuard{attributes};
     std::vector<HANDLE> inherited{childRead.value, childWrite.value, inheritedParent.value};
     Handle nullStream;
-    if (childCommand == L"--shell-menu-helper")
+    if (childCommand != L"--settings-ui")
     {
         // Extensions may retain or pass standard handles to another process.
         // The helper talks through its private IPC only; never lend it the
@@ -153,6 +156,13 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited.data(),
                                    inherited.size() * sizeof(HANDLE), nullptr, nullptr))
         throw ProtocolError("cannot set settings handle allowlist");
+    // Unrelated global hooks can re-enter Shell initialization inside provider
+    // DLL loading. Isolate this query helper at creation; registered COM Shell
+    // extensions still load normally. Settings and Start UI keep their policy.
+    DWORD64 extensionPointPolicy = PROCESS_CREATION_MITIGATION_POLICY_EXTENSION_POINT_DISABLE_ALWAYS_ON;
+    if (isolateExtensionPoints && !UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+        &extensionPointPolicy, sizeof(extensionPointPolicy), nullptr, nullptr))
+        throw ProtocolError("cannot set Shell menu extension-point isolation");
     const auto executable = ExecutablePath();
     std::wstring command = L"\"" + executable + L"\" " + std::wstring(childCommand) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(childRead.value)) + L" " +
@@ -164,7 +174,7 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     // Background menu queries must not trigger Windows' startup busy cursor.
     // This controls this helper's launch feedback; third-party subprocesses
     // still need the query-session lifetime bound in the Shell menu host.
-    if (childCommand == L"--shell-menu-helper")
+    if (childCommand != L"--settings-ui")
         startup.StartupInfo.dwFlags |= STARTF_FORCEOFFFEEDBACK;
     if (nullStream.value)
     {
@@ -188,7 +198,7 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     }
     Handle peer;
     if (!DuplicateHandle(GetCurrentProcess(), child.value, GetCurrentProcess(),
-        &peer.value, SYNCHRONIZE, FALSE, 0))
+        &peer.value, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0))
         throw ProtocolError("cannot retain settings process identity");
     channel.Open(parentRead.Detach(), parentWrite.Detach(), peer.Detach());
     impl_->process = child.Detach();

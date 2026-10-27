@@ -49,16 +49,6 @@ constexpr bool IsForegroundFocusReady(
         (!requireForegroundTarget || foregroundMatchesTarget);
 }
 
-constexpr bool ShouldAttachForegroundInputQueue(
-    unsigned long currentThread,
-    unsigned long foregroundThread,
-    bool foregroundFocusReady)
-{
-    return !foregroundFocusReady &&
-        currentThread != 0 && foregroundThread != 0 &&
-        currentThread != foregroundThread;
-}
-
 enum class AltF4Action
 {
     PassThrough,

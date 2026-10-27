@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
+#include "dock_input_diagnostics.h"
 #include "platform/foreground_fullscreen.h"
 #include <algorithm>
 
@@ -40,6 +43,7 @@ LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(
          message == WM_XBUTTONDOWN ||
          message == WM_XBUTTONUP))
     {
+        snowdesktop::dock_input_diagnostics::ObserveMouse(message, data);
         floatingDockEdgeSwipeMouseActivity_.store(
             true, std::memory_order_relaxed);
     }
@@ -57,8 +61,8 @@ bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()
             instance_, &DesktopApp::FloatingDockEdgeSwipeMouseHookProc))
         return true;
 
-    WriteDiagnosticLogEntry(
-        L"Floating Dock edge-swipe mouse hook FAILED");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+        L"Floating Dock edge-swipe mouse hook FAILED", DiagnosticLogLevel::Warning);
     return false;
 }
 
@@ -167,14 +171,14 @@ void DesktopApp::ApplyFloatingDockHotkey()
             const std::wstring message =
                 L"Floating Dock hotkey " + hotkeyText +
                 L" registered";
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str());
         }
         else
         {
             const std::wstring message =
                 L"Floating Dock hotkey " + hotkeyText +
                 L" registration failed";
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message.c_str(), DiagnosticLogLevel::Warning);
         }
     }
 
@@ -205,7 +209,9 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
 
     const ULONGLONG now = GetTickCount64();
     const bool internalDragActive =
-        dragSession_.IsActive();
+        dragSession_.IsActive() ||
+        (widgetAction_ == WidgetAction::Move &&
+            mouseDownWidgetIndex_ < widgets_.size());
     const bool oleDragActive =
         dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active();
     const bool dragRevealActive =
@@ -220,7 +226,8 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
             continue;
         }
         PersistentDockHost& host = *ownedHost;
-        if (FullscreenBlocksDockReveal(DockRevealSource::Gesture, host.monitor))
+        if (!IsDockStartMenuActive(host.monitor) &&
+            FullscreenBlocksDockReveal(DockRevealSource::Gesture, host.monitor))
         {
             host.edgeHoverRequested = false;
             if (host.passivelyRevealed)
@@ -311,6 +318,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 MONITOR_DEFAULTTONEAREST) == host.monitor;
         }
         const bool associatedSurfaceActive =
+            IsDockStartMenuActive(host.monitor) ||
             collectionPopupDockHost_ == &host ||
             quickNavigationDockHost_ == &host ||
             previewAssociated ||
@@ -425,12 +433,20 @@ bool DesktopApp::DismissMergedDockBackground(PersistentDockHost& host, POINT des
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
-    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr))
+    namespace inputTrace = snowdesktop::dock_input_diagnostics;
+    inputTrace::Scope trace(floatingDockVisible_ || floatingDockKeyboardSessionActive_,
+        static_cast<bool>(floatingDockEdgeSwipeMouseHook_));
+    if (trace.Observe(inputTrace::Gate::Fullscreen,
+            FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)))
     {
+        trace.sample.outcome = L"fullscreen-policy";
         // Also applies with both invocation triggers disabled. Relinquish an
         // existing session without restoring its previous foreground window.
         if (floatingDockVisible_ || floatingDockKeyboardSessionActive_)
+        {
+            inputTrace::RecordLayer(L"fullscreen-close", nullptr, floatingDockVisible_);
             CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        }
         if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) HideDockWindowPreview();
         POINT cursor{};
         if (GetCursorPos(&cursor)) UpdatePassiveDragRevealHosts(cursor);
@@ -439,7 +455,47 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         return;
     }
     const ULONGLONG layerNow = GetTickCount64();
+    (void)ObserveDockPromotionActivation(GetForegroundWindow());
     const HWND layerForeground = GetForegroundWindow();
+    bool foregroundChangedWhilePromoted = false;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->promoted || !layerForeground) continue;
+        foregroundChangedWhilePromoted = foregroundChangedWhilePromoted ||
+            (host->desktopLayerForegroundWindow &&
+                host->desktopLayerForegroundWindow != layerForeground);
+        // While promoted this field tracks the activation baseline. Desktop
+        // restoration continues to own it after promotion has ended.
+        host->desktopLayerForegroundWindow = layerForeground;
+    }
+    DWORD foregroundProcess = 0;
+    if (layerForeground) GetWindowThreadProcessId(layerForeground, &foregroundProcess);
+    const bool inputHeld = dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        HasActiveContextMenuSession() || shellPopupMenuLayerDepth_ > 0 || shellFileOperationInFlight_ > 0 ||
+        (dockStartMenu_ && dockStartMenu_->Active()) ||
+        (dockWindowTransition_ && dockWindowTransition_->IsActive());
+    if (floatingDockInputDeactivated_ && (!floatingDockKeyboardSessionActive_ || inputHeld))
+        floatingDockInputDeactivated_ = false;
+    if (floatingDockInputDeactivated_ && floatingDockVisible_ && foregroundProcess &&
+        foregroundProcess != GetCurrentProcessId() && IsWindowVisible(layerForeground))
+    {
+        // An owned native deactivation survives a fast click that skipped the
+        // poll's proxy sample, and does not depend on cursor/button queries.
+        floatingDockInputDeactivated_ = false;
+        inputTrace::RecordLayer(L"focus-loss-close", nullptr, floatingDockVisible_);
+        CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+        return;
+    }
+    ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
+    bool externalActivation = snowdesktop::floating_dock_rules::
+        ShouldDismissForForegroundActivation(
+            floatingDockVisible_, foregroundChangedWhilePromoted,
+            foregroundProcess != 0 && foregroundProcess != GetCurrentProcessId() &&
+                IsWindowVisible(layerForeground),
+            dockWindowTransition_ && dockWindowTransition_->IsActive(),
+            minimizeTick != 0 && layerNow - minimizeTick <=
+                snowdesktop::floating_dock_rules::kSystemShowDesktopEvidenceWindowMs);
     for (const auto& host : persistentDockHosts_)
     {
         if (host && host->active && host->container &&
@@ -474,8 +530,9 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             UpdatePersistentDockHostVisibility(host);
         }
     }
-    if (desktopPassthroughActive_)
+    if (trace.Observe(inputTrace::Gate::Passthrough, desktopPassthroughActive_))
     {
+        trace.sample.outcome = L"desktop-passthrough";
         floatingDockEdgeSwipeDetector_.Reset();
         floatingDockPointerButtonsDown_ = 0;
         floatingDockExternalPointerDrag_.Reset();
@@ -484,12 +541,17 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     constexpr UINT leftButtonBit = 1u << 0;
     constexpr UINT rightButtonBit = 1u << 1;
     constexpr UINT middleButtonBit = 1u << 2;
-    const SHORT leftState =
-        GetAsyncKeyState(VK_LBUTTON);
-    const SHORT rightState =
-        GetAsyncKeyState(VK_RBUTTON);
-    const SHORT middleState =
-        GetAsyncKeyState(VK_MBUTTON);
+    const auto observedButtons = snowdesktop::window_support::WindowSupport().PointerButtons();
+    const auto observedPresses = snowdesktop::window_support::WindowSupport().PointerPresses();
+    const SHORT leftState = observedButtons
+        ? static_cast<SHORT>(((*observedButtons & leftButtonBit) ? 0x8000 : 0) | ((observedPresses & leftButtonBit) ? 1 : 0))
+        : GetAsyncKeyState(VK_LBUTTON);
+    const SHORT rightState = observedButtons
+        ? static_cast<SHORT>(((*observedButtons & rightButtonBit) ? 0x8000 : 0) | ((observedPresses & rightButtonBit) ? 1 : 0))
+        : GetAsyncKeyState(VK_RBUTTON);
+    const SHORT middleState = observedButtons
+        ? static_cast<SHORT>(((*observedButtons & middleButtonBit) ? 0x8000 : 0) | ((observedPresses & middleButtonBit) ? 1 : 0))
+        : GetAsyncKeyState(VK_MBUTTON);
     const UINT buttonsDown =
         ((leftState & 0x8000) ? leftButtonBit : 0) |
         ((rightState & 0x8000) ? rightButtonBit : 0) |
@@ -500,17 +562,43 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         ((middleState & 1) ? middleButtonBit : 0);
     const UINT previousButtonsDown =
         floatingDockPointerButtonsDown_;
+    if (!floatingDockVisible_ ||
+        ((buttonsDown | pressedSinceLastSample) & (rightButtonBit | middleButtonBit)) != 0)
+        floatingDockOutsidePress_.Cancel();
+    if (const HWND source = floatingDockOutsidePress_.Source(); source &&
+        (IsIconic(source) || (dockWindowTransition_ && dockWindowTransition_->IsActiveFor(source) &&
+            dockWindowTransition_->GetDirection() == DockWindowTransitionDirection::Minimize)))
+    {
+        // Native minimization is observable even if the target was created
+        // before its animation Hook registration completed.
+        floatingDockOutsidePress_.Cancel(source);
+        minimizeTick = layerNow;
+        dockSystemMinimizeStartedTick_.store(minimizeTick);
+        externalActivation = false;
+    }
+    const bool deferredOutsidePress = floatingDockOutsidePress_.TakeReady(
+        (buttonsDown & leftButtonBit) != 0, layerNow);
+    trace.sample.activation = externalActivation;
+    trace.sample.sampled = true;
+    trace.sample.left = leftState;
+    trace.sample.right = rightState;
+    trace.sample.middle = middleState;
+    trace.sample.buttons = buttonsDown;
+    trace.sample.previous = previousButtonsDown;
+    trace.sample.recent = pressedSinceLastSample;
     const bool pointerPressed =
-        snowdesktop::floating_dock_rules::
+        externalActivation || deferredOutsidePress || snowdesktop::floating_dock_rules::
             HasNewPointerButtonPress(
                 buttonsDown,
                 previousButtonsDown,
-                pressedSinceLastSample);
+                pressedSinceLastSample,
+                observedButtons.has_value());
     const bool leftButtonPressed =
-        ((buttonsDown & leftButtonBit) != 0 &&
-            (previousButtonsDown &
-                leftButtonBit) == 0) ||
-        (pressedSinceLastSample & leftButtonBit) != 0;
+        snowdesktop::floating_dock_rules::HasNewPointerButtonPress(
+            buttonsDown & leftButtonBit,
+            previousButtonsDown & leftButtonBit,
+            pressedSinceLastSample & leftButtonBit,
+            observedButtons.has_value());
     floatingDockPointerButtonsDown_ = buttonsDown;
     if ((buttonsDown & leftButtonBit) == 0 &&
         !mouseDown_)
@@ -524,11 +612,15 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
 
     POINT cursor{};
-    if (!GetCursorPos(&cursor))
+    if (!snowdesktop::window_support::WindowSupport().PointerPosition(cursor))
     {
+        trace.sample.outcome = L"cursor-unavailable";
         floatingDockEdgeSwipeDetector_.Reset();
         return;
     }
+    trace.sample.cursorKnown = true;
+    trace.sample.x = cursor.x;
+    trace.sample.y = cursor.y;
 
     POINT desktopPoint = cursor;
     if (hwnd_ && IsWindow(hwnd_))
@@ -537,6 +629,17 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     {
         desktopPoint.x -= virtualLeft_;
         desktopPoint.y -= virtualTop_;
+    }
+
+    if (dockStartMenu_ && dockStartMenu_->Active())
+    {
+        const bool onDock = std::any_of(persistentDockHosts_.begin(), persistentDockHosts_.end(),
+            [&](const auto& host) {
+                return host && host->active && host->container && IsWindowVisible(host->hwnd) &&
+                    host->container->ContainsInteractivePoint(desktopPoint);
+            });
+        dockStartMenu_->ObservePointer(buttonsDown != 0, pointerPressed,
+            onDock || (statusBar_ && statusBar_->ContainsPoint(cursor)));
     }
 
     GUITHREADINFO dragGui{sizeof(dragGui)};
@@ -557,21 +660,29 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
 
     const bool minimizeButtonPress = floatingDockVisible_ && leftButtonPressed &&
         (buttonsDown & (rightButtonBit | middleButtonBit)) == 0 &&
-        dockExternalMinimize_ && dockWindowTransition_ &&
+        ((observedPresses & snowdesktop::window_support::PointerMinimizeIntent) != 0 ||
+        (dockExternalMinimize_ && dockWindowTransition_ &&
         !dockWindowTransition_->IsActive() &&
         snowdesktop::animation::RuntimeAnimationsEnabled() &&
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
         dockExternalMinimize_->IsMinimizeButtonPress(
-            GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor);
-    if ((floatingDockVisible_ || statusBar_) && pointerPressed &&
-        !passiveDragRevealedThisSample && !minimizeButtonPress)
+            GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor)));
+    if (minimizeButtonPress) floatingDockOutsidePress_.Cancel();
+    if (floatingDockVisible_ && leftButtonPressed)
+        inputTrace::RecordLayer(minimizeButtonPress ? L"pointer-minimize" : L"pointer-other", nullptr,
+            floatingDockVisible_, buttonsDown, observedPresses, minimizeTick, externalActivation);
+    if (trace.Observe(inputTrace::Gate::VisibleOrBar, floatingDockVisible_ || statusBar_) &&
+        trace.Observe(inputTrace::Gate::Press, pointerPressed) &&
+        !trace.Observe(inputTrace::Gate::PassiveReveal, passiveDragRevealedThisSample) &&
+        !trace.Observe(inputTrace::Gate::Minimize, minimizeButtonPress))
     {
         if (floatingDockVisible_ && leftButtonPressed &&
-            TryActivateDockPopupFromMenuPointerPress(
+            trace.Observe(inputTrace::Gate::PopupActivation, TryActivateDockPopupFromMenuPointerPress(
                 desktopPoint,
                 cursor,
-                (buttonsDown & leftButtonBit) != 0))
+                (buttonsDown & leftButtonBit) != 0)))
         {
+            trace.sample.outcome = L"popup-activation";
             floatingDockEdgeSwipeDetector_.
                 SuppressUntilEdgeLeave();
             return;
@@ -628,7 +739,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             const bool separateReveal = !merged && statusBar_->HasTemporaryReveal(host.monitor);
             if (!heldMerged && !separateReveal) continue;
             barSession = barSession || heldMerged;
-            const bool ownSurface = (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
+            const bool ownSurface = (IsDockStartMenuActive(host.monitor) && dockStartMenu_->ContainsPoint(cursor)) ||
+                (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
                 (statusBar_ && statusBar_->ContainsTrayMenuPoint(host.monitor, cursor)) ||
                 (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
                 (onOwnedMenu && statusBarMenuMonitor_ == host.monitor) ||
@@ -652,23 +764,52 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // The bar and its owned surface are one interaction session with the
         // merged Dock. Its own dismissal logic releases this hold; the global
         // pointer sampler must not tear the owner down between down and up.
-        if (floatingDockVisible_ && !barSession && !onBar && !onRevealedDockSurface &&
-            !IsPointOnPromotedDock(desktopPoint) &&
-            snowdesktop::floating_dock_rules::
+        if (trace.Observe(inputTrace::Gate::Visible, floatingDockVisible_) &&
+            !trace.Observe(inputTrace::Gate::StartMenu, dockStartMenu_ && dockStartMenu_->ContainsPoint(cursor)) &&
+            !trace.Observe(inputTrace::Gate::BarSession, barSession) &&
+            !trace.Observe(inputTrace::Gate::Bar, onBar) &&
+            !trace.Observe(inputTrace::Gate::RevealedDock, onRevealedDockSurface) &&
+            !trace.Observe(inputTrace::Gate::PromotedDock, IsPointOnPromotedDock(desktopPoint)) &&
+            trace.Observe(inputTrace::Gate::DismissRule, snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
-                    dragSession_.IsActive() ||
-                        dragDropController_.IsExternalDragActive(),
-                    HasActiveContextMenuSession(),
+                    trace.Observe(inputTrace::Gate::Drag, dragSession_.IsActive() ||
+                        dragDropController_.IsExternalDragActive()),
+                    trace.Observe(inputTrace::Gate::Menu, HasActiveContextMenuSession()),
                     desktopPoint,
                     RECT{},
                     dockPopupInteractionRect,
                     previewDesktopRect,
-                    quickNavigationInteractionRect))
+                    quickNavigationInteractionRect)))
         {
+            // A client-drawn caption can emit an ordinary down before its
+            // minimize action exists. Reserve that press only for a target
+            // with an actual animation route and Dock destination. Native
+            // preparation consumes it; an ordinary click completes after up.
+            const HWND source = GetAncestor(WindowFromPoint(cursor), GA_ROOT);
+            if (leftButtonPressed && source != floatingDockOutsidePress_.Source())
+                floatingDockOutsidePress_.Cancel();
+            DWORD sourceProcess = 0;
+            if (source) GetWindowThreadProcessId(source, &sourceProcess);
+            if (!deferredOutsidePress && buttonsDown == leftButtonBit &&
+                !floatingDockOutsidePress_.Source() && sourceProcess && sourceProcess != GetCurrentProcessId() &&
+                dockWindowTransition_ && snowdesktop::animation::RuntimeAnimationsEnabled() &&
+                snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
+                snowdesktop::window_support::WindowSupport().Resolve(
+                    snowdesktop::window_support::Capability::MinimizeAnimation, source).Available() &&
+                dockWindowTransition_->ResolveMinimizeTarget(source))
+                floatingDockOutsidePress_.Begin(source);
+            if (!deferredOutsidePress && floatingDockOutsidePress_.Source())
+            {
+                trace.sample.outcome = L"outside-awaiting-window-action";
+                return;
+            }
             // A physical outside click owns the foreground transition. Do not
             // restore the window that preceded the floating Dock: doing so can
             // race the clicked window's activation and force two DWM/backdrop
             // source changes through the shared close handoff.
+            trace.sample.outcome = L"dismissed";
+            inputTrace::RecordLayer(L"outside-close", nullptr, floatingDockVisible_, buttonsDown,
+                observedPresses, minimizeTick, externalActivation);
             CloseAllFloatingDocks(
                 FloatingDockCloseFocusPolicy::PreserveCurrent);
             floatingDockEdgeSwipeDetector_.
@@ -677,6 +818,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         }
     }
 
+    RefreshFloatingDockPromotionInputs();
     if (!generalSettings_.dockEnabled ||
         !snowdesktop::dock_settings_rules::
             IsFloatingEdgeSwipeEnabled(
@@ -792,7 +934,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         (!targetHost ||
             !IsPersistentDockHostPromoted(*targetHost)))
     {
-        WriteDiagnosticLogEntry(L"Floating Dock edge gesture received");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock edge gesture received");
         if (dockSettings_.showOnlyWhenSummoned && dockSettings_.edgeRevealGesture == 1 && targetHost)
         {
             targetHost->edgeHoverRequested = true;

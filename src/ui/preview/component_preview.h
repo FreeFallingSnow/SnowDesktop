@@ -288,6 +288,7 @@ private:
     RECT desktopWallpaperBounds_{};
     struct WallpaperEngineCaptureState
     {
+        std::uint64_t policyRevision = 0;
         std::atomic_bool cancelled = false;
         std::mutex mutex;
         widget_preview::Wallpaper wallpaper;

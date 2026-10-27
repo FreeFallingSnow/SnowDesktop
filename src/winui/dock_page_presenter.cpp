@@ -432,7 +432,10 @@ struct DockPagePresenter::Impl
                 if (!id.empty()) request.ids.push_back(std::move(id));
                 const auto result = action(std::move(request));
                 if (!guard || !*guard) return;
-                iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+                // An unlocalized error key must not open an empty banner.
+                const auto message = L(result.error.c_str(), L"");
+                iconStatus.Message(message);
+                iconStatus.IsOpen(!message.empty());
             }, snapshot.targetName);
     }
     void RestoreControlIcon(const std::wstring& target)
@@ -440,9 +443,12 @@ struct DockPagePresenter::Impl
         if (!active || closed || !actions.iconLibrary) return;
         IconLibraryRequest request; request.action = "restore"; request.target = target;
         const auto result = actions.iconLibrary(std::move(request));
-        iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+        const auto message = L(result.error.c_str(), L"");
+        iconStatus.Message(message);
+        iconStatus.IsOpen(!message.empty());
     }
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
+    muxc::ToggleSwitch startMenuKeepTaskbarHiddenToggle{nullptr};
     muxc::ToggleSwitch showQuickSearchButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
@@ -487,6 +493,7 @@ struct DockPagePresenter::Impl
     SettingRow singleClickLaunchItemsRow;
     SettingRow fullscreenPolicyRow;
     SettingRow showWindowsButtonRow;
+    SettingRow startMenuKeepTaskbarHiddenRow;
     SettingRow showQuickSearchButtonRow;
     SettingRow suppressTaskbarRow;
     SettingRow taskbarSuppressRow;
@@ -531,6 +538,7 @@ struct DockPagePresenter::Impl
     bool synchronizingPair = false;
     bool taskbarContentThemeCustomItems = false;
     bool taskbarHookRequired = false;
+    runtime_modules::Policy modulePolicy;
     bool taskbarInputReady = false;
     bool spaceReservedByStatusBar = false;
     int windowsSystemThemeValue = 0;
@@ -549,6 +557,7 @@ struct DockPagePresenter::Impl
     winrt::event_token singleClickLaunchItemsToken{};
     winrt::event_token fullscreenPolicyToken{};
     winrt::event_token showWindowsButtonToken{};
+    winrt::event_token startMenuKeepTaskbarHiddenToken{};
     winrt::event_token showQuickSearchButtonToken{};
     winrt::event_token suppressTaskbarToken{};
     winrt::event_token taskbarSuppressToken{};
@@ -682,6 +691,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItems = muxc::ToggleSwitch{};
         fullscreenPolicyCombo = NewCombo();
         showWindowsButtonToggle = muxc::ToggleSwitch{};
+        startMenuKeepTaskbarHiddenToggle = muxc::ToggleSwitch{};
         showQuickSearchButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
         taskbarSuppressToggle = muxc::ToggleSwitch{};
@@ -747,6 +757,8 @@ struct DockPagePresenter::Impl
         iconStatus.IsOpen(false); iconStatus.Severity(muxc::InfoBarSeverity::Error);
         presenter_controls::BindInfoBarVisibility(iconStatus);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
+        startMenuKeepTaskbarHiddenRow.Initialize(startMenuKeepTaskbarHiddenToggle);
+        startMenuKeepTaskbarHiddenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showQuickSearchButtonRow.Initialize(showQuickSearchButtonToggle);
         showQuickSearchButtonRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         suppressTaskbarRow.Initialize(suppressTaskbarToggle);
@@ -833,6 +845,7 @@ struct DockPagePresenter::Impl
         presenter_controls::BindInfoBarVisibility(suppressionStatus);
         behaviorCard.content.Children().Append(suppressionStatus);
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
+        itemsCard.content.Children().Append(startMenuKeepTaskbarHiddenRow.root);
         itemsCard.content.Children().Append(startIconRow.root);
         itemsCard.content.Children().Append(showQuickSearchButtonRow.root);
         itemsCard.content.Children().Append(searchIconRow.root);
@@ -875,7 +888,8 @@ struct DockPagePresenter::Impl
         taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
             if (updatingControls) return;
             const int mode = taskbarMode.SelectedIndex();
-            if (mode < 0 || (mode == 2 && !dockEnabledToggle.IsOn())) return;
+            if (!CanSelectTaskbarDisplayMode(mode, dockEnabledToggle.IsOn(),
+                modulePolicy.Allows(runtime_modules::Module::Taskbar))) return;
             EmitDock(SettingsUpdateMode::PreviewAndCommit, [mode](DockSettings& value) { SetTaskbarDisplayMode(value, mode); });
         });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -1473,11 +1487,18 @@ struct DockPagePresenter::Impl
             });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
             [this](const auto&, const auto&) {
+                UpdateDependentStates();
                 const bool value = showWindowsButtonToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.showWindowsButton = value;
                     });
+            });
+        startMenuKeepTaskbarHiddenToken = startMenuKeepTaskbarHiddenToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = startMenuKeepTaskbarHiddenToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.startMenuKeepTaskbarHidden = value; });
             });
         showQuickSearchButtonToken = showQuickSearchButtonToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -2010,6 +2031,8 @@ struct DockPagePresenter::Impl
     void PatchGeneral(const GeneralSettings& settings)
     {
         dockEnabledToggle.IsOn(settings.dockEnabled);
+        modulePolicy = settings.runtimeModules;
+        RefreshTaskbarRuntimeStatus();
     }
 
     void PatchContinuous(
@@ -2099,6 +2122,7 @@ struct DockPagePresenter::Impl
         homeSize.IsOn(settings.lastMonitorUseHomeSize);
         reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
+        startMenuKeepTaskbarHiddenToggle.IsOn(settings.startMenuKeepTaskbarHidden);
         showQuickSearchButtonToggle.IsOn(settings.showQuickSearchButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
@@ -2153,6 +2177,8 @@ struct DockPagePresenter::Impl
         if (closed)
             return;
         const bool dockEnabled = dockEnabledToggle.IsOn();
+        const bool taskbarAllowed = modulePolicy.Allows(runtime_modules::Module::Taskbar);
+        const bool startMenuAllowed = taskbarAllowed && modulePolicy.Allows(runtime_modules::Module::StartMenu);
         // Match the legacy BeginDisabled(!dockEnabled_) scope. Border and Grid
         // are FrameworkElements, not Controls, so disable each SettingRow's
         // ContentControl host to remove its descendants from keyboard/Tab
@@ -2169,14 +2195,19 @@ struct DockPagePresenter::Impl
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         edgeDistanceScale.row.SetEnabled(dockEnabled && layoutCombo.SelectedIndex() == 0);
         mergedIconScale.row.SetEnabled(dockEnabled && barAvailability.anyMerged);
-        suppressTaskbarRow.SetEnabled(dockEnabled);
+        suppressTaskbarRow.SetEnabled(dockEnabled && taskbarAllowed);
         taskbarSuppressRow.SetEnabled(true);
-        if (taskbarMode.Items().Size() == 3)
-            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(dockEnabled || taskbarSuppressToggle.IsOn());
+        if (taskbarMode.Items().Size() == 4)
+        {
+            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(2, dockEnabled, taskbarAllowed));
+            taskbarMode.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(3, dockEnabled, taskbarAllowed));
+        }
         homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled);
+        startMenuKeepTaskbarHiddenRow.SetEnabled(startMenuAllowed && dockEnabled && showWindowsButtonToggle.IsOn() &&
+            taskbarMode.SelectedIndex() > 0);
         showQuickSearchButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
@@ -2212,12 +2243,13 @@ struct DockPagePresenter::Impl
         const int selectedTheme = taskbarThemes->NativeSelection();
         const bool taskbarStyled = selectedTheme !=
             static_cast<int>(SystemTaskbarThemeMode::Native);
-        const bool taskbarCustom = taskbarThemes->CustomSelected() && selectedTheme ==
+        const bool taskbarCustom = taskbarAllowed && taskbarThemes->CustomSelected() && selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
         taskbarContentThemeRow.root.Visibility(!taskbarThemes->HasSavedSelection() && (taskbarStyled || IsClassicSystemTaskbar())
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
+        taskbarThemeRow.SetEnabled(taskbarAllowed);
+        taskbarContentThemeRow.SetEnabled(taskbarAllowed && (taskbarStyled || IsClassicSystemTaskbar()));
         presenter_controls::UpdateSettingsSubrows(taskbarBaseRows, 0);
         taskbarCustomAppearance.Visibility(taskbarCustom
                 ? mux::Visibility::Visible
@@ -2239,7 +2271,8 @@ struct DockPagePresenter::Impl
 
         for (DynamicRuleControl* control : dynamicRules)
         {
-            const bool enabled = control->enabled.IsOn();
+            const bool enabled = taskbarAllowed && control->enabled.IsOn();
+            control->enabledRow.SetEnabled(taskbarAllowed);
             const bool native = control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Native);
             const bool custom = control->savedThemes->CustomSelected() && control->savedThemes->NativeSelection() ==
@@ -2292,13 +2325,15 @@ struct DockPagePresenter::Impl
             suppressionStatus.Message(L(failed ? "settings.dock.suppressTaskbar.failed" : "app.settings.taskbar_connecting",
                 failed ? L"The taskbar could not be hidden. Turn this option off to restore it, then try again." : L"Connecting to the Explorer taskbar..."));
             suppressionStatus.Severity(failed ? muxc::InfoBarSeverity::Error : muxc::InfoBarSeverity::Informational);
-            suppressionStatus.IsOpen(dockEnabledToggle.IsOn() && suppressTaskbarToggle.IsOn() && (failed || pending));
+            const int mode = taskbarMode.SelectedIndex();
+            suppressionStatus.IsOpen(modulePolicy.Allows(runtime_modules::Module::Taskbar) &&
+                (mode == 3 || (mode == 2 && dockEnabledToggle.IsOn())) && (failed || pending));
         }
         if (!taskbarRuntimeStatus) return;
         std::wstring text;
         muxc::InfoBarSeverity severity =
             muxc::InfoBarSeverity::Informational;
-        if (taskbarHookRequired)
+        if (modulePolicy.Allows(runtime_modules::Module::Taskbar) && taskbarHookRequired)
         {
             switch (GetSystemTaskbarBackdropRuntimeState())
             {
@@ -2944,15 +2979,20 @@ struct DockPagePresenter::Impl
             L("settings.dock.summonOnAppMinimize.description",
                 L"When off, custom animations reveal the Dock only until they finish; system animations do not reveal it."));
         muxa::AutomationProperties::SetName(summonOnAppMinimizeToggle, summonOnAppMinimizeRow.label.Text());
-        suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
+        suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide taskbars on Dock displays"),
             L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
         taskbarSuppressRow.SetText(L("settings.bars.taskbarMode", L"Taskbar visibility"));
         const int displayMode = taskbarMode.SelectedIndex();
         taskbarMode.Items().Clear();
-        for (const auto key : {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"})
+        for (const auto key : {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar", "settings.taskbar.suppressAllTaskbars"})
         {
-            muxc::ComboBoxItem item; item.Content(winrt::box_value(L(key, L"")));
+            muxc::ComboBoxItem item;
+            const wchar_t* fallback = std::string_view(key) == "settings.dock.suppressTaskbar"
+                ? L"Always hide taskbars on Dock displays"
+                : std::string_view(key) == "settings.taskbar.suppressAllTaskbars"
+                ? L"Always hide taskbars on all displays" : L"";
+            item.Content(winrt::box_value(L(key, fallback)));
             taskbarMode.Items().Append(item);
         }
         taskbarMode.SelectedIndex(displayMode);
@@ -2983,6 +3023,12 @@ struct DockPagePresenter::Impl
         }
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
+        startMenuKeepTaskbarHiddenRow.SetText(
+            L("settings.dock.startMenuKeepTaskbarHidden", L"Keep the taskbar hidden when opening Start from the Dock"),
+            L("settings.dock.startMenuKeepTaskbarHidden.description",
+                L"For hidden or auto-hidden taskbars. Start opens centered beside the Dock without covering it. Unsupported layouts use Windows defaults."));
+        muxa::AutomationProperties::SetName(startMenuKeepTaskbarHiddenToggle,
+            startMenuKeepTaskbarHiddenRow.label.Text());
         showQuickSearchButtonRow.SetText(L(
             "app.dock.show_quick_search_button", L"Show quick search button"));
         singleClickLaunchItemsRow.SetText(
@@ -3299,6 +3345,8 @@ struct DockPagePresenter::Impl
         if (id == "dock.searchIcon") return dockTarget(searchIconChoose);
         if (id == "dock.showWindowsButton")
             return dockTarget(showWindowsButtonToggle);
+        if (id == "dock.startMenuKeepTaskbarHidden")
+            return dockTarget(startMenuKeepTaskbarHiddenToggle);
         if (id == "dock.showQuickSearchButton")
             return dockTarget(showQuickSearchButtonToggle);
         if (id == "dock.showFrequentItems")
@@ -3485,6 +3533,7 @@ struct DockPagePresenter::Impl
             ClearFullscreenExceptionRows();
             trayEditor.reset();
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            startMenuKeepTaskbarHiddenToggle.Toggled(startMenuKeepTaskbarHiddenToken);
             showQuickSearchButtonToggle.Toggled(showQuickSearchButtonToken);
             mergedHeight->Close();
             homeSize.Toggled(homeSizeToken);

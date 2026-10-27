@@ -89,10 +89,21 @@ struct ContentGeometry
     double x = 0, y = 0, width = 0, height = 0;
     double sourceX = 0, sourceY = 0, sourceWidth = 0, sourceHeight = 0;
     double titleLeft = 0, titleTop = 0, titleWidth = 0, titleHeight = 0;
+    double titleFontSize = 0;
     bool leftReveal = false, upReveal = false, cropped = false;
 };
-struct TitleSize { double width = 0, height = 0; bool fits = false; };
+struct TitleSize { double width = 0, height = 0; bool fits = false; double fontSize = 0; };
 using MeasureTitle = std::function<TitleSize(double, double)>;
+
+// The saved size is the reference at a 180-CU card edge. Grow more gently
+// than the card itself, while keeping DPI scaling independent of card size.
+inline double AdaptiveTitleFontSize(double reference, double scale, double width, double height)
+{
+    if (scale <= 0) return 0;
+    const double edge = std::min(width, height) / scale;
+    const double factor = edge > 0 ? std::clamp(std::sqrt(edge / 180.), .75, 2.) : 1.;
+    return std::max(8., reference * factor) * scale;
+}
 
 inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, double height,
     double sourceWidth, double sourceHeight, double scale, bool original, double hover,
@@ -151,7 +162,7 @@ inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, do
             (!fill && (left ? r.height > height + .01 : r.width > width + .01))) return result;
         const auto text = measure(maxWidth, maxHeight);
         if (!text.fits || text.width <= 0 || text.height <= 0) return result;
-        result.titleWidth = text.width; result.titleHeight = text.height;
+        result.titleWidth = text.width; result.titleHeight = text.height; result.titleFontSize = text.fontSize;
         if (left)
         {
             const double start = fill ? width - padding - text.width - gap - r.width : (width - r.width - gap - text.width) / 2;

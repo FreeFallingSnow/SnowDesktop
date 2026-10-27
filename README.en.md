@@ -83,10 +83,13 @@ target machines need a preinstalled Windows App SDK Runtime.
 .\scripts\build.bat
 ```
 
-The default build does not stop SnowDesktop or restart Explorer. Its preflight
-stops before compilation when the app or hook DLL is active. Exit SnowDesktop
-normally first. To clear the lock automatically, use
-`.\scripts\build.bat --reload-shell`; it stops SnowDesktop and briefly restarts Explorer.
+The current collaborative build compiles in an isolated candidate directory, so you
+do not need to close SnowDesktop or restart Explorer beforehand. After a successful
+full Release product build, the script updates this checkout's `.build/Release`:
+an already running application exits gracefully and resumes after the update;
+an application that was not running stays closed. Desktop layouts and settings are preserved.
+Entries that write directly to an active runtime directory still check its actual
+output owners; see the [build script documentation](scripts/README.md) for those cases.
 
 ## 🧱 Technology
 

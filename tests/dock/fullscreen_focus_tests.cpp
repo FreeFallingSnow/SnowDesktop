@@ -1,5 +1,6 @@
 #include "dock/dock_fullscreen_policy.h"
 #include "dock/dock_fullscreen_storage.h"
+#include "dock/floating_dock_rules.h"
 #include "dock/dock_running_animation.h"
 #include "dock/dock_minimize_completion.h"
 #include "dock/dock_window_transition.h"
@@ -7,6 +8,7 @@
 #include "system/status_bar/status_bar_appbar.h"
 
 #include <iostream>
+#include <array>
 #include <map>
 #include <thread>
 
@@ -218,8 +220,41 @@ int RunFullscreenFocusTests()
     check(!policy::BlocksReveal(P::Allow, S::Gesture, true, true) &&
         !policy::BlocksReveal(P::FullProtection, S::Hotkey, false, true),
         "opt-outs and ordinary windows preserve invocation");
-    check(!policy::StartsKeyboardSession(S::Gesture) && policy::StartsKeyboardSession(S::Hotkey),
-        "gesture reveals cannot create the keyboard proxy that minimizes exclusive games");
+    check(!policy::StartsKeyboardSession(S::Gesture) && !policy::StartsKeyboardSession(S::Hotkey) &&
+        !policy::StartsKeyboardSession(S::WindowAction),
+        "ordinary foreground windows retain activation after either Dock summon trigger");
+    check(policy::StartsKeyboardSession(S::Gesture, true) && policy::StartsKeyboardSession(S::Hotkey, true) &&
+        policy::StartsKeyboardSession(S::WindowAction, true),
+        "both summon triggers reuse the keyboard path for a higher-privilege foreground");
+    check(!policy::StartsKeyboardSession(S::Gesture, true, true) &&
+        !policy::StartsKeyboardSession(S::Hotkey, true, true) &&
+        !policy::StartsKeyboardSession(S::AssociatedSurface, true, true),
+        "foreground fullscreen suppresses every implicit keyboard activation path");
+    check(policy::StartsKeyboardSession(S::AssociatedSurface),
+        "explicit keyboard-associated surfaces keep their input path outside fullscreen");
+    const RECT dismissMonitorBounds{-1920, 0, 0, 1080};
+    for (const RECT dock : {RECT{-1500, 1000, -400, 1080}, RECT{-1500, 0, -400, 80},
+            RECT{-1920, 200, -1840, 900}, RECT{-80, 200, 0, 900}})
+    {
+        const RECT button = snowdesktop::floating_dock_rules::ExplicitDismissBounds(dock, dismissMonitorBounds, 48);
+        RECT intersection{};
+        check(button.right - button.left == 48 && button.bottom - button.top == 48 &&
+            button.left >= dismissMonitorBounds.left && button.top >= dismissMonitorBounds.top && button.right <= dismissMonitorBounds.right &&
+            button.bottom <= dismissMonitorBounds.bottom && IntersectRect(&intersection, &dock, &button),
+            "explicit dismiss overlaps the visible Dock corner and stays on each monitor edge at high DPI");
+        check(snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(button,
+                {(button.left + button.right) / 2, (button.top + button.bottom) / 2}) &&
+            !snowdesktop::floating_dock_rules::IsPointOnExplicitDismiss(button, {button.left, button.top}),
+            "the circular dismiss accepts its center but does not claim transparent square corners");
+    }
+    const RECT panel{-1500, 500, -400, 580};
+    const RECT movedPanel{-1450, 540, -250, 620};
+    const RECT initialButton = snowdesktop::floating_dock_rules::ExplicitDismissBounds(panel, dismissMonitorBounds, 48);
+    const RECT movedButton = snowdesktop::floating_dock_rules::ExplicitDismissBounds(movedPanel, dismissMonitorBounds, 48);
+    check(initialButton.left + 24 == panel.right && initialButton.top + 24 == panel.top &&
+        movedButton.left - initialButton.left == movedPanel.right - panel.right &&
+        movedButton.top - initialButton.top == movedPanel.top - panel.top,
+        "dismiss follows the painted Dock corner as the panel moves and changes width");
 
     std::vector<DockFullscreenException> exceptions{
         {L"C:\\Apps\\Player.exe", P::Allow}, {L"C:/Apps/PLAYER.exe", P::BlockGestures},
@@ -270,12 +305,20 @@ int RunFullscreenFocusTests()
     if (!desktop) return failures;
     std::thread fixture([&]() {
         if (!SetThreadDesktop(desktop)) { check(false, "attach isolated fixture thread"); return; }
+        if (!SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+        { check(false, "observe terminal inset in physical pixels on the isolated fixture thread"); return; }
         const auto instance = GetModuleHandleW(nullptr);
         WNDCLASSW cls{};
         // Custom browser chrome owns the nonclient calculation, even while
         // WS_THICKFRAME remains set on an ordinary maximized window.
         cls.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
-            if (message == WM_NCCALCSIZE) return 0;
+            if (message == WM_NCCALCSIZE)
+            {
+                auto& client = wp ? reinterpret_cast<NCCALCSIZE_PARAMS*>(lp)->rgrc[0]
+                                  : *reinterpret_cast<RECT*>(lp);
+                client.bottom -= static_cast<LONG>(GetWindowLongPtrW(window, GWLP_USERDATA));
+                return 0;
+            }
             return DefWindowProcW(window, message, wp, lp);
         };
         cls.hInstance = instance;
@@ -309,6 +352,36 @@ int RunFullscreenFocusTests()
                 DestroyWindow(covering);
             }
             int nativeActivationCalls = 0;
+            // Original Terminal sample: complete outer monitor, client bottom
+            // two physical pixels short for the auto-hidden taskbar. Use the
+            // real native sampler and scan; only the process boundary is waived.
+            SetWindowLongPtrW(window, GWLP_USERDATA, 2);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            const auto terminalSample = fullscreen::SampleWindow(window, 0);
+            check(terminalSample && terminalSample->client.bottom == rect.bottom - 2 &&
+                EqualRect(&terminalSample->frame, &rect), "native terminal fixture retains its original two-pixel client inset");
+            const auto terminal = fullscreen::ObserveWindow(window, 0);
+            const std::array terminalMonitors{handle};
+            const auto terminalSources = fullscreen::ObserveMonitors(terminalMonitors, 0);
+            check(terminal && terminalSources.front() && terminalSources.front()->window == window &&
+                fullscreen::ObserveMonitor(handle, 0).has_value(),
+                "direct, single-monitor and shared multi-monitor observation recognize the same inset fullscreen terminal");
+            snowdesktop::StatusBarFullscreenState terminalBar;
+            terminalBar.Observe(terminalSources.front() ? terminalSources.front()->window : nullptr, false, false, false);
+            check(terminalBar.ShouldHide(false), "shared terminal observation drives the independent status bar hide state");
+            check(policy::BlocksReveal(P::FullProtection, S::Gesture, terminal.has_value(), true) &&
+                !fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
+                    [&]() { ++nativeActivationCalls; }) && nativeActivationCalls == 0,
+                "terminal inset observation blocks protected Dock reveal and automatic keyboard activation");
+            SetWindowLongPtrW(window, GWLP_USERDATA, 3);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            check(!fullscreen::ObserveWindow(window, 0) && !fullscreen::ObserveMonitor(handle, 0),
+                "a larger native client inset cannot inherit the terminal taskbar allowance");
+            SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
             check(!fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
                 [&]() { ++nativeActivationCalls; SetFocus(window); }) && nativeActivationCalls == 0,
                 "native fullscreen observation blocks the production focus boundary before SetFocus");
@@ -322,7 +395,7 @@ int RunFullscreenFocusTests()
             check(IsZoomed(window) != FALSE, "custom-chrome fixture is actually maximized");
             const auto maximized = fullscreen::ObserveWindow(window, 0);
             check(!maximized, "monitor-sized maximized clients without WS_CAPTION are not fullscreen");
-            check(!snowdesktop::StatusBarFullscreenCandidate(
+            check(!fullscreen::IsCandidate(
                 GetWindowLongPtrW(window, GWL_STYLE), 0, IsZoomed(window) != FALSE, false),
                 "ordinary maximized custom chrome retains its status bar");
             for (const auto source : {S::Gesture, S::AssociatedSurface, S::Hotkey})
@@ -347,29 +420,20 @@ int RunFullscreenFocusTests()
             check(!fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
                 [&]() { ++maximizedFocusCalls; }) && maximizedFocusCalls == 1,
                 "browser fullscreen blocks activation even with WS_MAXIMIZE retained");
-            POINT clientOrigin{}, clientEnd{};
-            RECT browserClient{};
-            check(GetClientRect(window, &browserClient) != FALSE, "read browser fullscreen client geometry");
-            clientEnd = {browserClient.right, browserClient.bottom};
-            check(ClientToScreen(window, &clientOrigin) && ClientToScreen(window, &clientEnd),
-                "map browser fullscreen client to screen coordinates");
-            browserClient = {clientOrigin.x, clientOrigin.y, clientEnd.x, clientEnd.y};
-            const bool browserCandidate = snowdesktop::StatusBarFullscreenCandidate(
-                GetWindowLongPtrW(window, GWL_STYLE), 0, IsZoomed(window) != FALSE, false);
-            const bool hidesBar = browserCandidate && snowdesktop::StatusBarFullscreenClient(
-                browserClient, rect, true, false, false, false);
+            const auto browserSample = fullscreen::SampleWindow(window, 0);
+            const bool hidesBar = browserSample && fullscreen::IsFullscreen(*browserSample, rect);
             snowdesktop::StatusBarFullscreenState barState;
             barState.Observe(hidesBar ? window : nullptr, false, false, false);
             check(barState.ShouldHide(false), "browser fullscreen hides its monitor's independent status bar");
             RECT otherMonitor = rect;
             OffsetRect(&otherMonitor, rect.right - rect.left, 0);
-            check(!snowdesktop::StatusBarFullscreenClient(browserClient, otherMonitor, true, false, false, false),
+            check(browserSample && !fullscreen::IsFullscreen(*browserSample, otherMonitor),
                 "browser fullscreen does not hide the status bar on another monitor");
 
             SetWindowLongPtrW(window, GWL_STYLE, maximizedStyle);
             SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                 SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
-            check(!fullscreen::ObserveWindow(window, 0) && !snowdesktop::StatusBarFullscreenCandidate(
+            check(!fullscreen::ObserveWindow(window, 0) && !fullscreen::IsCandidate(
                 GetWindowLongPtrW(window, GWL_STYLE), 0, IsZoomed(window) != FALSE, false),
                 "exiting browser fullscreen restores ordinary maximized classification");
             ShowWindow(window, SW_RESTORE);

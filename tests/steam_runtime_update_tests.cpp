@@ -1744,6 +1744,90 @@ void TestConcurrentLaunchRecovery(const std::filesystem::path& root)
         "lost startup observation plus damaged latest payload never selects the older preserved runtime");
 }
 
+void TestStartupPrivilegeConsent(const wchar_t* executable)
+{
+    using namespace snowdesktop::steam_runtime::startup;
+    wchar_t original[32768]{};
+    const DWORD originalLength = GetEnvironmentVariableW(kChannelEnvironment, original, 32768);
+    struct Restore
+    {
+        const wchar_t* value;
+        ~Restore() { SetEnvironmentVariableW(kChannelEnvironment, value); }
+    } restore{originalLength && originalLength < 32768 ? original : nullptr};
+    SetEnvironmentVariableW(kChannelEnvironment, nullptr);
+    Check(!CurrentPrivilegesAcceptedFromEnvironment(), "missing startup channel carries no privilege consent");
+    Channel accepted;
+    Check(accepted.Create(true), "create per-launch privilege consent channel");
+    SetEnvironmentVariableW(kChannelEnvironment, accepted.Name().c_str());
+    Check(!CurrentPrivilegesAcceptedFromEnvironment(), "unassigned startup consent cannot authorize a process");
+    accepted.SetChild(GetCurrentProcessId());
+    Check(CurrentPrivilegesAcceptedFromEnvironment(), "explicit consent is available to its assigned runtime PID");
+    Check(GetEnvironmentVariableW(kChannelEnvironment, nullptr, 0) != 0,
+        "reading startup consent preserves the readiness channel for normal host attachment");
+    accepted.SetChild(0);
+    Check(!CurrentPrivilegesAcceptedFromEnvironment(), "another PID cannot reuse startup privilege consent");
+    Channel ordinary;
+    Check(ordinary.Create(), "create startup channel without privilege consent");
+    ordinary.SetChild(GetCurrentProcessId());
+    SetEnvironmentVariableW(kChannelEnvironment, ordinary.Name().c_str());
+    Check(!CurrentPrivilegesAcceptedFromEnvironment(), "normal launch channels never grant implicit consent");
+    Channel host;
+    host.AttachFromEnvironment();
+    Check(host.CurrentPhase() == Phase::Attached &&
+        GetEnvironmentVariableW(kChannelEnvironment, nullptr, 0) == 0,
+        "the extended channel preserves version-1 readiness and clears child environment inheritance");
+
+    // Execute the real channel reader in an isolated native child. Supplying
+    // only a channel name cannot authorize a different or unassigned PID.
+    for (const bool consent : {false, true})
+    {
+        Channel parent;
+        Check(parent.Create(consent), "create native child consent channel");
+        SetEnvironmentVariableW(kChannelEnvironment, parent.Name().c_str());
+        std::wstring command = L"\"" + std::wstring(executable) +
+            L"\" --startup-consent-probe " + (consent ? L"1" : L"0");
+        STARTUPINFOW startup{sizeof(startup)};
+        PROCESS_INFORMATION process{};
+        const BOOL created = CreateProcessW(executable, command.data(), nullptr, nullptr,
+            FALSE, CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+        Check(created != FALSE, "create isolated native consent probe");
+        if (!created) continue;
+        parent.SetChild(process.dwProcessId);
+        const DWORD resumed = ResumeThread(process.hThread);
+        const DWORD waited = resumed != static_cast<DWORD>(-1)
+            ? WaitForSingleObject(process.hProcess, 10000) : WAIT_FAILED;
+        if (waited != WAIT_OBJECT_0)
+        {
+            TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+            WaitForSingleObject(process.hProcess, 5000);
+        }
+        DWORD exitCode = ERROR_GEN_FAILURE;
+        Check(waited == WAIT_OBJECT_0 && GetExitCodeProcess(process.hProcess, &exitCode) && exitCode == 0,
+            "the runtime child receives only its own explicit decision and consumes its startup environment");
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+
+    // The old prefix is still usable for startup, but has no consent extension.
+    const auto legacyName = accepted.Name() + L".legacy";
+    const HANDLE legacyMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        0, sizeof(SharedState), legacyName.c_str());
+    auto* legacyState = legacyMapping ? static_cast<SharedState*>(MapViewOfFile(
+        legacyMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState))) : nullptr;
+    Check(legacyState != nullptr, "create a legacy version-1 startup prefix");
+    if (legacyState)
+    {
+        legacyState->magic = kMagic;
+        legacyState->version = 1;
+        legacyState->childProcessId = GetCurrentProcessId();
+        legacyState->phase = static_cast<LONG>(Phase::AwaitingHost);
+        SetEnvironmentVariableW(kChannelEnvironment, legacyName.c_str());
+        Check(!CurrentPrivilegesAcceptedFromEnvironment(), "an old startup prefix cannot fabricate privilege consent");
+        UnmapViewOfFile(legacyState);
+    }
+    if (legacyMapping) CloseHandle(legacyMapping);
+}
+
 // The same test executable acts as a controlled host. Only this OS-process
 // boundary is replaced: the production launcher, hashes, publication, IPC,
 // selection, recovery and cleanup all execute unchanged.
@@ -1950,6 +2034,10 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "readiness confirms exactly the launched runtime");
     Check(ReadText(output).find("args=4;\"\";\"two words\";\"quote\\\"inside\";\"tail \\\\\";channelCleared=1") != std::string::npos,
         "the real child receives empty, spaced, quoted and trailing-backslash arguments without inheriting startup identity");
+    WriteText(output, "");
+    Check(RunLauncherProcess(root, L"--launcher-test-host --snowdesktop-explorer-relaunch") == 0 &&
+        ReadText(output).find("args=0;channelCleared=1") != std::string::npos,
+        "the launcher handoff guard is consumed so the runtime retains its independent privilege normalization");
 
     WriteLauncherDistribution(root, host, b, "fail-before");
     const auto recoveryExit = RunLauncherProcess(root, L"--launcher-test-host");
@@ -2019,6 +2107,15 @@ void TestLauncherEntry(const std::filesystem::path& root,
 
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--startup-consent-probe")
+    {
+        using namespace snowdesktop::steam_runtime::startup;
+        const bool accepted = CurrentPrivilegesAcceptedFromEnvironment();
+        Begin();
+        return accepted == (std::wstring_view(argv[2]) == L"1") &&
+            HostChannel().CurrentPhase() == Phase::Attached &&
+            GetEnvironmentVariableW(kChannelEnvironment, nullptr, 0) == 0 ? 0 : ERROR_INVALID_DATA;
+    }
     if (argc >= 2 && std::wstring_view(argv[1]) == L"--launcher-test-host")
         return RunLauncherFixtureHost(argc, argv);
     const std::filesystem::path root =
@@ -2053,6 +2150,7 @@ int wmain(int argc, wchar_t** argv)
         TestSteamAutoStartRules();
         TestStartupRecoveryState(root / L"startup-recovery-state");
         TestConcurrentLaunchRecovery(root / L"concurrent-launch-recovery");
+        TestStartupPrivilegeConsent(argv[0]);
         Check(argc == 2, "CTest supplies the production launcher executable");
         if (argc == 2) TestLauncherEntry(root / L"launcher-entry", argv[1], argv[0]);
     }

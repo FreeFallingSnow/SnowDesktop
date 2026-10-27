@@ -4,6 +4,17 @@
 #include "navigation/quick_navigation_rules.h"
 #include "platform/shell_overlay_window.h"
 
+namespace
+{
+constexpr wchar_t kQuickNavigationOutsidePress[] = L"SnowDesktop.Navigation.OutsidePress";
+unsigned NavigationPointerButtons()
+{
+    return ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+        ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+        ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+}
+}
+
 void DesktopApp::StopQuickNavigationAnimationTimeline()
 {
     if (quickNavigationAnimationCompletionToken_)
@@ -30,7 +41,7 @@ void DesktopApp::ConfigureQuickNavigationAnimation()
     if (rules::IsDeformationEffect(effect) && quickNavigationDeformationFailed_)
         effect = rules::Effect::Scale;
     quickNavigationAnimation_.Configure(effect, motion::RuntimeDurationScale(),
-        dockSource && motion::RuntimeWindowEffect() != 0);
+        dockSource && motion::RuntimeWindowEffect() != 0, !dockSource);
 }
 
 // Quick-navigation hotkey, window, search edit and positioning lifecycle.
@@ -74,6 +85,7 @@ _LW("app.interact.snow_nav_title"),
  */
 void DesktopApp::DestroyQuickNavigationWindow()
 {
+    if (quickNavigationHwnd_) RemovePropW(quickNavigationHwnd_, kQuickNavigationOutsidePress);
     CancelQuickNavigationTabHover();
     quickNavigationHasLastEditAnimationFrame_ = false;
     quickNavBackdropCompositor_.Reset();
@@ -162,10 +174,10 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
         {
             std::wstring message = L"Quick navigation native backdrop unavailable: ";
             message += quickNavBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, message.c_str(), DiagnosticLogLevel::Warning);
             return;
         }
-        WriteDiagnosticLogEntry(L"Quick navigation native CompositionBackdropBrush initialized");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"Quick navigation native CompositionBackdropBrush initialized");
     }
     else
     {
@@ -649,10 +661,23 @@ void DesktopApp::PositionQuickNavigationWindow()
     }
     RECT nextRect = GetQuickNavigationRect();
     auto& resize = quickNavigationAnimation_.Resize();
+    const auto now = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    if (!resize.IsAnimating() && quickNavigationOpen_ && quickNavigationCollapsed_ &&
+        quickNavigationFixedTop_ && quickNavigationAnimation_.IsInteractive() &&
+        !snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigationAnimation_.GetEffect()) &&
+        !IsRectEmpty(&quickNavigationRect_) &&
+        quickNavigationRect_.left == nextRect.left && quickNavigationRect_.top == nextRect.top &&
+        quickNavigationRect_.right == nextRect.right && quickNavigationRect_.bottom != nextRect.bottom)
+    {
+        resize.StartResultFollow(
+            {quickNavigationRect_.left, quickNavigationRect_.top, quickNavigationRect_.right, quickNavigationRect_.bottom},
+            {nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now,
+            snowdesktop::animation::RuntimeAnimationsEnabled(), snowdesktop::animation::RuntimeDurationScale());
+    }
     if (resize.IsAnimating())
     {
-        const auto now = static_cast<std::uint64_t>(
-            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         resize.Retarget({nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now);
         const auto frame = resize.Advance(now, snowdesktop::animation::RuntimeAnimationsEnabled());
         nextRect = {frame.left, frame.top, frame.right, frame.bottom};
@@ -945,7 +970,8 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
  */
 
 void DesktopApp::OpenQuickNavigation(
-    QuickNavigationInvocationSource source)
+    QuickNavigationInvocationSource source,
+    std::optional<POINT> invocationScreenPoint)
 {
     // Hotkeys and Dock search share the same boundary as the status bar.
     if (statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())) return;
@@ -954,14 +980,60 @@ void DesktopApp::OpenQuickNavigation(
         dragDropController_.IsExternalDragActive())
         return;
 
+    if (!invocationScreenPoint)
+    {
+        POINT point{lastMousePoint_.x + virtualLeft_, lastMousePoint_.y + virtualTop_};
+        GetCursorPos(&point);
+        invocationScreenPoint = point;
+    }
+    if (dockStartMenu_ && dockStartMenu_->DismissThen([this, source, invocationScreenPoint] {
+            OpenQuickNavigation(source, invocationScreenPoint);
+        })) return;
+
+    const auto watchOutside = [this] {
+        const HWND target = quickNavigationHwnd_;
+        if (!target || !IsWindow(target)) return;
+        auto press = std::make_shared<snowdesktop::quick_navigation_rules::OutsidePress>(NavigationPointerButtons());
+        if (!SetPropW(target, kQuickNavigationOutsidePress, press.get())) return;
+        const auto watch = uiAnimationScheduler_.ScheduleInterval(16, [this, target, press](auto token) {
+            if (!quickNavigationOpen_ || target != quickNavigationHwnd_ || !IsWindow(target) ||
+                GetPropW(target, kQuickNavigationOutsidePress) != press.get())
+            {
+                uiAnimationScheduler_.Cancel(token);
+                return;
+            }
+            POINT screen{};
+            if (!GetCursorPos(&screen)) return;
+            const POINT point{screen.x - virtualLeft_, screen.y - virtualTop_};
+            const auto* dock = GetDockContainerAtPoint(point);
+            const HWND foreground = GetForegroundWindow();
+            // Activated search keeps its normal deactivation/IME/menu route.
+            // This supplement is for a popup whose activation request failed.
+            const bool searchForeground = foreground && (foreground == target ||
+                foreground == quickNavigationSearchEdit_ || IsChild(target, foreground));
+            const bool retained = searchForeground || (dock && dock->ContainsInteractivePoint(point)) ||
+                (statusBar_ && statusBar_->ContainsPoint(screen)) || HasActiveContextMenuSession() ||
+                dragSession_.IsActive() || dragDropController_.IsTransportActive() ||
+                snowdesktop::text_input::HasEditingMenu(quickNavigationSearchEdit_) ||
+                (renameController_.IsQuickNavigationPresentation() &&
+                    snowdesktop::text_input::HasEditingMenu(renameInputWindow_));
+            if (!press->Observe(NavigationPointerButtons(), PtInRect(&quickNavigationRect_, point) != FALSE, retained)) return;
+            if (statusBarActivationMonitor_ && quickNavigationPostCloseAction_)
+                CancelStatusBarActivation(statusBarActivationMonitor_);
+            CloseQuickNavigation(false);
+            uiAnimationScheduler_.Cancel(token);
+        });
+        if (!watch) RemovePropW(target, kQuickNavigationOutsidePress);
+    };
+
     POINT requestedOpenPoint = lastMousePoint_;
     POINT requestedAnchorPoint = requestedOpenPoint;
     RECT requestedDockRect{};
     float requestedDpiScale = quickNavDpiScale_;
     PersistentDockHost* requestedDockHost = nullptr;
-    POINT cursor{};
-    if (GetCursorPos(&cursor))
+    if (invocationScreenPoint)
     {
+        const POINT cursor = *invocationScreenPoint;
         requestedOpenPoint = {
             cursor.x - virtualLeft_,
             cursor.y - virtualTop_
@@ -1136,6 +1208,7 @@ void DesktopApp::OpenQuickNavigation(
                 quickNavigationHwnd_, true,
                 L"Quick navigation window", true);
         }
+        watchOutside();
         ApplyFloatingDockLayerPolicy();
         return;
     }
@@ -1240,6 +1313,7 @@ void DesktopApp::OpenQuickNavigation(
             quickNavigationHwnd_, true,
             L"Quick navigation window", true);
     }
+    watchOutside();
     ApplyFloatingDockLayerPolicy();
 }
 
@@ -1248,6 +1322,11 @@ void DesktopApp::OpenQuickNavigation(
  */
 void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
+    if (quickNavigationHwnd_) RemovePropW(quickNavigationHwnd_, kQuickNavigationOutsidePress);
+    const HWND captured = GetCapture();
+    if (captured && (captured == quickNavigationHwnd_ || captured == quickNavigationSearchEdit_ ||
+        (renameController_.IsQuickNavigationPresentation() && captured == renameInputWindow_)))
+        ReleaseCapturePreservingPointerState();
     CancelQuickNavigationTabHover();
     if (!quickNavigationOpen_) return;
     if (!quickNavigationPostCloseAction_)
@@ -1400,7 +1479,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         ConfigureQuickNavigationAnimation();
         visual = quickNavigationAnimation_.GetVisual();
         deformationFrame = false;
-        WriteDiagnosticLogEntry(L"QuickNav deformation unavailable; using scale for this session");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Navigation, L"QuickNav deformation unavailable; using scale for this session", DiagnosticLogLevel::Warning);
     }
     if (!deformationFrame)
     {

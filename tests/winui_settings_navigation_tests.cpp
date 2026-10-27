@@ -314,6 +314,29 @@ void TestNavigationFeedbackLifetime()
 
 int main()
 {
+    {
+        SettingsShellNavigationFeedback feedback;
+        auto route = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+        feedback.UpdateRoute(route, 1);
+        Check(!feedback.ConsumePackagePermissionEditor(true), "untargeted permissions navigation never opens a dialog");
+        route.itemKey = L"package-a";
+        feedback.UpdateRoute(route, 1);
+        Check(!feedback.ConsumePackagePermissionEditor(false), "pending package discovery does not consume the authorization request");
+        Check(feedback.ConsumePackagePermissionEditor(true), "the first ready package publication opens its authorization editor");
+        Check(!feedback.ConsumePackagePermissionEditor(true), "canceling a dialog cannot reopen it on layout or snapshot retries");
+        feedback.UpdateRoute(route, 1);
+        Check(!feedback.ConsumePackagePermissionEditor(true), "same-route snapshot refreshes do not create another dialog");
+        feedback.Restart();
+        Check(feedback.ConsumePackagePermissionEditor(true), "an explicit retry can request the same package again");
+        route.itemKey = L"package-b";
+        feedback.UpdateRoute(route, 1);
+        Check(feedback.ConsumePackagePermissionEditor(true), "a different package has an independent dialog request");
+        feedback.UpdateRoute(route, 2);
+        Check(feedback.ConsumePackagePermissionEditor(true), "a new settings session can request authorization again");
+        route.focusId = "widgets.installed";
+        feedback.UpdateRoute(route, 2);
+        Check(!feedback.ConsumePackagePermissionEditor(true), "ordinary component navigation never starts authorization");
+    }
     TestHistoryAndFocusRoutes();
     TestConditionalPages();
     TestRelocatedWidgetBehaviorNavigation();
@@ -353,6 +376,19 @@ int main()
         const auto noWindow = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.noWindow"));
         Check(noWindow.page == SettingsPage::StatusBar && noWindow.focusId == "statusBar.noWindow",
             "the no-window scene has an independent focus destination");
+    }
+    {
+        SettingsShellNavigationState modules;
+        const auto route = SettingsRoute::ForPage(SettingsPage::RuntimeModules);
+        Check(route.IsValid() && SettingsPageKey(route.page) == "runtime-modules", "module route is stable and appended");
+        Check(!modules.IsRouteAvailable(route) && modules.Navigate(route) &&
+            modules.Route() == SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"),
+            "direct hidden module route resolves to the About visibility control");
+        (void)modules.SetVisibility({false, false, true});
+        Check(modules.Navigate(route), "showing advanced settings enables the module destination");
+        const auto hidden = modules.SetVisibility({false, false, false});
+        Check(hidden && hidden->page == SettingsPage::About && hidden->focusId == "about.showAdvancedSettings" && !modules.CanGoBack(),
+            "hiding advanced settings returns to About and removes hidden history entries");
     }
     if (failures != 0)
     {

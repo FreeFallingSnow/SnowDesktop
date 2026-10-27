@@ -201,6 +201,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `draw.imageFit.roundedClip`：允许即时绘制的 `draw.imageFit` 通过可选
   `cornerRadius` 对目标矩形执行抗锯齿圆角裁切；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
+- `resource.image.lazy`：`resource.image(name, {lazy=true})` 显式延后像素解码；
+  句柄仍在加载阶段创建，首次绘制前 `resource.status` 可以返回 `pending`；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
 - `slots.mutation.userGesture`：binding/collection 的选择、清除、移除、撤销与重做仍要求
@@ -229,6 +231,12 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的
   稳定 `anchorKey`；回调收到 `context.surface="popover"`。
+  从直接桌面手势重复打开当前辅助面板时，宿主复用现有场景，不重播动画、不重发 opened/closed，
+  并保留焦点与滚动状态。同一弹窗按组件实例、surface、title 和 popover 的 anchorKey 识别；
+  仅尺寸或位置变化不构成新弹窗。不同标题、锚点或 surface 仍会切换内容。普通非手势调用
+  保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。点击非模态面板所属组件的
+  内容区时，宿主先交给组件处理；其他外部点击和 Escape 继续关闭。关闭中的相同桌面请求
+  不会反向重播打开动画。此行为纠正保持 API/schema v2，不新增 feature；较早构建仍可能重开。
   `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，悬停时
   由宿主在左下角显示紧凑移动手柄、右下角显示缩放手柄，其余桌面 surface 均由组件内容和
   指针交互使用。
@@ -257,6 +265,38 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `widget.openDialog(options)`、`widget.closeDialog()`。dialog 默认允许 Escape 关闭、
   不允许点击遮罩关闭；可用 `dismissOnEscape` 与 `dismissOnOutside` 显式调整。它不使用
   阻塞式系统模态循环。
+- `widget.openPanel()` 不返回值（Lua 中为 `nil`），不提供“窗口已显示”的布尔确认。
+  `pcall(widget.openPanel)` 的首个返回值只表示 Lua 调用未抛错。打开 panel 需声明
+  `widget.panel`，返回声明式树还需 `view.surface.panel`；二者不要求额外敏感权限。
+  panel 使用已加载实例的宿主回调，不要求 popover 的 `anchorKey`。
+  真实宿主的打开/关闭事件为 `{kind="panel", action="opened"|"closed"}`。
+  普通 desktop preview、lint 和 quality 不会验证桌面弹窗是否出现。
+  `panel` 回调无需自行维护 `opened` 门控；若门控未置为 true 并返回 nil，将没有声明式内容。
+
+最小 panel 定义（在 manifest 中声明上述两个 feature、`view.tree.core`、`l10n.basic`，
+并翻译 `panel.open/title/content`；仅从按钮/菜单的用户 action 打开）：
+
+```lua
+local function panel(_context, _model)
+    return view.column({key="panel.root", width="fill", children={
+        view.text({key="panel.message", text=l10n.tr("panel.content")}),
+    }})
+end
+return widget.define({
+    view=function()
+        return view.button({key="open", label=l10n.tr("panel.open"),
+            action={id="openPanel"}})
+    end,
+    event=function(_context, _model, event)
+        if event.kind == "action" and event.id == "openPanel" then
+            widget.openPanel({title=l10n.tr("panel.title"), width=520, height=360})
+        elseif event.kind == "panel" then
+            widget.log("info", "panel lifecycle: " .. tostring(event.action))
+        end
+    end,
+    panel=panel,
+})
+```
 - `widget.openPopover(options)`、`widget.closePopover()`：`anchorKey` 必填且必须属于当前
   desktop surface 中已启用、可见命中的元素。调用只在直接可信桌面手势中成功并返回 true；
   支持 `auto/top/bottom/left/right/topStart/topEnd/bottomStart/bottomEnd`，auto 会按当前
@@ -1952,6 +1992,13 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 时间线。每个会话包含受限到 4096 字节的 `sourceName/title/artist/album`、播放状态、
 逐动作 `can*`、相对 `positionMs/durationMs` 和 seek 范围；没有当前会话时 current
 和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
+会话可选字段 `shuffle`、`repeatMode`（`none/track/list`）和 `playbackRate` 返回
+SMTC 实际报告的状态；时间线也携带同一样本的 `playbackRate`。Windows 未报告时字段为
+`nil`，不能把它解释为关闭随机、无循环或 1 倍速。倍速只返回有限正数。状态和控制能力
+相互独立：显示可操作控件前检查对应 `canToggleShuffle/canChangeRepeatMode/
+canChangePlaybackRate`，执行时再次检查会话 ID、权限与能力；设置成功后仍以订阅回读
+为准。此为 API v2 的可选增量，不提高 `apiVersion`；旧宿主和同版本早期构建可能不含
+这些字段，调用方必须按字段类型降级，不依赖 `minHostVersion` 推断字段存在。
 会话 ID 绑定宿主当前识别的原生会话，不由应用名称或列表位置推导。列表重排保持现存
 会话的 ID；已退休会话的 ID 不会指向后来出现的会话，也不能跨宿主重启复用。
 `media.artwork` 只返回当前会话的 `sessionId`、临时 `image` resource handle 和不超过
@@ -2074,6 +2121,106 @@ local muteTask = task.start("audio.output.setMute", { muted = true })
 `audioEnumeratorUnavailable`、`audioEndpointUnavailable`、`audioVolumeUnavailable`、
 `audioControlRejected`、`permissionRevoked` 和 `canceled`。该权限不授予非默认设备、
 逐进程音频会话、默认设备切换或系统音频策略控制。
+探测 `task.audio.output.coalescedVolume` 后，`audio.output.setVolume` 可传
+`coalesce=true`，用于滑块拖动和音量滚轮。每次仍须有权限和可信手势；宿主先取消该实例
+尚未完成的音量任务，再接纳最新值，任务 ID 仍各自独立，旧任务通过 `canceled` 完成。
+后台按至少 100 ms 间隔执行最新音量，输入停止后也会提交最后一值，不要求组件在非可信
+`task.complete/schedule` 回调中继续发起控制。已按下且尚未释放的宿主滑块 `change`
+属于可信手势；普通悬停移动不属于。取消、卸载和权限撤销仍停止未执行的值。
+不传 `coalesce` 或传 `false` 时保留原有并发和 `rateLimited` 行为；旧宿主与同版本早期
+构建缺少该 capability 时不得传新参数，应降级为松手提交。此为 API v2 可选增量，
+无需提高 `apiVersion`，不能仅凭 `minHostVersion` 判断支持。
+
+#### 组件音频播放（宿主 1.0.12.0 增量能力）
+
+`resource.audio`、`task.audio.playback`、`audio.playback.events` 是独立 feature。
+API/schema 仍为 v2；依赖组件必须声明这些 requiredFeatures 和 `minHostVersion`。
+同版本早期构建也可能缺少能力；旧宿主会拒绝新增 audio 资源类型，不能仅靠 Lua
+feature 检测让含该资源的包在旧宿主加载。官方社区组件须在支持宿主发布后再发布。
+
+包内音频在 `resources` 声明 `{type="audio",path="assets/sound.wav"}`，
+沿用包内安全路径、32 个资源、每资源 8 MiB 和包总大小限制。
+入口求值时 `resource.audio("sound")` 创建不透明句柄；`resource.status` 的 ready
+表示声明已解析，不代表音频已解码。文件打开、解码和播放在独立工作线程进行，
+错误通过任务或播放状态回传，不阻塞渲染。播放只访问本地文件，不访问网络。基础格式为 MP3/WAV；扩展格式见下文。
+
+```lua
+local sound = resource.audio("sound")
+-- After audio.playback permission is granted, timer events may also play audio.
+local taskId, err = task.start("audio.play", {source=sound, volume=0.6, loop=false})
+-- Alternatively: {handle=userSelectedFile}, or {handle=selectedFolder,name="song.mp3"}.
+-- task.complete.value.playbackId is an opaque ID belonging to this VM.
+-- Save it in the instance model in the descriptor's event callback:
+-- if event.kind == "task.complete" and event.taskId == model.playTask and event.ok then
+--     model.playbackId = event.value.playbackId
+-- end
+-- After that completion, a later event can control this playback:
+task.start("audio.pause", {playbackId=model.playbackId})
+task.start("audio.resume", {playbackId=model.playbackId})
+task.start("audio.seek", {playbackId=model.playbackId, positionMs=30000})
+task.start("audio.setVolume", {playbackId=model.playbackId, volume=0.5})
+task.start("audio.setLoop", {playbackId=model.playbackId, loop=true})
+task.start("audio.stop", {playbackId=model.playbackId})
+```
+
+全部任务要求 `audio.playback`，无需即时手势；用户选择的文件还要求
+`filesystem.userSelected.read` 和当前实例可读句柄。包资源 `source` 与文件 `handle`
+必须且只能提供一个；`name` 仅接受文件夹的直接子文件名，拒绝路径跳转、备用数据流
+和重解析点。宿主在整个播放期固定目录及文件，防止授权后路径替换。
+`volume` 为有限 0–1 数值，默认 1；`loop` 为布尔值，默认 false。
+组件音量不会修改系统端点或其他组件。每 VM 最多 8 路、宿主最多 32 路。
+
+播放任务成功返回 `{playbackId=...}`，其余成功返回 `{accepted=true}`；
+成功表示操作已提交，音频解码仍可能失败。`audio.state` 在 task.complete 后串行投递，
+含 `playbackId/status/positionMs/durationMs/volume/loop/error`；status 为
+`loading/playing/paused/ended/stopped/error`。位置使用毫秒，未知时长为 0。
+活动播放最多每 250 ms 合并一次进度，终态保留；回调不继承用户手势。
+自然结束和失败后自动释放，播放 ID 不能持久化。无限循环须显式停止。
+后台隐藏继续播放；卸载、禁用、热重载、撤权、关闭自动停止。释放来源文件句柄也会停止。
+预览仅返回确定性播放 ID，不打开文件、不发声、不产生真实进度。
+
+稳定错误包括 `invalidArguments`、`invalidPlayback`、`permissionDenied`、
+`permissionRevoked`、`invalidReference`、`unsupportedFormat`、`audioOpenFailed`、
+`reparsePointDenied`、`notFile`、`seekOutOfRange`、`quotaExceeded`、
+`audioPlaybackUnavailable`、`audioPlaybackFailed`、`audioDecodeFailed`、`canceled`。
+提示音应默认关闭并提供设置开关；拒绝播放权限时计时、计数等主功能应继续可用。
+
+声明 `audio.playback.formats.extended` 后可依赖宿主识别 FLAC、M4A/M4B（AAC 或 ALAC）、
+AAC/ADTS、WMA、Ogg/OGA、Opus，文件选择与包内音频资源使用相同的格式表和容器头校验。
+实际解码依赖 Windows 原生媒体能力；Ogg/Opus 等可能需要系统媒体扩展，损坏文件、受 DRM
+保护或系统不支持的编码仍可能失败。不会自动下载安装解码器。包内资源仍受 8 MiB 上限约束。
+
+音乐播放器可按需声明四项新增 feature：`audio.playback.metadata`、
+`audio.playback.systemMediaControls`、`audio.playback.rate`、`audio.playback.mode`。
+API 仍为 v2；宿主 1.0.12.0 的早期构建可能尚无这些能力，组件应声明 requiredFeatures
+或提供能力检测降级。官方社区播放器应在支持宿主发布后再发布。
+
+`audio.play` 可选 `readMetadata=true` 读取标签标题、艺术家、专辑和封面；可选
+`systemMediaControls=true` 为本路播放创建 Windows SMTC 会话，也读取本地标签供系统显示。
+两者均默认 false，短提示音无需创建系统媒体会话。标签缺失或读取失败不影响播放，标题回退为
+不含扩展名的文件名；封面不存在、过大或无法解码时 `artwork` 为空，不返回文件路径。
+封面编码最多 4 MiB，源边长最多 16384，输出最长边 512，复用实例隔离的运行时图片缓存，
+可以直接用于 `view.image`。元数据与封面读取在音频工作线程执行，各异步步骤有 2 秒时限。
+
+`audio.play` 还支持 `playbackRate`（有限数 0.25–4，默认 1）、`shuffle`（布尔，默认 false）、
+`repeatMode`（`none/track/list`，默认 none）。`repeatMode` 与旧参数 `loop` 互斥；
+旧 `loop=true` 仍表示原生单曲循环。新增控制任务：
+
+```lua
+task.start("audio.setPlaybackRate", {playbackId=id, playbackRate=1.5})
+task.start("audio.setPlaybackMode", {playbackId=id, shuffle=true, repeatMode="list"})
+```
+
+`track` 在原生播放器循环当前音频；`shuffle/list` 同步 SMTC 状态，随机选曲和列表推进由组件实现。
+`audio.state` 增加 `title/artist/album/artwork/playbackRate/shuffle/repeatMode/systemMediaControls/canSeek`。
+`canSeek` 反映当前原生媒体能否跳转，未知时长或不支持跳转时组件应禁用进度操作。
+系统播放、暂停和进度控制由原生播放器处理，再通过状态事件同步组件。
+系统切歌、随机、循环和倍速请求通过 `audio.command` 传回当前实例，包含 `playbackId` 和
+`command=next/previous/setShuffle/setRepeatMode/setPlaybackRate`；后三种请求分别带
+`shuffle/repeatMode/playbackRate`。组件应执行自己的选曲或对应控制任务，再更新自身模型。
+命令有界排队，不与进度合并，不赋予可信手势；必须匹配当前播放 ID，忽略旧曲目迟到事件。
+停止、自然结束、错误、卸载、撤权和关闭时销毁对应 SMTC 会话。
+
 
 #### 设备与电源写任务（宿主 1.0.8.0 起）
 
@@ -2889,6 +3036,41 @@ CPU、内存、网络、媒体和音频波形等状态应通过 `data.subscribe`
 显示文本；宿主保存值而不是翻译，切换语言不会使现有设置失效。对应 feature 为
 `settings.select.localizedOptions`。
 
+#### 设置字段类型总表
+
+`widget.define({settings=...})` 的字段类型限于下表。`view.textArea`、
+`control.textArea` 是面板/桌面输入控件，**不是设置字段类型**。未知类型在运行期仍保留
+既有文本回退；作者工具对可静态识别的 literal `widget.define` 设置表给出
+`settings.unknown-type` 警告并列出允许类型，quality 会拒绝未解决的警告。
+动态构造的 schema 不能仅凭静态 lint 无警告判定有效。
+
+| type | storage／值通道 | 额外 feature | 约束 |
+| --- | --- | --- | --- |
+| `text` | 普通字符串 | 基础设置能力 | `minLength/maxLength/required` |
+| `password` | 宿主 secret reference | `settings.secretReference` | `required`；无明文 default/preset |
+| `bool` | 普通布尔的字符串编码 | 基础设置能力 | `required` 表示必须为 true |
+| `int` | 普通十进制整数字符串 | 基础设置能力 | `min/max`，整数输入 |
+| `float` | 普通数字字符串 | 基础设置能力 | `min/max/step` |
+| `range` | 类型化 number | `settings.range` | `min/max/step` |
+| `color` | 普通颜色数值字符串 | 基础设置能力 | `0..0xFFFFFF` |
+| `select` | 稳定选项字符串 | 本地化标签需 `settings.select.localizedOptions` | `options/required` |
+| `multiSelect` | 类型化字符串数组 | `settings.multiSelect` | `options/required` |
+| `url` | 普通字符串 | `settings.url` | URL 格式、长度、`required` |
+| `date` | 普通 `YYYY-MM-DD` 字符串 | `settings.date` | 日期格式、长度、`required` |
+| `time` | 普通 `HH:MM` 字符串 | `settings.time` | 时刻格式、长度、`required` |
+| `duration` | 指定单位的整数字符串 | `settings.duration` | `unit/min/max/step` |
+| `appSearch` | 显示名与搜索字符串 | `settings.appSearch` | `searchKey` |
+| `appReference` | 宿主 binding 的 opaque 引用 | `settings.appReference`、`slots.model` | binding、`required` |
+| `desktopItemReference` | 宿主 binding 的 opaque 引用 | `settings.desktopItemReference`、`slots.model` | binding、`required` |
+| `fileReference` | 宿主 binding 的 opaque 引用 | `settings.fileReference`、`slots.model` | binding、`required` |
+| `folderReference` | 宿主 binding 的 opaque 引用 | `settings.folderReference`、`slots.model` | binding、`required` |
+| `fileHandle` | 宿主文件 handle | `settings.fileHandle` | `access/extensions/required` |
+| `folderHandle` | 宿主目录 handle | `settings.folderHandle` | `access/required` |
+
+声明 `required/minLength/maxLength` 还需 `settings.validation` 和本地化
+`validationMessage`；长度限制仅用于 `text/url/date/time`。各类型的边界、选择器与持久化
+细节见下文，表中的“基础设置能力”不表示新增 feature。
+
 API v2 还提供以下普通值设置控件：
 
 - `url`：空值或不超过 2048 字节、带 authority 且不含空白和反斜杠的 `http://` / `https://` URL；
@@ -3113,7 +3295,7 @@ view.image({ key = "logo", source = logo, alt = "SnowDesktop" })
 view.text({ key = "title", text = "SnowDesktop", font = display })
 ```
 
-可用 `resource.exists(name)` 和 `resource.status(handle)` 查询。句柄在入口求值期间同步创建，
+可用 `resource.exists(name)` 和 `resource.status(handle)` 查询。默认句柄在入口求值期间同步创建，
 所以状态只会是 `ready` 或带 `error = "unavailable"` 的 `error`，不会留下需要轮询的
 `pending`。创建失败会拒绝本次 VM 加载，并以 `resource.image: code` 或
 `resource.font: code` 抛出稳定错误：`loadPhaseRequired`、`invalidName`、
@@ -3125,12 +3307,42 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 资源名在 VM 建立时一次性解析为宿主私有路径；`resource.exists` 只查询已验证的清单，
 不会在 `view/render` 回调中访问文件系统。`resource.image` 在入口加载期计算内容 SHA-256，
-再把图片解码到有界、同宿主共享的像素缓存；成功 VM 保存资源名对应的内容键，因此同一路径
-热重载不会误用旧像素，失败的新 VM 也不会改变仍在运行的旧实例。绘制和 D2D 设备重建只从
-对应内容键的内存像素创建设备位图；失败加载、热重载、卸载和关机会释放当前 VM 创建的句柄，
-最后一个同内容句柄释放后宿主回收其 CPU 像素和 D2D 位图；
-`resource.font` 同样必须在入口加载期完成私有字体集合创建。解码、字体加载或总缓存额度
-失败会直接拒绝句柄和本次 VM，而不是把同步磁盘 I/O 推迟到首帧。
+保留不可变的压缩源快照；默认调用仍同步完成解码和设备检查，失败时拒绝本次 VM。
+成功 VM 保存资源名对应的内容键，因此同一路径热重载不会误用旧像素，失败的新 VM 也不会
+改变仍在运行的旧实例。绘制和 D2D 设备重建使用内存快照，不重新读取已改变或已删除的文件。
+失败加载、热重载、卸载和关机会释放当前 VM 创建的句柄，最后一个同内容句柄释放后回收
+其快照、CPU 像素和 D2D 位图；`resource.font` 仍在入口加载期完成私有字体集合创建。
+
+宿主按图片内容共享解码像素，合并当前可见组件和 surface 的最大物理像素需求，按分辨率档位
+重建。尺寸增大时准备更高档位，缩小或隐藏后等待约两秒稳定期再降档或回收；同一档内的尺寸
+变化不重复解码。原始宽高比、`fit="none"` 的固有尺寸和裁剪语义保持不变，最近邻绘制保留
+原始像素采样。升级期间继续使用旧位图，结果完成后刷新引用该图片的视图。像素回收不会让
+已验证资源重新变成 `pending`，压缩快照保留到最后一个句柄释放。原始尺寸的图片配额仍在
+创建句柄时预留，不能通过小尺寸绘制或懒解码绕过。
+
+需要懒解码时，先探测 `resource.image.lazy`，在入口加载期显式选择：
+
+```lua
+local lazy = widget.hasFeature("resource.image.lazy")
+local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
+```
+
+`{lazy=true}` 在加载期保留快照并校验格式元数据及配额，像素内容在首次绘制该句柄时按需
+解码。桌面宿主在后台解码并唤醒重绘，等待期间该图片绘制为空操作；组件可继续绘制上一个
+已就绪背景。独立预览会在其隔离进程内完成首次请求，保证一次性导出包含图片。
+尚未使用或首次解码未完成时，`resource.status(handle).state` 为 `pending`；首次成功后为
+`ready`，解码失败为带 `error="unavailable"` 的 `error`。句柄不会自行要求轮询或启动定时器，
+使用场景由绘制决定。损坏的像素数据可能在首次解码时才报错，不能把懒句柄的创建成功当作
+完整解码验证。第二参数仅接受可选布尔字段 `lazy`，无效选项报 `resource.image: invalidOptions`。
+默认调用的加载阶段报错语义保持不变。
+
+支持 `resource.image.lazy` 的宿主还会在图片状态中返回布尔字段 `resident`，表示当前有可用的
+解码像素。已验证图片的像素被回收后仍为 `ready`，但 `resident=false`；再次绘制会请求恢复。
+需要保留上一张背景的组件应同时检查 `state=="ready"` 和 `resident~=false`，直到新图像素就绪。
+
+此能力是 API v2 的可选扩展，不提高 `apiVersion`。旧宿主（包括同版本号的早期构建）不支持
+该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
+交付对应宿主，再发布组件，或像上例保留可运行的降级路径。
 
 ## 清单 v2 最小要求
 
@@ -3351,3 +3563,261 @@ only secondary dates. Disabling annotations never changes events.
 `glass-transparent` uses light/white content (`contentTheme=0`), neutral low-opacity tint,
 blur and edge reflections. Use the tool bundled with a supporting host; older
 tools reject this appearance. Lua API and schema versions remain unchanged.
+
+
+## Native EXE helpers (feature `task.native.request`)
+
+This additive API retains `apiVersion: 2`. A component using it must declare
+`task.native.request` or `task.native.watch` in `requiredFeatures` and `native.execute` in either
+`permissions` or `optionalPermissions`. Older hosts reject the required feature
+or the executable package. Publish a supporting host before publishing components
+that require it; the application version alone does not identify support.
+
+Lua keeps its existing sandbox. Native code runs only in a declared package EXE,
+with the current Windows user's permissions. The host never loads component DLLs
+or runs shell commands/scripts. Package DLLs and undeclared EXEs remain forbidden;
+use a self-contained EXE or an already-installed system runtime. This feature is
+not a security sandbox for the approved EXE and does not grant administrator rights.
+
+Declare one to four helpers in the manifest's `nativeHelpers` object:
+
+```json
+"nativeHelpers": {
+  "battery": {
+    "path": "bin/battery-helper.exe",
+    "sha256": "<64 lowercase hexadecimal characters from the actual EXE>",
+    "purposeKey": "native.purpose",
+    "operationsKey": "native.operations",
+    "reasonKey": "native.reason",
+    "deniedKey": "native.denied"
+  }
+}
+```
+
+All four keys must have nonempty translations (at most 4096 UTF-8 bytes each)
+in every declared component locale, including an English `en-US` or `en`
+fallback. Explain the purpose, actual operations, why host APIs are insufficient,
+and behavior after refusal. The host resolves them through component localization
+and separately shows its own localized full-trust warning, executable paths and
+SHA-256 values. Declared purpose is not an enforced restriction on the EXE.
+
+Users grant access in the host permission editor. Granting `native.execute`
+requires a separate unchecked acknowledgment and a 10-second delay starting when
+the dialog opens. A package subscription or development override does not approve
+native execution. Authorization is bound to the package source, permissions and
+validated contents of every package file. The host revalidates this reviewed
+identity when the user submits approval; changed content or source is rejected.
+Same-version content changes invalidate it. Executable hashes are checked again before launch; `native.request` holds the image open
+against modification/deletion for its managed invocation. Revocation cannot undo
+past file, network or device operations.
+
+```lua
+local taskId, err = task.start("native.request", {
+    helper = "battery",
+    operation = "read",
+    payload = "{}",
+    timeoutMs = 15000,
+})
+```
+
+Each task creates one process and handles one request. Helper IDs contain 1-64
+lowercase ASCII letters, digits, `_` or `-`, starting with a letter. Operation
+names accept 1-64 ASCII letters, digits, `.`, `_`, or `-`. `payload` is a JSON object
+string, at most 8192 bytes; pretty-printed whitespace is compacted. `timeoutMs`
+is an integer from 1000 to 60000 (default 15000). One request per component
+instance and at most eight managed requests across the engine can run concurrently.
+Preview, dry loading, lint, quality checks and author tests never launch helpers;
+preview execution completes with `previewUnavailable`.
+
+The host starts the exact declared EXE with the sole fixed argument
+`--snowdesktop-native-v1`. Communication uses private inherited stdin/stdout pipe
+handles. No network listener is created. stdout is reserved for UTF-8 JSON Lines;
+flush every frame. stderr is drained separately, capped at 16 KiB and not exposed
+to Lua or automatically logged. The child inherits only the three standard pipe
+handles, not other host handles. The EXE must not request elevation.
+
+The helper's language entry point must inspect its real process arguments; a
+wrapper or a second process must forward them explicitly. The host still sends
+hello first. If the fixed argument is present but hello is absent, exit instead
+of falling back to human-readable stdout. Direct manual/debug launches may use a
+separate mode. Do not change the protocol contract to work around a missing
+argument without checking the entry point and any wrapper/relaunch logic.
+
+#### Explicit UTF-8 output
+
+**Every stdout frame must be UTF-8 bytes. Do not rely on the system code page,
+console settings or the process which launches the helper.** Console output code
+page settings alone do not configure the encoding of a redirected pipe. A Python
+parent's `PYTHONIOENCODING` does not configure a managed child's `Console.Out`.
+Use one writer, append one LF, and flush every complete JSON frame. Diagnostics
+belong on stderr or in a file outside the package; never mix them into stdout.
+
+For .NET Framework 4, write encoded bytes to the standard output stream:
+
+```csharp
+Stream output = Console.OpenStandardOutput();
+byte[] bytes = new UTF8Encoding(false).GetBytes(jsonLine + "\n");
+output.Write(bytes, 0, bytes.Length);
+output.Flush();
+```
+
+For Python 3, bypass text-stream defaults:
+
+```python
+sys.stdout.buffer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+sys.stdout.buffer.flush()
+```
+
+For Windows C/C++, pass an already UTF-8 encoded buffer to `WriteFile` on
+`GetStdHandle(STD_OUTPUT_HANDLE)` and handle partial writes. Do not assume
+`SetConsoleOutputCP` converts pipe bytes. Node can use
+`process.stdout.write(Buffer.from(JSON.stringify(frame) + "\n", "utf8"))`;
+Go can use `json.NewEncoder(os.Stdout).Encode(frame)` and check the returned error.
+If either uses additional buffering, flush it after each frame. Encoding does not
+make invalid JSON, mixed logging, interleaved writers or missing LF framing valid.
+
+Protocol v1 exchange (each object occupies one line):
+
+```json
+{"version":1,"kind":"hello","protocol":"snowdesktop-native"}
+```
+
+The host sends hello first; the helper replies with the same object within three
+seconds, also respecting the request deadline. The host then sends:
+
+```json
+{"version":1,"kind":"request","id":"1","operation":"read","payload":{}}
+```
+
+The helper may emit events, followed by exactly one final result or error:
+
+```json
+{"version":1,"kind":"event","id":"1","value":{"status":"reading"}}
+{"version":1,"kind":"result","id":"1","value":{"percent":73,"charging":false}}
+```
+
+```json
+{"version":1,"kind":"error","id":"1","code":"deviceUnavailable"}
+```
+
+Each frame is limited to 16 KiB, JSON depth to 16, JSON nodes to 2048, stdout to
+256 KiB and events to 16 per request. All response/event IDs must be `"1"`.
+Protocol versions and message kinds are checked; arbitrary commands from the
+helper are never interpreted by the host.
+
+Events arrive as `event.kind == "native.event"` with `taskId` and decoded `value`.
+The final `task.complete` has `task == "native.request"`; successful `value` is the
+decoded result JSON. JSON null follows existing Lua nil conversion rules.
+Helper error frames currently yield `nativeHelperError` without exposing stderr.
+Other stable errors include `nativeLaunchFailed`, `unknownHelper`,
+`nativeContentChanged`, `nativeProtocolError`, `nativeOutputLimit`, `nativeExited`,
+`nativeTimeout`, `previewUnavailable`, `permissionRevoked`, and `canceled`.
+
+#### Optional native diagnostics (`task.native.diagnostics`)
+
+Supporting hosts add `task.complete.diagnostic` to some failed native tasks:
+`{reason, phase, relativePath?}`. Existing `error` codes and successful values are
+unchanged. Detect `widget.hasFeature("task.native.diagnostics")`; API version
+remains 2. Required users must wait for the supporting host to be published;
+early builds including Steam internal-dev Build 26106929 lack this feature.
+Components can otherwise keep it optional and fall back to the original error.
+
+| reason | Meaning |
+| --- | --- |
+| `emptyFrame` / `invalidUtf8` / `invalidJson` | Empty line, invalid UTF-8 bytes or invalid JSON |
+| `invalidEnvelope` / `jsonLimit` | Wrong version/object envelope or JSON complexity limit |
+| `unexpectedHello` / `unexpectedId` / `unexpectedKind` | Wrong handshake, request ID or message kind |
+| `frameTooLarge` | A completed frame exceeded the size budget |
+| `helperHashMismatch` | Package validation rejected a helper image/hash |
+| `packageValidationFailed` | Package validation failed for another reason |
+| `authorizationContentChanged` | Valid package contents no longer match the reviewed authorization |
+| `packageChangeDetected` | A directory change notification occurred during a watch; it may be the helper's own log/cache write |
+| `packageIdentityChanged` | The watched package directory no longer has the original identity |
+
+`phase` is `validation`, `hello`, `response` or `watch`. `relativePath`, when
+available, is the first notification path relative to the package (at most 1024
+UTF-8 bytes). It is a hint, not a complete change list or proof of which process
+wrote the file. Overflow/identity changes can omit it. No raw stdout/stderr,
+payload snippets, tokens or absolute user paths are copied into diagnostics.
+Not every failure has metadata; always handle `error` without it.
+
+After a final frame, the host sends `{"version":1,"kind":"stop"}`, allows a brief
+cooperative exit, then cleans up the request's Job Object. Cancellation, timeout,
+component disposal, permission revocation and host shutdown also clean up managed
+processes. The job manages at most eight processes per request and is a lifecycle
+mechanism, not an isolation boundary against malicious same-user programs.
+A helper crash or protocol failure does not load helper code into the host.
+
+### Resident helpers (`task.native.watch`)
+
+Use `task.start("native.watch", arguments)` for a resident, instance-owned helper.
+Its arguments match `native.request`; `timeoutMs` applies to validation, startup,
+handshake and the first event/heartbeat. The process then remains alive until the
+task is canceled, the component is disposed/disabled/reloaded, consent is revoked,
+the package changes, the helper exits, or the host shuts down. Hiding a component
+does not itself end the watch. Each watch owns a separate process; it is not shared
+between component instances. At most one watch per instance and eight native
+tasks across the engine may run. Request and watch tasks have separate per-instance limits.
+
+The protocol and launch argument remain v1. A watch request adds `"stream":true`:
+
+```json
+{"version":1,"kind":"request","id":"1","operation":"watch","payload":{},"stream":true}
+```
+
+Send `event` frames with the latest readings; do not send `result` after each
+reading, because `result`/`error` ends the task. Send an event or this heartbeat
+at least once every 30 seconds after the first frame:
+
+```json
+{"version":1,"kind":"heartbeat","id":"1"}
+```
+
+Heartbeats are consumed by the host. Data still arrives as `native.event`, with
+the original watch `taskId`. A stopped or failed watch emits `task.complete`.
+There is no automatic restart; the component can offer an explicit retry after
+reporting the error. Always retain the returned task ID and use `task.cancel(id)`
+to stop a watch before explicitly replacing it. Disposal and host teardown also
+stop it without requiring component cleanup code.
+
+The 16 KiB frame, JSON depth/node limits still apply. For watches the byte and
+event budgets reset in one-second windows: stdout 256 KiB, stderr 16 KiB, and
+32 events/heartbeats. At most 64 undelivered events may be queued for one native
+task; excess output ends it with `nativeOutputLimit`. Initial silence uses the
+startup timeout; subsequent 30-second silence yields `nativeTimeout`.
+
+The host watches the package directory for writes/renames and checks its path
+identity once per second. Changes end the watch with `nativeContentChanged`.
+Launch-time image/directory pins are released after process startup so a resident
+helper does not retain the host's package-replacement locks. The running Windows
+image still follows normal OS file-sharing rules.
+
+**Do not write logs, configuration, caches or temporary files anywhere inside
+the component package, including the EXE's directory.** Any such write can end
+the watch with `nativeContentChanged` and invalidate authorization. Use a
+component-specific directory under `%LOCALAPPDATA%` or the system temporary
+directory instead, and avoid recording credentials. For example, managed helpers
+can combine `Environment.SpecialFolder.LocalApplicationData`, their own directory
+name and a log basename. This rule applies even with development overrides.
+
+After rebuilding an EXE, update its declared SHA-256, finish editing the package,
+then synchronize and reauthorize. Development mode does not remove the independent
+acknowledgment or 10-second wait; package ID alone is never an execution grant.
+
+On every exit path, including cancellation, the host first sends `stop` and allows
+a brief cooperative exit, then terminates any remaining managed processes through
+the Job Object. Revoking authorization cannot roll back completed operations.
+
+```lua
+-- In setup, once for this component instance (never from view/render):
+local watchId, err = task.start("native.watch", {
+    helper = "battery", operation = "watch", payload = "{}", timeoutMs = 5000,
+})
+-- Handle native.event for watchId to update the model without respawning the EXE.
+```
+
+Components requiring resident mode must declare `task.native.watch`; an older
+host which only supports `task.native.request` must reject that required feature.
+Publish the supporting host before distributing such a component. The Lua API
+version remains 2. Resident mode was introduced in authoring Skill revision 18;
+revision 19 adds protocol diagnostics and the integration guidance above.

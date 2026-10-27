@@ -749,7 +749,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
         {
             const std::wstring message = L"[HookRuntimeDeployment] pool-expanded candidateSlots=" +
                 std::to_wstring(cache.CandidateSlotCount()) + L" path=" + shared.wstring();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str());
         }
         if (shared.empty())
         {
@@ -757,7 +757,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
             const std::wstring message = L"[HookRuntimeDeployment] error=" + std::to_wstring(code) +
                 L" candidateSlots=" + std::to_wstring(cache.CandidateSlotCount()) +
                 L" source=" + source.wstring();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Warning);
             SetLastError(code);
         }
         if (!shared.empty() && (taskbar || dock64 || dock32))
@@ -1048,7 +1048,7 @@ std::wstring GetTaskbarHookPath()
         }
         if (!deployedPath.empty())
         {
-            WriteDiagnosticLogEntry(L"[HookRuntimeDeployment] publication busy; using active resident DLL; new DLL code deferred until Explorer exits naturally");
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"[HookRuntimeDeployment] publication busy; using active resident DLL; new DLL code deferred until Explorer exits naturally");
             SetLastError(ERROR_SUCCESS);
         }
         else SetLastError(ERROR_BUSY);

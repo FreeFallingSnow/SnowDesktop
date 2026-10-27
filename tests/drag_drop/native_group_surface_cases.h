@@ -65,6 +65,86 @@ inline std::set<std::wstring> VisiblePaths(DesktopApp& app)
                 "native search cannot publish the same physical member twice");
     return result;
 }
+inline void RunSortResponse()
+{
+    // The pointer reaches the near quarter of its neighbour before that
+    // neighbour's old midpoint. Expectations describe the user-visible order,
+    // not a reimplementation of the production threshold calculation.
+    struct Move
+    {
+        std::vector<std::wstring> selected;
+        const wchar_t* pressed;
+        const wchar_t* neighbour;
+        bool right, cancel;
+        size_t beforeIndex, afterIndex;
+        std::vector<std::wstring> before, after;
+    };
+    const Move moves[]{
+        {{L"B"}, L"B", L"C", true, false, 2, 3, {L"A", L"B", L"C", L"D"}, {L"A", L"C", L"B", L"D"}},
+        {{L"C"}, L"C", L"B", false, false, 2, 1, {L"A", L"B", L"C", L"D"}, {L"A", L"C", L"B", L"D"}},
+        {{L"B", L"D"}, L"B", L"C", true, false, 2, 3, {L"A", L"B", L"D", L"C"}, {L"A", L"C", L"B", L"D"}},
+        {{L"B", L"D"}, L"D", L"C", false, true, 3, 2, {L"A", L"C", L"B", L"D"}, {L"A", L"B", L"D", L"C"}},
+    };
+    Profile profile;
+    size_t scenes = 0;
+    for (const bool fileGroup : {false, true})
+    for (const bool list : {false, true})
+    for (const auto& move : moves)
+    {
+        context = "responsive label sort file-group=" + std::to_string(fileGroup) + " list=" + std::to_string(list) +
+            " case=" + std::to_string(&move - moves);
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, fileGroup, list, false);
+        for (auto& widget : widgets)
+        {
+            if (widget.id == L"surface-group") widget.gridSpan.columns = 8;
+            if (widget.id == L"B") widget.title = widget.customTitle = L"Medium source B";
+            if (widget.id == L"C") widget.title = widget.customTitle = L"Longer C source title";
+        }
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app); native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        Require(Access::Save(app), "save responsive-sort baseline before hovering");
+        const auto saved = Read(Access::LayoutPath(app));
+        const RECT neighbour = Access::GroupSurfaceTabRect(app, L"surface-group", move.neighbour);
+        Require(!IsRectEmpty(&neighbour), "responsive neighbour is visible with variable-width labels");
+        const LONG quarter = (neighbour.right - neighbour.left) / 4;
+        const LONG threshold = move.right ? neighbour.left + quarter : neighbour.right - quarter;
+        auto* group = Access::MemberContainer(app, L"surface-group");
+        const int step = group->Cu(2.0f), buffer = group->Cu(4.0f);
+        const int direction = move.right ? 1 : -1;
+        Access::BeginResponsiveGroupLabels(app, move.selected, move.pressed);
+        const auto checkAt = [&](LONG x, size_t insertion, const std::vector<std::wstring>& expected) {
+            const POINT point{x, (neighbour.top + neighbour.bottom) / 2};
+            const auto preview = Access::GroupSurfacePointPreview(app, L"surface-group", point);
+            Require(!preview.Empty() && preview.insertIndex == insertion,
+                "same-group sort must respond at the directional near-quarter boundary, before the old midpoint");
+            const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+            std::vector<std::wstring> order;
+            for (const auto& tab : visual.tabs) order.push_back(tab.id);
+            Require(visual.inserting && order == expected && !Access::GroupSurfaceGhostWanted(app) &&
+                Access::GroupSurfaceLabelHint(app, L"surface-group").empty(),
+                "responsive sorting retains exact label landing, silent feedback and ghost exclusion");
+            Require(Read(Access::LayoutPath(app)) == saved, "responsive hover cannot save a tentative order");
+        };
+        checkAt(threshold - direction * step, move.beforeIndex, move.before);
+        checkAt(threshold + direction * step, move.afterIndex, move.after);
+        for (int repeat = 0; repeat < 3; ++repeat)
+            checkAt(threshold - direction * step, move.afterIndex, move.after);
+        checkAt(threshold - direction * (buffer + step), move.beforeIndex, move.before);
+        checkAt(threshold + direction * step, move.afterIndex, move.after);
+        if (move.cancel) Access::EndActualGesture(app);
+        else Access::DropGroupSurfaceLabels(app, L"surface-group");
+        const auto expected = move.cancel ? std::vector<std::wstring>{L"A", L"B", L"C", L"D"} : move.after;
+        CheckSurface(app, original, expected); samples.Check();
+        Require(Access::Save(app), "save responsive sort through actual host storage");
+        native_drag_async_reload_cases::Refresh(app); CheckSurface(app, original, expected);
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); CheckSurface(app, original, expected); samples.Check();
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " responsive same-group quarter-boundary, hysteresis, primary-label and storage scenes passed\n";
+}
 inline void RunLabels()
 {
     Profile profile;
@@ -85,6 +165,21 @@ inline void RunLabels()
         const auto saved = Read(Access::LayoutPath(app));
         const auto captured = Access::BeginGroupLabels(app, L"surface-group", move.selected);
         Require(captured.entries.size() == move.selected.size(), "native label capture retains the complete supplied selection");
+        const auto checkExtracted = [&] {
+            const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+            std::vector<std::wstring> order;
+            for (const auto& tab : visual.tabs)
+            {
+                order.push_back(tab.id);
+                Require(!tab.placeholder, "a floating label cannot leave any insertion placeholder behind");
+            }
+            std::vector<std::wstring> expected;
+            for (const auto* id : {L"A", L"B", L"C", L"D"})
+                if (std::find(move.selected.begin(), move.selected.end(), id) == move.selected.end()) expected.emplace_back(id);
+            Require(visual.active && !visual.inserting && order == expected && Access::GroupSurfaceGhostWanted(app),
+                "taking labels out removes their original blocks and repacks the remaining tabs while the ghost is shown");
+        };
+        checkExtracted();
         for (std::size_t index = 0; index < move.selected.size(); ++index)
         {
             // Mapped labels use Widget metadata because they can also leave
@@ -97,7 +192,41 @@ inline void RunLabels()
                     : collectionLabel && collectionLabel->GetCollectionId() == move.selected[index]),
                 "native labels retain their actual original child identities, label wrappers and source order");
         }
-        const auto preview = Access::GroupSurfaceLabelPreview(app, L"surface-group", move.boundary, move.after);
+        // The same horizontal insertion must survive title, member content and
+        // bottom-edge hits. Hover is presentation only, including cancellation.
+        for (int zone = 0; zone < 4; ++zone)
+        {
+            const auto projected = Access::GroupSurfaceLabelPreview(app, L"surface-group", move.boundary, move.after, zone);
+            Require(!projected.Empty() && projected.insertIndex == move.insert,
+                "own label drag uses tab insertion across the complete source component");
+            Require(Access::GroupSurfaceLabelHint(app, L"surface-group").empty(),
+                "same-group sorting has live position feedback without a floating text hint");
+            const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+            std::vector<std::wstring> order, placeholders;
+            LONG previousRight = LONG_MIN;
+            for (const auto& tab : visual.tabs)
+            {
+                order.push_back(tab.id);
+                if (tab.placeholder) placeholders.push_back(tab.id);
+                Require(tab.bounds.left >= previousRight && tab.bounds.right > tab.bounds.left,
+                    "live tab layout makes nonoverlapping space for every label");
+                previousRight = tab.bounds.right;
+            }
+            // A cancelled gesture still previews the requested order.
+            const auto expected = move.cancel ? std::vector<std::wstring>{L"B", L"D", L"A", L"C"} : move.expected;
+            Require(visual.active && visual.inserting && order == expected && placeholders == move.selected,
+                "live preview shows the independently specified final tab order and full selection");
+            Require(!Access::GroupSurfaceGhostWanted(app), "a live label landing suppresses the floating duplicate block");
+            Require(Access::GroupSurfaceRetiresActualGhost(app),
+                "actual preview synchronization hides an existing sorting ghost before preparing any duplicate geometry");
+            CheckSurface(app, original, {L"A", L"B", L"C", L"D"});
+            Require(Read(Access::LayoutPath(app)) == saved, "live tab preview never persists an intermediate order");
+        }
+        Access::LeaveGroupSurface(app); checkExtracted();
+        Access::GroupSurfaceTransportVisual(app, false);
+        Require(!Access::GroupSurfaceGhostWanted(app), "OLE visual ownership continues to suppress the custom ghost outside tab targets");
+        Access::GroupSurfaceTransportVisual(app, true); checkExtracted();
+        const auto preview = Access::GroupSurfaceLabelPreview(app, L"surface-group", move.boundary, move.after, 1);
         Require(!preview.Empty() && !preview.fileBacked && preview.action == DropAction::Move && preview.targetWidget &&
             preview.targetWidget->id == L"surface-group" && preview.insertIndex == move.insert &&
             preview.landings.size() == move.selected.size(),
@@ -106,6 +235,8 @@ inline void RunLabels()
         {
             Access::EndActualGesture(app);
             Require(Read(Access::LayoutPath(app)) == saved, "cancelled label drag cannot save a new order");
+            Require(!Access::GroupSurfaceTabLayout(app, L"surface-group").active,
+                "cancelled gesture immediately retires the live insertion layout");
         }
         else Access::DropGroupSurfaceLabels(app, L"surface-group");
         CheckSurface(app, original, move.expected); samples.Check();
@@ -117,6 +248,117 @@ inline void RunLabels()
         Access::StopModel(app); samples.Cleanup();
     }
     std::cout << scenes << " native same-group label hit, reorder, cancellation and storage scenes passed\n";
+}
+inline void RunInsertionZones()
+{
+    Profile profile;
+    std::size_t scenes = 0;
+    for (const bool fileGroup : {false, true})
+    for (const bool list : {false, true})
+    for (int zone = 0; zone < 4; ++zone)
+    {
+        context = "label insertion file-group=" + std::to_string(fileGroup) + " list=" + std::to_string(list) +
+            " zone=" + std::to_string(zone);
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, fileGroup, list, false);
+        for (const auto* id : {L"E", L"F"})
+        {
+            auto child = Component(id, fileGroup ? (id[0] == L'E' ? mapping : files) : collection, 6, 0, false);
+            samples.Add(child, L"incoming"); widgets.push_back(std::move(child));
+        }
+        widgets.push_back(Group(L"source-group", fileGroup ? files : collection, {L"E", L"F"}, 6, 0, false));
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        Require(Access::Save(app), "save cross-group baseline before hovering");
+        for (const auto& widget : original)
+            if (Configuration(native_widget_pair_cases::Widget(app, widget.id)) != Configuration(widget))
+                std::cerr << "baseline save changed " << WideToUtf8(widget.id) << " before=" << Configuration(widget)
+                    << " after=" << Configuration(native_widget_pair_cases::Widget(app, widget.id)) << '\n';
+        const auto saved = Read(Access::LayoutPath(app));
+        Access::BeginGroupLabels(app, L"source-group", {L"E"});
+        auto* target = Access::MemberContainer(app, L"surface-group");
+        const RECT a = Access::GroupSurfaceTabRect(app, L"surface-group", L"A");
+        const RECT b = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
+        const RECT frame = target->GetFrameRect();
+        // External insertion keeps its exact midpoint, even after hovering
+        // the opposite side; the new sort reversal buffer must not leak here.
+        for (const auto [x, insertion] : std::initializer_list<std::pair<LONG, size_t>>{
+            {b.left + (b.right - b.left) * 3 / 10, 1}, {b.left + (b.right - b.left) * 7 / 10, 2},
+            {(b.left + b.right) / 2 - 1, 1}, {(b.left + b.right) / 2 + 1, 2}, {(b.left + b.right) / 2 - 1, 1}})
+        {
+            const auto edge = Access::GroupSurfacePointPreview(app, L"surface-group", {x, (b.top + b.bottom) / 2});
+            Require(edge.insertIndex == insertion, "cross-group insertion retains the original50-percent boundary without sort hysteresis");
+        }
+        POINT point{b.left + 1, (b.top + b.bottom) / 2};
+        if (zone == 0) point.x = (a.right + b.left) / 2; // Actual gap, not a label hit.
+        if (zone == 1) point.y = b.top - target->Cu(3.0f);
+        if (zone == 2) point.y = b.bottom + target->Cu(3.0f);
+        if (zone == 3) point.y = frame.bottom - 1;
+        const auto preview = Access::GroupSurfacePointPreview(app, L"surface-group", point);
+        Require(!preview.Empty() && preview.insertIndex == (zone == 3 ? 4u : 1u),
+            "another component retains body append but its tab gaps and nearby strip publish exact insertion");
+        const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+        const std::vector<std::wstring> expected = zone == 3
+            ? std::vector<std::wstring>{L"A", L"B", L"C", L"D", L"E"}
+            : std::vector<std::wstring>{L"A", L"E", L"B", L"C", L"D"};
+        Require(visual.active == (zone != 3),
+            "cross-group body keeps membership-box feedback; only the expanded tab strip uses live insertion");
+        Require(visual.inserting == (zone != 3) && Access::GroupSurfaceGhostWanted(app) == (zone == 3),
+            "cross-group tab landings replace the ghost, and yellow membership boxes retain the ghost without a landing");
+        if (zone != 3) Require(Access::GroupSurfaceRetiresActualGhost(app),
+            "actual preview synchronization also retires the ghost when inserting into another group");
+        const auto extracted = Access::GroupSurfaceTabLayout(app, L"source-group");
+        Require(extracted.active && !extracted.inserting && extracted.tabs.size() == 1 &&
+            extracted.tabs.front().id == L"F" && !extracted.tabs.front().placeholder,
+            "cross-group dragging removes the original E block and repacks F without mutating source membership");
+        Require(Access::GroupSurfaceLabelHint(app, L"surface-group") == (zone == 3
+                ? _LW(fileGroup ? "widget.file_group.add_hint" : "widget.collection_group.add_hint") : L""),
+            "only the yellow cross-group membership box publishes a floating text hint; tab insertion remains silent");
+        if (visual.active)
+        {
+            std::vector<std::wstring> order;
+            for (const auto& tab : visual.tabs) order.push_back(tab.id);
+            Require(order == expected && visual.tabs[1].placeholder,
+                "incoming label occupies the actual previewed gap and displaces later labels");
+        }
+        Require(Read(Access::LayoutPath(app)) == saved, "cross-group hover cannot persist membership or ordering");
+        Access::LeaveGroupSurface(app);
+        Require(!Access::GroupSurfaceTabLayout(app, L"surface-group").active,
+            "leaving the insertion strip retires its displaced layout without a model mutation");
+        Require(Access::GroupSurfaceGhostWanted(app), "leaving a cross-group landing restores only the floating block");
+        Access::GroupSurfacePointPreview(app, L"surface-group", point);
+        Access::DropGroupSurfaceLabels(app, L"surface-group");
+        std::string phase = "drop";
+        const auto check = [&] {
+            for (auto widget : original)
+            {
+                if (widget.id == L"surface-group") widget.childWidgetIds = expected;
+                if (widget.id == L"source-group") { widget.childWidgetIds = {L"F"}; widget.activeCategoryId = L"F"; }
+                const auto& actualWidget = native_widget_pair_cases::Widget(app, widget.id);
+                // Stored Windows membership keys are case-insensitive. The
+                // loader uppercases them; compare their complete order using
+                // that existing identity contract, separately from settings.
+                const auto actual = Configuration(actualWidget, true, false);
+                const auto expectedConfiguration = Configuration(widget, true, false);
+                const bool sameMembers = OrderedKeys(actualWidget) == OrderedKeys(widget);
+                if (actual != expectedConfiguration || !sameMembers)
+                    std::cerr << "cross-group phase=" << phase << " child=" << WideToUtf8(widget.id)
+                        << " expected=" << Configuration(widget) << " actual=" << Configuration(actualWidget) << '\n';
+                Require(actual == expectedConfiguration && sameMembers,
+                    "cross-group drop changes only expected membership/order and preserves component data and identity: " + phase);
+                if (widget.type == mapping) CheckChild(app, widget);
+            }
+            samples.Check(); CheckRuntime(app);
+        };
+        check(); Require(Access::Save(app), "save cross-group insertion through host storage");
+        phase = "refresh"; native_drag_async_reload_cases::Refresh(app); check();
+        phase = "disk reload"; Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " native cross-group insertion zones, live layout and storage scenes passed\n";
 }
 inline void RunSearch()
 {
@@ -424,9 +666,76 @@ inline void RunInactiveTab()
     std::cout << scenes << " native inactive-tab preview, activation, tail append and storage scenes passed\n";
     RunExternalInactiveTab();
 }
+inline void RunDesktopComponentTabs()
+{
+    Profile profile;
+    std::size_t scenes = 0;
+    for (const auto sourceType : {collection, files, mapping})
+    for (const bool list : {false, true})
+    for (int zone = 0; zone < 5; ++zone)
+    {
+        context = "desktop component tab insertion type=" + std::to_string(static_cast<int>(sourceType)) +
+            " list=" + std::to_string(list) + " zone=" + std::to_string(zone);
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, sourceType != collection, list, false);
+        auto source = Component(L"E", sourceType, 6, 0, false);
+        samples.Add(source, L"desktop-source"); widgets.push_back(std::move(source));
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app); native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        Require(Access::Save(app), "save component source before its native handle gesture");
+        const auto saved = Read(Access::LayoutPath(app));
+        const auto a = Access::GroupSurfaceTabRect(app, L"surface-group", L"A");
+        const auto b = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
+        auto* group = Access::MemberContainer(app, L"surface-group");
+        Access::BeginGroupComponentMove(app, L"E");
+        for (const auto [x, insertion] : std::initializer_list<std::pair<LONG, size_t>>{
+            {(b.left + b.right) / 2 - 1, 1}, {(b.left + b.right) / 2 + 1, 2}, {(b.left + b.right) / 2 - 1, 1}})
+            Require(Access::GroupComponentMovePoint(app, {x, (b.top + b.bottom) / 2}) == insertion,
+                "desktop component insertion retains exact midpoint behavior on both sides and reversal");
+        POINT point{b.left + 1, (b.top + b.bottom) / 2};
+        if (zone == 1) point.x = (a.right + b.left) / 2;
+        if (zone == 2) point.y = b.top - group->Cu(3.0f);
+        if (zone == 3) point.y = group->GetFrameRect().bottom - 1;
+        const bool cancel = zone == 4;
+        const auto insertion = Access::GroupComponentMovePoint(app, point);
+        const auto visual = Access::GroupSurfaceTabLayout(app, L"surface-group");
+        Require(zone == 3 || insertion == 1, "native component handle move retains the exact tab insertion index");
+        Require(visual.active == (zone != 3) && visual.inserting == (zone != 3),
+            "desktop components use live tab landing in the strip while body drops retain membership feedback");
+        if (zone != 3)
+        {
+            std::vector<std::wstring> order;
+            for (const auto& tab : visual.tabs) order.push_back(tab.id);
+            Require(order == std::vector<std::wstring>{L"A", L"E", L"B", L"C", L"D"} && visual.tabs[1].placeholder,
+                "desktop component landing reserves its label block and displaces later tabs");
+        }
+        const POINT body{point.x, group->GetFrameRect().bottom - 1};
+        Access::GroupComponentMovePoint(app, body);
+        Require(!Access::GroupSurfaceTabLayout(app, L"surface-group").active,
+            "native component movement from a tab landing to the body retires the label reservation");
+        Access::GroupComponentMovePoint(app, point);
+        Require(Access::GroupSurfaceTabLayout(app, L"surface-group").inserting == (zone != 3),
+            "native component movement back into the tab strip restores its exact landing before release");
+        Require(Read(Access::LayoutPath(app)) == saved, "component insertion preview cannot persist membership");
+        Access::EndGroupComponentMove(app, point, cancel);
+        const std::vector<std::wstring> expected = cancel ? std::vector<std::wstring>{L"A", L"B", L"C", L"D"}
+            : zone == 3 ? std::vector<std::wstring>{L"A", L"B", L"C", L"D", L"E"}
+            : std::vector<std::wstring>{L"A", L"E", L"B", L"C", L"D"};
+        CheckSurface(app, original, expected); samples.Check();
+        if (cancel) Require(Read(Access::LayoutPath(app)) == saved, "native Escape cancellation preserves the saved component layout");
+        Require(!Access::GroupSurfaceTabLayout(app, L"surface-group").active, "release or cancel retires the component landing");
+        Require(Access::Save(app), "save component insertion through actual host storage");
+        native_drag_async_reload_cases::Refresh(app); CheckSurface(app, original, expected);
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); CheckSurface(app, original, expected); samples.Check();
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " native desktop component tab landing, release, cancellation and storage scenes passed\n";
+}
 inline void Run(std::string_view mode)
 {
-    if (mode == "labels") RunLabels();
+    if (mode == "labels") { RunSortResponse(); RunDesktopComponentTabs(); RunLabels(); RunInsertionZones(); }
     else if (mode == "search") RunSearch();
     else if (mode == "date") RunDateHeaders();
     else if (mode == "inactive") RunInactiveTab();

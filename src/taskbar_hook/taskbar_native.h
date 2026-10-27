@@ -11,8 +11,9 @@ inline constexpr wchar_t kMinimizeInputTickProperty[] = L"SnowDesktop.Taskbar.Mi
 
 // Called on the owning window thread. The mapping must outlive the subclass.
 using AppBarMessage = UINT_PTR(WINAPI*)(DWORD, PAPPBARDATA);
+using CursorPosition = BOOL(WINAPI*)(LPPOINT);
 bool Attach(HWND window, SharedState* state, bool classic,
-    AppBarMessage appBarMessage = &SHAppBarMessage);
+    AppBarMessage appBarMessage = &SHAppBarMessage, CursorPosition cursorPosition = &GetCursorPos);
 // Restore/detach on the owning window thread before another DLL takes over.
 bool Retire(HWND window) noexcept;
 bool IsClassicTaskbarPlatform() noexcept;

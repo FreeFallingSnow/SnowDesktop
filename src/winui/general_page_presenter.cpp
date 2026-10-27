@@ -168,6 +168,13 @@ struct GeneralPagePresenter::Impl
     muxc::StackPanel dockShortcutRoot{nullptr};
 
     SettingsCard startupCard;
+    SettingsCard windowSupportCard;
+    SettingRow windowSupportRow;
+    muxc::Expander windowSupportExpander{nullptr};
+    std::array<muxc::TextBlock, 3> windowSupportFeatureTitles{nullptr, nullptr, nullptr};
+    std::array<muxc::TextBlock, 3> windowSupportFeatureDescriptions{nullptr, nullptr, nullptr};
+    muxc::Button enableWindowSupport{nullptr}, disableWindowSupport{nullptr};
+    winrt::event_token enableWindowSupportToken{}, disableWindowSupportToken{};
     SettingsCard advancedFeaturesCard;
     SettingsCard desktopBehaviorCard;
     SettingsCard languageCard;
@@ -181,6 +188,8 @@ struct GeneralPagePresenter::Impl
     muxc::TextBlock advancedFeatureStatus{nullptr};
     muxc::Button registerAdvancedFeaturesButton{nullptr};
     muxc::Button retryAdvancedFeaturesButton{nullptr};
+    muxc::TextBlock advancedFeatureNoticeText{nullptr};
+    muxc::StackPanel advancedFeatureActions{nullptr};
     muxc::Button advancedFeatureInfoButton{nullptr};
     muxc::Flyout advancedFeatureInfoFlyout{nullptr};
     muxc::TextBlock advancedFeatureInfoTitle{nullptr};
@@ -303,6 +312,59 @@ struct GeneralPagePresenter::Impl
         startupOwnershipNotice.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(startupOwnershipNotice);
         startupCard.content.Children().Append(startupOwnershipNotice);
+
+        InitializeCard(windowSupportCard, cardStyle, root, false);
+        windowSupportExpander = muxc::Expander{};
+        windowSupportExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        windowSupportExpander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        UseInlineDisclosureStyle(windowSupportExpander);
+        muxc::StackPanel windowSupportActions;
+        windowSupportActions.Orientation(muxc::Orientation::Horizontal);
+        windowSupportActions.Spacing(8);
+        windowSupportActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        windowSupportActions.VerticalAlignment(mux::VerticalAlignment::Center);
+        enableWindowSupport = muxc::Button{};
+        disableWindowSupport = muxc::Button{};
+        enableWindowSupportToken = enableWindowSupport.Click([this](const auto&, const auto&) {
+            if (actions.configureWindowSupport) actions.configureWindowSupport(true);
+            RefreshWindowSupport();
+        });
+        disableWindowSupportToken = disableWindowSupport.Click([this](const auto&, const auto&) {
+            if (actions.configureWindowSupport) actions.configureWindowSupport(false);
+            RefreshWindowSupport();
+        });
+        windowSupportActions.Children().Append(enableWindowSupport);
+        windowSupportActions.Children().Append(disableWindowSupport);
+        windowSupportRow.Initialize(windowSupportActions, 0.0);
+        windowSupportRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        windowSupportRow.root.MinHeight(34.0);
+        windowSupportExpander.Header(windowSupportRow.root);
+        muxc::StackPanel windowSupportFeatures;
+        windowSupportFeatures.Spacing(12.0);
+        windowSupportFeatures.Margin({0.0, 12.0, 0.0, 0.0});
+        for (std::size_t i = 0; i < windowSupportFeatureTitles.size(); ++i)
+        {
+            muxc::StackPanel feature;
+            feature.Spacing(4.0);
+            auto& title = windowSupportFeatureTitles[i];
+            title = muxc::TextBlock{};
+            title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+            title.TextWrapping(mux::TextWrapping::Wrap);
+            auto& description = windowSupportFeatureDescriptions[i];
+            description = muxc::TextBlock{};
+            description.FontSize(12.0);
+            description.Opacity(0.68);
+            description.TextWrapping(mux::TextWrapping::Wrap);
+            feature.Children().Append(title);
+            feature.Children().Append(description);
+            windowSupportFeatures.Children().Append(feature);
+        }
+        windowSupportExpander.Content(windowSupportFeatures);
+        const auto weakFeatures = winrt::make_weak(windowSupportFeatures);
+        windowSupportExpander.SizeChanged([weakFeatures](const auto&, const mux::SizeChangedEventArgs& args) {
+            if (const auto body = weakFeatures.get()) body.Width(std::max(0.0, static_cast<double>(args.NewSize().Width)));
+        });
+        windowSupportCard.content.Children().Append(windowSupportExpander);
 
         InitializeCard(advancedFeaturesCard, cardStyle, root, false);
         advancedFeaturesCard.content.Children().Clear();
@@ -428,7 +490,6 @@ struct GeneralPagePresenter::Impl
         advancedFeatureNotice.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(advancedFeatureNotice);
         retryAdvancedFeaturesButton = muxc::Button{};
-        advancedFeatureNotice.ActionButton(retryAdvancedFeaturesButton);
         advancedFeatureUpdateButton = muxc::Button{};
         advancedFeatureUpdateInstructions = muxc::TextBlock{};
         advancedFeatureUpdateInstructions.TextWrapping(mux::TextWrapping::Wrap);
@@ -436,7 +497,35 @@ struct GeneralPagePresenter::Impl
         advancedFeatureUpdateFlyout = muxc::Flyout{};
         advancedFeatureUpdateFlyout.Content(advancedFeatureUpdateInstructions);
         advancedFeatureUpdateButton.Flyout(advancedFeatureUpdateFlyout);
-        advancedFeatureNotice.Content(advancedFeatureUpdateButton);
+        // Show the message and both actions in a single row with the action
+        // group right-aligned. InfoBar.Message would force its own row because
+        // ActionButton only accepts one ButtonBase, so this banner moves the
+        // message into Content: with Title/Message/ActionButton empty the
+        // native template raises Content into the banner row, keeping the
+        // severity background/icon and a normal InfoBar height.
+        advancedFeatureNoticeText = muxc::TextBlock{};
+        advancedFeatureNoticeText.TextWrapping(mux::TextWrapping::Wrap);
+        advancedFeatureNoticeText.VerticalAlignment(mux::VerticalAlignment::Center);
+        advancedFeatureActions = muxc::StackPanel{};
+        advancedFeatureActions.Orientation(muxc::Orientation::Horizontal);
+        advancedFeatureActions.Spacing(8.0);
+        advancedFeatureActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        advancedFeatureActions.VerticalAlignment(mux::VerticalAlignment::Center);
+        advancedFeatureActions.Children().Append(retryAdvancedFeaturesButton);
+        advancedFeatureActions.Children().Append(advancedFeatureUpdateButton);
+        muxc::Grid advancedFeatureContent;
+        advancedFeatureContent.ColumnSpacing(16.0);
+        advancedFeatureContent.Margin({0.0, 12.0, 16.0, 12.0});
+        advancedFeatureContent.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::ColumnDefinition messageColumn, actionColumn;
+        messageColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        actionColumn.Width(mux::GridLengthHelper::Auto());
+        advancedFeatureContent.ColumnDefinitions().Append(messageColumn);
+        advancedFeatureContent.ColumnDefinitions().Append(actionColumn);
+        advancedFeatureContent.Children().Append(advancedFeatureNoticeText);
+        muxc::Grid::SetColumn(advancedFeatureActions, 1);
+        advancedFeatureContent.Children().Append(advancedFeatureActions);
+        advancedFeatureNotice.Content(advancedFeatureContent);
         advancedFeaturesCard.content.Children().Append(advancedFeatureNotice);
         advancedFeatureErrorExpander = muxc::Expander{};
         advancedFeatureErrorExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -1099,8 +1188,60 @@ struct GeneralPagePresenter::Impl
         updatingControls = wasUpdating;
     }
 
+    void RefreshWindowSupport()
+    {
+        using namespace window_support;
+        const auto status = actions.queryWindowSupport ? actions.queryWindowSupport() : SupportStatus{};
+        const bool configuring = AuthorizationPending(status.authorization);
+        const bool registered = status.authorization == AuthorizationState::Registered;
+        const bool starting = status.capabilities.helperState == ProviderState::Starting;
+        const bool helper = status.capabilities.helperState == ProviderState::Ready;
+        const auto available = helper ? status.capabilities.helper : status.capabilities.inProcess;
+        const bool complete = Contains(available, Capability::PointerObservation) && Contains(available, Capability::WindowPin) &&
+            Contains(available, Capability::WindowControl) && Contains(available, Capability::MinimizeAnimation);
+        const char* key = status.hostElevated ? "settings.general.windowSupport.native"
+            : status.authorization == AuthorizationState::AwaitingConsent ? "settings.general.windowSupport.authorizing"
+            : configuring ? "settings.general.windowSupport.configuring"
+            : starting ? "settings.general.windowSupport.starting"
+            : helper ? "settings.general.windowSupport.helper"
+            : status.error && status.error != ERROR_CANCELLED ? "settings.general.windowSupport.configurationFailed"
+            : registered || status.authorization == AuthorizationState::Invalid
+                ? "settings.general.windowSupport.unavailable" : "settings.general.windowSupport.disabled";
+        std::wstring description = L(key);
+        if (!status.hostElevated && status.updateAvailable && !configuring && !starting)
+            description += L" " + L("settings.general.windowSupport.updateAvailable");
+        if ((helper || status.hostElevated) && !complete) description += L" " + L("settings.general.windowSupport.partial");
+        if (!configuring && !starting && status.error && status.error != ERROR_CANCELLED)
+            description += L" (" + std::to_wstring(status.error) + L")";
+        windowSupportRow.SetText(L("settings.general.windowSupport.title"), description);
+        const std::array titles{L("settings.general.windowSupport.features.pin.title"),
+            L("settings.general.windowSupport.features.animation.title"), L("settings.general.windowSupport.features.dock.title")};
+        const std::array descriptions{L("settings.general.windowSupport.features.pin.description"),
+            L("settings.general.windowSupport.features.animation.description"), L("settings.general.windowSupport.features.dock.description")};
+        for (std::size_t i = 0; i < windowSupportFeatureTitles.size(); ++i)
+        {
+            windowSupportFeatureTitles[i].Text(titles[i]);
+            windowSupportFeatureDescriptions[i].Text(descriptions[i]);
+        }
+        const auto enableText = status.updateAvailable ? L("settings.general.windowSupport.update") :
+            L(registered || status.authorization == AuthorizationState::Invalid
+                ? "settings.general.windowSupport.repair" : "settings.general.windowSupport.enable");
+        enableWindowSupport.Content(winrt::box_value(enableText));
+        disableWindowSupport.Content(winrt::box_value(L("settings.general.windowSupport.disable")));
+        enableWindowSupport.Visibility(status.hostElevated || (helper && complete && !status.updateAvailable)
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        disableWindowSupport.Visibility(registered || status.authorization == AuthorizationState::Invalid
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        enableWindowSupport.IsEnabled(!configuring && !starting && static_cast<bool>(actions.configureWindowSupport));
+        disableWindowSupport.IsEnabled(!configuring && static_cast<bool>(actions.configureWindowSupport));
+        muxa::AutomationProperties::SetName(windowSupportExpander, L("settings.general.windowSupport.title"));
+        muxa::AutomationProperties::SetName(enableWindowSupport, enableText);
+        muxa::AutomationProperties::SetName(disableWindowSupport, L("settings.general.windowSupport.disable"));
+    }
+
     void RefreshStartupConflict()
     {
+        RefreshWindowSupport();
         GeneralStartupConflict conflict;
         if (actions.queryStartupConflict)
             conflict = actions.queryStartupConflict();
@@ -1275,8 +1416,15 @@ struct GeneralPagePresenter::Impl
         retryAdvancedFeaturesButton.IsEnabled(showRetry && buttonEnabled);
         advancedFeatureUpdateButton.Visibility(showUpdateGuide ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (!showUpdateGuide) advancedFeatureUpdateFlyout.Hide();
+        // Keep the notice compact when it has no action at all: an empty
+        // action row would still contribute its bottom inset.
+        advancedFeatureActions.Visibility(showRetry || showUpdateGuide
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         advancedFeatureNotice.Severity(severity);
-        advancedFeatureNotice.Message(L(noticeKey));
+        const std::wstring noticeMessage = L(noticeKey);
+        advancedFeatureNoticeText.Text(noticeMessage);
+        muxa::AutomationProperties::SetName(advancedFeatureNotice, noticeMessage);
+        muxa::AutomationProperties::SetHelpText(advancedFeatureNotice, noticeMessage);
         advancedFeatureNotice.Visibility(showNotice
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         advancedFeatureNotice.IsOpen(showNotice);
@@ -1356,6 +1504,8 @@ struct GeneralPagePresenter::Impl
             onboarding->Close();
             root.ActualThemeChanged(themeToken);
             autoStartToggle.Toggled(autoStartToken);
+            enableWindowSupport.Click(enableWindowSupportToken);
+            disableWindowSupport.Click(disableWindowSupportToken);
             registerAdvancedFeaturesButton.Click(
                 registerAdvancedFeaturesToken);
             retryAdvancedFeaturesButton.Click(retryAdvancedFeaturesToken);
@@ -1461,6 +1611,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
 
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
+    registerAliases(impl_->windowSupportExpander, {"general.windowSupport"});
     registerAliases(impl_->advancedFeatureExpander,
         {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
     registerAliases(impl_->softwareDesktopToggle,
@@ -1504,6 +1655,11 @@ mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId
 {
     if (prerequisite) *prerequisite = {};
     if (!impl_ || impl_->closed) return nullptr;
+    if (focusId == "general.windowSupport")
+    {
+        if (reveal) impl_->windowSupportExpander.IsExpanded(true);
+        return impl_->windowSupportExpander;
+    }
     const auto hotkeyTarget = [prerequisite](const HotkeyRecorder& recorder,
         const muxc::ToggleSwitch& parent, std::wstring_view parentName)
         -> mux::FrameworkElement {

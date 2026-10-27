@@ -460,10 +460,12 @@ struct DesktopStylePagePresenter::Impl
 
         const auto taskbarCard = AddSection(style, "settings.nav.taskbar");
         AddChoice(taskbarCard, "settings.bars.taskbarMode", "", "desktopStyle.taskbar.displayMode",
-            {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"},
+            {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar", "settings.taskbar.suppressAllTaskbars"},
             [](const auto&, const auto& value) { return TaskbarDisplayMode(value); },
             [this](int index) {
-                if (index == 2 && !general.dockEnabled) { Sync(); return; }
+                if (!CanSelectTaskbarDisplayMode(index, general.dockEnabled,
+                    general.runtimeModules.Allows(runtime_modules::Module::Taskbar)))
+                { Sync(); return; }
                 EmitDock([index](auto& value) { SetTaskbarDisplayMode(value, index); });
             });
 
@@ -922,8 +924,12 @@ struct DesktopStylePagePresenter::Impl
         for (const auto& choice : choices)
         {
             choice->control.SelectedIndex(choice->read(general, dock));
-            if (choice->focus == "desktopStyle.taskbar.displayMode" && choice->control.Items().Size() == 3)
-                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(general.dockEnabled || dock.suppressSystemTaskbar);
+            if (choice->focus == "desktopStyle.taskbar.displayMode" && choice->control.Items().Size() == 4)
+            {
+                const bool taskbarAllowed = general.runtimeModules.Allows(runtime_modules::Module::Taskbar);
+                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(2, general.dockEnabled, taskbarAllowed));
+                choice->control.Items().GetAt(3).as<muxc::ComboBoxItem>().IsEnabled(CanSelectTaskbarDisplayMode(3, general.dockEnabled, taskbarAllowed));
+            }
             choice->row.SetEnabled(hasSnapshot && (!choice->enabled || choice->enabled(general, dock)));
         }
         apply.IsEnabled(hasSnapshot);

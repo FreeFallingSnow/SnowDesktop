@@ -2,7 +2,10 @@
 param(
     [switch]$SkipBuild,
     [switch]$ReloadShell,
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [string]$BuildOutputDirectory = "",
+    [string]$ArtifactRepositoryRoot = "",
+    [ValidatePattern('^[a-f0-9]{32}$')][string]$ArtifactRun = ''
 )
 
 Set-StrictMode -Version Latest
@@ -40,52 +43,50 @@ function Get-TextSha256 {
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
-$buildOutput = Join-Path $repositoryRoot ".build\Release"
 $runtimeDirectory = "SnowDesktop.Runtime"
 Import-Module (Join-Path $scriptDirectory "deployment_payload.psm1") -Force
-$steamIdentity = Get-Content -LiteralPath `
-    (Join-Path $repositoryRoot "packaging\steam-identity.json") `
-    -Encoding UTF8 -Raw | ConvertFrom-Json
+Import-Module (Join-Path $scriptDirectory "steam_packaging_paths.psm1") -Force
+if ($ArtifactRun) {
+    if ($ReloadShell) { throw '-ArtifactRun cannot be combined with -ReloadShell.' }
+    $SkipBuild = $true
+}
+if ((Test-SnowDesktopFrozenPackagingSource -Path $repositoryRoot) -and (-not $SkipBuild -or -not $ArtifactRepositoryRoot)) {
+    throw 'Frozen candidate packaging requires -SkipBuild and an explicit -ArtifactRepositoryRoot outside the frozen source.'
+}
+if ($SkipBuild -and $ReloadShell) { throw '-ReloadShell cannot be combined with -SkipBuild.' }
+if ($BuildOutputDirectory -and -not $ArtifactRun) { throw 'Explicit build input requires a matching -ArtifactRun.' }
+. (Join-Path $scriptDirectory 'packaging_input.ps1')
+$originalRepositoryRoot = if ($ArtifactRepositoryRoot) { $ArtifactRepositoryRoot } else { $repositoryRoot }
+if (-not $SkipBuild) { $ArtifactRun = Invoke-SnowDesktopPackagingBuild $originalRepositoryRoot }
+$packagingContext = Get-SnowDesktopPackagingContext $originalRepositoryRoot $ArtifactRun
+if ($BuildOutputDirectory -and [IO.Path]::GetFullPath($BuildOutputDirectory).TrimEnd('\','/') -ne $packagingContext.runtime) {
+    throw '-BuildOutputDirectory must match the selected saved ArtifactRun; unbound packaging inputs are rejected.'
+}
+$repositoryRoot = $packagingContext.source
+$version = $packagingContext.version
+$buildOutput = $packagingContext.runtime
+# Recompute from the captured version, not the live checkout's version.
+$requestedOutput = if ($PSBoundParameters.ContainsKey('OutputDirectory')) { $PSBoundParameters['OutputDirectory'] } else { '' }
+$paths = Resolve-SnowDesktopSteamPackagingPaths `
+    -SourceRepositoryRoot $originalRepositoryRoot -Version $version `
+    -BuildOutputDirectory $buildOutput -ArtifactRepositoryRoot $originalRepositoryRoot `
+    -OutputDirectory $requestedOutput -SkipBuild
+$versionRoot = $paths.versionRoot
+$OutputDirectory = $paths.outputDirectory
+if ($repositoryRoot -eq $OutputDirectory -or $repositoryRoot.StartsWith($OutputDirectory+'\',[StringComparison]::OrdinalIgnoreCase) -or
+    $OutputDirectory.StartsWith($repositoryRoot+'\',[StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Steam staging must not overlap its saved packaging source.'
+}
+$steamIdentity = Get-Content -LiteralPath (Join-Path $repositoryRoot 'packaging/steam-identity.json') -Raw | ConvertFrom-Json
 $steamAppId = [uint32]$steamIdentity.appId
 $windowsDepotId = [uint32]$steamIdentity.windowsDepotId
-if ($steamAppId -eq 0 -or $windowsDepotId -eq 0) {
-    throw "packaging\steam-identity.json contains an invalid Steam identity."
-}
-$version = (Get-Content -LiteralPath `
-    (Join-Path $repositoryRoot "version.json") -Encoding UTF8 -Raw |
-    ConvertFrom-Json).version
-if ($version -notmatch "^[1-9][0-9]*\.[0-9]+\.[0-9]+\.0$") {
-    throw "version.json must use Store-compatible A.B.C.0 format."
-}
-$versionRoot = Join-Path $repositoryRoot "artifacts\v$version"
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $versionRoot "steam"
-}
-$OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
-$versionRootFull = [System.IO.Path]::GetFullPath($versionRoot).TrimEnd("\") + "\"
-if (-not $OutputDirectory.StartsWith(
-        $versionRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Steam artifacts must remain under artifacts\v$version\."
-}
-
-if ($SkipBuild -and $ReloadShell) {
-    throw "-ReloadShell cannot be combined with -SkipBuild."
-}
-if (-not $SkipBuild) {
-    $buildCommand = "call `"$repositoryRoot\scripts\build.bat`""
-    if ($ReloadShell) {
-        $buildCommand += " --reload-shell"
-    }
-    & cmd.exe /d /c $buildCommand
-    if ($LASTEXITCODE -ne 0) {
-        throw "scripts/build.bat failed with exit code $LASTEXITCODE."
-    }
-}
+if ($steamAppId -eq 0 -or $windowsDepotId -eq 0) { throw 'Invalid saved Steam identity.' }
 
 $runtimeFiles = @(
     "SnowDesktopHookEntry.dll",
     "SnowDesktopHookEntry32.dll",
     "SnowDesktopTaskbarHook.dll",
+    "SnowDesktopWindowHelper.exe",
     "SnowDesktopDockMinimizeHook.dll",
     "SnowDesktopDockMinimizeHook32.dll",
     "SnowDesktopDockMinimizeHost32.exe",
@@ -99,6 +100,7 @@ $required = @(
     "SnowDesktopHookEntry.dll",
     "SnowDesktopHookEntry32.dll",
     "SnowDesktopTaskbarHook.dll",
+    "SnowDesktopWindowHelper.exe",
     "SnowDesktopDockMinimizeHook.dll",
     "SnowDesktopDockMinimizeHook32.dll",
     "SnowDesktopDockMinimizeHost32.exe",
@@ -213,9 +215,9 @@ foreach ($name in @("LICENSE", "THIRD_PARTY_NOTICES.md", "README.md", "README.en
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $name) `
         -Destination (Join-Path $distribution $name) -Force
 }
-Copy-Item -LiteralPath (Join-Path $repositoryRoot "widgets") `
+Copy-Item -LiteralPath (Join-Path $buildOutput "widgets") `
     -Destination (Join-Path $distribution "widgets") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $repositoryRoot "lang") `
+Copy-Item -LiteralPath (Join-Path $buildOutput "lang") `
     -Destination (Join-Path $distribution "lang") -Recurse -Force
 $null = Copy-SnowDesktopDeploymentPayload `
     -BuildOutput $buildOutput `
@@ -363,6 +365,7 @@ $payloadFileMetadata = @(Get-ChildItem -LiteralPath $payload -Recurse -File |
     } | Sort-Object path)
 $manifest = [ordered]@{
     schemaVersion = 3
+    buildProvenance = $packagingContext.provenance
     version = $version
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     steamAppId = $steamAppId
@@ -380,7 +383,8 @@ $manifest | ConvertTo-Json -Depth 5 |
     Set-Content -LiteralPath (Join-Path $OutputDirectory "manifest.json") `
         -Encoding utf8
 
-$zip = Join-Path $versionRoot "SnowDesktop-Steam-x64-$version.zip"
+$zip = $paths.zip
+Assert-SnowDesktopPackagingContext $packagingContext
 if (Test-Path -LiteralPath $zip) {
     Remove-Item -LiteralPath $zip -Force
 }

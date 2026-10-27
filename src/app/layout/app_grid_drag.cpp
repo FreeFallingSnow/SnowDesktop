@@ -29,7 +29,7 @@ void DesktopApp::InitializeGridFromWindows()
         const std::wstring message = L"Windows desktop grid capture unavailable; using DPI defaults. HRESULT=" +
             std::to_wstring(static_cast<unsigned long>(snapshot.status)) +
             L", stage=" + snapshot.stage + L", attempts=" + std::to_wstring(snapshot.attempts);
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, message.c_str(), DiagnosticLogLevel::Warning);
         return;
     }
 
@@ -112,7 +112,7 @@ void DesktopApp::InitializeGridFromWindows()
         L", icon=" + std::to_wstring(snapshot.iconSize) +
         L", captured=" + std::to_wstring(snapshot.items.size()) +
         L", imported=" + std::to_wstring(imported);
-    WriteDiagnosticLogEntry(message.c_str());
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, message.c_str());
 }
 
 bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)

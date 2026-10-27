@@ -1,6 +1,6 @@
 ---
 name: snowdesktop-lua-widget
-description: Create, modify, debug, visually review, validate, package, and publish SnowDesktop API v2 Lua desktop widget packages. Use for folders containing widget.json and main.lua, including responsive layout, host-owned materials, foreground themes, localization, resources, settings, data, interactions, previews, and the snowwidget CLI.
+description: Create, modify, debug, visually review, validate, package, and publish SnowDesktop API v2 Lua desktop widget packages. Use for folders containing widget.json and main.lua, including callable performance evaluation, responsive layout, host-owned materials, foreground themes, localization, resources, settings, data, interactions, previews, and the snowwidget CLI.
 ---
 
 # SnowDesktop Lua Widget
@@ -66,6 +66,7 @@ source of truth:
 | Function signatures for the editor | `library/snowdesktop-v2.lua` |
 | Detailed behavior for one selected feature | Search the matching heading in `references/api-v2.md` |
 | Visual ownership, themes and preview review | `references/visual-authoring.md` |
+| Evaluate component CPU, allocations, timers, rendering or idle cost | `references/performance-evaluation.md`; check `snowwidget capabilities` first |
 | Steam Workshop planning and publishing | `references/workshop-publishing.md` |
 | Suspected host/API defect or contract mismatch | `references/api-troubleshooting.md`, then the matching implementation in the official source |
 
@@ -316,8 +317,22 @@ queries, write storage or rebuild invariant data on every frame.
   upper bound. Recommended preview variants do not need to restrict resizing.
 - Keep `permissions` empty unless a documented guarded API needs one. Reserved
   vocabulary does not make an API available.
-- Never include native binaries, executables, absolute paths, parent traversal,
-  symlinks, junctions, reparse points or files outside the package.
+- Native helpers are limited to declared, hash-matched `.exe` files with
+  `native.execute` permission and a required `task.native.request` (one request)
+  or `task.native.watch` (resident stream) feature.
+  Provide all four localized consent explanations and require the host's strong
+  user authorization before execution. Lua remains sandboxed; use only the fixed
+  helper protocol described under "Native EXE helpers" in `references/api-v2.md`.
+  A supporting host must be published before a component requires this feature.
+- Native protocol output must use explicit UTF-8 bytes and flush each frame.
+  Keep logs, configuration and caches outside the package (for example in
+  LocalAppData or the system temporary directory); any package write can stop a
+  watch and invalidate authorization. Read the language examples and optional
+  `task.complete.diagnostic` metadata in `references/api-v2.md`.
+- Never include component DLLs or undeclared executables. Do not use shell
+  commands or scripts as native helpers.
+- Never include absolute paths, parent traversal, symlinks, junctions, reparse
+  points or files outside the package.
 
 ## Build, preview and verify
 
@@ -385,6 +400,18 @@ check is required.
 Do not claim pointer interaction, context menus, declarative events,
 multi-monitor DPI or permission UX is verified from lint, validation or build
 alone. Those require an observable runtime check or explicit user validation.
+
+## Evaluate performance when requested
+
+Use `snowwidget profile <directory> <new-output-directory>` for a user-requested
+performance review or a demonstrated performance concern. Read
+`references/performance-evaluation.md` for workload selection, artifacts and
+metric boundaries. This runs the real isolated preview engine and native
+Perfetto; it does not require a performance control in Settings. Check the
+`performanceProfile` capability and the returned report quality before drawing
+conclusions. Non-default module filters or input sampling also require the
+corresponding capabilities and confirmation in the actual result. Ordinary
+previews remain static and do not start tracing.
 
 ## Diagnose suspected API problems
 

@@ -938,8 +938,13 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT tabsRect = FolderMappingTabsRect(this);
         if (!IsRectEmptyRect(tabsRect))
         {
-            context->PushAxisAlignedClip(
-                app_->ToD2DRect(tabsRect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            const int totalWidth = FolderMappingTabTotalWidth(
+                FolderMappingTabWidths(this, tabsRect.right - tabsRect.left));
+            const int scroll = snowdesktop::collection_group_rules::ClampIndependentTabScroll(
+                data_->tabScrollOffset, totalWidth, tabsRect.right - tabsRect.left);
+            const snowdesktop::ScrollContentClip tabsClip(
+                context, tabContentFadeCache_, tabsRect, scroll, totalWidth,
+                static_cast<float>(Cu(16.0f)), snowdesktop::ScrollContentAxis::Horizontal);
             for (size_t i = 0; i < visibleCategoryIds_.size(); ++i)
             {
                 RECT layoutTab =
@@ -963,7 +968,6 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                                     static_cast<int>(i) &&
                                 app_->OwnsWidgetKeyboardNavigation(this)));
             }
-            context->PopAxisAlignedClip();
         }
     }
 

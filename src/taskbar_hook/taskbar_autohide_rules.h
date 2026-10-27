@@ -56,6 +56,39 @@ inline bool IsTaskbarRevealEdge(const RECT& bar, const RECT& screen, POINT curso
         ? cursor.x >= screen.right - 2 : cursor.x < screen.left + 2;
 }
 
+// Suppress the opening activation, while preserving a later explicit reveal
+// for automatic hiding. Once released, renewal cannot hide the bar again in
+// this invocation; a new begin command rearms the next Dock click.
+struct StartMenuProtection
+{
+    bool seen = false, released = false, suppress = false, pointerKnown = false;
+    ULONGLONG started = 0;
+    POINT previous{};
+
+    void Reset() noexcept { *this = {}; }
+    void Reveal(ULONGLONG now) noexcept
+    {
+        // The Win key used to open Start generates a native reveal message.
+        // Ignore that opening activation, not later taskbar keyboard access.
+        if (seen && now >= started && now - started >= 250) released = true;
+    }
+    bool Update(bool lease, bool permanent, bool geometry, bool edge, POINT cursor, ULONGLONG now) noexcept
+    {
+        if (!lease) { Reset(); return false; }
+        if (!seen)
+        {
+            seen = true; started = now;
+            previous = cursor; pointerKnown = geometry;
+        }
+        const bool moved = geometry && pointerKnown &&
+            (cursor.x != previous.x || cursor.y != previous.y);
+        if (!permanent && edge && moved) released = true;
+        previous = cursor; pointerKnown = geometry;
+        suppress = permanent || !released;
+        return suppress;
+    }
+};
+
 struct MinimizeProtectionInput
 {
     LONG sequence = 0;

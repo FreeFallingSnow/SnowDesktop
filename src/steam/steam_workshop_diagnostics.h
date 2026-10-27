@@ -13,6 +13,16 @@ namespace snowdesktop::widget
 {
 using SteamWorkshopDiagnosticSink = std::function<void(std::string_view)>;
 
+inline DiagnosticLogLevel SteamWorkshopQueryFailureLogLevel(
+    std::string_view error) noexcept
+{
+    // A Steam installation that has never subscribed may have no appworkshop
+    // manifest. Keep the snapshot non-authoritative; this only classifies its
+    // diagnostic and must not turn missing data into an empty subscription set.
+    return error == "Steam Workshop cache is unavailable"
+        ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Error;
+}
+
 inline const char* SteamWorkshopDiagnosticActionName(
     SteamWorkshopSyncActionKind kind) noexcept
 {
@@ -35,6 +45,7 @@ inline void EmitSteamWorkshopDiagnostic(const SteamWorkshopDiagnosticSink& sink,
 inline void WriteSteamWorkshopDiagnostic(std::uint64_t queryId,
     std::string_view message) noexcept
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Steam)) return;
     try
     {
         std::string line = "[WorkshopSync] pid=" +
@@ -51,7 +62,7 @@ inline void WriteSteamWorkshopDiagnostic(std::uint64_t queryId,
         std::wstring wide(static_cast<std::size_t>(count), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, line.data(),
             static_cast<int>(line.size()), wide.data(), count);
-        WriteDiagnosticLogEntry(wide.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Steam, wide.c_str());
     }
     catch (...) {}
 }

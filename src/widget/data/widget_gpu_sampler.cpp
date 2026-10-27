@@ -2,6 +2,8 @@
 #include "widget_gpu_usage.h"
 #include "widget_gpu_counter_buffer.h"
 #include "widget_gpu_identity.h"
+#include "diagnostics/performance_trace.h"
+#include "diagnostics/performance_trace_control.h"
 #include <windows.h>
 #include <winternl.h> // NTSTATUS is required by the user-mode D3DKMT declarations.
 #include <dxgi1_6.h>
@@ -29,10 +31,12 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 using Microsoft::WRL::ComPtr;
-constexpr std::array<const wchar_t*, 3> Paths{
+constexpr std::array<const wchar_t*, 5> Paths{
     L"\\GPU Engine(*)\\Utilization Percentage",
     L"\\GPU Adapter Memory(*)\\Dedicated Usage",
-    L"\\GPU Adapter Memory(*)\\Shared Usage"};
+    L"\\GPU Adapter Memory(*)\\Shared Usage",
+    L"\\GPU Process Memory(*)\\Dedicated Usage",
+    L"\\GPU Process Memory(*)\\Shared Usage"};
 std::string Utf8(std::wstring_view value)
 {
     if (value.empty()) return {};
@@ -113,10 +117,11 @@ struct WidgetGpuSampler::Impl
     WidgetGpuIdentityInventory identities;
     HRESULT topologyStatus = S_OK;
     HQUERY query = nullptr;
-    std::array<Counter, 3> counters;
+    std::array<Counter, 5> counters;
     bool primed = false;
     Clock::time_point nextCounterAttempt{}, previousSample{};
     std::uint64_t wall = 0, awake = 0;
+    std::uint64_t profileGeneration = 0;
     WidgetGpuSamplingStatistics statistics;
     std::optional<WidgetGpuDiagnosticSample> diagnostic;
     ~Impl() { CloseQuery(); CloseTopology(); }
@@ -172,8 +177,12 @@ struct WidgetGpuSampler::Impl
         }
         return true;
     }
-    void EnsureCounters(Clock::time_point now)
+    void EnsureCounters(Clock::time_point now, bool profiling)
     {
+        for (std::size_t i = 3; i < counters.size(); ++i)
+            if (!profiling && counters[i].handle) { PdhRemoveCounter(counters[i].handle); counters[i].handle = nullptr; }
+        const auto generation = performance::CaptureGeneration();
+        if (generation != profileGeneration) { profileGeneration = generation; nextCounterAttempt = {}; }
         if (now < nextCounterAttempt) return;
         nextCounterAttempt = now + std::chrono::seconds(5);
         if (!query)
@@ -184,7 +193,7 @@ struct WidgetGpuSampler::Impl
             ++statistics.queryCreations;
         }
         bool any = false;
-        for (std::size_t index = 0; index < counters.size(); ++index)
+        for (std::size_t index = 0; index < (profiling ? counters.size() : 3); ++index)
         {
             auto& counter = counters[index];
             if (!counter.handle)
@@ -221,13 +230,16 @@ struct WidgetGpuSampler::Impl
         { result.error = "notPresent"; result.warmingUp = false; }
         else
         {
-            EnsureCounters(start);
+            const bool profiling = performance::CaptureGeneration() != 0;
+            EnsureCounters(start, profiling);
             collected = query ? PdhCollectQueryDataWithTime(query, &collectedAt) : PDH_INVALID_HANDLE;
             const bool readUsage = primed;
             result.warmingUp = counters[0].handle && !primed && collected == ERROR_SUCCESS;
             WidgetGpuUsageAccumulator usage;
             WidgetGpuMemoryAccumulator dedicated, shared;
-            for (std::size_t index = 0; index < counters.size(); ++index)
+            const auto processPrefix = profiling ? L"pid_" + std::to_wstring(GetCurrentProcessId()) + L"_" : std::wstring{};
+            std::array<unsigned, 5> processInstances{};
+            for (std::size_t index = 0; index < (profiling ? counters.size() : 3); ++index)
             {
                 auto& counter = counters[index];
                 WidgetGpuCounterDiagnostic* detail = nullptr;
@@ -254,6 +266,14 @@ struct WidgetGpuSampler::Impl
                             if (detail) detail->formatted.push_back({item.szName ? item.szName : L"", item.FmtValue.CStatus,
                                 index == 0 ? item.FmtValue.doubleValue : 0, index != 0 ? item.FmtValue.largeValue : 0});
                             if (!Valid(item.FmtValue.CStatus)) continue;
+                            if (profiling && item.szName && std::wstring_view(item.szName).starts_with(processPrefix) &&
+                                ((index == 0 && readUsage) || index >= 3))
+                            {
+                                performance::Value("process", index == 0 ? "gpu_engine_percent" :
+                                    index == 3 ? "gpu_dedicated_bytes" : "gpu_shared_bytes", item.szName,
+                                    index == 0 ? item.FmtValue.doubleValue : static_cast<double>(item.FmtValue.largeValue));
+                                ++processInstances[index];
+                            }
                             if (index == 0 && readUsage) usage.AddSample(item.szName, item.FmtValue.doubleValue);
                             else if (index == 1) dedicated.AddSample(item.szName, item.FmtValue.largeValue);
                             else if (index == 2) shared.AddSample(item.szName, item.FmtValue.largeValue);
@@ -286,6 +306,13 @@ struct WidgetGpuSampler::Impl
                 statistics.bufferGrowths += counter.formatted.Growths() + counter.raw.Growths() - before;
             }
             bool anyUsage = false;
+            if (profiling)
+            {
+                performance::Value("process", "gpu_query_available", {}, collected == ERROR_SUCCESS ? 1 : 0);
+                performance::Value("process", "gpu_engine_instances", {}, processInstances[0]);
+                performance::Value("process", "gpu_dedicated_instances", {}, processInstances[3]);
+                performance::Value("process", "gpu_shared_instances", {}, processInstances[4]);
+            }
             const bool anyCompleteMemory = ApplyWidgetGpuMemory(result.adapters, dedicated, shared);
             for (auto& adapter : result.adapters)
             {

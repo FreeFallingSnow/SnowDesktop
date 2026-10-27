@@ -1,5 +1,6 @@
 #pragma once
 #include "large_icon_config.h"
+#include "layout/popup_motion_curve.h"
 #include <algorithm>
 #include <cmath>
 
@@ -17,6 +18,52 @@ struct LargeIconMotion
     int activeEffect = 0;
     float tiltX = 0, tiltY = 0, tiltFromX = 0, tiltFromY = 0, tiltTargetX = 0, tiltTargetY = 0;
     double tiltStart = 0, tiltDuration = 0;
+    popup_motion_curve::Sample titleMotion;
+    popup_motion_curve::Timeline titleTimeline;
+    double titleDuration = 0;
+
+    void ResetHover(float value, double now)
+    {
+        hover = from = target = value; transitionStart = now;
+        titleMotion = {value, 0}; titleTimeline = {}; titleTimeline.target = value; titleDuration = 0;
+    }
+
+    bool AdvanceTitle(double now, bool hovered, double durationScale, const LargeIconConfig& config)
+    {
+        // Sample before retargeting so pointer events between frames preserve
+        // both position and velocity, as the popup's critical spring does.
+        const auto sample = [&] {
+            titleMotion = now < transitionStart ? popup_motion_curve::Sample{from, 0} :
+                popup_motion_curve::Evaluate(titleTimeline, (now - transitionStart) / 1000.);
+            hover = static_cast<float>(std::clamp(titleMotion.position, 0., 1.));
+        };
+        sample();
+        constexpr double speed = .6;
+        const float next = hovered ? 1.f : 0.f;
+        const double duration = (hovered ? config.enterMs : config.exitMs) * std::max(0., durationScale) * speed;
+        if (next != target || duration != titleDuration)
+        {
+            from = hover; target = next;
+            transitionStart = now + (hovered && hover == 0 ? config.delayMs * speed : 0);
+            titleDuration = duration;
+            if (popup_motion_curve::AtRest(titleMotion, target))
+            { ResetHover(target, now); titleDuration = duration; return false; }
+            if (duration <= 0)
+            {
+                // A zero-length transition still waits for the independent
+                // hover deadline before publishing its endpoint.
+                titleTimeline = {}; titleTimeline.target = target;
+            }
+            else
+            {
+                const double frequency = popup_motion_curve::TargetBoundedFrequency(titleMotion, target,
+                    (hovered ? 6.638352067994 : 3.0) / (duration * .00075));
+                titleTimeline = popup_motion_curve::Build(titleMotion, target, frequency, duration);
+            }
+        }
+        sample();
+        return now < transitionStart + titleTimeline.durationMilliseconds;
+    }
 
     bool AdvanceTilt(double now, float x, float y, bool hovered, bool visible,
         bool enabled, double durationScale, const LargeIconConfig& config)
@@ -47,7 +94,7 @@ struct LargeIconMotion
         if (activeEffect != config.effect)
         {
             activeEffect = config.effect;
-            hover = from = target = 0; transitionStart = now;
+            ResetHover(0, now);
             shine = -1; shineHovered = false;
         }
         if (config.effect == 5)
@@ -63,16 +110,17 @@ struct LargeIconMotion
         if (!visible || config.effect == 0 || (config.effect == 2 && IsLargeIconFill(config)) ||
             ((config.effect == 1 || config.effect == 3) && !enabled) ||
             (config.effect == 3 && config.zoomAmount <= 0) || (config.effect == 4 && config.glowStrength <= 0))
-        { hover = from = target = 0; transitionStart = now; return false; }
+        { ResetHover(0, now); return false; }
         // Explicit context-menu invocation reveals the name immediately and
         // holds a settled pose. Closing resumes the ordinary hover transition.
         if (menuTitle && config.effect == 2)
-        { hover = from = target = 1; transitionStart = now; return false; }
+        { ResetHover(1, now); return false; }
         const float next = hovered ? 1.f : 0.f;
         if (!enabled)
-        { hover = from = target = next; transitionStart = now; return false; }
+        { ResetHover(next, now); return false; }
         if (config.effect == 1)
-        { hover = from = target = next; transitionStart = now; return false; }
+        { ResetHover(next, now); return false; }
+        if (config.effect == 2) return AdvanceTitle(now, hovered, durationScale, config);
         const double speed = .6;
         // Sample at this event's time before reversing; pointer events need
         // not coincide with the last animation frame.

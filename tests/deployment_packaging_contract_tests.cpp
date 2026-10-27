@@ -29,6 +29,62 @@ std::string ReadText(const std::filesystem::path& path)
     return text;
 }
 
+void TestPerformanceDeployment(const std::filesystem::path& root)
+{
+    const auto fixture = build_test::temporary("perfetto-deployment-contract");
+    const auto script = fixture / "contract.ps1";
+    build_test::write(script, R"ps(
+param([string]$Repository,[string]$Root)
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+Import-Module (Join-Path $Repository 'scripts/deployment_payload.psm1') -Force
+function Write-Fixture([string]$Relative) {
+    $path=Join-Path $Root $Relative
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))|Out-Null
+    [IO.File]::WriteAllText($path,'fixture')
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+$names=@('CppWinRT-LICENSE.txt','WindowsAppSDK-LICENSE.txt','WindowsAppSDK-NOTICE.txt',
+    'WindowsML-LICENSE.txt','WindowsML-NOTICE.txt','WebView2-LICENSE.txt','WebView2-NOTICE.txt',
+    'YASB-LICENSE.txt','MiSans-LICENSE.pdf','HarmonyOS-Sans-LICENSE.txt')
+$notices=@(foreach($name in $names) {
+    $path='.deployment/licenses/'+$name
+    [ordered]@{path=$path;destination=('licenses/'+$name);sha256=(Write-Fixture $path)}
+})
+$manifest=[ordered]@{schemaVersion=1;architecture='x64';windowsAppSdkPackageVersion='2.4.0';cppWinRtPackageVersion='3.0.260818.1'
+    files=@([ordered]@{path='fixture.bin';source='Generated';sha256=(Write-Fixture 'fixture.bin')})
+    appxFragments=@([ordered]@{path='.deployment/appxfragments/fixture.appxfragment';source='fixture';sha256=(Write-Fixture '.deployment/appxfragments/fixture.appxfragment')})
+    notices=$notices}
+function Save { [IO.File]::WriteAllText((Join-Path $Root 'SnowDesktop.deployment.json'),($manifest|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false)) }
+Save
+$legacy=Read-SnowDesktopDeploymentManifest -BuildOutput $Root
+if(@($legacy.notices).Count -ne 10){throw 'legacy ten-notice manifest must remain readable'}
+$tool='performance/scripts/profile.ps1'
+$manifest.files+=([ordered]@{path=$tool;source='SnowDesktop';sha256=(Write-Fixture $tool)})
+Save
+$rejected=$false
+try { Read-SnowDesktopDeploymentManifest -BuildOutput $Root|Out-Null } catch { $rejected=$true }
+if(-not $rejected){throw 'performance tools without Perfetto license must be rejected'}
+$perfetto=[ordered]@{path='.deployment/licenses/Perfetto-LICENSE.txt';destination='licenses/Perfetto-LICENSE.txt';sha256=(Write-Fixture '.deployment/licenses/Perfetto-LICENSE.txt')}
+$manifest.notices+= $perfetto
+Save
+$current=Read-SnowDesktopDeploymentManifest -BuildOutput $Root
+if(@($current.notices).Count -ne 11){throw 'current eleven-notice manifest must be accepted'}
+$delivery=Join-Path $Root 'delivery'
+Copy-SnowDesktopDeploymentPayload -BuildOutput $Root -Destination $delivery -RuntimeDirectory 'SnowDesktop.Runtime'|Out-Null
+if(-not (Test-Path -LiteralPath (Join-Path $delivery $tool)) -or (Test-Path -LiteralPath (Join-Path $delivery ('SnowDesktop.Runtime/'+$tool)))){throw 'host analysis tools must stay beside the executable'}
+if(-not (Test-Path -LiteralPath (Join-Path $delivery 'licenses/Perfetto-LICENSE.txt'))){throw 'Perfetto notice must be distributed'}
+$perfetto.destination='licenses/Unexpected.txt'
+Save
+$rejected=$false
+try { Read-SnowDesktopDeploymentManifest -BuildOutput $Root|Out-Null } catch { $rejected=$true }
+if(-not $rejected){throw 'extending one known notice must not accept arbitrary destinations'}
+)ps");
+    const auto result = build_test::run({build_test::powershell(true).wstring(), L"-NoProfile", L"-NonInteractive",
+        L"-ExecutionPolicy", L"Bypass", L"-File", script.wstring(), L"-Repository", root.wstring(), L"-Root", fixture.wstring()}, fixture, 25);
+    build_test::require(result.code == 0, "production deployment reader/copy handles legacy and Perfetto notice contracts: " + result.out + result.err);
+}
+
 void TestExecutableVersionResources(const std::filesystem::path& root)
 {
     namespace fs = std::filesystem;
@@ -246,6 +302,12 @@ void TestPackagers(const std::string& module,
             steam.find("Copy-SnowDesktopDeploymentPayload") !=
                 std::string::npos,
         "portable, MSIX, and Steam payloads use the same deployment manifest");
+    Check(release.find("Get-SnowDesktopPackagingContext") != std::string::npos &&
+            steam.find("Get-SnowDesktopPackagingContext") != std::string::npos &&
+            release.find("buildProvenance") != std::string::npos && steam.find("buildProvenance") != std::string::npos &&
+            release.find("Join-Path $buildOutput \"widgets\"") != std::string::npos &&
+            steam.find("Join-Path $buildOutput \"widgets\"") != std::string::npos,
+        "both packagers bind saved build provenance and built widget inputs");
     Check(module.find("Copy-SnowDesktopRepositoryLicenses") !=
                 std::string::npos &&
             module.find("Everything-SDK-LICENSE.txt") !=
@@ -402,11 +464,10 @@ void TestBuildOutputLayout(const std::string& cmake,
 void TestReleaseManagerShellReload(const std::string& manager,
     const std::string& documentation)
 {
-    Check(manager.find("[switch]$ReloadShell") != std::string::npos &&
-            manager.find("\"--reload-shell\"") != std::string::npos &&
-            manager.find("-BatchArguments $buildArguments") !=
-                std::string::npos,
-        "release manager forwards the explicit shell reload option to the standard build");
+    Check(manager.find("Invoke-SnowDesktopPackagingBuild $repositoryRoot") != std::string::npos &&
+            manager.find("Get-SnowDesktopPackagingContext $repositoryRoot $ArtifactRun") != std::string::npos &&
+            manager.find("@('-ArtifactRun', $ArtifactRun)") != std::string::npos,
+        "release manager packages the producing saved Run instead of rebuilding active output");
     Check(manager.find("Get-BuildOccupancy") != std::string::npos &&
             manager.find("SnowDesktopTaskbarHook.dll") !=
                 std::string::npos &&
@@ -421,13 +482,11 @@ void TestReleaseManagerShellReload(const std::string& manager,
             manager.find("SnowDesktop_Release") == std::string::npos &&
             manager.find("sync-release") == std::string::npos,
         "release automation cannot inspect, synchronize, or publish the retired repository");
-    Check(documentation.find(
-              "scripts\\release.bat package -ReloadShell") !=
-            std::string::npos &&
-            documentation.find(
-              "scripts\\release.bat prepare -ReloadShell") !=
-                std::string::npos,
-        "release documentation describes shell reload for package and prepare");
+    Check(documentation.find("scripts\\release.bat package") != std::string::npos &&
+            documentation.find("scripts\\release.bat prepare") != std::string::npos &&
+            documentation.find("-ArtifactRun") != std::string::npos &&
+            documentation.find("-ReloadShell") != std::string::npos,
+        "release documentation keeps package/prepare and immutable artifact inputs with shell reload compatibility");
 }
 
 void TestGitHubReleasePublication(const std::filesystem::path& root)
@@ -508,7 +567,7 @@ foreach ($loop in $loops) { Invoke-Statement $loop }
         auto result = bridge.invoke(driver, {utf8(script.wstring()), utf8(output.wstring())});
         require(result.code == 0, result.out + result.err);
         for (const auto* hook : {"SnowDesktopHookEntry.dll", "SnowDesktopHookEntry32.dll", "SnowDesktopDockMinimizeHook.dll",
-                 "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe"})
+                 "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe", "SnowDesktopWindowHelper.exe"})
         {
             const auto packaged = output / "output" / "SnowDesktop.Runtime" / hook;
             require(fs::is_regular_file(packaged) && read(packaged) == "fixture:" + std::string(hook),
@@ -520,6 +579,90 @@ foreach ($loop in $loops) { Invoke-Statement $loop }
                 std::string(packager) + " accepted a build without " + hook);
         }
     }
+}
+
+void TestSteamPackagingPaths(const std::filesystem::path& repository)
+{
+    // Run the same path resolver used by package_steam.ps1. Native assertions
+    // define the output boundary; the PowerShell adapter only serializes it.
+    using namespace build_test;
+    const auto fixture = temporary("steam-packaging-paths");
+    const auto original = fixture / L"repository";
+    const auto source = original / L".build/candidate-slots/fixture/source";
+    const auto runtime = original / L".build/candidate-artifacts/fixture/runtime";
+    for (const auto& directory : {original, source})
+    {
+        write(directory / L"version.json", R"({"version":"1.2.3.0"})");
+        write(directory / L"packaging/steam-identity.json", R"({"appId":5080330,"windowsDepotId":5080331})");
+    }
+    fs::create_directories(runtime);
+    const auto adapter = fixture / L"resolve-steam-paths.ps1";
+    write(adapter, R"PS(param($Module,$Source,$Build,$Artifacts,$Output,[switch]$Skip,[switch]$Reload)
+$ErrorActionPreference='Stop'
+Import-Module $Module -Force
+Resolve-SnowDesktopSteamPackagingPaths -SourceRepositoryRoot $Source -Version '1.2.3.0' `
+    -BuildOutputDirectory $Build -ArtifactRepositoryRoot $Artifacts -OutputDirectory $Output `
+    -SkipBuild:$Skip -ReloadShell:$Reload | ConvertTo-Json -Compress
+)PS", true);
+    Bridge bridge(repository, fixture);
+    const auto module = repository / L"scripts/steam_packaging_paths.psm1";
+    auto arguments = [&](const fs::path& src, const fs::path& input,
+                         const fs::path& artifacts, const fs::path& output) {
+        return std::vector<std::string>{"-Module", utf8(module.wstring()),
+            "-Source", utf8(src.wstring()), "-Build", utf8(input.wstring()),
+            "-Artifacts", utf8(artifacts.wstring()), "-Output", utf8(output.wstring())};
+    };
+    auto defaults = arguments(original, {}, {}, {});
+    const auto normal = bridge.call(adapter, defaults);
+    require(fs::path(wide(normal.at("buildOutput").str())) == original / L".build/Release" &&
+            fs::path(wide(normal.at("outputDirectory").str())) == original / L"artifacts/v1.2.3.0/steam" &&
+            fs::path(wide(normal.at("zip").str())) == original / L"artifacts/v1.2.3.0/SnowDesktop-Steam-x64-1.2.3.0.zip",
+        "ordinary Steam packaging changed its build, payload or ZIP location");
+    auto frozen = arguments(source, runtime, original,
+        original / L"artifacts/v1.2.3.0/steam-frozen");
+    frozen.push_back("-Skip");
+    const auto resolved = bridge.call(adapter, frozen);
+    require(fs::path(wide(resolved.at("sourceRoot").str())) == source &&
+            fs::path(wide(resolved.at("buildOutput").str())) == runtime &&
+            fs::path(wide(resolved.at("outputDirectory").str())) == original / L"artifacts/v1.2.3.0/steam-frozen" &&
+            fs::path(wide(resolved.at("zip").str())) == original / L"artifacts/v1.2.3.0/SnowDesktop-Steam-x64-1.2.3.0.zip" &&
+            !fs::exists(source / L"artifacts"),
+        "frozen Steam input placed its payload or ZIP inside captured source");
+    auto reject = [&](std::vector<std::string> args, const std::string& expected) {
+        const auto result = bridge.invoke(adapter, args);
+        require(result.code != 0 && result.err.find(expected) != std::string::npos &&
+                !fs::exists(source / L"artifacts"),
+            "Steam packaging accepted an unsafe path or failed for the wrong reason: " + result.out + result.err);
+    };
+    auto noRoot = arguments(source, runtime, {}, {}); noRoot.push_back("-Skip");
+    reject(noRoot, "-ArtifactRepositoryRoot");
+    auto self = arguments(source, runtime, source, {}); self.push_back("-Skip");
+    reject(self, "frozen candidate source tree");
+    auto escape = arguments(source, runtime, original, original / L"artifacts/outside-version"); escape.push_back("-Skip");
+    reject(escape, "artifacts\\v1.2.3.0");
+    auto overlap = arguments(source, original / L"artifacts/v1.2.3.0", original, {}); overlap.push_back("-Skip");
+    reject(overlap, "input and output directories must not overlap");
+    reject(arguments(source, runtime, original, {}), "requires -SkipBuild");
+    auto reload = frozen; reload.push_back("-Reload");
+    reject(reload, "cannot be combined with -SkipBuild");
+    const auto outside = fixture / L"outside";
+    fs::create_directories(outside);
+    const auto linked = original / L"artifacts/v1.2.3.0/linked";
+    fs::create_directories(linked.parent_path());
+    const auto junction = run({powershell().wstring(), L"-NoProfile", L"-Command",
+        wide("New-Item -ItemType Junction -Path " + ps_literal(linked) +
+            " -Target " + ps_literal(outside) + " | Out-Null")}, fixture, 10);
+    require(junction.code == 0, "Steam path fixture could not create its output junction: " + junction.err);
+    auto linkedOutput = arguments(source, runtime, original, linked); linkedOutput.push_back("-Skip");
+    reject(linkedOutput, "cannot traverse a reparse point");
+    // Verify the public packager itself rejects the original failing call
+    // before it can read runtime EXEs or create source/artifacts.
+    copy(repository, source, {"scripts/package_steam.ps1", "scripts/steam_packaging_paths.psm1",
+        "scripts/deployment_payload.psm1"});
+    const auto denied = bridge.invoke(source / L"scripts/package_steam.ps1", {"-SkipBuild"});
+    require(denied.code != 0 && denied.err.find("-ArtifactRepositoryRoot") != std::string::npos &&
+            !fs::exists(source / L"artifacts"),
+        "real Steam packager did not reject implicit output inside a frozen source tree");
 }
 
 void TestSteamPipeAutomation(const std::string& steamPipe,
@@ -752,6 +895,8 @@ int main(int argc, char** argv)
     if (argc == 2)
     {
         const std::filesystem::path root(argv[1]);
+        try { TestPerformanceDeployment(root); }
+        catch (const std::exception& error) { std::cerr << error.what() << '\n'; Check(false, "Perfetto deployment compatibility and license enforcement"); }
         try { TestExecutableVersionResources(root); }
         catch (const std::exception& error) {
             std::cerr << error.what() << '\n';
@@ -778,6 +923,11 @@ int main(int argc, char** argv)
         catch (const std::exception& error) {
             std::cerr << error.what() << '\n';
             Check(false, "Dock animation hooks are copied and required by every packager");
+        }
+        try { TestSteamPackagingPaths(root); }
+        catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            Check(false, "Steam packaging separates frozen inputs from versioned artifact output");
         }
         TestSteamPipeAutomation(
             ReadText(root / "scripts/steam_pipe.ps1"),

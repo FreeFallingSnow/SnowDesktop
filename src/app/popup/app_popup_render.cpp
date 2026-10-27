@@ -116,7 +116,7 @@ void DesktopApp::DrawCollectionPopup(
         }
     }
 
-    const auto popupKeys = GetPopupItemKeys(widget);
+    const auto& popupKeys = GetPopupItemKeysView(widget);
     if (!fan)
     {
         PersonalizationSettings popupBackgroundAppearance =
@@ -307,18 +307,11 @@ void DesktopApp::DrawCollectionPopup(
         fanOffset, fanCapacity, popupItemCount);
     const size_t firstItem = fan ? fanRange.first : 0;
     const size_t endItem = fan ? fanRange.end : popupItemCount;
-    ComPtr<ID2D1DeviceContext> iconRecorder;
-    ComPtr<ID2D1Effect> iconShadow;
-    if (fan && popupItemCount > 0 && d2dDevice_ && SUCCEEDED(d2dDevice_->CreateDeviceContext(
-            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &iconRecorder)) &&
-        SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Shadow, &iconShadow)))
-    {
-        iconRecorder->SetDpi(96, 96);
-        iconShadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 2.5f * popupMetrics.scale);
-        iconShadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1_VECTOR_4F{0, 0, 0, 0.65f});
-        iconShadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION, D2D1_SHADOW_OPTIMIZATION_BALANCED);
-    }
-    const auto drawFanSlot = [&](size_t index, bool selected, bool cut, const auto& drawIcon) {
+    if (fan && !popupFanIconRecorder_ && d2dDevice_)
+        (void)d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &popupFanIconRecorder_);
+    const auto iconRecorder = popupFanIconRecorder_;
+    const auto drawFanSlot = [&](size_t index, bool selected, bool cut, const auto& drawIcon,
+        std::wstring_view iconIdentity = {}) {
         namespace layout = snowdesktop::collection_popup_layout;
         const auto pose = GetCollectionPopupFanItem(popupRect_, index);
         const double slot = index == popupItemCount ? static_cast<double>(fanCapacity) :
@@ -358,74 +351,97 @@ void DesktopApp::DrawCollectionPopup(
                 D2D1::ColorF(1, 1, 1, selected ? 0.18f : 0.10f),
                 D2D1::ColorF(1, 1, 1, 0.35f), popupMetrics.scale);
         bool iconDrawn = false;
-        if (iconRecorder && iconShadow)
+        if (iconRecorder)
         {
-            // Record the real silhouette, including placeholder/demo icons and
-            // shortcut badges. Shadow and icon then share the same fan transform.
-            ComPtr<ID2D1CommandList> commands;
-            if (SUCCEEDED(iconRecorder->CreateCommandList(&commands)))
+            const auto cacheKey = std::to_wstring(index) + L":" + std::to_wstring(popupMetrics.scale) +
+                L":" + std::to_wstring(iconAppearanceRevision_) + L":" + std::to_wstring(iconCustomizationRevision_) +
+                L":" + std::wstring(iconIdentity);
+            auto cached = popupFanIconDrawings_.find(cacheKey);
+            if (cached == popupFanIconDrawings_.end())
             {
-                iconRecorder->SetTarget(commands.Get());
-                iconRecorder->SetTransform(D2D1::Matrix3x2F::Identity());
-                iconRecorder->BeginDraw();
-                drawIcon(iconRecorder.Get(), RECT{0, 0,
-                    pose.icon.right - pose.icon.left, pose.icon.bottom - pose.icon.top});
-                const HRESULT recorded = iconRecorder->EndDraw();
-                iconRecorder->SetTarget(nullptr);
-                if (SUCCEEDED(recorded) && SUCCEEDED(commands->Close()))
+                if (popupFanIconDrawings_.size() >= 24)
                 {
-                    iconShadow->SetInput(0, commands.Get());
-                    ComPtr<ID2D1Image> shadowImage;
-                    iconShadow->GetOutput(&shadowImage);
-                    D2D1_RECT_F shadowBounds{};
-                    // DrawImage maps the image's bounding-box corner to its
-                    // offset. Preserve the negative blur extent around origin.
-                    if (SUCCEEDED(ctx->GetImageLocalBounds(shadowImage.Get(), &shadowBounds)))
-                    {
-                        const auto shadowOffset = D2D1::Point2F(
-                            pose.icon.left + shadowBounds.left,
-                            pose.icon.top + shadowBounds.top + 3.0f * popupMetrics.scale);
-                        ctx->DrawImage(shadowImage.Get(), &shadowOffset, &shadowBounds);
-                    }
-                    const auto iconBounds = D2D1::RectF(0, 0,
-                        static_cast<float>(pose.icon.right - pose.icon.left),
-                        static_cast<float>(pose.icon.bottom - pose.icon.top));
-                    const auto iconOffset = D2D1::Point2F(
-                        static_cast<float>(pose.icon.left), static_cast<float>(pose.icon.top));
-                    ctx->DrawImage(commands.Get(), &iconOffset, &iconBounds);
-                    iconDrawn = true;
+                    popupFanIconDrawings_.clear();
+                    cached = popupFanIconDrawings_.end();
                 }
+                PopupFanIconDrawing drawing;
+                if (SUCCEEDED(iconRecorder->CreateCommandList(&drawing.commands)) &&
+                    SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Shadow, &drawing.shadow)))
+                {
+                    iconRecorder->SetDpi(96, 96);
+                    iconRecorder->SetTarget(drawing.commands.Get());
+                    iconRecorder->SetTransform(D2D1::Matrix3x2F::Identity());
+                    iconRecorder->BeginDraw();
+                    drawIcon(iconRecorder.Get(), RECT{0, 0,
+                        pose.icon.right - pose.icon.left, pose.icon.bottom - pose.icon.top});
+                    const HRESULT recorded = iconRecorder->EndDraw();
+                    iconRecorder->SetTarget(nullptr);
+                    if (SUCCEEDED(recorded) && SUCCEEDED(drawing.commands->Close()))
+                    {
+                        drawing.shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 2.5f * popupMetrics.scale);
+                        drawing.shadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1_VECTOR_4F{0, 0, 0, 0.65f});
+                        drawing.shadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION, D2D1_SHADOW_OPTIMIZATION_BALANCED);
+                        drawing.shadow->SetValue(D2D1_PROPERTY_CACHED, static_cast<BOOL>(TRUE));
+                        drawing.shadow->SetInput(0, drawing.commands.Get());
+                        drawing.shadow->GetOutput(&drawing.shadowImage);
+                        if (SUCCEEDED(ctx->GetImageLocalBounds(drawing.shadowImage.Get(), &drawing.shadowBounds)))
+                            cached = popupFanIconDrawings_.emplace(cacheKey, std::move(drawing)).first;
+                    }
+                }
+            }
+            if (cached != popupFanIconDrawings_.end())
+            {
+                const auto& drawing = cached->second;
+                const auto shadowOffset = D2D1::Point2F(pose.icon.left + drawing.shadowBounds.left,
+                    pose.icon.top + drawing.shadowBounds.top + 3.0f * popupMetrics.scale);
+                ctx->DrawImage(drawing.shadowImage.Get(), &shadowOffset, &drawing.shadowBounds);
+                const auto iconBounds = D2D1::RectF(0, 0, static_cast<float>(pose.icon.right - pose.icon.left),
+                    static_cast<float>(pose.icon.bottom - pose.icon.top));
+                const auto iconOffset = D2D1::Point2F(static_cast<float>(pose.icon.left), static_cast<float>(pose.icon.top));
+                ctx->DrawImage(drawing.commands.Get(), &iconOffset, &iconBounds);
+                iconDrawn = true;
             }
         }
         if (!iconDrawn) drawIcon(ctx, pose.icon);
         const RECT textRect = layout::FanLabelTextRect(pose.label, popupMetrics.scale);
-        DrawD2DTextEllipsis(ctx, GetCollectionPopupFanLabel(index), textRect,
+        const auto text = GetCollectionPopupFanLabel(index);
+        auto* labelLayout = GetCollectionPopupFanTextLayout(text,
+            static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left)),
+            static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top)), true);
+        DrawD2DTextEllipsis(ctx, text, textRect,
             fanTitleTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
-            DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true, labelLayout);
         ctx->SetTransform(transform);
     };
     const auto drawFanItem = [&](size_t index, const auto& item, const DesktopItem* desktopItem) {
+        const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
+        const std::wstring_view identity = [&]() -> std::wstring_view {
+            if constexpr (requires { item.layoutKey; }) return item.layoutKey;
+            else return item.fullPath;
+        }();
+        const auto pose = GetCollectionPopupFanItem(popupRect_, index);
+        auto* custom = demo ? nullptr : GetSmallCustomIcon(ctx, identity, pose.icon.right - pose.icon.left);
+        auto* bitmap = demo || custom ? nullptr : GetTargetIconBitmap(ctx, item.iconBitmap, identity, item.iconIsMediaThumbnail);
+        // Resolve asynchronous/custom icon state before consulting the recorded
+        // drawing. A late icon arrival must replace a cached placeholder.
+        const auto iconIdentity = std::wstring(identity) + L":" +
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(custom ? custom : bitmap)) + L":" +
+            std::to_wstring(item.sysIconIndex) + L":" + std::to_wstring(item.isShortcut) +
+            L":" + std::to_wstring(item.isApplicationShortcut) + (demo ? L":demo" : L":icon");
         drawFanSlot(index, item.selected, item.isCut, [&](ID2D1DeviceContext* iconContext, const RECT& iconRect) {
-            const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
             if (demo)
                 DrawDemoCollectionIdentityIcon(iconContext, widget,
                     desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
                     iconRect, 1.0f);
-            else if (auto* custom = GetSmallCustomIcon(iconContext, [&]() -> std::wstring_view {
-                if constexpr (requires { item.layoutKey; }) return item.layoutKey;
-                else return item.fullPath;
-            }(), iconRect.right - iconRect.left))
+            else if (custom)
                 DrawIconBitmap(iconContext, custom, iconRect);
-            else if (auto* icon = GetTargetIconBitmap(iconContext, item.iconBitmap, [&]() -> std::wstring_view {
-                    if constexpr (requires { item.layoutKey; }) return item.layoutKey;
-                    else return item.fullPath;
-                }(), item.iconIsMediaThumbnail))
-                DrawIconBitmap(iconContext, icon, iconRect);
+            else if (bitmap)
+                DrawIconBitmap(iconContext, bitmap, iconRect);
             else
                 DrawPlaceholderIcon(iconContext, item.sysIconIndex, iconRect, 1.0f);
             if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
                 DrawShortcutArrowOverlay(iconContext, iconRect, 1.0f);
-        });
+        }, iconIdentity);
     };
     for (size_t i = firstItem; i < endItem; ++i)
     {

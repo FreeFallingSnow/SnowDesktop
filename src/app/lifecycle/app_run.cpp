@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
@@ -23,6 +24,7 @@
 
 #include "diagnostics/slow_call_limiter.h"
 #include "diagnostics/performance_trace.h"
+#include "diagnostics/input_diagnostics.h"
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
@@ -36,6 +38,7 @@ constexpr const wchar_t* slowCallPhaseNames[] = {
 void LogSlowMessageLoopCall(snowdesktop::SlowCallPhase phase, double started,
     const MSG* message = nullptr) noexcept try
 {
+    if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Runtime)) return;
     const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started;
     if (elapsed <= 50.0) return;
     const auto summary = slowCallLimiter.Record(phase,
@@ -50,7 +53,7 @@ void LogSlowMessageLoopCall(snowdesktop::SlowCallPhase phase, double started,
         message ? static_cast<void*>(message->hwnd) : nullptr,
         message ? message->message : 0U,
         message && message->message == WM_TIMER ? static_cast<unsigned long long>(message->wParam) : 0ULL);
-    WriteDiagnosticLogEntry(line);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line);
 }
 catch (...) { /* Diagnostics must not interrupt the message pump. */ }
 
@@ -84,7 +87,7 @@ void LogDelayedInputMessage(const MSG& message) noexcept try
     swprintf_s(line, L"InputMessageDelayed ageMs=%lu hwnd=%p message=0x%04X delayedCount=%llu",
         age, static_cast<void*>(message.hwnd), message.message,
         static_cast<unsigned long long>(delayedCount));
-    WriteDiagnosticLogEntry(line);
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line, DiagnosticLogLevel::Warning);
 }
 catch (...) { /* Diagnostics must not interrupt the message pump. */ }
 
@@ -383,7 +386,7 @@ ToGeneralAdvancedFeatureStatus(
 
 void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 {
-    WriteDiagnosticLogEntry(revalidateRegistered
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, revalidateRegistered
         ? L"[SteamActivation] entry=startup revalidation"
         : L"[SteamActivation] entry=manual registration");
     if (!steamEntitlementService_)
@@ -425,11 +428,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         const std::wstring message = std::wstring(L"Startup stage: ") +
             stage + L" elapsed_ms=" +
             std::to_wstring(GetTickCount64() - startupStarted);
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str());
     };
 
     MigrateLegacyDataPaths();
-    WriteDiagnosticLogEntry(L"Run start");
+    const std::wstring startupIdentity = L"Run start version=" + Utf8ToWide(SNOWDESKTOP_VERSION) +
+        L" pid=" + std::to_wstring(GetCurrentProcessId()) +
+        L" logModules=" + std::to_wstring(snowdesktop::diagnostics::enabledLogModules.load(std::memory_order_relaxed));
+    WriteDiagnosticLogEntry(startupIdentity.c_str());
 
     {
         std::wstring langDir = GetExecutableDirectoryPath();
@@ -451,10 +457,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     const HRESULT oleInitializeResult = OleInitialize(nullptr);
     if (FAILED(oleInitializeResult))
     {
-        WriteDiagnosticLogEntry(L"OleInit FAILED");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"OleInit FAILED", DiagnosticLogLevel::Error);
         return static_cast<int>(oleInitializeResult);
     }
-    WriteDiagnosticLogEntry(L"OleInit ok");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"OleInit ok");
 
     // OleInitialize returns S_FALSE when this STA was already initialized, and
     // that successful call still requires a matching OleUninitialize. Keep the
@@ -468,8 +474,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     if (!uiAnimationScheduler_.Initialize())
     {
-        WriteDiagnosticLogEntry(
-            L"UiAnimationScheduler initialization failed");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
+            L"UiAnimationScheduler initialization failed", DiagnosticLogLevel::Error);
         return static_cast<int>(ERROR_GEN_FAILURE);
     }
 
@@ -493,7 +499,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         wsprintfW(buf, L"Desktop: progman=%p defView=%p listView=%p host=%p",
             desktopWindows_.progman, desktopWindows_.defView,
             desktopWindows_.listView, desktopWindows_.host);
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, buf);
     }
     snowdesktop::StartupAnimation startupAnimation;
     if (customDesktopVisible_)
@@ -503,12 +509,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             snowdesktop::animation::RuntimeDurationScale(),
             Locale::Instance().TrW("app.startup.starting"),
             Locale::Instance().TrW("app.startup.cancel"));
-        WriteDiagnosticLogEntry(
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
             L"Explorer icon layer retained during startup");
     }
     else
     {
-        WriteDiagnosticLogEntry(L"Native desktop selected by persisted setting");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Native desktop selected by persisted setting");
     }
 
     // Create desktop overlay window as child of desktop host
@@ -629,7 +635,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         wc.lpszClassName, L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
-    if (!hwnd_) { const DWORD error = GetLastError(); WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return static_cast<int>(error ? error : ERROR_GEN_FAILURE); }
+    if (!hwnd_) { const DWORD error = GetLastError(); WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"CreateWindow FAILED", DiagnosticLogLevel::Error); return static_cast<int>(error ? error : ERROR_GEN_FAILURE); }
     // Keep the main UI window unparented while initialization can block.
     // Cross-process child windows couple the main and Explorer input queues,
     // even when the child is hidden. The startup layer has its own UI thread.
@@ -649,23 +655,27 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }))
         dockWindowPreview_.reset();
     if (dockWindowPreview_)
+        dockWindowPreview_->SetPeekActivateCallback([this](HWND window) {
+            ActivateDockWindowFromPreview(window);
+        });
+    if (dockWindowPreview_)
         dockWindowPreview_->SetPinBorderAppearance(CurrentPersonalization());
     if (!CreateDesktopInputWindow(parent))
     {
-        WriteDiagnosticLogEntry(L"CreateInputWindow FAILED");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"CreateInputWindow FAILED", DiagnosticLogLevel::Error);
         return static_cast<int>(ERROR_GEN_FAILURE);
     }
-    WriteDiagnosticLogEntry(L"Window created");
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Window created");
     {
         wchar_t buf[256];
         wsprintfW(buf, L"Parent=%p origin=(%d,%d) size=%dx%d exStyle=0x%08X",
             parent, origin.x, origin.y, virtualWidth_, virtualHeight_,
             static_cast<unsigned>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)));
-        WriteDiagnosticLogEntry(buf);
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, buf);
     }
 
-    if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return static_cast<int>(ERROR_GEN_FAILURE); }
-    WriteDiagnosticLogEntry(L"InitGraphics ok");
+    if (!InitGraphics()) { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"InitGraphics FAILED", DiagnosticLogLevel::Error); return static_cast<int>(ERROR_GEN_FAILURE); }
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"InitGraphics ok");
     InitializeDockWindowTransition();
 
     // Create control window for tray icon ownership
@@ -683,24 +693,52 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (!controlHwnd_)
     {
         const DWORD error = GetLastError();
-        WriteDiagnosticLogEntry(L"Control window creation failed");
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Control window creation failed", DiagnosticLogLevel::Error);
         return static_cast<int>(error ? error : ERROR_GEN_FAILURE);
     }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
+    auto& windowSupport = snowdesktop::window_support::WindowSupport();
+    windowSupport.Start();
+    windowSupport.SetStatusChangedHandler([this] {
+        if (settingsWindow_) settingsWindow_->RefreshGeneralRuntimeState();
+    });
+    windowSupport.SetAuthorizationRequestHandler([this] {
+        ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::General, "general.windowSupport"));
+    });
+    windowSupport.SetPointerCallback([this](const snowdesktop::window_support::protocol::PointerEvent& event) {
+        floatingDockEdgeSwipeMouseActivity_.store(true, std::memory_order_relaxed);
+        // Local events only wake the original live sampler. Replaying their
+        // queued positions/buttons can turn a completed gesture into a fresh
+        // outside click. Remote events supply otherwise inaccessible input.
+        if (snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::PointerObservation).provider ==
+            snowdesktop::window_support::Provider::Helper)
+            UpdateFloatingDockEdgeSwipe();
+        const bool down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN ||
+            event.message == WM_MBUTTONDOWN || event.message == WM_XBUTTONDOWN;
+        if (down && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) &&
+            static_cast<LONG>(event.time - floatingPopupPointerGenerationStartedAt_) > 0)
+            HandleFloatingPopupExternalPointerDown(floatingPopupMouseHookGeneration_,
+                snowdesktop::floating_popup_rules::PackScreenPoint(event.point));
+    });
+    uiAnimationScheduler_.ScheduleInterval(25, [](snowdesktop::UiScheduleToken) {
+        snowdesktop::window_support::WindowSupport().Poll();
+    });
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
         L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
 
     // Create DComp target and initial surface
     if (const HRESULT result = dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_); FAILED(result))
-        { WriteDiagnosticLogEntry(L"CreateTargetForHwnd FAILED"); return static_cast<int>(result); }
+        { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"CreateTargetForHwnd FAILED", DiagnosticLogLevel::Error); return static_cast<int>(result); }
     if (const HRESULT result = dcompDevice_->CreateVisual(&dcompVisual_); FAILED(result))
-        { WriteDiagnosticLogEntry(L"CreateVisual FAILED"); return static_cast<int>(result); }
+        { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"CreateVisual FAILED", DiagnosticLogLevel::Error); return static_cast<int>(result); }
     dcompTarget_->SetRoot(dcompVisual_.Get());
     if (const HRESULT result = CreateOrResizeCompositionSurface(); FAILED(result))
-        { WriteDiagnosticLogEntry(L"CreateCompositionSurface FAILED"); return static_cast<int>(result); }
-    WriteDiagnosticLogEntry(L"Composition target ready");
+        { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"CreateCompositionSurface FAILED", DiagnosticLogLevel::Error); return static_cast<int>(result); }
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Composition target ready");
 
     LoadCategorySettingsAndApply();
     GetDemoIdentityIconDirectory();
@@ -715,7 +753,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     SyncStatusBar();
     if (!UpdateLayoutWorkArea())
     {
-        WriteDiagnosticLogEntry(L"Startup AppBar work area unavailable",
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, L"Startup AppBar work area unavailable",
             DiagnosticLogLevel::Error);
         return static_cast<int>(ERROR_GEN_FAILURE);
     }
@@ -736,7 +774,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // Show the saved widgets/layout while Shell is still reading. Do not
             // feed an empty snapshot into placement, pruning or persistence.
             LayoutItems();
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
                 L"Startup Shell read pending; saved widgets shown, desktop items deferred");
         }
         snowdesktop::startup_diagnostics::Call(L"StartIconLoader", [&] { StartIconLoader(); });
@@ -833,6 +871,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 GeneralStartupConflictKind::InstalledVersionOwnsStartup;
         }
         return conflict;
+    };
+    settingsHostOptions.windowSupportStatus = [] {
+        return snowdesktop::window_support::WindowSupport().Status();
+    };
+    settingsHostOptions.configureWindowSupport = [](bool enabled, HWND owner) {
+        snowdesktop::window_support::WindowSupport().Configure(enabled, owner, [](DWORD error) {
+            if (error && error != ERROR_CANCELLED)
+                snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+        });
     };
     settingsHostOptions.advancedFeatureStatus = [this]() {
         return steamEntitlementService_
@@ -1276,7 +1323,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             message += L": ";
             message += settingsWindow_->LastError();
         }
-        WriteDiagnosticLogEntry(message.c_str());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Warning);
     }
     StartSteamEntitlementRegistration(true);
 
@@ -1636,7 +1683,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         FinishWidgetGroupTransitions();
         if (!OnPaint() || !FlushPendingCompositionCommit())
         {
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
                 L"Startup first frame FAILED; native desktop retained",
                 DiagnosticLogLevel::Error);
             return static_cast<int>(ERROR_GEN_FAILURE);
@@ -1658,7 +1705,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         if (desktopBackdropCompositor_.Initialize(hwnd_, false))
         {
             nativeGlassPanelReadyLogged_ = false;
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
                 L"Native desktop CompositionBackdropBrush initialized");
         }
         else
@@ -1666,7 +1713,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const std::wstring message =
                 L"Native desktop CompositionBackdropBrush unavailable: " +
                 desktopBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message.c_str(), DiagnosticLogLevel::Warning);
         }
         // The first content frame precedes backdrop initialization. Collect
         // all visible panels while both desktop windows are still hidden;
@@ -1675,7 +1722,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         if (!OnPaint() || !FlushPendingCompositionCommit())
         {
             LogDesktopWidgetBackdropState(L"prepare-failed");
-            WriteDiagnosticLogEntry(
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime,
                 L"Startup glass frame FAILED; native desktop retained",
                 DiagnosticLogLevel::Error);
             return static_cast<int>(ERROR_GEN_FAILURE);
@@ -1696,11 +1743,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         LogDesktopWidgetBackdropState(L"shown");
     }
     startupAnimation.Finish();
+    // Queue background blur-factory work after the first frame. Only the
+    // hidden HWND and host-device binding remain on their owning UI thread.
+    uiAnimationScheduler_.ScheduleOnce(250u, [this](snowdesktop::UiScheduleToken) {
+        if (!exitRequested_ && !mouseDown_ && !dragSession_.IsActive() &&
+            !HasActiveContextMenuSession())
+            (void)WarmFloatingPopupResources();
+    });
     logStartupStage(L"desktop handoff complete");
     snowdesktop::steam_runtime::startup::Ready();
+    snowdesktop::InputDiagnostics inputDiagnostics(controlHwnd_);
     ShowUsageGuideWelcome();
     TryShowPendingSettingsWindow();
-    WriteDiagnosticLogEntry(customDesktopVisible_
+    WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, customDesktopVisible_
         ? L"Window shown, entering loop"
         : L"Native desktop active, entering loop");
 
@@ -1747,6 +1802,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // requested by a nested tray/settings callback.
             if (exitRequested_) break;
             LogDelayedInputMessage(msg);
+            snowdesktop::InputDiagnostics::ObserveDequeued(msg);
             const bool nativeDragActive =
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
@@ -1874,7 +1930,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             wchar_t line[224]{};
             swprintf_s(line, L"MessageLoopSlowCallSummary phase=%ls suppressed=%llu maxSuppressedMs=%.3f",
                 slowCallPhaseNames[phase], static_cast<unsigned long long>(summary->count), summary->maximumMs);
-            WriteDiagnosticLogEntry(line);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, line);
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");

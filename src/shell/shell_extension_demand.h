@@ -109,6 +109,7 @@ inline DemandPlan PlanDemandQueries(const Catalogue &catalogue, const Catalogue 
         query.omitNvidiaCompatibility = false;
         query.sourceClsid.assign(source->verbs.front().begin(), source->verbs.front().end());
         query.sourceKey = key;
+        query.visibleMenuProviders.reset();
         if (std::find(plan.sources.begin(), plan.sources.end(), query) == plan.sources.end())
             plan.sources.push_back(std::move(query));
     }

@@ -152,12 +152,21 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         empty.Text(L("iconAppearance.empty"));
         x::Automation::AutomationProperties::SetName(list, title.Text()); Buttons();
     }
-    void Error(std::string_view key) { feedback.Message(L(key)); feedback.IsOpen(!key.empty()); }
+    void Error(std::string_view key)
+    {
+        const bool visible = !key.empty();
+        feedback.Severity(visible ? c::InfoBarSeverity::Error : c::InfoBarSeverity::Informational);
+        feedback.Message(L(key));
+        feedback.IsOpen(visible);
+    }
     void Refresh()
     {
         if (!active || !action || closed) return;
         const auto result = action({});
         if (!result.succeeded) { Error(result.error); return; }
+        // A poll that recovered must not leave the previous error banner
+        // behind at the bottom of the page.
+        Error(std::string_view{});
         if (result.revision == snapshot.revision && result.entries.size() == snapshot.entries.size() &&
             std::equal(result.entries.begin(), result.entries.end(), snapshot.entries.begin(),
                 [](const auto& left, const auto& right) {
