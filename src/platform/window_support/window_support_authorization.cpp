@@ -261,11 +261,24 @@ DWORD StartAuthorizedHelper() noexcept
     }
     catch (...) { return Error(); }
 }
-DWORD ConfigureAuthorization(bool enabled, HWND owner) noexcept
+DWORD WaitForAuthorizationCompletion(HANDLE process, DWORD timeoutMs) noexcept
 {
     try
     {
         ComScope shellScope(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        DWORD index = 0;
+        const HRESULT waited = CoWaitForMultipleHandles(COWAIT_DISPATCH_CALLS | COWAIT_DISPATCH_WINDOW_MESSAGES,
+            timeoutMs, 1, &process, &index);
+        return waited == RPC_S_CALLPENDING ? ERROR_TIMEOUT : FAILED(waited) ? static_cast<DWORD>(waited) : ERROR_SUCCESS;
+    }
+    catch (...) { return Error(); }
+}
+DWORD ConfigureAuthorization(bool enabled, HWND owner, const std::function<void()>& started) noexcept
+{
+    try
+    {
+        ComScope shellScope(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        if (!owner || !IsWindow(owner) || !TargetInCurrentSession(owner)) return ERROR_CANCELLED;
         const auto ownImage = ProcessImage(GetCurrentProcess());
         if (ownImage.empty()) return ERROR_PATH_NOT_FOUND;
         const auto directory = std::filesystem::path(ownImage).parent_path();
@@ -278,10 +291,18 @@ DWORD ConfigureAuthorization(bool enabled, HWND owner) noexcept
         info.lpVerb = L"runas";
         info.lpFile = executable.c_str();
         info.lpParameters = arguments.c_str();
-        info.nShow = SW_HIDE;
+        // The visible settings window owns this explicit user request. An
+        // invisible desktop host must not own (or hide) the elevation prompt.
+        if (owner && IsWindow(owner)) SetForegroundWindow(owner);
+        info.nShow = SW_SHOWNORMAL;
         if (!ShellExecuteExW(&info)) return GetLastError();
         Handle process{info.hProcess};
-        if (!process.value || WaitForSingleObject(process.value, INFINITE) != WAIT_OBJECT_0) return ERROR_PROCESS_ABORTED;
+        if (!process.value) return ERROR_PROCESS_ABORTED;
+        if (started) started();
+        // Keep the launching STA responsive to Shell/COM while waiting. Setup
+        // has no interactive work after consent and must not hold the card
+        // indefinitely if its process stops responding.
+        if (const DWORD error = WaitForAuthorizationCompletion(process.value)) return error;
         DWORD result = ERROR_GEN_FAILURE;
         return GetExitCodeProcess(process.value, &result) ? result : GetLastError();
     }
@@ -298,6 +319,21 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
             WaitForSingleObject(host.value, 0) != WAIT_TIMEOUT) return ERROR_ACCESS_DENIED;
         const auto hostImage = std::filesystem::path(ProcessImage(host.value));
         if (_wcsicmp(hostImage.filename().c_str(), L"SnowDesktop.exe") != 0) return ERROR_ACCESS_DENIED;
+        // A timed-out setup can still be unwinding in Task Scheduler. A later
+        // explicit retry must not interleave protected-file writes or revocation.
+        const auto lockName = L"Local\\SnowDesktop.WindowSupport.Configure." + own.sid;
+        const auto security = AuthorizationSecurityDescriptor();
+        PSECURITY_DESCRIPTOR descriptor = nullptr;
+        WinCheck(ConvertStringSecurityDescriptorToSecurityDescriptorW(security.c_str(), SDDL_REVISION_1, &descriptor, nullptr));
+        SECURITY_ATTRIBUTES attributes{sizeof(attributes), descriptor, FALSE};
+        Handle configurationLock{CreateMutexW(&attributes, FALSE, lockName.c_str())};
+        const DWORD lockError = configurationLock.value ? ERROR_SUCCESS : GetLastError();
+        LocalFree(descriptor);
+        if (lockError) return static_cast<int>(lockError);
+        const DWORD locked = WaitForSingleObject(configurationLock.value, 0);
+        if (locked != WAIT_OBJECT_0 && locked != WAIT_ABANDONED)
+            return static_cast<int>(locked == WAIT_TIMEOUT ? ERROR_BUSY : GetLastError());
+        struct Unlock { HANDLE value; ~Unlock() { ReleaseMutex(value); } } unlock{configurationLock.value};
         Scheduler scheduler;
         const auto folder = EnsureTaskFolder(scheduler);
         const Text name(HelperTaskName());
@@ -350,10 +386,10 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
         Check(execute->put_Path(image.value));
         Check(execute->put_WorkingDirectory(directory.value));
         // No login trigger: disabling auto-start never revokes this capability.
-        Variant user(own.sid), empty, security(SecurityDescriptor());
+        Variant user(own.sid), empty, taskSecurity(SecurityDescriptor());
         ComPtr<IRegisteredTask> task;
         Check(folder->RegisterTaskDefinition(name.value, definition.Get(), TASK_CREATE_OR_UPDATE | TASK_DONT_ADD_PRINCIPAL_ACE,
-            user.value, empty.value, TASK_LOGON_INTERACTIVE_TOKEN, security.value, &task));
+            user.value, empty.value, TASK_LOGON_INTERACTIVE_TOKEN, taskSecurity.value, &task));
         return ERROR_SUCCESS;
     }
     catch (...) { return static_cast<int>(Error()); }

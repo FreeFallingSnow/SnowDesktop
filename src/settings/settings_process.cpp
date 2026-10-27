@@ -198,7 +198,7 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     }
     Handle peer;
     if (!DuplicateHandle(GetCurrentProcess(), child.value, GetCurrentProcess(),
-        &peer.value, SYNCHRONIZE, FALSE, 0))
+        &peer.value, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0))
         throw ProtocolError("cannot retain settings process identity");
     channel.Open(parentRead.Detach(), parentWrite.Detach(), peer.Detach());
     impl_->process = child.Detach();

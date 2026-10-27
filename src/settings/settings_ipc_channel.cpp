@@ -15,8 +15,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Adds independent status-bar display and edge-reveal preferences.
-constexpr std::uint32_t Version = 52;
+// Adds the settings HWND for foreground window-support authorization and its consent state.
+constexpr std::uint32_t Version = 53;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;
@@ -432,6 +432,12 @@ void Channel::Open(HANDLE readPipe, HANDLE writePipe, HANDLE peerProcess)
 }
 void Channel::Close() noexcept { impl_->Close(); }
 bool Channel::Connected() const noexcept { return impl_->connected; }
+DWORD Channel::PeerProcessId() const noexcept { return impl_->peerProcess ? GetProcessId(impl_->peerProcess) : 0; }
+bool Channel::OwnsPeerWindow(HWND window) const noexcept
+{
+    DWORD process = 0;
+    return IsWindow(window) && GetWindowThreadProcessId(window, &process) && process == PeerProcessId();
+}
 HWND Channel::Window() const noexcept { return impl_->window; }
 bool Channel::Post(std::function<void()> task)
 {

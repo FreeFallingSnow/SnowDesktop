@@ -1971,7 +1971,11 @@ struct SettingsWindowHost::Impl
         general.configureWindowSupport = [weak](bool enabled) {
             const auto state = weak.lock();
             if (state && state->alive.load() && state->owner && state->owner->options.configureWindowSupport)
-                state->owner->options.configureWindowSupport(enabled);
+            {
+                const auto owner = state->owner->window;
+                (void)ActivateSettingsWindow(owner);
+                state->owner->options.configureWindowSupport(enabled, owner);
+            }
         };
         general.queryAdvancedFeatureStatus = [weak]() {
             const auto state = weak.lock();
@@ -3967,6 +3971,11 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         impl_->SetError(L"Settings host window remained hidden after show");
         return false;
     }
+
+    // Reopening the same destination must replay its locator after the HWND
+    // is visible, including when a previous visit already consumed the pulse.
+    if (impl_->shell && route.page == SettingsPage::General && route.focusId == "general.windowSupport")
+        (void)impl_->shell->Navigate(route, false);
 
     if (snapshot && impl_->shell &&
         route.page == SettingsPage::General &&

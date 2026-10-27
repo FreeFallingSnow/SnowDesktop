@@ -21,7 +21,7 @@ struct Runtime::Impl
 {
     Impl() { status.capabilities.inProcess = Mask(Capability::WindowPin) | Mask(Capability::WindowControl); }
     struct Work { protocol::Request request; Completion completion; };
-    struct Configuration { bool enabled; HWND owner; std::function<void(DWORD)> completion; };
+    struct Configuration { bool enabled; protocol::WindowIdentity owner; std::function<void(DWORD)> completion; };
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::thread worker;
@@ -40,7 +40,7 @@ struct Runtime::Impl
     std::optional<protocol::PointerEvent> currentPointer;
     protocol::PinAppearance appearance;
     HWND peekTarget = nullptr;
-    bool stopping = false, running = false, polling = false;
+    bool stopping = false, running = false, polling = false, workerFailed = false;
     std::uint64_t nextSequence = 0;
     RecentPointerEvents recentPointerEvents;
     WindowOperationFailures failures;
@@ -143,8 +143,11 @@ struct Runtime::Impl
         auto authorization = QueryAuthorization();
         {
             std::lock_guard guard(mutex);
-            status.authorization = authorization.state;
-            status.error = authorization.error;
+            if (!configuration)
+            {
+                status.authorization = authorization.state;
+                status.error = authorization.error;
+            }
         }
         ULONGLONG nextAttempt = 0;
         for (;;)
@@ -170,18 +173,23 @@ struct Runtime::Impl
                     CloseHandle(connection);
                     connection = INVALID_HANDLE_VALUE;
                 }
-                Disconnect(ERROR_NOT_CONNECTED);
+                // Reconfiguration intentionally retires the previous provider.
+                // It is not a connection failure (2250) to show beside progress.
+                Disconnect(ERROR_SUCCESS);
                 // A previous owner is allowed to undo its own pins/cloak and
                 // leave before an explicitly requested protected-file update.
                 if (previous) { WaitForSingleObject(previous, 5000); CloseHandle(previous); }
-                const DWORD error = elevated
+                const DWORD error = !protocol::Current(configure->owner) ? ERROR_CANCELLED : elevated
                     ? static_cast<DWORD>(RunAuthorizationCommand(configure->enabled, GetCurrentProcessId()))
-                    : ConfigureAuthorization(configure->enabled, configure->owner);
+                    : ConfigureAuthorization(configure->enabled, protocol::Window(configure->owner), [this] {
+                        std::lock_guard guard(mutex);
+                        status.authorization = AuthorizationState::Configuring;
+                    });
                 authorization = QueryAuthorization();
                 {
                     std::lock_guard guard(mutex);
                     status.authorization = authorization.state;
-                    status.error = error == ERROR_CANCELLED ? ERROR_SUCCESS : error;
+                    status.error = error == ERROR_CANCELLED ? ERROR_SUCCESS : error ? error : authorization.error;
                     if (error || !configure->enabled) pendingPin.reset();
                     configured.emplace_back(std::move(configure->completion), error);
                 }
@@ -278,6 +286,7 @@ void Runtime::Start()
     {
         std::lock_guard guard(impl_->mutex);
         impl_->stopping = false;
+        impl_->workerFailed = false;
         impl_->running = true;
         impl_->status.hostElevated = elevated;
         impl_->status.capabilities.inProcess = (impl_->status.capabilities.inProcess & Mask(Capability::MinimizeAnimation)) |
@@ -287,9 +296,25 @@ void Runtime::Start()
     }
     try { impl_->worker = std::thread([state = impl_.get()] {
         try { state->Run(); }
-        catch (...) { state->Disconnect(ERROR_GEN_FAILURE); }
+        catch (...)
+        {
+            state->Disconnect(ERROR_GEN_FAILURE);
+            std::lock_guard guard(state->mutex);
+            if (AuthorizationPending(state->status.authorization))
+                state->status.authorization = AuthorizationState::Invalid;
+            state->configuration.reset();
+            state->pendingPin.reset();
+            state->workerFailed = true;
+        }
     }); }
-    catch (...) { impl_->pointer.Stop(); impl_->Disconnect(ERROR_NOT_ENOUGH_MEMORY); }
+    catch (...)
+    {
+        impl_->pointer.Stop();
+        impl_->Disconnect(ERROR_NOT_ENOUGH_MEMORY);
+        std::lock_guard guard(impl_->mutex);
+        impl_->workerFailed = true;
+        impl_->status.authorization = AuthorizationState::Invalid;
+    }
 }
 void Runtime::Stop()
 {
@@ -479,9 +504,15 @@ bool Runtime::Submit(protocol::Request request, Completion completion)
 void Runtime::Configure(bool enabled, HWND owner, std::function<void(DWORD)> completion)
 {
     std::lock_guard guard(impl_->mutex);
-    if (impl_->configuration || impl_->status.authorization == AuthorizationState::Configuring) return;
-    impl_->status.authorization = AuthorizationState::Configuring;
-    impl_->configuration = Impl::Configuration{enabled, owner, std::move(completion)};
+    if (!impl_->running || impl_->workerFailed)
+    {
+        impl_->configured.emplace_back(std::move(completion), ERROR_PROCESS_ABORTED);
+        return;
+    }
+    if (impl_->configuration || AuthorizationPending(impl_->status.authorization)) return;
+    impl_->status.authorization = impl_->status.hostElevated ? AuthorizationState::Configuring : AuthorizationState::AwaitingConsent;
+    impl_->status.error = ERROR_SUCCESS;
+    impl_->configuration = Impl::Configuration{enabled, protocol::Capture(owner), std::move(completion)};
     impl_->wake.notify_one();
 }
 protocol::Response Runtime::HelperSnapshot() const

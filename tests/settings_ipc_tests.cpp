@@ -40,7 +40,7 @@ HANDLE CurrentProcessHandle()
 {
     HANDLE result = nullptr;
     if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(),
-        GetCurrentProcess(), &result, SYNCHRONIZE, FALSE, 0))
+        GetCurrentProcess(), &result, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, 0))
         throw std::runtime_error("test process handle failed");
     return result;
 }
@@ -792,6 +792,16 @@ void TestChannel()
             throw std::runtime_error("test pipe creation failed");
         Channel parent;
         parent.Open(mainRead, mainWrite, CurrentProcessHandle());
+        Check(parent.PeerProcessId() == GetCurrentProcessId(), "settings channel retains the process identity needed for foreground handoff");
+        const HWND owner = CreateWindowExW(0, L"STATIC", L"Settings authorization owner fixture", WS_POPUP,
+            0, 0, 10, 10, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Check(owner && parent.OwnsPeerWindow(owner) && !parent.OwnsPeerWindow(nullptr),
+            "authorization accepts only a live window owned by the connected settings process");
+        if (owner)
+        {
+            DestroyWindow(owner);
+            Check(!parent.OwnsPeerWindow(owner), "a closed settings window cannot own another UAC prompt");
+        }
         parent.Bind<int, int>("host.preview", [](int value) { return value + 1; });
         std::promise<HWND> started;
         std::atomic<bool> childFailed = false;
@@ -1565,6 +1575,15 @@ int RunSettingsIpcTests()
             copy.capabilities.helperState == ProviderState::Ready && copy.capabilities.generation == 57 &&
             copy.authorization == AuthorizationState::Registered && !copy.hostElevated && copy.error == ERROR_NOT_SUPPORTED,
             "settings IPC preserves independent capabilities, authorization and real host elevation");
+        for (const auto phase : {AuthorizationState::AwaitingConsent, AuthorizationState::Configuring,
+                 AuthorizationState::NotRegistered, AuthorizationState::Invalid})
+        {
+            status.authorization = phase;
+            status.capabilities.helperState = ProviderState::Absent;
+            const auto progress = Unpack<SupportStatus>(Pack(status));
+            Check(progress.authorization == phase && progress.capabilities.helperState == ProviderState::Absent,
+                "the settings process distinguishes Windows consent, setup, cancellation and failure without inventing helper readiness");
+        }
     }
     TestCodec();
     TestPermissionAndRelocatedRoutesCodec();

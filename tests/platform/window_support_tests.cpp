@@ -2,6 +2,7 @@
 #include "platform/window_support/window_pointer_events.h"
 #include "platform/window_support/window_operation_failures.h"
 #include "platform/window_support/window_support_security.h"
+#include "platform/window_support/window_support_authorization.h"
 #include <sddl.h>
 
 #include <cstdio>
@@ -15,6 +16,25 @@ int main()
     const auto check = [&](bool result, const char* message) {
         if (!result) { std::fprintf(stderr, "FAIL: %s\n", message); ++failed; }
     };
+    for (const auto state : {AuthorizationState::NotRegistered, AuthorizationState::Registered, AuthorizationState::Invalid})
+        check(!AuthorizationPending(state), "completed and failed authorizations allow another explicit action");
+    check(AuthorizationPending(AuthorizationState::AwaitingConsent) && AuthorizationPending(AuthorizationState::Configuring),
+        "consent and installation both prevent overlapping authorization requests");
+    bool launched = false;
+    check(ConfigureAuthorization(true, nullptr, [&] { launched = true; }) == ERROR_CANCELLED && !launched,
+        "a missing initiating settings window cancels before UAC and before installation progress");
+    const HANDLE completion = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    check(completion != nullptr, "authorization wait fixture is created");
+    if (completion)
+    {
+        const auto before = GetTickCount64();
+        check(WaitForAuthorizationCompletion(completion, 20) == ERROR_TIMEOUT && GetTickCount64() - before < 2000,
+            "an unresponsive setup has a bounded wait and reports timeout");
+        SetEvent(completion);
+        check(WaitForAuthorizationCompletion(completion, 100) == ERROR_SUCCESS,
+            "a completed setup leaves the waiting state");
+        CloseHandle(completion);
+    }
     constexpr Capability operations[] = {Capability::PointerObservation,
         Capability::WindowPin, Capability::WindowControl, Capability::MinimizeAnimation};
     for (const auto operation : operations)

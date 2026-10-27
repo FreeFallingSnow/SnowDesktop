@@ -866,8 +866,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.windowSupportStatus = [] {
         return snowdesktop::window_support::WindowSupport().Status();
     };
-    settingsHostOptions.configureWindowSupport = [this](bool enabled) {
-        snowdesktop::window_support::WindowSupport().Configure(enabled, ShellDialogOwnerHwnd(), [](DWORD error) {
+    settingsHostOptions.configureWindowSupport = [](bool enabled, HWND owner) {
+        snowdesktop::window_support::WindowSupport().Configure(enabled, owner, [](DWORD error) {
             if (error && error != ERROR_CANCELLED)
                 snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
         });

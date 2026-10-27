@@ -349,8 +349,11 @@ struct BackendServer::Impl
         channel.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();
         });
-        channel.Bind<void, bool>("options.configureWindowSupport", [this](bool enabled) {
-            if (options.configureWindowSupport) options.configureWindowSupport(enabled);
+        channel.Bind<void, bool, std::uint64_t>("options.configureWindowSupport", [this](bool enabled, std::uint64_t handle) {
+            const auto owner = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(handle));
+            if (!channel.OwnsPeerWindow(owner))
+                throw ProtocolError("window support owner does not belong to the settings connection");
+            if (options.configureWindowSupport) options.configureWindowSupport(enabled, owner);
         });
         channel.Bind<bool>("options.resetAdvancedFeatures", [this] {
             return options.resetAdvancedFeatures && options.resetAdvancedFeatures();
@@ -555,7 +558,12 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return channel.Call<bool>("options.ensureWidget", std::wstring(id)); };
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
-    options.configureWindowSupport = [&channel](bool enabled) { channel.Call<void>("options.configureWindowSupport", enabled); };
+    options.configureWindowSupport = [&channel](bool enabled, HWND owner) {
+        // The user clicked in this foreground settings process. Transfer the
+        // foreground permission to the actual host before its worker invokes UAC.
+        AllowSetForegroundWindow(channel.PeerProcessId());
+        channel.Call<void>("options.configureWindowSupport", enabled, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(owner)));
+    };
     options.resetAdvancedFeatures = [&channel] { return channel.Call<bool>("options.resetAdvancedFeatures"); };
     options.widgetsPage.workshopAvailable = [&channel] { return channel.Call<bool>("options.workshopAvailable"); };
     options.widgetsPage.openWorkshop = [&channel](std::string_view) {

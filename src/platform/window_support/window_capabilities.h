@@ -67,7 +67,9 @@ constexpr CapabilityRoute ResolveCapability(const CapabilitySnapshot& snapshot,
     return {Provider::Unavailable, reason, snapshot.generation};
 }
 
-enum class AuthorizationState : std::uint8_t { NotRegistered, Registered, Invalid, Configuring };
+enum class AuthorizationState : std::uint8_t { NotRegistered, Registered, Invalid, Configuring, AwaitingConsent };
+constexpr bool AuthorizationPending(AuthorizationState state) noexcept
+{ return state == AuthorizationState::Configuring || state == AuthorizationState::AwaitingConsent; }
 struct SupportStatus
 {
     CapabilitySnapshot capabilities;

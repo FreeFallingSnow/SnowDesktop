@@ -32,6 +32,8 @@ public:
     void Open(HANDLE readPipe, HANDLE writePipe, HANDLE peerProcess);
     void Close() noexcept;
     bool Connected() const noexcept;
+    DWORD PeerProcessId() const noexcept;
+    bool OwnsPeerWindow(HWND window) const noexcept;
     HWND Window() const noexcept;
     bool Post(std::function<void()> task);
     // Weak lifetime-safe callbacks for backend workers that can outlive UI

@@ -776,6 +776,12 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                 if (definition.descriptionKey[0] != '\0')
                     descriptor.description = L(definition.descriptionKey);
                 descriptor.context = pageContext(descriptor.page);
+                if (descriptor.focusId == "general.windowSupport")
+                    for (const auto* key : {"settings.general.windowSupport.features.pin.title",
+                             "settings.general.windowSupport.features.animation.title",
+                             "settings.general.windowSupport.features.dock.title",
+                             "settings.general.windowSupport.features.pin.description"})
+                        descriptor.keywords.push_back(L(key));
                 for (const auto& [focusId, key] : aliases)
                     if (descriptor.focusId == focusId)
                     {
