@@ -3,6 +3,7 @@
 #include "window_capabilities.h"
 #include <windows.h>
 #include <functional>
+#include <filesystem>
 #include <string_view>
 
 namespace snowdesktop::window_support
@@ -11,7 +12,10 @@ struct AuthorizationResult
 {
     AuthorizationState state = AuthorizationState::NotRegistered;
     DWORD error = ERROR_SUCCESS;
+    bool updateAvailable = false;
 };
+std::string_view HelperImplementationId() noexcept;
+bool HelperImplementationChanged(const std::filesystem::path& installedDirectory) noexcept;
 AuthorizationResult QueryAuthorization() noexcept;
 DWORD StartAuthorizedHelper() noexcept;
 bool AuthorizationTaskUserMatches(std::wstring_view user) noexcept;

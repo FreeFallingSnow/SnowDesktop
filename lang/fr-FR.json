@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "Le renommage sera rétabli : « {0} » sera renommé « {1} »",
   "app.fileHistory.undoDelete": "La suppression sera annulée pour restaurer : {0}",
   "app.fileHistory.redoDelete": "La suppression sera répétée : {0}",
-  "settings.taskbar.suppressAllTaskbars": "Toujours masquer les barres des tâches sur tous les écrans"
+  "settings.taskbar.suppressAllTaskbars": "Toujours masquer les barres des tâches sur tous les écrans",
+  "settings.general.windowSupport.update": "Mettre à jour",
+  "settings.general.windowSupport.updateAvailable": "Une mise à jour des composants auxiliaires est disponible."
 }

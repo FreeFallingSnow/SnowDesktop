@@ -4,19 +4,79 @@
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_authorization.h"
 #include "platform/window_support/window_support_host_identity.h"
+#include "platform/window_support/window_support_installation.h"
+#include "../test_temporary_directory.h"
 #include <sddl.h>
 
 #include <cstdio>
 #include <initializer_list>
+#include <fstream>
+#include <iterator>
 
 using namespace snowdesktop::window_support;
 
-int main()
+int main(int argc, char** argv)
 {
     unsigned failed = 0;
     const auto check = [&](bool result, const char* message) {
         if (!result) { std::fprintf(stderr, "FAIL: %s\n", message); ++failed; }
     };
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto live = temporary.path / L"authorized";
+        const auto staged = temporary.path / L"staged";
+        std::filesystem::create_directory(live);
+        std::filesystem::create_directory(staged);
+        check(HelperImplementationId().size() == 64 && HelperImplementationChanged(live),
+            "a legacy installation without an implementation identity offers an explicit update");
+        { std::ofstream marker(live / L"implementation-id.bin", std::ios::binary); marker << HelperImplementationId(); }
+        check(!HelperImplementationChanged(live), "matching implementation stays current regardless of application version metadata");
+        { std::ofstream marker(live / L"implementation-id.bin", std::ios::binary); marker << "old implementation"; }
+        check(HelperImplementationChanged(live), "a changed helper implementation offers an update");
+        const auto write = [](const auto& path, const char* text) { std::ofstream output(path, std::ios::binary); output << text; };
+        const auto read = [](const auto& path) { std::ifstream input(path, std::ios::binary); return std::string(std::istreambuf_iterator<char>(input), {}); };
+        write(staged / L"new.bin", "new protected bundle");
+        check(argc == 2, "installation regression receives its isolated Hook DLL fixture");
+        if (argc == 2)
+        {
+            const auto mappedImage = live / L"hook.dll";
+            std::filesystem::copy_file(std::filesystem::path(argv[1]), mappedImage);
+            const HMODULE module = LoadLibraryW(mappedImage.c_str());
+            check(module != nullptr, "old target-side Hook remains mapped during the update");
+            if (module)
+            {
+                const BOOL deleted = DeleteFileW(mappedImage.c_str());
+                const DWORD error = GetLastError();
+                check(!deleted && error == ERROR_ACCESS_DENIED, "old in-place replacement reproduces user error 5 with a loaded DLL");
+                std::filesystem::path retired;
+                check(PublishHelperBundle(staged, live, retired) == ERROR_SUCCESS &&
+                    read(live / L"new.bin") == "new protected bundle" && std::filesystem::is_regular_file(retired / L"hook.dll"),
+                    "production bundle publication succeeds while the old Hook remains loaded and reusable");
+                FreeLibrary(module);
+            }
+        }
+        const auto failing = temporary.path / L"failing";
+        const auto occupied = temporary.path / L"not-a-directory";
+        std::filesystem::create_directory(failing);
+        write(failing / L"new.bin", "pending"); write(occupied, "keep existing file");
+        std::filesystem::path retired;
+        check(PublishHelperBundle(failing, occupied, retired) == ERROR_ACCESS_DENIED &&
+            read(occupied) == "keep existing file" && read(failing / L"new.bin") == "pending",
+            "invalid destination leaves both existing data and the prepared update unchanged");
+        const auto rollback = temporary.path / L"rollback", blocked = temporary.path / L"blocked-stage";
+        std::filesystem::create_directory(rollback); std::filesystem::create_directory(blocked);
+        write(rollback / L"old.bin", "working old helper"); write(blocked / L"new.bin", "pending new helper");
+        const HANDLE lock = CreateFileW(blocked.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        check(lock != INVALID_HANDLE_VALUE, "a directory lease can reject publication after the old bundle was retired");
+        if (lock != INVALID_HANDLE_VALUE)
+        {
+            check(PublishHelperBundle(blocked, rollback, retired) != ERROR_SUCCESS &&
+                read(rollback / L"old.bin") == "working old helper" && read(blocked / L"new.bin") == "pending new helper",
+                "rejected publication restores the old fixed path and retains the prepared update");
+            CloseHandle(lock);
+        }
+    }
     const auto firstRuntime = HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-one\\SnowDesktop.exe");
     check(!firstRuntime.empty() && firstRuntime == HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-two\\SnowDesktop.exe"),
         "the same managed installation retains authorization across runtime version directories");
@@ -26,10 +86,10 @@ int main()
     check(!HostIdentityMatches(L"D:\\Other\\SnowDesktop\\.snowdesktop\\runtime\\deleted-build\\SnowDesktop.exe", firstRuntime) &&
         !HostIdentityMatches(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\..\\SnowDesktop.exe", firstRuntime),
         "legacy migration never broadens a grant to another installation or a traversing path");
-    check(HostIdentityMatches(L"C:\\Program Files\\WindowsApps\\SnowDesktop_1.0.1.0_x64__abcdefghijklm\\SnowDesktop.exe",
-        L"SnowDesktopHost:2:package:SnowDesktop_abcdefghijklm") &&
-        !HostIdentityMatches(L"C:\\Program Files\\WindowsApps\\SnowDesktop_1.0.1.0_x64__abcdefghijklm\\SnowDesktop.exe",
-        L"SnowDesktopHost:2:package:Other_abcdefghijklm"),
+    check(HostIdentityMatches(L"C:\\Program Files\\WindowsApps\\SnowDesktop_1.0.1.0_x64__8wekyb3d8bbwe\\SnowDesktop.exe",
+        L"SnowDesktopHost:2:package:SnowDesktop_8wekyb3d8bbwe") &&
+        !HostIdentityMatches(L"C:\\Program Files\\WindowsApps\\SnowDesktop_1.0.1.0_x64__8wekyb3d8bbwe\\SnowDesktop.exe",
+        L"SnowDesktopHost:2:package:Other_8wekyb3d8bbwe"),
         "legacy packaged paths match the same package family across versions and reject another package");
     check(firstRuntime != HostPathIdentity(L"D:\\Other\\SnowDesktop\\.snowdesktop\\runtime\\build-two\\SnowDesktop.exe") &&
         firstRuntime != HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\dev\\build-two\\SnowDesktop.exe") &&

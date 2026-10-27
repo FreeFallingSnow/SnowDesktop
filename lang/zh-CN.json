@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "将重做重命名：将“{0}”改为“{1}”",
   "app.fileHistory.undoDelete": "将撤销删除并恢复：{0}",
   "app.fileHistory.redoDelete": "将重做删除：{0}",
-  "settings.taskbar.suppressAllTaskbars": "始终隐藏所有屏幕的任务栏"
+  "settings.taskbar.suppressAllTaskbars": "始终隐藏所有屏幕的任务栏",
+  "settings.general.windowSupport.update": "更新",
+  "settings.general.windowSupport.updateAvailable": "辅助组件有可用更新。"
 }

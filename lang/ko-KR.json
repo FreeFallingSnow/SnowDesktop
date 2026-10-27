@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "이름 변경을 다시 실행하여 “{0}”을(를) “{1}”(으)로 변경합니다",
   "app.fileHistory.undoDelete": "삭제를 실행 취소하고 복원합니다: {0}",
   "app.fileHistory.redoDelete": "삭제를 다시 실행합니다: {0}",
-  "settings.taskbar.suppressAllTaskbars": "모든 화면의 작업 표시줄 항상 숨기기"
+  "settings.taskbar.suppressAllTaskbars": "모든 화면의 작업 표시줄 항상 숨기기",
+  "settings.general.windowSupport.update": "업데이트",
+  "settings.general.windowSupport.updateAvailable": "보조 구성 요소의 업데이트를 사용할 수 있습니다."
 }

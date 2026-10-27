@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "Se rehará el cambio de nombre: «{0}» pasará a llamarse «{1}»",
   "app.fileHistory.undoDelete": "Se deshará la eliminación y se restaurará lo siguiente: {0}",
   "app.fileHistory.redoDelete": "Se rehará la eliminación: {0}",
-  "settings.taskbar.suppressAllTaskbars": "Ocultar siempre las barras de tareas en todas las pantallas"
+  "settings.taskbar.suppressAllTaskbars": "Ocultar siempre las barras de tareas en todas las pantallas",
+  "settings.general.windowSupport.update": "Actualizar",
+  "settings.general.windowSupport.updateAvailable": "Hay una actualización disponible para los componentes auxiliares."
 }

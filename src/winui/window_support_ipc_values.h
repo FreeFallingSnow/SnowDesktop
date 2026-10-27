@@ -12,6 +12,6 @@ template<> struct Fields<window_support::CapabilitySnapshot>
 template<> struct Fields<window_support::SupportStatus>
 {
     template<class Value> static auto Tie(Value& v)
-    { return std::tie(v.capabilities, v.authorization, v.hostElevated, v.error); }
+    { return std::tie(v.capabilities, v.authorization, v.hostElevated, v.error, v.updateAvailable); }
 };
 }

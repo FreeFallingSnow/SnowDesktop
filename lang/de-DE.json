@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "Die Umbenennung wird wiederholt: „{0}“ wird in „{1}“ umbenannt",
   "app.fileHistory.undoDelete": "Die Löschung wird rückgängig gemacht, um Folgendes wiederherzustellen: {0}",
   "app.fileHistory.redoDelete": "Die Löschung wird wiederholt: {0}",
-  "settings.taskbar.suppressAllTaskbars": "Taskleisten auf allen Bildschirmen immer ausblenden"
+  "settings.taskbar.suppressAllTaskbars": "Taskleisten auf allen Bildschirmen immer ausblenden",
+  "settings.general.windowSupport.update": "Aktualisieren",
+  "settings.general.windowSupport.updateAvailable": "Für die Hilfskomponenten ist ein Update verfügbar."
 }

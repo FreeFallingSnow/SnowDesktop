@@ -1012,6 +1012,24 @@ end})
         {
             unsigned statusChanges = 0;
             {
+                const HWND anchor = create(nullptr), overlay = create(nullptr);
+                constexpr UINT position = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+                SetWindowPos(anchor, HWND_NOTOPMOST, 0, 0, 0, 0, position);
+                SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0, position);
+                SetWindowPos(overlay, anchor, 0, 0, 0, 0, position);
+                check(!(GetWindowLongPtrW(overlay, GWL_EXSTYLE) & WS_EX_TOPMOST),
+                    "old helper ordering reproduces overlay demotion behind an ordinary Dock anchor");
+                SetWindowPos(overlay, ResolveDockWindowTransitionInsertAfter(anchor, false), 0, 0, 0, 0, position);
+                check((GetWindowLongPtrW(overlay, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
+                    "production transition ordering retains topmost presentation over ordinary windows");
+                SetWindowPos(anchor, HWND_TOPMOST, 0, 0, 0, 0, position);
+                check(ResolveDockWindowTransitionInsertAfter(anchor, false) == anchor &&
+                    ResolveDockWindowTransitionInsertAfter(anchor, true) == HWND_TOPMOST,
+                    "topmost anchors remain usable while the desktop host retains its complete-pair ordering callback");
+                SetWindowPos(anchor, HWND_NOTOPMOST, 0, 0, 0, 0, position);
+                SetWindowPos(overlay, HWND_NOTOPMOST, 0, 0, 0, 0, position);
+            }
+            {
                 // No Hook transition is delivered. The production Dock poll
                 // must still see current native buttons when its observer is
                 // available, then see release without a cached button-up.

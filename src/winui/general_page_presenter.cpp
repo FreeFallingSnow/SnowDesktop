@@ -1208,6 +1208,8 @@ struct GeneralPagePresenter::Impl
             : registered || status.authorization == AuthorizationState::Invalid
                 ? "settings.general.windowSupport.unavailable" : "settings.general.windowSupport.disabled";
         std::wstring description = L(key);
+        if (!status.hostElevated && status.updateAvailable && !configuring && !starting)
+            description += L" " + L("settings.general.windowSupport.updateAvailable");
         if ((helper || status.hostElevated) && !complete) description += L" " + L("settings.general.windowSupport.partial");
         if (!configuring && !starting && status.error && status.error != ERROR_CANCELLED)
             description += L" (" + std::to_wstring(status.error) + L")";
@@ -1221,11 +1223,13 @@ struct GeneralPagePresenter::Impl
             windowSupportFeatureTitles[i].Text(titles[i]);
             windowSupportFeatureDescriptions[i].Text(descriptions[i]);
         }
-        const auto enableText = L(registered || status.authorization == AuthorizationState::Invalid
-            ? "settings.general.windowSupport.repair" : "settings.general.windowSupport.enable");
+        const auto enableText = status.updateAvailable ? L("settings.general.windowSupport.update") :
+            L(registered || status.authorization == AuthorizationState::Invalid
+                ? "settings.general.windowSupport.repair" : "settings.general.windowSupport.enable");
         enableWindowSupport.Content(winrt::box_value(enableText));
         disableWindowSupport.Content(winrt::box_value(L("settings.general.windowSupport.disable")));
-        enableWindowSupport.Visibility(status.hostElevated || (helper && complete) ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        enableWindowSupport.Visibility(status.hostElevated || (helper && complete && !status.updateAvailable)
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         disableWindowSupport.Visibility(registered || status.authorization == AuthorizationState::Invalid
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         enableWindowSupport.IsEnabled(!configuring && !starting && static_cast<bool>(actions.configureWindowSupport));

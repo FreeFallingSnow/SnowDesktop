@@ -998,6 +998,7 @@ source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "Source" FILES
 snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
 add_library(SnowDesktopWindowSupport STATIC
+    src/platform/window_support/window_support_installation.cpp
     src/platform/window_support/window_support_host_identity.cpp
     src/platform/window_support/window_support_runtime.cpp
     src/platform/window_support/window_support_security.cpp
@@ -1147,6 +1148,8 @@ ExternalProject_Add(SnowDesktopDockMinimize32
     BUILD_ALWAYS TRUE
     INSTALL_COMMAND "")
 add_dependencies(SnowDesktop SnowDesktopDockMinimizeHook SnowDesktopDockMinimize32)
+include(cmake/SnowDesktop.WindowSupport.cmake)
+snowdesktop_window_support_build_identity()
 foreach(target SnowDesktopTaskbarHook SnowDesktopWallpaperHook SnowDesktopHookEntry SnowDesktopDockMinimizeHook)
     if(TARGET ${target})
         snowdesktop_private_runtime_target(${target} "${CMAKE_BINARY_DIR}/$<CONFIG>")
@@ -1472,6 +1475,7 @@ if (BUILD_TESTING)
         SnowDesktopWindowSupportTests
         window_support
         SOURCES tests/platform/window_support_tests.cpp
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopHookEntryFixture1>"
         LINK_LIBRARIES SnowDesktopWindowSupport user32
         INCLUDE_DIRECTORIES src
         LABELS core platform rules)
@@ -1607,6 +1611,7 @@ if (BUILD_TESTING)
             "$<TARGET_FILE:SnowDesktopHookEntryFixture1>" "$<TARGET_FILE:SnowDesktopHookEntryFixture2>"
         LABELS core integration deployment)
     add_dependencies(SnowDesktopHookEntryTests SnowDesktopHookEntry SnowDesktopHookEntryFixture1 SnowDesktopHookEntryFixture2)
+    add_dependencies(SnowDesktopWindowSupportTests SnowDesktopHookEntryFixture1)
     add_dependencies(SnowDesktopHookEntryTests SnowDesktopDockMinimize32)
     add_test(NAME hook_stable_entry32 COMMAND SnowDesktopHookEntryTests --run32
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe"

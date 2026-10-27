@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "將重做重新命名：將「{0}」改為「{1}」",
   "app.fileHistory.undoDelete": "將撤銷刪除並還原：{0}",
   "app.fileHistory.redoDelete": "將重做刪除：{0}",
-  "settings.taskbar.suppressAllTaskbars": "一律隱藏所有螢幕的工作列"
+  "settings.taskbar.suppressAllTaskbars": "一律隱藏所有螢幕的工作列",
+  "settings.general.windowSupport.update": "更新",
+  "settings.general.windowSupport.updateAvailable": "輔助元件有可用更新。"
 }

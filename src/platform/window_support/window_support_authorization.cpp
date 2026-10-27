@@ -2,6 +2,8 @@
 #include "window_support_protocol.h"
 #include "window_support_security.h"
 #include "window_support_host_identity.h"
+#include "window_support_installation.h"
+#include "window_support_build_id.h"
 
 #include <taskschd.h>
 #include <sddl.h>
@@ -167,7 +169,24 @@ void ProtectDirectory(const std::filesystem::path& path, bool shared = false)
     LocalFree(descriptor);
     if (error) throw Failure{error};
 }
-void InstallFiles(const std::filesystem::path& source)
+void WriteProtectedBytes(const std::filesystem::path& path, const void* bytes, DWORD size)
+{
+    const auto file = CreateProtectedFile(path);
+    DWORD written = 0;
+    WinCheck(WriteFile(file.value, bytes, size, &written, nullptr));
+    if (written != size) throw Failure{ERROR_WRITE_FAULT};
+    WinCheck(FlushFileBuffers(file.value));
+}
+constexpr std::array bundleFiles{protocol::HelperFilename, L"SnowDesktopDockMinimizeHook.dll",
+    L"SnowDesktopDockMinimizeHook32.dll", L"SnowDesktopDockMinimizeHost32.exe", L"host-path.bin", L"implementation-id.bin"};
+void RemoveRetiredFiles(const std::filesystem::path& directory) noexcept try
+{
+    // Fixed leaves only. In-use images deliberately remain mapped and reusable.
+    for (const auto image : bundleFiles) DeleteFileW((directory / image).c_str());
+    RemoveDirectoryW(directory.c_str());
+}
+catch (...) { /* Mapped images can retire after their target processes exit. */ }
+void InstallFiles(const std::filesystem::path& source, const std::wstring& hostIdentity)
 {
     const auto destination = HelperDirectory();
     if (destination.empty()) throw Failure{ERROR_PATH_NOT_FOUND};
@@ -176,7 +195,14 @@ void InstallFiles(const std::filesystem::path& source)
     RejectReparse(product.parent_path());
     ProtectDirectory(product, true);
     ProtectDirectory(support, true);
-    ProtectDirectory(destination);
+    const auto staging = support / (destination.filename().wstring() + L".staging-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
+    ProtectDirectory(staging);
+    struct StagingScope
+    {
+        const std::filesystem::path& path;
+        ~StagingScope() { RemoveRetiredFiles(path); }
+    } cleanup{staging};
     // Fixed distribution-owned images only. The broker never accepts a DLL,
     // executable or command line from an ordinary IPC request.
     constexpr std::array images{protocol::HelperFilename, L"SnowDesktopDockMinimizeHook.dll",
@@ -185,13 +211,11 @@ void InstallFiles(const std::filesystem::path& source)
     {
         const auto privateImage = source / L"SnowDesktop.Runtime" / image;
         const auto from = std::filesystem::is_regular_file(privateImage) ? privateImage : source / image;
-        const auto to = destination / image;
+        const auto to = staging / image;
         RejectReparse(from);
         RejectReparse(to);
-        // Recreate fixed leaves under the now-protected parent. CopyFile can
-        // copy a source DACL, and an old user-owned leaf can retain WRITE_DAC.
-        // Neither may become a writable future elevated executable.
-        if (!DeleteFileW(to.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) throw Failure{GetLastError()};
+        // Never overwrite mapped target-side hooks. Prepare new protected
+        // leaves first, then switch the fixed directory as a complete bundle.
         std::ifstream input(from, std::ios::binary);
         if (!input) throw Failure{ERROR_FILE_NOT_FOUND};
         const auto output = CreateProtectedFile(to);
@@ -207,6 +231,13 @@ void InstallFiles(const std::filesystem::path& source)
         if (!input.eof()) throw Failure{ERROR_READ_FAULT};
         WinCheck(FlushFileBuffers(output.value));
     }
+    if (hostIdentity.empty()) throw Failure{ERROR_ACCESS_DENIED};
+    WriteProtectedBytes(staging / L"host-path.bin", hostIdentity.data(), static_cast<DWORD>(hostIdentity.size() * sizeof(wchar_t)));
+    const auto implementation = HelperImplementationId();
+    WriteProtectedBytes(staging / L"implementation-id.bin", implementation.data(), static_cast<DWORD>(implementation.size()));
+    std::filesystem::path retired;
+    if (const DWORD error = PublishHelperBundle(staging, destination, retired)) throw Failure{error};
+    if (!retired.empty()) RemoveRetiredFiles(retired);
 }
 DWORD Error() noexcept
 {
@@ -215,6 +246,19 @@ DWORD Error() noexcept
     catch (const std::bad_alloc&) { return ERROR_OUTOFMEMORY; }
     catch (...) { return ERROR_GEN_FAILURE; }
 }
+}
+std::string_view HelperImplementationId() noexcept { return SNOWDESKTOP_WINDOW_SUPPORT_BUILD_ID; }
+bool HelperImplementationChanged(const std::filesystem::path& installedDirectory) noexcept
+{
+    try
+    {
+        const auto expected = HelperImplementationId();
+        std::string installed(expected.size(), '\0');
+        std::ifstream file(installedDirectory / L"implementation-id.bin", std::ios::binary);
+        file.read(installed.data(), static_cast<std::streamsize>(installed.size()));
+        return !file || file.peek() != EOF || installed != expected;
+    }
+    catch (...) { return true; }
 }
 AuthorizationResult QueryAuthorization() noexcept
 {
@@ -239,7 +283,7 @@ AuthorizationResult QueryAuthorization() noexcept
         const bool valid = enabled == VARIANT_TRUE && TaskSecurityMatches(task.Get()) && TaskMatches(definition.Get()) &&
             attributes != INVALID_FILE_ATTRIBUTES && !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
         return {valid ? AuthorizationState::Registered : AuthorizationState::Invalid,
-            static_cast<DWORD>(valid ? ERROR_SUCCESS : ERROR_INVALID_DATA)};
+            static_cast<DWORD>(valid ? ERROR_SUCCESS : ERROR_INVALID_DATA), HelperImplementationChanged(HelperDirectory())};
     }
     catch (...) { return {AuthorizationState::Invalid, Error()}; }
 }
@@ -370,22 +414,7 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
             Check(Missing(removed) ? S_OK : removed);
             return ERROR_SUCCESS; // Keep protected binaries; never recursively delete a computed path.
         }
-        InstallFiles(hostImage.parent_path());
-        {
-            // Bind this narrowly scoped authorization to the actual host
-            // selected by the user, rather than accepting a copied EXE name.
-            const auto identityPath = HelperDirectory() / L"host-path.bin";
-            RejectReparse(identityPath);
-            if (!DeleteFileW(identityPath.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) throw Failure{GetLastError()};
-            const auto identity = CreateProtectedFile(identityPath);
-            const auto path = HostProcessIdentity(host.value);
-            if (path.empty()) throw Failure{ERROR_ACCESS_DENIED};
-            const DWORD size = static_cast<DWORD>(path.size() * sizeof(wchar_t));
-            DWORD written = 0;
-            WinCheck(WriteFile(identity.value, path.data(), size, &written, nullptr));
-            if (written != size) throw Failure{ERROR_WRITE_FAULT};
-            WinCheck(FlushFileBuffers(identity.value));
-        }
+        InstallFiles(hostImage.parent_path(), HostProcessIdentity(host.value));
         ComPtr<ITaskDefinition> definition;
         Check(scheduler.service->NewTask(0, &definition));
         ComPtr<IPrincipal> principal;

@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "名前の変更をやり直し、「{0}」を「{1}」に変更します",
   "app.fileHistory.undoDelete": "削除を元に戻して復元します：{0}",
   "app.fileHistory.redoDelete": "削除をやり直します：{0}",
-  "settings.taskbar.suppressAllTaskbars": "すべての画面のタスクバーを常に非表示"
+  "settings.taskbar.suppressAllTaskbars": "すべての画面のタスクバーを常に非表示",
+  "settings.general.windowSupport.update": "更新",
+  "settings.general.windowSupport.updateAvailable": "補助コンポーネントの更新があります。"
 }

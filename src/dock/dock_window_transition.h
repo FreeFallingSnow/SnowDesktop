@@ -97,6 +97,15 @@ inline constexpr COLORREF
     kDockWindowTransitionBorderColor =
         DWMWA_COLOR_NONE;
 
+inline HWND ResolveDockWindowTransitionInsertAfter(HWND keepBelow, bool hostOwnsOrdering) noexcept
+{
+    // Inserting behind an ordinary desktop Dock demotes a topmost overlay.
+    // Only an anchor already in the topmost band may constrain this overlay.
+    return !hostOwnsOrdering && keepBelow && IsWindow(keepBelow) &&
+        (GetWindowLongPtrW(keepBelow, GWL_EXSTYLE) & WS_EX_TOPMOST)
+        ? keepBelow : HWND_TOPMOST;
+}
+
 // Coordinates are physical screen pixels; the returned region belongs to the
 // caller and is local to hostBounds. This also handles negative monitor origins.
 HRGN CreateDockWindowTransitionOcclusionRegion(

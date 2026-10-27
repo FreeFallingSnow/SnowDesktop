@@ -126,6 +126,7 @@ struct Engine
     protocol::Response Execute(const protocol::Request& request)
     {
         protocol::Response response;
+        response.version = request.version;
         response.sequence = request.sequence;
         response.capabilities = Capabilities();
         const HWND window = protocol::Window(request.target);
@@ -246,11 +247,12 @@ int RunHelper()
     else if (error != ERROR_PIPE_CONNECTED && error != ERROR_SUCCESS) return static_cast<int>(error);
     protocol::Request request;
     if (!Transfer(connection.value, &request, sizeof(request), false, nullptr) ||
-        request.magic != protocol::Magic || request.version != protocol::Version || request.command != protocol::Command::Hello)
+        request.magic != protocol::Magic || !protocol::CompatibleVersion(request.version) || request.command != protocol::Command::Hello)
         return ERROR_INVALID_DATA;
     Handle host;
     if (!AcceptedHost(connection.value, request.hostProcess, host)) return ERROR_ACCESS_DENIED;
     const DWORD hostProcess = request.hostProcess;
+    const auto wireVersion = request.version;
     std::uint64_t lastSequence = 0;
     Engine engine;
     operation_feedback::SetReporter([&engine](const operation_feedback::Failure& failure) {
@@ -264,7 +266,7 @@ int RunHelper()
     engine.pointer.Start();
     for (;;)
     {
-        if (request.magic != protocol::Magic || request.version != protocol::Version ||
+        if (request.magic != protocol::Magic || request.version != wireVersion ||
             request.hostProcess != hostProcess || request.sequence <= lastSequence ||
             request.targetCount > request.targets.size()) break;
         lastSequence = request.sequence;

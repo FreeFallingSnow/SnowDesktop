@@ -2662,5 +2662,7 @@
   "app.fileHistory.redoRename": "Will redo rename: change “{0}” to “{1}”",
   "app.fileHistory.undoDelete": "Will undo deletion and restore: {0}",
   "app.fileHistory.redoDelete": "Will redo deletion: {0}",
-  "settings.taskbar.suppressAllTaskbars": "Always hide taskbars on all displays"
+  "settings.taskbar.suppressAllTaskbars": "Always hide taskbars on all displays",
+  "settings.general.windowSupport.update": "Update",
+  "settings.general.windowSupport.updateAvailable": "An update is available for the helper components."
 }

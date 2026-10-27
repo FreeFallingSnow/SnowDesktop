@@ -79,6 +79,7 @@ struct SupportStatus
     // second privileged process. This field never selects feature fallbacks.
     bool hostElevated = false;
     std::uint32_t error = 0;
+    bool updateAvailable = false;
     bool operator==(const SupportStatus&) const = default;
 };
 }

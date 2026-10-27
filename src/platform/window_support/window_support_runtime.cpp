@@ -44,6 +44,7 @@ struct Runtime::Impl
     HWND peekTarget = nullptr;
     bool stopping = false, running = false, polling = false, workerFailed = false;
     std::uint64_t nextSequence = 0;
+    std::uint32_t wireVersion = protocol::Version;
     RecentPointerEvents recentPointerEvents;
     WindowOperationFailures failures;
     ULONGLONG lastResponse = 0;
@@ -100,10 +101,11 @@ struct Runtime::Impl
     bool Exchange(HANDLE connection, protocol::Request& request, protocol::Response& response)
     {
         request.sequence = ++nextSequence;
+        request.version = wireVersion;
         request.hostProcess = GetCurrentProcessId();
         if (!pipe::Transfer(connection, &request, sizeof(request), true) ||
             !pipe::Transfer(connection, &response, sizeof(response), false)) return false;
-        if (response.magic != protocol::Magic || response.version != protocol::Version ||
+        if (response.magic != protocol::Magic || response.version != request.version ||
             response.sequence != request.sequence || response.pointerCount > response.pointerEvents.size())
         { SetLastError(ERROR_REVISION_MISMATCH); return false; }
         return true;
@@ -149,9 +151,11 @@ struct Runtime::Impl
             {
                 status.authorization = authorization.state;
                 status.error = authorization.error;
+                status.updateAvailable = authorization.updateAvailable;
             }
         }
         ULONGLONG nextAttempt = 0;
+        bool alternateVersionTried = false;
         for (;;)
         {
             std::optional<Configuration> configure;
@@ -191,6 +195,7 @@ struct Runtime::Impl
                 {
                     std::lock_guard guard(mutex);
                     status.authorization = authorization.state;
+                    status.updateAvailable = authorization.updateAvailable;
                     status.error = error == ERROR_CANCELLED ? ERROR_SUCCESS : error ? error : authorization.error;
                     if (error || !configure->enabled) pendingPin.reset();
                     configured.emplace_back(std::move(configure->completion), error);
@@ -231,9 +236,17 @@ struct Runtime::Impl
                     if (connection != INVALID_HANDLE_VALUE) CloseHandle(connection);
                     connection = INVALID_HANDLE_VALUE;
                     Disconnect(error ? error : ERROR_NOT_CONNECTED);
-                    nextAttempt = GetTickCount64() + 10000;
+                    const bool versionProbe = !alternateVersionTried && (error == ERROR_BROKEN_PIPE ||
+                        error == ERROR_NO_DATA || error == ERROR_REVISION_MISMATCH || error == ERROR_INVALID_DATA);
+                    if (versionProbe)
+                    {
+                        wireVersion = wireVersion == 2 ? 1 : 2;
+                        alternateVersionTried = true;
+                    }
+                    nextAttempt = GetTickCount64() + (versionProbe ? 200 : 10000);
                     continue;
                 }
+                alternateVersionTried = false;
                 Publish(response);
             }
             Work current;

@@ -1051,9 +1051,7 @@ bool DockWindowTransition::Start(
             imageHostRect_.top);
     // The host callback keeps entire Dock content/backdrop pairs above us.
     // Only legacy callers without that callback use the single-window anchor.
-    const HWND insertAfter = !presentationCallback_ &&
-        keepBelowWindow && IsWindow(keepBelowWindow)
-        ? keepBelowWindow : HWND_TOPMOST;
+    const HWND insertAfter = ResolveDockWindowTransitionInsertAfter(keepBelowWindow, static_cast<bool>(presentationCallback_));
     SetWindowPos(
         hwnd_, insertAfter,
         imageHostRect_.left,
