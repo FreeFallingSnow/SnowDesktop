@@ -4792,10 +4792,20 @@ void TestWarmFailureRecovery(bool permanent)
     ext::Request request;
     request.paths = {(temp.path / L"target.txt").wstring()};
     std::ofstream(request.paths.front()) << "private";
-    std::atomic<unsigned> queries = 0;
+    std::atomic<unsigned> queries = 0, fullReads = 0, sourceReads = 0;
     std::atomic<std::uint64_t> registrationRevision = 17;
+    const auto inventory = [&]
+    {
+        ext::Catalogue c; c.revision = registrationRevision.load();
+        ext::Registration row; row.id = "reg:warm-failure"; row.types = {L"*"};
+        row.contexts = ext::ContextBit(ext::Context::File); row.verbs = {"warm-failure"};
+        row.revision = c.revision; c.rows = {row};
+        return c;
+    };
+    const auto cachePath = temp.path / L"cache";
+    shell_service_fixture::SeedMetadata(cachePath, inventory());
     ext::MenuService service(
-        temp.path / L"cache",
+        cachePath,
         [&](const ext::Request &target)
         {
             if (target.paths != request.paths)
@@ -4821,11 +4831,12 @@ void TestWarmFailureRecovery(bool permanent)
         },
         [&]
         {
-            ext::Catalogue c; c.revision = registrationRevision.load();
-            ext::Registration row; row.id = "reg:warm-failure"; row.types = {L"*"};
-            row.contexts = ext::ContextBit(ext::Context::File); row.verbs = {"warm-failure"};
-            row.revision = c.revision; c.rows = {row};
-            return c;
+            ++fullReads;
+            return inventory();
+        }, {}, {}, [&](const auto &seeds)
+        {
+            ++sourceReads;
+            return shell_service_fixture::Sources(inventory(), seeds);
         });
     ext::Preferences prefs;
     ext::SetCommon(prefs, "verb:warm-failure", ext::Category::Objects, true);
@@ -4833,8 +4844,8 @@ void TestWarmFailureRecovery(bool permanent)
     service.Query(request);
     PumpUntil([&] { return service.View(request).snapshot.has_value(); },
               "seed a real service cache before invalidation");
-    service.Inspect();
-    PumpUntil([&] { return !service.Inspect().scanning; }, "settle initial inventory before warm-cache notification");
+    Expect(sourceReads > 0 && fullReads == 0,
+        "ordinary warm-cache proof reads only the configured exact source without opening management");
     auto before = service.View(request).revision;
     registrationRevision = 18; // A real dependency change still exercises failed refresh recovery.
     DWORD value = 1;
@@ -4859,6 +4870,7 @@ void TestWarmFailureRecovery(bool permanent)
                << (items.empty() ? L"" : items.front().label) << std::endl;
     Expect(queries == 3 && (permanent ? items.empty() : items.size() == 1 && items.front().label == L"Recovered"),
            "new popup must recover once rather than treating a failed stale-cache refresh as successful publication");
+    Expect(fullReads == 0, "ordinary transient and permanent refresh failures never request complete inventory");
 }
 void TestPopupQueryFailureRecovery(bool background, bool permanent)
 {
