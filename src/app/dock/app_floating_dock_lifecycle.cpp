@@ -575,12 +575,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             HasNewPointerButtonPress(
                 buttonsDown,
                 previousButtonsDown,
-                pressedSinceLastSample);
+                pressedSinceLastSample,
+                observedButtons.has_value());
     const bool leftButtonPressed =
-        ((buttonsDown & leftButtonBit) != 0 &&
-            (previousButtonsDown &
-                leftButtonBit) == 0) ||
-        (pressedSinceLastSample & leftButtonBit) != 0;
+        snowdesktop::floating_dock_rules::HasNewPointerButtonPress(
+            buttonsDown & leftButtonBit,
+            previousButtonsDown & leftButtonBit,
+            pressedSinceLastSample & leftButtonBit,
+            observedButtons.has_value());
     floatingDockPointerButtonsDown_ = buttonsDown;
     if ((buttonsDown & leftButtonBit) == 0 &&
         !mouseDown_)

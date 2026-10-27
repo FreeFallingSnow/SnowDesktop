@@ -606,10 +606,12 @@ inline bool IsPointInDockEdgeCorridor(
 
 inline bool HasNewPointerButtonPress(
     UINT buttonsDown, UINT previousButtonsDown,
-    UINT pressedSinceLastSample)
+    UINT pressedSinceLastSample, bool forwardedState = false)
 {
+    // A forwarded snapshot can arrive before its classified event. It only
+    // describes held buttons; dispatch owns the press and its minimize intent.
     return pressedSinceLastSample != 0 ||
-        (buttonsDown & ~previousButtonsDown) != 0;
+        (!forwardedState && (buttonsDown & ~previousButtonsDown) != 0);
 }
 
 inline bool ShouldDismissForForegroundActivation(

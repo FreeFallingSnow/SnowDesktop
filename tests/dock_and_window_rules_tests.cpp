@@ -6066,6 +6066,22 @@ int main(int argc, char** argv)
     Check(!floatingDock::HasNewPointerButtonPress(
             1, 1, 0),
         "a held pointer button must not repeatedly dismiss");
+    // Local consumer contract for the reported helper snapshot -> classified
+    // event ordering. Host scheduling and actual elevated windows need runtime
+    // acceptance; raw held state must never preempt the minimize classification.
+    Check(!floatingDock::HasNewPointerButtonPress(1, 0, 0, true),
+        "a forwarded held snapshot before event dispatch must not dismiss the Dock");
+    Check(floatingDock::HasNewPointerButtonPress(1, 1, 1, true),
+        "the delivered press must remain observable after an earlier held snapshot");
+    Check(!floatingDock::HasNewPointerButtonPress(0, 1, 0, true) &&
+            !floatingDock::HasNewPointerButtonPress(1, 1, 0, true),
+        "forwarded release and held snapshots must not create additional outside presses");
+    Check(floatingDock::HasNewPointerButtonPress(0, 0, 1, true) &&
+            floatingDock::HasNewPointerButtonPress(3, 1, 2, true),
+        "forwarded fast clicks and additional chord presses must remain observable");
+    Check(floatingDock::HasNewPointerButtonPress(1, 0, 0, false) &&
+            floatingDock::HasNewPointerButtonPress(3, 1, 0, false),
+        "live native input must retain rising-edge detection without forwarded events");
     Check(floatingDock::ShouldDismissForForegroundActivation(true, true, true, false, false),
         "external activation dismisses a summoned Dock even without a readable button-down");
     Check(!floatingDock::ShouldDismissForForegroundActivation(true, false, true, false, false) &&

@@ -23,6 +23,11 @@ inline std::atomic<std::uint64_t> lastDown{0}, lastUp{0};
 inline void RecordLayer(const wchar_t* reason, HWND host, bool promoted,
     UINT buttons = 0, UINT semantics = 0, ULONGLONG minimizeTick = 0, bool activation = false) noexcept try
 {
+    struct ErrorScope
+    {
+        DWORD value = GetLastError();
+        ~ErrorScope() { SetLastError(value); }
+    } errorScope;
     static unsigned records = 0;
     if (records++ >= 128) return;
     const auto status = window_support::WindowSupport().Status();
