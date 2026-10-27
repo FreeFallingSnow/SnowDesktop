@@ -1311,6 +1311,8 @@ end})
             InputSafetyImport hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&InputSafetyWindowAtPoint));
             InputSafetyImport buttons("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
             auto& dock = *app->persistentDockHosts_.front();
+            const RECT previousDockRect = dock.dockRect;
+            const RECT previousDismissRect = dock.explicitDismissRect;
             dock.promoted = app->floatingDockVisible_ = true;
             dock.dockRect = {200, 200, 400, 240};
             dock.explicitDismissRect = {};
@@ -1330,6 +1332,8 @@ end})
             app->UpdateFloatingDockEdgeSwipe();
             check(!dock.promoted && !app->floatingDockVisible_ && !app->floatingDockOutsidePress_.Source(),
                 "production timer dismisses an ordinary deferred outside click once its release handoff completes");
+            dock.dockRect = previousDockRect;
+            dock.explicitDismissRect = previousDismissRect;
             snowdesktop::window_support::WindowSupport().SetNativeCapability(
                 snowdesktop::window_support::Capability::PointerObservation, false);
             inputSafetyForeground = nullptr;
