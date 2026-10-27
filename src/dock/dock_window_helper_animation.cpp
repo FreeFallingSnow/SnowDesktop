@@ -3,6 +3,7 @@
 #include "dock_minimize_protocol.h"
 #include "dock_window_transition.h"
 #include "platform/window_support/window_support_security.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "settings/animation_settings.h"
 
 #include <algorithm>
@@ -17,6 +18,9 @@ struct DockWindowHelperAnimation::Impl
     std::vector<wire::Target> targets;
     HWND receiver = nullptr;
     wire::WindowIdentity current, minimized;
+    wire::WindowIdentity hostReceiver, nativeMinimizing;
+    RECT nativeMinimizeFrame{};
+    DWORD nativeMinimizeAt = 0;
     bool ready = false;
     ~Impl()
     {
@@ -54,6 +58,18 @@ struct DockWindowHelperAnimation::Impl
                 return wire::Window(value.identity) == source && wire::Current(value.identity);
             });
             if (found == self->targets.end() || !self->hooks.OwnsTarget(source)) return FALSE;
+            self->nativeMinimizing = found->identity;
+            self->nativeMinimizeAt = GetTickCount();
+            self->nativeMinimizeFrame = {};
+            GetWindowRect(source, &self->nativeMinimizeFrame);
+            // Establish the host's native-minimize protection before the CBT
+            // caller can change foreground. No polling round trip is required.
+            if (wire::Current(self->hostReceiver))
+            {
+                DWORD_PTR acknowledged = 0;
+                SendMessageTimeoutW(wire::Window(self->hostReceiver), support::BeforeNativeMinimizeMessage(),
+                    reinterpret_cast<WPARAM>(source), lp, SMTO_ABORTIFHUNG | SMTO_BLOCK, 12, &acknowledged);
+            }
             Preferences(*found);
             self->transition.ObserveNativeMinimize(source);
             if (!found->animate || IsRectEmpty(&found->anchor)) return FALSE;
@@ -107,6 +123,8 @@ snowdesktop::UiAnimationScheduler& DockWindowHelperAnimation::Scheduler() { retu
 bool DockWindowHelperAnimation::Configure(const wire::Request& request)
 {
     if (!Available()) return false;
+    impl_->hostReceiver = wire::Current(request.target) && request.target.process == request.hostProcess
+        ? request.target : wire::WindowIdentity{};
     std::vector<wire::Target> desired;
     for (std::size_t i = 0; i < request.targetCount; ++i)
         if (wire::Current(request.targets[i].identity) && support::TargetInCurrentSession(wire::Window(request.targets[i].identity)))
@@ -147,4 +165,17 @@ void DockWindowHelperAnimation::Snapshot(wire::Response& response)
     response.direction = static_cast<std::uint32_t>(impl_->transition.GetDirection());
     response.presentation = reinterpret_cast<UINT_PTR>(impl_->transition.GetPresentationWindow());
     response.externalMinimize = std::exchange(impl_->minimized, {});
+}
+void DockWindowHelperAnimation::AnnotatePointerEvents(wire::Response& response)
+{
+    for (std::size_t i = 0; i < response.pointerCount; ++i)
+    {
+        auto& event = response.pointerEvents[i];
+        if (event.message != WM_LBUTTONDOWN) continue;
+        const HWND target = GetAncestor(WindowFromPoint(event.point), GA_ROOT);
+        const bool caption = impl_->hooks.IsMinimizeButtonPress(target, event.point);
+        const bool observed = wire::Current(impl_->nativeMinimizing) &&
+            support::PressPrecedesObservedMinimize(event, impl_->nativeMinimizeFrame, impl_->nativeMinimizeAt, GetTickCount());
+        if (caption || observed) event.flags |= support::PointerMinimizeIntent;
+    }
 }

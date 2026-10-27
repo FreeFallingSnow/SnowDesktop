@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "platform/window_support/window_support_runtime.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "dock_input_diagnostics.h"
 #include "platform/foreground_fullscreen.h"
 #include <algorithm>
@@ -637,12 +638,13 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
 
     const bool minimizeButtonPress = floatingDockVisible_ && leftButtonPressed &&
         (buttonsDown & (rightButtonBit | middleButtonBit)) == 0 &&
-        dockExternalMinimize_ && dockWindowTransition_ &&
+        ((observedPresses & snowdesktop::window_support::PointerMinimizeIntent) != 0 ||
+        (dockExternalMinimize_ && dockWindowTransition_ &&
         !dockWindowTransition_->IsActive() &&
         snowdesktop::animation::RuntimeAnimationsEnabled() &&
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
         dockExternalMinimize_->IsMinimizeButtonPress(
-            GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor);
+            GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor)));
     if (trace.Observe(inputTrace::Gate::VisibleOrBar, floatingDockVisible_ || statusBar_) &&
         trace.Observe(inputTrace::Gate::Press, pointerPressed) &&
         !trace.Observe(inputTrace::Gate::PassiveReveal, passiveDragRevealedThisSample) &&

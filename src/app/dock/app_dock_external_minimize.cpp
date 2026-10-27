@@ -72,6 +72,7 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     namespace wire = support::protocol;
     wire::Request helperTargets;
     helperTargets.command = wire::Command::ConfigureTargets;
+    helperTargets.target = wire::Capture(receiver);
     std::vector<HWND> nativeTargets;
     for (const HWND window : windows)
     {

@@ -155,6 +155,7 @@ struct Runtime::Impl
             }
         }
         ULONGLONG nextAttempt = 0;
+        ULONGLONG nextAuthorizationCheck = 0;
         bool alternateVersionTried = false;
         for (;;)
         {
@@ -202,6 +203,29 @@ struct Runtime::Impl
                 }
                 nextAttempt = 0;
                 continue;
+            }
+            if (GetTickCount64() >= nextAuthorizationCheck)
+            {
+                const auto refreshed = QueryAuthorization();
+                bool retired = false;
+                {
+                    std::lock_guard guard(mutex);
+                    if (!AuthorizationPending(status.authorization))
+                    {
+                        if (status.authorization != refreshed.state || refreshed.error)
+                            status.error = refreshed.error;
+                        status.authorization = refreshed.state;
+                        status.updateAvailable = refreshed.updateAvailable;
+                        authorized = refreshed.state;
+                        retired = authorized != AuthorizationState::Registered;
+                    }
+                }
+                if (retired && connection != INVALID_HANDLE_VALUE)
+                {
+                    CloseHandle(connection); connection = INVALID_HANDLE_VALUE;
+                    Disconnect(ERROR_SUCCESS);
+                }
+                nextAuthorizationCheck = GetTickCount64() + 2000;
             }
             // Elevation is a provider lifecycle optimization only. Feature
             // consumers still resolve actual per-operation capabilities.
@@ -400,7 +424,7 @@ std::uint32_t Runtime::PointerPresses() const
     if (!impl_->currentPointer) return 0;
     switch (impl_->currentPointer->message)
     {
-    case WM_LBUTTONDOWN: return 1;
+    case WM_LBUTTONDOWN: return 1u | (impl_->currentPointer->flags & PointerMinimizeIntent);
     case WM_RBUTTONDOWN: return 2;
     case WM_MBUTTONDOWN: return 4;
     default: return 0;
@@ -429,7 +453,10 @@ void Runtime::Poll()
     }
     protocol::Response local;
     impl_->pointer.Collect(local);
-    for (std::size_t i = 0; i < local.pointerCount; ++i) pointer.push_back(local.pointerEvents[i]);
+    // Use the established provider's complete observation. An earlier local
+    // copy must not race the helper's caption/minimize classification.
+    if (Resolve(Capability::PointerObservation).provider != Provider::Helper)
+        for (std::size_t i = 0; i < local.pointerCount; ++i) pointer.push_back(local.pointerEvents[i]);
     std::stable_sort(pointer.begin(), pointer.end(), [](const auto& a, const auto& b) {
         return static_cast<LONG>(a.time - b.time) < 0;
     });

@@ -5,6 +5,7 @@
 #include "platform/window_support/window_support_authorization.h"
 #include "platform/window_support/window_support_host_identity.h"
 #include "platform/window_support/window_support_installation.h"
+#include "platform/window_support/window_support_pipe.h"
 #include "../test_temporary_directory.h"
 #include <sddl.h>
 
@@ -12,11 +13,33 @@
 #include <initializer_list>
 #include <fstream>
 #include <iterator>
+#include <cstring>
+#include <array>
+#include <algorithm>
 
 using namespace snowdesktop::window_support;
 
 int main(int argc, char** argv)
 {
+    if (argc == 3 && std::strcmp(argv[1], "--scope-pipe-client") == 0)
+    {
+        const std::wstring name(argv[2], argv[2] + std::strlen(argv[2]));
+        const HANDLE connection = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+            OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        if (connection == INVALID_HANDLE_VALUE) return 10;
+        DWORD mode = PIPE_READMODE_MESSAGE;
+        SetNamedPipeHandleState(connection, &mode, nullptr, nullptr);
+        protocol::Request hello;
+        hello.hostProcess = GetCurrentProcessId(); hello.sequence = 1;
+        protocol::Response response;
+        bool ok = pipe::Transfer(connection, &hello, sizeof(hello), true, 5000) &&
+            pipe::Transfer(connection, &response, sizeof(response), false, 5000) &&
+            response.succeeded && response.sequence == GetCurrentProcessId();
+        hello.command = protocol::Command::Poll; hello.sequence = 2;
+        ok = ok && pipe::Transfer(connection, &hello, sizeof(hello), true, 5000);
+        CloseHandle(connection);
+        return ok ? 0 : 11;
+    }
     unsigned failed = 0;
     const auto check = [&](bool result, const char* message) {
         if (!result) { std::fprintf(stderr, "FAIL: %s\n", message); ++failed; }
@@ -78,6 +101,94 @@ int main(int argc, char** argv)
         }
     }
     const auto firstRuntime = HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-one\\SnowDesktop.exe");
+    check(HostAuthorizationKey(firstRuntime).size() == 64 &&
+        HostAuthorizationKey(firstRuntime) == HostAuthorizationKey(HostPathIdentity(L"d:\\steam\\snowdesktop\\.SNOWDESKTOP\\RUNTIME\\build-two\\SnowDesktop.exe")) &&
+        HostAuthorizationKey(firstRuntime) != HostAuthorizationKey(HostPathIdentity(L"D:\\Other\\.snowdesktop\\runtime\\build-two\\SnowDesktop.exe")),
+        "authorization scopes are stable across managed versions and path casing, and isolate other installations");
+    check(HostAuthorizationKey(L"arbitrary").empty() && HostAuthorizationKey(L"").empty(),
+        "unidentified hosts cannot acquire a shared default authorization scope");
+    check(HostAuthorizationKey(HostPathIdentity(L"D:\\Portable\\one\\SnowDesktop.exe")) !=
+        HostAuthorizationKey(HostPathIdentity(L"D:\\Portable\\two\\SnowDesktop.exe")),
+        "independent portable versions have independent grants instead of a last-enabled-wins record");
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto runtime = temporary.path / L"installation" / L".snowdesktop" / L"runtime";
+        const std::array images{runtime / L"one" / L"SnowDesktop.exe", runtime / L"two" / L"SnowDesktop.exe"};
+        for (const auto& image : images)
+        {
+            std::filesystem::create_directories(image.parent_path());
+            std::filesystem::copy_file(std::filesystem::path(ProcessImage(GetCurrentProcess())), image);
+        }
+        const auto identity = HostPathIdentity(images[0]);
+        const auto key = HostAuthorizationKey(identity);
+        check(SelectHelperAuthorizationScope(key) && HelperTaskName() == CurrentUserSid() + L"." + key &&
+            HelperDirectory() == LegacyHelperDirectory() / key,
+            "task, protected bundle and pipe use the same stable installation scope");
+        check(!SelectHelperAuthorizationScope(HostAuthorizationKey(firstRuntime)),
+            "a running provider cannot switch to another installation's authorization scope");
+        std::array<HANDLE, 2> servers{}, events{};
+        std::array<OVERLAPPED, 2> pending{};
+        std::array<PROCESS_INFORMATION, 2> children{};
+        for (std::size_t i = 0; i < servers.size(); ++i)
+        {
+            servers[i] = CreateHelperConnectionPipe(nullptr);
+            events[i] = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            pending[i].hEvent = events[i];
+            check(servers[i] != INVALID_HANDLE_VALUE && events[i], "each host gets a simultaneous production pipe instance");
+            if (servers[i] == INVALID_HANDLE_VALUE || !events[i]) continue;
+            const BOOL connected = ConnectNamedPipe(servers[i], &pending[i]);
+            const DWORD error = connected ? ERROR_SUCCESS : GetLastError();
+            check(connected || error == ERROR_IO_PENDING || error == ERROR_PIPE_CONNECTED,
+                "a second pipe instance can await another live host without rejecting the first");
+            if (connected || error == ERROR_PIPE_CONNECTED) SetEvent(events[i]);
+        }
+        for (std::size_t i = 0; i < children.size(); ++i)
+        {
+            STARTUPINFOW startup{sizeof(startup)};
+            auto command = L"\"" + images[i].wstring() + L"\" --scope-pipe-client \"" + HelperPipeName() + L"\"";
+            check(CreateProcessW(images[i].c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                nullptr, nullptr, &startup, &children[i]) != FALSE,
+                "a real isolated console host starts from each managed version directory");
+        }
+        std::array<DWORD, 2> peers{};
+        for (std::size_t i = 0; i < servers.size(); ++i)
+        {
+            if (servers[i] == INVALID_HANDLE_VALUE || !events[i]) continue;
+            const DWORD connected = WaitForSingleObject(events[i], 5000);
+            check(connected == WAIT_OBJECT_0, "both concurrently running versions connect to their own server instance");
+            if (connected != WAIT_OBJECT_0)
+            {
+                CancelIoEx(servers[i], &pending[i]);
+                DWORD ignored = 0; GetOverlappedResult(servers[i], &pending[i], &ignored, TRUE);
+                continue;
+            }
+            protocol::Request request;
+            const bool received = pipe::Transfer(servers[i], &request, sizeof(request), false, 5000);
+            ULONG peer = 0; GetNamedPipeClientProcessId(servers[i], &peer); peers[i] = peer;
+            const auto child = std::find_if(children.begin(), children.end(), [peer](const auto& value) { return value.dwProcessId == peer; });
+            check(received && request.hostProcess == peer && child != children.end() &&
+                SameInteractiveUser(child->hProcess) && AuthorizedHostMatches(identity, child->hProcess) &&
+                AuthorizedHostMatches((runtime / L"deleted-version" / L"SnowDesktop.exe").wstring(), child->hProcess),
+                "live peer PID and stable protected host identity accept both versions, including a deleted legacy record path");
+            if (child != children.end())
+                check(!AuthorizedHostMatches(L"D:\\Other\\.snowdesktop\\runtime\\one\\SnowDesktop.exe", child->hProcess),
+                    "another installation's grant cannot authorize either live peer");
+            protocol::Response response; response.succeeded = TRUE; response.sequence = peer;
+            check(pipe::Transfer(servers[i], &response, sizeof(response), true, 5000) &&
+                pipe::Transfer(servers[i], &request, sizeof(request), false, 5000) && request.hostProcess == peer && request.sequence == 2,
+                "responses and subsequent requests remain isolated to the correct host connection");
+        }
+        check(peers[0] && peers[1] && peers[0] != peers[1], "two different live process identities coexist without overwriting each other");
+        for (auto& child : children) if (child.hProcess)
+        {
+            check(WaitForSingleObject(child.hProcess, 6000) == WAIT_OBJECT_0, "isolated host finishes within its bounded pipe deadline");
+            DWORD code = 1; GetExitCodeProcess(child.hProcess, &code);
+            check(code == 0, "each version received only its own successful response");
+            CloseHandle(child.hThread); CloseHandle(child.hProcess);
+        }
+        for (std::size_t i = 0; i < servers.size(); ++i)
+        { if (servers[i] != INVALID_HANDLE_VALUE) CloseHandle(servers[i]); if (events[i]) CloseHandle(events[i]); }
+    }
     check(!firstRuntime.empty() && firstRuntime == HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-two\\SnowDesktop.exe"),
         "the same managed installation retains authorization across runtime version directories");
     check(HostIdentityMatches(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\deleted-build\\SnowDesktop.exe", firstRuntime) &&
@@ -225,6 +336,24 @@ int main(int argc, char** argv)
     check(recent.Accept(down, 1201), "injected observation is delivered once");
     down.flags |= LLMHF_LOWER_IL_INJECTED;
     check(!recent.Accept(down, 1201), "observer integrity metadata does not duplicate the same input");
+    down.flags |= PointerMinimizeIntent;
+    check(!recent.Accept(down, 1201), "helper minimize classification cannot replay a native copy as a second outside press");
+    const RECT sourceFrame{100, 100, 500, 400};
+    protocol::PointerEvent caption{1, {450, 110}, WM_LBUTTONDOWN, 1000, 0, 0, 1};
+    check(PressPrecedesObservedMinimize(caption, sourceFrame, 1050, 1060),
+        "a press in the original source frame is associated with its observed native minimize");
+    caption.point = {50, 110};
+    check(!PressPrecedesObservedMinimize(caption, sourceFrame, 1050, 1060),
+        "an unrelated outside-window press is never protected by native minimize evidence");
+    caption.point = {450, 110}; caption.time = 1060;
+    check(!PressPrecedesObservedMinimize(caption, sourceFrame, 1050, 1070),
+        "a later new click still dismisses the Dock during a minimize animation");
+    caption.time = 1000;
+    check(!PressPrecedesObservedMinimize(caption, sourceFrame, 1050, 1400),
+        "expired minimize observations cannot leave Dock dismissal suppressed");
+    caption.time = 0xfffffff0;
+    check(PressPrecedesObservedMinimize(caption, sourceFrame, 16, 32),
+        "native minimize intent keeps its bounded lifetime across DWORD tick wrap");
     HWND fixture = CreateWindowExW(0, L"STATIC", L"Window support identity fixture", WS_POPUP,
         0, 0, 20, 20, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     check(fixture != nullptr, "native target fixture is created");

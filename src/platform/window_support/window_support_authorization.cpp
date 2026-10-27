@@ -110,7 +110,7 @@ ComPtr<ITaskFolder> EnsureTaskFolder(Scheduler& scheduler)
     Check(folder->SetSecurityDescriptor(descriptor.value, 0));
     return folder;
 }
-bool TaskMatches(ITaskDefinition* definition)
+bool TaskMatches(ITaskDefinition* definition, const std::filesystem::path& expectedImage = HelperImage(), bool parallel = true)
 {
     ComPtr<ITriggerCollection> triggers;
     Check(definition->get_Triggers(&triggers));
@@ -122,6 +122,9 @@ bool TaskMatches(ITaskDefinition* definition)
     VARIANT_BOOL demand = VARIANT_FALSE;
     Check(settings->get_AllowDemandStart(&demand));
     if (demand != VARIANT_TRUE) return false;
+    TASK_INSTANCES_POLICY instances{};
+    Check(settings->get_MultipleInstances(&instances));
+    if (parallel && instances != TASK_INSTANCES_PARALLEL) return false;
     ComPtr<IPrincipal> principal;
     Check(definition->get_Principal(&principal));
     TASK_RUNLEVEL_TYPE level{};
@@ -144,8 +147,28 @@ bool TaskMatches(ITaskDefinition* definition)
     Text executable, arguments;
     Check(execute->get_Path(&executable.value));
     Check(execute->get_Arguments(&arguments.value));
-    return executable.value && _wcsicmp(executable.value, HelperImage().c_str()) == 0 &&
+    return executable.value && _wcsicmp(executable.value, expectedImage.c_str()) == 0 &&
         (!arguments.value || !*arguments.value);
+}
+bool LegacyGrantMatches(ITaskFolder* folder, HANDLE host)
+{
+    ComPtr<IRegisteredTask> task;
+    const Text name(CurrentUserSid());
+    const auto found = folder->GetTask(name.value, &task);
+    if (Missing(found)) return false;
+    Check(found);
+    ComPtr<ITaskDefinition> definition;
+    Check(task->get_Definition(&definition));
+    if (!TaskSecurityMatches(task.Get()) ||
+        !TaskMatches(definition.Get(), LegacyHelperDirectory() / protocol::HelperFilename, false)) return false;
+    const auto record = LegacyHelperDirectory() / L"host-path.bin";
+    std::error_code error;
+    const auto bytes = std::filesystem::file_size(record, error);
+    if (error || !bytes || bytes > 65534 || bytes % sizeof(wchar_t)) return false;
+    std::wstring identity(static_cast<std::size_t>(bytes / sizeof(wchar_t)), L'\0');
+    std::ifstream input(record, std::ios::binary);
+    input.read(reinterpret_cast<char*>(identity.data()), static_cast<std::streamsize>(bytes));
+    return input && AuthorizedHostMatches(identity, host);
 }
 void RejectReparse(const std::filesystem::path& path)
 {
@@ -190,12 +213,14 @@ void InstallFiles(const std::filesystem::path& source, const std::wstring& hostI
 {
     const auto destination = HelperDirectory();
     if (destination.empty()) throw Failure{ERROR_PATH_NOT_FOUND};
-    const auto support = destination.parent_path();
+    const auto userRoot = destination.parent_path();
+    const auto support = userRoot.parent_path();
     const auto product = support.parent_path();
     RejectReparse(product.parent_path());
     ProtectDirectory(product, true);
     ProtectDirectory(support, true);
-    const auto staging = support / (destination.filename().wstring() + L".staging-" +
+    ProtectDirectory(userRoot);
+    const auto staging = userRoot / (destination.filename().wstring() + L".staging-" +
         std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     ProtectDirectory(staging);
     struct StagingScope
@@ -272,7 +297,9 @@ AuthorizationResult QueryAuthorization() noexcept
         ComPtr<IRegisteredTask> task;
         const Text name(HelperTaskName());
         const HRESULT result = folder->GetTask(name.value, &task);
-        if (Missing(result)) return {};
+        if (Missing(result))
+            return LegacyGrantMatches(folder.Get(), GetCurrentProcess())
+                ? AuthorizationResult{AuthorizationState::Invalid, ERROR_SUCCESS, true} : AuthorizationResult{};
         Check(result);
         VARIANT_BOOL enabled = VARIANT_FALSE;
         ComPtr<ITaskDefinition> definition;
@@ -390,9 +417,10 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
             WaitForSingleObject(host.value, 0) != WAIT_TIMEOUT) return ERROR_ACCESS_DENIED;
         const auto hostImage = std::filesystem::path(ProcessImage(host.value));
         if (_wcsicmp(hostImage.filename().c_str(), L"SnowDesktop.exe") != 0) return ERROR_ACCESS_DENIED;
+        if (!SelectHelperAuthorizationScope(HostAuthorizationKey(HostProcessIdentity(host.value)))) return ERROR_ACCESS_DENIED;
         // A timed-out setup can still be unwinding in Task Scheduler. A later
         // explicit retry must not interleave protected-file writes or revocation.
-        const auto lockName = L"Local\\SnowDesktop.WindowSupport.Configure." + own.sid;
+        const auto lockName = L"Local\\SnowDesktop.WindowSupport.Configure." + own.sid + L"." + HelperAuthorizationScope();
         const auto security = AuthorizationSecurityDescriptor();
         PSECURITY_DESCRIPTOR descriptor = nullptr;
         WinCheck(ConvertStringSecurityDescriptorToSecurityDescriptorW(security.c_str(), SDDL_REVISION_1, &descriptor, nullptr));
@@ -412,6 +440,12 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
         {
             const HRESULT removed = folder->DeleteTask(name.value, 0);
             Check(Missing(removed) ? S_OK : removed);
+            if (LegacyGrantMatches(folder.Get(), host.value))
+            {
+                const Text legacyName(CurrentUserSid());
+                const HRESULT legacyRemoved = folder->DeleteTask(legacyName.value, 0);
+                Check(Missing(legacyRemoved) ? S_OK : legacyRemoved);
+            }
             return ERROR_SUCCESS; // Keep protected binaries; never recursively delete a computed path.
         }
         InstallFiles(hostImage.parent_path(), HostProcessIdentity(host.value));
@@ -430,7 +464,7 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
         Check(settings->put_AllowDemandStart(VARIANT_TRUE));
         Check(settings->put_DisallowStartIfOnBatteries(VARIANT_FALSE));
         Check(settings->put_StopIfGoingOnBatteries(VARIANT_FALSE));
-        Check(settings->put_MultipleInstances(TASK_INSTANCES_IGNORE_NEW));
+        Check(settings->put_MultipleInstances(TASK_INSTANCES_PARALLEL));
         const Text unlimited(L"PT0S");
         Check(settings->put_ExecutionTimeLimit(unlimited.value));
         ComPtr<IActionCollection> actions;

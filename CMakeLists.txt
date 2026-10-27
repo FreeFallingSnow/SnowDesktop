@@ -1008,7 +1008,7 @@ target_compile_features(SnowDesktopWindowSupport PUBLIC cxx_std_20)
 target_compile_definitions(SnowDesktopWindowSupport PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(SnowDesktopWindowSupport PRIVATE /W4 /permissive- /EHsc /utf-8)
 set_property(TARGET SnowDesktopWindowSupport PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-target_link_libraries(SnowDesktopWindowSupport PUBLIC advapi32 ole32 oleaut32 shell32 taskschd user32)
+target_link_libraries(SnowDesktopWindowSupport PUBLIC advapi32 bcrypt ole32 oleaut32 shell32 taskschd user32)
 
 # A small, independently authorized HWND broker. No desktop composition root,
 # Lua engine, Shell extension loader or arbitrary command executor is linked.

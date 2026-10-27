@@ -18,6 +18,7 @@ public:
     bool Start(const snowdesktop::window_support::protocol::Target& target, bool restore);
     void Cancel(bool complete);
     void Snapshot(snowdesktop::window_support::protocol::Response& response);
+    void AnnotatePointerEvents(snowdesktop::window_support::protocol::Response& response);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

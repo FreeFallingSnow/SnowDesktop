@@ -205,6 +205,7 @@ struct Engine
         if (!response.succeeded && !response.error)
         { response.error = GetLastError(); if (!response.error) response.error = ERROR_GEN_FAILURE; }
         pointer.Collect(response);
+        animation.AnnotatePointerEvents(response);
         pins.Refresh();
         animation.Snapshot(response);
         const auto asynchronous = pendingError.exchange(ERROR_SUCCESS);
@@ -214,19 +215,15 @@ struct Engine
 };
 int RunHelper()
 {
+    if (!SelectHelperAuthorizationScope(std::filesystem::path(ProcessImage(GetCurrentProcess())).parent_path().filename().wstring()))
+        return ERROR_ACCESS_DENIED;
     if (!IsProtectedHelper(GetCurrentProcess())) return ERROR_ACCESS_DENIED;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const auto name = HelperPipeName();
     if (name.empty()) return ERROR_INVALID_SID;
-    const auto mutexName = L"Local\\SnowDesktop.WindowSupport." + CurrentUserSid();
-    Handle instance{CreateMutexW(nullptr, FALSE, mutexName.c_str())};
-    if (!instance.value) return static_cast<int>(GetLastError());
-    if (GetLastError() == ERROR_ALREADY_EXISTS) return ERROR_ALREADY_EXISTS;
     Security security(CurrentUserSid());
     if (!security.descriptor) return static_cast<int>(GetLastError());
-    Handle connection{CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-        1, sizeof(protocol::Response), sizeof(protocol::Request), 0, &security.attributes)};
+    Handle connection{CreateHelperConnectionPipe(&security.attributes)};
     if (connection.value == INVALID_HANDLE_VALUE) return static_cast<int>(GetLastError());
     Handle connected{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
     if (!connected.value) return static_cast<int>(GetLastError());
@@ -264,6 +261,8 @@ int RunHelper()
     animationScheduler = &engine.animation.Scheduler();
     struct SchedulerScope { ~SchedulerScope() { animationScheduler = nullptr; } } schedulerScope;
     engine.pointer.Start();
+    ULONGLONG nextAuthorizationCheck = 0;
+    unsigned unavailableObservations = 0;
     for (;;)
     {
         if (request.magic != protocol::Magic || request.version != wireVersion ||
@@ -271,6 +270,15 @@ int RunHelper()
             request.targetCount > request.targets.size()) break;
         lastSequence = request.sequence;
         if (request.command == protocol::Command::Disconnect) break;
+        if (GetTickCount64() >= nextAuthorizationCheck)
+        {
+            // Revoking an installation applies to all of its live hosts.
+            // Two observations tolerate the brief directory publication gap.
+            unavailableObservations = QueryAuthorization().state == AuthorizationState::Registered
+                ? 0 : unavailableObservations + 1;
+            if (unavailableObservations >= 2) break;
+            nextAuthorizationCheck = GetTickCount64() + 1000;
+        }
         auto response = engine.Execute(request);
         if (!Transfer(connection.value, &response, sizeof(response), true, host.value) ||
             !Transfer(connection.value, &request, sizeof(request), false, host.value)) break;

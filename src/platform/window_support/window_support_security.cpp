@@ -1,15 +1,20 @@
 #include "window_support_security.h"
 #include "window_support_protocol.h"
+#include "window_support_host_identity.h"
 
 #include <sddl.h>
 #include <shlobj.h>
 #include <vector>
+#include <mutex>
+#include <algorithm>
 
 namespace snowdesktop::window_support
 {
 namespace
 {
 struct Handle { HANDLE value = nullptr; ~Handle() { if (value) CloseHandle(value); } };
+std::mutex scopeMutex;
+std::wstring selectedScope;
 }
 bool ReadTokenIdentity(HANDLE process, TokenIdentity& identity) noexcept
 {
@@ -57,7 +62,22 @@ std::wstring CurrentUserSid()
     TokenIdentity identity;
     return ReadTokenIdentity(GetCurrentProcess(), identity) ? identity.sid : std::wstring{};
 }
-std::filesystem::path HelperDirectory()
+std::wstring HelperAuthorizationScope()
+{
+    std::lock_guard lock(scopeMutex);
+    if (selectedScope.empty()) selectedScope = HostAuthorizationKey(HostProcessIdentity(GetCurrentProcess()));
+    return selectedScope;
+}
+bool SelectHelperAuthorizationScope(std::wstring_view key)
+{
+    if (key.size() != 64 || !std::all_of(key.begin(), key.end(), [](wchar_t ch) {
+        return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f'); })) return false;
+    std::lock_guard lock(scopeMutex);
+    if (!selectedScope.empty() && selectedScope != key) return false;
+    selectedScope = key;
+    return true;
+}
+std::filesystem::path LegacyHelperDirectory()
 {
     PWSTR path = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, nullptr, &path))) return {};
@@ -67,15 +87,36 @@ std::filesystem::path HelperDirectory()
     const auto sid = CurrentUserSid();
     return sid.empty() ? std::filesystem::path{} : base / L"SnowDesktop" / L"WindowSupport" / sid;
 }
+std::filesystem::path HelperDirectory()
+{
+    const auto root = LegacyHelperDirectory();
+    const auto scope = HelperAuthorizationScope();
+    return root.empty() || scope.empty() ? std::filesystem::path{} : root / scope;
+}
 std::filesystem::path HelperImage()
 { const auto directory = HelperDirectory(); return directory.empty() ? directory : directory / protocol::HelperFilename; }
 std::wstring HelperPipeName()
 {
     TokenIdentity identity;
     if (!ReadTokenIdentity(GetCurrentProcess(), identity)) return {};
-    return L"\\\\.\\pipe\\SnowDesktop.WindowSupport.v1." + identity.sid + L"." + std::to_wstring(identity.session);
+    const auto scope = HelperAuthorizationScope();
+    if (scope.empty()) return {};
+    return L"\\\\.\\pipe\\SnowDesktop.WindowSupport.v1." + identity.sid + L"." + std::to_wstring(identity.session) + L"." + scope;
 }
-std::wstring HelperTaskName() { return CurrentUserSid(); }
+std::wstring HelperTaskName()
+{
+    const auto sid = CurrentUserSid(), scope = HelperAuthorizationScope();
+    return sid.empty() || scope.empty() ? std::wstring{} : sid + L"." + scope;
+}
+HANDLE CreateHelperConnectionPipe(SECURITY_ATTRIBUTES* security)
+{
+    const auto name = HelperPipeName();
+    if (name.empty()) { SetLastError(ERROR_INVALID_NAME); return INVALID_HANDLE_VALUE; }
+    // Separate instances let another live host use the same installation.
+    return CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_UNLIMITED_INSTANCES, sizeof(protocol::Response), sizeof(protocol::Request), 0, security);
+}
 std::wstring AuthorizationSecurityDescriptor(bool sharedFolder)
 {
     const auto sid = CurrentUserSid();

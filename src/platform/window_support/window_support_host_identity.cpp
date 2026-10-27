@@ -2,6 +2,7 @@
 #include "window_support_security.h"
 
 #include <appmodel.h>
+#include <bcrypt.h>
 #include <algorithm>
 
 namespace snowdesktop::window_support
@@ -73,6 +74,25 @@ std::wstring HostProcessIdentity(HANDLE process)
     if (path.empty()) return {};
     const auto package = PackageIdentity(process);
     return package.empty() ? path : package;
+}
+std::wstring HostAuthorizationKey(std::wstring_view identity)
+{
+    if (identity.empty() || !identity.starts_with(L"SnowDesktopHost:2:") ||
+        identity.find(L'\0') != std::wstring_view::npos || identity.size() > 32767) return {};
+    const int length = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, identity.data(),
+        static_cast<int>(identity.size()), nullptr, 0, nullptr, nullptr, 0);
+    if (!length) return {};
+    std::wstring normalized(static_cast<std::size_t>(length), L'\0');
+    if (!LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE, identity.data(), static_cast<int>(identity.size()),
+        normalized.data(), length, nullptr, nullptr, 0)) return {};
+    BYTE digest[32]{};
+    if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0,
+        reinterpret_cast<PUCHAR>(normalized.data()), static_cast<ULONG>(normalized.size() * sizeof(wchar_t)),
+        digest, sizeof(digest)) < 0) return {};
+    constexpr wchar_t digits[] = L"0123456789abcdef";
+    std::wstring key;
+    for (const BYTE byte : digest) { key += digits[byte >> 4]; key += digits[byte & 15]; }
+    return key;
 }
 bool HostIdentityMatches(std::wstring_view recorded, std::wstring_view current)
 {

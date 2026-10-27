@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
+#include "platform/window_support/window_support_pointer_metadata.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_hover_rules.h"
@@ -88,6 +90,24 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         if (dockTrayService_ && dockTrayService_->AcknowledgeChange(hwnd, wp)) RefreshDockTrayPopup();
         return 0;
+    }
+    if (msg >= 0xC000 && msg == snowdesktop::window_support::BeforeNativeMinimizeMessage())
+    {
+        const HWND source = reinterpret_cast<HWND>(wp);
+        const DWORD deadline = static_cast<DWORD>(lp);
+        if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+            !IsWindowVisible(source) || IsIconic(source) ||
+            snowdesktop::window_support::WindowSupport().Resolve(
+                snowdesktop::window_support::Capability::MinimizeAnimation, source).provider !=
+                snowdesktop::window_support::Provider::Helper) return 0;
+        dockSystemMinimizeStartedTick_.store(GetTickCount64());
+        floatingDockInputDeactivated_ = false;
+        CancelDockWindowActivationObservation(source);
+        PrepareDockWindowMinimize(source, L"helper-application-minimize");
+        if (dockWindowTransition_ && snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+            if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(source))
+                KeepDockTopmostForAction(target->anchor, dockSettings_.summonOnAppMinimize);
+        return 1;
     }
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
         return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
