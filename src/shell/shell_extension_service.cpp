@@ -700,8 +700,10 @@ struct MenuService::Impl
                 if (found != rows.end())
                 {
                     const auto &row = found->second;
-                    if (row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now() &&
-                        (!row.invalid || VerifiedBackgroundSnapshot(row) ||
+                    const bool verifiedBackground = VerifiedBackgroundSnapshot(row);
+                    if (row.view.snapshot && (row.view.error.empty() || verifiedBackground) &&
+                        row.expires > MenuSnapshotCache::Now() &&
+                        (!row.invalid || verifiedBackground ||
                             (retainPublished && row.view.error.empty()))) return found->first;
                 }
             }
