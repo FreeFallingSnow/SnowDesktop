@@ -15,9 +15,14 @@ struct ImmediateDockPaintDeferral
 };
 }
 
-void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus)
+void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus,
+    bool nativePointerInput)
 {
     if (floatingDockPromotionInputUpdateActive_) return;
+    LASTINPUTINFO nativeInput{sizeof(LASTINPUTINFO)};
+    if (nativePointerInput && (!host.promoted || host.promotionInputPointerRetryUsed ||
+        host.promotionInputPrivilegeGap != true || !GetLastInputInfo(&nativeInput) ||
+        host.promotionInputRequestInputTime == nativeInput.dwTime)) return;
     const bool raised = host.promoted || host.passivelyRevealed || host.mergedInteractionHeld;
     const bool visible = raised && host.active && host.frameReady && host.hwnd &&
         IsWindowVisible(host.hwnd) &&
@@ -27,6 +32,8 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     if (!visible)
     {
         host.promotionInputFocusPendingUntil = 0;
+        host.promotionInputRequestInputTime.reset();
+        host.promotionInputPointerRetryUsed = false;
         host.promotionInputForeground = nullptr;
         host.promotionInputProcess = 0;
         host.promotionInputPrivilegeGap.reset();
@@ -58,14 +65,15 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         (dockWindowTransition_ && dockWindowTransition_->IsActive());
     const bool retryDeferred = host.promotionInputBlocked && !blocked;
     const bool request = requestFocus || newlyVisible || retryDeferred;
+    if (request) host.promotionInputPointerRetryUsed = false;
     if (request || foreground != host.promotionInputForeground || process != host.promotionInputProcess)
         host.promotionInputPrivilegeGap = snowdesktop::dock_input_privilege::
             ForegroundHasHigherInputPrivilege(foreground);
     host.promotionInputForeground = foreground;
     host.promotionInputProcess = process;
     host.promotionInputBlocked = blocked;
-    const bool borrowForeground = request && host.promotionInputPrivilegeGap.value_or(false) &&
-        !blocked && !host.promotionInputFocusPendingUntil;
+    const bool borrowForeground = (request || nativePointerInput) && host.promotionInputPrivilegeGap.value_or(false) &&
+        !blocked && (!host.promotionInputFocusPendingUntil || nativePointerInput);
 
     floatingDockPromotionInputUpdateActive_ = true;
     struct InputUpdateScope { bool& active; ~InputUpdateScope() { active = false; } }
@@ -76,6 +84,14 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         IsWindowVisible(hostWindow) && snowdesktop::popup_window_pair_z_order::IsTopmost(hostWindow) &&
         GetForegroundWindow() == foreground)
     {
+        // A registered hotkey supplies activation permission. A polled gesture
+        // may not; allow one more request only when new native Dock input arrives.
+        // Last-input time deduplicates that input, it never proves an outside click.
+        if (nativePointerInput || GetLastInputInfo(&nativeInput))
+            host.promotionInputRequestInputTime = nativeInput.dwTime;
+        else
+            host.promotionInputRequestInputTime.reset();
+        if (nativePointerInput) host.promotionInputPointerRetryUsed = true;
         SelectPersistentDockHost(visibleHost);
         CancelDockWindowActivationObservation(foreground);
         BeginFloatingDockKeyboardSession(false);
@@ -432,6 +448,8 @@ void DesktopApp::CloseFloatingDock(
 
     host.promoted = false;
     host.promotionInputFocusPendingUntil = 0;
+    host.promotionInputRequestInputTime.reset();
+    host.promotionInputPointerRetryUsed = false;
     host.promotionInputVisible = false;
     host.explicitDismissAvailable = false;
     host.explicitDismissRect = {};
@@ -494,6 +512,8 @@ void DesktopApp::CloseAllFloatingDocks(
         {
             host->promoted = false;
             host->promotionInputFocusPendingUntil = 0;
+            host->promotionInputRequestInputTime.reset();
+            host->promotionInputPointerRetryUsed = false;
             host->promotionInputVisible = false;
             host->explicitDismissAvailable = false;
             host->explicitDismissRect = {};

@@ -1048,9 +1048,11 @@ end})
 
             // A failed request has never armed this session. A late inactive
             // notification must not be treated as evidence of foreground loss.
+            dock.promoted = app->floatingDockVisible_ = true;
             app->floatingDockKeyboardSessionActive_ = true;
             app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
-            check(!app->floatingDockInputDeactivated_,
+            check(!app->floatingDockInputDeactivated_ && dock.promoted && app->floatingDockVisible_ &&
+                app->floatingDockKeyboardSessionActive_,
                 "an unarmed session ignores inactive notifications without actual proxy foreground");
             app->floatingDockInputDeactivated_ = false;
             app->EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
@@ -1065,6 +1067,10 @@ end})
                 inputSafetyOwnedWindow = proxy;
                 inputSafetyAllowForeground = true;
                 inputSafetyLastInputTick = 100;
+                dock.promoted = dock.frameReady = dock.promotionInputVisible = app->floatingDockVisible_ = true;
+                app->SelectPersistentDockHost(&dock);
+                SetWindowPos(dockWindow, HWND_TOPMOST, 0,0,0,0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
                 dock.dockRect = dock.animationVisualRect = {0,0,200,200};
                 dock.sourceRect = {0,0,400,300};
                 const auto seedForeground = [&](bool elevated) {
@@ -1078,7 +1084,12 @@ end})
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(40,40));
                 check(inputSafetyForegroundCalls == beforePointer && inputSafetyForeground == control,
                     "native Dock pointer input never takes foreground from an ordinary window");
+                dock.frameReady = true;
                 seedForeground(true);
+                dock.promotionInputRequestInputTime = inputSafetyLastInputTick;
+                SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(40,40));
+                check(inputSafetyForegroundCalls == beforePointer,
+                    "region-generated moves without newer input do not retry foreground acquisition");
                 ++inputSafetyLastInputTick;
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));
                 check(inputSafetyForegroundCalls == beforePointer + 1 && inputSafetyForeground == proxy &&
@@ -1115,6 +1126,9 @@ end})
                 app->dockSystemMinimizeStartedTick_.store(GetTickCount64());
                 inputSafetyForeground = proxy;
                 app->HandleInputMessage(proxy, WM_ACTIVATEAPP, TRUE, 0);
+                app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
+                check(!app->floatingDockInputDeactivated_ && dock.promoted,
+                    "stale inactive notification cannot close a session whose proxy is still actual foreground");
                 inputSafetyForeground = control;
                 app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
                 app->UpdateFloatingDockEdgeSwipe();
@@ -1370,6 +1384,8 @@ end})
             inputSafetyAllowForeground = true;
             check(app->FocusKeyboardWindow(dockWindow, true, L"Input safety permitted activation") && inputSafetyAttachCalls == 0,
                 "a permitted foreground request must retain the ordinary successful focus route");
+            check(inputSafetyActiveCalls == 1 && inputSafetyFocusCalls == 1,
+                "confirmed foreground still completes exactly one local activation and focus request");
             inputSafetyAllowForeground = false;
         }
         if (!failures.empty()) throw std::runtime_error(std::to_string(failures.size()) + " native input safety assertions failed");

@@ -454,9 +454,19 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     {
         snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
         POINT livePointer{};
-        if (GetCursorPos(&livePointer))
+        const bool cursorKnown = GetCursorPos(&livePointer) != FALSE;
+        if (cursorKnown)
             snowdesktop::desktop_hover_rules::ObserveRetainedDockLeavePointer(
                 host.retainedLeaveTracking, livePointer.x, livePointer.y);
+        constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
+        if (!(wp & buttons) && cursorKnown && host.promoted &&
+            host.promotionInputPrivilegeGap == true && WindowFromPoint(livePointer) == hwnd)
+        {
+            auto* identity = &host;
+            RefreshFloatingDockPromotionInput(host, false, true);
+            // Activation and immediate presentation can dispatch native work.
+            if (FindPersistentDockHost(hwnd) != identity || !identity->active) return 0;
+        }
         SelectPersistentDockHost(&host);
         floatingDockHoverHandoffPending_ = false;
         floatingDockHoverHandoffRect_ = {};

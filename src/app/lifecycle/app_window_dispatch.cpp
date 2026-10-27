@@ -299,12 +299,18 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     switch (msg)
     {
     case WM_ACTIVATEAPP:
-        if (hwnd == floatingDockInputHwnd_ && !wp && floatingDockKeyboardSessionActive_)
+        if (hwnd == floatingDockInputHwnd_ && floatingDockKeyboardSessionActive_)
         {
-            floatingDockInputDeactivated_ = true;
-            uiAnimationScheduler_.RequestFramePresentation(&floatingDockInputDeactivated_, [this] {
-                if (floatingDockInputDeactivated_) UpdateFloatingDockEdgeSwipe();
-            });
+            const HWND foreground = GetForegroundWindow();
+            if (wp && foreground == hwnd)
+                floatingDockInputForegroundSeen_ = true;
+            else if (!wp && floatingDockInputForegroundSeen_ && foreground != hwnd)
+            {
+                floatingDockInputDeactivated_ = true;
+                uiAnimationScheduler_.RequestFramePresentation(&floatingDockInputDeactivated_, [this] {
+                    if (floatingDockInputDeactivated_) UpdateFloatingDockEdgeSwipe();
+                });
+            }
         }
         break;
     case WM_GETDLGCODE:

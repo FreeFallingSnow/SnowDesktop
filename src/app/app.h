@@ -837,6 +837,8 @@ private:
         DWORD promotionInputProcess = 0;
         std::optional<bool> promotionInputPrivilegeGap;
         ULONGLONG promotionInputFocusPendingUntil = 0;
+        std::optional<DWORD> promotionInputRequestInputTime;
+        bool promotionInputPointerRetryUsed = false;
         snowdesktop::floating_dock_rules::WindowActionPromotion windowActionPromotion;
         // Passive drag-edge reveal is intentionally separate from manual
         // promotion. It may borrow the floating Z band without starting a
@@ -936,7 +938,7 @@ private:
         bool afterDispatch);
     void TraceDesktopPresentation(const wchar_t* event, HRESULT result,
         const RECT* dirty = nullptr);
-    /** @brief 让当前线程拥有指定键盘窗口的焦点，必要时短暂附加前台输入队列。 */
+    /** @brief 请求键盘焦点；前台未转移时保留线程焦点，不附加外部输入队列。 */
     bool FocusKeyboardWindow(
         HWND target, bool requestForeground,
         const wchar_t* diagnosticLabel, bool deliberateFullscreenExit = false);
@@ -1316,7 +1318,8 @@ private:
         POINT anchorScreen);
     HWND KeepDockTopmostForAction(const RECT& anchorScreen, bool retainPromotion = true);
     void ReleaseTemporaryDockActionPromotion();
-    void RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus = false);
+    void RefreshFloatingDockPromotionInput(PersistentDockHost& host, bool requestFocus = false,
+        bool nativePointerInput = false);
     void RefreshFloatingDockPromotionInputs(bool requestFocus = false);
     bool ObserveDockPromotionActivation(HWND foreground);
     void CloseFloatingDock(
@@ -4280,6 +4283,7 @@ private:
     // 单一 Host 所有权，也不等同于 HWND/合成资源的生命周期。
     bool floatingDockHostActive_ = false;
     bool floatingDockKeyboardSessionActive_ = false;
+    bool floatingDockInputForegroundSeen_ = false;
     bool floatingDockInputDeactivated_ = false;
     bool floatingDockPromotionInputUpdateActive_ = false;
     snowdesktop::UiScheduleToken floatingDockPromotionInputToken_ = 0;

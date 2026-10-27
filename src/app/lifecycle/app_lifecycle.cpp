@@ -468,16 +468,23 @@ bool DesktopApp::FocusKeyboardWindow(
                 observation.foreground == activationWindow);
         return observation;
     };
+    bool foregroundAttempted = false, foregroundAccepted = false;
+    const HWND previousActive = GetActiveWindow(), previousFocus = GetFocus();
     const auto requestFocus = [this, target, activationWindow,
-                                  requestForeground, deliberateFullscreenExit]() {
+                                  requestForeground, deliberateFullscreenExit,
+                                  &foregroundAttempted, &foregroundAccepted]() {
         const bool deliberateExitAllowed = deliberateFullscreenExit &&
             !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr);
         return snowdesktop::fullscreen::GuardFocusRequest(deliberateExitAllowed,
-            snowdesktop::fullscreen::ObserveForeground, [=]() {
+            snowdesktop::fullscreen::ObserveForeground, [=, &foregroundAttempted, &foregroundAccepted]() {
                 if (requestForeground)
                 {
                     ShowWindow(target, SW_SHOWNOACTIVATE);
-                    (void)SetForegroundWindow(activationWindow);
+                    foregroundAttempted = true;
+                    foregroundAccepted = SetForegroundWindow(activationWindow) != FALSE;
+                    // Local activation/focus cannot grant global foreground.
+                    // Do not leave the background queue focused on a rejected proxy.
+                    if (GetForegroundWindow() != activationWindow) return;
                     (void)SetActiveWindow(activationWindow);
                 }
                 (void)SetFocus(target);
@@ -506,18 +513,20 @@ bool DesktopApp::FocusKeyboardWindow(
     // failed/queued foreground request must not couple our input queue to an
     // unrelated application: synchronous activation can then block both.
 
-    wchar_t message[384]{};
+    wchar_t message[544]{};
     swprintf_s(
         message,
         L"%ls focus FAILED target=%p activation=%p foreground=%p "
         L"foregroundThread=%lu foregroundFocus=%p focusKnown=%d "
-        L"localFocus=%p",
+        L"localFocus=%p requested=%d accepted=%d callerThread=%lu targetThread=%lu "
+        L"previousActive=%p previousFocus=%p",
         diagnosticLabel ? diagnosticLabel : L"Keyboard window",
         target, activationWindow, observation.foreground,
         observation.foregroundThread,
         observation.foregroundFocus,
         observation.foregroundFocusKnown ? 1 : 0,
-        GetFocus());
+        GetFocus(), foregroundAttempted ? 1 : 0, foregroundAccepted ? 1 : 0,
+        currentThread, GetWindowThreadProcessId(target, nullptr), previousActive, previousFocus);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
     return false;
 }
@@ -551,6 +560,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
         RefocusFloatingDockKeyboardSession(deliberateFullscreenExit);
         return;
     }
+
+    floatingDockInputForegroundSeen_ = false;
 
     HWND foreground = GetForegroundWindow();
     if (foreground)
@@ -624,12 +635,15 @@ void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExi
 
     (void)FocusKeyboardWindow(floatingDockInputHwnd_, true,
         L"Floating Dock input proxy", deliberateFullscreenExit);
+    if (floatingDockKeyboardSessionActive_ && GetForegroundWindow() == floatingDockInputHwnd_)
+        floatingDockInputForegroundSeen_ = true;
 }
 
 void DesktopApp::EndFloatingDockKeyboardSession(
     FloatingDockCloseFocusPolicy focusPolicy)
 {
     floatingDockInputDeactivated_ = false;
+    floatingDockInputForegroundSeen_ = false;
     if (!floatingDockKeyboardSessionActive_)
     {
         floatingDockLogicalForegroundWindow_ = nullptr;
