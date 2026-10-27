@@ -6,6 +6,7 @@
 #include "theme/flat_glass_rim.h"
 #include "platform/shell_overlay_window.h"
 #include "diagnostics/performance_trace.h"
+#include "platform/window_support/window_support_runtime.h"
 
 #include <array>
 #include <bit>
@@ -172,6 +173,18 @@ LRESULT CALLBACK DesktopApp::FloatingPopupMouseHookProc(
 
 bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
 {
+    if (snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::PointerObservation).Available())
+    {
+        if (!floatingPopupMouseHookNotificationWindow_.load())
+        {
+            ++floatingPopupMouseHookGeneration_;
+            floatingPopupPointerGenerationStartedAt_ = GetTickCount();
+            floatingPopupMouseHookNotificationWindow_.store(floatingPopupHwnd_);
+        }
+        if (floatingPopupMouseHook_) floatingPopupMouseHook_.Stop();
+        return true;
+    }
     if (floatingPopupMouseHook_)
         return true;
     if (!floatingPopupHwnd_ ||
@@ -214,6 +227,7 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
 
 void DesktopApp::AdvanceFloatingPopupContentGeneration()
 {
+    floatingPopupPointerGenerationStartedAt_ = GetTickCount();
     floatingPopupPresentationRetryCount_ = 0;
     if (floatingPopupHwnd_)
         KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
@@ -1282,11 +1296,13 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize || largeIconGesture_;
     const HWND dialogOwner = ShellDialogOwnerHwnd();
+    const auto observedButtons = snowdesktop::window_support::WindowSupport().PointerButtons();
     const bool pointerPressed = GetCapture() || mouseDown_ ||
         dragSession_.HasContext() || middleButtonWidgetMove_ ||
         widgetAction_ != WidgetAction::None ||
-        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON)) & 0x8000);
+        (observedButtons ? (*observedButtons & 7u) != 0 :
+            ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+                GetAsyncKeyState(VK_MBUTTON)) & 0x8000) != 0);
     const bool interactionBusy = HasActiveContextMenuSession() ||
         renameController_.IsActive() ||
         detailColumnResizeActive_ || luaWidgetPanelMouseDown_ ||

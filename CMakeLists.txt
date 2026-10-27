@@ -997,6 +997,38 @@ source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "Source" FILES
     src/resources/resource.rc)
 snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
+add_library(SnowDesktopWindowSupport STATIC
+    src/platform/window_support/window_support_runtime.cpp
+    src/platform/window_support/window_support_security.cpp
+    src/platform/window_support/window_support_authorization.cpp)
+target_include_directories(SnowDesktopWindowSupport PUBLIC "${CMAKE_SOURCE_DIR}/src")
+target_compile_features(SnowDesktopWindowSupport PUBLIC cxx_std_20)
+target_compile_definitions(SnowDesktopWindowSupport PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopWindowSupport PRIVATE /W4 /permissive- /EHsc /utf-8)
+set_property(TARGET SnowDesktopWindowSupport PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(SnowDesktopWindowSupport PUBLIC advapi32 ole32 oleaut32 shell32 taskschd user32)
+target_link_libraries(SnowDesktop PRIVATE SnowDesktopWindowSupport)
+
+# A small, independently authorized HWND broker. No desktop composition root,
+# Lua engine, Shell extension loader or arbitrary command executor is linked.
+add_executable(SnowDesktopWindowHelper WIN32
+    src/platform/window_support/window_helper_main.cpp
+    src/dock/dock_window_pin.cpp
+    src/dock/dock_external_minimize.cpp
+    src/dock/dock_window_helper_animation.cpp
+    src/dock/dock_cloak_dispatcher.cpp
+    src/dock/dock_window_transition.cpp
+    src/ui/render/ui_animation_scheduler.cpp)
+target_include_directories(SnowDesktopWindowHelper PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_features(SnowDesktopWindowHelper PRIVATE cxx_std_20)
+target_compile_definitions(SnowDesktopWindowHelper PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopWindowHelper PRIVATE /W4 /permissive- /EHsc /utf-8)
+set_property(TARGET SnowDesktopWindowHelper PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(SnowDesktopWindowHelper PRIVATE SnowDesktopWindowSupport SnowDesktopPerfetto d2d1 dwmapi dcomp dxgi d3d11)
+snowdesktop_add_executable_version_resource(SnowDesktopWindowHelper "SnowDesktop administrator window support")
+snowdesktop_enable_native_window_compatibility(SnowDesktopWindowHelper)
+add_dependencies(SnowDesktop SnowDesktopWindowHelper)
+
 # Error messages must survive a missing or damaged distribution/lang tree.
 # Keep lang/*.json as the only translation source, embedded at configure time.
 file(GLOB SNOWDESKTOP_LAUNCHER_CATALOGS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/lang/*.json")
@@ -1328,6 +1360,9 @@ if (BUILD_TESTING)
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
         target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopTextInput)
+        if ("src/dock/dock_window_pin.cpp" IN_LIST SNOW_TEST_SOURCES OR "src/dock/dock_window_transition.cpp" IN_LIST SNOW_TEST_SOURCES)
+            target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopWindowSupport)
+        endif()
         foreach(probe_source IN LISTS SNOW_TEST_SOURCES)
             if(probe_source IN_LIST SNOWDESKTOP_PERFETTO_PROBE_SOURCES)
                 target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopPerfetto)
@@ -1432,6 +1467,14 @@ if (BUILD_TESTING)
                 "${SNOWDESKTOP_FAST_TEST_TARGETS}" PARENT_SCOPE)
         endif()
     endfunction()
+
+    snowdesktop_add_test(
+        SnowDesktopWindowSupportTests
+        window_support
+        SOURCES tests/platform/window_support_tests.cpp
+        LINK_LIBRARIES user32
+        INCLUDE_DIRECTORIES src
+        LABELS core platform rules)
 
     snowdesktop_add_test(
         SnowDesktopApplicationDataLifecycleTests

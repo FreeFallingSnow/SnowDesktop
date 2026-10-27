@@ -3,6 +3,7 @@
 #include "dock/dock_minimize_protocol.h"
 #include "platform/deployment_context.h"
 #include "settings/animation_settings.h"
+#include "platform/window_support/window_support_runtime.h"
 
 void DesktopApp::UpdateDockExternalMinimizeTargets()
 {
@@ -14,6 +15,9 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
         snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect;
     if (!moduleAllowed || (!protectTaskbar && !animate))
     {
+        snowdesktop::window_support::protocol::Request clear;
+        clear.command = snowdesktop::window_support::protocol::Command::ConfigureTargets;
+        snowdesktop::window_support::WindowSupport().Submit(clear);
         dockExternalMinimize_.reset();
         snowdesktop::runtime_modules::SetActive(snowdesktop::runtime_modules::Module::WindowMinimize, 0);
         return;
@@ -64,7 +68,31 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     }
     std::sort(windows.begin(), windows.end(), std::less<HWND>{});
     windows.erase(std::unique(windows.begin(), windows.end()), windows.end());
-    dockExternalMinimize_->UpdateTargets(windows);
+    namespace support = snowdesktop::window_support;
+    namespace wire = support::protocol;
+    wire::Request helperTargets;
+    helperTargets.command = wire::Command::ConfigureTargets;
+    std::vector<HWND> nativeTargets;
+    for (const HWND window : windows)
+    {
+        if (support::WindowSupport().Resolve(support::Capability::MinimizeAnimation, window).provider != support::Provider::Helper)
+        { nativeTargets.push_back(window); continue; }
+        if (helperTargets.targetCount == helperTargets.targets.size()) continue;
+        wire::Target target;
+        target.identity = wire::Capture(window);
+        target.animate = animate ? 1u : 0u;
+        target.effect = static_cast<std::uint32_t>(snowdesktop::animation::RuntimeWindowEffect());
+        target.speed = static_cast<std::uint32_t>(snowdesktop::animation::detail::speed.load());
+        target.frameLimit = static_cast<std::uint32_t>(snowdesktop::animation::detail::frameLimit.load());
+        target.dockPosition = static_cast<std::uint32_t>(snowdesktop::animation::detail::dockPosition.load());
+        if (dockWindowTransition_)
+            if (const auto resolved = dockWindowTransition_->ResolveMinimizeTarget(window))
+            { target.anchor = resolved->anchor; target.keepBelow = reinterpret_cast<UINT_PTR>(resolved->dock); }
+        helperTargets.targets[helperTargets.targetCount++] = target;
+        if (dockWindowTransition_) dockWindowTransition_->ObserveNativeMinimize(window);
+    }
+    support::WindowSupport().Submit(helperTargets);
+    dockExternalMinimize_->UpdateTargets(nativeTargets);
     const auto registrations = dockExternalMinimize_->RegistrationStatistics();
     const auto cloakRegistrations = dockExternalMinimize_->CloakStatistics();
     const auto active = dockExternalMinimize_->HookCount();

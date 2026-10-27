@@ -175,6 +175,7 @@ try {
     }
 
     $firstPartyRuntimeFiles = @(
+        "SnowDesktopWindowHelper.exe",
         "SnowDesktopHookEntry.dll",
         "SnowDesktopHookEntry32.dll",
         "SnowDesktopTaskbarHook.dll",

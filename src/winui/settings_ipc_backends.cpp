@@ -295,6 +295,7 @@ struct BackendServer::Impl
         channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
         SD_OPTION(startupConflict, GeneralStartupConflict)
+        SD_OPTION(windowSupportStatus, window_support::SupportStatus)
         SD_OPTION(appliedFont, app_fonts::Selection)
         SD_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
         SD_OPTION(developerToolsVisible, bool)
@@ -347,6 +348,9 @@ struct BackendServer::Impl
         });
         channel.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();
+        });
+        channel.Bind<void, bool>("options.configureWindowSupport", [this](bool enabled) {
+            if (options.configureWindowSupport) options.configureWindowSupport(enabled);
         });
         channel.Bind<bool>("options.resetAdvancedFeatures", [this] {
             return options.resetAdvancedFeatures && options.resetAdvancedFeatures();
@@ -541,6 +545,7 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.Name = [&channel] { return channel.Call<Return>("options." #Name); };
     SD_REMOTE_OPTION(searchInput, SettingsSearchIndexInput)
     SD_REMOTE_OPTION(startupConflict, GeneralStartupConflict)
+    SD_REMOTE_OPTION(windowSupportStatus, window_support::SupportStatus)
     SD_REMOTE_OPTION(appliedFont, app_fonts::Selection)
     SD_REMOTE_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
     SD_REMOTE_OPTION(developerToolsVisible, bool)
@@ -550,6 +555,7 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return channel.Call<bool>("options.ensureWidget", std::wstring(id)); };
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
+    options.configureWindowSupport = [&channel](bool enabled) { channel.Call<void>("options.configureWindowSupport", enabled); };
     options.resetAdvancedFeatures = [&channel] { return channel.Call<bool>("options.resetAdvancedFeatures"); };
     options.widgetsPage.workshopAvailable = [&channel] { return channel.Call<bool>("options.workshopAvailable"); };
     options.widgetsPage.openWorkshop = [&channel](std::string_view) {

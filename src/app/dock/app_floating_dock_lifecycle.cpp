@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "dock_input_diagnostics.h"
 #include "platform/foreground_fullscreen.h"
 #include <algorithm>
@@ -536,12 +537,17 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     constexpr UINT leftButtonBit = 1u << 0;
     constexpr UINT rightButtonBit = 1u << 1;
     constexpr UINT middleButtonBit = 1u << 2;
-    const SHORT leftState =
-        GetAsyncKeyState(VK_LBUTTON);
-    const SHORT rightState =
-        GetAsyncKeyState(VK_RBUTTON);
-    const SHORT middleState =
-        GetAsyncKeyState(VK_MBUTTON);
+    const auto observedButtons = snowdesktop::window_support::WindowSupport().PointerButtons();
+    const auto observedPresses = snowdesktop::window_support::WindowSupport().PointerPresses();
+    const SHORT leftState = observedButtons
+        ? static_cast<SHORT>(((*observedButtons & leftButtonBit) ? 0x8000 : 0) | ((observedPresses & leftButtonBit) ? 1 : 0))
+        : GetAsyncKeyState(VK_LBUTTON);
+    const SHORT rightState = observedButtons
+        ? static_cast<SHORT>(((*observedButtons & rightButtonBit) ? 0x8000 : 0) | ((observedPresses & rightButtonBit) ? 1 : 0))
+        : GetAsyncKeyState(VK_RBUTTON);
+    const SHORT middleState = observedButtons
+        ? static_cast<SHORT>(((*observedButtons & middleButtonBit) ? 0x8000 : 0) | ((observedPresses & middleButtonBit) ? 1 : 0))
+        : GetAsyncKeyState(VK_MBUTTON);
     const UINT buttonsDown =
         ((leftState & 0x8000) ? leftButtonBit : 0) |
         ((rightState & 0x8000) ? rightButtonBit : 0) |
@@ -583,7 +589,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
 
     POINT cursor{};
-    if (!GetCursorPos(&cursor))
+    if (!snowdesktop::window_support::WindowSupport().PointerPosition(cursor))
     {
         trace.sample.outcome = L"cursor-unavailable";
         floatingDockEdgeSwipeDetector_.Reset();

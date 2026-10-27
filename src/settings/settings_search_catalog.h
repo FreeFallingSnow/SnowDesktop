@@ -165,6 +165,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "general.autoStart",
         "app.settings.auto_start",
         "settings.general.startup.description"},
+    {SettingsPage::General, "general.windowSupport", "settings.general.windowSupport.title", "settings.general.windowSupport.disabled"},
     {SettingsPage::General, "general.advancedFeatures",
         "settings.general.advancedFeatures",
         "settings.general.advancedFeatures.description"},

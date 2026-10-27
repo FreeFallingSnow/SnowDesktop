@@ -1,4 +1,5 @@
 #include "dock_window_pin.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "theme/personalization.h"
 
 #include <dwmapi.h>
@@ -606,7 +607,7 @@ struct DockWindowPin::State
 };
 
 DockWindowPin::DockWindowPin() = default;
-DockWindowPin::~DockWindowPin() = default;
+DockWindowPin::~DockWindowPin() { Clear(); }
 
 bool DockWindowPin::IsPinned(HWND window)
 {
@@ -621,6 +622,7 @@ void DockWindowPin::Refresh()
 
 void DockWindowPin::SetPeekTarget(HWND window)
 {
+    snowdesktop::window_support::WindowSupport().SetPinPeek(window);
     if (!state_ || state_->peekTarget == window) return;
     state_->peekTarget = window;
     state_->Refresh();
@@ -630,6 +632,10 @@ void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
 {
     auto normalized = settings;
     NormalizeWindowPinBorderAppearance(normalized);
+    snowdesktop::window_support::WindowSupport().SetPinAppearance({
+        normalized.windowPinBorderEnabled ? 1u : 0u, normalized.windowPinBorderWidth,
+        normalized.windowPinBorderR, normalized.windowPinBorderG, normalized.windowPinBorderB,
+        normalized.windowPinBorderOpacity});
     const auto channel = [](float value) { return static_cast<UINT32>(std::lround(value * 255.0f)); };
     const BorderAppearance appearance{normalized.windowPinBorderEnabled, normalized.windowPinBorderWidth,
         (channel(normalized.windowPinBorderR) << 16) | (channel(normalized.windowPinBorderG) << 8) |
@@ -642,6 +648,9 @@ void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
 
 void DockWindowPin::Clear()
 {
+    snowdesktop::window_support::protocol::Request request;
+    request.command = snowdesktop::window_support::protocol::Command::ClearPins;
+    snowdesktop::window_support::WindowSupport().Submit(request);
     state_.reset();
 }
 
@@ -649,6 +658,17 @@ bool DockWindowPin::Toggle(HWND window)
 {
     const ScopedPhysicalCoordinates physicalCoordinates;
     if (!IsWindow(window) || GetAncestor(window, GA_ROOT) != window) return false;
+    const auto route = snowdesktop::window_support::WindowSupport().Resolve(
+        snowdesktop::window_support::Capability::WindowPin, window);
+    if (route.provider == snowdesktop::window_support::Provider::Helper)
+    {
+        snowdesktop::window_support::protocol::Request request;
+        request.command = snowdesktop::window_support::protocol::Command::TogglePin;
+        request.target = snowdesktop::window_support::protocol::Capture(window);
+        return snowdesktop::window_support::WindowSupport().Submit(request);
+    }
+    if (!route.Available())
+        return snowdesktop::window_support::WindowSupport().RequestPinAuthorization(window);
     if (state_)
     {
         if (auto* entry = state_->FindEntry(window); entry && entry->OwnsTarget())

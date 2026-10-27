@@ -1963,6 +1963,16 @@ struct SettingsWindowHost::Impl
             }
             return state->owner->options.startupConflict();
         };
+        general.queryWindowSupport = [weak]() {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner && state->owner->options.windowSupportStatus
+                ? state->owner->options.windowSupportStatus() : window_support::SupportStatus{};
+        };
+        general.configureWindowSupport = [weak](bool enabled) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner && state->owner->options.configureWindowSupport)
+                state->owner->options.configureWindowSupport(enabled);
+        };
         general.queryAdvancedFeatureStatus = [weak]() {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner ||

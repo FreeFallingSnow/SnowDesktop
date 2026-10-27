@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -20,6 +21,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::window_support::WindowSupport().Stop();
     FlushQueuedLayoutSave();
     snowdesktop::EmergencyRestartHotkey().Stop();
     StopRecycleBinWatcher();

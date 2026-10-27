@@ -4,6 +4,7 @@
 #include "platform/foreground_fullscreen.h"
 #include "desktop/display_color_mode.h"
 #include "desktop_composition_effect.h"
+#include "platform/window_support/window_support_runtime.h"
 
 // Graphics-device and composition-surface lifecycle.
 
@@ -346,8 +347,12 @@ void DesktopApp::InitializeDockWindowTransition()
             instance_, &uiAnimationScheduler_,
             d2dDevice_.Get(), dcompDevice_.Get()))
         dockWindowTransition_.reset();
+    snowdesktop::window_support::WindowSupport().SetNativeCapability(
+        snowdesktop::window_support::Capability::MinimizeAnimation,
+        dockWindowTransition_ && dockWindowTransition_->ReadyForAnimation());
     if (dockWindowTransition_)
     {
+        dockWindowTransition_->EnableHelperRouting();
         dockWindowTransition_->SetMinimizeCompletionCallbacks(
             [this](HWND window, std::optional<RECT> requestedAnchor)
                 -> std::optional<DockWindowTransition::MinimizeTarget> {
@@ -501,6 +506,8 @@ bool DesktopApp::RequestGraphicsDeviceRecovery(const wchar_t* stage, HRESULT hr)
 
 void DesktopApp::ReleaseGraphicsDeviceResources()
 {
+    snowdesktop::window_support::WindowSupport().SetNativeCapability(
+        snowdesktop::window_support::Capability::MinimizeAnimation, false);
     // Run only at the outer message-pump boundary, after every BeginDraw has
     // unwound. Keep Lua instances, layout and user state intact.
     CancelStatusBarActivation();

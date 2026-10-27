@@ -14,6 +14,9 @@ namespace snowdesktop::settings_ipc
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 
+SD_IPC_FIELDS(window_support::CapabilitySnapshot, v.inProcess, v.helper, v.helperState, v.generation);
+SD_IPC_FIELDS(window_support::SupportStatus, v.capabilities, v.authorization, v.hostElevated, v.error);
+
 SD_IPC_FIELDS(calendar::CalendarEvent, v.id, v.revision, v.title, v.date, v.allDay, v.startMinutes, v.endMinutes, v.notes, v.reminderMinutes, v.notifiedTrigger, v.seriesId, v.occurrenceDate, v.occurrenceOverride);
 SD_IPC_FIELDS(calendar::CalendarSeriesRule, v.kind, v.dates, v.startDate, v.endDate, v.interval, v.weekdays, v.monthDay);
 SD_IPC_FIELDS(calendar::CalendarSeriesException, v.canceled, v.event);

@@ -47,6 +47,7 @@
 - 直接实现 `DesktopApp`、接入窗口消息与用户输入、协调多个模块或依赖整个应用状态的代码放入 `app/` 对应子目录；功能本身的服务、模型、规则、存储与渲染能力放入外层职责模块。例如 `app/dock/` 负责应用中的 Dock 事件接线，`dock/` 负责 Dock 能力本身。
 - 仅供应用协调使用的 helper 随其 `app/` 功能子目录放置；可由宿主、独立工具或测试使用的模块能力归入外层模块。目录归类本身不表示模块已经是独立库，不得据此绕过真实依赖审查。
 - `src/widget/` 分为 `api/`、`authoring/`、`runtime/`、`packages/`、`permissions/`、`settings/`、`storage/`、`tasks/`、`data/`、`view/`、`preview/`。`api/` 保存内部注册与契约实现；对组件作者分发的 Skill 与 API 文档仍放在仓库根目录的 `widgets/snowdesktop-lua-widget/`。
+- `src/platform/window_support/` 保存管理员窗口支持的私有能力路由、授权任务、辅助进程生命周期及通信；功能实现仍归 `dock/` 等原职责模块，应用接线归 `app/`，设置卡片归 `winui/`。功能回退按具体能力及目标上下文决定，不以进程提权标记或辅助进程存在代替能力可用性；文件操作与任意程序的管理员启动不复用这项持久授权。
 - `widget_author_test.cpp` 等实现产品 `snowwidget test`、lint、预览功能的文件属于 `widget/authoring/`；验证这些功能的回归测试属于 `tests/`，不得因文件名包含 `test` 而混淆产品功能与测试驱动。
 - 需要新增职责模块时，先更新本节归属规则并明确边界，再创建目录；不为单个未分类文件随意增加 `misc/`、`helpers/`、`temp/` 等收容目录。
 

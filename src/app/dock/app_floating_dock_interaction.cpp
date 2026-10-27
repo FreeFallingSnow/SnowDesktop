@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "dock_platform_helpers.h"
 #include "platform/foreground_fullscreen.h"
 #include "app/popup/popup_window_pair_z_order.h"
@@ -21,7 +22,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     if (floatingDockPromotionInputUpdateActive_) return;
     LASTINPUTINFO nativeInput{sizeof(LASTINPUTINFO)};
     if (nativePointerInput && (!host.promoted || host.promotionInputPointerRetryUsed ||
-        host.promotionInputPrivilegeGap != true || !GetLastInputInfo(&nativeInput) ||
+        host.promotionInputCapabilityMissing != true || !GetLastInputInfo(&nativeInput) ||
         host.promotionInputRequestInputTime == nativeInput.dwTime)) return;
     const bool raised = host.promoted || host.passivelyRevealed || host.mergedInteractionHeld;
     const bool visible = raised && host.active && host.frameReady && host.hwnd &&
@@ -31,12 +32,13 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     host.promotionInputVisible = visible;
     if (!visible)
     {
+        host.promotionInputBorrowedFocus = false;
         host.promotionInputFocusPendingUntil = 0;
         host.promotionInputRequestInputTime.reset();
         host.promotionInputPointerRetryUsed = false;
         host.promotionInputForeground = nullptr;
         host.promotionInputProcess = 0;
-        host.promotionInputPrivilegeGap.reset();
+        host.promotionInputCapabilityMissing.reset();
         if (host.explicitDismissAvailable)
         {
             host.explicitDismissAvailable = false;
@@ -66,13 +68,19 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     const bool retryDeferred = host.promotionInputBlocked && !blocked;
     const bool request = requestFocus || newlyVisible || retryDeferred;
     if (request) host.promotionInputPointerRetryUsed = false;
-    if (request || foreground != host.promotionInputForeground || process != host.promotionInputProcess)
-        host.promotionInputPrivilegeGap = snowdesktop::dock_input_privilege::
-            ForegroundHasHigherInputPrivilege(foreground);
+    const bool pointerUnavailable = snowdesktop::window_support::WindowSupport().Resolve(
+        snowdesktop::window_support::Capability::PointerObservation, foreground).NeedsFallback();
+    host.promotionInputCapabilityMissing = pointerUnavailable;
+    if (!pointerUnavailable && host.promotionInputBorrowedFocus)
+    {
+        host.promotionInputBorrowedFocus = false;
+        host.promotionInputFocusPendingUntil = 0;
+        EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+    }
     host.promotionInputForeground = foreground;
     host.promotionInputProcess = process;
     host.promotionInputBlocked = blocked;
-    const bool borrowForeground = (request || nativePointerInput) && host.promotionInputPrivilegeGap.value_or(false) &&
+    const bool borrowForeground = (request || nativePointerInput) && host.promotionInputCapabilityMissing.value_or(false) &&
         !blocked && (!host.promotionInputFocusPendingUntil || nativePointerInput);
 
     floatingDockPromotionInputUpdateActive_ = true;
@@ -95,6 +103,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         SelectPersistentDockHost(visibleHost);
         CancelDockWindowActivationObservation(foreground);
         BeginFloatingDockKeyboardSession(false);
+        if (auto* current = FindPersistentDockHost(hostWindow)) current->promotionInputBorrowedFocus = true;
         const HWND observed = GetForegroundWindow();
         DWORD observedProcess = 0;
         if (observed) GetWindowThreadProcessId(observed, &observedProcess);
@@ -102,8 +111,8 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         {
             current->promotionInputForeground = observed;
             current->promotionInputProcess = observedProcess;
-            current->promotionInputPrivilegeGap = snowdesktop::dock_input_privilege::
-                ForegroundHasHigherInputPrivilege(observed);
+            current->promotionInputCapabilityMissing = snowdesktop::window_support::WindowSupport().Resolve(
+                snowdesktop::window_support::Capability::PointerObservation, observed).NeedsFallback();
             // Publish the owned foreground immediately; a quick return click
             // must not depend on a timer first sampling the proxy's activation.
             current->desktopLayerForegroundWindow = observed;
@@ -122,7 +131,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
             if (current->promotionInputProcess == GetCurrentProcessId())
                 current->promotionInputFocusPendingUntil = 0;
             else if (blocked || !floatingDockKeyboardSessionActive_ ||
-                current->promotionInputPrivilegeGap == false ||
+                current->promotionInputCapabilityMissing == false ||
                 GetTickCount64() >= current->promotionInputFocusPendingUntil)
             {
                 current->promotionInputFocusPendingUntil = 0;
@@ -130,9 +139,8 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
             }
         }
         const bool keepFallback = !current->promotionInputFocusPendingUntil &&
-            (!current->promotionInputPrivilegeGap.has_value() ||
-                current->promotionInputPrivilegeGap.value_or(false) ||
-                snowdesktop::fullscreen::ObserveForeground().has_value());
+            (!current->promotionInputCapabilityMissing.has_value() ||
+                current->promotionInputCapabilityMissing.value_or(false));
         if (current->explicitDismissAvailable != keepFallback)
         {
             current->explicitDismissAvailable = keepFallback;
@@ -289,7 +297,7 @@ void DesktopApp::ShowFloatingDock(
     }
     RefreshFloatingDockPromotionInput(*floatingDockHost_);
     // Actual keyboard editors retain their explicit input request. All other
-    // promotion paths use the same relative-privilege gate above.
+    // promotion paths use the same established pointer capability above.
     if (source == DockRevealSource::AssociatedSurface &&
         !snowdesktop::fullscreen::ObserveForeground())
         BeginFloatingDockKeyboardSession(false);
@@ -340,10 +348,10 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
             !ownedHost->hwnd) continue;
         // Consume the native minimize-button press for hidden and visible
         // Hosts alike, before an outside-pointer timer can sample it.
-        floatingDockPointerButtonsDown_ |=
+        floatingDockPointerButtonsDown_ |= snowdesktop::window_support::WindowSupport().PointerButtons().value_or(
             ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
             ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
-            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));
         if (!IsWindowVisible(ownedHost->hwnd))
         {
             const bool alreadyPromoted = ownedHost->promoted;

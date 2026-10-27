@@ -5,6 +5,7 @@
 #include "settings_focus_feedback.h"
 #include "general_advanced_feature_status.h"
 #include "start_page_presenter.h"
+#include "platform/window_support/window_capabilities.h"
 #include "../../steam_bridge/src/steam_connection_feedback.h"
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
@@ -60,6 +61,8 @@ struct GeneralPageActions
     std::function<void(std::uint64_t generation, bool enabled)>
         setAutoStart;
     std::function<GeneralStartupConflict()> queryStartupConflict;
+    std::function<window_support::SupportStatus()> queryWindowSupport;
+    std::function<void(bool)> configureWindowSupport;
     std::function<GeneralAdvancedFeatureStatus()> queryAdvancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
     std::function<void()> openAdvancedFeaturesStore;

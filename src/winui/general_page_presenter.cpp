@@ -168,6 +168,10 @@ struct GeneralPagePresenter::Impl
     muxc::StackPanel dockShortcutRoot{nullptr};
 
     SettingsCard startupCard;
+    SettingsCard windowSupportCard;
+    SettingRow windowSupportRow;
+    muxc::Button enableWindowSupport{nullptr}, disableWindowSupport{nullptr};
+    winrt::event_token enableWindowSupportToken{}, disableWindowSupportToken{};
     SettingsCard advancedFeaturesCard;
     SettingsCard desktopBehaviorCard;
     SettingsCard languageCard;
@@ -305,6 +309,25 @@ struct GeneralPagePresenter::Impl
         startupOwnershipNotice.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(startupOwnershipNotice);
         startupCard.content.Children().Append(startupOwnershipNotice);
+
+        InitializeCard(windowSupportCard, cardStyle, root, false);
+        muxc::StackPanel windowSupportActions;
+        windowSupportActions.Orientation(muxc::Orientation::Horizontal);
+        windowSupportActions.Spacing(8);
+        enableWindowSupport = muxc::Button{};
+        disableWindowSupport = muxc::Button{};
+        enableWindowSupportToken = enableWindowSupport.Click([this](const auto&, const auto&) {
+            if (actions.configureWindowSupport) actions.configureWindowSupport(true);
+            RefreshWindowSupport();
+        });
+        disableWindowSupportToken = disableWindowSupport.Click([this](const auto&, const auto&) {
+            if (actions.configureWindowSupport) actions.configureWindowSupport(false);
+            RefreshWindowSupport();
+        });
+        windowSupportActions.Children().Append(enableWindowSupport);
+        windowSupportActions.Children().Append(disableWindowSupport);
+        windowSupportRow.Initialize(windowSupportActions);
+        windowSupportCard.content.Children().Append(windowSupportRow.root);
 
         InitializeCard(advancedFeaturesCard, cardStyle, root, false);
         advancedFeaturesCard.content.Children().Clear();
@@ -1128,8 +1151,43 @@ struct GeneralPagePresenter::Impl
         updatingControls = wasUpdating;
     }
 
+    void RefreshWindowSupport()
+    {
+        using namespace window_support;
+        const auto status = actions.queryWindowSupport ? actions.queryWindowSupport() : SupportStatus{};
+        const bool configuring = status.authorization == AuthorizationState::Configuring;
+        const bool registered = status.authorization == AuthorizationState::Registered;
+        const bool starting = status.capabilities.helperState == ProviderState::Starting;
+        const bool helper = status.capabilities.helperState == ProviderState::Ready;
+        const auto available = helper ? status.capabilities.helper : status.capabilities.inProcess;
+        const bool complete = Contains(available, Capability::PointerObservation) && Contains(available, Capability::WindowPin) &&
+            Contains(available, Capability::WindowControl) && Contains(available, Capability::MinimizeAnimation);
+        const char* key = status.hostElevated ? "settings.general.windowSupport.native"
+            : configuring ? "settings.general.windowSupport.authorizing"
+            : starting ? "settings.general.windowSupport.starting"
+            : helper ? "settings.general.windowSupport.helper"
+            : registered || status.authorization == AuthorizationState::Invalid
+                ? "settings.general.windowSupport.unavailable" : "settings.general.windowSupport.disabled";
+        std::wstring description = L(key);
+        if ((helper || status.hostElevated) && !complete) description += L" " + L("settings.general.windowSupport.partial");
+        if (status.error && status.error != ERROR_CANCELLED)
+            description += L" (" + std::to_wstring(status.error) + L")";
+        windowSupportRow.SetText(L("settings.general.windowSupport.title"), description);
+        enableWindowSupport.Content(winrt::box_value(L(registered || status.authorization == AuthorizationState::Invalid
+            ? "settings.general.windowSupport.repair" : "settings.general.windowSupport.enable")));
+        disableWindowSupport.Content(winrt::box_value(L("settings.general.windowSupport.disable")));
+        enableWindowSupport.Visibility(status.hostElevated || (helper && complete) ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        disableWindowSupport.Visibility(registered || status.authorization == AuthorizationState::Invalid
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        enableWindowSupport.IsEnabled(!configuring && !starting && static_cast<bool>(actions.configureWindowSupport));
+        disableWindowSupport.IsEnabled(!configuring && static_cast<bool>(actions.configureWindowSupport));
+        muxa::AutomationProperties::SetName(enableWindowSupport, L("settings.general.windowSupport.enable"));
+        muxa::AutomationProperties::SetName(disableWindowSupport, L("settings.general.windowSupport.disable"));
+    }
+
     void RefreshStartupConflict()
     {
+        RefreshWindowSupport();
         GeneralStartupConflict conflict;
         if (actions.queryStartupConflict)
             conflict = actions.queryStartupConflict();
@@ -1392,6 +1450,8 @@ struct GeneralPagePresenter::Impl
             onboarding->Close();
             root.ActualThemeChanged(themeToken);
             autoStartToggle.Toggled(autoStartToken);
+            enableWindowSupport.Click(enableWindowSupportToken);
+            disableWindowSupport.Click(disableWindowSupportToken);
             registerAdvancedFeaturesButton.Click(
                 registerAdvancedFeaturesToken);
             retryAdvancedFeaturesButton.Click(retryAdvancedFeaturesToken);
@@ -1497,6 +1557,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
 
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
+    registerAliases(impl_->windowSupportCard.root, {"general.windowSupport"});
     registerAliases(impl_->advancedFeatureExpander,
         {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
     registerAliases(impl_->softwareDesktopToggle,
@@ -1540,6 +1601,7 @@ mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId
 {
     if (prerequisite) *prerequisite = {};
     if (!impl_ || impl_->closed) return nullptr;
+    if (focusId == "general.windowSupport") return impl_->windowSupportCard.root;
     const auto hotkeyTarget = [prerequisite](const HotkeyRecorder& recorder,
         const muxc::ToggleSwitch& parent, std::wstring_view parentName)
         -> mux::FrameworkElement {

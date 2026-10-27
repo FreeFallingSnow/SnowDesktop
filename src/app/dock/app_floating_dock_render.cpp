@@ -460,7 +460,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 host.retainedLeaveTracking, livePointer.x, livePointer.y);
         constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
         if (!(wp & buttons) && cursorKnown && host.promoted &&
-            host.promotionInputPrivilegeGap == true && WindowFromPoint(livePointer) == hwnd)
+            host.promotionInputCapabilityMissing == true && WindowFromPoint(livePointer) == hwnd)
         {
             auto* identity = &host;
             RefreshFloatingDockPromotionInput(host, false, true);

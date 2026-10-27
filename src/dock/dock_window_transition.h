@@ -156,10 +156,9 @@ public:
     {
         diagnosticCallback_ = std::move(callback);
     }
-    HWND GetPresentationWindow() const noexcept
-    {
-        return presenting_ ? hwnd_ : nullptr;
-    }
+    void EnableHelperRouting() noexcept { helperRouting_ = true; }
+    bool ReadyForAnimation() const noexcept { return compositionDevice_ && hwnd_ && animationScheduler_; }
+    HWND GetPresentationWindow() const noexcept;
     void RefreshOcclusion();
     void Cancel();
     // Settings changes must preserve pending native minimize/restore intent.
@@ -167,13 +166,14 @@ public:
     bool IsActive() const;
     bool RequiresNativeAnimationFallback() const noexcept { return nativeFallbackRequested_; }
     bool IsActiveFor(HWND window) const;
-    bool IsPresentationWindow(HWND window) const noexcept
-    {
-        return window && window == hwnd_;
-    }
+    bool IsPresentationWindow(HWND window) const noexcept;
     DockWindowTransitionDirection GetDirection() const;
 
 private:
+    struct RemoteAnimation;
+    bool StartHelperAnimation(HWND source, RECT anchor, HWND below, bool restore, RestoreCallback callback = {});
+    bool helperRouting_ = false;
+    std::shared_ptr<RemoteAnimation> remoteAnimation_;
     friend struct DockWindowTransitionTestAccess;
     struct PresentationBarrier;
     struct RetiredScene;

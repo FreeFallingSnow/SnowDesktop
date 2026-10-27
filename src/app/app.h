@@ -835,7 +835,8 @@ private:
         bool promotionInputBlocked = false;
         HWND promotionInputForeground = nullptr;
         DWORD promotionInputProcess = 0;
-        std::optional<bool> promotionInputPrivilegeGap;
+        std::optional<bool> promotionInputCapabilityMissing;
+        bool promotionInputBorrowedFocus = false;
         ULONGLONG promotionInputFocusPendingUntil = 0;
         std::optional<DWORD> promotionInputRequestInputTime;
         bool promotionInputPointerRetryUsed = false;
@@ -4387,6 +4388,7 @@ private:
     bool floatingPopupDropTargetRegistered_ = false;
     snowdesktop::LowLevelMouseHook floatingPopupMouseHook_;
     std::uint32_t floatingPopupMouseHookGeneration_ = 0;
+    DWORD floatingPopupPointerGenerationStartedAt_ = 0;
     inline static std::atomic<HWND>
         floatingPopupMouseHookNotificationWindow_{ nullptr };
     inline static std::atomic<std::uint32_t>

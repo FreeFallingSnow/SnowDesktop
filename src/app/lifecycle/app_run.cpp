@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "platform/window_support/window_support_runtime.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
@@ -697,6 +698,25 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
+    auto& windowSupport = snowdesktop::window_support::WindowSupport();
+    windowSupport.Start();
+    windowSupport.SetAuthorizationRequestHandler([this] {
+        ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::General, "general.windowSupport"));
+    });
+    windowSupport.SetPointerCallback([this](const snowdesktop::window_support::protocol::PointerEvent& event) {
+        floatingDockEdgeSwipeMouseActivity_.store(true, std::memory_order_relaxed);
+        UpdateFloatingDockEdgeSwipe();
+        const bool down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN ||
+            event.message == WM_MBUTTONDOWN || event.message == WM_XBUTTONDOWN;
+        if (down && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) &&
+            static_cast<LONG>(event.time - floatingPopupPointerGenerationStartedAt_) > 0)
+            HandleFloatingPopupExternalPointerDown(floatingPopupMouseHookGeneration_,
+                snowdesktop::floating_popup_rules::PackScreenPoint(event.point));
+    });
+    uiAnimationScheduler_.ScheduleInterval(25, [](snowdesktop::UiScheduleToken) {
+        snowdesktop::window_support::WindowSupport().Poll();
+    });
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
         L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
@@ -842,6 +862,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 GeneralStartupConflictKind::InstalledVersionOwnsStartup;
         }
         return conflict;
+    };
+    settingsHostOptions.windowSupportStatus = [] {
+        return snowdesktop::window_support::WindowSupport().Status();
+    };
+    settingsHostOptions.configureWindowSupport = [this](bool enabled) {
+        snowdesktop::window_support::WindowSupport().Configure(enabled, ShellDialogOwnerHwnd(), [](DWORD error) {
+            if (error && error != ERROR_CANCELLED)
+                snowdesktop::operation_feedback::Report({"settings.general.windowSupport.operationFailed", {}, error});
+        });
     };
     settingsHostOptions.advancedFeatureStatus = [this]() {
         return steamEntitlementService_
