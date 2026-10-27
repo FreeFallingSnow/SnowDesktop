@@ -27,6 +27,8 @@ public:
     void Poll();
     SupportStatus Status() const;
     CapabilityRoute Resolve(Capability capability, HWND target = nullptr) const;
+    // Forwarded event/helper state only. No value means use live native input,
+    // including when the native event observer itself is available.
     std::optional<std::uint32_t> PointerButtons() const;
     std::uint32_t PointerPresses() const;
     bool PointerPosition(POINT& point) const;

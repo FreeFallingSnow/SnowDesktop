@@ -1011,6 +1011,27 @@ end})
         }
         {
             unsigned statusChanges = 0;
+            {
+                // No Hook transition is delivered. The production Dock poll
+                // must still see current native buttons when its observer is
+                // available, then see release without a cached button-up.
+                InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
+                InputSafetyImport buttons("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&InputSafetyAsyncKeyState));
+                inputSafetyForeground = app->hwnd_;
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, true);
+                inputSafetyPhysicalButton = VK_LBUTTON;
+                app->UpdateFloatingDockEdgeSwipe();
+                check((app->floatingDockPointerButtonsDown_ & 1u) != 0,
+                    "native Dock polling sees a held button without a queued Hook transition");
+                inputSafetyPhysicalButton = 0;
+                app->UpdateFloatingDockEdgeSwipe();
+                check(app->floatingDockPointerButtonsDown_ == 0,
+                    "native Dock polling sees release without requiring a cached Hook button-up");
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, false);
+                inputSafetyForeground = nullptr;
+            }
             snowdesktop::window_support::Runtime statusProbe;
             statusProbe.SetStatusChangedHandler([&] { ++statusChanges; });
             statusProbe.Poll();
@@ -1143,14 +1164,14 @@ end})
                 ++inputSafetyLastInputTick;
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));
                 check(inputSafetyForegroundCalls == beforePointer + 1 && inputSafetyForeground == proxy &&
-                    dock.explicitDismissAvailable,
-                    "fresh native Dock pointer input retries a missed promotion and confirms the proxy foreground");
+                    !dock.explicitDismissAvailable && app->floatingDockInputForegroundSeen_,
+                    "fresh native Dock input confirms the focus-dismiss route and hides the redundant dismiss button");
                 snowdesktop::window_support::WindowSupport().SetNativeCapability(
                     snowdesktop::window_support::Capability::PointerObservation, true);
                 for (int poll = 0; poll < 3; ++poll) app->RefreshFloatingDockPromotionInputs();
                 app->UpdateFloatingDockEdgeSwipe();
                 check(app->floatingDockKeyboardSessionActive_ && dock.promotionInputBorrowedFocus &&
-                    dock.promotionInputCapabilityMissing == true && dock.explicitDismissAvailable && dock.promoted &&
+                    dock.promotionInputCapabilityMissing == true && !dock.explicitDismissAvailable && dock.promoted &&
                     (GetWindowLongPtrW(dockWindow, GWL_EXSTYLE) & WS_EX_TOPMOST),
                     "owned proxy foreground cannot falsely restore outside coverage or immediately demote the summoned Dock");
                 seedForeground(true);

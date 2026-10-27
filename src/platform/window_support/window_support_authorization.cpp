@@ -1,6 +1,7 @@
 #include "window_support_authorization.h"
 #include "window_support_protocol.h"
 #include "window_support_security.h"
+#include "window_support_host_identity.h"
 
 #include <taskschd.h>
 #include <sddl.h>
@@ -377,7 +378,8 @@ int RunAuthorizationCommand(bool enabled, DWORD requestingHost) noexcept
             RejectReparse(identityPath);
             if (!DeleteFileW(identityPath.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) throw Failure{GetLastError()};
             const auto identity = CreateProtectedFile(identityPath);
-            const auto path = hostImage.wstring();
+            const auto path = HostProcessIdentity(host.value);
+            if (path.empty()) throw Failure{ERROR_ACCESS_DENIED};
             const DWORD size = static_cast<DWORD>(path.size() * sizeof(wchar_t));
             DWORD written = 0;
             WinCheck(WriteFile(identity.value, path.data(), size, &written, nullptr));

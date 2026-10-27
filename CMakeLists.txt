@@ -998,6 +998,7 @@ source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "Source" FILES
 snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
 add_library(SnowDesktopWindowSupport STATIC
+    src/platform/window_support/window_support_host_identity.cpp
     src/platform/window_support/window_support_runtime.cpp
     src/platform/window_support/window_support_security.cpp
     src/platform/window_support/window_support_authorization.cpp)

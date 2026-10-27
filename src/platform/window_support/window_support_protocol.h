@@ -7,7 +7,9 @@
 
 namespace snowdesktop::window_support::protocol
 {
-inline constexpr std::uint32_t Version = 1;
+// v2 establishes version-independent protected host identity. An installed
+// v1 provider must be explicitly repaired once before it can serve this host.
+inline constexpr std::uint32_t Version = 2;
 inline constexpr std::uint32_t Magic = 0x57534453;
 inline constexpr std::size_t MaximumTargets = 128;
 inline constexpr std::size_t MaximumPointerEvents = 32;

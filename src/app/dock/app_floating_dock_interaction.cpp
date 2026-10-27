@@ -148,9 +148,14 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     }
     if (auto* current = FindPersistentDockHost(hostWindow))
     {
+        const HWND actualForeground = GetForegroundWindow();
+        DWORD actualProcess = 0;
+        if (actualForeground) GetWindowThreadProcessId(actualForeground, &actualProcess);
+        if (floatingDockKeyboardSessionActive_ && actualForeground == floatingDockInputHwnd_)
+            floatingDockInputForegroundSeen_ = true;
         if (current->promotionInputFocusPendingUntil)
         {
-            if (process == GetCurrentProcessId())
+            if (actualProcess == GetCurrentProcessId())
                 current->promotionInputFocusPendingUntil = 0;
             else if (blocked || !floatingDockKeyboardSessionActive_ ||
                 current->promotionInputCapabilityMissing == false ||
@@ -160,7 +165,9 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
                 EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
             }
         }
-        const bool keepFallback = !current->promotionInputFocusPendingUntil &&
+        const bool focusDismissAvailable = floatingDockKeyboardSessionActive_ &&
+            floatingDockInputForegroundSeen_ && actualProcess == GetCurrentProcessId();
+        const bool keepFallback = !focusDismissAvailable && !current->promotionInputFocusPendingUntil &&
             (!current->promotionInputCapabilityMissing.has_value() ||
                 current->promotionInputCapabilityMissing.value_or(false));
         if (current->explicitDismissAvailable != keepFallback)

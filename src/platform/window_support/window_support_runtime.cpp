@@ -179,7 +179,7 @@ struct Runtime::Impl
                 // It is not a connection failure (2250) to show beside progress.
                 Disconnect(ERROR_SUCCESS);
                 // A previous owner is allowed to undo its own pins/cloak and
-                // leave before an explicitly requested protected-file update.
+                // leave before explicitly reconfiguring the authorization.
                 if (previous) { WaitForSingleObject(previous, 5000); CloseHandle(previous); }
                 const DWORD error = !protocol::Current(configure->owner) ? ERROR_CANCELLED : elevated
                     ? static_cast<DWORD>(RunAuthorizationCommand(configure->enabled, GetCurrentProcessId()))
@@ -377,7 +377,10 @@ std::optional<std::uint32_t> Runtime::PointerButtons() const
     if (!route.Available()) return {};
     if (route.provider == Provider::Helper)
     { std::lock_guard guard(impl_->mutex); return impl_->snapshot.buttons; }
-    return impl_->pointer.Buttons();
+    // A local low-level hook is an event source, not an authoritative current
+    // button state: another input queue may swallow its matching button-up.
+    // Keep native polling on the original live User32 sampler.
+    return {};
 }
 std::uint32_t Runtime::PointerPresses() const
 {

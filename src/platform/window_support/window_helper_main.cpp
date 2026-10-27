@@ -2,6 +2,7 @@
 #include "window_support_pipe.h"
 #include "window_support_protocol.h"
 #include "window_support_security.h"
+#include "window_support_host_identity.h"
 #include "window_pointer_observer.h"
 #include "dock/dock_window_pin.h"
 #include "dock/dock_window_helper_animation.h"
@@ -108,7 +109,7 @@ bool AcceptedHost(HANDLE connection, DWORD expectedProcess, Handle& owner)
     std::wstring expected(static_cast<std::size_t>(bytes / sizeof(wchar_t)), L'\0');
     std::ifstream identity(identityPath, std::ios::binary);
     identity.read(reinterpret_cast<char*>(expected.data()), static_cast<std::streamsize>(bytes));
-    return identity && expected.find(L'\0') == std::wstring::npos && _wcsicmp(path.c_str(), expected.c_str()) == 0;
+    return identity && AuthorizedHostMatches(expected, owner.value);
 }
 struct Engine
 {

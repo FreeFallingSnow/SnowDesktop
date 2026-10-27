@@ -3,6 +3,7 @@
 #include "platform/window_support/window_operation_failures.h"
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_authorization.h"
+#include "platform/window_support/window_support_host_identity.h"
 #include <sddl.h>
 
 #include <cstdio>
@@ -16,6 +17,33 @@ int main()
     const auto check = [&](bool result, const char* message) {
         if (!result) { std::fprintf(stderr, "FAIL: %s\n", message); ++failed; }
     };
+    const auto firstRuntime = HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-one\\SnowDesktop.exe");
+    check(!firstRuntime.empty() && firstRuntime == HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-two\\SnowDesktop.exe"),
+        "the same managed installation retains authorization across runtime version directories");
+    check(HostIdentityMatches(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\deleted-build\\SnowDesktop.exe", firstRuntime) &&
+        HostIdentityMatches(firstRuntime, firstRuntime),
+        "both legacy protected paths and new identity records survive removal of the old managed version");
+    check(!HostIdentityMatches(L"D:\\Other\\SnowDesktop\\.snowdesktop\\runtime\\deleted-build\\SnowDesktop.exe", firstRuntime) &&
+        !HostIdentityMatches(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\..\\SnowDesktop.exe", firstRuntime),
+        "legacy migration never broadens a grant to another installation or a traversing path");
+    check(HostIdentityMatches(L"C:\\Program Files\\WindowsApps\\SnowDesktop_1.0.1.0_x64__abcdefghijklm\\SnowDesktop.exe",
+        L"SnowDesktopHost:2:package:SnowDesktop_abcdefghijklm") &&
+        !HostIdentityMatches(L"C:\\Program Files\\WindowsApps\\SnowDesktop_1.0.1.0_x64__abcdefghijklm\\SnowDesktop.exe",
+        L"SnowDesktopHost:2:package:Other_abcdefghijklm"),
+        "legacy packaged paths match the same package family across versions and reject another package");
+    check(firstRuntime != HostPathIdentity(L"D:\\Other\\SnowDesktop\\.snowdesktop\\runtime\\build-two\\SnowDesktop.exe") &&
+        firstRuntime != HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\dev\\build-two\\SnowDesktop.exe") &&
+        firstRuntime != HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-two\\nested\\SnowDesktop.exe"),
+        "another installation, development profile or nested executable cannot reuse the managed grant");
+    check(HostPathIdentity(L"D:\\Portable\\one\\SnowDesktop.exe") != HostPathIdentity(L"D:\\Portable\\two\\SnowDesktop.exe"),
+        "portable folders keep their exact authorized location");
+    check(HostPathIdentity(L"relative\\SnowDesktop.exe").empty() &&
+        HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\..\\SnowDesktop.exe").empty() &&
+        HostPathIdentity(L"D:\\Steam\\SnowDesktop\\.snowdesktop\\runtime\\build-one\\other.exe").empty(),
+        "relative paths, traversal and unrelated program names are rejected");
+    check(!AuthorizedHostMatches(firstRuntime, GetCurrentProcess()) &&
+        !AuthorizedHostMatches(L"SnowDesktopHost:2:path:D:\\unrelated\\SnowDesktop.exe", GetCurrentProcess()),
+        "the live process check rejects a renamed test executable despite valid-looking recorded paths");
     for (const auto state : {AuthorizationState::NotRegistered, AuthorizationState::Registered, AuthorizationState::Invalid})
         check(!AuthorizationPending(state), "completed and failed authorizations allow another explicit action");
     check(AuthorizationPending(AuthorizationState::AwaitingConsent) && AuthorizationPending(AuthorizationState::Configuring),
