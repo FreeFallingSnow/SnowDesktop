@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "削除をやり直します：{0}",
   "settings.taskbar.suppressAllTaskbars": "すべての画面のタスクバーを常に非表示",
   "settings.general.windowSupport.update": "更新",
-  "settings.general.windowSupport.updateAvailable": "補助コンポーネントの更新があります。"
+  "settings.general.windowSupport.updateAvailable": "補助コンポーネントの更新があります。",
+  "settings.desktop.idleHide": "操作していないときにデスクトップを自動的に隠す",
+  "settings.desktop.idleHide.description": "デスクトップ上でマウスを動かすと再表示します。",
+  "settings.desktop.idleHide.delay": "操作なしの時間（秒）",
+  "settings.desktop.idleHide.pauseWithWindows": "アプリのウィンドウが表示されている間は無効にする"
 }

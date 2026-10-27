@@ -514,6 +514,85 @@ void TestInitialPersonalization()
 int main(int argc, char** argv)
 {
     {
+        // Exercise the production idle policy with a deterministic clock and
+        // OS input/window samples. Host hit-testing and rendering need runtime acceptance.
+        using namespace snowdesktop::desktop_idle_hide;
+        State state;
+        Sample sample;
+        sample.pointerValid = sample.pointerOnDesktop = sample.inputKnown = true;
+        sample.inputIdleMs = 60000;
+        Check(state.Update(sample) == Action::None, "idle hiding is off by default");
+        sample.enabled = true;
+        sample.now = 4999;
+        Check(state.Update(sample) == Action::None, "desktop stays visible before five seconds");
+        sample.now = 5000;
+        sample.inputIdleMs = 50;
+        Check(state.Update(sample) == Action::None, "keyboard activity delays automatic hiding");
+        sample.now = 10000;
+        sample.inputIdleMs = 5000;
+        Check(state.Update(sample) == Action::Hide && state.AutoHidden(), "five idle seconds hide the desktop");
+        sample.desktopHidden = true;
+        sample.now = 11000;
+        Check(state.Update(sample) == Action::None, "a stationary mouse does not reveal hidden desktop content");
+        sample.pointerOnDesktop = false;
+        sample.pointerX = 20;
+        Check(state.Update(sample) == Action::None, "movement over another app does not reveal the desktop");
+        sample.pointerOnDesktop = true;
+        sample.pointerX = 21;
+        Check(state.Update(sample) == Action::Show && !state.AutoHidden(), "desktop mouse movement reveals automatically hidden content");
+        state.Reset(sample.now);
+        sample.pointerX = 22;
+        Check(state.Update(sample) == Action::None, "manual hiding survives desktop movement");
+        sample.enabled = false;
+        Check(state.Update(sample) == Action::None, "disabling idle hiding preserves manual hiding");
+        sample.enabled = true;
+        sample.desktopHidden = false;
+        sample.now = 16000;
+        Check(state.Update(sample) == Action::Hide, "automatic hiding resumes after a full timeout");
+        sample.desktopHidden = true;
+        sample.suspended = true;
+        Check(state.Update(sample) == Action::Show, "visible-app suspension restores automatically hidden content");
+        sample.desktopHidden = false;
+        sample.now = 30000;
+        Check(state.Update(sample) == Action::None, "suspension prevents hiding even after a long idle period");
+        sample.suspended = false;
+        sample.now = 34999;
+        Check(state.Update(sample) == Action::None, "resuming suspension grants a fresh idle interval");
+        sample.interactionBusy = true;
+        sample.now = 40000;
+        Check(state.Update(sample) == Action::None, "active drag, rename and menu interactions prevent hiding");
+        sample.interactionBusy = false;
+        sample.inputKnown = false;
+        sample.now = 45000;
+        Check(state.Update(sample) == Action::None, "unknown input state cannot hide the desktop");
+        sample.inputKnown = true;
+        sample.delaySeconds = 1;
+        sample.now = 46000;
+        Check(state.Update(sample) == Action::Hide, "custom one-second timeout is honored");
+        sample.desktopHidden = true;
+        sample.enabled = false;
+        Check(state.Update(sample) == Action::Show, "turning the feature off restores its hidden desktop");
+        Check(NormalizeDelay(-2) == 1 && NormalizeDelay(99999) == 3600, "idle timeout is bounded to one second through one hour");
+
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopIdleHide-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings settings, restored;
+        settings.desktopIdleHideEnabled = true;
+        settings.desktopIdleHideDelaySeconds = 37;
+        settings.desktopIdleHidePauseWithWindows = true;
+        Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), restored) &&
+            restored.desktopIdleHideEnabled && restored.desktopIdleHideDelaySeconds == 37 &&
+            restored.desktopIdleHidePauseWithWindows, "idle hiding preferences survive disk persistence");
+        { std::ofstream fixture(path); fixture << "{}"; }
+        Check(LoadGeneralSettings(path.c_str(), restored) && !restored.desktopIdleHideEnabled &&
+            restored.desktopIdleHideDelaySeconds == 5 && !restored.desktopIdleHidePauseWithWindows,
+            "legacy profiles default to disabled idle hiding and a five-second delay");
+        { std::ofstream fixture(path); fixture << "{\"desktopIdleHideDelaySeconds\":-3}"; }
+        Check(LoadGeneralSettings(path.c_str(), restored) && restored.desktopIdleHideDelaySeconds == 1,
+            "invalid persisted idle delays are normalized");
+        std::filesystem::remove(path);
+    }
+    {
         namespace modules = snowdesktop::runtime_modules;
         const auto modulePath = std::filesystem::temp_directory_path() / (L"SnowDesktopModules-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings original;

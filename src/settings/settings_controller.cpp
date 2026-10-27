@@ -310,6 +310,7 @@ void SettingsController::UpdateGeneral(
 {
     if (externalReplacementPending_) return;
     NormalizeGeneralAnimationSettings(settings);
+    settings.desktopIdleHideDelaySeconds = desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds);
     NormalizeStatusBarSettings(settings.statusBar);
     calendar::Normalize(settings.calendarDisplay);
     shell_extensions::Normalize(settings.shellExtensions);

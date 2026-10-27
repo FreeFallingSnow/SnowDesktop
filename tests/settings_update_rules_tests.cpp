@@ -57,6 +57,22 @@ int main()
 
     GeneralSettings general;
     auto logging = general;
+    for (int field = 0; field < 3; ++field)
+    {
+        auto shortcut = general;
+        shortcut.forceRestartHotkeyEnabled = !general.forceRestartHotkeyEnabled;
+        auto logs = general;
+        logs.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Input);
+        for (auto* value : {&shortcut, &logs})
+        {
+            if (field == 0) value->desktopIdleHideEnabled = true;
+            if (field == 1) value->desktopIdleHideDelaySeconds = 15;
+            if (field == 2) value->desktopIdleHidePauseWithWindows = true;
+        }
+        Check(!IsGeneralShortcutOnlyCommit(general, shortcut) &&
+            !snowdesktop::settings_update_rules::IsGeneralLoggingOnlyCommit(general, logs),
+            "mixed shortcut/logging commits cannot skip applying idle hide preferences");
+    }
     logging.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Input);
     using snowdesktop::settings_update_rules::IsGeneralLoggingOnlyCommit;
     Check(IsGeneralLoggingOnlyCommit(general, logging),

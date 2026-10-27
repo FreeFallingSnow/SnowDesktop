@@ -44,6 +44,7 @@
 #include "icons/icon_row_index.h"
 #include "app/dock/dock_icon_work.h"
 #include "desktop/desktop_namespace_registry.h"
+#include "desktop/desktop_idle_hide.h"
 #include "core/item.h"
 #include "core/slot.h"
 #include "core/container.h"
@@ -1723,7 +1724,8 @@ private:
         return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
     }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
-    void ToggleDesktopIconsVisibility();
+    void ToggleDesktopIconsVisibility(bool automatic = false);
+    void UpdateDesktopIdleHide();
     /** @brief 判断隐藏桌面时该点是否位于保留元素（组件/Dock）上。 */
     bool IsPointOnRetainedElement(POINT pt) const;
     /** @brief 判断当前打开的集合弹窗是否属于隐藏桌面时保留的元素。 */
@@ -3997,6 +3999,7 @@ private:
     PersonalizationSettings collectionPopupAppearance_ =
         MakeCollectionPopupAppearancePreset(kAppearancePresetDark);
     bool desktopIconsHidden_ = false;
+    snowdesktop::desktop_idle_hide::State desktopIdleHide_;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
     bool showWidgetAddedHint_ = false;

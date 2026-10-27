@@ -1239,6 +1239,7 @@ public:
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
+            app_.UpdateDesktopIdleHide();
             snowdesktop::EmergencyRestartHotkey().Apply(app_.generalSettings_.forceRestartHotkeyEnabled,
                 app_.generalSettings_.forceRestartHotkeyModifiers, app_.generalSettings_.forceRestartHotkeyVirtualKey);
             snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
@@ -2380,8 +2381,9 @@ void DesktopApp::ApplyLanguageChange()
         InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-void DesktopApp::ToggleDesktopIconsVisibility()
+void DesktopApp::ToggleDesktopIconsVisibility(bool automatic)
 {
+    if (!automatic) desktopIdleHide_.Reset(GetTickCount64());
     if (layoutScrollSave_.Pending()) SaveLayoutSlots();
     desktopIconsHidden_ = !desktopIconsHidden_;
     // The control-window timer also maintains the Explorer taskbar hook and

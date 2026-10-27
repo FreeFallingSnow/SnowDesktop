@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "Die Löschung wird wiederholt: {0}",
   "settings.taskbar.suppressAllTaskbars": "Taskleisten auf allen Bildschirmen immer ausblenden",
   "settings.general.windowSupport.update": "Aktualisieren",
-  "settings.general.windowSupport.updateAvailable": "Für die Hilfskomponenten ist ein Update verfügbar."
+  "settings.general.windowSupport.updateAvailable": "Für die Hilfskomponenten ist ein Update verfügbar.",
+  "settings.desktop.idleHide": "Desktop bei Inaktivität automatisch ausblenden",
+  "settings.desktop.idleHide.description": "Bewegen Sie die Maus auf dem Desktop, um ihn wieder anzuzeigen.",
+  "settings.desktop.idleHide.delay": "Inaktivitätsdauer (Sekunden)",
+  "settings.desktop.idleHide.pauseWithWindows": "Bei sichtbaren Anwendungsfenstern deaktivieren"
 }

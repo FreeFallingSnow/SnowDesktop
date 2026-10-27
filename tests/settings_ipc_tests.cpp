@@ -262,9 +262,14 @@ void TestCodec()
         !statusCopy.modules[0].active && !statusCopy.modules[0].residencyKnown && statusCopy.modules[0].targets[0].explorer && statusCopy.modules[0].targets[0].process == 123,
         "disabled behavior, unknown residency and an Explorer image remain distinct across IPC");
     GeneralSettings moduleSettings;
+    moduleSettings.desktopIdleHideEnabled = true;
+    moduleSettings.desktopIdleHideDelaySeconds = 37;
+    moduleSettings.desktopIdleHidePauseWithWindows = true;
     moduleSettings.showAdvancedSettings = true;
     moduleSettings.runtimeModules.allowed = {false, true, false, false, true};
     const auto moduleCopy = Unpack<GeneralSettings>(Pack(moduleSettings));
+    Check(moduleCopy.desktopIdleHideEnabled && moduleCopy.desktopIdleHideDelaySeconds == 37 &&
+        moduleCopy.desktopIdleHidePauseWithWindows, "idle hiding preferences cross the real private settings codec");
     Check(moduleCopy.showAdvancedSettings && moduleCopy.runtimeModules == moduleSettings.runtimeModules,
         "five independent module policies and About visibility cross the private settings process boundary");
     GeneralSettings extensions;

@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include "platform/runtime_module_policy.h"
+#include "desktop/desktop_idle_hide.h"
 
 #include <string>
 #include "diagnostics/diagnostic_log_modules.h"
@@ -39,6 +40,9 @@ struct GeneralSettings
     std::uint32_t diagnosticLogModules = 0;
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
+    bool desktopIdleHideEnabled = false;
+    int desktopIdleHideDelaySeconds = snowdesktop::desktop_idle_hide::kDefaultDelaySeconds;
+    bool desktopIdleHidePauseWithWindows = false;
     // The shortcut toggles temporary desktop/Dock passthrough; only this
     // shortcut preference is persisted, never the active passthrough state.
     bool desktopPassthroughHotkeyEnabled = false;

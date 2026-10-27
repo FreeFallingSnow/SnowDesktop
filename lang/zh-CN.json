@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "将重做删除：{0}",
   "settings.taskbar.suppressAllTaskbars": "始终隐藏所有屏幕的任务栏",
   "settings.general.windowSupport.update": "更新",
-  "settings.general.windowSupport.updateAvailable": "辅助组件有可用更新。"
+  "settings.general.windowSupport.updateAvailable": "辅助组件有可用更新。",
+  "settings.desktop.idleHide": "无操作时自动隐藏桌面",
+  "settings.desktop.idleHide.description": "在桌面移动鼠标即可重新显示。",
+  "settings.desktop.idleHide.delay": "无操作时长（秒）",
+  "settings.desktop.idleHide.pauseWithWindows": "有可见应用窗口时停用"
 }

@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "A exclusão será refeita: {0}",
   "settings.taskbar.suppressAllTaskbars": "Sempre ocultar as barras de tarefas em todas as telas",
   "settings.general.windowSupport.update": "Atualizar",
-  "settings.general.windowSupport.updateAvailable": "Há uma atualização disponível para os componentes auxiliares."
+  "settings.general.windowSupport.updateAvailable": "Há uma atualização disponível para os componentes auxiliares.",
+  "settings.desktop.idleHide": "Ocultar a área de trabalho automaticamente quando inativa",
+  "settings.desktop.idleHide.description": "Mova o mouse sobre a área de trabalho para exibi-la novamente.",
+  "settings.desktop.idleHide.delay": "Tempo de inatividade (segundos)",
+  "settings.desktop.idleHide.pauseWithWindows": "Desativar enquanto houver janelas de aplicativos visíveis"
 }

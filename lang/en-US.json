@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "Will redo deletion: {0}",
   "settings.taskbar.suppressAllTaskbars": "Always hide taskbars on all displays",
   "settings.general.windowSupport.update": "Update",
-  "settings.general.windowSupport.updateAvailable": "An update is available for the helper components."
+  "settings.general.windowSupport.updateAvailable": "An update is available for the helper components.",
+  "settings.desktop.idleHide": "Automatically hide desktop when idle",
+  "settings.desktop.idleHide.description": "Move the mouse on the desktop to show it again.",
+  "settings.desktop.idleHide.delay": "Idle time (seconds)",
+  "settings.desktop.idleHide.pauseWithWindows": "Disable while app windows are visible"
 }

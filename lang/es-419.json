@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "Se rehará la eliminación: {0}",
   "settings.taskbar.suppressAllTaskbars": "Ocultar siempre las barras de tareas en todas las pantallas",
   "settings.general.windowSupport.update": "Actualizar",
-  "settings.general.windowSupport.updateAvailable": "Hay una actualización disponible para los componentes auxiliares."
+  "settings.general.windowSupport.updateAvailable": "Hay una actualización disponible para los componentes auxiliares.",
+  "settings.desktop.idleHide": "Ocultar automáticamente el escritorio al estar inactivo",
+  "settings.desktop.idleHide.description": "Mueve el mouse sobre el escritorio para volver a mostrarlo.",
+  "settings.desktop.idleHide.delay": "Tiempo de inactividad (segundos)",
+  "settings.desktop.idleHide.pauseWithWindows": "Desactivar mientras haya ventanas de aplicaciones visibles"
 }

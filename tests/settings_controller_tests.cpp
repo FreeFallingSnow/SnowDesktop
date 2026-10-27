@@ -1670,6 +1670,20 @@ int main()
             "closing advanced navigation preserves explicit module disables");
     }
     TestLoadRouteAndImmutableSnapshots();
+    {
+        auto store = std::make_shared<FakeStore>();
+        SettingsController controller(store);
+        (void)controller.Initialize();
+        auto general = controller.Snapshot()->values.general;
+        general.desktopIdleHideEnabled = true;
+        general.desktopIdleHideDelaySeconds = 99999;
+        general.desktopIdleHidePauseWithWindows = true;
+        controller.UpdateGeneral(general, SettingsUpdateMode::Commit);
+        Check(controller.FlushPending().Succeeded() && store->lastSavedGeneral.desktopIdleHideEnabled &&
+            store->lastSavedGeneral.desktopIdleHideDelaySeconds == 3600 &&
+            store->lastSavedGeneral.desktopIdleHidePauseWithWindows,
+            "settings commits normalize and persist idle hiding through the production controller");
+    }
     TestDomainRevisionsTrackChangedDomain();
     TestDesktopStylePresetScope();
     TestDesktopStyleQueuedCommit();

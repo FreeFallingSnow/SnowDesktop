@@ -106,6 +106,13 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
         settings.doubleClickHideDesktop = val;
+    settings.desktopIdleHideEnabled = false;
+    settings.desktopIdleHideDelaySeconds = snowdesktop::desktop_idle_hide::kDefaultDelaySeconds;
+    settings.desktopIdleHidePauseWithWindows = false;
+    ReadBoolField(text, "desktopIdleHideEnabled", settings.desktopIdleHideEnabled);
+    ReadIntField(text, "desktopIdleHideDelaySeconds", settings.desktopIdleHideDelaySeconds);
+    settings.desktopIdleHideDelaySeconds = snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds);
+    ReadBoolField(text, "desktopIdleHidePauseWithWindows", settings.desktopIdleHidePauseWithWindows);
     if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
         settings.desktopPassthroughHotkeyEnabled = val;
     if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
@@ -288,6 +295,9 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"demoModeEnabled\": "
          << (settings.demoModeEnabled ? "true" : "false") << ",\n";
     file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
+    file << "  \"desktopIdleHideEnabled\": " << (settings.desktopIdleHideEnabled ? "true" : "false") << ",\n";
+    file << "  \"desktopIdleHideDelaySeconds\": " << snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds) << ",\n";
+    file << "  \"desktopIdleHidePauseWithWindows\": " << (settings.desktopIdleHidePauseWithWindows ? "true" : "false") << ",\n";
     file << "  \"desktopPassthroughHotkeyEnabled\": "
          << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
          << ",\n";

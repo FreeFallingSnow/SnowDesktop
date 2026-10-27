@@ -2664,5 +2664,9 @@
   "app.fileHistory.redoDelete": "將重做刪除：{0}",
   "settings.taskbar.suppressAllTaskbars": "一律隱藏所有螢幕的工作列",
   "settings.general.windowSupport.update": "更新",
-  "settings.general.windowSupport.updateAvailable": "輔助元件有可用更新。"
+  "settings.general.windowSupport.updateAvailable": "輔助元件有可用更新。",
+  "settings.desktop.idleHide": "閒置時自動隱藏桌面",
+  "settings.desktop.idleHide.description": "在桌面移動滑鼠即可重新顯示。",
+  "settings.desktop.idleHide.delay": "閒置時間（秒）",
+  "settings.desktop.idleHide.pauseWithWindows": "有可見應用程式視窗時停用"
 }

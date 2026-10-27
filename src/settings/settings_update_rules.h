@@ -44,6 +44,9 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.diagnosticLogModules == after.diagnosticLogModules &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
+        before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
+        before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
+        before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
         before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
         before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
         before.contextMenuHideMoreManagement == after.contextMenuHideMoreManagement &&
@@ -84,6 +87,9 @@ inline bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.forceRestartHotkeyVirtualKey == after.forceRestartHotkeyVirtualKey &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
+        before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
+        before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
+        before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
         before.desktopPassthroughHotkeyEnabled == after.desktopPassthroughHotkeyEnabled &&
         before.desktopPassthroughHotkeyModifiers == after.desktopPassthroughHotkeyModifiers &&
         before.desktopPassthroughHotkeyVirtualKey == after.desktopPassthroughHotkeyVirtualKey &&

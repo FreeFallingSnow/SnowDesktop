@@ -80,6 +80,7 @@ SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
     v.showAdvancedSettings, v.runtimeModules,
     v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
+    v.desktopIdleHideEnabled, v.desktopIdleHideDelaySeconds, v.desktopIdleHidePauseWithWindows,
     v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,
     v.forceRestartHotkeyEnabled, v.forceRestartHotkeyModifiers, v.forceRestartHotkeyVirtualKey,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,

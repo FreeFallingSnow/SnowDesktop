@@ -399,6 +399,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/render/app_render_primitives.cpp
     src/app/lifecycle/app_run.cpp
     src/app/features/app_usage_guide.cpp
+    src/app/features/app_desktop_idle_hide.cpp
     src/platform/usage_guide.cpp
     src/platform/usage_guide.h
     src/app/shell/app_shell_context_menu.cpp
