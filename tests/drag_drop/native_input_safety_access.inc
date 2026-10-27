@@ -84,6 +84,8 @@
     static BOOL WINAPI InputSafetyCursor(LPPOINT point) { *point = {40, 40}; return TRUE; }
     static HWND WINAPI InputSafetyWindowAtPoint(POINT) { return inputSafetyPointerWindow; }
     static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
+    static inline bool inputSafetyStableExternalIdentity = false;
+    static inline HWND inputSafetyExternalIdentityWindow = nullptr;
     static inline decltype(&OpenProcess) inputSafetyOriginalOpenProcess = nullptr;
     static HANDLE WINAPI InputSafetyOpenProcess(DWORD access, BOOL inherit, DWORD process)
     {
@@ -108,6 +110,12 @@
     static BOOL WINAPI InputSafetyAttach(DWORD, DWORD, BOOL) { ++inputSafetyAttachCalls; return FALSE; }
     static DWORD WINAPI InputSafetyThread(HWND window, LPDWORD process)
     {
+        if (inputSafetyStableExternalIdentity)
+        {
+            if (window == inputSafetyExternalIdentityWindow && window != inputSafetyOwnedWindow)
+            { if (process) *process = GetCurrentProcessId() + 1000; return GetCurrentThreadId() + 1000; }
+            return inputSafetyOriginalThread(window, process);
+        }
         if (window == inputSafetyForeground && window != inputSafetyOwnedWindow)
         { if (process) *process = GetCurrentProcessId() + 1000; return GetCurrentThreadId() + 1000; }
         return inputSafetyOriginalThread(window, process);
@@ -1014,6 +1022,13 @@ end})
             statusProbe.SetNativeCapability(snowdesktop::window_support::Capability::PointerObservation, false);
             statusProbe.Poll();
             check(statusChanges == 3, "capability loss notifies the settings consumer after revocation or disconnect");
+            inputSafetyStableExternalIdentity = true;
+            inputSafetyExternalIdentityWindow = control;
+            struct RestoreIdentity
+            {
+                bool& stable; HWND& external;
+                ~RestoreIdentity() { stable = false; external = nullptr; }
+            } restoreIdentity{inputSafetyStableExternalIdentity, inputSafetyExternalIdentityWindow};
             // All HWNDs live on this fixture's inactive desktop. Keep a Dock
             // already raised while its foreground changes after the summon.
             auto& dock = *app->persistentDockHosts_.front();
@@ -1107,7 +1122,7 @@ end})
                 dock.sourceRect = {0,0,400,300};
                 const auto seedForeground = [&](bool pointerUnavailable) {
                     inputSafetyForeground = control;
-                    inputSafetyOwnedWindow = pointerUnavailable ? app->hwnd_ : control;
+                    inputSafetyOwnedWindow = pointerUnavailable ? proxy : control;
                     dock.promotionInputForeground = control;
                     dock.promotionInputProcess = GetCurrentProcessId() + 1000;
                     dock.promotionInputCapabilityMissing = pointerUnavailable;
@@ -1130,12 +1145,47 @@ end})
                 check(inputSafetyForegroundCalls == beforePointer + 1 && inputSafetyForeground == proxy &&
                     dock.explicitDismissAvailable,
                     "fresh native Dock pointer input retries a missed promotion and confirms the proxy foreground");
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, true);
+                for (int poll = 0; poll < 3; ++poll) app->RefreshFloatingDockPromotionInputs();
+                app->UpdateFloatingDockEdgeSwipe();
+                check(app->floatingDockKeyboardSessionActive_ && dock.promotionInputBorrowedFocus &&
+                    dock.promotionInputCapabilityMissing == true && dock.explicitDismissAvailable && dock.promoted &&
+                    (GetWindowLongPtrW(dockWindow, GWL_EXSTYLE) & WS_EX_TOPMOST),
+                    "owned proxy foreground cannot falsely restore outside coverage or immediately demote the summoned Dock");
                 seedForeground(true);
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));
                 ++inputSafetyLastInputTick;
                 SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(42,40));
                 check(inputSafetyForegroundCalls == beforePointer + 1,
                     "stationary messages and later moves cannot turn one promotion retry into a foreground polling loop");
+                app->EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+                inputSafetyExternalIdentityWindow = nullptr;
+                inputSafetyForeground = control;
+                dock.promoted = dock.frameReady = dock.promotionInputVisible = app->floatingDockVisible_ = true;
+                SetWindowPos(dockWindow, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, false);
+                app->RefreshFloatingDockPromotionInputs(true);
+                check(app->floatingDockKeyboardSessionActive_ && dock.promotionInputBorrowedFocus,
+                    "an unavailable observer starts a compensating session for its captured context");
+                inputSafetyForeground = proxy;
+                app->HandleInputMessage(proxy, WM_ACTIVATEAPP, TRUE, 0);
+                app->UpdateFloatingDockEdgeSwipe();
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, true);
+                app->RefreshFloatingDockPromotionInputs();
+                check(dock.desktopLayerForegroundWindow == control,
+                    "retiring the owned proxy records its expected target return before activation observation");
+                inputSafetyForeground = control;
+                app->UpdateFloatingDockEdgeSwipe();
+                check(!app->floatingDockKeyboardSessionActive_ && !dock.promotionInputBorrowedFocus && dock.promoted &&
+                    (GetWindowLongPtrW(dockWindow, GWL_EXSTYLE) & WS_EX_TOPMOST),
+                    "actual target coverage retires borrowed focus without treating its return as an outside activation");
+                inputSafetyExternalIdentityWindow = control;
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, false);
                 inputSafetyAllowForeground = false;
                 inputSafetyOwnedWindow = app->hwnd_;
                 app->EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);

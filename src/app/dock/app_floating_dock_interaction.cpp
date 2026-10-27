@@ -68,18 +68,37 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     const bool retryDeferred = host.promotionInputBlocked && !blocked;
     const bool request = requestFocus || newlyVisible || retryDeferred;
     if (request) host.promotionInputPointerRetryUsed = false;
-    const bool pointerUnavailable = snowdesktop::window_support::WindowSupport().Resolve(
-        snowdesktop::window_support::Capability::PointerObservation, foreground).NeedsFallback();
+    const auto borrowedContext = std::find_if(persistentDockHosts_.begin(), persistentDockHosts_.end(),
+        [](const auto& candidate) { return candidate && candidate->promotionInputBorrowedFocus; });
+    const bool compensatingSession = borrowedContext != persistentDockHosts_.end();
+    const bool observingBorrowedForeground = floatingDockKeyboardSessionActive_ &&
+        process == GetCurrentProcessId() && compensatingSession;
+    const HWND pointerContext = observingBorrowedForeground
+        ? (*borrowedContext)->promotionInputForeground : foreground;
+    const DWORD pointerContextProcess = observingBorrowedForeground
+        ? (*borrowedContext)->promotionInputProcess : process;
+    DWORD currentContextProcess = 0;
+    const bool contextCurrent = !observingBorrowedForeground ||
+        (pointerContext && IsWindow(pointerContext) && GetWindowThreadProcessId(pointerContext, &currentContextProcess) &&
+            currentContextProcess == pointerContextProcess);
+    // Borrowing our own input queue does not establish observation of the
+    // outside target. Keep every promoted host bound to the original context.
+    const bool pointerUnavailable = !contextCurrent || snowdesktop::window_support::WindowSupport().Resolve(
+        snowdesktop::window_support::Capability::PointerObservation, pointerContext).NeedsFallback();
     host.promotionInputCapabilityMissing = pointerUnavailable;
     if (!pointerUnavailable && host.promotionInputBorrowedFocus)
     {
         host.promotionInputBorrowedFocus = false;
         host.promotionInputFocusPendingUntil = 0;
+        if (foreground == floatingDockInputHwnd_)
+            for (const auto& candidate : persistentDockHosts_)
+                if (candidate && candidate->promoted)
+                    candidate->desktopLayerForegroundWindow = pointerContext;
         EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
         return; // Hiding the proxy can rebuild hosts; reacquire on the next observation.
     }
-    host.promotionInputForeground = foreground;
-    host.promotionInputProcess = process;
+    host.promotionInputForeground = pointerContext;
+    host.promotionInputProcess = pointerContextProcess;
     host.promotionInputBlocked = blocked;
     const bool borrowForeground = (request || nativePointerInput) && host.promotionInputCapabilityMissing.value_or(false) &&
         !blocked && (!host.promotionInputFocusPendingUntil || nativePointerInput);
@@ -103,17 +122,19 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         if (nativePointerInput) host.promotionInputPointerRetryUsed = true;
         SelectPersistentDockHost(visibleHost);
         CancelDockWindowActivationObservation(foreground);
+        const bool borrowSession = !floatingDockKeyboardSessionActive_ || compensatingSession;
         BeginFloatingDockKeyboardSession(false);
-        if (auto* current = FindPersistentDockHost(hostWindow)) current->promotionInputBorrowedFocus = true;
+        if (auto* current = FindPersistentDockHost(hostWindow))
+            current->promotionInputBorrowedFocus = floatingDockKeyboardSessionActive_ && borrowSession;
         const HWND observed = GetForegroundWindow();
         DWORD observedProcess = 0;
         if (observed) GetWindowThreadProcessId(observed, &observedProcess);
         if (auto* current = FindPersistentDockHost(hostWindow))
         {
-            current->promotionInputForeground = observed;
-            current->promotionInputProcess = observedProcess;
-            current->promotionInputCapabilityMissing = snowdesktop::window_support::WindowSupport().Resolve(
-                snowdesktop::window_support::Capability::PointerObservation, observed).NeedsFallback();
+            current->promotionInputForeground = pointerContext;
+            current->promotionInputProcess = pointerContextProcess;
+            current->promotionInputCapabilityMissing = !contextCurrent || snowdesktop::window_support::WindowSupport().Resolve(
+                snowdesktop::window_support::Capability::PointerObservation, pointerContext).NeedsFallback();
             // Publish the owned foreground immediately; a quick return click
             // must not depend on a timer first sampling the proxy's activation.
             current->desktopLayerForegroundWindow = observed;
@@ -129,7 +150,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     {
         if (current->promotionInputFocusPendingUntil)
         {
-            if (current->promotionInputProcess == GetCurrentProcessId())
+            if (process == GetCurrentProcessId())
                 current->promotionInputFocusPendingUntil = 0;
             else if (blocked || !floatingDockKeyboardSessionActive_ ||
                 current->promotionInputCapabilityMissing == false ||
