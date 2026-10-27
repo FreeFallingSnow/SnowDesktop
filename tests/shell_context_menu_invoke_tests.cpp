@@ -4533,10 +4533,39 @@ void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensi
     Expect(queries == (mode == 1 ? 2u : 1u), "changed folder registration re-queries exactly once");
 }
 
-void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Desktop)
+void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Desktop,
+    bool fullFirst = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
+    struct Trace
+    {
+        std::wstring previous;
+        std::filesystem::path file;
+        explicit Trace(const std::filesystem::path &base)
+        {
+            wchar_t value[32768]{};
+            const auto length = GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", value, 32768);
+            Expect(length < 32768, "preserve the existing menu trace environment");
+            previous.assign(value, length);
+            file = base.wstring() + L"." + std::to_wstring(GetCurrentProcessId()) + L".log";
+            Expect(SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", base.c_str()) != FALSE,
+                "enable this private completion-order trace");
+        }
+        ~Trace() { SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str()); }
+        unsigned AcceptedCatalogues() const
+        {
+            unsigned count = 0;
+            std::ifstream input(file, std::ios::binary);
+            for (std::string line; std::getline(input, line);)
+                if (line.find(" phase=catalogue reason=unchanged ") != std::string::npos) ++count;
+            return count;
+        }
+    };
+    // This lifetime encloses the service: the worker stops before the caller's
+    // diagnostic environment is restored or the private trace is removed.
+    std::optional<Trace> trace;
+    if (mode == 0 && fullFirst) trace.emplace(temp.path / L"completion-order");
     struct Registry
     {
         HKEY key = nullptr;
@@ -4579,7 +4608,8 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
     std::atomic<unsigned> queries = 0, scans = 0, scopes = 0, scopeFinished = 0;
     std::atomic<bool> blocked = false;
     std::atomic<UINT> invoked = 0;
-    std::mutex mutex; std::condition_variable gate; bool release = false;
+    std::mutex mutex; std::condition_variable gate;
+    bool releaseFull = false, releaseNative = false;
     ext::MenuService service(
         temp.path / L"cache",
         [&](const ext::Request &request)
@@ -4589,7 +4619,7 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
             return ext::QueryWork{
                 [&, query]() -> std::optional<ext::Reply>
                 {
-                    if (query > 1) { std::lock_guard lock(mutex); if (!release) return {}; }
+                    if (query > 1) { std::lock_guard lock(mutex); if (!releaseNative) return {}; }
                     if (mode == 0 && query == 2) return ext::Reply{false, {}, "controlled refresh failure"};
                     ext::Entry entry;
                     entry.key = "cache-proof"; entry.provider = "verb:cache-proof"; entry.registration = registration;
@@ -4605,7 +4635,7 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
             {
                 blocked = true;
                 std::unique_lock lock(mutex);
-                if (!gate.wait_for(lock, std::chrono::seconds(20), [&] { return release; }))
+                if (!gate.wait_for(lock, std::chrono::seconds(20), [&] { return releaseFull; }))
                     throw std::runtime_error("pending-cache full scan gate bound");
             }
             auto value = ext::ReadCatalogue(registry.key, false);
@@ -4621,10 +4651,12 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
         });
     struct Release
     {
-        std::mutex &mutex; std::condition_variable &gate; bool &release;
-        void Now() { { std::lock_guard lock(mutex); release = true; } gate.notify_all(); }
+        std::mutex &mutex; std::condition_variable &gate; bool &full; bool &native;
+        void Full() { { std::lock_guard lock(mutex); full = true; } gate.notify_all(); }
+        void Native() { std::lock_guard lock(mutex); native = true; }
+        void Now() { { std::lock_guard lock(mutex); full = native = true; } gate.notify_all(); }
         ~Release() { Now(); }
-    } cleanup{mutex, gate, release};
+    } cleanup{mutex, gate, releaseFull, releaseNative};
     ext::Preferences preferences;
     ext::SetCommon(preferences, registration, ext::Category::Background, true);
     service.Configure(preferences); service.Inspect();
@@ -4696,8 +4728,23 @@ void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Con
         }
     }
     std::cout << "pending-cache context=" << static_cast<int>(context) << " mode=" << mode << " scopes=" << scopes
-              << " queries=" << queries << " visible=" << items.size() << std::endl;
-    cleanup.Now();
+              << " queries=" << queries << " visible=" << items.size() << " full_first=" << fullFirst << std::endl;
+    if (mode == 0 && fullFirst)
+    {
+        const auto accepted = trace->AcceptedCatalogues();
+        cleanup.Full();
+        // Both notification generations were issued while the first refresh
+        // was held. This trace is emitted after the worker accepts each full
+        // catalogue, rather than when the reader merely enters or returns.
+        // The barrier covers completion order; it does not establish that
+        // registry-snapshot restoration has cleared the row's invalid flag.
+        PumpUntil([&] { return trace->AcceptedCatalogues() >= accepted + 2; },
+            "the worker accepts both full catalogue generations before native failure is released");
+        Expect(service.View(selected).pending && queries == 2,
+            "accepted full proof does not finish or restart the held native query");
+        cleanup.Native();
+    }
+    else cleanup.Now();
     PumpUntil([&] { return !service.View(opened).pending; }, "supervised native refresh reaches completion after release");
     if (mode == 1)
     {
@@ -5964,7 +6011,11 @@ int wmain(int argc, wchar_t **argv)
         }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-pending-background-cache")
         { for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
-            for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context); }
+            {
+                for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
+                TestPendingBackgroundCache(0, context, true);
+            }
+        }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-folder-registration-verification")
         { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
@@ -5999,7 +6050,10 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+            {
                 for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
+                TestPendingBackgroundCache(0, context, true);
+            }
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
             TestShortcutQueryRecovery();
@@ -6073,7 +6127,10 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+            {
                 for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
+                TestPendingBackgroundCache(0, context, true);
+            }
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
             TestLateInitialRegistrationAttribution();
