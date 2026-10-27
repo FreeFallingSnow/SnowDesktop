@@ -77,6 +77,12 @@
     static inline HWND inputSafetyOwnedWindow = nullptr;
     static inline unsigned inputSafetyAttachCalls = 0;
     static inline bool inputSafetyAllowForeground = false;
+    static inline unsigned inputSafetyForegroundCalls = 0, inputSafetyActiveCalls = 0, inputSafetyFocusCalls = 0;
+    static inline DWORD inputSafetyLastInputTick = 100;
+    static inline HWND inputSafetyPointerWindow = nullptr;
+    static BOOL WINAPI InputSafetyLastInput(PLASTINPUTINFO info) { info->dwTime = inputSafetyLastInputTick; return TRUE; }
+    static BOOL WINAPI InputSafetyCursor(LPPOINT point) { *point = {40, 40}; return TRUE; }
+    static HWND WINAPI InputSafetyWindowAtPoint(POINT) { return inputSafetyPointerWindow; }
     static inline decltype(&GetWindowThreadProcessId) inputSafetyOriginalThread = nullptr;
     static HWND WINAPI InputSafetyForeground() { return inputSafetyForeground; }
     static inline decltype(&InvalidateRect) inputSafetyOriginalInvalidate = nullptr;
@@ -89,8 +95,10 @@
         return accepted;
     }
     static BOOL WINAPI InputSafetyDenyForeground(HWND window)
-    { if (!inputSafetyAllowForeground) return FALSE; inputSafetyForeground = window; return TRUE; }
+    { ++inputSafetyForegroundCalls; if (!inputSafetyAllowForeground) return FALSE; inputSafetyForeground = window; return TRUE; }
     static HWND WINAPI InputSafetyDenyFocus(HWND) { return nullptr; }
+    static HWND WINAPI InputSafetyActive(HWND) { ++inputSafetyActiveCalls; return nullptr; }
+    static HWND WINAPI InputSafetyFocus(HWND) { ++inputSafetyFocusCalls; return nullptr; }
     static BOOL WINAPI InputSafetyAttach(DWORD, DWORD, BOOL) { ++inputSafetyAttachCalls; return FALSE; }
     static DWORD WINAPI InputSafetyThread(HWND window, LPDWORD process)
     {
@@ -1038,6 +1046,55 @@ end})
                 !app->floatingDockKeyboardSessionActive_ && inputSafetyForeground == control,
                 "uncompleted activation publishes fallback only after bounded observation and retires the proxy session");
 
+            // A failed request has never armed this session. A late inactive
+            // notification must not be treated as evidence of foreground loss.
+            app->floatingDockKeyboardSessionActive_ = true;
+            app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
+            check(!app->floatingDockInputDeactivated_,
+                "an unarmed session ignores inactive notifications without actual proxy foreground");
+            app->floatingDockInputDeactivated_ = false;
+            app->EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+
+            {
+                // The native HWND dispatch is real; only OS input identity,
+                // eligibility and result are controlled on this private desktop.
+                InputSafetyImport input("GetLastInputInfo", reinterpret_cast<ULONG_PTR>(&InputSafetyLastInput));
+                InputSafetyImport cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&InputSafetyCursor));
+                InputSafetyImport hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&InputSafetyWindowAtPoint));
+                inputSafetyPointerWindow = dockWindow;
+                inputSafetyOwnedWindow = proxy;
+                inputSafetyAllowForeground = true;
+                inputSafetyLastInputTick = 100;
+                dock.dockRect = dock.animationVisualRect = {0,0,200,200};
+                dock.sourceRect = {0,0,400,300};
+                const auto seedForeground = [&](bool elevated) {
+                    inputSafetyForeground = control;
+                    dock.promotionInputForeground = control;
+                    dock.promotionInputProcess = GetCurrentProcessId() + 1000;
+                    dock.promotionInputPrivilegeGap = elevated;
+                };
+                const unsigned beforePointer = inputSafetyForegroundCalls;
+                seedForeground(false);
+                SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(40,40));
+                check(inputSafetyForegroundCalls == beforePointer && inputSafetyForeground == control,
+                    "native Dock pointer input never takes foreground from an ordinary window");
+                seedForeground(true);
+                ++inputSafetyLastInputTick;
+                SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));
+                check(inputSafetyForegroundCalls == beforePointer + 1 && inputSafetyForeground == proxy &&
+                    !dock.explicitDismissAvailable,
+                    "fresh native Dock pointer input retries a missed promotion and confirms the proxy foreground");
+                seedForeground(true);
+                SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(41,40));
+                ++inputSafetyLastInputTick;
+                SendMessageW(dockWindow, WM_MOUSEMOVE, 0, MAKELPARAM(42,40));
+                check(inputSafetyForegroundCalls == beforePointer + 1,
+                    "stationary messages and later moves cannot turn one promotion retry into a foreground polling loop");
+                inputSafetyAllowForeground = false;
+                inputSafetyOwnedWindow = app->hwnd_;
+                app->EndFloatingDockKeyboardSession(FloatingDockCloseFocusPolicy::PreserveCurrent);
+            }
+
             inputSafetyForeground = control;
             app->dockWindowActivationObservations_[control].Begin(false, GetTickCount64(),
                 GetCurrentProcessId() + 1000, GetCurrentThreadId() + 1000);
@@ -1056,6 +1113,9 @@ end})
                 dock.desktopLayerForegroundWindow = control;
                 app->floatingDockVisible_ = app->floatingDockKeyboardSessionActive_ = true;
                 app->dockSystemMinimizeStartedTick_.store(GetTickCount64());
+                inputSafetyForeground = proxy;
+                app->HandleInputMessage(proxy, WM_ACTIVATEAPP, TRUE, 0);
+                inputSafetyForeground = control;
                 app->HandleInputMessage(proxy, WM_ACTIVATEAPP, FALSE, 0);
                 app->UpdateFloatingDockEdgeSwipe();
                 check(!dock.promoted && !app->floatingDockVisible_ && !app->floatingDockKeyboardSessionActive_ &&
@@ -1294,14 +1354,17 @@ end})
         {
             InputSafetyImport foreground("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
             InputSafetyImport denyForeground("SetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyForeground));
-            InputSafetyImport denyActive("SetActiveWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
-            InputSafetyImport denyFocus("SetFocus", reinterpret_cast<ULONG_PTR>(&InputSafetyDenyFocus));
+            InputSafetyImport denyActive("SetActiveWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyActive));
+            InputSafetyImport denyFocus("SetFocus", reinterpret_cast<ULONG_PTR>(&InputSafetyFocus));
             InputSafetyImport thread("GetWindowThreadProcessId", reinterpret_cast<ULONG_PTR>(&InputSafetyThread));
             InputSafetyImport gui("GetGUIThreadInfo", reinterpret_cast<ULONG_PTR>(&InputSafetyGui));
             InputSafetyImport attach("AttachThreadInput", reinterpret_cast<ULONG_PTR>(&InputSafetyAttach), true);
             inputSafetyAttachCalls = 0;
+            inputSafetyActiveCalls = inputSafetyFocusCalls = 0;
             const bool focused = app->FocusKeyboardWindow(dockWindow, true, L"Input safety denied activation");
             check(!focused && inputSafetyAttachCalls == 0, "denied host activation must return without attaching a foreign input queue");
+            check(inputSafetyActiveCalls == 0 && inputSafetyFocusCalls == 0,
+                "denied global foreground must not mutate local active or keyboard focus state");
             (void)app->FocusKeyboardWindow(popupWindow, true, L"Unavailable popup activation");
             check(!IsWindowVisible(popupWindow), "activation must not revive a popup whose presentation is unavailable");
             inputSafetyAllowForeground = true;
