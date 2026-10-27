@@ -967,12 +967,15 @@ end})
                     throw std::runtime_error("read dismiss-rim pixels");
                 D2D1_MAPPED_RECT map{};
                 if (FAILED(readable->Map(D2D1_MAP_OPTIONS_READ,&map))) throw std::runtime_error("map dismiss-rim pixels");
+                const std::size_t previousOldLost = oldLost, previousActualLost = actualLost;
                 for (int y=0;y<300;++y) for (int x=0;x<400;++x)
                     if (map.bits[static_cast<std::size_t>(y)*map.pitch+static_cast<std::size_t>(x)*4+3])
                     {
                         if (!PtInRegion(exact,x,y)) ++oldLost;
                         if (!PtInRegion(observed,x,y)) ++actualLost;
                     }
+                std::cout << "Dismiss rim size=" << size << ": exact fence lost="
+                    << oldLost - previousOldLost << "; actual fence lost=" << actualLost - previousActualLost << '\n';
                 readable->Unmap(); DeleteObject(exact); DeleteObject(observed);
                 ++offset;
             }

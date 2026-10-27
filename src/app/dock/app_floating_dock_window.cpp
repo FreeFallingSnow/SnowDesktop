@@ -1175,11 +1175,12 @@ bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
     if (!region) return false;
     if (host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect))
     {
-        // The binary GDI ellipse needs an outward fence for the D2D
-        // antialiased stroke. Keep the actual hit circle unchanged.
+        // D2D alpha supplies the visible circular edge. Reserve its complete
+        // bounds instead of rasterizing another binary ellipse over the AA rim.
+        // Hit testing still uses the original logical circle.
         RECT button = snowdesktop::floating_dock_rules::ExpandForBorderOverdraw(host.explicitDismissRect);
         OffsetRect(&button, -host.sourceRect.left, -host.sourceRect.top);
-        HRGN buttonRegion = CreateEllipticRgn(button.left, button.top, button.right, button.bottom);
+        HRGN buttonRegion = CreateRectRgnIndirect(&button);
         const bool combined = buttonRegion && CombineRgn(region, region, buttonRegion, RGN_OR) != ERROR;
         if (buttonRegion) DeleteObject(buttonRegion);
         if (!combined) { DeleteObject(region); return false; }
