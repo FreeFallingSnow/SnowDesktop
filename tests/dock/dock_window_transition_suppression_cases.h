@@ -95,6 +95,10 @@ void Run(Check report)
         dock_window_peek_cases::foreground = foreground;
         dock_window_peek_cases::escape = false;
         NativeImportPatch pointer("TrackMouseEvent", reinterpret_cast<ULONG_PTR>(&dock_window_peek_cases::TrackPointer));
+        dock_window_peek_cases::pointerWindow = nullptr;
+        dock_window_peek_cases::pointerPosition = {-32000, -32000};
+        NativeImportPatch cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&dock_window_peek_cases::Cursor));
+        NativeImportPatch hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&dock_window_peek_cases::WindowAtPointer));
         NativeImportPatch keys("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&dock_window_peek_cases::KeyState));
         NativeImportPatch focus("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&dock_window_peek_cases::Foreground));
         events.clear();
@@ -116,11 +120,11 @@ void Run(Check report)
             preview.Show({{source, L"system transition"}}, {0, 0, 30, 30}, DockPosition::Bottom, false);
             SetWindowPos(preview.GetWindow(), nullptr, -16000, -16000, 0, 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            SendMessageW(preview.GetWindow(), WM_MOUSEMOVE, 0, dock_window_peek_cases::ContentPoint(preview.GetWindow()));
+            dock_window_peek_cases::SendPointer(preview.GetWindow(), WM_MOUSEMOVE, 0, dock_window_peek_cases::ContentPoint(preview.GetWindow()));
             check(dock_window_peek_cases::Wait([] { return !events.empty(); }) &&
                 events == std::vector<std::string>{"peek"}, "the popup's dwell changes no transition setting");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, dock_window_peek_cases::ContentPoint(preview.GetWindow()));
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, dock_window_peek_cases::ContentPoint(preview.GetWindow()));
+            dock_window_peek_cases::SendPointer(preview.GetWindow(), WM_LBUTTONDOWN, 0, dock_window_peek_cases::ContentPoint(preview.GetWindow()));
+            dock_window_peek_cases::SendPointer(preview.GetWindow(), WM_LBUTTONUP, 0, dock_window_peek_cases::ContentPoint(preview.GetWindow()));
             check(dock_window_peek_cases::Wait([&] { return preview.IsCleared(); }) && ordinary == 0 && committed == 1 &&
                 events == std::vector<std::string>{"peek", "suppress", "restore", "stop", "release"},
                 "the real popup click commits once with scoped native-transition suppression and cleanup");

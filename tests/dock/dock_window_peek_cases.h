@@ -23,6 +23,26 @@ inline bool failBegin = false;
 inline bool failStop = false;
 inline bool escape = false;
 inline HWND foreground = nullptr;
+inline HWND pointerWindow = nullptr;
+inline POINT pointerPosition{-32000, -32000};
+inline BOOL WINAPI Cursor(POINT* point) { *point = pointerPosition; return TRUE; }
+inline HWND WINAPI WindowAtPointer(POINT) { return pointerWindow; }
+inline LRESULT SendPointer(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    // Native reflow now samples the pointer again after posted dispatch. Keep
+    // that OS boundary consistent with the mouse input this fixture supplies.
+    if (message == WM_MOUSELEAVE)
+    {
+        if (pointerWindow == window) { pointerWindow = nullptr; pointerPosition = {-32000, -32000}; }
+    }
+    else if (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST)
+    {
+        pointerWindow = window;
+        pointerPosition = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ClientToScreen(window, &pointerPosition);
+    }
+    return SendMessageW(window, message, wp, lp);
+}
 
 inline HRESULT WINAPI Activate(BOOL active, HWND target, HWND caller, UINT trigger, const RECT* rect)
 {
@@ -85,7 +105,11 @@ void Run(Check report)
         ShowWindow(second.window, SW_SHOWMINNOACTIVE);
         const HWND actualForeground = GetForegroundWindow();
         foreground = actualForeground;
+        pointerWindow = nullptr;
+        pointerPosition = {-32000, -32000};
         ImportPatch pointer("TrackMouseEvent", reinterpret_cast<ULONG_PTR>(&TrackPointer));
+        ImportPatch cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&Cursor));
+        ImportPatch hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&WindowAtPointer));
         ImportPatch keys("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&KeyState));
         ImportPatch focus("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&Foreground));
         const auto nativeForeground = reinterpret_cast<HWND(WINAPI*)()>(focus.original);
@@ -142,7 +166,7 @@ void Run(Check report)
                 RECT card{};
                 const HWND popup = preview.GetWindows().at(index);
                 GetClientRect(popup, &card);
-                SendMessageW(popup, WM_MOUSEMOVE, 0,
+                SendPointer(popup, WM_MOUSEMOVE, 0,
                     MAKELPARAM(card.right / 2, card.bottom * 2 / 3));
             };
             const auto actionPoint = [&](bool pin) {
@@ -167,26 +191,26 @@ void Run(Check report)
             hover(1);
             check(Peeking(second.window) && IsIconic(second.window),
                 "moving to a second thumbnail switches immediately without restoring its source");
-            SendMessageW(preview.GetWindows()[0], WM_MOUSELEAVE, 0, 0);
+            SendPointer(preview.GetWindows()[0], WM_MOUSELEAVE, 0, 0);
             check(Peeking(second.window), "a late leave from the previous popup cannot cancel its successor");
             const auto& popups = preview.GetWindows();
             check(!activated && !closed && !sourceHasFocus() &&
                 std::find(popups.begin(), popups.end(), nativeForeground()) == popups.end(),
                 "hover and switching never invoke click callbacks or give an owned source or popup foreground");
-            SendMessageW(preview.GetWindows()[1], WM_MOUSELEAVE, 0, 0);
+            SendPointer(preview.GetWindows()[1], WM_MOUSELEAVE, 0, 0);
             check(Wait([&] { return !calls.back().active; }), "leaving the active thumbnail restores the desktop");
             show();
             hover(1);
             check(Wait([&] { return Peeking(second.window); }), "returning to the panel starts a fresh Peek");
 
             const POINT pin = actionPoint(true);
-            SendMessageW(preview.GetWindow(), WM_MOUSEMOVE, 0, MAKELPARAM(pin.x, pin.y));
+            SendPointer(preview.GetWindow(), WM_MOUSEMOVE, 0, MAKELPARAM(pin.x, pin.y));
             check(!calls.back().active, "hovering the pin ends the full-window Peek");
             const size_t pinCalls = calls.size();
             Wait([] { return false; }, 450);
             check(calls.size() == pinCalls, "a pin hover cannot schedule another Peek");
             const POINT close = actionPoint(false);
-            SendMessageW(preview.GetWindow(), WM_MOUSEMOVE, 0, MAKELPARAM(close.x, close.y));
+            SendPointer(preview.GetWindow(), WM_MOUSEMOVE, 0, MAKELPARAM(close.x, close.y));
             Wait([] { return false; }, 450);
             check(calls.size() == pinCalls, "a close-button hover cannot schedule Peek");
 
@@ -242,9 +266,9 @@ void Run(Check report)
             calls.clear();
             show();
             hover(0);
-            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, ContentPoint(preview.GetWindow()));
+            SendPointer(preview.GetWindow(), WM_LBUTTONDOWN, 0, ContentPoint(preview.GetWindow()));
             Wait([] { return false; }, 450);
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
+            SendPointer(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
             check(calls.empty() && activated == first.window && !activatedFromPeek,
                 "clicking before the delay cancels pending Peek and preserves the original click path");
             activated = nullptr;
@@ -252,9 +276,9 @@ void Run(Check report)
             show();
             hover(0);
             check(Wait([&] { return Peeking(first.window); }), "click fixture begins Peek");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, ContentPoint(preview.GetWindow()));
+            SendPointer(preview.GetWindow(), WM_LBUTTONDOWN, 0, ContentPoint(preview.GetWindow()));
             check(Peeking(first.window), "left-button down retains the preview for a seamless click handoff");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
+            SendPointer(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
             check(activatedFromPeek == first.window && !activated && !closed && peekHeldForHandoff &&
                     Peeking(first.window) && !preview.IsVisible() && IsIconic(first.window),
                 "an active Peek selects the nonanimated callback and remains visible through asynchronous restoration");
@@ -267,7 +291,7 @@ void Run(Check report)
             show();
             hover(0);
             check(Wait([&] { return Peeking(first.window); }), "unresponsive-restore fixture begins Peek");
-            SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
+            SendPointer(preview.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(preview.GetWindow()));
             check(Wait([&] { return preview.IsCleared(); }, 2000) && IsIconic(first.window),
                 "an uncompleted activation has a bounded Peek handoff without fabricating restoration");
             ShowWindow(first.window, SW_SHOWNOACTIVATE);
@@ -275,7 +299,7 @@ void Run(Check report)
             hover(1);
             check(Wait([&] { return Peeking(second.window); }), "middle-click fixture begins Peek");
             endedBeforeAction = false;
-            SendMessageW(preview.GetWindows()[1], WM_MBUTTONUP, 0, ContentPoint(preview.GetWindows()[1]));
+            SendPointer(preview.GetWindows()[1], WM_MBUTTONUP, 0, ContentPoint(preview.GetWindows()[1]));
             check(closed == second.window && endedBeforeAction && !Peeking(second.window) && preview.IsVisible(),
                 "middle click ends Peek before dispatching close while retaining the multi-window preview");
 
@@ -322,9 +346,9 @@ void Run(Check report)
             unavailable.Show({{first.window, L"fallback"}}, {0, 0, 30, 30}, DockPosition::Bottom, false);
             SetWindowPos(unavailable.GetWindow(), nullptr, -16000, -16000, 0, 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            SendMessageW(unavailable.GetWindow(), WM_MOUSEMOVE, 0, ContentPoint(unavailable.GetWindow()));
+            SendPointer(unavailable.GetWindow(), WM_MOUSEMOVE, 0, ContentPoint(unavailable.GetWindow()));
             Wait([] { return false; }, 450);
-            SendMessageW(unavailable.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(unavailable.GetWindow()));
+            SendPointer(unavailable.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(unavailable.GetWindow()));
             check(calls.empty() && fallbackActivated == first.window && unavailable.IsCleared(),
                 "missing Peek support retains ordinary thumbnail activation and cleanup");
         }
