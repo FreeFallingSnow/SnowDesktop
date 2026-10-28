@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "modern_menu.h"
+#include "menu_control_snapshot.h"
 #include "ui/input/text_input_state.h"
 #include "platform/foreground_fullscreen.h"
 #include "ui/render/smooth_corner_geometry.h"
@@ -22,6 +23,8 @@
 #include <memory>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 
 namespace snowdesktop::modern_menu
 {
@@ -36,6 +39,7 @@ constexpr UINT_PTR kTextCaretTimer = 3;
 constexpr UINT kTextCaretBlinkMs = 530;
 constexpr UINT kCancelMessage = WM_APP + 0x311;
 std::atomic<HWND> gActiveRootMenu{ nullptr };
+std::atomic<std::uint64_t> gControlSession{0};
 
 bool IsWindowAbove(HWND upper, HWND lower)
 {
@@ -103,6 +107,7 @@ using DwmExtendFrameIntoClientAreaFn = HRESULT(WINAPI*)(
     HWND, const MARGINS*);
 
 class MenuController;
+thread_local MenuController* gControlController = nullptr;
 
 struct Popup
 {
@@ -788,6 +793,85 @@ public:
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
         DeleteObject(bitmap);
+    }
+
+    std::vector<ControlSnapshot> Controls() const
+    {
+        std::vector<ControlSnapshot> result;
+        if (done_ || closing_) return result;
+        std::vector<std::vector<std::string>> itemIds;
+        for (const auto& holder : popups_)
+        {
+            const auto& popup = *holder;
+            if (!popup.items || !IsWindowVisible(popup.hwnd)) break;
+            const auto depth = static_cast<std::size_t>(popup.depth);
+            if (depth != itemIds.size()) break;
+            std::string parent;
+            if (depth && popup.parentItem >= 0 && static_cast<std::size_t>(popup.parentItem) < itemIds[depth - 1].size())
+                parent = itemIds[depth - 1][static_cast<std::size_t>(popup.parentItem)];
+            if (depth && parent.empty()) break;
+            const auto paneId = depth ? parent + "/submenu" : "menu/" + std::to_string(controlSession_) + "/root";
+            ControlSnapshot pane;
+            pane.id = paneId; pane.parent = parent; pane.window = popup.hwnd; pane.pane = true; pane.depth = popup.depth;
+            pane.name = L"Menu"; pane.bounds = {popup.panelScreenOrigin.x, popup.panelScreenOrigin.y,
+                popup.panelScreenOrigin.x + popup.panelWidth, popup.panelScreenOrigin.y + popup.panelHeight};
+            pane.clip = pane.bounds; result.push_back(std::move(pane));
+            const LONG originX = popup.panelScreenOrigin.x - shadowSize_;
+            const LONG originY = popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset;
+            const RECT viewport{popup.panelScreenOrigin.x, popup.panelScreenOrigin.y + panelPadding_ + popup.scrollTopBand,
+                popup.panelScreenOrigin.x + popup.panelWidth,
+                popup.panelScreenOrigin.y + popup.panelHeight - panelPadding_ - popup.scrollBottomBand};
+            std::vector<std::string> ids(popup.items->size());
+            std::unordered_map<std::string, unsigned> occurrences;
+            for (std::size_t index = 0; index < popup.items->size() && index < popup.itemRects.size(); ++index)
+            {
+                const auto& item = (*popup.items)[index];
+                if (item.separator) continue;
+                std::uint64_t labelHash = 14695981039346656037ULL;
+                for (const auto character : item.label) { labelHash ^= static_cast<std::uint16_t>(character); labelHash *= 1099511628211ULL; }
+                const auto key = item.command ? "command/" + std::to_string(item.command) : "label/" + std::to_string(labelHash);
+                ControlSnapshot control;
+                control.id = paneId + "/" + key + "/" + std::to_string(occurrences[key]++); ids[index] = control.id;
+                control.parent = paneId; control.window = popup.hwnd; control.bounds = popup.itemRects[index];
+                OffsetRect(&control.bounds, originX - (item.horizontalScrollAction ? popup.horizontalScrollOffset : 0), originY);
+                control.clip = viewport;
+                if (item.horizontalScrollAction)
+                {
+                    auto horizontal = popup.horizontalScrollRect; OffsetRect(&horizontal, originX, originY);
+                    IntersectRect(&control.clip, &control.clip, &horizontal);
+                }
+                control.name = item.label; control.value = item.inputText;
+                control.textInput = item.textInput; control.enabled = item.enabled; control.checked = item.checked;
+                control.hasChildren = !item.children.empty(); control.depth = popup.depth; control.index = index;
+                control.expanded = depth + 1 < popups_.size() && popups_[depth + 1]->parentItem == static_cast<int>(index);
+                control.focused = item.textInput ? IsTextInputFocused(popup, item)
+                    : (popup.depth == activeDepth_ && popup.keyboardItem == static_cast<int>(index));
+                control.selected = popup.hoveredItem == static_cast<int>(index) ||
+                    (popup.depth == activeDepth_ && popup.keyboardItem == static_cast<int>(index));
+                result.push_back(std::move(control));
+            }
+            itemIds.push_back(std::move(ids));
+        }
+        return result;
+    }
+
+    bool SetControlValue(std::string_view id, std::wstring_view value)
+    {
+        if (value.size() > 96) return false; // Same UTF-16 limit as normal menu editing.
+        for (const auto& control : Controls())
+        {
+            if (control.id != id || !control.textInput || !control.enabled || control.depth < 0 ||
+                static_cast<std::size_t>(control.depth) >= popups_.size()) continue;
+            auto& popup = *popups_[static_cast<std::size_t>(control.depth)];
+            if (!popup.items || control.index >= popup.items->size()) return false;
+            auto& item = (*popup.items)[control.index];
+            FocusTextInput(popup, static_cast<int>(control.index), item.inputText.size(), false);
+            textInputSelectionAnchor_ = 0;
+            if (ReplaceTextSelection(item, std::wstring(value))) NotifyTextInputChanged(popup, item);
+            else Render(popup);
+            return true;
+        }
+        return false;
     }
 
 private:
@@ -2921,6 +3005,7 @@ private:
     }
 
     std::vector<Item> rootItems_;
+    const std::uint64_t controlSession_ = ++gControlSession;
     Options options_;
     Appearance effectiveAppearance_ = Appearance::FollowSystem;
     bool lightTheme_ = true;
@@ -2964,7 +3049,21 @@ private:
 Result Show(const std::vector<Item>& items, const Options& options)
 {
     MenuController controller(items, options);
+    struct ControlScope
+    {
+        MenuController* previous;
+        ~ControlScope() { gControlController = previous; }
+    } scope{std::exchange(gControlController, &controller)};
     return controller.Run();
+}
+
+std::vector<ControlSnapshot> ActiveControls()
+{
+    return gControlController ? gControlController->Controls() : std::vector<ControlSnapshot>{};
+}
+bool SetControlText(std::string_view id, std::wstring_view value)
+{
+    return gControlController && gControlController->SetControlValue(id, value);
 }
 
 bool IsActive()

@@ -101,6 +101,7 @@ Value Describe()
     add("ui.perform", true, "{elementId:string,action:string,ifSnapshotRevision:string,targetId?:string,value?:string,number?:number,durationMs?:integer,showCursor?:boolean}");
     add("ui.pointerState", false, "{includeTrace?:boolean}");
     add("ui.cancelPointer", true, "{}");
+    add("ui.dismissMenu", true, "{}");
     add("capture.monitors", false, "{}");
     add("capture.screenshot", true, "{monitorId?:string,includeSystemCursor?:boolean}");
     add("capture.state", false, "{id:string}");
@@ -119,7 +120,7 @@ Value Describe()
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
         {"capabilities", Object({{"elements", Number(1)}, {"controlledPointer", Number(1)},
-            {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}})}});
+            {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler) noexcept

@@ -4,6 +4,7 @@
 #include "layout/widget_displacement.h"
 #include "platform/control/control_protocol.h"
 #include "data/data_paths.h"
+#include "ui/menu/modern_menu.h"
 
 namespace
 {
@@ -116,6 +117,14 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         return CaptureValue(applicationControlRuntime_->capture.Current());
     }
     if (method == "ui.snapshot") { Fields(params, {}); return ApplicationControlElements().ToJson(); }
+    if (method == "ui.dismissMenu")
+    {
+        Fields(params, {});
+        if (applicationControlRuntime_->pointer.Current().status == "running")
+            throw Error("busy", "Wait for pointer playback before dismissing its menu");
+        snowdesktop::modern_menu::DismissActive();
+        return Object({{"status", String("accepted")}});
+    }
     if (method == "ui.pointerState")
     {
         Fields(params, {"includeTrace"});
@@ -141,6 +150,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             {"desktopVisible", Boolean(customDesktopVisible_)},
             {"presentationReady", Boolean(!desktopStartupPresentationPending_)},
             {"navigationOpen", Boolean(quickNavigationOpen_)},
+            {"menuOpen", Boolean(snowdesktop::modern_menu::IsActive())},
             {"floatingDockVisible", Boolean(floatingDockVisible_)},
             {"popupWidgetId", String(popupId)},
             {"popupAnimating", Boolean(popupAnimation_.IsAnimating())},

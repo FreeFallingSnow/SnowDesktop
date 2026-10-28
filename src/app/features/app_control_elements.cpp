@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "platform/control/control_elements.h"
+#include "ui/menu/menu_control_snapshot.h"
 #include "widget/view/widget_accessibility_snapshot.h"
 #include <cmath>
 #include <unordered_set>
@@ -34,9 +35,9 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
     using namespace snowdesktop::control;
     ElementSnapshot result;
     result.coveredSurfaces = {"desktop-items", "native-widget-frames", "native-widget-members",
-        "native-widget-search", "dock-items", "quick-navigation", "lua-accessibility"};
+        "native-widget-search", "dock-items", "quick-navigation", "lua-accessibility", "modern-menus"};
     result.pendingSurfaces = {"native-widget-extra-chrome-and-category-tabs", "popup-extra-controls",
-        "context-menus", "settings-window", "system-dialogs-and-external-applications"};
+        "legacy-system-menus", "settings-window", "system-dialogs-and-external-applications"};
     const auto screen = [&](RECT rect) { OffsetRect(&rect, virtualLeft_, virtualTop_); return rect; };
     const RECT desktop = screen({0, 0, virtualWidth_, virtualHeight_});
     const auto add = [&](std::string id, std::string parent, std::string surface, std::string role,
@@ -226,6 +227,25 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
                 result.elements.push_back(std::move(element));
             }
         }
+    }
+    for (const auto& control : snowdesktop::modern_menu::ActiveControls())
+    {
+        Element element;
+        element.id = control.id; element.parent = control.parent; element.surface = "menu";
+        element.role = control.pane ? "menu" : control.textInput ? "edit" : "menuitem";
+        element.name = WideToUtf8(control.name); element.value = WideToUtf8(control.value);
+        element.bounds = control.bounds; element.clip = control.clip; element.window = control.window;
+        element.enabled = control.enabled; element.visible = IsWindowVisible(control.window) != FALSE;
+        element.focused = control.focused; element.selected = control.selected;
+        element.actions = control.pane ? std::vector<std::string>{"hover", "scroll"} : std::vector<std::string>{"hover", "click"};
+        if (!control.pane) element.checked = control.checked;
+        if (control.hasChildren) element.expanded = control.expanded;
+        if (control.textInput)
+        {
+            element.backend = ElementBackend::MenuText; element.nodeKey = control.id;
+            element.actions.push_back("setValue");
+        }
+        result.elements.push_back(std::move(element));
     }
     result.Finish(); return result;
 }

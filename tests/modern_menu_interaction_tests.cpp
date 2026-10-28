@@ -1,4 +1,5 @@
 #include "ui/menu/modern_menu.h"
+#include "ui/menu/menu_control_snapshot.h"
 #include "app/menus/sort_menu.h"
 #include "app/menus/tray_context_menu_placement.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
@@ -16,6 +17,7 @@
 #include <iostream>
 #include <utility>
 #include <vector>
+#include <unordered_set>
 
 namespace
 {
@@ -1283,6 +1285,78 @@ void CheckSortRows(HWND owner, bool negativeControl)
     gMenuScript = {};
 }
 
+// Exercise the production controller on this harness's isolated desktop. A
+// catalog query must never execute a command, and semantic text must retain the
+// ordinary undo/change-callback path rather than merely changing its snapshot.
+void CheckControlSnapshots(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    Item disabled; disabled.command = 9400; disabled.label = L"Disabled"; disabled.enabled = false;
+    Item input; input.command = 9401; input.label = L"Search"; input.textInput = true; input.inputText = L"initial";
+    Item group; group.command = 9402; group.label = L"Group";
+    Item leaf; leaf.command = 9403; leaf.label = L"Leaf"; group.children.push_back(leaf);
+    Options options; options.owner = owner; options.anchor = {120, 120}; options.appearance = Appearance::OpaqueLight;
+    unsigned commands = 0, changes = 0;
+    options.onCommand = [&](UINT, auto&) { ++commands; return false; };
+    options.onTextChanged = [&](UINT command, const std::wstring&, auto&) {
+        Expect(command == 9401, "semantic menu edit uses the original command callback"); ++changes;
+    };
+    std::string rootId, inputId;
+    gDriveMode = DriveMode::Script; gInputPosted = false; gWatchdogFired = false;
+    gMenuScript = [&](HWND root) {
+        auto controls = ActiveControls();
+        Expect(controls.size() == 4, "catalog includes root, disabled item, editor and cascade parent");
+        std::unordered_set<std::string> ids;
+        for (const auto& control : controls)
+        {
+            Expect(ids.insert(control.id).second, "menu controls have distinct identities");
+            RECT window{}; Expect(GetWindowRect(control.window, &window) != FALSE, "menu control owns a live window");
+            RECT visible{}; Expect(IntersectRect(&visible, &control.bounds, &control.clip) != FALSE, "fixture controls have visible clipped hit areas");
+            POINT center{visible.left + (visible.right - visible.left) / 2, visible.top + (visible.bottom - visible.top) / 2};
+            Expect(PtInRect(&window, center) != FALSE, "physical menu hit point lies in its actual HWND");
+            if (control.pane) rootId = control.id;
+            if (control.textInput) inputId = control.id;
+            if (control.name == L"Disabled") Expect(!control.enabled, "disabled menu state is preserved");
+        }
+        Expect(commands == 0 && changes == 0, "querying controls has no command or edit side effects");
+        SendMessageW(root, WM_KEYDOWN, VK_END, 0); SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+        controls = ActiveControls();
+        const auto parent = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Group"; });
+        Expect(parent != controls.end() && parent->expanded, "opening a real cascade updates expanded state");
+        const auto child = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Leaf"; });
+        Expect(child != controls.end() && child->parent == parent->id + "/submenu", "cascade nodes retain their real parent chain");
+        Expect(SetControlText(inputId, L"固定查询"), "semantic text reaches the real menu editor");
+        controls = ActiveControls();
+        const auto edited = std::find_if(controls.begin(), controls.end(), [&](const auto& value) { return value.id == inputId; });
+        Expect(edited != controls.end() && edited->value == L"固定查询" && changes == 1 && commands == 0,
+            "semantic editor value and ordinary callback agree without submission");
+        BYTE saved[256]{}, keys[256]{};
+        Expect(GetKeyboardState(saved) != FALSE, "save isolated thread keyboard state"); keys[VK_CONTROL] = 0x80;
+        Expect(SetKeyboardState(keys) != FALSE, "set only isolated thread Ctrl state");
+        SendMessageW(root, WM_KEYDOWN, 'Z', 0);
+        Expect(SetKeyboardState(saved) != FALSE, "restore isolated thread keyboard state");
+        controls = ActiveControls();
+        const auto undone = std::find_if(controls.begin(), controls.end(), [&](const auto& value) { return value.id == inputId; });
+        Expect(undone != controls.end() && undone->value == L"initial" && changes == 2,
+            "normal Ctrl+Z undoes semantic replacement through the edit callback");
+        Expect(!SetControlText(inputId, std::wstring(97, L'x')), "semantic input respects native UTF-16 limit");
+        DismissActive();
+    };
+    SetTimer(owner, kDriveTimer, 10, nullptr); SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto result = Show({disabled, input, group}, options); KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired && !result.command && commands == 0 && ActiveControls().empty(), "dismissal retires control bindings without invoking an item");
+    gInputPosted = false;
+    gMenuScript = [&](HWND) {
+        const auto controls = ActiveControls();
+        Expect(!controls.empty() && controls.front().id != rootId, "reopening creates a new menu session identity");
+        Expect(!SetControlText(inputId, L"stale"), "old text binding cannot modify a reopened menu"); DismissActive();
+    };
+    SetTimer(owner, kDriveTimer, 10, nullptr); SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    (void)Show({disabled, input, group}, options); KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired && changes == 2 && commands == 0, "stale binding rejection has no callback side effects");
+    gMenuScript = {}; gDriveMode = DriveMode::Cascade; gInputPosted = false;
+}
+
 void RunTrayFocusWindowTests();
 void RunNativeTrayMenuLayerTests();
 
@@ -1384,6 +1458,7 @@ int wmain(int argc, wchar_t** argv)
     SetForegroundWindow(owner);
     SetFocus(owner);
 
+    CheckControlSnapshots(owner);
     CheckTrayFlyoutMenuHeight(owner);
     if (argc == 2 && std::wstring_view(argv[1]) == L"--tray-placement-only")
     {

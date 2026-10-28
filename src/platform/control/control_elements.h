@@ -9,7 +9,7 @@
 
 namespace snowdesktop::control
 {
-enum class ElementBackend { Pointer, Lua, NavigationSearch, WidgetSearch };
+enum class ElementBackend { Pointer, Lua, NavigationSearch, WidgetSearch, MenuText };
 
 struct Element
 {

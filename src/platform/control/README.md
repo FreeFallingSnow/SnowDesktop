@@ -60,7 +60,7 @@ state separately. An operation may fail after delivering part of its input.
 Current catalogs cover desktop items, common native widget frames/member items
 and search, visible Dock entries, Quick Navigation and Lua accessibility nodes.
 The response explicitly lists pending surfaces: additional native chrome/tabs,
-popup-specific controls, context menus, settings and external/system windows.
+popup-specific controls, legacy system menus, settings and external/system windows.
 `coveredSurfaces` identifies available adapters, not exhaustive acceptance of
 every control or every visual state. Pointer motion follows current target
 geometry and uses the same procedural cursor renderer intended for later
@@ -97,6 +97,27 @@ keeping UI/input dispatch available. Capture can run while pointer playback is
 active. The format is SDR BGRA8/PNG; HDR tone mapping and video export are not part
 of this extension. Frame acquisition times out after five seconds. Unsupported
 cursor exclusion fails explicitly instead of silently including a system cursor.
+
+## Modern menus
+
+`capabilities.menus:1` adds visible modern popup menus to the element catalog.
+`surface:"menu"` elements include each popup pane, ordinary/quick/inline commands,
+submenu entries and text fields. Bounds and clipping use the menu controller's
+actual painted item rectangles, scroll offsets and viewport. IDs include a menu
+session and command/model reference; take a new snapshot after filtering or
+opening a cascade. Closing and reopening a menu creates a new session identity.
+
+Use advertised `click` and `hover` actions for menu items, and `scroll` on a popup
+pane. Submenu entries expose `expanded`; wait for the cascade before querying its
+items. Menu text fields support `setValue` through the same editing/history/change
+callback path as normal input, with the existing limit of 96 UTF-16 code units.
+This does not submit the field or invoke a command.
+
+`ui.dismissMenu {}` closes the active modern menu without selecting a command.
+Wait for pointer playback to finish first; a running playback returns `busy`.
+`app.getState.menuOpen` indicates whether a modern menu is still active. Query and
+pointer dispatch continue through the menu's existing nested event pump. Native
+system-menu fallbacks and external dialogs remain outside this menu adapter.
 
 ## Connection
 

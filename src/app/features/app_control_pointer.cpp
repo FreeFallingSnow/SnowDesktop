@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app_control_runtime.h"
 #include "platform/control/control_elements.h"
+#include "ui/menu/menu_control_snapshot.h"
 #include "widget/view/widget_accessibility_snapshot.h"
 #include <cmath>
 
@@ -121,8 +122,14 @@ snowdesktop::control::Value DesktopApp::PerformApplicationControlElement(const s
         }, error)) throw Error(error.empty() ? "pointer_unavailable" : error, "Controlled pointer could not start");
         return ApplicationControlPointerState(false);
     }
-    if (HasActiveContextMenuSession()) throw Error("busy", "A context menu is active");
-    if (action == "setValue" && element.backend == ElementBackend::NavigationSearch)
+    if (HasActiveContextMenuSession() && element.backend != ElementBackend::MenuText)
+        throw Error("busy", "A context menu is active");
+    if (action == "setValue" && element.backend == ElementBackend::MenuText)
+    {
+        if (!snowdesktop::modern_menu::SetControlText(element.nodeKey, InputText(params)))
+            throw Error("action_rejected", "Menu editor rejected the value or no longer exists");
+    }
+    else if (action == "setValue" && element.backend == ElementBackend::NavigationSearch)
     {
         const auto text = InputText(params);
         if (!IsWindow(quickNavigationSearchEdit_)) throw Error("not_ready", "Navigation editor is unavailable");

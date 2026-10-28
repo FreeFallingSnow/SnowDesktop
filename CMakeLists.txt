@@ -630,6 +630,7 @@ set(SNOWDESKTOP_SOURCES
     src/ui/menu/menu_icon_render.cpp
     src/ui/menu/menu_builtin_icon.cpp
     src/ui/menu/modern_menu.cpp
+    src/ui/menu/menu_control_snapshot.h
     src/navigation/search_match.cpp
     src/navigation/everything_search.cpp
     src/navigation/quick_navigation_everything_search.cpp

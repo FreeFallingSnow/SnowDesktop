@@ -53,6 +53,8 @@ void Protocol()
         "clients can negotiate element and pointer capabilities without changing protocol v1");
     Check(capabilities->Find("monitorCapture") && capabilities->Find("monitorCapture")->number == 1,
         "clients can discover the optional monitor-capture extension");
+    Check(capabilities->Find("menus") && capabilities->Find("menus")->number == 1,
+        "clients can discover visible modern-menu controls");
     Check(mutations == 1, "discovery is independent of UI mutations");
     const auto failure = Parse(Dispatch(R"({"jsonrpc":"2.0","id":"old","method":"widgets.place"})",
         [](std::string_view, const Value&) -> Value { throw Error("stale_layout", "refresh required"); }));
