@@ -1498,6 +1498,8 @@ public:
     void ClearInteractionHover(std::string_view surface = {});
     std::string InteractionCursorAt(const std::wstring& widgetId,
         int x, int y, std::string_view surface = "desktop") const;
+    bool HasInteractionTargetAt(const std::wstring& widgetId,
+        int x, int y, std::string_view surface = "desktop") const;
     bool RuntimeCanWriteWidgetStorage(
         const std::wstring& widgetId) const;
 

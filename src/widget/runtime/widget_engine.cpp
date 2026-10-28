@@ -26524,6 +26524,16 @@ std::string WidgetEngine::InteractionCursorAt(
         static_cast<float>(x), static_cast<float>(y));
 }
 
+bool WidgetEngine::HasInteractionTargetAt(
+    const std::wstring& widgetId, int x, int y,
+    std::string_view surface) const
+{
+    const int index = FindWidget(widgetId);
+    return index >= 0 &&
+        !InteractionRegionsForSurface(widgets_[index], surface).TargetAt(
+            static_cast<float>(x), static_cast<float>(y)).empty();
+}
+
 bool WidgetEngine::RuntimeCanWriteWidgetStorage(
     const std::wstring& widgetId) const
 {

@@ -235,7 +235,8 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   并保留焦点与滚动状态。同一弹窗按组件实例、surface、title 和 popover 的 anchorKey 识别；
   仅尺寸或位置变化不构成新弹窗。不同标题、锚点或 surface 仍会切换内容。普通非手势调用
   保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。点击非模态面板所属组件的
-  内容区时，宿主先交给组件处理；其他外部点击和 Escape 继续关闭。关闭中的相同桌面请求
+  有效交互元素时，宿主先交给组件处理；点击所属组件的空白区域也按外部点击处理，遵守
+  `dismissOnOutside`；其他外部点击和 Escape 继续关闭。关闭中的相同桌面请求
   不会反向重播打开动画。此行为纠正保持 API/schema v2，不新增 feature；较早构建仍可能重开。
   `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，悬停时
   由宿主在左下角显示紧凑移动手柄、右下角显示缩放手柄，其余桌面 surface 均由组件内容和

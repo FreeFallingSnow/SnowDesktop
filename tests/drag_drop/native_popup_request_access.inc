@@ -107,9 +107,8 @@
         check(!PtInRect(&popup, press) && app.HitTestStandaloneWidget(0, press) == WidgetHit::Content,
             "fixture click must hit owning component content outside its popup");
         app.OnLeftButtonDown(MK_LBUTTON, MAKELPARAM(press.x, press.y));
-        check(app.luaWidgetPanelAnimation_.IsInteractive() &&
-            app.luaWidgetPanelRequest_.widgetId == owner.id,
-            "owner opener press must not dismiss popup before its release action reuses it");
+        check(!app.luaWidgetPanelAnimation_.IsInteractive(),
+            "owner content without a live interaction target must dismiss its popup");
         ReleaseCapture();
         app.mouseDown_ = false;
         app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -587,7 +586,13 @@
                 view.column({key="body",height=1800,padding=12,children={
                     view.text({key="title",text="Output devices",height=40})}})}})
             end
-            return widget.define({apiVersion=2,view=body,panel=body,dialog=body,popover=body}))lua");
+            local function desktop()
+                return view.column({key="desktop",width="fill",height="fill",gap=8,children={
+                    view.button({key="opener",label="Open",width=100,height=32}),
+                    view.button({key="disabled",label="Disabled",width=100,height=32,enabled=false}),
+                    view.text({key="label",text="Static label",width=100,height=24})}})
+            end
+            return widget.define({apiVersion=2,view=desktop,panel=body,dialog=body,popover=body}))lua");
         app.widgetEngine_ = std::make_unique<WidgetEngine>();
         check(app.widgetEngine_->InitPreview(ctx.Get(), app.dwriteFactory_.Get()),
             "initialize render-only scrollbar engine");
@@ -597,6 +602,7 @@
             throw std::runtime_error("load scrollbar package: " +
                 (failure ? failure->detail : "no runtime diagnostic"));
         }
+        CheckLuaPopupOwnerOutside(app, ctx.Get());
         for (const auto* surface : {"panel", "dialog", "popover"})
         for (const bool header : {false, true})
         {
@@ -702,5 +708,69 @@
         app.luaWidgetPanelRequest_ = {};
         app.luaWidgetPanelAnimation_.ResetHidden();
         ctx->SetTarget(nullptr);
+    }
+
+    static void CheckLuaPopupOwnerOutside(DesktopApp& app, ID2D1DeviceContext* ctx)
+    {
+        const auto check = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        const auto& owner = app.widgets_.front();
+        const RECT frame = app.GetStandaloneWidgetFrameRect(owner);
+        ctx->BeginDraw();
+        app.widgetEngine_->RenderWidget(owner.id, L"", ctx, frame, 2, 2);
+        check(SUCCEEDED(ctx->EndDraw()), "render actual desktop interaction targets");
+        const auto& regions = app.widgetEngine_->GetWidgets().front().interactionRegions;
+        const auto* opener = regions.Find("opener");
+        const auto* disabled = regions.Find("disabled");
+        check(opener && disabled && opener->enabled && !disabled->enabled,
+            "rendered fixture must contain an enabled opener and a disabled control");
+        const POINT openerPoint{frame.left + static_cast<LONG>(opener->shape.x + 10),
+            frame.top + static_cast<LONG>(opener->shape.y + 10)};
+        const POINT disabledPoint{frame.left + static_cast<LONG>(disabled->shape.x + 10),
+            frame.top + static_cast<LONG>(disabled->shape.y + 10)};
+        // The static label and the column's unused space are both noninteractive.
+        const POINT labelPoint{frame.left + 10, frame.top + 90};
+        const POINT blankPoint{frame.left + 150, frame.top + 30};
+        check(app.widgetEngine_->HasInteractionTargetAt(owner.id,
+                openerPoint.x - frame.left, openerPoint.y - frame.top) &&
+            !app.widgetEngine_->HasInteractionTargetAt(owner.id,
+                disabledPoint.x - frame.left, disabledPoint.y - frame.top) &&
+            !app.widgetEngine_->HasInteractionTargetAt(owner.id, 10, 90) &&
+            !app.widgetEngine_->HasInteractionTargetAt(owner.id, 150, 30),
+            "only enabled interactive content may retain the owner's popup");
+        const int mode = snowdesktop::animation::detail::mode.exchange(snowdesktop::animation::AlwaysOn);
+        const int effect = snowdesktop::animation::detail::popupEffect.load();
+        for (const auto* surface : {"panel", "popover"})
+        for (const int animation : {0, snowdesktop::animation::Scale})
+        for (const bool dismiss : {false, true})
+        for (const POINT point : {openerPoint, disabledPoint, labelPoint, blankPoint})
+        {
+            snowdesktop::animation::detail::popupEffect.store(animation);
+            app.luaWidgetPanelRequest_ = {};
+            app.luaWidgetPanelRequest_.widgetId = owner.id;
+            app.luaWidgetPanelRequest_.surface = surface;
+            app.luaWidgetPanelRequest_.dismissOnOutside = dismiss;
+            app.luaWidgetPanelAnchorPoint_ = {700, 500};
+            app.luaWidgetPanelAnimation_.ShowImmediately();
+            const RECT panel = app.GetLuaWidgetPanelRect();
+            check(!PtInRect(&panel, point) &&
+                app.HitTestStandaloneWidget(0, point) == WidgetHit::Content,
+                "outside test must click actual owner content beyond its popup");
+            const bool onOpener = point.x == openerPoint.x && point.y == openerPoint.y;
+            app.OnLeftButtonDown(MK_LBUTTON, MAKELPARAM(point.x, point.y));
+            check(app.luaWidgetPanelAnimation_.IsInteractive() == (!dismiss || onOpener),
+                "owner blank, static label and disabled control must dismiss when outside dismissal is enabled");
+            check(app.widgetEngine_->RuntimeInteractionPressed(owner.id, "opener") == onOpener,
+                "outside classification must leave the desktop pointer dispatch intact");
+            app.widgetEngine_->CancelInteractionPointerPress("desktop");
+            ReleaseCapture();
+            app.mouseDown_ = false;
+            app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+            app.luaWidgetPanelRequest_ = {};
+            app.luaWidgetPanelAnimation_.ResetHidden();
+        }
+        snowdesktop::animation::detail::popupEffect.store(effect);
+        snowdesktop::animation::detail::mode.store(mode);
     }
 #include "../layout/native_popup_input_access.inc"
