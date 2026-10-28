@@ -151,7 +151,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -331,7 +331,7 @@ DesktopApp::ExportNativeComponentPreviews(
             });
 
     if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
-    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup" || request.component == "popup-group")
+    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup" || request.component == "popup-group" || request.component == "demo-scene")
         return ExportThemeSurfacePreview(request);
 
     const float scale = static_cast<float>(request.dpi) /

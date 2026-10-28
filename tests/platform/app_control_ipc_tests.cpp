@@ -57,6 +57,8 @@ void Protocol()
         "clients can discover visible modern-menu controls");
     Check(capabilities->Find("settingsAutomation") && capabilities->Find("settingsAutomation")->number == 1,
         "clients can negotiate the asynchronous settings adapter");
+    Check(capabilities->Find("demoRender") && capabilities->Find("demoRender")->number == 1,
+        "clients can negotiate isolated native scene exports");
     Check(mutations == 1, "discovery is independent of UI mutations");
     const auto failure = Parse(Dispatch(R"({"jsonrpc":"2.0","id":"old","method":"widgets.place"})",
         [](std::string_view, const Value&) -> Value { throw Error("stale_layout", "refresh required"); }));

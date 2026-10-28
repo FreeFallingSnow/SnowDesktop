@@ -404,6 +404,13 @@ set(SNOWDESKTOP_SOURCES
     src/ui/preview/video_writer.h
     src/demo/scene.cpp
     src/demo/scene.h
+    src/demo/artifact_io.cpp
+    src/demo/artifact_io.h
+    src/demo/export_service.cpp
+    src/demo/export_service.h
+    src/demo/builtin_scenes.cpp
+    src/demo/builtin_scenes.h
+    src/app/features/app_demo_scene_render.inc
     src/settings/settings_automation.cpp
     src/settings/settings_automation.h
     src/app/navigation/app_quick_navigation_layout.cpp
@@ -2144,6 +2151,20 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src tests
         LINK_LIBRARIES mfplat mfreadwrite mfuuid ole32
         LABELS contract integration render)
+
+    snowdesktop_add_test(
+        SnowDesktopDemoRenderExportTests
+        demo_render_export
+        SOURCES tests/demo/render_export_tests.cpp
+            src/demo/scene.cpp src/demo/artifact_io.cpp src/demo/export_service.cpp src/demo/builtin_scenes.cpp
+            src/data/atomic_file.cpp src/platform/control/control_protocol.cpp src/ui/input/control_pointer.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES user32 ole32 bcrypt mfplat mfreadwrite mfuuid windowscodecs
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
+        LABELS contract integration render host-runtime)
+    add_dependencies(SnowDesktopDemoRenderExportTests SnowDesktop)
+    set_target_properties(SnowDesktopDemoRenderExportTests PROPERTIES VS_GLOBAL_UseCommonOutputDirectory "true")
+    set_tests_properties(demo_render_export PROPERTIES TIMEOUT 150)
 
     snowdesktop_add_test(
         SnowDesktopSettingsAutomationTests

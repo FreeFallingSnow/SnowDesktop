@@ -121,6 +121,48 @@ system-menu fallbacks and external dialogs remain outside this menu adapter.
 
 ## Connection
 
+### Isolated native scene export
+
+Capability `demoRender: 1` adds `demo.describe {}`, `demo.render {scene}`,
+`demo.state {id}` and `demo.cancel {id}` to this endpoint. `demo.describe` returns
+the supported schema, bounds, surface/action lists and an editable complete
+example. Scene schema version 1 is independent of the pipe protocol and Lua API.
+
+A scene fixes locale, appearance, clock text, canvas, frame rate, named fixture
+items, surface layout and an ordered timeline. Supported native surfaces are
+collections, file categories, folder mappings, collection popups, Dock, status
+bar and Quick Navigation. Fixture items contain display text, glyph/color and
+category data. They do not reference personal files. Export does not load or
+replace the live desktop layout. `locale:"system"` is rejected; the chosen
+language must be installed in the host. Canvas dimensions are even, up to
+3840x2160; duration is at most 30 seconds, 60fps, with a further work budget.
+
+Timeline actions use virtual milliseconds: cursor movement/press/release,
+surface show/hide/move/resize, grid/list presentation, search text and category.
+They update the private native render model. These exports demonstrate native
+presentation with fixed data; live end-to-end operation checks use `ui.perform`
+and observable product state. The render clock advances by frame index, with
+native popup motion and the same pointer interpolation/cursor artwork. Idle
+frames continue animating trails and click rings. Arbitrary programs, shell
+file operations, external windows and arbitrary Lua packages are outside the
+offline scene schema.
+
+Rendering runs in an owned instance of the existing private preview host. The
+live host returns immediately with a task ID; poll state for `completedFrames`,
+`frames`, terminal status and a result manifest. Only one export runs at a time;
+only the latest task remains queryable. Cancel terminates that owned worker job,
+preserving earlier outputs. Failed/cancelled directories retain diagnostic or
+partial files and never count as a completed export.
+
+Each run creates a new UUID directory under `data/Automation/Demos/` containing
+`scene.json`, a native PNG `poster.png`, sampled frame PNGs, `video.mp4`, progress
+and result JSON. The manifest records canvas/rate/frame count, host EXE and scene
+SHA256, output hashes and sampled-frame times. H264 output is SDR BT.709 with no
+audio; Media Foundation is loaded only for export. Missing media components are
+reported as an export failure without adding a desktop-startup dependency. PNG
+pixel repeatability must be checked on the actual host/font/graphics environment;
+the manifest does not claim identical MP4 bytes across codecs or machines.
+
 ### Settings window automation
 
 Capability `settingsAutomation: 1` adds `ui.settingsRefresh {}` and
@@ -246,9 +288,8 @@ The endpoint starts after host service initialization and stops before settings,
 widgets and windows are torn down. Preview-export processes do not start it.
 Failure to acquire the endpoint is logged without disabling the desktop.
 
-The first version provides discovery, observation, placement and common UI
-operations. Loading fixture data, virtual-clock control, replay, recording,
-creating/removing widgets, arbitrary settings mutation and package publication
-are not implemented by this endpoint. A scene runner can later compose these
-operations and add explicitly scoped capabilities without editing layout files
-behind the running host.
+The endpoint provides live discovery/operations plus isolated native render
+exports. Fixture data and virtual clocks belong to the private renderer; they
+do not replace the live user profile. Creating/removing live widgets, general
+settings mutation outside advertised UIA patterns, external application control
+and package publication remain outside this endpoint's current contract.

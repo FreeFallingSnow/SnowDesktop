@@ -4,6 +4,7 @@
 #include "ui/render/demo_cursor.h"
 #include "ui/preview/screen_capture.h"
 #include "settings/settings_automation.h"
+#include "demo/export_service.h"
 
 namespace snowdesktop::app_control
 {
@@ -15,7 +16,8 @@ struct Runtime
     demo_cursor::Overlay cursor;
     screen_capture::Service capture;
     settings_automation::Service settings;
+    demo::ExportService demo;
     ~Runtime() { Stop(); }
-    void Stop() noexcept { pointer.Stop(); cursor.Hide(); capture.Stop(); settings.Stop(); }
+    void Stop() noexcept { pointer.Stop(); cursor.Hide(); capture.Stop(); settings.Stop(); demo.Stop(); }
 };
 }

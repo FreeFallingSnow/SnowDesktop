@@ -5,6 +5,7 @@
 #include "platform/control/control_protocol.h"
 #include "data/data_paths.h"
 #include "ui/menu/modern_menu.h"
+#include "demo/builtin_scenes.h"
 
 namespace
 {
@@ -31,6 +32,14 @@ Value SettingsAutomationValue(const snowdesktop::settings_automation::State& sta
         {"elementCount", Number(static_cast<double>(state.elementCount))}, {"truncated", Boolean(state.truncated)},
         {"startedUnixMs", Number(static_cast<double>(state.startedUnixMs))},
         {"finishedUnixMs", Number(static_cast<double>(state.finishedUnixMs))}});
+}
+Value DemoValue(const snowdesktop::demo::ExportState& state)
+{
+    return Object({{"id", String(state.id)}, {"status", String(state.status)}, {"error", String(state.error)},
+        {"directory", String(WideToUtf8(state.directory.wstring()))}, {"frames", Number(state.frames)},
+        {"completedFrames", Number(state.completedFrames)}, {"sourceExeSha256", String(state.sourceExeSha256)},
+        {"startedUnixMs", Number(static_cast<double>(state.startedUnixMs))},
+        {"finishedUnixMs", Number(static_cast<double>(state.finishedUnixMs))}, {"manifest", state.manifest}});
 }
 Value WidgetValue(const DesktopWidget& widget, bool grouped)
 {
@@ -97,6 +106,28 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     using namespace snowdesktop::control;
     if (!startupInitializationComplete_ || exitRequested_)
         throw Error("not_ready", "Application is starting or shutting down");
+    if (method == "demo.describe") { Fields(params, {}); return snowdesktop::demo::Describe(); }
+    if (method == "demo.render")
+    {
+        Fields(params, {"scene"}); const auto* value = params.Find("scene");
+        if (!value) throw Error("invalid_params", "scene is required", -32602);
+        const auto scene = snowdesktop::demo::ParseScene(*value);
+        wchar_t executable[32768]{};
+        const auto length = GetModuleFileNameW(nullptr, executable, 32768);
+        if (!length || length >= 32768) throw Error("demo_host_unavailable", "Cannot identify the current render host");
+        std::string error;
+        if (!applicationControlRuntime_->demo.Start(scene, executable,
+            std::filesystem::path(GetDataDirectoryPath()) / L"Automation" / L"Demos", error))
+            throw Error(error, "Scene export could not start");
+        return DemoValue(applicationControlRuntime_->demo.Current());
+    }
+    if (method == "demo.state" || method == "demo.cancel")
+    {
+        Fields(params, {"id"}); const auto state = applicationControlRuntime_->demo.Current();
+        if (Text(params, "id") != state.id) throw Error("demo_not_found", "This export is no longer the current task");
+        if (method == "demo.cancel" && state.status == "running") applicationControlRuntime_->demo.Cancel();
+        return DemoValue(applicationControlRuntime_->demo.Current());
+    }
     if (method == "ui.settingsRefresh")
     {
         Fields(params, {}); std::string error;
