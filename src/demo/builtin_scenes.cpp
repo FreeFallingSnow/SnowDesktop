@@ -22,18 +22,18 @@ control::Value Describe()
         {"id":"status","kind":"status-bar","x":0,"y":0,"width":1920,"height":40},
         {"id":"work","kind":"files","title":"工作空间","x":80,"y":160,"width":540,"height":540,"items":["notes","travel","budget","books"],"showSearch":true,"showCategories":true},
         {"id":"inspiration","kind":"mapping","title":"灵感资料","x":700,"y":160,"width":460,"height":400,"items":["photos","design","travel","books"],"showSearch":true,"showCategories":false},
-        {"id":"favorites","kind":"collection","title":"常用","x":1260,"y":160,"width":400,"height":300,"items":["music","browser","books","photos"]},
+        {"id":"favorites","kind":"collection","title":"常用","x":1260,"y":160,"width":400,"height":300,"scrollContainer":false},
         {"id":"dock","kind":"dock","x":580,"y":950,"width":760,"height":96},
-        {"id":"library","kind":"popup","title":"我的资料库","x":660,"y":310,"width":620,"height":500,"visible":false}],
+        {"id":"library","kind":"popup","title":"常用","x":660,"y":310,"width":620,"height":500,"visible":false}],
       "timeline":[
-        {"atMs":0,"action":"cursor.move","durationMs":800,"x":340,"y":260},
+        {"atMs":0,"action":"cursor.move","durationMs":800,"target":"work","element":"view"},
         {"atMs":1000,"action":"cursor.down"},{"atMs":1100,"action":"cursor.up"},
         {"atMs":1100,"action":"surface.view","target":"work","value":"list"},
-        {"atMs":1600,"action":"cursor.move","durationMs":650,"x":920,"y":250},
+        {"atMs":1600,"action":"cursor.move","durationMs":650,"target":"inspiration","element":"search"},
         {"atMs":2400,"action":"cursor.down"},{"atMs":2500,"action":"cursor.up"},
         {"atMs":2500,"action":"surface.search","target":"inspiration","value":"旅行"},
         {"atMs":3300,"action":"surface.search","target":"inspiration","value":""},
-        {"atMs":3400,"action":"cursor.move","durationMs":650,"x":1460,"y":310},
+        {"atMs":3400,"action":"cursor.move","durationMs":650,"target":"favorites","element":"open"},
         {"atMs":4200,"action":"cursor.down"},{"atMs":4300,"action":"cursor.up"},
         {"atMs":4300,"action":"surface.show","target":"library"},
         {"atMs":4700,"action":"cursor.move","durationMs":600,"x":960,"y":480},
@@ -47,6 +47,9 @@ control::Value Describe()
         {"surfaceKinds", std::move(kinds)}, {"actions", std::move(actions)},
         {"maximumDurationMs", Number(30000)}, {"maximumSurfaces", Number(12)}, {"maximumItems", Number(128)},
         {"maximumSteps", Number(256)}, {"maximumPixelFrames", Number(4000000000.0)},
+        {"elementTargets", Object({{"surfaceKinds", String("collection, files, mapping")},
+            {"keys", String("view, search, open, date-headers, category/<id>, header/<column>, divider/<column>, collapse, move, resize")},
+            {"resolution", String("native hit-tested visible control center at cursor arrival time; unavailable controls fail the export")}})},
         {"output", String("SDR BT.709 H264 MP4 plus native PNG posters and a manifest")}});
 }
 }

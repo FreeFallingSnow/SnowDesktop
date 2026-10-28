@@ -49,6 +49,18 @@ int main()
         Require(surface.bounds.left == 100 && surface.bounds.top == 100 && surface.bounds.right == 600 && surface.bounds.bottom == 400,
             "native surface transforms preserve size and final bounds");
         Require(surface.listMode && surface.search == "笔记" && surface.category == "documents", "view, search and category changes are observable scene state");
+        auto targeted = Input();
+        auto& firstMove = targeted.object["timeline"].array[0];
+        firstMove.object.erase("x"); firstMove.object.erase("y");
+        firstMove.object["target"] = control::String("work"); firstMove.object["element"] = control::String("view");
+        auto targetScene = demo::ParseScene(targeted);
+        Require(demo::EvaluateLayout(targetScene, 300).surfaces[0].surface.bounds.left == 100,
+            "native target resolution uses the layout at arrival, after movement");
+        bool unresolved = false;
+        try { (void)demo::Evaluate(targetScene, 300); } catch (const std::logic_error&) { unresolved = true; }
+        Require(unresolved, "unresolved native targets cannot silently move to the canvas origin");
+        targetScene.timeline[0].point = {350, 200}; targetScene.timeline[0].elementResolved = true;
+        Require(demo::Evaluate(targetScene, 300).cursor.x == 350, "resolved native endpoints share the existing cursor timeline");
         for (unsigned index = scene.FrameCount(); index-- > 0;)
         {
             const auto time = scene.FrameMilliseconds(index);
@@ -66,6 +78,8 @@ int main()
         Reject([](auto& value) { value.object["timeline"].array[5].object["atMs"] = control::Number(10); });
         Reject([](auto& value) { value.object["timeline"].array.erase(value.object["timeline"].array.begin() + 4); });
         Reject([](auto& value) { value.object["surfaces"].array[0].object["kind"] = control::String("dock"); });
+        Reject([](auto& value) { value.object["timeline"].array[0].object["element"] = control::String("view"); });
+        Reject([](auto& value) { value.object["surfaces"].array[0].object["scrollContainer"] = control::Boolean(false); });
         std::cout << "fixed scene and virtual timeline checks passed\n"; return 0;
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -46,6 +46,7 @@ Value ElementJson(const Element& element)
         {"focused", Boolean(element.focused)}, {"selected", Boolean(element.selected)},
         {"password", Boolean(element.password)}, {"actions", std::move(actions)}});
     if (!element.password) value.object.emplace("value", String(element.value));
+    if (!element.nativeControlKey.empty()) value.object.emplace("nativeControlKey", String(element.nativeControlKey));
     if (element.checked) value.object.emplace("checked", Boolean(*element.checked));
     if (element.expanded) value.object.emplace("expanded", Boolean(*element.expanded));
     return value;

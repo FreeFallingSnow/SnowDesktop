@@ -84,6 +84,18 @@ enum class WidgetHit {
     IconTitle,          ///< 单格图标入口的标题及选择区域，不打开弹窗
 };
 
+// Native control identity and geometry, shared by automation and fixed demos.
+// Keys are independent of localized labels and remain scoped to one widget.
+struct WidgetControlRegion
+{
+    std::wstring key, name;
+    RECT bounds{};
+    WidgetHit hit = WidgetHit::None;
+    std::string role = "button";
+    std::optional<bool> checked;
+    bool selected = false;
+};
+
 /**
  * @class Widget
  * @brief 纯 Item 组件，不具备容器（Container）能力
@@ -229,6 +241,7 @@ public:
 
     // ── Hit testing ──────────────────────────────────────
     virtual WidgetHit HitTestWidget(POINT pt) const;
+    std::vector<WidgetControlRegion> GetControlRegions() const;
     bool HitResizeHandle(POINT pt) const;
 
     // ── Rendering ────────────────────────────────────────
@@ -281,6 +294,10 @@ public:
     bool IsPopupHosted() const { return popupFrameActive_; }
 
 protected:
+    virtual void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const;
+    void AddControlRegion(std::vector<WidgetControlRegion>& regions,
+        std::wstring key, std::wstring name, RECT bounds, WidgetHit hit,
+        std::string role = "button", std::optional<bool> checked = {}, bool selected = false) const;
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
 
@@ -506,6 +523,7 @@ public:
     BarStyle GetInsertionStyle() const override;
 
 protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
     std::wstring searchPresentationId_;
     mutable std::shared_ptr<snowdesktop::WidgetFolderSearchState> folderSearch_;
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
@@ -568,6 +586,8 @@ private:
  */
 class Collection : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -640,6 +660,8 @@ private:
  */
 class FileCategories : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -751,6 +773,8 @@ private:
  */
 class FolderMapping : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -866,6 +890,8 @@ private:
  */
 class CollectionGroup : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -963,6 +989,8 @@ private:
  */
 class FileGroup : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -1083,6 +1111,8 @@ private:
  */
 class GuideWidget : public WidgetContainer
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using WidgetContainer::WidgetContainer;
 

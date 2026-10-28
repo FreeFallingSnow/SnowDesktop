@@ -35,9 +35,10 @@ demo::Scene Scene()
         {"id":"dock","kind":"dock","x":250,"y":440,"width":500,"height":80},
         {"id":"popup","kind":"popup","title":"All files","x":260,"y":90,"width":400,"height":340,"visible":false},
         {"id":"navigation","kind":"navigation","x":180,"y":80,"width":600,"height":400,"visible":false}],
-      "timeline":[{"atMs":0,"action":"cursor.move","durationMs":100,"x":300,"y":180},
+      "timeline":[{"atMs":0,"action":"cursor.move","durationMs":100,"target":"files","element":"view"},
         {"atMs":150,"action":"cursor.down"},{"atMs":180,"action":"cursor.up"},
         {"atMs":180,"action":"surface.view","target":"files","value":"list"},
+        {"atMs":200,"action":"cursor.move","durationMs":40,"target":"mapping","element":"search"},
         {"atMs":250,"action":"surface.search","target":"mapping","value":"Travel"},
         {"atMs":350,"action":"surface.category","target":"files","value":"documents"},
         {"atMs":500,"action":"surface.search","target":"mapping","value":""},
@@ -130,6 +131,13 @@ int wmain(int argc, wchar_t** argv)
         Require(!service.Start(scene, executable, root, error) && error == "demo_busy", "concurrent export cannot replace a running task");
         const auto first = Wait(service); Require(first.status == "completed" && first.completedFrames == 6, "first desktop export completed");
         Require(first.sourceExeSha256 == demo::Sha256(executable), "worker output binds the trusted source binary");
+        const auto* targets = first.manifest.Find("resolvedTargets");
+        Require(targets && targets->array.size() == 2, "native controls resolve into an inspectable manifest");
+        const auto& viewTarget = targets->array[0]; const auto& searchTarget = targets->array[1];
+        Require(viewTarget.Find("element")->string == "view" && viewTarget.Find("x")->number > 300 && viewTarget.Find("y")->number > 350,
+            "view click targets the actual footer rather than a content item");
+        Require(searchTarget.Find("element")->string == "search" && searchTarget.Find("x")->number > 460 && searchTarget.Find("y")->number < 130,
+            "search click targets the native edit box rather than the item grid");
         Png(first.directory / L"poster.png"); Video(first.directory / L"video.mp4");
         Require(service.Start(scene, executable, root, error), "repeat exact scene in a new worker");
         const auto second = Wait(service); Require(second.status == "completed" && first.directory != second.directory, "repeated export owns a fresh directory");
@@ -149,6 +157,19 @@ int wmain(int argc, wchar_t** argv)
                 Require(false, "all sampled native frames repeat exactly");
             }
         }
+        auto movedInput = scene.source;
+        movedInput.object["surfaces"].array[1].object["x"] = control::Number(70);
+        movedInput.object["surfaces"].array[1].object["y"] = control::Number(110);
+        Require(service.Start(demo::ParseScene(movedInput), executable, root, error), "render a moved widget without changing cursor coordinates");
+        const auto moved = Wait(service); Require(moved.status == "completed", "moved widget export completed");
+        const auto& movedTarget = moved.manifest.Find("resolvedTargets")->array[0];
+        Require(movedTarget.Find("x")->number == viewTarget.Find("x")->number + 30 && movedTarget.Find("y")->number == viewTarget.Find("y")->number + 30,
+            "native cursor endpoint follows a widget layout change");
+        auto absentInput = scene.source; absentInput.object["timeline"].array[0].object["element"] = control::String("absent-control");
+        Require(service.Start(demo::ParseScene(absentInput), executable, root, error), "start unavailable-control negative fixture");
+        const auto absent = Wait(service);
+        Require(absent.status == "failed" && absent.error.find("demo_element_not_available") != std::string::npos &&
+            !std::filesystem::exists(absent.directory / L"scene-result.json"), "missing controls fail instead of clicking an approximate location");
         auto longInput = scene.source; longInput.object["durationMs"] = control::Number(30000); longInput.object["fps"] = control::Number(60);
         const auto longScene = demo::ParseScene(longInput);
         Require(service.Start(longScene, executable, root, error), "start cancellable owned render worker"); service.Cancel();

@@ -905,6 +905,18 @@ void CollectionGroup::ApplyMarqueeSelection(
     }
 }
 
+void CollectionGroup::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    ScrollingItemWidget::CollectControlRegions(regions);
+    if (!data_) return;
+    auto* self = const_cast<CollectionGroup*>(this);
+    AddControlRegion(regions, L"view", L"List view", CollectionGroupListToggleRect(self), WidgetHit::ListToggleBtn, "button", data_->listMode);
+    const auto& children = GetVisibleCollectionIds();
+    for (size_t index = 0; index < children.size(); ++index)
+        AddControlRegion(regions, L"category/" + children[index], CollectionGroupTabDisplayText(self, index),
+            CollectionGroupTabRect(self, index), WidgetHit::CategoryTab, "tab", {}, children[index] == GetActiveCollectionId());
+}
+
 WidgetHit CollectionGroup::HitTestWidget(POINT pt) const
 {
     WidgetHit base =

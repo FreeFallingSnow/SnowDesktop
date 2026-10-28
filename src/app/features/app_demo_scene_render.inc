@@ -6,7 +6,7 @@ if (request.component == "demo-scene")
     result.stage = "demo-scene.render";
     try
     {
-        const auto scene = demo::ParseScene(demo::ReadJson(request.outputDirectory / L"scene.json"));
+        auto scene = demo::ParseScene(demo::ReadJson(request.outputDirectory / L"scene.json"));
         if (scene.width != request.canvasWidth || scene.height != request.canvasHeight ||
             scene.locale != request.locale || scene.appearance != request.appearance)
             throw std::runtime_error("demo_worker_configuration_mismatch");
@@ -56,7 +56,7 @@ if (request.component == "demo-scene")
             widget.cellScale = 1; widget.gridSpan = {std::max(2, static_cast<int>((surface.bounds.right - surface.bounds.left) / kCellWidth)),
                 std::max(2, static_cast<int>((surface.bounds.bottom - surface.bounds.top) / kMinCellHeight))};
             widget.showTitle = true; widget.showSearchBox = surface.showSearch; widget.showFileCategories = surface.showCategories;
-            widget.listMode = surface.listMode; widget.scrollContainerMode = true; widget.activeCategoryId = L"all";
+            widget.listMode = surface.listMode; widget.scrollContainerMode = surface.scrollContainer; widget.activeCategoryId = L"all";
             for (const auto& id : surface.items)
             {
                 const auto key = L"__demo_item_" + demo::Wide(id); widget.itemKeys.push_back(key);
@@ -129,6 +129,42 @@ if (request.component == "demo-scene")
             return POINT{static_cast<LONG>(std::lround(cursor.x * transform._11 + cursor.y * transform._21 + transform._31)),
                 static_cast<LONG>(std::lround(cursor.x * transform._12 + cursor.y * transform._22 + transform._32))};
         };
+        auto resolvedTargets = control::Array();
+        for (auto& step : scene.timeline)
+        {
+            if (step.element.empty()) continue;
+            const auto arrival = static_cast<std::uint64_t>(step.atMs) + step.durationMs;
+            const auto layout = demo::EvaluateLayout(scene, arrival);
+            const auto targetSurface = std::find_if(layout.surfaces.begin(), layout.surfaces.end(),
+                [&](const demo::Presentation& candidate) { return candidate.surface.id == step.target; });
+            if (targetSurface == layout.surfaces.end() || !targetSurface->visible || targetSurface->opacity <= 0 || targetSurface->scale <= 0)
+                throw std::runtime_error("demo_element_surface_not_visible: " + step.target);
+            const auto& surface = targetSurface->surface;
+            auto& widget = widgets_[indices.at(surface.id)]; widget.bounds = surface.bounds;
+            widget.listMode = surface.listMode; widget.activeCategoryId = demo::Wide(surface.category);
+            widget.gridSpan = {std::max(2, static_cast<int>((surface.bounds.right - surface.bounds.left) / kCellWidth)),
+                std::max(2, static_cast<int>((surface.bounds.bottom - surface.bounds.top) / kMinCellHeight))};
+            WidgetRenderOptions options; options.previewScene = fixture.get(); options.frame = surface.bounds;
+            options.pointer = {-32000, -32000}; options.dpi = 96; options.interactive = true; options.registerBackdrop = false;
+            auto* view = views.at(surface.id); view->SetRenderOptions(&options);
+            struct ResetOptions { WidgetContainer* view; ~ResetOptions() { view->SetRenderOptions(nullptr); } } resetOptions{view};
+            if (auto* scrolling = dynamic_cast<ScrollingItemWidget*>(view)) scrolling->SetSearchText(demo::Wide(surface.search));
+            view->InvalidateSlots();
+            const auto controls = view->GetControlRegions();
+            const auto found = std::find_if(controls.begin(), controls.end(),
+                [&](const WidgetControlRegion& candidate) { return candidate.key == demo::Wide(step.element); });
+            if (found == controls.end()) throw std::runtime_error("demo_element_not_available: " + step.target + "/" + step.element);
+            const auto& bounds = found->bounds; const auto& rect = surface.bounds;
+            const double cx = (rect.left + rect.right) / 2.0, cy = (rect.top + rect.bottom) / 2.0;
+            step.point = {static_cast<LONG>(std::lround(cx + ((bounds.left + bounds.right) / 2 - cx) * targetSurface->scale)),
+                static_cast<LONG>(std::lround(cy + ((bounds.top + bounds.bottom) / 2 - cy) * targetSurface->scale))};
+            if (step.point.x < 0 || step.point.y < 0 || step.point.x >= scene.width || step.point.y >= scene.height)
+                throw std::runtime_error("demo_element_target_outside_canvas");
+            step.elementResolved = true;
+            resolvedTargets.array.push_back(control::Object({{"target", control::String(step.target)}, {"element", control::String(step.element)},
+                {"atMs", control::Number(step.atMs)}, {"arrivalMs", control::Number(static_cast<double>(arrival))},
+                {"x", control::Number(step.point.x)}, {"y", control::Number(step.point.y)}}));
+        }
         const auto videoPartial = root / L"video.partial.mp4";
         video_writer::Mp4 writer(videoPartial, scene.width, scene.height, scene.fps);
         const auto frameCount = scene.FrameCount(); const unsigned posterFrame = frameCount * 2 / 3;
@@ -146,6 +182,9 @@ if (request.component == "demo-scene")
             {
                 if (!presentation.visible || presentation.scale <= 0) continue;
                 const auto& surface = presentation.surface; const auto rect = surface.bounds;
+                const bool fading = presentation.opacity < .999f;
+                if (fading) context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), presentation.opacity), nullptr);
                 const auto transform = D2D1::Matrix3x2F::Scale(presentation.scale, presentation.scale,
                     D2D1::Point2F((rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f));
                 context->SetTransform(transform);
@@ -216,6 +255,7 @@ if (request.component == "demo-scene")
                     }
                 }
                 context->SetTransform(D2D1::Matrix3x2F::Identity());
+                if (fading) context->PopLayer();
             }
             require(context->EndDraw()); context->SetTarget(nullptr); brushCache_.clear(); brushCacheContext_ = nullptr;
             require(readback->CopyFromBitmap(nullptr, target.Get(), nullptr));
@@ -249,7 +289,7 @@ if (request.component == "demo-scene")
             {"frames", control::Number(frameCount)}, {"duration100ns", control::String(std::to_string(video_writer::FrameTime(frameCount, scene.fps)))},
             {"sourceExeSha256", control::String(demo::Sha256(executable))}, {"sceneSha256", control::String(demo::Sha256(root / L"scene.json"))},
             {"videoSha256", control::String(demo::Sha256(root / L"video.mp4"))}, {"posterSha256", control::String(demo::Sha256(root / L"poster.png"))},
-            {"posters", std::move(posters)}});
+            {"posters", std::move(posters)}, {"resolvedTargets", std::move(resolvedTargets)}});
         demo::WriteJson(root / L"scene-result.json", manifest);
         result.ok = true; result.stage = "complete";
         native_component_preview::Output output; output.component = "demo-scene"; output.path = root / L"poster.png";

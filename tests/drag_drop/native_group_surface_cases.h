@@ -52,6 +52,22 @@ inline void CheckSurface(DesktopApp& app, const std::vector<DesktopWidget>& orig
             auto expected = widget; expected.childWidgetIds = order;
             Require(Configuration(native_widget_pair_cases::Widget(app, widget.id)) == Configuration(expected),
                 "U06: label reorder changes only the specified order and preserves active child and group settings");
+            const auto controls = Access::MemberContainer(app, widget.id)->GetControlRegions();
+            const bool fileGroup = widget.type == DesktopWidgetType::FileGroup;
+            const auto hit = fileGroup ? WidgetHit::SourceTab : WidgetHit::CategoryTab;
+            const std::wstring prefix = fileGroup ? L"source-tab/" : L"category/";
+            std::set<std::wstring> keys;
+            for (const auto& control : controls)
+            {
+                if (control.hit != hit) continue;
+                Require(control.key.starts_with(prefix) && keys.insert(control.key).second,
+                    "native group tab keys remain unique model identities after reorder and reload");
+                const auto id = control.key.substr(prefix.size());
+                Require(std::find(order.begin(), order.end(), id) != order.end() && !control.name.empty() &&
+                    control.selected == (id == expected.activeCategoryId),
+                    "group controls report the existing child identity and active selection independently of labels or order");
+            }
+            Require(!keys.empty(), "visible native group tabs remain discoverable after reorder and reload");
         }
         else CheckChild(app, widget);
     CheckRuntime(app);

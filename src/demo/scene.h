@@ -21,11 +21,13 @@ struct Surface
     RECT bounds{};
     std::vector<std::string> items;
     bool visible = true, listMode = false, showSearch = true, showCategories = true;
+    bool scrollContainer = true;
 };
 struct Step
 {
     int atMs = 0, durationMs = 0;
-    std::string action, target, value;
+    std::string action, target, value, element;
+    bool elementResolved = false;
     POINT point{};
     SIZE size{};
 };
@@ -53,4 +55,5 @@ struct Frame
 };
 Scene ParseScene(const control::Value& value);
 Frame Evaluate(const Scene& scene, std::uint64_t milliseconds);
+Frame EvaluateLayout(const Scene& scene, std::uint64_t milliseconds);
 }

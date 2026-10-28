@@ -127,7 +127,8 @@ Value Describe()
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
         {"capabilities", Object({{"elements", Number(1)}, {"controlledPointer", Number(1)},
             {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)},
-            {"settingsAutomation", Number(1)}, {"demoRender", Number(1)}})}});
+            {"settingsAutomation", Number(1)}, {"demoRender", Number(1)},
+            {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler) noexcept

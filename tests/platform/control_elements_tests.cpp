@@ -30,6 +30,8 @@ void ApplicationControlElementChecks()
     button.clip = {-400, -100, -250, 100}; button.actions = {"click"}; button.password = true; button.value = "secret";
     snapshot.elements = {parent, button}; snapshot.Finish();
     Check(!ElementJson(button).Find("value"), "password values cannot be serialized");
+    button.nativeControlKey = "category/documents";
+    Check(ElementJson(button).Find("nativeControlKey")->string == "category/documents", "native control keys retain their semantic identity");
     const auto center = ElementCenter(snapshot.Resolve("button", "click"));
     Check(center.x == -325 && center.y == 30, "target must use visible physical-screen intersection");
     Reject([&] { snapshot.Resolve("absent", "click"); }, "element_not_found");

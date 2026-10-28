@@ -84,7 +84,10 @@ CursorState CursorAt(const Scene& scene, std::uint64_t time)
     {
         if (static_cast<std::uint64_t>(step.atMs) > time) break;
         if (step.action == "cursor.move")
-        { from = point(step.atMs); to = step.point; start = step.atMs; duration = step.durationMs; }
+        {
+            if (!step.element.empty() && !step.elementResolved) throw std::logic_error("demo_element_target_unresolved");
+            from = point(step.atMs); to = step.point; start = step.atMs; duration = step.durationMs;
+        }
         else if (step.action == "cursor.down") state.pressed = true;
         else if (step.action == "cursor.up") { state.pressed = false; state.releasedMs = step.atMs; }
     }
@@ -129,7 +132,7 @@ Scene ParseScene(const Value& value)
     }
     for (const auto& entry : Entries(value, "surfaces", 12, true))
     {
-        Fields(entry, {"id", "kind", "title", "x", "y", "width", "height", "items", "visible", "listMode", "showSearch", "showCategories"});
+        Fields(entry, {"id", "kind", "title", "x", "y", "width", "height", "items", "visible", "listMode", "showSearch", "showCategories", "scrollContainer"});
         Surface surface; surface.id = Identifier(entry, "id");
         if (!surfaces.insert(surface.id).second) Invalid("Duplicate scene surface identity");
         surface.kind = StringField(entry, "kind", "collection", 32);
@@ -141,6 +144,8 @@ Scene ParseScene(const Value& value)
         surface.bounds.bottom = surface.bounds.top + Integer(entry, "height", 32, scene.height); Bounds(scene, surface.bounds);
         surface.visible = Flag(entry, "visible", true); surface.listMode = Flag(entry, "listMode", false);
         surface.showSearch = Flag(entry, "showSearch", true); surface.showCategories = Flag(entry, "showCategories", true);
+        surface.scrollContainer = Flag(entry, "scrollContainer", true);
+        if (entry.Find("scrollContainer") && surface.kind != "collection") Invalid("Only collection supports scrollContainer");
         std::unordered_set<std::string> used;
         for (const auto& id : Entries(entry, "items", 128, false))
         {
@@ -157,9 +162,18 @@ Scene ParseScene(const Value& value)
         if (step.atMs < previous) Invalid("Timeline must be in time order"); previous = step.atMs;
         if (step.action == "cursor.move")
         {
-            Fields(entry, {"action", "atMs", "durationMs", "x", "y"});
+            Fields(entry, {"action", "atMs", "durationMs", "x", "y", "target", "element"});
             step.durationMs = Integer(entry, "durationMs", 1, scene.durationMs - step.atMs);
-            step.point = {Integer(entry, "x", 0, scene.width - 1), Integer(entry, "y", 0, scene.height - 1)};
+            if (entry.Find("element") || entry.Find("target"))
+            {
+                if (entry.Find("x") || entry.Find("y")) Invalid("Element cursor targets cannot also specify coordinates");
+                step.target = Identifier(entry, "target"); step.element = StringField(entry, "element", {}, 384);
+                const auto surface = std::find_if(scene.surfaces.begin(), scene.surfaces.end(), [&](const Surface& candidate) { return candidate.id == step.target; });
+                if (step.element.empty() || surface == scene.surfaces.end() ||
+                    (surface->kind != "collection" && surface->kind != "files" && surface->kind != "mapping"))
+                    Invalid("Element cursor targets require a supported native widget surface");
+            }
+            else step.point = {Integer(entry, "x", 0, scene.width - 1), Integer(entry, "y", 0, scene.height - 1)};
         }
         else if (step.action == "cursor.down" || step.action == "cursor.up")
         {
@@ -205,11 +219,11 @@ Scene ParseScene(const Value& value)
     }
     if (pressed) Invalid("Scene cannot leave a cursor button pressed");
     // Validate every motion endpoint and interruption, not only final layout.
-    for (const auto& step : scene.timeline) { (void)Evaluate(scene, step.atMs); (void)Evaluate(scene, step.atMs + step.durationMs); }
-    (void)Evaluate(scene, scene.durationMs);
+    for (const auto& step : scene.timeline) { (void)EvaluateLayout(scene, step.atMs); (void)EvaluateLayout(scene, step.atMs + step.durationMs); }
+    (void)EvaluateLayout(scene, scene.durationMs);
     scene.source = value; return scene;
 }
-Frame Evaluate(const Scene& scene, std::uint64_t milliseconds)
+Frame EvaluateLayout(const Scene& scene, std::uint64_t milliseconds)
 {
     struct Live { Surface surface; Motion motion; popup_animation_rules::State animation; };
     std::vector<Live> surfaces;
@@ -222,7 +236,7 @@ Frame Evaluate(const Scene& scene, std::uint64_t milliseconds)
     for (const auto& step : scene.timeline)
     {
         if (static_cast<std::uint64_t>(step.atMs) > milliseconds) break;
-        if (step.target.empty()) continue;
+        if (step.target.empty() || step.action == "cursor.move") continue;
         const auto found = std::find_if(surfaces.begin(), surfaces.end(), [&](const Live& live) { return live.surface.id == step.target; });
         if (found == surfaces.end()) Invalid("Unknown timeline surface");
         auto& live = *found; live.surface.bounds = live.motion.At(step.atMs); Bounds(scene, live.surface.bounds);
@@ -246,6 +260,11 @@ Frame Evaluate(const Scene& scene, std::uint64_t milliseconds)
         live.animation.Advance(milliseconds); const auto visual = live.animation.GetVisual();
         frame.surfaces.push_back({std::move(live.surface), visual.visible, visual.scale, visual.opacity});
     }
+    return frame;
+}
+Frame Evaluate(const Scene& scene, std::uint64_t milliseconds)
+{
+    auto frame = EvaluateLayout(scene, milliseconds);
     const auto current = CursorAt(scene, milliseconds);
     frame.cursor.x = static_cast<float>(current.point.x); frame.cursor.y = static_cast<float>(current.point.y);
     frame.cursor.scale = std::clamp(scene.width / 1280.f, .75f, 2.5f); frame.cursor.pressed = current.pressed;

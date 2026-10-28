@@ -784,6 +784,58 @@ bool WidgetContainer::HitResizeHandle(POINT pt) const
  * @param pt 屏幕坐标点
  * @return 命中的组件区域类型
  */
+std::vector<WidgetControlRegion> WidgetContainer::GetControlRegions() const
+{
+    std::vector<WidgetControlRegion> regions;
+    CollectControlRegions(regions);
+    return regions;
+}
+
+void WidgetContainer::AddControlRegion(std::vector<WidgetControlRegion>& regions,
+    std::wstring key, std::wstring name, RECT bounds, WidgetHit hit,
+    std::string role, std::optional<bool> checked, bool selected) const
+{
+    RECT clipped{}; const auto frame = GetFrameRect();
+    if (!IntersectRect(&clipped, &bounds, &frame)) return;
+    const POINT center{clipped.left + (clipped.right - clipped.left) / 2,
+        clipped.top + (clipped.bottom - clipped.top) / 2};
+    // The same hit-test used for real input is the final authority, including
+    // collapsed/hosted modes and controls occluded by other widget chrome.
+    if (HitTestWidget(center) != hit) return;
+    regions.push_back({std::move(key), std::move(name), clipped, hit, std::move(role), checked, selected});
+}
+
+void WidgetContainer::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    AddControlRegion(regions, L"collapse", L"Collapse or expand", GetCollapseButtonRect(), WidgetHit::CollapseToggleBtn);
+    AddControlRegion(regions, L"move", L"Move widget", GetTitleRect(), WidgetHit::MoveHandle);
+    AddControlRegion(regions, L"resize", L"Resize widget", GetResizeHandleRect(), WidgetHit::ResizeHandle);
+}
+
+void ScrollingItemWidget::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    WidgetContainer::CollectControlRegions(regions);
+    AddControlRegion(regions, L"search", L"Search", GetSearchBoxRect(), WidgetHit::SearchBox, "edit");
+    const auto header = GetDetailsHeaderRectFromViewport(GetContentViewportRect());
+    if (IsRectEmpty(&header)) return;
+    const auto columns = GetDetailsColumns(header.right - header.left);
+    LONG left = header.left;
+    const auto column = [&](const wchar_t* key, const char* label, int width, WidgetHit hit, WidgetHit divider) {
+        RECT bounds{left, header.top, left + width, header.bottom}; left += width;
+        if (width <= 0) return;
+        AddControlRegion(regions, std::wstring(L"header/") + key, _LW(label), bounds, hit, "columnheader");
+        if (divider != WidgetHit::None)
+        {
+            RECT edge{bounds.left - Cu(4.f), header.top, bounds.left + Cu(4.f) + 1, header.bottom};
+            AddControlRegion(regions, std::wstring(L"divider/") + key, _LW(label), edge, divider, "separator");
+        }
+    };
+    column(L"name", "widget.details.name", columns.nameWidth, WidgetHit::DetailsNameHeader, WidgetHit::None);
+    if (columns.showModified) column(L"modified", "widget.details.modified", columns.modifiedWidth, WidgetHit::DetailsModifiedHeader, WidgetHit::DetailsModifiedDivider);
+    if (columns.showType) column(L"type", "widget.details.type", columns.typeWidth, WidgetHit::DetailsTypeHeader, WidgetHit::DetailsTypeDivider);
+    if (columns.showSize) column(L"size", "widget.details.size", columns.sizeWidth, WidgetHit::DetailsSizeHeader, WidgetHit::DetailsSizeDivider);
+}
+
 WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 {
     if (IsPopupHosted() && IsSingleCellDesktopPoint(pt))

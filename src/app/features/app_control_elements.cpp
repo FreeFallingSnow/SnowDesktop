@@ -36,8 +36,8 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
     using namespace snowdesktop::control;
     ElementSnapshot result;
     result.coveredSurfaces = {"desktop-items", "native-widget-frames", "native-widget-members",
-        "native-widget-search", "dock-items", "quick-navigation", "lua-accessibility", "modern-menus"};
-    result.pendingSurfaces = {"native-widget-extra-chrome-and-category-tabs", "popup-extra-controls",
+        "native-widget-search", "native-widget-buttons-tabs-and-details", "dock-items", "quick-navigation", "lua-accessibility", "modern-menus"};
+    result.pendingSurfaces = {"native-search-result-extra-controls", "popup-extra-controls", "native-status-bar-and-system-panels",
         "legacy-system-menus", "settings-floating-popups", "system-dialogs-and-external-applications"};
     const auto screen = [&](RECT rect) { OffsetRect(&rect, virtualLeft_, virtualTop_); return rect; };
     const RECT desktop = screen({0, 0, virtualWidth_, virtualHeight_});
@@ -76,31 +76,21 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
             auto& parent = add(root, {}, "widget", "group", widget->GetTitle(), frame, frame, window,
                 {"hover", "contextMenu", "scroll", "drop"});
             parent.widgetId = data->id; parent.selected = data->selected; parent.expanded = !widget->IsCollapsed();
-            const auto chrome = [&](const char* key, const wchar_t* title, RECT bounds, WidgetHit hit,
-                std::vector<std::string> actions) {
-                const POINT center{bounds.left + (bounds.right - bounds.left) / 2, bounds.top + (bounds.bottom - bounds.top) / 2};
-                if (!IsRectEmpty(&bounds) && widget->HitTestWidget(center) == hit)
-                    add(root + "/" + key, root, "widget", "button", title, bounds, frame, window, std::move(actions)).widgetId = data->id;
-            };
-            chrome("collapse", L"Collapse or expand", widget->GetCollapseButtonRect(), WidgetHit::CollapseToggleBtn, {"click", "hover"});
-            chrome("move", L"Move widget", widget->GetTitleRect(), WidgetHit::MoveHandle, {"drag", "hover", "contextMenu"});
-            chrome("resize", L"Resize widget", widget->GetResizeHandleRect(), WidgetHit::ResizeHandle, {"drag", "hover"});
-            if (auto* collection = dynamic_cast<Collection*>(widget))
-                chrome("open", L"Show all", collection->GetAllButtonRect(), WidgetHit::CollectionOpenBtn, {"click", "hover"});
-            if (auto* guide = dynamic_cast<GuideWidget*>(widget))
+            for (const auto& control : widget->GetControlRegions())
             {
-                chrome("add", L"Add widget", guide->GetPrimaryButtonRect(guide->GetBodyRect()), WidgetHit::GuideAddWidgetBtn, {"click", "hover"});
-                chrome("details", L"Details", guide->GetSecondaryButtonRect(guide->GetBodyRect()), WidgetHit::GuideDetailsBtn, {"click", "hover"});
-            }
-            if (auto* scrolling = dynamic_cast<ScrollingItemWidget*>(widget))
-            {
-                const auto bounds = scrolling->GetSearchBoxRect();
-                if (!IsRectEmpty(&bounds))
+                std::vector<std::string> actions{"click", "hover"};
+                if (control.hit == WidgetHit::MoveHandle) actions = {"drag", "hover", "contextMenu"};
+                if (control.hit == WidgetHit::ResizeHandle || control.role == "separator") actions = {"drag", "hover"};
+                auto& child = add(root + "/" + Key(control.key), root, "widget", control.role, control.name,
+                    control.bounds, frame, window, std::move(actions));
+                child.widgetId = data->id; child.nativeControlKey = WideToUtf8(control.key);
+                child.checked = control.checked; child.selected = control.selected;
+                if (control.hit == WidgetHit::SearchBox)
                 {
-                    auto& search = add(root + "/search", root, "widget", "edit", L"Search", bounds, frame, window,
-                        {"click", "hover", "setValue"});
-                    search.backend = ElementBackend::WidgetSearch; search.widgetId = data->id;
-                    search.value = WideToUtf8(scrolling->GetSearchText()); search.focused = scrolling->IsSearchFocused();
+                    auto* scrolling = dynamic_cast<ScrollingItemWidget*>(widget);
+                    if (!scrolling) continue;
+                    child.actions.push_back("setValue"); child.backend = ElementBackend::WidgetSearch;
+                    child.value = WideToUtf8(scrolling->GetSearchText()); child.focused = scrolling->IsSearchFocused();
                 }
             }
             std::unordered_map<std::string, unsigned> occurrences;

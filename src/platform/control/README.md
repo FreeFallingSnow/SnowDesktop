@@ -7,6 +7,15 @@ The existing settings-child and elevated-window-helper protocols stay private.
 
 ## Element and pointer capabilities
 
+`nativeWidgetControls: 1` adds native widget view/date buttons, category and
+group-source tabs, detail headers and column dividers. Their `nativeControlKey`
+is stable within the widget and independent of translated labels. The catalog
+uses the renderer's geometry and verifies each visible center with the real
+widget hit test, including collapsed and hosted modes. Existing common control
+IDs remain valid. Inspect `pendingSurfaces` for remaining coverage; native status
+bar/system panels, search-result extra controls and external/system windows are
+not currently included in this adapter.
+
 `api.describe.capabilities` advertises `elements:1`, `controlledPointer:1` and
 `demoCursor:1`. These are additive capabilities within protocol v1; the original
 13 methods retain their parameters and behavior. Clients must inspect capabilities
@@ -146,6 +155,18 @@ native popup motion and the same pointer interpolation/cursor artwork. Idle
 frames continue animating trails and click rings. Arbitrary programs, shell
 file operations, external windows and arbitrary Lua packages are outside the
 offline scene schema.
+
+Capability `demoElementTargets: 1` extends `cursor.move` with
+`{atMs,action:"cursor.move",durationMs,target:"work",element:"view"}` instead of
+`x,y`. `target` names a collection/files/mapping surface; `element` is its native
+control key, such as `view`, `search`, `open`, `category/documents` or
+`header/name`. The worker resolves its visible hit-tested center at arrival time
+using the configured layout and presentation state, then records the endpoint in
+manifest `resolvedTargets`. Unknown, hidden or unavailable controls fail the
+export; coordinates are not guessed. Existing XY moves remain supported. A
+collection's optional `scrollContainer:false` selects its native mosaic/Show all
+presentation; the default remains `true` for existing scenes. These changes are
+additive within scene schema 1 and do not alter Lua APIs.
 
 Rendering runs in an owned instance of the existing private preview host. The
 live host returns immediately with a task ID; poll state for `completedFrames`,

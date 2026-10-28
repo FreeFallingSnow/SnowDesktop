@@ -13,7 +13,7 @@ enum class ElementBackend { Pointer, Lua, NavigationSearch, WidgetSearch, MenuTe
 
 struct Element
 {
-    std::string id, parent, surface, role, name, value;
+    std::string id, parent, surface, role, name, value, nativeControlKey;
     RECT bounds{}, clip{}; // Physical screen pixels, including negative origins.
     HWND window = nullptr; // Internal routing only; never serialized.
     bool enabled = true, visible = true, focused = false, selected = false;

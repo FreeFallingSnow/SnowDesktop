@@ -1496,6 +1496,19 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
  * @param pt 测试点的屏幕坐标。
  * @return 命中结果，可能为 None、MoveHandle、CategoryTab、ListToggleBtn 等。
  */
+void FileCategories::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    ScrollingItemWidget::CollectControlRegions(regions);
+    if (!data_) return;
+    auto* self = const_cast<FileCategories*>(this);
+    AddControlRegion(regions, L"view", L"List view", FileCategoryToggleRect(self), WidgetHit::ListToggleBtn, "button", data_->listMode);
+    AddControlRegion(regions, L"date-headers", L"Date headers", FileCategoryDateToggleRect(self), WidgetHit::DateHeaderToggleBtn, "button", data_->dateHeaders);
+    const auto& categories = CachedVisibleCategoryIds();
+    for (size_t index = 0; index < categories.size(); ++index)
+        AddControlRegion(regions, L"category/" + categories[index], FileCategoryTabDisplayText(self, categories[index]),
+            FileCategoryTabRect(self, index), WidgetHit::CategoryTab, "tab", {}, categories[index] == CachedActiveCategoryId());
+}
+
 WidgetHit FileCategories::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);

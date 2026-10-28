@@ -1586,6 +1586,35 @@ bool FileGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
     return hosted && source->TryScrollTabs(pt, delta, changed);
 }
 
+void FileGroup::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    if (IsGroupSearchActive()) ScrollingItemWidget::CollectControlRegions(regions);
+    else
+    {
+        WidgetContainer::CollectControlRegions(regions);
+        AddControlRegion(regions, L"search", L"Search", GetSearchBoxRect(), WidgetHit::SearchBox, "edit");
+    }
+    const auto& sources = GetVisibleSourceIds();
+    for (size_t index = 0; index < sources.size(); ++index)
+        AddControlRegion(regions, L"source-tab/" + sources[index], FileGroupSourceTabText(const_cast<FileGroup*>(this), index),
+            GetSourceTabRectById(sources[index]), WidgetHit::SourceTab, "tab", {}, sources[index] == GetActiveSourceId());
+    if (IsGroupSearchActive()) return;
+    auto* source = GetActiveSourceContainer();
+    if (!source) return;
+    HostedFileSourceScope hosted(const_cast<FileGroup*>(this), source);
+    if (!hosted) return;
+    for (const auto& child : source->GetControlRegions())
+    {
+        // Match the normal host's delegated input boundary; source search and
+        // outer chrome belong to the group, rather than its hosted child.
+        if (child.hit != WidgetHit::CategoryTab && child.hit != WidgetHit::DateHeaderToggleBtn &&
+            child.hit != WidgetHit::ListToggleBtn && child.hit != WidgetHit::OpenFolderBtn &&
+            child.role != "columnheader" && child.role != "separator") continue;
+        AddControlRegion(regions, L"source/" + GetActiveSourceId() + L"/" + child.key, child.name,
+            child.bounds, child.hit, child.role, child.checked, child.selected);
+    }
+}
+
 WidgetHit FileGroup::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);

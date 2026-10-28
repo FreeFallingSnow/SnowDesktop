@@ -1016,6 +1016,23 @@ bool Collection::HidesBottomBarTitle() const
  * @param pt 测试点的屏幕坐标
  * @return 命中类型，未命中则返回 WidgetHit::None
  */
+static RECT CollectionViewToggleRect(const Collection* widget, RECT handle)
+{
+    const int size = widget->Cu(14.f * widget->GetBarScale()), gap = widget->Cu(4.f * widget->GetBarScale());
+    const int reserve = widget->GetTitleBarResizeReserve();
+    return {handle.right - reserve - gap - size, handle.top + (handle.bottom - handle.top - size) / 2,
+        handle.right - reserve - gap, handle.top + (handle.bottom - handle.top + size) / 2};
+}
+
+void Collection::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    ScrollingItemWidget::CollectControlRegions(regions);
+    if (!data_) return;
+    if (data_->scrollContainerMode)
+        AddControlRegion(regions, L"view", L"List view", CollectionViewToggleRect(this, GetMoveHandleRect()), WidgetHit::ListToggleBtn, "button", data_->listMode);
+    else AddControlRegion(regions, L"open", L"Show all", GetAllButtonRect(), WidgetHit::CollectionOpenBtn);
+}
+
 WidgetHit Collection::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
@@ -1033,17 +1050,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
         if (details != WidgetHit::None) return details;
         if (base == WidgetHit::MoveHandle)
         {
-            RECT handle = GetMoveHandleRect();
-            const float bs = GetBarScale();
-            const int btnSize = Cu(14.0f * bs);
-            const int gap = Cu(4.0f * bs);
-            const int resizeReserve = GetTitleBarResizeReserve();
-            RECT toggleBtn = {
-                handle.right - resizeReserve - gap - btnSize,
-                handle.top + (handle.bottom - handle.top - btnSize) / 2,
-                handle.right - resizeReserve - gap,
-                handle.top + (handle.bottom - handle.top + btnSize) / 2
-            };
+            const auto toggleBtn = CollectionViewToggleRect(this, GetMoveHandleRect());
             if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
         }
         return base;
@@ -1314,15 +1321,7 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
     if (!data_ || !app_ || !data_->scrollContainerMode) return;
 
     const float bs = GetBarScale();
-    const int btnSize = Cu(14.0f * bs);
-    const int gap = Cu(4.0f * bs);
-    const int resizeReserve = GetTitleBarResizeReserve();
-    RECT toggleBtn = {
-        handleRect.right - resizeReserve - gap - btnSize,
-        handleRect.top + (handleRect.bottom - handleRect.top - btnSize) / 2,
-        handleRect.right - resizeReserve - gap,
-        handleRect.top + (handleRect.bottom - handleRect.top + btnSize) / 2
-    };
+    const auto toggleBtn = CollectionViewToggleRect(this, handleRect);
 
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);

@@ -1117,35 +1117,39 @@ RECT FolderMapping::GetMemberLayoutRect(size_t index) const
  * - 打开文件夹按钮：打开当前映射的磁盘文件夹
  * 按钮使用 Fluent System Icons Regular，并具有悬停高亮效果。
  */
+static RECT FolderMappingFooterRect(const FolderMapping* widget, WidgetHit hit, RECT handle)
+{
+    const float scale = widget->GetBarScale();
+    const int size = widget->Cu(14.f * scale), gap = widget->Cu(4.f * scale);
+    const int index = hit == WidgetHit::OpenFolderBtn ? 0 : hit == WidgetHit::ListToggleBtn ? 1 : 2;
+    const LONG right = handle.right - widget->GetTitleBarResizeReserve() - gap - index * (size + gap);
+    return {right - size, handle.top + (handle.bottom - handle.top - size) / 2,
+        right, handle.top + (handle.bottom - handle.top + size) / 2};
+}
+
+void FolderMapping::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    ScrollingItemWidget::CollectControlRegions(regions);
+    if (!data_) return;
+    const auto handle = GetMoveHandleRect();
+    AddControlRegion(regions, L"view", L"List view", FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handle), WidgetHit::ListToggleBtn, "button", data_->listMode);
+    AddControlRegion(regions, L"date-headers", L"Date headers", FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handle), WidgetHit::DateHeaderToggleBtn, "button", data_->dateHeaders);
+    AddControlRegion(regions, L"open-folder", L"Open source folder", FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handle), WidgetHit::OpenFolderBtn);
+    const auto& categories = GetVisibleCategoryIds();
+    for (size_t index = 0; index < categories.size(); ++index)
+        AddControlRegion(regions, L"category/" + categories[index], FolderMappingTabDisplayText(const_cast<FolderMapping*>(this), categories[index]),
+            FolderMappingTabRect(const_cast<FolderMapping*>(this), index), WidgetHit::CategoryTab, "tab", {}, categories[index] == CachedActiveCategoryId());
+}
+
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
     const bool lt = UsesLightContentTheme();
 
     const float bs = GetBarScale();
-    const int btnSize = Cu(14.0f * bs);
-    const int gap = Cu(4.0f * bs);
-    const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = GetTitleBarResizeReserve();
-    const int h = handleRect.bottom - handleRect.top;
-    RECT toggleBtn = {
-        handleRect.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handleRect.top + (h - btnSize) / 2,
-        handleRect.right - resizeReserve - gap - btnSize - gapBetween,
-        handleRect.top + (h + btnSize) / 2
-    };
-    RECT dateBtn = {
-        toggleBtn.left - gapBetween - btnSize,
-        handleRect.top + (h - btnSize) / 2,
-        toggleBtn.left - gapBetween,
-        handleRect.top + (h + btnSize) / 2
-    };
-    RECT openBtn = {
-        handleRect.right - resizeReserve - gap - btnSize,
-        handleRect.top + (h - btnSize) / 2,
-        handleRect.right - resizeReserve - gap,
-        handleRect.top + (h + btnSize) / 2
-    };
+    const auto toggleBtn = FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handleRect);
+    const auto dateBtn = FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handleRect);
+    const auto openBtn = FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handleRect);
 
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
@@ -1264,31 +1268,10 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     if (details != WidgetHit::None) return details;
     if (base != WidgetHit::MoveHandle) return base;
 
-    RECT handle = GetMoveHandleRect();
-    const float bs = GetBarScale();
-    const int btnSize = Cu(14.0f * bs);
-    const int gap = Cu(4.0f * bs);
-    const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = GetTitleBarResizeReserve();
-    const int h = handle.bottom - handle.top;
-    RECT toggleBtn = {
-        handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handle.top + (h - btnSize) / 2,
-        handle.right - resizeReserve - gap - btnSize - gapBetween,
-        handle.top + (h + btnSize) / 2
-    };
-    RECT dateBtn = {
-        toggleBtn.left - gapBetween - btnSize,
-        handle.top + (h - btnSize) / 2,
-        toggleBtn.left - gapBetween,
-        handle.top + (h + btnSize) / 2
-    };
-    RECT openBtn = {
-        handle.right - resizeReserve - gap - btnSize,
-        handle.top + (h - btnSize) / 2,
-        handle.right - resizeReserve - gap,
-        handle.top + (h + btnSize) / 2
-    };
+    const auto handle = GetMoveHandleRect();
+    const auto toggleBtn = FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handle);
+    const auto dateBtn = FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handle);
+    const auto openBtn = FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handle);
     if (PtInRect(&dateBtn, pt)) return WidgetHit::DateHeaderToggleBtn;
     if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
     if (PtInRect(&openBtn, pt)) return WidgetHit::OpenFolderBtn;
