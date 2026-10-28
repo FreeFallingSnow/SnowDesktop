@@ -654,12 +654,25 @@
             check(nested != nullptr, "nested panel opener must exist in the actual committed panel scene");
             const int nestedX = static_cast<int>(nested->shape.x + 10);
             const int nestedY = static_cast<int>(nested->shape.y + 10);
-            for (const auto* suffix : {"MouseDown", "MouseUp", "Click"})
             {
-                const std::string callback = std::string("on") +
-                    (surface == std::string_view("dialog") ? "Dialog" :
-                        surface == std::string_view("popover") ? "Popover" : "Panel") + suffix;
-                app.widgetEngine_->InvokeMouseEvent(L"lua-popup-owner", callback.c_str(), nestedX, nestedY, 1, 0);
+                // Offscreen loading supplies the scene without desktop services.
+                // Execute this isolated instance as a runtime owner: preview
+                // events intentionally dry-load and cannot request any panel.
+                struct RuntimeRoleScope
+                {
+                    LuaWidget& widget;
+                    bool preview;
+                    explicit RuntimeRoleScope(LuaWidget& value)
+                        : widget(value), preview(std::exchange(value.preview, false)) {}
+                    ~RuntimeRoleScope() { widget.preview = preview; }
+                } runtimeRole(const_cast<LuaWidget&>(app.widgetEngine_->GetWidgets().front()));
+                for (const auto* suffix : {"MouseDown", "MouseUp", "Click"})
+                {
+                    const std::string callback = std::string("on") +
+                        (surface == std::string_view("dialog") ? "Dialog" :
+                            surface == std::string_view("popover") ? "Popover" : "Panel") + suffix;
+                    app.widgetEngine_->InvokeMouseEvent(L"lua-popup-owner", callback.c_str(), nestedX, nestedY, 1, 0);
+                }
             }
             app.widgetEngine_->SetOpenWidgetPanelCallback({});
             check(nestedRequest && nestedRequest->hasAnchor && !nestedRequest->desktopGesture &&
