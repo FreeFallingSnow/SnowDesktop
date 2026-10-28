@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/input/widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
 #include "shell/shell_context_menu_invoke.h"
@@ -44,6 +45,12 @@ void DesktopApp::ShowFolderEntryContextMenu(
         : widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const bool searchResultMenu = searchSelection ||
+        (keepQuickNavigationOpen && !GetQuickNavigationEffectiveSearchText().empty()) ||
+        snowdesktop::widget_search_context_menu::IsSearchResultAtPoint(containers_, clientPoint);
+    const bool canPersonalizeIcon = singleSelection && !searchResultMenu;
     bool administratorLaunchSelected = false;
     for (const auto& path : selectedPaths)
     {
@@ -91,8 +98,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand,
         _LW("app.menu.properties"));
-    if (singleSelection) AppendWebsiteIconMenu(menu, fullPath);
-    if (singleSelection) AppendIconOverrideMenu(menu, fullPath);
+    if (canPersonalizeIcon) AppendWebsiteIconMenu(menu, fullPath);
+    if (canPersonalizeIcon) AppendIconOverrideMenu(menu, fullPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -150,7 +157,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
     ClearMenuIcons();
     bool inlineEditorStarted = false;
 
-    if (ExecuteIconOverrideMenu(command, fullPath)) return;
+    if (canPersonalizeIcon && ExecuteIconOverrideMenu(command, fullPath)) return;
     switch (command)
     {
     case kContextOpenCommand:
@@ -192,7 +199,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
             ShowPathProperties(selectedPaths.front());
         break;
     case kContextFetchWebsiteIconCommand:
-        if (singleSelection) FetchWebsiteIcon(selectedPaths.front());
+        if (canPersonalizeIcon) FetchWebsiteIcon(selectedPaths.front());
         break;
     case kContextRenameCommand:
         if (singleSelection)

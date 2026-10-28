@@ -8,6 +8,24 @@
 
 namespace snowdesktop::widget_search_context_menu
 {
+template<class Containers>
+bool IsSearchResultAtPoint(const Containers& containers, POINT point)
+{
+    for (const auto& container : containers)
+    {
+        auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+        if (!view || !view->IsSearchActive()) continue;
+        const RECT viewport = view->GetContentViewportRect();
+        if (!PtInRect(&viewport, point)) continue;
+        for (const auto& slot : view->GetSlots())
+        {
+            const RECT bounds = slot->GetBounds();
+            if (slot->GetItem() && PtInRect(&bounds, point)) return true;
+        }
+    }
+    return false;
+}
+
 inline bool NeedsPathMenu(ScrollingItemWidget& view, const Item& hit)
 {
     if (hit.IsSearchResult()) return true;

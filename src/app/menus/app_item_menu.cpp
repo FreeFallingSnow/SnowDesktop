@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/input/widget_search_context_menu.h"
 #include "icons/large_icon_steam.h"
 #include "icons/large_icon_preset_rules.h"
 #include "icons/large_icon_edit_rules.h"
@@ -320,7 +321,12 @@ void DesktopApp::ShowItemContextMenu(
     const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
         entitlement.bridgeAvailable, entitlement.registered);
     const auto customIconIdentity = items_[itemIndex].layoutKey;
-    const auto iconPersonalization = selectedCount == 1 && !items_[itemIndex].largeIcon ?
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const bool searchResultMenu =
+        (keepQuickNavigationOpen && !GetQuickNavigationEffectiveSearchText().empty()) ||
+        snowdesktop::widget_search_context_menu::IsSearchResultAtPoint(containers_, clientPoint);
+    const auto iconPersonalization = !searchResultMenu && selectedCount == 1 && !items_[itemIndex].largeIcon ?
         AppendIconOverrideMenu(nullptr, customIconIdentity) : nullptr;
     if (largeIconMenu)
     {
@@ -404,7 +410,7 @@ void DesktopApp::ShowItemContextMenu(
     {
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(iconPersonalization),_LW("iconLibrary.personalization"));
     }
-    if (selectedCount == 1 && canFile)
+    if (!searchResultMenu && selectedCount == 1 && canFile)
         AppendWebsiteIconMenu(menu, itemPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!namespaceItem)
@@ -787,7 +793,7 @@ void DesktopApp::ShowItemContextMenu(
         return;
     }
     applyLargeIconCommand(command);
-    if (ExecuteIconOverrideMenu(command, customIconIdentity)) return;
+    if (!searchResultMenu && ExecuteIconOverrideMenu(command, customIconIdentity)) return;
     switch (command)
     {
     case kContextAddFolderMappingWidget:
@@ -934,7 +940,7 @@ void DesktopApp::ShowItemContextMenu(
             ShowPathProperties(itemPath);
         break;
     case kContextFetchWebsiteIconCommand:
-        if (selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
+        if (!searchResultMenu && selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
         break;
     case kContextPopupFan:
         if (dockFolderEntry)
