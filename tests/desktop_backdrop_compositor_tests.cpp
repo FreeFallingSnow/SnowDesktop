@@ -17,6 +17,7 @@
 #include "ui/render/native_tooltip_content.h"
 #include "system/panel/system_panel_backdrop_placement.h"
 #include "dock/dock_desktop_layer_cases.h"
+#include "dock/dock_pair_transition_cases.h"
 #include "navigation/quick_navigation_attraction_render_cases.h"
 #include "ui/render/desktop_backdrop_panel_properties_cases.h"
 #include "ui/render/desktop_backdrop_region_cache_cases.h"
@@ -848,6 +849,7 @@ int RunDesktopBackdropCompositorTests()
         return condition;
     };
     snowdesktop::test::CheckDockDesktopLayerRestoration(check);
+    snowdesktop::test::dock_pair_transition::Run(check);
 
     // Like the host, retain the apartment until process exit: the production
     // compositor/DispatcherQueue context is thread-local and outlives fixtures.

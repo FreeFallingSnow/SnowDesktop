@@ -74,10 +74,6 @@ inline bool Apply(
         SWP_NOOWNERZORDER;
     constexpr UINT backdropFlags =
         SWP_NOACTIVATE | SWP_NOOWNERZORDER;
-    constexpr UINT bandOnlyFlags =
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-        SWP_NOOWNERZORDER;
-
     const bool usesBandSentinel =
         contentInsertAfter == HWND_TOPMOST ||
         contentInsertAfter == HWND_NOTOPMOST;
@@ -154,73 +150,68 @@ inline bool Apply(
         return synchronizeBackdropGeometry();
     }
 
+    // If User32 cannot commit a pair transaction, keep the helper hidden
+    // while falling back to separate calls. A visible helper above its content
+    // can sample that content into its BackdropBrush even if the final order
+    // is repaired immediately afterwards.
+    const auto placeSeparately = [&]() {
+        const bool restoreVisible = IsWindowVisible(backdropWindow) != FALSE;
+        if (restoreVisible && !SetWindowPos(backdropWindow, nullptr, 0, 0, 0, 0,
+                contentFlags | SWP_NOZORDER | SWP_HIDEWINDOW))
+            return false;
+        const bool positioned =
+            SetWindowPos(backdropWindow, bandInsertAfter,
+                backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
+                backdropFlags) &&
+            SetWindowPos(contentWindow, bandInsertAfter, 0, 0, 0, 0, contentFlags) &&
+            (contentInsertAfter == bandInsertAfter ||
+                SetWindowPos(contentWindow, contentInsertAfter, 0, 0, 0, 0, contentFlags)) &&
+            SetWindowPos(backdropWindow, contentWindow,
+                backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
+                backdropFlags) &&
+            IsTopmost(contentWindow) == topmost &&
+            IsTopmost(backdropWindow) == topmost && IsPaired(contentWindow, backdropWindow);
+        if (!positioned) return false;
+        return !restoreVisible || SetWindowPos(backdropWindow, nullptr, 0, 0, 0, 0,
+            contentFlags | SWP_NOZORDER | SWP_SHOWWINDOW) != FALSE;
+    };
+
     const bool changesZOrderBand =
         IsTopmost(contentWindow) != topmost ||
         IsTopmost(backdropWindow) != topmost;
     if (changesZOrderBand && topmost)
     {
         // Inserting after the LAST topmost window preserves a non-topmost
-        // helper's band. Both windows therefore need explicit promotion,
-        // even when content/backdrop are already adjacent. Promote together
-        // with content last so the helper never presents above its content.
-        HDWP promotion = BeginDeferWindowPos(2);
-        if (promotion)
-            promotion = DeferWindowPos(promotion, backdropWindow, HWND_TOPMOST,
+        // helper's band. Normalize both bands explicitly before using a
+        // concrete anchor. Demotion must also be paired: moving content below
+        // the anchor separately leaves the glass above it until the next call.
+        HDWP normalization = BeginDeferWindowPos(2);
+        if (normalization)
+            normalization = DeferWindowPos(normalization, backdropWindow, bandInsertAfter,
                 backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
                 backdropFlags);
-        if (promotion)
-            promotion = DeferWindowPos(promotion, contentWindow, HWND_TOPMOST,
+        if (normalization)
+            normalization = DeferWindowPos(normalization, contentWindow, bandInsertAfter,
                 0, 0, 0, 0, contentFlags);
-        if (!promotion || !EndDeferWindowPos(promotion))
-        {
-            // Retain the existing direct-call fallback if User32 cannot
-            // allocate or commit a positioning transaction.
-            if (!SetWindowPos(backdropWindow, HWND_TOPMOST,
-                    backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
-                    backdropFlags) ||
-                !SetWindowPos(contentWindow, HWND_TOPMOST, 0, 0, 0, 0, contentFlags))
-                return false;
-        }
+        if (!normalization || !EndDeferWindowPos(normalization))
+            return placeSeparately();
         if (contentInsertAfter == bandInsertAfter)
-            return IsTopmost(contentWindow) && IsTopmost(backdropWindow) &&
+            return IsTopmost(contentWindow) == topmost && IsTopmost(backdropWindow) == topmost &&
                 IsPaired(contentWindow, backdropWindow);
         // Both bands are now explicit; concrete-anchor placement can use the
         // ordinary same-band transaction below.
     }
     else if (changesZOrderBand)
     {
-        bool succeeded = true;
-        if (!topmost)
-        {
-            // Remove the glass helper from TOPMOST before moving its content.
-            // The still-topmost content keeps the helper from surfacing alone.
-            succeeded = SetWindowPos(
-                backdropWindow, HWND_NOTOPMOST,
-                0, 0, 0, 0, bandOnlyFlags) != FALSE &&
-                succeeded;
-        }
-
-        // Normalize the content band independently of concrete placement: a
-        // stale/rejected anchor must not undo dismissal of a floating Dock.
-        // On demotion the backdrop has already crossed the boundary first.
-        if (contentInsertAfter != bandInsertAfter && IsTopmost(contentWindow) != topmost)
-        {
-            succeeded = SetWindowPos(contentWindow, bandInsertAfter,
-                0, 0, 0, 0, contentFlags) != FALSE && succeeded;
-        }
-        succeeded = SetWindowPos(
-            contentWindow, contentInsertAfter,
-            0, 0, 0, 0, contentFlags) != FALSE &&
-            succeeded;
-        succeeded = SetWindowPos(
-            backdropWindow, contentWindow,
-            backdropOrigin.x, backdropOrigin.y,
-            backdropSize.cx, backdropSize.cy,
-            backdropFlags) != FALSE && succeeded;
-        return succeeded &&
-            IsTopmost(contentWindow) == topmost &&
-            IsTopmost(backdropWindow) == topmost &&
-            IsPaired(contentWindow, backdropWindow);
+        // Lower the helper first while content remains above it. Normalize
+        // content only to the top of the ordinary band; the concrete anchor
+        // placement below must move the complete pair together. Moving only
+        // content behind that anchor exposes the still-higher helper.
+        if (!SetWindowPos(backdropWindow, HWND_NOTOPMOST,
+                0, 0, 0, 0, contentFlags) ||
+            (IsTopmost(contentWindow) && !SetWindowPos(contentWindow, HWND_NOTOPMOST,
+                0, 0, 0, 0, contentFlags)))
+            return placeSeparately();
     }
 
     HDWP deferred = BeginDeferWindowPos(2);
@@ -242,17 +233,7 @@ inline bool Apply(
         return IsTopmost(contentWindow) == topmost &&
             IsTopmost(backdropWindow) == topmost && IsPaired(contentWindow, backdropWindow);
 
-    const bool contentPositioned = SetWindowPos(
-        contentWindow, contentInsertAfter,
-        0, 0, 0, 0, contentFlags) != FALSE;
-    const bool backdropPositioned = SetWindowPos(
-        backdropWindow, contentWindow,
-        backdropOrigin.x, backdropOrigin.y,
-        backdropSize.cx, backdropSize.cy,
-        backdropFlags) != FALSE;
-    return contentPositioned && backdropPositioned &&
-        IsTopmost(contentWindow) == topmost &&
-        IsTopmost(backdropWindow) == topmost && IsPaired(contentWindow, backdropWindow);
+    return placeSeparately();
 }
 
 // A transparent popup has no backdrop to establish pair adjacency. Refreshing
