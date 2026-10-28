@@ -3,6 +3,7 @@
 #include "platform/control/control_elements.h"
 #include "layout/widget_displacement.h"
 #include "platform/control/control_protocol.h"
+#include "data/data_paths.h"
 
 namespace
 {
@@ -11,6 +12,16 @@ Value Rect(const RECT& rect)
 {
     return Object({{"left", Number(rect.left)}, {"top", Number(rect.top)},
         {"right", Number(rect.right)}, {"bottom", Number(rect.bottom)}});
+}
+Value CaptureValue(const snowdesktop::screen_capture::State& state)
+{
+    return Object({{"id", String(state.id)}, {"status", String(state.status)}, {"error", String(state.error)},
+        {"path", String(WideToUtf8(state.path.wstring()))}, {"monitorId", String(WideToUtf8(state.monitor.id))},
+        {"monitorBounds", Rect(state.monitor.bounds)}, {"width", Number(state.width)}, {"height", Number(state.height)},
+        {"includeSystemCursor", Boolean(state.systemCursor)}, {"colorSpace", String("sdr-bgra8")},
+        {"startedUnixMs", Number(static_cast<double>(state.startedUnixMs))},
+        {"finishedUnixMs", Number(static_cast<double>(state.finishedUnixMs))},
+        {"frameTime100ns", String(std::to_string(state.frameTime100ns))}, {"processId", Number(GetCurrentProcessId())}});
 }
 Value WidgetValue(const DesktopWidget& widget, bool grouped)
 {
@@ -77,6 +88,33 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     using namespace snowdesktop::control;
     if (!startupInitializationComplete_ || exitRequested_)
         throw Error("not_ready", "Application is starting or shutting down");
+    if (method == "capture.monitors")
+    {
+        Fields(params, {}); auto monitors = Array();
+        for (const auto& monitor : snowdesktop::screen_capture::Monitors())
+            monitors.array.push_back(Object({{"id", String(WideToUtf8(monitor.id))},
+                {"bounds", Rect(monitor.bounds)}, {"primary", Boolean(monitor.primary)}}));
+        return Object({{"coordinateSpace", String("physical-screen-pixels")}, {"monitors", std::move(monitors)}});
+    }
+    if (method == "capture.screenshot")
+    {
+        Fields(params, {"monitorId", "includeSystemCursor"});
+        auto monitor = Text(params, "monitorId", false); if (monitor.empty()) monitor = "primary";
+        const auto* cursor = params.Find("includeSystemCursor");
+        if (cursor && !cursor->IsBoolean()) throw Error("invalid_params", "includeSystemCursor must be boolean", -32602);
+        std::string error;
+        if (!applicationControlRuntime_->capture.Screenshot(Utf8ToWide(monitor),
+            std::filesystem::path(GetDataDirectoryPath()) / L"Automation" / L"Captures", cursor && cursor->boolean, error))
+            throw Error(error.empty() ? "capture_unavailable" : error, "Screenshot request could not start");
+        return CaptureValue(applicationControlRuntime_->capture.Current());
+    }
+    if (method == "capture.state" || method == "capture.cancel")
+    {
+        Fields(params, {"id"}); const auto state = applicationControlRuntime_->capture.Current();
+        if (Text(params, "id") != state.id) throw Error("capture_not_found", "This capture is no longer the current task");
+        if (method == "capture.cancel" && state.status == "running") applicationControlRuntime_->capture.Cancel();
+        return CaptureValue(applicationControlRuntime_->capture.Current());
+    }
     if (method == "ui.snapshot") { Fields(params, {}); return ApplicationControlElements().ToJson(); }
     if (method == "ui.pointerState")
     {

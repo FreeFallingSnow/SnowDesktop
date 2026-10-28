@@ -2,6 +2,7 @@
 
 #include "ui/input/control_pointer.h"
 #include "ui/render/demo_cursor.h"
+#include "ui/preview/screen_capture.h"
 
 namespace snowdesktop::app_control
 {
@@ -11,7 +12,8 @@ struct Runtime
 {
     controlled_pointer::Player pointer;
     demo_cursor::Overlay cursor;
+    screen_capture::Service capture;
     ~Runtime() { Stop(); }
-    void Stop() noexcept { pointer.Stop(); cursor.Hide(); }
+    void Stop() noexcept { pointer.Stop(); cursor.Hide(); capture.Stop(); }
 };
 }

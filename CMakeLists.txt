@@ -398,6 +398,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/input/control_pointer.h
     src/ui/render/demo_cursor.cpp
     src/ui/render/demo_cursor.h
+    src/ui/preview/screen_capture.cpp
+    src/ui/preview/screen_capture.h
     src/app/navigation/app_quick_navigation_layout.cpp
     src/app/navigation/app_quick_navigation_messages.cpp
     src/app/navigation/app_quick_navigation_model.cpp

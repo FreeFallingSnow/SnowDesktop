@@ -67,6 +67,37 @@ geometry and uses the same procedural cursor renderer intended for later
 capture/offline compositing. Scene configuration and video export are a later
 stage and are not provided by these methods.
 
+## Monitor screenshots
+
+`api.describe.capabilities.monitorCapture:1` advertises the asynchronous screenshot
+extension. Runtime availability still depends on Windows Graphics Capture, the
+interactive session and graphics support.
+
+- `capture.monitors {}` returns monitor IDs, primary flags and physical screen
+  rectangles. It does not activate or rearrange windows.
+- `capture.screenshot {monitorId?:string,includeSystemCursor?:boolean}` starts one
+  screenshot task. Omit `monitorId` to select the primary monitor, or use an exact
+  ID from `capture.monitors`. `includeSystemCursor` defaults to false; a visible
+  SnowDesktop demo-cursor layer remains part of the composed screen. This avoids
+  adding the hardware cursor a second time. It captures the selected monitor's
+  complete composed desktop, including other visible application windows.
+- `capture.state {id}` returns the latest task's status, error, monitor/bounds,
+  dimensions, start/finish Unix milliseconds, frame timestamp in 100ns units,
+  source process ID and PNG path. Timestamps exceeding JSON integer precision are
+  decimal strings. Poll until `completed`, `failed` or `cancelled`. Only the latest
+  task's state is retained; completed files remain available on disk.
+- `capture.cancel {id}` requests cancellation of the current task. It is safe to
+  call after completion. Poll state for the terminal outcome. A PNG already
+  atomically written during cancellation may remain in that task's directory.
+
+Outputs go into a newly created UUID directory under the current data directory's
+`Automation/Captures/`; callers cannot supply a destination filename or overwrite
+an existing capture. GPU readback and PNG encoding run on a windowless MTA worker,
+keeping UI/input dispatch available. Capture can run while pointer playback is
+active. The format is SDR BGRA8/PNG; HDR tone mapping and video export are not part
+of this extension. Frame acquisition times out after five seconds. Unsupported
+cursor exclusion fails explicitly instead of silently including a system cursor.
+
 ## Connection
 
 The Windows named pipe is
