@@ -386,6 +386,9 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_features.cpp
     src/app/navigation/app_quick_navigation_preview.cpp
     src/app/features/app_theme_preview.cpp
+    src/app/features/app_control.cpp
+    src/platform/control/control_protocol.cpp
+    src/platform/control/control_server.cpp
     src/app/navigation/app_quick_navigation_layout.cpp
     src/app/navigation/app_quick_navigation_messages.cpp
     src/app/navigation/app_quick_navigation_model.cpp
@@ -2091,6 +2094,16 @@ if (BUILD_TESTING)
         SOURCES tests/demo_mode_rules_tests.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract settings render)
+
+    snowdesktop_add_test(
+        SnowDesktopApplicationControlTests
+        application_control
+        SOURCES tests/platform/app_control_ipc_tests.cpp
+            src/platform/control/control_protocol.cpp
+            src/platform/control/control_server.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 advapi32
+        LABELS contract integration ipc)
 
     snowdesktop_add_test(
         SnowDesktopSettingsWindowOpenRulesTests

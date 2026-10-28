@@ -21,6 +21,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    applicationControl_.Stop();
     filePreview_.Stop();
     snowdesktop::window_support::WindowSupport().Stop();
     FlushQueuedLayoutSave();

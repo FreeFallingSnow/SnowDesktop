@@ -32,6 +32,7 @@
 #include "common/background_work.h"
 #include "data/data_cleanup.h"
 #include "platform/single_instance.h"
+#include "platform/control/control_server.h"
 #include "app/shell/shell_icon_work.h"
 #include "app/shell/shell_icon_request.h"
 #include "icons/icon_styled_pixels.h"
@@ -1637,6 +1638,10 @@ private:
         HWND window) const noexcept;
     /** Initialize the application-lifetime settings state owner. */
     void InitializeSettingsController();
+    void InitializeApplicationControl();
+    snowdesktop::control::Value ApplicationControlLayout() const;
+    snowdesktop::control::Value HandleApplicationControl(
+        std::string_view method, const snowdesktop::control::Value& params);
     /** Release settings UI and services while their borrowed owners are alive. */
     void ShutdownSettingsInfrastructure() noexcept;
     /** Commit a validated layout backup on the application STA. */
@@ -4464,6 +4469,7 @@ private:
     bool exitRequested_ = false;
     std::unique_ptr<snowdesktop::single_instance::PreparedRestart> preparedRestart_;
     bool startupInitializationComplete_ = false;
+    snowdesktop::control::Server applicationControl_;
     bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;

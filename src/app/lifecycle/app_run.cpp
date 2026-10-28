@@ -1688,6 +1688,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // are configured. Activation requests received during startup remain
     // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
+    InitializeApplicationControl();
     RefreshTrayNamespaceRegistrations();
     logStartupStage(L"services ready");
     if (customDesktopVisible_)
@@ -1951,6 +1952,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");
+    applicationControl_.Stop();
     operationFeedback.Drain();
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();
