@@ -91,6 +91,13 @@ void ProgressReplacement(const std::filesystem::path& file)
 {
     const auto payload = control::String(std::string(256 * 1024, 'p'));
     demo::WriteJson(file, control::Object({{"generation", control::Number(0)}, {"payload", payload}}));
+    struct Lease { HANDLE value; ~Lease() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); } } held{
+        CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, 0, nullptr)};
+    Require(held.value != INVALID_HANDLE_VALUE, "hold an old complete progress snapshot");
+    demo::WriteJson(file, control::Object({{"generation", control::Number(1)}, {"payload", payload}}));
+    Require(demo::ReadJson(file).Find("generation")->number == 1, "new opens see the replacement while the old snapshot is held");
+    CloseHandle(held.value); held.value = INVALID_HANDLE_VALUE;
     std::atomic<bool> failed{false};
     std::jthread reader([&](std::stop_token stopped) {
         while (!stopped.stop_requested())
