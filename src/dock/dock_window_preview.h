@@ -125,6 +125,7 @@ public:
         HWND dockLayerOwner = nullptr);
     void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void SetPinBorderAppearance(const PersonalizationSettings& settings) { windowPins_.SetAppearance(settings); }
+    void SetPeekAnchorResolver(std::function<HWND(HWND)> resolver) { peekAnchorResolver_ = std::move(resolver); }
     void SetPeekActivateCallback(ActivateCallback callback)
     {
         if (!callback) { peekActivateCallback_ = {}; return; }
@@ -199,6 +200,7 @@ private:
     snowdesktop::dock_peek::Session windowPeek_;
     snowdesktop::dock_peek::WindowIdentity peekCandidate_;
     HWND peekOwner_ = nullptr;
+    std::function<HWND(HWND)> peekAnchorResolver_;
     HWND peekTimerWindow_ = nullptr;
     HWND peekSuppressedWindow_ = nullptr;
     HWND peekPendingForeground_ = nullptr;
@@ -206,6 +208,7 @@ private:
     ULONGLONG peekLeaveDue_ = 0;
     bool peekSurfacesReady_ = false;
     bool peekCommitting_ = false;
+    bool peekUpdating_ = false;
     ULONGLONG peekCommitDeadline_ = 0;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;

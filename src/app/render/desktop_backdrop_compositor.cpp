@@ -1084,6 +1084,18 @@ bool DesktopBackdropCompositor::SetExcludedFromPeek(bool excluded)
         impl_->contentWindow, impl_->backdropWindow, excluded);
 }
 
+HWND DesktopBackdropCompositor::PreparePeekInsertBefore(HWND contentWindow)
+{
+    if (!contentWindow || !IsWindow(contentWindow)) return nullptr;
+    if (!impl_ || !impl_->available || !impl_->popupMode || impl_->contentWindow != contentWindow)
+        return contentWindow;
+    POINT origin{};
+    SIZE size{};
+    if (!impl_->QueryContentPlacement(nullptr, origin, size)) return nullptr;
+    return snowdesktop::popup_window_pair_z_order::PreparePeekInsertBefore(
+        contentWindow, impl_->backdropWindow, origin, size);
+}
+
 std::shared_future<bool> DesktopBackdropCompositor::PrepareBlurFactoryInBackground(float blurRadius)
 {
     if (!impl_ || !std::isfinite(blurRadius) || !impl_->EnsureDispatcherQueue()) return {};

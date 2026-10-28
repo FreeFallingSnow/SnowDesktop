@@ -1504,6 +1504,8 @@ void DockWindowPreview::UpdatePeekTarget(HWND target)
 
 void DockWindowPreview::OnPeekTimer()
 {
+    if (std::exchange(peekUpdating_, true)) return;
+    struct UpdateScope { bool& active; ~UpdateScope() { active = false; } } updateScope{peekUpdating_};
     if (peekCommitting_)
     {
         const HWND target = windowPeek_.Target();
@@ -1555,6 +1557,13 @@ void DockWindowPreview::OnPeekTimer()
         return;
     }
     if (GetTickCount64() < peekDue_) return;
+    HWND insertBefore = peekOwner_;
+    if (peekOwner_ && peekAnchorResolver_)
+    {
+        snowdesktop::performance::Scope trace("dock.preview", "peek.anchor");
+        insertBefore = peekAnchorResolver_(peekOwner_);
+        if (!insertBefore) { CancelPeek(true); return; }
+    }
     {
         snowdesktop::performance::Scope trace("dock.preview", "peek.pins");
         windowPins_.SetPeekTarget(peekCandidate_.window);
@@ -1562,7 +1571,7 @@ void DockWindowPreview::OnPeekTimer()
     bool began = false;
     {
         snowdesktop::performance::Scope trace("dock.preview", "peek.begin");
-        began = windowPeek_.Begin(peekCandidate_.window, peekOwner_);
+        began = windowPeek_.Begin(peekCandidate_.window, insertBefore);
     }
     if (!began) CancelPeek(true);
 }

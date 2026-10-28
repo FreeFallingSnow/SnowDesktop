@@ -246,6 +246,23 @@ inline bool Apply(
     return placeSeparately();
 }
 
+// DWM's live-preview insertion anchor must be below both layers. Keep the
+// content at its current place (including below menus), repair its helper,
+// then use that helper as the anchor rather than splitting the visual pair.
+inline HWND PreparePeekInsertBefore(HWND contentWindow, HWND backdropWindow,
+    POINT backdropOrigin, SIZE backdropSize)
+{
+    if (!contentWindow || !IsWindow(contentWindow)) return nullptr;
+    if (!backdropWindow) return contentWindow;
+    if (backdropWindow == contentWindow || !IsWindow(backdropWindow)) return nullptr;
+    HWND previous = GetWindow(contentWindow, GW_HWNDPREV);
+    if (previous == backdropWindow) previous = GetWindow(backdropWindow, GW_HWNDPREV);
+    const bool topmost = IsTopmost(contentWindow);
+    const HWND anchor = previous ? previous : (topmost ? HWND_TOPMOST : HWND_TOP);
+    return Apply(contentWindow, backdropWindow, anchor, topmost, backdropOrigin, backdropSize)
+        ? backdropWindow : nullptr;
+}
+
 // A transparent popup has no backdrop to establish pair adjacency. Refreshing
 // its band must be idempotent too, so it does not overtake drag HUD windows.
 inline bool MaintainContentBand(HWND contentWindow, bool topmost,

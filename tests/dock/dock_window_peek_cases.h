@@ -2,6 +2,7 @@
 
 #include "dock_preview_thumbnail_cases.h"
 #include "dock/dock_window_peek.h"
+#include "app/popup/popup_window_pair_z_order.h"
 #include "theme/personalization.h"
 
 #include <chrono>
@@ -16,7 +17,7 @@ struct Call
 {
     bool active;
     HWND target;
-    HWND caller;
+    HWND insertBefore;
 };
 inline std::vector<Call> calls;
 inline bool failBegin = false;
@@ -44,10 +45,10 @@ inline LRESULT SendPointer(HWND window, UINT message, WPARAM wp, LPARAM lp)
     return SendMessageW(window, message, wp, lp);
 }
 
-inline HRESULT WINAPI Activate(BOOL active, HWND target, HWND caller, UINT trigger, const RECT* rect)
+inline HRESULT WINAPI Activate(BOOL active, HWND target, HWND insertBefore, UINT trigger, const RECT* rect)
 {
     if (trigger != 3 || rect) return E_INVALIDARG;
-    calls.push_back({active != FALSE, target, caller});
+    calls.push_back({active != FALSE, target, insertBefore});
     return (active ? failBegin : failStop) ? E_FAIL : S_OK;
 }
 inline BOOL WINAPI TrackPointer(TRACKMOUSEEVENT*) { return TRUE; }
@@ -121,6 +122,10 @@ void Run(Check report)
             Session session(snowdesktop::dock_peek::Api{&Activate});
             check(session.Begin(second.window, first.window) && IsIconic(second.window),
                 "a minimized source can be submitted without restoring it");
+            const size_t anchoredCalls = calls.size();
+            check(session.Begin(second.window, nullptr) && calls.size() == anchoredCalls + 1 &&
+                    calls.back().active && !calls.back().insertBefore,
+                "changing a live target's insertion anchor must update Peek without a stop/restart");
             check(session.Begin(first.window, second.window) && Peeking(first.window),
                 "switching Peek submits the new concrete HWND");
             failStop = true;
@@ -188,7 +193,7 @@ void Run(Check report)
             check(calls.empty(), "crossing a thumbnail briefly does not invoke Peek");
             check(Wait([&] { return Peeking(first.window); }),
                 "resting on the thumbnail invokes Peek through the real popup timer");
-            check(calls.back().caller == nullptr,
+            check(calls.back().insertBefore == nullptr,
                 "desktop Peek does not depend on a thumbnail popup that will hide during handoff");
             const size_t firstCalls = calls.size();
             hover(0);
@@ -374,6 +379,61 @@ void Run(Check report)
             SendPointer(unavailable.GetWindow(), WM_LBUTTONUP, 0, ContentPoint(unavailable.GetWindow()));
             check(calls.empty() && fallbackActivated == first.window && unavailable.IsCleared(),
                 "missing Peek support retains ordinary thumbnail activation and cleanup");
+        }
+
+        {
+            Source owner, glass, rebuiltGlass, target;
+            for (const HWND window : {owner.window, glass.window, rebuiltGlass.window, target.window})
+                ShowWindow(window, SW_SHOWNOACTIVATE);
+            RECT ownerBounds{};
+            GetWindowRect(owner.window, &ownerBounds);
+            check(snowdesktop::popup_window_pair_z_order::Apply(owner.window, glass.window, HWND_TOPMOST, true,
+                    {ownerBounds.left, ownerBounds.top}, {ownerBounds.right - ownerBounds.left, ownerBounds.bottom - ownerBounds.top}),
+                "paired Peek fixture owns a promoted floating Dock and glass");
+            calls.clear();
+            foreground = nativeForeground();
+            escape = false;
+            pointerWindow = nullptr;
+            pointerPosition = {-32000, -32000};
+            HWND currentGlass = glass.window;
+            bool validPair = true, ownerMatched = true;
+            unsigned resolverDepth = 0, maxResolverDepth = 0;
+            bool nestedTimerSent = false;
+            DockWindowPreview preview(snowdesktop::dock_peek::Api{&Activate});
+            check(preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [](HWND) {}),
+                "paired insertion-anchor fixture initializes");
+            preview.SetPeekAnchorResolver([&](HWND content) -> HWND {
+                ++resolverDepth;
+                maxResolverDepth = std::max(maxResolverDepth, resolverDepth);
+                struct DepthScope { unsigned& depth; ~DepthScope() { --depth; } } depthScope{resolverDepth};
+                if (!nestedTimerSent)
+                {
+                    nestedTimerSent = true;
+                    SendPointer(preview.GetWindow(), WM_TIMER, 2, 0);
+                }
+                ownerMatched = ownerMatched && content == owner.window;
+                if (!validPair) return nullptr;
+                RECT bounds{};
+                if (!GetWindowRect(content, &bounds)) return nullptr;
+                return snowdesktop::popup_window_pair_z_order::PreparePeekInsertBefore(content, currentGlass,
+                    {bounds.left, bounds.top}, {bounds.right - bounds.left, bounds.bottom - bounds.top});
+            });
+            preview.Show({{target.window, L"paired target"}}, {0, 0, 30, 30}, DockPosition::Bottom, false, owner.window);
+            SetWindowPos(preview.GetWindow(), nullptr, -16000, -16000, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SendPointer(preview.GetWindow(), WM_MOUSEMOVE, 0, ContentPoint(preview.GetWindow()));
+            check(Wait([&] { return Peeking(target.window); }) && ownerMatched && calls.back().insertBefore == glass.window &&
+                    GetWindow(preview.GetWindow(), GW_OWNER) == owner.window,
+                "Peek inserts below the glass while thumbnail ownership stays with the Dock content");
+            check(maxResolverDepth == 1, "native pair callbacks cannot reenter Peek anchor preparation");
+            const size_t oldAnchorCalls = calls.size();
+            currentGlass = rebuiltGlass.window;
+            check(Wait([&] { return calls.size() > oldAnchorCalls && calls.back().active &&
+                    calls.back().insertBefore == rebuiltGlass.window; }),
+                "recreated glass retargets the active Peek insertion anchor without stopping it");
+            validPair = false;
+            check(Wait([&] { return !calls.back().active; }) && preview.IsVisible(),
+                "unrepairable pair ends Peek but retains the ordinary interactive thumbnail");
         }
 
         Source other;

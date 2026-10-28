@@ -652,14 +652,20 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 for (const auto& host : persistentDockHosts_)
                     if (host && host->active)
                     {
-                        // Both native layers must remain above a Peek target.
-                        // Excluding only the content splits the glass/content pair.
+                        // Keep both layers opaque during Peek. The separate
+                        // insertion-anchor resolver places the target below the pair.
                         host->backdrop.SetExcludedFromPeek(true);
                         UpdateFloatingDockWindowBounds(*host, false, true);
                     }
                 InvalidateDockRects();
             }))
         dockWindowPreview_.reset();
+    if (dockWindowPreview_)
+        dockWindowPreview_->SetPeekAnchorResolver([this](HWND owner) -> HWND {
+            if (auto* host = FindPersistentDockHost(owner))
+                return host->backdrop.PreparePeekInsertBefore(owner);
+            return owner && IsWindow(owner) ? owner : nullptr;
+        });
     if (dockWindowPreview_)
         dockWindowPreview_->SetPeekActivateCallback([this](HWND window) {
             ActivateDockWindowFromPreview(window);

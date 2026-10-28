@@ -109,6 +109,26 @@ void Run(Check check, bool nativeVisibility = false)
             };
             const bool prepared = place(dock, glass, HWND_NOTOPMOST, false, "prepare ordinary Dock pair") &&
                 place(popup, popupGlass, HWND_NOTOPMOST, false, "prepare ordinary popup pair");
+            if (prepared)
+            {
+                place(dock, glass, HWND_TOPMOST, true, "prepare Peek insertion pair");
+                SetWindowPos(anchor, dock, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+                check(pair::IsAbove(dock, anchor) && pair::IsAbove(anchor, glass),
+                    "negative control reproduces content/target/glass order with the old content anchor");
+                const HWND peekFloor = pair::PreparePeekInsertBefore(dock, glass, {0, 0}, {32, 32});
+                check(peekFloor == glass && pair::IsPaired(dock, glass) && pair::IsAbove(glass, anchor),
+                    "Peek insertion preparation repairs a split pair and returns its lowest native glass layer");
+                SetWindowPos(anchor, peekFloor, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+                check(pair::IsPaired(dock, glass) && pair::IsAbove(glass, anchor),
+                    "target placement beneath the glass anchor cannot split the Dock visual pair");
+                check(pair::PreparePeekInsertBefore(dock, nullptr, {}, {}) == dock &&
+                        !pair::PreparePeekInsertBefore(dock, dock, {}, {}),
+                    "content-only surfaces use content while invalid self pairs are rejected");
+                SetWindowPos(anchor, HWND_NOTOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            }
             bool placed = prepared;
             observation = &observed;
             for (unsigned iteration = 0; placed && iteration < 128; ++iteration)
