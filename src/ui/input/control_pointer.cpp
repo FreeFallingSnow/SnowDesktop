@@ -2,13 +2,17 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace snowdesktop::controlled_pointer
 {
 namespace
 {
-constexpr ULONG_PTR InputTag = static_cast<ULONG_PTR>(0x534e4f5750545231ULL);
+// Some input routes preserve only the low 32 bits of dwExtraInfo. A wider
+// marker would make our own injected movement look like outside input.
+constexpr ULONG_PTR InputTag = 0x50545231U;
+static_assert(InputTag <= std::numeric_limits<std::uint32_t>::max());
 constexpr wchar_t WindowClass[] = L"SnowDesktop.ControlledPointer.v1";
 double Now()
 {
