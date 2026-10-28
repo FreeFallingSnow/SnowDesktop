@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "Automatically hide desktop when idle",
   "settings.desktop.idleHide.description": "Move the mouse on the desktop to show it again.",
   "settings.desktop.idleHide.delay": "Idle time (seconds)",
-  "settings.desktop.idleHide.pauseWithWindows": "Disable while app windows are visible"
+  "settings.desktop.idleHide.pauseWithWindows": "Disable while app windows are visible",
+  "widget.search.everything_results": "Everything results"
 }

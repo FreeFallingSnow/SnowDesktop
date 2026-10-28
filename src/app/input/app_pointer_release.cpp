@@ -1177,6 +1177,12 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             OpenCollectionPopupAt(widgetIndex, upPoint, L"", closedPopupByPress);
             return;
         }
+        if (pendingAction == WidgetHit::SearchMoreBtn)
+        {
+            if (auto* search = dynamic_cast<ScrollingItemWidget*>(buttonOwner)) search->ExpandFolderSearchAtPoint(upPoint);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         if (pendingAction == WidgetHit::CollapseToggleBtn)
         {
             ToggleWidgetCollapsed(widgetIndex);

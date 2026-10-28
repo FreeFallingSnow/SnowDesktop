@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "Desktop bei Inaktivität automatisch ausblenden",
   "settings.desktop.idleHide.description": "Bewegen Sie die Maus auf dem Desktop, um ihn wieder anzuzeigen.",
   "settings.desktop.idleHide.delay": "Inaktivitätsdauer (Sekunden)",
-  "settings.desktop.idleHide.pauseWithWindows": "Bei sichtbaren Anwendungsfenstern deaktivieren"
+  "settings.desktop.idleHide.pauseWithWindows": "Bei sichtbaren Anwendungsfenstern deaktivieren",
+  "widget.search.everything_results": "Everything-Ergebnisse"
 }

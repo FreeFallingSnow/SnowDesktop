@@ -1258,6 +1258,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
 
     if (!CategoryIdAtPoint(pt).empty())
         return WidgetHit::CategoryTab;
+    if (FolderSearchMoreAtPoint(pt) != static_cast<size_t>(-1)) return WidgetHit::SearchMoreBtn;
     RECT searchRect = GetSearchBoxRect();
     if (!IsRectEmptyRect(searchRect) && PtInRect(&searchRect, pt))
         return WidgetHit::SearchBox;

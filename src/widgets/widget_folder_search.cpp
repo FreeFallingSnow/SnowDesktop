@@ -6,6 +6,7 @@
 #include "widget/runtime/widget_item_layout.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/item_render_layer_rules.h"
+#include "ui/render/file_search_result_row.h"
 #include <unordered_set>
 #include <shlwapi.h>
 
@@ -35,16 +36,19 @@ public:
     SearchFolderIcon(std::shared_ptr<FolderEntry> entry,
         Container* owner, DesktopApp* app)
         : FolderEntryIcon(entry.get(), owner, app), entry_(std::move(entry)) {}
+    bool IsSearchResult() const override { return true; }
 private:
     std::shared_ptr<FolderEntry> entry_;
 };
 
 snowdesktop::widget_item_layout::Layout SearchLayout(
-    const ScrollingItemWidget& widget)
+    const ScrollingItemWidget& widget, bool recursive = false)
 {
     const auto* data = widget.GetWidgetData();
     const RECT content = widget.GetContentViewportRect();
     const auto metrics = widget.GetItemVisualMetrics();
+    if (recursive)
+        return snowdesktop::widget_item_layout::ResolveList(content, widget.Cu(52.0f), {}, 1);
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(content,
             std::max(widget.GetListRowHeight(), metrics.minimumListHeight),
@@ -59,10 +63,57 @@ snowdesktop::widget_item_layout::Layout SearchLayout(
 }
 }
 
+std::shared_ptr<Item> snowdesktop::CaptureSearchDragItem(const Item& item, DesktopApp* app)
+{
+    std::shared_ptr<FolderEntry> entry;
+    if (const auto* folder = dynamic_cast<const FolderEntryIcon*>(&item); folder && folder->GetFolderEntry())
+        entry = std::make_shared<FolderEntry>(*folder->GetFolderEntry());
+    else
+    {
+        entry = std::make_shared<FolderEntry>();
+        entry->name = item.GetTitle(); entry->fullPath = item.GetPath();
+        if (const auto* desktop = dynamic_cast<const DesktopIcon*>(&item); desktop && desktop->GetDesktopItem())
+        {
+            const auto& source = *desktop->GetDesktopItem();
+            entry->typeName = source.typeName; entry->fileSize = source.fileSize;
+            entry->lastWriteTime = source.modifiedTime.value_or(FILETIME{});
+            entry->sysIconIndex = source.sysIconIndex;
+            entry->iconBitmapSize = source.iconBitmapSize;
+            if (source.iconBitmap) entry->iconBitmap = static_cast<HBITMAP>(
+                CopyImage(source.iconBitmap, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+            entry->iconIsMediaThumbnail = source.iconIsMediaThumbnail;
+        }
+        const DWORD attributes = GetFileAttributesW(entry->fullPath.c_str());
+        entry->isDirectory = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    }
+    entry->selected = true;
+    auto snapshot = std::make_shared<SearchFolderIcon>(entry, nullptr, app);
+    snapshot->SetBounds(item.GetBounds());
+    return snapshot;
+}
+
+ScrollingItemWidget::ScrollingItemWidget(DesktopWidget* data, DesktopApp* app)
+    : WidgetContainer(data, app), searchPresentationId_(data ? data->id : L"") {}
+
+ScrollingItemWidget::SearchPresentation ScrollingItemWidget::CaptureSearchPresentation() const
+{
+    return {searchPresentationId_, searchText_, searchCursorPos_, searchSelectionAnchor_, searchFocused_, folderSearch_};
+}
+
+void ScrollingItemWidget::RestoreSearchPresentation(const SearchPresentation& state)
+{
+    if (state.widgetId != searchPresentationId_) return;
+    searchText_ = state.text; searchCursorPos_ = state.cursor; searchSelectionAnchor_ = state.anchor;
+    searchFocused_ = state.focused; folderSearch_ = state.results;
+    if (folderSearch_ && !searchText_.empty()) folderSearch_->refreshRequested = true;
+    InvalidateSlots();
+}
+
 void ScrollingItemWidget::EnsureFolderSearch() const
 {
+    if (IsPreviewRendering()) return;
     if (!data_ || !app_ || !data_->showSearchBox || searchText_.empty() ||
-        IsPreviewRendering() || (data_->type != DesktopWidgetType::FileCategories &&
+        (data_->type != DesktopWidgetType::FileCategories &&
         data_->type != DesktopWidgetType::FolderMapping &&
         data_->type != DesktopWidgetType::FileGroup))
     {
@@ -85,6 +136,10 @@ void ScrollingItemWidget::EnsureFolderSearch() const
         }
     }
     else sources.push_back(data_);
+    const std::wstring activeSource = data_->type == DesktopWidgetType::FileGroup ? data_->activeCategoryId : data_->id;
+    std::stable_sort(sources.begin(), sources.end(), [&](const auto* left, const auto* right) {
+        return left->id == activeSource && right->id != activeSource;
+    });
 
     std::wstring sourceIdentity;
     for (const auto* source : sources)
@@ -94,16 +149,22 @@ void ScrollingItemWidget::EnsureFolderSearch() const
         for (const auto& entry : source->folderEntries) sourceIdentity += entry.fullPath + L"\n" + entry.name + L"\n";
     }
     std::wstring identity = searchText_ + L"\n" + sourceIdentity;
-    if (state.identity != identity)
+    if (state.identity != identity || state.refreshRequested)
     {
+        const bool sameQuery = state.query == searchText_;
+        state.refreshRequested = false;
         const bool sourcesChanged = state.sourceIdentity != sourceIdentity || !state.worker;
         state.sourceIdentity = std::move(sourceIdentity);
         state.identity = std::move(identity);
         state.modelIdentity.clear();
         state.query = searchText_;
-        state.rows.clear(); state.sections.clear(); state.results.clear();
+        if (!sameQuery)
+        {
+            state.rows.clear(); state.allRows.clear(); state.sections.clear(); state.results.clear();
+            state.visibleLimits.clear();
+        }
         const_cast<ScrollingItemWidget*>(this)->InvalidateSlots();
-        state.available = false;
+        state.available = sameQuery && state.available;
         state.pending = true;
         ++state.generation;
         if (sourcesChanged)
@@ -134,15 +195,14 @@ void ScrollingItemWidget::EnsureFolderSearch() const
             }
             const auto scopes = state.sources;
             const auto provider = state.search;
-            state.icons = std::make_shared<std::unordered_map<std::wstring, int>>();
-            const auto icons = state.icons;
             state.worker = std::make_unique<snowdesktop::QuickNavigationEverythingSearchAsync>(
-                [scopes, provider, icons](const std::wstring& query, DWORD limit) {
+                [scopes, provider](const std::wstring& query, DWORD limit) {
                     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
                     struct ComScope { HRESULT result; ~ComScope() { if (SUCCEEDED(result)) CoUninitialize(); } } comScope{com};
                     snowdesktop::QuickNavigationEverythingSearchResponse response;
                     auto client = provider ? nullptr : std::make_unique<EverythingSearchClient>();
                     std::unordered_set<std::wstring> seen;
+                    std::unordered_map<std::wstring, int> icons;
                     bool queried = false;
                     for (const auto& scope : scopes)
                     {
@@ -163,14 +223,15 @@ void ScrollingItemWidget::EnsureFolderSearch() const
                             {
                                 const wchar_t* extension = PathFindExtensionW(result.path.c_str());
                                 const std::wstring key = result.isDirectory ? L"folder" : ToUpperInvariant(extension);
-                                if (!icons->contains(key))
+                                if (!icons.contains(key))
                                 {
                                     SHFILEINFOW info{};
                                     const auto loaded = SHGetFileInfoW(result.isDirectory ? L"folder" : extension,
                                         result.isDirectory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL,
                                         &info, sizeof(info), SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
-                                    icons->emplace(key, loaded ? info.iIcon : -1);
+                                    icons.emplace(key, loaded ? info.iIcon : -1);
                                 }
+                                result.systemIconIndex = icons.at(key);
                                 response.results.push_back(std::move(result));
                             }
                     }
@@ -197,7 +258,7 @@ void ScrollingItemWidget::EnsureFolderSearch() const
             state.results = std::move(completed->results);
             changed = true;
         }
-    if (!state.available) return;
+    if (!state.available && !state.pending) return;
     std::wstring modelIdentity = state.identity + std::to_wstring(static_cast<int>(data_->contentSortColumn)) +
         std::to_wstring(data_->contentSortAscending);
     for (const auto* source : sources) modelIdentity += source->activeCategoryId + std::to_wstring(source->showFileCategories);
@@ -207,7 +268,7 @@ void ScrollingItemWidget::EnsureFolderSearch() const
     // Rebuild lightweight references from current native filters/sort order.
     // The recursive backing entries are retained to preserve selection.
     std::unordered_map<std::wstring, std::shared_ptr<FolderEntry>> previous;
-    for (const auto& row : state.rows)
+    for (const auto& row : state.allRows)
         if (row.recursive) previous.emplace(row.sourceId + L"\n" + ToUpperInvariant(row.recursive->fullPath), row.recursive);
     std::vector<State::Row> rows;
     std::vector<State::Section> sections;
@@ -255,7 +316,7 @@ void ScrollingItemWidget::EnsureFolderSearch() const
         if (rows.size() > first)
             sections.push_back({sources.size() > 1 ? (source->title.empty()
                 ? (source->type == DesktopWidgetType::FolderMapping ? _LW("widget.folder_mapping") : _LW("widget.desktop_files"))
-                : source->title) : L"", first, rows.size() - first});
+                : source->title) : L"", first, rows.size() - first, rows.size() - first, source->id + L"\ndirect", false});
     }
     for (const auto& scope : state.sources)
     {
@@ -266,20 +327,36 @@ void ScrollingItemWidget::EnsureFolderSearch() const
                 !std::any_of(scope.roots.begin(), scope.roots.end(), [&](const auto& root) { return Inside(result.path, root); })) continue;
             const std::wstring key = scope.id + L"\n" + ToUpperInvariant(result.path);
             auto& entry = previous[key];
-            if (!entry)
-            {
-                entry = std::make_shared<FolderEntry>();
-                entry->name = result.name;
-                entry->fullPath = result.path;
-                entry->isDirectory = result.isDirectory;
-                entry->lastWriteTime = result.dateModified;
-                const std::wstring iconKey = result.isDirectory ? L"folder" : ToUpperInvariant(PathFindExtensionW(result.path.c_str()));
-                if (const auto icon = state.icons->find(iconKey); icon != state.icons->end()) entry->sysIconIndex = icon->second;
-            }
+            if (!entry) entry = std::make_shared<FolderEntry>();
+            entry->name = result.name;
+            entry->fullPath = result.path;
+            entry->isDirectory = result.isDirectory;
+            entry->lastWriteTime = result.dateModified;
+            entry->sysIconIndex = result.systemIconIndex;
             rows.push_back({scope.id, {}, 0, entry});
         }
-        if (rows.size() > first) sections.push_back({scope.title, first, rows.size() - first});
+        if (rows.size() > first) sections.push_back({scope.title, first, rows.size() - first,
+            rows.size() - first, scope.id + L"\nrecursive", true});
     }
+    // Keep each source's title and contents together, with the active tab first.
+    std::stable_sort(sections.begin(), sections.end(), [&](const auto& left, const auto& right) {
+        const auto rank = [&](const auto& section) {
+            const auto id = section.key.substr(0, section.key.find(L'\n'));
+            const auto found = std::find_if(sources.begin(), sources.end(), [&](const auto* source) { return source->id == id; });
+            return std::distance(sources.begin(), found);
+        };
+        return rank(left) < rank(right);
+    });
+    std::vector<State::Row> visibleRows;
+    for (auto& section : sections)
+    {
+        const size_t first = section.first;
+        section.first = visibleRows.size();
+        section.count = std::min(section.total, std::max<size_t>(20, state.visibleLimits[section.key]));
+        visibleRows.insert(visibleRows.end(), rows.begin() + first, rows.begin() + first + section.count);
+    }
+    state.allRows = std::move(rows);
+    rows = std::move(visibleRows);
     if (rows.size() != state.rows.size()) changed = true;
     if (!changed)
         for (size_t i = 0; i < rows.size(); ++i)
@@ -291,8 +368,9 @@ void ScrollingItemWidget::EnsureFolderSearch() const
 
 bool ScrollingItemWidget::UsesFolderSearch() const
 {
+    if (IsPreviewRendering()) return false;
     EnsureFolderSearch();
-    return folderSearch_ && folderSearch_->available;
+    return folderSearch_ && (folderSearch_->available || folderSearch_->pending);
 }
 
 size_t ScrollingItemWidget::FolderSearchCount() const { return folderSearch_->rows.size(); }
@@ -300,25 +378,26 @@ size_t ScrollingItemWidget::FolderSearchCount() const { return folderSearch_->ro
 int ScrollingItemWidget::FolderSearchContentHeight() const
 {
     int height = 0;
-    const auto layout = SearchLayout(*this);
     for (const auto& section : folderSearch_->sections)
     {
         if (!section.title.empty()) height += Cu(data_->listMode ? 28.0f : 36.0f);
-        height += snowdesktop::widget_item_layout::ContentHeight(layout, section.count);
+        height += snowdesktop::widget_item_layout::ContentHeight(SearchLayout(*this, section.recursive), section.count);
+        if (section.count < section.total) height += Cu(30.0f);
     }
+    if (folderSearch_->pending && !folderSearch_->rows.empty()) height += Cu(30.0f);
     return height;
 }
 
 RECT ScrollingItemWidget::FolderSearchItemRect(size_t index) const
 {
     int y = 0;
-    const auto layout = SearchLayout(*this);
     // Geometry must not re-enter UsesFolderSearch/scan source membership for
     // every result while materializing slots or extending a marquee.
     const int scroll = std::clamp(data_->scrollOffset, 0,
         std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f)));
     for (const auto& section : folderSearch_->sections)
     {
+        const auto layout = SearchLayout(*this, section.recursive);
         if (!section.title.empty()) y += Cu(data_->listMode ? 28.0f : 36.0f);
         if (index >= section.first && index - section.first < section.count)
         {
@@ -327,6 +406,7 @@ RECT ScrollingItemWidget::FolderSearchItemRect(size_t index) const
             return cell;
         }
         y += snowdesktop::widget_item_layout::ContentHeight(layout, section.count);
+        if (section.count < section.total) y += Cu(30.0f);
     }
     return {};
 }
@@ -361,12 +441,12 @@ std::vector<std::unique_ptr<Slot>> ScrollingItemWidget::BuildFolderSearchSlots()
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> slots;
     const RECT viewport = GetContentViewportRect();
-    const auto layout = SearchLayout(*this);
     const int scroll = GetScrollOffset();
     const int visibleHeight = std::max<int>(1, viewport.bottom - viewport.top);
     int y = 0;
     for (const auto& section : folderSearch_->sections)
     {
+        const auto layout = SearchLayout(*this, section.recursive);
         if (!section.title.empty()) y += Cu(data_->listMode ? 28.0f : 36.0f);
         const int height = snowdesktop::widget_item_layout::ContentHeight(layout, section.count);
         if (y < scroll + visibleHeight && y + height > scroll)
@@ -383,6 +463,7 @@ std::vector<std::unique_ptr<Slot>> ScrollingItemWidget::BuildFolderSearchSlots()
             }
         }
         y += height;
+        if (section.count < section.total) y += Cu(30.0f);
     }
     return slots;
 }
@@ -454,11 +535,59 @@ std::wstring ScrollingItemWidget::FolderSearchSourceId(const Item* item) const
     return {};
 }
 
+RECT ScrollingItemWidget::GetFolderSearchMoreRect(size_t sectionIndex) const
+{
+    if (!folderSearch_ || sectionIndex >= folderSearch_->sections.size()) return {};
+    const RECT content = GetContentViewportRect();
+    int y = content.top - GetScrollOffset();
+    for (size_t i = 0; i <= sectionIndex; ++i)
+    {
+        const auto& section = folderSearch_->sections[i];
+        if (!section.title.empty()) y += Cu(data_->listMode ? 28.0f : 36.0f);
+        y += snowdesktop::widget_item_layout::ContentHeight(SearchLayout(*this, section.recursive), section.count);
+        if (i == sectionIndex)
+            return section.count < section.total ? RECT{content.left, y, content.right, y + Cu(30.0f)} : RECT{};
+        if (section.count < section.total) y += Cu(30.0f);
+    }
+    return {};
+}
+
+size_t ScrollingItemWidget::FolderSearchMoreAtPoint(POINT point) const
+{
+    if (!UsesFolderSearch()) return static_cast<size_t>(-1);
+    const RECT content = GetContentViewportRect();
+    if (!PtInRect(&content, point)) return static_cast<size_t>(-1);
+    for (size_t i = 0; i < folderSearch_->sections.size(); ++i)
+    {
+        const RECT rect = GetFolderSearchMoreRect(i);
+        if (PtInRect(&rect, point)) return i;
+    }
+    return static_cast<size_t>(-1);
+}
+
+bool ScrollingItemWidget::ExpandFolderSearchAtPoint(POINT point)
+{
+    const size_t sectionIndex = FolderSearchMoreAtPoint(point);
+    if (sectionIndex == static_cast<size_t>(-1)) return false;
+    const auto section = folderSearch_->sections[sectionIndex];
+    folderSearch_->visibleLimits[section.key] = section.count + 20;
+    folderSearch_->modelIdentity.clear();
+    EnsureFolderSearch(); InvalidateSlots();
+    return true;
+}
+
+std::wstring ScrollingItemWidget::FolderSearchNotice() const
+{
+    if (folderSearch_ && folderSearch_->pending) return _LW("settings.widgets.searching");
+    return _LW("widget.categories.no_results");
+}
+
 void ScrollingItemWidget::DrawFolderSearch(ID2D1DeviceContext* context)
 {
     const RECT content = GetContentViewportRect();
     DrawDetailsHeader(context, content);
     const bool light = UsesLightContentTheme();
+    const auto subtle = light ? D2D1::ColorF(0, 0, 0, 0.72f) : D2D1::ColorF(1, 1, 1, 0.52f);
     const bool privacy = data_->privacyMode && !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() && !PtInRect(&data_->bounds, app_->lastMousePoint_);
     const auto& slots = GetSlots();
@@ -466,24 +595,45 @@ void ScrollingItemWidget::DrawFolderSearch(ID2D1DeviceContext* context)
         GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
     if (FolderSearchCount() == 0)
     {
-        app_->DrawD2DText(context, _LW("widget.categories.no_results"), content,
-            GetCuTextFormat(13.0f, false, true), light ? D2D1::ColorF(0, 0, 0, 0.72f) : D2D1::ColorF(1, 1, 1, 0.52f));
+        app_->DrawD2DText(context, FolderSearchNotice(), content, GetCuTextFormat(13.0f, false, true), subtle);
         return;
     }
     int y = content.top - GetScrollOffset();
-    const auto layout = SearchLayout(*this);
-    for (const auto& section : folderSearch_->sections)
+    for (size_t i = 0; i < folderSearch_->sections.size(); ++i)
     {
+        const auto& section = folderSearch_->sections[i];
         if (!section.title.empty())
         {
             const int height = Cu(data_->listMode ? 28.0f : 36.0f);
-            RECT label{content.left + Cu(8.0f), y, content.right, y + height};
-            app_->DrawD2DText(context, section.title, label,
-                light ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : GetCuTextFormat(13.0f, false, false),
-                light ? D2D1::ColorF(0, 0, 0, 0.72f) : D2D1::ColorF(1, 1, 1, 0.52f));
+            RECT label{content.left + Cu(8.0f), y, content.right - Cu(8.0f), y + height};
+            auto* format = light ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : GetCuTextFormat(13.0f, false, false);
+            if (section.recursive)
+            {
+                RECT kind = label;
+                const int width = std::min<int>(Cu(148.0f), (label.right - label.left) * 2 / 3);
+                kind.left = kind.right - width;
+                label.right = std::max<LONG>(label.left, kind.left - Cu(8.0f));
+                app_->DrawD2DTextEllipsis(context, _LW("widget.search.everything_results"), kind,
+                    format, subtle, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+            app_->DrawD2DTextEllipsis(context, section.title, label, format, subtle,
+                DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             y += height;
         }
-        y += snowdesktop::widget_item_layout::ContentHeight(layout, section.count);
+        y += snowdesktop::widget_item_layout::ContentHeight(SearchLayout(*this, section.recursive), section.count);
+        if (section.count < section.total)
+        {
+            const RECT more = GetFolderSearchMoreRect(i);
+            app_->DrawD2DText(context, _LW("quickNav.more"), more,
+                GetCuTextFormat(12.0f, false, true), PtInRect(&more, app_->lastMousePoint_)
+                    ? (light ? D2D1::ColorF(0, 0, 0, 1) : D2D1::ColorF(1, 1, 1, 1)) : subtle);
+            y += Cu(30.0f);
+        }
+    }
+    if (folderSearch_->pending)
+    {
+        RECT notice{content.left, y, content.right, y + Cu(30.0f)};
+        app_->DrawD2DText(context, FolderSearchNotice(), notice, GetCuTextFormat(12.0f, false, true), subtle);
     }
     std::vector<std::pair<Item*, RECT>> foreground;
     for (const auto& slot : slots)
@@ -509,6 +659,28 @@ void ScrollingItemWidget::DrawFolderSearch(ID2D1DeviceContext* context)
             drawTitle = !app_->IsRenamingItem(source);
         }
         if (privacy) DrawPrivacyPlaceholder(context, cell, item->GetTitle(), details.isDirectory);
+        else if (item->IsSearchResult())
+        {
+            namespace row = snowdesktop::file_search_result_row;
+            const auto* entry = dynamic_cast<FolderEntryIcon*>(item)->GetFolderEntry();
+            const auto modified = row::ModifiedTime(entry->lastWriteTime);
+            const auto geometry = row::Resolve(cell, {Cu(28.0f), Cu(12.0f), Cu(10.0f), Cu(6.0f),
+                Cu(19.0f), Cu(5.0f), Cu(118.0f), Cu(156.0f), Cu(8.0f)}, !modified.empty());
+            const bool hover = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
+            app_->DrawD2DRoundedRectangle(context, cell, static_cast<float>(Cu(4.0f)),
+                light ? D2D1::ColorF(0, 0, 0, item->IsSelected() ? 0.15f : hover ? 0.08f : 0.0f)
+                      : D2D1::ColorF(1, 1, 1, item->IsSelected() ? 0.19f : hover ? 0.09f : 0.0f), D2D1::ColorF(0, 0));
+            app_->DrawD2DRoundedRectangle(context, geometry.icon, static_cast<float>(Cu(4.0f)),
+                D2D1::ColorF(1, 1, 1, 0.08f), D2D1::ColorF(1, 1, 1, 0.12f));
+            app_->DrawQuickNavSysIcon(context, systemIcon, geometry.icon);
+            app_->DrawD2DTextEllipsis(context, item->GetTitle(), geometry.name, GetCuTextFormat(13.0f, false, false),
+                light ? D2D1::ColorF(0, 0, 0, 0.92f) : D2D1::ColorF(1, 1, 1, 0.92f),
+                DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            app_->DrawD2DTextEllipsis(context, item->GetPath(), geometry.path, GetCuTextFormat(11.0f, false, false),
+                subtle, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            if (!modified.empty()) app_->DrawD2DTextEllipsis(context, modified, geometry.modified,
+                GetCuTextFormat(11.0f, false, false), subtle, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
         else if (data_->listMode) DrawListItem(context, cell, item->GetIconBitmap(), systemIcon,
             item->GetTitle(), item->IsSelected(), thumbnail, {}, nullptr, details, std::nullopt, drawTitle, item->GetPath());
         else

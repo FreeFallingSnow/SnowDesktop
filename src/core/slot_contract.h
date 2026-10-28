@@ -36,6 +36,7 @@ enum class SlotSurfaceKind : std::uint8_t
     LuaLogicalSlot,
     Guide,
     External,
+    SearchResults,
     Count,
 };
 
@@ -51,6 +52,7 @@ enum class DragPayloadKind : std::uint8_t
     CollectionGroupLabel,
     FileGroupLabel,
     GroupWidget,
+    SearchResult,
     Count,
 };
 
@@ -278,6 +280,11 @@ inline constexpr std::array<
         CapabilityBit(InteractionCapability::Commit) |
             CapabilityBit(
                 InteractionCapability::CrossDisplayCoordinates),
+    },
+    {
+        SlotSurfaceKind::SearchResults, "search_results",
+        false, false, PayloadBit(DragPayloadKind::SearchResult),
+        kInteractiveSlotCapabilities,
     },
 }};
 
@@ -518,7 +525,8 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
     if (relation == DragRelation::ExternalEgress)
     {
         return payload == DragPayloadKind::DesktopItem ||
-                payload == DragPayloadKind::FolderEntry
+                payload == DragPayloadKind::FolderEntry ||
+                payload == DragPayloadKind::SearchResult
             ? DropRoute::ExportToExternal
             : DropRoute::Reject;
     }
@@ -652,7 +660,7 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
         return DropRoute::Reject;
     }
 
-    if (payload == DragPayloadKind::FolderEntry)
+    if (payload == DragPayloadKind::FolderEntry || payload == DragPayloadKind::SearchResult)
     {
         if (target == SlotSurfaceKind::LuaLogicalSlot)
             return DropRoute::BindLogicalReference;

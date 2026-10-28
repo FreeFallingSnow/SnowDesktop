@@ -1595,6 +1595,7 @@ WidgetHit FileGroup::HitTestWidget(POINT pt) const
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
     if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None) return base;
+    if (FolderSearchMoreAtPoint(pt) != static_cast<size_t>(-1)) return WidgetHit::SearchMoreBtn;
     RECT search = GetSearchBoxRect();
     if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
         return WidgetHit::SearchBox;

@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "Ocultar a área de trabalho automaticamente quando inativa",
   "settings.desktop.idleHide.description": "Mova o mouse sobre a área de trabalho para exibi-la novamente.",
   "settings.desktop.idleHide.delay": "Tempo de inatividade (segundos)",
-  "settings.desktop.idleHide.pauseWithWindows": "Desativar enquanto houver janelas de aplicativos visíveis"
+  "settings.desktop.idleHide.pauseWithWindows": "Desativar enquanto houver janelas de aplicativos visíveis",
+  "widget.search.everything_results": "Resultados do Everything"
 }

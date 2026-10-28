@@ -163,6 +163,15 @@ public:
         source_ = source;
         items_ = std::move(items);
         sourceList_ = std::move(sourceList);
+        if (sourceList_.hasSearchResults)
+        {
+            items_.clear();
+            for (auto& entry : sourceList_.entries)
+            {
+                if (entry.retainedItem) entry.item = entry.retainedItem.get();
+                if (entry.item) items_.push_back(entry.item);
+            }
+        }
         mouseDownPoint_ = mouseDown;
         visualMouseDownPoint_ = mouseDown;
         currentPoint_ = current;

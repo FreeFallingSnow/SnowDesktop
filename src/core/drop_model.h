@@ -186,6 +186,7 @@ enum class DropSourceKind
     DesktopIcon,    ///< 来自桌面的图标（DesktopIcon）
     FolderEntry,    ///< 来自文件夹视图内部的条目
     ExternalFile,   ///< 来自桌面外部（如资源管理器拖入）的文件
+    SearchResult,   ///< 临时搜索投影中的真实文件引用，无组件成员索引
     Widget,         ///< 来自 Widget 组件自身
     CollectionGroupEntry, ///< 来自集合组中的集合标签
     FileGroupEntry, ///< 来自文件组中的来源标签
@@ -241,6 +242,7 @@ struct DragSourceEntry
 {
     DropSourceKind kind = DropSourceKind::Unknown;
     Item* item = nullptr;
+    std::shared_ptr<Item> retainedItem; ///< search-drag snapshot lifetime
     size_t sourceIndex = 0;
     size_t desktopIndex = static_cast<size_t>(-1);
     size_t memberIndex = static_cast<size_t>(-1);
@@ -295,6 +297,8 @@ struct DragSourceList
      * 描述它的文件组标签视觉/插入语义，不参与载荷家族分类。
      */
     bool hasFileGroupSourceLabels = false;
+    bool hasSearchResults = false;
+    std::wstring searchViewId;
 
     bool Empty() const { return entries.empty(); }
 
@@ -326,7 +330,7 @@ struct DragSourceList
     {
         using Surface = snowdesktop::slot_contract::
             SlotSurfaceKind;
-        return Empty() || !origin ||
+        return Empty() || !origin || hasSearchResults ||
             SourceSurfaceKind() == Surface::Dock ||
             hasCollectionGroupEntries ||
             UsesFileGroupSourceInsertion() ||
@@ -374,7 +378,9 @@ struct DragSourceList
     {
         origin = value;
         if (!value) return;
-        originSurface = value->GetSlotSurfaceKind();
+        originSurface = hasSearchResults
+            ? snowdesktop::slot_contract::SlotSurfaceKind::SearchResults
+            : value->GetSlotSurfaceKind();
         hasOriginSurface = true;
     }
 
@@ -399,6 +405,10 @@ struct DragSourceList
     /** Classify this runtime source for the centralized slot contract. */
     snowdesktop::slot_contract::DragPayloadKind SlotPayloadKind() const
     {
+        if (hasSearchResults)
+            return !hasWidgets && !hasCollectionGroupEntries && !hasFileGroupEntries
+                ? snowdesktop::slot_contract::DragPayloadKind::SearchResult
+                : snowdesktop::slot_contract::DragPayloadKind::Count;
         bool collectionWidgetsOnly = false;
         bool folderMappingWidgetsOnly = false;
         bool fileSourceWidgetsOnly = false;

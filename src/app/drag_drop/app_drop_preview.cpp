@@ -6,6 +6,7 @@
 #include "drag_drop/desktop_drop_dispatch.h"
 #include "drag_drop/file_source_eligibility.h"
 #include "dock/dock_desktop_return.h"
+#include "widgets/widget_folder_search.h"
 
 // Drag source normalization and destination preview planning.
 
@@ -337,6 +338,26 @@ DragSourceList DesktopApp::BuildDragSourceList(
         if (entry.originalSpan.rows <= 0) entry.originalSpan.rows = 1;
         list.entries.push_back(entry);
     }
+    if (std::any_of(sourceItems.begin(), sourceItems.end(), [](const Item* item) {
+            return item && item->IsSearchResult(); }))
+    {
+        list.hasSearchResults = true;
+        list.searchViewId = origin && dynamic_cast<WidgetContainer*>(origin)
+            ? dynamic_cast<WidgetContainer*>(origin)->GetWidgetData()->id : L"";
+        list.hasDesktopIcons = false;
+        list.hasExternalFiles = false;
+        list.hasFolderEntries = true;
+        for (auto& entry : list.entries)
+        {
+            entry.kind = DropSourceKind::SearchResult;
+            entry.memberIndex = static_cast<size_t>(-1);
+            entry.widgetId.clear();
+            entry.retainedItem = snowdesktop::CaptureSearchDragItem(*entry.item,
+                const_cast<DesktopApp*>(this));
+            entry.item = entry.retainedItem.get();
+        }
+        list.BindRuntimeOrigin(list.origin);
+    }
     return list;
 }
 
@@ -359,7 +380,7 @@ bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
 bool DesktopApp::IsAutoCollectFileCategorySource(
     const DragSourceList& sourceList) const
 {
-    if (!sourceList.hasOriginWidget ||
+    if (sourceList.hasSearchResults || !sourceList.hasOriginWidget ||
         sourceList.originWidgetType != DesktopWidgetType::FileCategories)
         return false;
     const size_t widgetIndex = FindWidgetIndexById(sourceList.originWidgetId);
@@ -730,11 +751,11 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
                     resolvedTarget = source;
         if (preview.targetWidget &&
             preview.targetWidget->dateHeaders &&
-            sourceList.origin == resolvedTarget &&
+            !sourceList.hasSearchResults && sourceList.origin == resolvedTarget &&
             preview.action == DropAction::Move)
             return preview;
         preview.fileBacked = !(
-            sourceList.origin == resolvedTarget &&
+            !sourceList.hasSearchResults && sourceList.origin == resolvedTarget &&
             preview.action == DropAction::Move) &&
             IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         preview.insertIndex = widget->GetDropInsertIndex(targetSlot, region);

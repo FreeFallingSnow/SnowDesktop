@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "사용하지 않을 때 바탕 화면 자동 숨기기",
   "settings.desktop.idleHide.description": "바탕 화면에서 마우스를 움직이면 다시 표시됩니다.",
   "settings.desktop.idleHide.delay": "유휴 시간(초)",
-  "settings.desktop.idleHide.pauseWithWindows": "앱 창이 표시되어 있으면 사용 안 함"
+  "settings.desktop.idleHide.pauseWithWindows": "앱 창이 표시되어 있으면 사용 안 함",
+  "widget.search.everything_results": "Everything 검색 결과"
 }

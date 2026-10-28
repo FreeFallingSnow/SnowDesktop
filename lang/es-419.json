@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "Ocultar automáticamente el escritorio al estar inactivo",
   "settings.desktop.idleHide.description": "Mueve el mouse sobre el escritorio para volver a mostrarlo.",
   "settings.desktop.idleHide.delay": "Tiempo de inactividad (segundos)",
-  "settings.desktop.idleHide.pauseWithWindows": "Desactivar mientras haya ventanas de aplicaciones visibles"
+  "settings.desktop.idleHide.pauseWithWindows": "Desactivar mientras haya ventanas de aplicaciones visibles",
+  "widget.search.everything_results": "Resultados de Everything"
 }

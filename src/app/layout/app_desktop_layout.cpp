@@ -152,6 +152,13 @@ void DesktopApp::RebuildContainersAndItems()
     ClearPopupDragTarget();
     ClearPopupMouseDownItem();
 
+    std::vector<ScrollingItemWidget::SearchPresentation> searchPresentations;
+    for (const auto& container : containers_)
+        if (const auto* widget = dynamic_cast<const ScrollingItemWidget*>(container.get()))
+        {
+            auto state = widget->CaptureSearchPresentation();
+            if (!state.text.empty()) searchPresentations.push_back(std::move(state));
+        }
     std::vector<DockContainer::PresentationState> dockPresentationStates;
     dockPresentationStates.reserve(dockAreas_.size());
     for (const auto& container : containers_)
@@ -289,6 +296,9 @@ void DesktopApp::RebuildContainersAndItems()
     // next guard tick instead of retaining the previous Dock monitor binding.
     systemTaskbarBackdropRefreshTick_ = 0;
     systemTaskbarWindowStateChangedTick_.fetch_add(1, std::memory_order_relaxed);
+    for (auto& container : containers_)
+        if (auto* widget = dynamic_cast<ScrollingItemWidget*>(container.get()))
+            for (const auto& state : searchPresentations) widget->RestoreSearchPresentation(state);
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {

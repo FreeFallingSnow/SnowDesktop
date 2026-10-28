@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "无操作时自动隐藏桌面",
   "settings.desktop.idleHide.description": "在桌面移动鼠标即可重新显示。",
   "settings.desktop.idleHide.delay": "无操作时长（秒）",
-  "settings.desktop.idleHide.pauseWithWindows": "有可见应用窗口时停用"
+  "settings.desktop.idleHide.pauseWithWindows": "有可见应用窗口时停用",
+  "widget.search.everything_results": "Everything 结果"
 }

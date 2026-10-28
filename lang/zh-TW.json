@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "閒置時自動隱藏桌面",
   "settings.desktop.idleHide.description": "在桌面移動滑鼠即可重新顯示。",
   "settings.desktop.idleHide.delay": "閒置時間（秒）",
-  "settings.desktop.idleHide.pauseWithWindows": "有可見應用程式視窗時停用"
+  "settings.desktop.idleHide.pauseWithWindows": "有可見應用程式視窗時停用",
+  "widget.search.everything_results": "Everything 結果"
 }

@@ -356,7 +356,7 @@ bool LuaLogicalSlotContainer::AcceptsDragPayload(
             AcceptsKind(*surface, "filesystem.reference");
     }
     if (payload == Payload::FolderEntry ||
-        payload == Payload::ExternalFile)
+        payload == Payload::ExternalFile || payload == Payload::SearchResult)
         return AcceptsKind(*surface, "filesystem.reference");
     return false;
 }

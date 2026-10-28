@@ -226,6 +226,41 @@
     static auto FolderSearchTargets(DesktopApp& app, const std::wstring& id) { return app.GetWidgetSelectionTargets(app.FindWidgetIndexById(id)); }
     static void ClearFolderSearchSelection(DesktopApp& app) { app.ClearSelection(); }
     static auto CaptureFolderSearch(DesktopApp& app, ScrollingItemWidget& view) { return app.BuildDragSourceList(view.GetSelectedItems(), &view); }
+    static void RebuildFolderSearch(DesktopApp& app) { app.RebuildContainersAndItems(); }
+    static void AddSearchDropTarget(DesktopApp& app, const std::filesystem::path& mapped, int kind)
+    {
+        // Release wrappers before growing their model vector.
+        app.items_oo_.clear(); app.containers_.clear();
+        DesktopWidget target;
+        target.id = L"search-target"; target.title = target.customTitle = L"Search destination";
+        target.type = kind == 1 ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection;
+        target.sourceFolderPath = kind == 1 ? mapped.wstring() : L"";
+        target.gridCell = {L"__page:1", 8, 0}; target.gridSpan = {3, 4};
+        target.autoCollect = false; target.activeCategoryId = L"all";
+        app.widgets_.push_back(std::move(target)); app.LayoutItems();
+    }
+    static DragSourceList BeginSearchDrop(DesktopApp& app, ScrollingItemWidget& view, POINT destination, int mods)
+    {
+        auto items = view.GetSelectedItems();
+        if (items.empty()) throw std::runtime_error("search drop requires a selected real result");
+        const RECT bounds = items.front()->GetBounds();
+        const POINT start{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+        auto captured = app.BuildDragSourceList(items, &view);
+        app.dragGroupOriginX_ = bounds.left; app.dragGroupOriginY_ = bounds.top; app.mouseDownPoint_ = start;
+        app.dragSession_.Begin(&view, std::move(items), captured, start, destination);
+        app.dragSession_.UpdateActionFromMods(mods);
+        return captured;
+    }
+    static void SubmitSearchDrop(DesktopApp& app, int mods)
+    {
+        auto* target = app.dragSession_.TargetContainer(); auto* origin = app.dragSession_.Source();
+        auto* slot = app.dragSession_.TargetSlot(); const auto region = app.dragSession_.TargetRegion();
+        auto items = app.dragSession_.Items();
+        if (!target) throw std::runtime_error("search drop must resolve an actual native target");
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, slot, region, mods);
+        app.EndDragSession();
+    }
     static DropPreviewList FolderSearchDesktopPreview(DesktopApp& app, ScrollingItemWidget& view)
     {
         auto items = view.GetSelectedItems();

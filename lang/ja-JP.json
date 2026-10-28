@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "操作していないときにデスクトップを自動的に隠す",
   "settings.desktop.idleHide.description": "デスクトップ上でマウスを動かすと再表示します。",
   "settings.desktop.idleHide.delay": "操作なしの時間（秒）",
-  "settings.desktop.idleHide.pauseWithWindows": "アプリのウィンドウが表示されている間は無効にする"
+  "settings.desktop.idleHide.pauseWithWindows": "アプリのウィンドウが表示されている間は無効にする",
+  "widget.search.everything_results": "Everything の結果"
 }

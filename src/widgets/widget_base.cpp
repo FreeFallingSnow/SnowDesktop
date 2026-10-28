@@ -845,6 +845,8 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     if (!PtInRect(&frame, pt)) return HitRegion::None;
 
     if (IsSingleCellPresentation()) return HitRegion::SortAfter;
+    if (const auto* search = dynamic_cast<const ScrollingItemWidget*>(this);
+        search && search->FolderSearchMoreAtPoint(pt) != static_cast<size_t>(-1)) return HitRegion::Blocked;
 
     auto& slots = GetSlots();
     const bool verticalBar =

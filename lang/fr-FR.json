@@ -2668,5 +2668,6 @@
   "settings.desktop.idleHide": "Masquer automatiquement le bureau en cas d’inactivité",
   "settings.desktop.idleHide.description": "Déplacez la souris sur le bureau pour l’afficher à nouveau.",
   "settings.desktop.idleHide.delay": "Durée d’inactivité (secondes)",
-  "settings.desktop.idleHide.pauseWithWindows": "Désactiver lorsque des fenêtres d’application sont visibles"
+  "settings.desktop.idleHide.pauseWithWindows": "Désactiver lorsque des fenêtres d’application sont visibles",
+  "widget.search.everything_results": "Résultats Everything"
 }

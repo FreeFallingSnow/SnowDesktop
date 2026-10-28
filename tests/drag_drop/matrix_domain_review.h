@@ -33,7 +33,7 @@ constexpr bool Reviewed(DropSourceKind value) // P01 and source identity; Unknow
     switch (value)
     {
     case DropSourceKind::DesktopIcon: case DropSourceKind::FolderEntry:
-    case DropSourceKind::ExternalFile: case DropSourceKind::Widget:
+    case DropSourceKind::SearchResult: case DropSourceKind::ExternalFile: case DropSourceKind::Widget:
     case DropSourceKind::CollectionGroupEntry: case DropSourceKind::FileGroupEntry:
     case DropSourceKind::Unknown: return true;
     }

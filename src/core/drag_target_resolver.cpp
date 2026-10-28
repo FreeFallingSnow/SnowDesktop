@@ -71,7 +71,7 @@ bool DragTargetResolver::AcceptsInternal(
     const auto sourceSurface = source.SourceSurfaceKind();
     const auto targetSurface = target.GetSlotSurfaceKind();
     const auto relation = contract::ClassifyRelation(
-        sourceSurface, targetSurface, source.origin == &target);
+        sourceSurface, targetSurface, source.origin == &target && !source.hasSearchResults);
     return contract::AcceptsSlotDrop(
             sourceSurface, payload, targetSurface, relation) &&
         target.AcceptsDragPayload(payload, source.entries.size());

@@ -70,6 +70,7 @@ enum class WidgetHit {
     SourceTab,          ///< FileGroup：来源组件标签
     CategoryTab,        ///< FileCategories / FolderMapping：分类标签页
     SearchBox,          ///< FileCategories / FolderMapping：搜索框
+    SearchMoreBtn,      ///< 搜索结果区块的按需展开按钮
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
     GuideAddWidgetBtn,  ///< Guide：打开“添加组件”菜单
     GuideDetailsBtn,    ///< Guide：展开或收起分页说明
@@ -321,7 +322,18 @@ class ScrollingItemWidget : public WidgetContainer
     friend struct NativeDragIntegrationAccess;
     friend class DesktopApp;
 public:
-    using WidgetContainer::WidgetContainer;
+    ScrollingItemWidget(DesktopWidget* data, DesktopApp* app);
+    struct SearchPresentation
+    {
+        std::wstring widgetId;
+        std::wstring text;
+        size_t cursor = 0;
+        size_t anchor = 0;
+        bool focused = false;
+        std::shared_ptr<snowdesktop::WidgetFolderSearchState> results;
+    };
+    SearchPresentation CaptureSearchPresentation() const;
+    void RestoreSearchPresentation(const SearchPresentation& state);
 
     bool SingleColumn() const override;
     int GetScrollOffset() const override;
@@ -422,6 +434,10 @@ public:
     void ApplyFolderSearchMarquee(const RECT& contentRect);
     void DrawFolderSearch(ID2D1DeviceContext* context);
     std::wstring FolderSearchSourceId(const Item* item) const;
+    RECT GetFolderSearchMoreRect(size_t sectionIndex) const;
+    size_t FolderSearchMoreAtPoint(POINT point) const;
+    bool ExpandFolderSearchAtPoint(POINT point);
+    std::wstring FolderSearchNotice() const;
     void DrawSearchBox(ID2D1DeviceContext* context);
     /** @brief 分类滚动组件共用的搜索框布局。 */
     RECT GetCategorizedSearchBoxRect(bool visible) const;
@@ -487,6 +503,7 @@ public:
     BarStyle GetInsertionStyle() const override;
 
 protected:
+    std::wstring searchPresentationId_;
     mutable std::shared_ptr<snowdesktop::WidgetFolderSearchState> folderSearch_;
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     snowdesktop::ScrollContentFadeCache tabContentFadeCache_;

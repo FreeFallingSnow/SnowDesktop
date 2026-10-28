@@ -1063,7 +1063,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
-        else if (wh == WidgetHit::CollapseToggleBtn ||
+        else if (wh == WidgetHit::SearchMoreBtn || wh == WidgetHit::CollapseToggleBtn ||
                  wh == WidgetHit::GuideAddWidgetBtn ||
                  wh == WidgetHit::GuideDetailsBtn)
         {
