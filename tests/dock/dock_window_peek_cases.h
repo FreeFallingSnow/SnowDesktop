@@ -276,8 +276,8 @@ void Run(Check report)
             check(Wait([&] { return Peeking(second.window); }), "middle-click fixture begins Peek");
             endedBeforeAction = false;
             SendMessageW(preview.GetWindows()[1], WM_MBUTTONUP, 0, ContentPoint(preview.GetWindows()[1]));
-            check(closed == second.window && endedBeforeAction && preview.IsCleared(),
-                "middle click ends Peek before dispatching the original close callback");
+            check(closed == second.window && endedBeforeAction && !Peeking(second.window) && preview.IsVisible(),
+                "middle click ends Peek before dispatching close while retaining the multi-window preview");
 
             show();
             hover(1);
