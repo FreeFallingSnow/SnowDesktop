@@ -165,14 +165,24 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
         else
         {
             const auto entries = GetQuickNavigationEntries();
+            std::unordered_map<std::string, unsigned> occurrences;
             for (const auto& region : quickNavigationHoverRegions_)
             {
                 const auto& target = region.target;
                 auto key = std::to_string(static_cast<int>(target.kind)) + "/" + std::to_string(target.index);
                 std::wstring name = L"Navigation control";
                 if (target.kind == QuickNavigationPointerTargetKind::Item && target.index < entries.size())
-                { name = entries[target.index].name; key = "item/" + Key(entries[target.index].source) + "/" + Key(entries[target.index].path); }
-                add("navigation/control/" + key, "navigation", "navigation", "button", name,
+                {
+                    const auto& entry = entries[target.index]; name = entry.name;
+                    if (entry.kind == QuickNavigationEntry::Kind::DesktopItem && entry.itemIndex < items_.size())
+                        key = "item/desktop/" + Key(items_[entry.itemIndex].layoutKey);
+                    else if (entry.widgetIndex < widgets_.size())
+                        key = "item/widget/" + Key(widgets_[entry.widgetIndex].id) + "/" + Key(entry.path);
+                    else key = "item/path/" + Key(entry.path);
+                }
+                // A result may have several painted hit regions. They share
+                // its model identity but need distinct addressable references.
+                add("navigation/control/" + key + "/" + std::to_string(occurrences[key]++), "navigation", "navigation", "button", name,
                     region.bounds, frame, quickNavigationHwnd_, {"click", "hover", "contextMenu"});
             }
         }

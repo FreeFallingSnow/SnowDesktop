@@ -57,7 +57,7 @@ void ElementSnapshot::Finish()
     for (const auto& element : elements)
     {
         if (element.id.empty() || !ids.insert(element.id).second)
-            throw Error("ambiguous_element", "Element catalog contains a duplicate identity");
+            throw Error("ambiguous_element", "Element catalog contains a duplicate identity: " + element.id);
         identity.array.push_back(ElementJson(element));
     }
     for (const auto& element : elements)

@@ -116,11 +116,16 @@ bool Overlay::Show(const Pose& screenPose)
     if (!impl_->memory) impl_->memory = CreateCompatibleDC(nullptr);
     if (!impl_->memory) return false;
     const int padding = static_cast<int>(std::ceil(44 * std::clamp(screenPose.scale, .25f, 8.f)));
-    int left = static_cast<int>(std::floor(screenPose.x)) - padding, top = static_cast<int>(std::floor(screenPose.y)) - padding;
+    const int cursorX = static_cast<int>(std::floor(screenPose.x)), cursorY = static_cast<int>(std::floor(screenPose.y));
+    int left = cursorX - padding, top = cursorY - padding;
     int right = left + padding * 2, bottom = top + padding * 2;
     for (const auto point : screenPose.trail)
     {
         if (std::abs(static_cast<double>(point.x)) > 1000000 || std::abs(static_cast<double>(point.y)) > 1000000) return false;
+        // Keep the overlay bounded even when a short replay crosses a 4K/8K
+        // display. Older distant trail samples are clipped, never the cursor.
+        if (std::abs(static_cast<double>(point.x) - cursorX) > 1024 - padding ||
+            std::abs(static_cast<double>(point.y) - cursorY) > 1024 - padding) continue;
         left = std::min(left, static_cast<int>(point.x) - padding); top = std::min(top, static_cast<int>(point.y) - padding);
         right = std::max(right, static_cast<int>(point.x) + padding); bottom = std::max(bottom, static_cast<int>(point.y) + padding);
     }
