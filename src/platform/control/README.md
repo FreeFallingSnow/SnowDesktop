@@ -40,6 +40,12 @@ before using an extension.
   error, source/target IDs and current cursor sample. With `includeTrace:true`,
   it includes up to 4096 timestamped physical-screen samples with button state
   and phase. Terminal states are `completed`, `failed` and `cancelled`.
+  When an untagged input interrupts playback, optional `interruption` records
+  device, Windows message/flags, injection/integrity flags, event coordinates,
+  virtual key (keyboard only), and received/expected extra-info tags. Tags are
+  decimal strings to preserve pointer-width values beyond JSON's safe integers.
+  The `interrupted_by_user` error also covers unrecognized injected input; it
+  alone does not establish that a human operated the device.
 - `ui.cancelPointer {}` cancels the current operation and returns its state.
   Cancellation releases buttons owned by playback; an active drag also receives
   Escape. It does not roll back changes already applied by the application.

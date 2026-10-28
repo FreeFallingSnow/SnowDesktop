@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "app_control_runtime.h"
+#include "platform/control/control_elements.h"
 #include "widget/view/widget_accessibility_snapshot.h"
 #include <cmath>
 
@@ -31,7 +33,7 @@ double InputNumber(const Value& params)
 snowdesktop::control::Value DesktopApp::ApplicationControlPointerState(bool includeTrace) const
 {
     using namespace snowdesktop::control;
-    const auto& state = applicationControlPointer_.Current();
+    const auto& state = applicationControlRuntime_->pointer.Current();
     const auto sample = [](const snowdesktop::controlled_pointer::Sample& value) {
         return Object({{"timeMs", Number(value.milliseconds)}, {"x", Number(value.point.x)}, {"y", Number(value.point.y)},
             {"buttons", Number(value.buttons)}, {"phase", String(value.phase)}});
@@ -44,6 +46,17 @@ snowdesktop::control::Value DesktopApp::ApplicationControlPointerState(bool incl
         auto trace = Array(); for (const auto& entry : state.trace) trace.array.push_back(sample(entry));
         result.object.emplace("trace", std::move(trace));
     }
+    if (state.interruption)
+    {
+        const auto& event = *state.interruption;
+        result.object.emplace("interruption", Object({{"device", String(event.device)},
+            {"message", Number(event.message)}, {"flags", Number(event.flags)},
+            {"injected", Boolean(event.injected)}, {"lowerIntegrity", Boolean(event.lowerIntegrity)},
+            {"extraInfo", String(std::to_string(event.extraInfo))},
+            {"expectedExtraInfo", String(std::to_string(event.expectedExtraInfo))},
+            {"x", Number(event.point.x)}, {"y", Number(event.point.y)},
+            {"virtualKey", Number(event.virtualKey)}}));
+    }
     return result;
 }
 
@@ -54,7 +67,7 @@ snowdesktop::control::Value DesktopApp::PerformApplicationControlElement(const s
     Fields(params, {"elementId", "action", "ifSnapshotRevision", "targetId", "value", "number", "durationMs", "showCursor"});
     const auto action = Text(params, "action");
     const auto id = Text(params, "elementId");
-    if (applicationControlPointer_.Current().status == "running" || mouseDown_ || dragSession_.IsActive() ||
+    if (applicationControlRuntime_->pointer.Current().status == "running" || mouseDown_ || dragSession_.IsActive() ||
         widgetAction_ != WidgetAction::None)
         throw Error("busy", "Another pointer or widget operation is active");
     if (desktopStartupPresentationPending_ || popupAnimation_.IsAnimating() || quickNavigationAnimation_.IsAnimating())
@@ -91,12 +104,12 @@ snowdesktop::control::Value DesktopApp::PerformApplicationControlElement(const s
         }
         std::string error;
         const auto destination = plan.destinationId;
-        if (!applicationControlPointer_.Start(std::move(plan), [this, id, destination, action](const std::string& target) {
+        if (!applicationControlRuntime_->pointer.Start(std::move(plan), [this, destination, action](const std::string& target) {
             auto current = ApplicationControlElements();
             const auto& node = current.Resolve(target, target == destination ? "drop" : action);
             return pointer::Target{VisibleBounds(node), node.window};
         }, [this](const pointer::State& state) {
-            if (state.status != "running" || !state.plan.showCursor) { applicationControlCursor_.Hide(); return; }
+            if (state.status != "running" || !state.plan.showCursor) { applicationControlRuntime_->cursor.Hide(); return; }
             snowdesktop::demo_cursor::Pose pose;
             pose.x = static_cast<float>(state.current.point.x); pose.y = static_cast<float>(state.current.point.y);
             pose.pressed = state.current.buttons != 0;
@@ -104,7 +117,7 @@ snowdesktop::control::Value DesktopApp::PerformApplicationControlElement(const s
                 if (state.current.milliseconds - entry.milliseconds <= 180) pose.trail.push_back(entry.point);
             for (auto it = state.trace.rbegin(); it != state.trace.rend(); ++it)
                 if (it->phase == "released") { pose.clickAgeMilliseconds = static_cast<float>(state.current.milliseconds - it->milliseconds); break; }
-            if (!applicationControlCursor_.Show(pose)) throw std::runtime_error("cursor_overlay_unavailable");
+            if (!applicationControlRuntime_->cursor.Show(pose)) throw std::runtime_error("cursor_overlay_unavailable");
         }, error)) throw Error(error.empty() ? "pointer_unavailable" : error, "Controlled pointer could not start");
         return ApplicationControlPointerState(false);
     }

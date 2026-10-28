@@ -20,9 +20,6 @@
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
 #include "ui/input/text_input_window.h"
-#include "ui/input/control_pointer.h"
-#include "ui/render/demo_cursor.h"
-#include "platform/control/control_elements.h"
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "data/layout_save_queue.h"
@@ -72,6 +69,8 @@
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
 namespace snowdesktop::page_mapping { struct State; struct Services; }
+namespace snowdesktop::app_control { struct Runtime; }
+namespace snowdesktop::control { struct ElementSnapshot; }
 namespace snowdesktop::dock_drop_model { struct Services; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
@@ -4476,8 +4475,7 @@ private:
     std::unique_ptr<snowdesktop::single_instance::PreparedRestart> preparedRestart_;
     bool startupInitializationComplete_ = false;
     snowdesktop::control::Server applicationControl_;
-    snowdesktop::controlled_pointer::Player applicationControlPointer_;
-    snowdesktop::demo_cursor::Overlay applicationControlCursor_;
+    std::unique_ptr<snowdesktop::app_control::Runtime> applicationControlRuntime_;
     bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;

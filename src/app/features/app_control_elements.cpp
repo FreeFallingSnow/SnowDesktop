@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "platform/control/control_elements.h"
 #include "widget/view/widget_accessibility_snapshot.h"
 #include <cmath>
 #include <unordered_set>

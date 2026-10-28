@@ -3,6 +3,7 @@
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "ui/menu/modern_menu.h"
 #include "system/controls/system_control_prompt.h"
@@ -1953,8 +1954,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");
     applicationControl_.Stop();
-    applicationControlPointer_.Stop();
-    applicationControlCursor_.Hide();
+    if (applicationControlRuntime_) applicationControlRuntime_->Stop();
     operationFeedback.Drain();
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();

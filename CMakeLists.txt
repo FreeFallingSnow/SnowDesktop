@@ -387,13 +387,17 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_preview.cpp
     src/app/features/app_theme_preview.cpp
     src/app/features/app_control.cpp
+    src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp
     src/app/features/app_control_pointer.cpp
     src/platform/control/control_protocol.cpp
     src/platform/control/control_server.cpp
     src/platform/control/control_elements.cpp
+    src/platform/control/control_elements.h
     src/ui/input/control_pointer.cpp
+    src/ui/input/control_pointer.h
     src/ui/render/demo_cursor.cpp
+    src/ui/render/demo_cursor.h
     src/app/navigation/app_quick_navigation_layout.cpp
     src/app/navigation/app_quick_navigation_messages.cpp
     src/app/navigation/app_quick_navigation_model.cpp

@@ -1,6 +1,7 @@
 #include "platform/force_restart_hotkey.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
+#include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_platform_helpers.h"
@@ -22,8 +23,7 @@ DesktopApp::DesktopApp() = default;
 DesktopApp::~DesktopApp()
 {
     applicationControl_.Stop();
-    applicationControlPointer_.Stop();
-    applicationControlCursor_.Hide();
+    if (applicationControlRuntime_) applicationControlRuntime_->Stop();
     filePreview_.Stop();
     snowdesktop::window_support::WindowSupport().Stop();
     FlushQueuedLayoutSave();

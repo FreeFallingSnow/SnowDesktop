@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,15 @@ struct Target { RECT bounds{}; HWND window = nullptr; };
 POINT Interpolate(POINT from, POINT to, double progress, double curvature = 0.12);
 bool AbsolutePoint(POINT point, RECT virtualScreen, LONG& x, LONG& y);
 
+struct Interruption
+{
+    std::string device;
+    UINT message = 0;
+    DWORD flags = 0, virtualKey = 0;
+    std::uint64_t extraInfo = 0, expectedExtraInfo = 0;
+    POINT point{};
+    bool injected = false, lowerIntegrity = false;
+};
 struct State
 {
     std::uint64_t operation = 0;
@@ -36,6 +46,7 @@ struct State
     Plan plan;
     Sample current;
     std::vector<Sample> trace;
+    std::optional<Interruption> interruption;
 };
 
 class Player final

@@ -103,13 +103,27 @@ struct Player::Impl
     static LRESULT CALLBACK MouseHook(int code, WPARAM wp, LPARAM lp)
     {
         if (code >= 0 && active && reinterpret_cast<MSLLHOOKSTRUCT*>(lp)->dwExtraInfo != InputTag)
+        {
+            const auto& event = *reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
+            if (!active->state.interruption)
+                active->state.interruption = Interruption{"mouse", static_cast<UINT>(wp), event.flags, 0,
+                    static_cast<std::uint64_t>(event.dwExtraInfo), static_cast<std::uint64_t>(InputTag), event.pt,
+                    (event.flags & LLMHF_INJECTED) != 0, (event.flags & LLMHF_LOWER_IL_INJECTED) != 0};
             active->interrupted = true;
+        }
         return CallNextHookEx(nullptr, code, wp, lp);
     }
     static LRESULT CALLBACK KeyboardHook(int code, WPARAM wp, LPARAM lp)
     {
         if (code >= 0 && active && reinterpret_cast<KBDLLHOOKSTRUCT*>(lp)->dwExtraInfo != InputTag)
+        {
+            const auto& event = *reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
+            if (!active->state.interruption)
+                active->state.interruption = Interruption{"keyboard", static_cast<UINT>(wp), event.flags, event.vkCode,
+                    static_cast<std::uint64_t>(event.dwExtraInfo), static_cast<std::uint64_t>(InputTag), active->state.current.point,
+                    (event.flags & LLKHF_INJECTED) != 0, (event.flags & LLKHF_LOWER_IL_INJECTED) != 0};
             active->interrupted = true;
+        }
         return CallNextHookEx(nullptr, code, wp, lp);
     }
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)

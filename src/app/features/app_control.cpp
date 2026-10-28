@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "app_control_runtime.h"
+#include "platform/control/control_elements.h"
 #include "layout/widget_displacement.h"
 #include "platform/control/control_protocol.h"
 
@@ -40,6 +42,7 @@ std::string Revision(const Value& value)
 
 void DesktopApp::InitializeApplicationControl()
 {
+    applicationControlRuntime_ = std::make_unique<snowdesktop::app_control::Runtime>();
     if (!applicationControl_.Start([this](std::string_view method, const snowdesktop::control::Value& params) {
         return HandleApplicationControl(method, params);
     }))
@@ -84,7 +87,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     }
     if (method == "ui.cancelPointer")
     {
-        Fields(params, {}); applicationControlPointer_.Cancel(); applicationControlCursor_.Hide();
+        Fields(params, {}); applicationControlRuntime_->pointer.Cancel(); applicationControlRuntime_->cursor.Hide();
         return ApplicationControlPointerState(false);
     }
     if (method == "ui.perform") return PerformApplicationControlElement(params);
@@ -124,7 +127,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             {"layoutRevision", ApplicationControlLayout().object.at("layoutRevision")}});
     }
     // Do not enter UI actions from a nested modal loop or interrupt a live drag.
-    if (applicationControlPointer_.Current().status == "running" || mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
+    if (applicationControlRuntime_->pointer.Current().status == "running" || mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
         throw Error("busy", "A pointer operation or context menu is active");
     if (desktopStartupPresentationPending_)
         throw Error("not_ready", "The first desktop frame is not ready");
