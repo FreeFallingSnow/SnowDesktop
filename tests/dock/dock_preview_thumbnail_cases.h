@@ -358,6 +358,24 @@ void Run(Check check)
                 "close relayout measures and refreshes the one surviving source without leaving stale relationships");
             for (int sample = 0; sample < 4; ++sample) SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsVisible(), "two-to-one reflow must not manufacture a leave while the close pointer stays stationary");
+            preview.UpdateItems({{replacement.window, L"title refreshed after close"}});
+            SendMessageW(preview.GetWindow(), WM_APP + 1, 0, 0);
+            preview.ScheduleHide();
+            for (int sample = 0; sample < 4; ++sample) SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsVisible(),
+                "a live title refresh after two-to-one reflow must preserve the stationary close pointer outside the new card");
+            {
+                Source added;
+                check(added.window != nullptr, "live membership retention owns an additional source");
+                boundary.sizes[added.window] = {600, 400};
+                preview.UpdateItems({{replacement.window, L"survivor"}, {added.window, L"added"}});
+                preview.UpdateItems({{replacement.window, L"survivor refreshed"}});
+                SendMessageW(preview.GetWindow(), WM_APP + 1, 0, 0);
+                preview.ScheduleHide();
+                SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+                check(preview.IsVisible() && preview.GetWindows().size() == 1,
+                    "same-group membership refreshes retain the stationary close session without a new native move");
+            }
             POINT movedFromClose = closePointer;
             ++movedFromClose.x;
             check(!preview.ContainsInteractionPoint(movedFromClose),
@@ -374,6 +392,10 @@ void Run(Check check)
             SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsCleared() && boundary.live.empty(),
                 "leaving the original preview area dismisses the retained group through its real timer");
+            preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
+            closePointer = {oldGroup.right - 5, closedCard.top + 10};
+            SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsCleared(), "a freshly opened group must not inherit the previous close pointer retention");
             preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
             preview.RemoveWindow(replacement.window);
             check(boundary.live.empty() && preview.IsCleared(),

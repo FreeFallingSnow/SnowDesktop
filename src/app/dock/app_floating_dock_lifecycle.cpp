@@ -441,6 +441,10 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     // relayout/hide until this sampler observes the native input it handled.
     const HMONITOR previewInteractionMonitor = dockWindowPreview_
         ? dockWindowPreview_->TakePointerInteractionMonitor() : nullptr;
+    // A handled preview press supersedes a pending outside-press decision.
+    // Otherwise its settle timer can tear down the recentered group later,
+    // after the one-shot input receipt has already been consumed.
+    if (previewInteractionMonitor) floatingDockOutsidePress_.Cancel();
     if (trace.Observe(inputTrace::Gate::Fullscreen,
             FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)))
     {

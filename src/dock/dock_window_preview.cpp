@@ -729,7 +729,11 @@ void DockWindowPreview::Show(
     RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
     HWND dockLayerOwner)
 {
-    closeReflowPointerKnown_ = false;
+    // Live title/membership refreshes still belong to the current group. They
+    // must not turn layout movement into a pointer leave after a close.
+    const bool sameGroup = IsVisible() && std::any_of(items.begin(), items.end(),
+        [this](const auto& item) { return IsShowingWindow(item.window); });
+    if (!sameGroup) closeReflowPointerKnown_ = false;
     CancelPeek();
     peekSurfacesReady_ = false;
     if (!EnsureWindow())

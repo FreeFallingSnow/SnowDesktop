@@ -968,12 +968,17 @@ end})
             SendMessageW(preview.GetWindow(), finalCard ? WM_MBUTTONUP : WM_LBUTTONUP, 0, point);
             check(preview.IsVisible() == !finalCard, "preview close reaches real multi/final-card cleanup before sampling");
             if (dropReceipt) (void)preview.TakePointerInteractionMonitor();
+            if (variant == 0) app->floatingDockOutsidePress_.Begin(second);
             previewReceiptButton = finalCard ? VK_MBUTTON : VK_LBUTTON;
             app->UpdateFloatingDockEdgeSwipe();
             const bool retained = host.promoted && (GetWindowLongPtrW(owner, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
             check(retained == !dropReceipt, dropReceipt
                 ? "dropping the handled press must reproduce native Dock dismissal through the real sampler"
                 : "sampling a handled preview close after reflow/hide must not lower its Dock");
+            if (variant == 0)
+                check(!app->floatingDockOutsidePress_.Source() &&
+                        !app->floatingDockOutsidePress_.TakeReady(false, GetTickCount64() + 1000),
+                    "a handled preview close retires an older pending outside press before its delayed settle can dismiss the survivor");
             if (!dropReceipt)
             {
                 previewReceiptButton = 0;
