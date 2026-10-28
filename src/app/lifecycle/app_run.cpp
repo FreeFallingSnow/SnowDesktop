@@ -715,7 +715,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         if (snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::PointerObservation).provider ==
             snowdesktop::window_support::Provider::Helper)
+        {
+            if (dockWindowPreview_) dockWindowPreview_->ObserveForwardedPointer(event.message, event.time);
             UpdateFloatingDockEdgeSwipe();
+        }
         const bool down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN ||
             event.message == WM_MBUTTONDOWN || event.message == WM_XBUTTONDOWN;
         if (down && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) &&

@@ -897,6 +897,8 @@ end})
         return static_cast<SHORT>(key == previewReceiptButton ? 1 : 0); // Completed press after native button-up.
     }
     static inline int previewReceiptButton = 0;
+    static inline DWORD previewReceiptTime = 1000;
+    static LONG WINAPI PreviewMessageTime() { return static_cast<LONG>(previewReceiptTime); }
     static BOOL WINAPI PreviewReceiptCursor(POINT* point) { *point = {-32000, -32000}; return TRUE; }
     static void RunPreviewCloseLayerSafety()
     {
@@ -933,6 +935,7 @@ end})
         InputSafetyImport focus("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
         InputSafetyImport cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&PreviewReceiptCursor));
         InputSafetyImport keys("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&PreviewReceiptKey));
+        InputSafetyImport messageTime("GetMessageTime", reinterpret_cast<ULONG_PTR>(&PreviewMessageTime));
         snowdesktop::window_support::WindowSupport().SetNativeCapability(
             snowdesktop::window_support::Capability::PointerObservation, true);
         auto ownedHost = std::make_unique<DesktopApp::PersistentDockHost>();
@@ -946,9 +949,10 @@ end})
         if (!preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [&](HWND target) { preview.RemoveWindow(target); }))
             throw std::runtime_error("initialize preview layer fixture");
         const auto check = [](bool ok, const char* message) { if (!ok) throw std::runtime_error(message); };
-        for (int variant = 0; variant < 3; ++variant)
+        for (int variant = 0; variant < 5; ++variant)
         {
-            const bool finalCard = variant == 1, dropReceipt = variant == 2;
+            const bool finalCard = variant == 1 || variant == 4, dropReceipt = variant == 2;
+            previewReceiptTime += 10;
             app->floatingDockPointerButtonsDown_ = 0;
             app->floatingDockVisible_ = host.promoted = host.frameReady = true;
             SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0,
@@ -974,12 +978,61 @@ end})
             {
                 previewReceiptButton = 0;
                 app->UpdateFloatingDockEdgeSwipe();
+                if (variant >= 3)
+                {
+                    // The first sampler has consumed the native receipt. The
+                    // same helper event arrives only after reflow/final Hide.
+                    preview.ObserveForwardedPointer(finalCard ? WM_MBUTTONDOWN : WM_LBUTTONDOWN, previewReceiptTime);
+                    previewReceiptButton = finalCard ? VK_MBUTTON : VK_LBUTTON;
+                    app->UpdateFloatingDockEdgeSwipe();
+                    check(host.promoted && preview.IsVisible() == !finalCard,
+                        "late helper replay must preserve both the Dock and the surviving two-to-one preview");
+                    previewReceiptButton = 0;
+                    app->UpdateFloatingDockEdgeSwipe();
+                    preview.ObserveForwardedPointer(WM_LBUTTONDOWN, previewReceiptTime + 1);
+                }
                 previewReceiptButton = VK_LBUTTON;
                 app->UpdateFloatingDockEdgeSwipe();
                 check(!host.promoted, "the next independent outside press must still dismiss the Dock");
             }
         }
-        std::cout << "Preview close: delayed input preserves Dock Z band; final-card and missing-receipt controls passed\n";
+        // Model User32 completing the close's foreground handoff on a later
+        // sample, after the native receipt was already consumed. Only owned
+        // fixture HWNDs are used; the OS process boundary is supplied here.
+        inputSafetyOriginalThread = &GetWindowThreadProcessId;
+        inputSafetyStableExternalIdentity = true;
+        inputSafetyExternalIdentityWindow = second;
+        InputSafetyImport thread("GetWindowThreadProcessId", reinterpret_cast<ULONG_PTR>(&InputSafetyThread));
+        inputSafetyForeground = first;
+        previewReceiptButton = 0;
+        app->floatingDockVisible_ = host.promoted = host.frameReady = true;
+        host.desktopLayerForegroundWindow = first;
+        SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        ShowWindow(first, SW_SHOWNOACTIVATE);
+        ShowWindow(second, SW_SHOWNOACTIVATE);
+        preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [&](HWND target) {
+            ShowWindow(target, SW_HIDE);
+            preview.RemoveWindow(target);
+        });
+        preview.Show({{first, L"closing foreground"}, {second, L"survivor"}},
+            {0, 0, 20, 20}, DockPosition::Bottom, false, owner);
+        SendMessageW(preview.GetWindow(), WM_MBUTTONDOWN, 0, MAKELPARAM(20, 20));
+        SendMessageW(preview.GetWindow(), WM_MBUTTONUP, 0, MAKELPARAM(20, 20));
+        app->UpdateFloatingDockEdgeSwipe();
+        inputSafetyForeground = second;
+        app->floatingDockKeyboardSessionActive_ = true;
+        app->floatingDockInputDeactivated_ = true;
+        app->UpdateFloatingDockEdgeSwipe();
+        check(host.promoted && preview.IsVisible() && !preview.IsShowingWindow(first),
+            "the later close-related foreground/deactivation handoff must retain the surviving preview and Dock");
+        previewReceiptButton = VK_LBUTTON;
+        app->UpdateFloatingDockEdgeSwipe();
+        check(!host.promoted && !preview.IsVisible(),
+            "an independent outside press still dismisses the retained Dock and preview after a close handoff");
+        inputSafetyStableExternalIdentity = false;
+        inputSafetyExternalIdentityWindow = nullptr;
+        std::cout << "Preview close: native/helper replay, asynchronous foreground handoff and outside-press controls passed\n";
     }
 
     static void RunInputSafety()

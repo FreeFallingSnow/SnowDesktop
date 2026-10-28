@@ -156,6 +156,19 @@ inline HRESULT WINAPI MonitorDpi(HMONITOR, MONITOR_DPI_TYPE, UINT* x, UINT* y)
     return S_OK;
 }
 inline POINT closePointer{};
+inline HWND closeHitWindow = nullptr;
+inline HWND WINAPI CloseHitWindow(POINT) { return closeHitWindow; }
+inline unsigned trackingArms = 0;
+inline bool repeatLeave = false;
+inline BOOL WINAPI PreviewTracking(TRACKMOUSEEVENT* tracking)
+{
+    if (tracking->dwFlags == TME_LEAVE)
+    {
+        ++trackingArms;
+        if (repeatLeave) PostMessageW(tracking->hwndTrack, WM_MOUSELEAVE, 0, 0);
+    }
+    return TRUE;
+}
 inline BOOL WINAPI ClosePointer(POINT* point)
 {
     *point = closePointer;
@@ -181,6 +194,8 @@ void Run(Check check)
         ImportPatch update("DwmUpdateThumbnailProperties", reinterpret_cast<ULONG_PTR>(&Update));
         ImportPatch retirement("DwmUnregisterThumbnail", reinterpret_cast<ULONG_PTR>(&Unregister));
         ImportPatch dpi("GetDpiForMonitor", reinterpret_cast<ULONG_PTR>(&MonitorDpi));
+        ImportPatch pointerHit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&CloseHitWindow));
+        ImportPatch tracking("TrackMouseEvent", reinterpret_cast<ULONG_PTR>(&PreviewTracking));
         Source first, second;
         check(first.window && second.window, "thumbnail source fixtures are real owned off-screen windows");
         if (!first.window || !second.window) return;
@@ -341,12 +356,17 @@ void Run(Check check)
             check(boundary.registrations == 1 && boundary.queries == 2 && boundary.updates == 1 &&
                     boundary.retirements == 2,
                 "close relayout measures and refreshes the one surviving source without leaving stale relationships");
-            check(!preview.ContainsInteractionPoint(closePointer),
-                "the vacated edge of the old group must not remain an interaction region after recentering");
+            for (int sample = 0; sample < 4; ++sample) SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsVisible(), "two-to-one reflow must not manufacture a leave while the close pointer stays stationary");
+            POINT movedFromClose = closePointer;
+            ++movedFromClose.x;
+            check(!preview.ContainsInteractionPoint(movedFromClose),
+                "stationary close retention must not preserve the old group's interaction rectangle");
             RECT survivorBounds{};
             GetWindowRect(preview.GetWindow(), &survivorBounds);
             closePointer = {(survivorBounds.left + survivorBounds.right) / 2,
                 (survivorBounds.top + survivorBounds.bottom) / 2};
+            closeHitWindow = preview.GetWindow();
             SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsVisible() && preview.ContainsInteractionPoint(closePointer),
                 "entering the new preview during the close grace period cancels dismissal");
@@ -388,7 +408,8 @@ void Run(Check check)
                 boundary.dpi = caseDpi;
                 closePointer = {-32000, -32000};
                 DockWindowPreview preview(snowdesktop::dock_peek::Api{nullptr});
-                check(preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [](HWND) {}),
+                unsigned closeCallbacks = 0;
+                check(preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [&](HWND) { ++closeCallbacks; }),
                     "recenter fixture initializes without invoking real system Peek");
                 preview.Show({{firstCard.window, L"first"}, {middleCard.window, L"middle"}, {lastCard.window, L"last"}},
                     centeredAnchor, position, false, dockOwner.window);
@@ -413,18 +434,54 @@ void Run(Check check)
                 check((GetWindowLongPtrW(dockOwner.window, GWL_EXSTYLE) & WS_EX_TOPMOST) &&
                         above(dockOwner.window, otherTopmost.window),
                     "closing a card preserves the native Dock owner's topmost band and relative order");
-                RECT card{};
-                GetWindowRect(preview.GetWindow(), &card);
-                closePointer = {(card.left + card.right) / 2, (card.top + card.bottom) / 2};
-                // No WM_MOUSEMOVE: relayout must establish tracking for the
-                // stationary pointer, then reject a stale leave notification.
-                preview.UpdateAnchor(centeredAnchor, position);
-                SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
-                check(preview.IsVisible(), "a queued leave cannot dismiss a card that now contains the pointer");
-                closePointer = {-32000, -32000};
-                SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
-                check(preview.IsCleared(),
-                    "the next real leave is still tracked after reflow and a stale leave notification");
+                for (const bool singleCard : {false, true})
+                {
+                    if (singleCard) preview.Show({{firstCard.window, L"single"}}, centeredAnchor, position, false, dockOwner.window);
+                    const unsigned previousCloses = closeCallbacks;
+                    RECT card{};
+                    GetWindowRect(preview.GetWindow(), &card);
+                    closePointer = {(card.left + card.right) / 2, (card.top + card.bottom) / 2};
+                    closeHitWindow = preview.GetWindow();
+                    // No WM_MOUSEMOVE: relayout must establish tracking for the
+                    // stationary pointer, then reject a stale leave notification.
+                    preview.UpdateAnchor(centeredAnchor, position);
+                    SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
+                    check(preview.IsVisible(), "a queued leave cannot dismiss a card that now contains the pointer");
+                    trackingArms = 0;
+                    repeatLeave = true;
+                    ++closePointer.x;
+                    preview.UpdateAnchor(centeredAnchor, position);
+                    MSG leave{};
+                    unsigned leaves = 0;
+                    while (leaves < 16 && PeekMessageW(&leave, preview.GetWindow(), WM_MOUSELEAVE, WM_MOUSELEAVE, PM_REMOVE))
+                    {
+                        ++leaves;
+                        DispatchMessageW(&leave);
+                    }
+                    repeatLeave = false;
+                    check(leaves <= 2 && trackingArms <= 2,
+                        "immediate region-generated leaves cannot create a self-sustaining input queue loop");
+                    RECT client{};
+                    GetClientRect(preview.GetWindow(), &client);
+                    const RECT close = CalculateDockWindowPreviewCloseButtonRect(client, caseDpi);
+                    const LPARAM closePoint = MAKELPARAM((close.left + close.right) / 2, (close.top + close.bottom) / 2);
+                    ValidateRect(preview.GetWindow(), nullptr);
+                    SendMessageW(preview.GetWindow(), WM_MOUSEMOVE, 0, closePoint);
+                    check(GetUpdateRect(preview.GetWindow(), nullptr, FALSE) != FALSE,
+                        "hover changes are painted after the bounded leave recovery");
+                    SendMessageW(preview.GetWindow(), WM_LBUTTONDOWN, 0, closePoint);
+                    SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, closePoint);
+                    check(closeCallbacks == previousCloses + 1, "single and multiple cards still receive close input after repeated native leave notifications");
+                    closeHitWindow = otherTopmost.window;
+                    ++closePointer.x;
+                    preview.UpdateAnchor(centeredAnchor, position);
+                    SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+                    check(preview.IsCleared(), "an overlapping external surface is a real leave despite matching the card bounding box");
+                    closePointer = {-32000, -32000};
+                    SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+                    check(preview.IsCleared(),
+                        "the next real leave is still tracked after reflow and a stale leave notification");
+                    }
             }
         }
         check(boundary.live.empty() && boundary.errors == 0,

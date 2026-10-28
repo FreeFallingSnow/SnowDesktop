@@ -7,6 +7,7 @@
 #include <dwmapi.h>
 #include <windows.h>
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -135,6 +136,9 @@ public:
     void RemoveWindow(HWND window);
     // One-shot input provenance survives card reflow and final-card Hide.
     HMONITOR TakePointerInteractionMonitor() { return std::exchange(pointerInteractionMonitor_, nullptr); }
+    void ObserveForwardedPointer(UINT message, DWORD time);
+    bool RetainsCloseForeground(HWND foreground);
+    void ReleaseCloseRetention() { closeRetentionUntil_ = 0; closeReflowPointerKnown_ = false; }
     void ScheduleHide();
     void KeepVisible();
     bool IsVisible() const;
@@ -167,13 +171,16 @@ private:
     void OnLeftButtonUp(POINT point);
     void OnMiddleButtonUp(POINT point);
     void CloseWindowAtIndex(int index);
-    void RecordPointerInteraction();
+    void RecordPointerInteraction(UINT message);
     void RefreshPointerTracking();
+    HWND PointerWindowAt(POINT screenPoint) const;
+    void ArmPointerTracking(HWND window, POINT screenPoint);
     void UpdatePeekTarget(HWND target);
     void OnPeekTimer();
     void CancelPeek(bool suppressUntilLeave = false);
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
+    bool RetainsReflowPointer(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
     int CloseButtonIndexAtPoint(POINT point) const;
     int PinButtonIndexAtPoint(POINT point) const;
@@ -205,10 +212,28 @@ private:
     SIZE panelSize_{};
     RECT anchorScreen_{};
     HMONITOR pointerInteractionMonitor_ = nullptr;
+    struct PointerReceipt
+    {
+        UINT message = 0;
+        DWORD time = 0;
+        HMONITOR monitor = nullptr;
+        ULONGLONG recordedAt = 0;
+    };
+    std::array<PointerReceipt, 8> pointerReceipts_{};
+    size_t nextPointerReceipt_ = 0;
+    snowdesktop::dock_peek::WindowIdentity closingWindow_;
+    HWND closeForeground_ = nullptr;
+    HWND closeSuccessor_ = nullptr;
+    ULONGLONG closeRetentionUntil_ = 0;
+    POINT closeReflowPointer_{};
+    bool closeReflowPointerKnown_ = false;
     DockPosition dockPosition_ = DockPosition::Bottom;
     bool lightTheme_ = false;
     bool trackingMouse_ = false;
     HWND trackingWindow_ = nullptr;
+    HWND retainedLeaveWindow_ = nullptr;
+    POINT retainedLeavePoint_{};
+    bool retainedLeaveRearmed_ = false;
     int hoveredIndex_ = -1;
     int hoveredCloseIndex_ = -1;
     int hoveredPinIndex_ = -1;
