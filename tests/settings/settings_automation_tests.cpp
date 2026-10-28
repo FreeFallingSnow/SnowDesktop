@@ -61,8 +61,9 @@ struct Child
     }
     void Start()
     {
-        // The driver process itself starts on the private desktop, so its MTA
-        // threads and its target child share the same desktop/window station.
+        // Client and target must use one desktop where the native providers
+        // supply runtime IDs. No input is injected and fixture windows do not
+        // activate; all editor content belongs only to this test child.
         wchar_t name[256]{}; DWORD needed = 0;
         Require(GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME, name, sizeof(name), &needed) != FALSE,
             "identify driver's private desktop");
@@ -95,23 +96,23 @@ struct Child
         window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(std::stoull(text)));
     }
 };
-int IsolatedDriver()
+int FixtureDriver()
 {
     Child driver;
-    const auto name = L"SnowSettingsAutomation-" + std::to_wstring(GetCurrentProcessId());
-    driver.desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
-    Require(driver.desktop != nullptr, "create private driver desktop");
+    wchar_t name[256]{}; DWORD needed = 0;
+    Require(GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME, name, sizeof(name), &needed) != FALSE,
+        "identify fixture driver desktop");
     SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE}; HANDLE outputWrite = nullptr;
     Require(CreatePipe(&driver.output, &outputWrite, &security, 0) != FALSE, "create driver output pipe");
     SetHandleInformation(driver.output, HANDLE_FLAG_INHERIT, 0);
     wchar_t exe[32768]{}; Require(GetModuleFileNameW(nullptr, exe, 32768) != 0, "resolve driver executable");
     std::wstring command = L"\"" + std::wstring(exe) + L"\" --settings-driver";
-    STARTUPINFOW startup{sizeof(startup)}; startup.lpDesktop = const_cast<wchar_t*>(name.c_str());
+    STARTUPINFOW startup{sizeof(startup)}; startup.lpDesktop = name;
     startup.dwFlags = STARTF_USESTDHANDLES; startup.hStdOutput = outputWrite; startup.hStdError = outputWrite;
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     const bool started = CreateProcessW(exe, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
         nullptr, nullptr, &startup, &driver.process) != FALSE;
-    CloseHandle(outputWrite); Require(started, "start private desktop driver");
+    CloseHandle(outputWrite); Require(started, "start isolated fixture-process driver");
     const auto deadline = GetTickCount64() + 45000;
     for (;;)
     {
@@ -123,7 +124,7 @@ int IsolatedDriver()
             std::cout.write(buffer, count);
         }
         else if (WaitForSingleObject(driver.process.hProcess, 20) == WAIT_OBJECT_0) break;
-        Require(GetTickCount64() < deadline, "private UIA driver completed before deadline");
+        Require(GetTickCount64() < deadline, "UIA fixture driver completed before deadline");
     }
     DWORD exit = 1; Require(GetExitCodeProcess(driver.process.hProcess, &exit) != FALSE, "read driver exit status");
     return static_cast<int>(exit);
@@ -143,7 +144,7 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2 && std::wstring_view(argv[1]) == L"--settings-fixture") return Fixture();
     try
     {
-        if (argc == 1) return IsolatedDriver();
+        if (argc == 1) return FixtureDriver();
         Child child; child.Start(); Service service; std::string error;
         Require(!service.Refresh(nullptr, error) && error == "settings_not_ready", "missing settings root rejected");
         Require(service.Refresh(child.window, error), "start asynchronous fixture query");
