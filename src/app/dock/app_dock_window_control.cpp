@@ -464,6 +464,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         }
     }
     dockWindowPreviewKey_ = target.targetToken;
+    dockWindowPreviewIdentity_ = target.identity;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(
         previewItems, target.anchorScreen, dockSettings_.position,
@@ -473,6 +474,13 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
     if (dockWindowPreview_->IsVisible())
         dockWindowPreviewHover_.MarkPreviewShown(
             target.targetToken);
+}
+
+void DesktopApp::RefreshDockWindowPreviewItems()
+{
+    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() ||
+        dockWindowPreviewIdentity_.kind == DockAppIdentityKind::None) return;
+    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_));
 }
 
 void DesktopApp::HideDockWindowPreview()
@@ -492,6 +500,7 @@ void DesktopApp::HideDockWindowPreview()
         dockWindowPreview_->Hide();
     dockWindowPreviewHover_.Reset();
     dockWindowPreviewKey_.clear();
+    dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
 }
 
@@ -503,6 +512,7 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
     if (dockWindowPreview_)
         dockWindowPreview_->Hide();
     dockWindowPreviewKey_.clear();
+    dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
 }
 

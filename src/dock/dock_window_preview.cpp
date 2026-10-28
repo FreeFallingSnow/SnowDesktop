@@ -845,6 +845,21 @@ void DockWindowPreview::Show(
         UpdateWindow(window);
     }
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
+    RefreshPointerTracking(true);
+}
+
+void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& items)
+{
+    if (!IsVisible()) return;
+    std::vector<DockWindowPreviewItem> current;
+    std::unordered_set<HWND> seen;
+    for (const auto& item : items)
+        if (item.window && IsWindow(item.window) && seen.insert(item.window).second) current.push_back(item);
+    if (current.size() == items_.size() && std::equal(current.begin(), current.end(), items_.begin(),
+            [](const auto& left, const auto& right) { return left.window == right.window && left.title == right.title; }))
+        return;
+    const HWND owner = peekOwner_;
+    Show(current, anchorScreen_, dockPosition_, lightTheme_, owner);
 }
 
 void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
@@ -979,6 +994,7 @@ void DockWindowPreview::UpdateAnchor(
     };
     const DockWindowPreviewMonitorContext context =
         ResolveDockWindowPreviewMonitorContext(anchorCenter);
+    bool layoutChanged = context.dpi != dpi_;
     if (context.dpi != dpi_)
     {
         // 跨监视器 DPI 变化：卡片与缩略图目标必须按新 DPI 重新布局。
@@ -997,6 +1013,7 @@ void DockWindowPreview::UpdateAnchor(
         RECT previous{};
         const bool known = GetWindowRect(windows_[index], &previous) != FALSE;
         if (known && EqualRect(&previous, &desired)) continue;
+        layoutChanged = true;
         SetWindowPos(windows_[index], nullptr,
             panelRect.left + card.left, panelRect.top + card.top,
             card.right - card.left, card.bottom - card.top,
@@ -1012,7 +1029,7 @@ void DockWindowPreview::UpdateAnchor(
         }
     }
     InvalidatePopups();
-    RefreshPointerTracking();
+    RefreshPointerTracking(layoutChanged);
 }
 
 void DockWindowPreview::RemoveWindow(HWND window)
@@ -1062,10 +1079,12 @@ void DockWindowPreview::RemoveWindow(HWND window)
     // Reuse the surviving native cards and their Dock owner. Moving in the
     // current Z band must not renegotiate or lower the owner's promotion.
     UpdateAnchor(anchorScreen_, dockPosition_);
+    RefreshPointerTracking(true);
 }
 
 void DockWindowPreview::Hide()
 {
+    pointerReconcilePending_ = false;
     closeReflowPointerKnown_ = false;
     if (IsCleared())
         return;
@@ -1572,8 +1591,25 @@ void DockWindowPreview::ArmPointerTracking(HWND window, POINT screenPoint)
     retainedLeavePoint_ = screenPoint;
 }
 
-void DockWindowPreview::RefreshPointerTracking()
+void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
 {
+    if (layoutChanged)
+    {
+        if (trackingWindow_)
+        {
+            TRACKMOUSEEVENT cancel{sizeof(cancel), TME_CANCEL | TME_LEAVE, trackingWindow_, 0};
+            TrackMouseEvent(&cancel);
+        }
+        trackingMouse_ = false;
+        trackingWindow_ = retainedLeaveWindow_ = nullptr;
+        retainedLeaveRearmed_ = false;
+        hoveredIndex_ = hoveredCloseIndex_ = hoveredPinIndex_ = -1;
+        CancelPeek();
+        // The geometry can change before User32 finishes its hit-test handoff.
+        // Sample now for a stationary initial entry, then once after this
+        // native dispatch turn. A stale old-layout leave cannot win that race.
+        pointerReconcilePending_ = PostMessageW(hwnd_, kPointerReconcileMessage, 0, 0) != FALSE;
+    }
     POINT screen{};
     if (GetCursorPos(&screen))
     {
@@ -1637,6 +1673,7 @@ bool DockWindowPreview::RetainsCloseForeground(HWND foreground)
 
 void DockWindowPreview::OnMouseLeave(HWND window)
 {
+    if (pointerReconcilePending_) return;
     if (trackingWindow_ != window) return;
     POINT screen{};
     if (GetCursorPos(&screen) && PointerWindowAt(screen) == window)
@@ -1815,6 +1852,10 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
 
     switch (message)
     {
+    case kPointerReconcileMessage:
+        preview->pointerReconcilePending_ = false;
+        if (preview->IsVisible()) preview->RefreshPointerTracking();
+        return 0;
     case WM_PAINT:
         preview->Paint(window);
         return 0;
@@ -1823,6 +1864,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_MOUSEMOVE:
+        preview->pointerReconcilePending_ = false;
         preview->OnMouseMove(window, preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
         }));

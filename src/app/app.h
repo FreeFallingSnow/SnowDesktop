@@ -1548,6 +1548,7 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
+    void RefreshDockWindowPreviewItems();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
     /** @brief 根据当前指针所在窗口清理不应继续显示的桌面悬浮状态。 */
@@ -4075,6 +4076,7 @@ private:
         dockLaunchBounces_;
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
+    DockAppIdentity dockWindowPreviewIdentity_;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
     DWORD systemTaskbarWindowScanTick_ = 0;

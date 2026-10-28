@@ -134,6 +134,7 @@ public:
     }
     void Hide();
     void RemoveWindow(HWND window);
+    void UpdateItems(const std::vector<DockWindowPreviewItem>& items);
     // One-shot input provenance survives card reflow and final-card Hide.
     HMONITOR TakePointerInteractionMonitor() { return std::exchange(pointerInteractionMonitor_, nullptr); }
     void ObserveForwardedPointer(UINT message, DWORD time);
@@ -154,6 +155,7 @@ private:
     static constexpr UINT_PTR kPeekTimerId = 2;
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
+    static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
 
     static LRESULT CALLBACK WindowProc(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -172,7 +174,7 @@ private:
     void OnMiddleButtonUp(POINT point);
     void CloseWindowAtIndex(int index);
     void RecordPointerInteraction(UINT message);
-    void RefreshPointerTracking();
+    void RefreshPointerTracking(bool layoutChanged = false);
     HWND PointerWindowAt(POINT screenPoint) const;
     void ArmPointerTracking(HWND window, POINT screenPoint);
     void UpdatePeekTarget(HWND target);
@@ -234,6 +236,7 @@ private:
     HWND retainedLeaveWindow_ = nullptr;
     POINT retainedLeavePoint_{};
     bool retainedLeaveRearmed_ = false;
+    bool pointerReconcilePending_ = false;
     int hoveredIndex_ = -1;
     int hoveredCloseIndex_ = -1;
     int hoveredPinIndex_ = -1;

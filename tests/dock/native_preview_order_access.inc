@@ -46,4 +46,8 @@
     {
         return !app.dockWindowPreviewHover_.SuppressedTarget().empty();
     }
+    static void TrackLivePreview(DesktopApp& app, const std::wstring& executable)
+    {
+        app.dockWindowPreviewIdentity_ = app.ReadDockAppIdentity(executable);
+    }
 #include "native_running_refresh_access.inc"

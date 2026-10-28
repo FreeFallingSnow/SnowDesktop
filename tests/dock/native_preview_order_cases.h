@@ -252,6 +252,36 @@ inline void RunClosePreview()
     CheckClosePreview(0);
 }
 
+inline void RunLivePreviewRefresh()
+{
+    native_drag_commit_cases::Profile profile;
+    auto& app = profile.Model(false, profile.root / L"live-preview");
+    Access::PreparePreviewOrder(app);
+    Fixture fixture;
+    fixture.Start();
+    const HWND first = fixture.Create(30, false);
+    Access::NotifyPreviewWindow(app, first, EVENT_OBJECT_CREATE);
+    auto& preview = Access::PrepareClosePreview(app, Access::PreviewItems(app, fixture.executable), 0);
+    Access::TrackLivePreview(app, fixture.executable);
+    const HWND initialCard = preview.GetWindow();
+    Require(preview.GetWindows().size() == 1, "live preview begins with one source window");
+    const HWND second = fixture.Create(31, false);
+    Access::NotifyPreviewWindow(app, second, EVENT_OBJECT_SHOW);
+    Require(preview.IsVisible() && preview.GetWindows().size() == 2 && preview.IsShowingWindow(second) &&
+            preview.GetWindow() == initialCard && !Access::ClosePreviewSuppressed(app),
+        "native create/show event must add a new source to the open preview without another Dock hover");
+    const HWND third = fixture.Create(32, false);
+    Access::NotifyPreviewWindow(app, third, EVENT_OBJECT_CREATE);
+    Require(preview.GetWindows().size() == 3 && preview.IsShowingWindow(third),
+        "new source membership continues updating after the first live refresh");
+    fixture.Send(kDestroy, reinterpret_cast<WPARAM>(second));
+    Access::NotifyPreviewWindow(app, second, EVENT_OBJECT_DESTROY);
+    Require(preview.IsVisible() && preview.GetWindows().size() == 2 && preview.IsShowingWindow(first) &&
+            preview.IsShowingWindow(third) && !preview.IsShowingWindow(second),
+        "source destruction must refresh only current membership while retaining the open view");
+    preview.Hide();
+}
+
 inline void Run(int onlyVariant = -1)
 {
     native_drag_commit_cases::Profile profile;
@@ -314,6 +344,7 @@ inline void Run(int onlyVariant = -1)
     {
         RunRunningRefresh();
         RunClosePreview();
+        RunLivePreviewRefresh();
     }
 }
 }

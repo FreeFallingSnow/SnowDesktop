@@ -533,6 +533,9 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
         previewOrder.Forget(window);
     else
         previewOrder.Observe(window);
+    if (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_DESTROY ||
+        event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE)
+        RefreshDockWindowPreviewItems();
     if (dockWindowTransition_)
     {
         if (event == EVENT_SYSTEM_MINIMIZESTART)
@@ -1138,6 +1141,7 @@ void DesktopApp::RefreshDockRunningWindows(
     dockRunningWindowsStateTick_ = observedWindowStateTick;
     dockRunningWindowsRefreshTick_ = GetTickCount();
     UpdateDockExternalMinimizeTargets();
+    RefreshDockWindowPreviewItems();
 }
 
 bool DesktopApp::ActivateOrToggleDockItem(

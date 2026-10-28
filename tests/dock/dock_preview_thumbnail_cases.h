@@ -445,12 +445,14 @@ void Run(Check check)
                     // No WM_MOUSEMOVE: relayout must establish tracking for the
                     // stationary pointer, then reject a stale leave notification.
                     preview.UpdateAnchor(centeredAnchor, position);
+                    SendMessageW(preview.GetWindow(), WM_APP + 1, 0, 0);
                     SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
                     check(preview.IsVisible(), "a queued leave cannot dismiss a card that now contains the pointer");
                     trackingArms = 0;
                     repeatLeave = true;
                     ++closePointer.x;
                     preview.UpdateAnchor(centeredAnchor, position);
+                    SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
                     MSG leave{};
                     unsigned leaves = 0;
                     while (leaves < 16 && PeekMessageW(&leave, preview.GetWindow(), WM_MOUSELEAVE, WM_MOUSELEAVE, PM_REMOVE))
@@ -459,8 +461,16 @@ void Run(Check check)
                         DispatchMessageW(&leave);
                     }
                     repeatLeave = false;
-                    check(leaves <= 2 && trackingArms <= 2,
+                    check(leaves >= 1 && leaves <= 2 && trackingArms >= 1 && trackingArms <= 2,
                         "immediate region-generated leaves cannot create a self-sustaining input queue loop");
+                    trackingArms = 0;
+                    RECT shiftedAnchor = centeredAnchor;
+                    ++shiftedAnchor.left;
+                    ++shiftedAnchor.right;
+                    preview.UpdateAnchor(shiftedAnchor, position);
+                    SendMessageW(preview.GetWindow(), WM_APP + 1, 0, 0);
+                    check(trackingArms >= 1 && preview.IsVisible(),
+                        "changed geometry performs a fresh initial entry even at the previously retained stationary pointer");
                     RECT client{};
                     GetClientRect(preview.GetWindow(), &client);
                     const RECT close = CalculateDockWindowPreviewCloseButtonRect(client, caseDpi);
