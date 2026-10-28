@@ -165,6 +165,76 @@ struct Fixture
 
 #include "native_running_refresh_cases.h"
 
+inline void CheckClosePreview(int legacyRoute)
+{
+    native_drag_commit_cases::Profile profile;
+    auto& app = profile.Model(false, profile.root / L"close-preview");
+    Access::PreparePreviewOrder(app);
+    Fixture fixture;
+    fixture.Start();
+    const HWND first = fixture.Create(10, false);
+    const HWND middle = fixture.Create(11, false);
+    const HWND last = fixture.Create(12, false);
+    auto& preview = Access::PrepareClosePreview(app,
+        {{first, L"first"}, {middle, L"middle"}, {last, L"last"}}, legacyRoute);
+    const auto popups = preview.GetWindows();
+    Require(popups.size() == 3, "three owned windows have preview cards before closing");
+    RECT firstBounds{}, lastBounds{};
+    GetWindowRect(popups[0], &firstBounds);
+    GetWindowRect(popups[2], &lastBounds);
+    const auto clickClose = [&](HWND popup) {
+        RECT client{};
+        GetClientRect(popup, &client);
+        const RECT close = CalculateDockWindowPreviewCloseButtonRect(client, GetDpiForWindow(popup));
+        SendMessageW(popup, WM_LBUTTONUP, 0, MAKELPARAM(
+            (close.left + close.right) / 2, (close.top + close.bottom) / 2));
+    };
+    clickClose(popups[1]);
+    constexpr const char* retentionFailure = "closing one window must keep the remaining preview cards open";
+    Require(preview.IsVisible() && preview.IsShowingWindow(first) && preview.IsShowingWindow(last) &&
+            !preview.IsShowingWindow(middle) && preview.GetWindows().size() == 2 &&
+            !Access::ClosePreviewSuppressed(app), retentionFailure);
+    Require(preview.GetWindows() == std::vector<HWND>{popups[0], popups[2]},
+        "closing the middle source retires only its native card");
+    RECT afterFirst{}, afterLast{};
+    GetWindowRect(popups[0], &afterFirst);
+    GetWindowRect(popups[2], &afterLast);
+    Require(EqualRect(&firstBounds, &afterFirst) && EqualRect(&lastBounds, &afterLast),
+        "remaining controls stay in place for repeated close actions");
+    Require(Access::PreviewItems(app, fixture.executable).size() == 2,
+        "accepted close is excluded from the real host preview collector");
+    SendMessageW(popups[0], WM_MBUTTONUP, 0, MAKELPARAM(10, 10));
+    Require(preview.IsVisible() && preview.GetWindows() == std::vector<HWND>{popups[2]} &&
+            preview.IsShowingWindow(last) && !preview.IsShowingWindow(first),
+        "middle-clicking the primary card retains the final card and transfers timer ownership");
+    clickClose(popups[2]);
+    Require(preview.IsCleared() && Access::ClosePreviewSuppressed(app),
+        "closing the final window dismisses the preview until pointer leave");
+    const ULONGLONG deadline = GetTickCount64() + 3000;
+    while ((IsWindow(first) || IsWindow(middle) || IsWindow(last)) && GetTickCount64() < deadline)
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+    Require(!IsWindow(first) && !IsWindow(middle) && !IsWindow(last),
+        "production tracked close requests actually destroy only the three owned source windows");
+}
+
+inline void RunClosePreview()
+{
+    for (const int legacyRoute : {1, 2})
+    {
+        bool rejected = false;
+        try { CheckClosePreview(legacyRoute); }
+        catch (const std::runtime_error& error)
+        {
+            if (std::string_view(error.what()) !=
+                "closing one window must keep the remaining preview cards open") throw;
+            rejected = true;
+        }
+        Require(rejected, "each original popup/host dismissal must fail the same retention assertion");
+        std::cout << "old close dismissal route " << legacyRoute << " rejected by preview retention assertion\n";
+    }
+    CheckClosePreview(0);
+}
+
 inline void Run(int onlyVariant = -1)
 {
     native_drag_commit_cases::Profile profile;
@@ -223,6 +293,10 @@ inline void Run(int onlyVariant = -1)
         expect({owned[0], owned[2], owned[3]}, "a newly opened window appends after survivors, including recycled HWNDs");
     }
     std::cout << "actual host preview opening-order cases passed\n";
-    if (onlyVariant != 1) RunRunningRefresh();
+    if (onlyVariant != 1)
+    {
+        RunRunningRefresh();
+        RunClosePreview();
+    }
 }
 }

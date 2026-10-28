@@ -718,8 +718,8 @@ int RunDockWindowPinTests()
             SendMessageW(secondPopup, WM_LBUTTONUP, 0, MAKELPARAM(secondPin.x, secondPin.y));
             check(!DockWindowPin::IsPinned(other), "a recreated second popup can cancel the retained source pin");
             SendMessageW(secondPopup, WM_MBUTTONUP, 0, MAKELPARAM(20, second.bottom - 20));
-            check(closed == other && !activated && preview.IsCleared(),
-                "middle-click coordinates in the second popup close its source and hide the complete group");
+            check(closed == other && !activated && preview.IsVisible(),
+                "middle-click coordinates in the second popup request only its source without hiding the group");
         }
     }
     check(pins.Toggle(target), "prepare destroyed-window cleanup fixture");

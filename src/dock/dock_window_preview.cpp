@@ -751,6 +751,7 @@ void DockWindowPreview::Show(
     }
 
     anchorScreen_ = anchorScreen;
+    closeRetentionScreen_ = {};
     dockPosition_ = dockPosition;
     lightTheme_ = lightTheme;
     hoveredIndex_ = -1;
@@ -1004,6 +1005,51 @@ void DockWindowPreview::UpdateAnchor(
     InvalidatePopups();
 }
 
+void DockWindowPreview::RemoveWindow(HWND window)
+{
+    const auto found = std::find_if(items_.begin(), items_.end(),
+        [window](const auto& item) { return item.window == window; });
+    if (found == items_.end()) return;
+    if (items_.size() == 1)
+    {
+        Hide();
+        return;
+    }
+
+    CancelPeek(true);
+    KeepVisible();
+    // Keep the survivors in place while the user continues closing windows.
+    // The vacated area remains a transition region until the pointer leaves.
+    const RECT previousBounds = GetBounds();
+    UnionRect(&closeRetentionScreen_, &closeRetentionScreen_, &previousBounds);
+    const size_t index = static_cast<size_t>(found - items_.begin());
+    if (trackingWindow_)
+    {
+        TRACKMOUSEEVENT tracking{sizeof(tracking), TME_CANCEL | TME_LEAVE, trackingWindow_, 0};
+        TrackMouseEvent(&tracking);
+    }
+    trackingMouse_ = false;
+    trackingWindow_ = nullptr;
+    hoveredIndex_ = hoveredCloseIndex_ = hoveredPinIndex_ = -1;
+    const HWND popup = windows_[index];
+    // Detach before destruction so WM_NCDESTROY cannot clear the new timer owner.
+    windows_.erase(windows_.begin() + index);
+    hwnd_ = windows_.front();
+    items_.erase(found);
+    cardRects_.erase(cardRects_.begin() + index);
+    thumbnailRects_.erase(thumbnailRects_.begin() + index);
+    if (index < thumbnails_.size())
+    {
+        ReleaseThumbnail(thumbnails_[index]);
+        thumbnails_.erase(thumbnails_.begin() + index);
+    }
+    ReleaseThumbnails(measuredThumbnails_);
+    if (popup) DestroyWindow(popup);
+    InvalidatePopups();
+    if (SetTimer(hwnd_, kHideTimerId, kTransitionHideDelayMs, nullptr) != 0)
+        hideTimerArmed_ = true;
+}
+
 void DockWindowPreview::Hide()
 {
     if (IsCleared())
@@ -1028,6 +1074,7 @@ void DockWindowPreview::Hide()
     trackingMouse_ = false;
     trackingWindow_ = nullptr;
     hasTransitionOrigin_ = false;
+    closeRetentionScreen_ = {};
     if (wasVisible && visibilityChanged_) visibilityChanged_();
 }
 
@@ -1106,6 +1153,7 @@ bool DockWindowPreview::IsCleared() const
         hoveredPinIndex_ == -1 &&
         !trackingMouse_ &&
         !hasTransitionOrigin_ &&
+        IsRectEmpty(&closeRetentionScreen_) &&
         !hideTimerArmed_;
 }
 
@@ -1497,12 +1545,7 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
         static_cast<size_t>(closeIndex) <
             items_.size())
     {
-        const HWND target =
-            items_[closeIndex].window;
-        Hide();
-        if (closeCallback_ && target &&
-            IsWindow(target))
-            closeCallback_(target);
+        CloseWindowAtIndex(closeIndex);
         return;
     }
 
@@ -1532,11 +1575,16 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
 
 void DockWindowPreview::OnMiddleButtonUp(POINT point)
 {
+    CloseWindowAtIndex(CardIndexAtPoint(point));
+}
+
+void DockWindowPreview::CloseWindowAtIndex(int index)
+{
     CancelPeek(true);
-    const int index = CardIndexAtPoint(point);
     if (index < 0 || static_cast<size_t>(index) >= items_.size()) return;
     const HWND target = items_[index].window;
-    Hide();
+    if (items_.size() == 1) Hide();
+    else KeepVisible();
     if (closeCallback_ && target && IsWindow(target)) closeCallback_(target);
 }
 
@@ -1564,6 +1612,7 @@ void DockWindowPreview::HideIfPointerOutside()
 bool DockWindowPreview::IsPointerInTransitionRegion(
     POINT screenPoint) const
 {
+    if (RectContainsScreenPoint(closeRetentionScreen_, screenPoint)) return true;
     if (!hwnd_ || IsRectEmpty(&anchorScreen_))
         return false;
     const RECT preview = GetBounds();

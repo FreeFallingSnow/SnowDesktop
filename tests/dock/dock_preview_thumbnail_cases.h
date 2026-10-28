@@ -155,6 +155,12 @@ inline HRESULT WINAPI MonitorDpi(HMONITOR, MONITOR_DPI_TYPE, UINT* x, UINT* y)
     *x = *y = boundary.dpi;
     return S_OK;
 }
+inline POINT closePointer{};
+inline BOOL WINAPI ClosePointer(POINT* point)
+{
+    *point = closePointer;
+    return TRUE;
+}
 
 struct Source
 {
@@ -316,10 +322,35 @@ void Run(Check check)
                     "a new or recycled source HWND gets a fresh relationship after the surviving source");
                 checkLinks({second.window, replacement.window});
             }
+            RECT closedCard{};
+            GetWindowRect(preview.GetWindow(), &closedCard);
+            closePointer = {closedCard.left + 10, closedCard.top + 10};
+            // Supply pointer input without moving the user's mouse. The real
+            // popup timer, transition rules and thumbnail cleanup still execute.
+            ImportPatch cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&ClosePointer));
             if (!preview.GetWindows().empty())
                 SendMessageW(preview.GetWindow(), WM_MBUTTONUP, 0, MAKELPARAM(10, 10));
-            check(closed == second.window && boundary.live.empty() && preview.IsCleared(),
-                "production close routing hides the group and releases retained registrations");
+            check(closed == second.window && boundary.live.size() == 2 && preview.IsVisible(),
+                "production close routing retains the group while its close request is handled");
+            boundary.ResetCounts();
+            preview.RemoveWindow(second.window);
+            check(!preview.IsShowingWindow(second.window) && preview.IsVisible(),
+                "accepted close removes only its source and retains the surviving preview");
+            checkLinks({replacement.window});
+            check(boundary.registrations == 0 && boundary.queries == 0 && boundary.updates == 0 &&
+                    boundary.retirements == 1,
+                "closing one card releases only its relationship without refreshing the survivors");
+            SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsVisible() && preview.ContainsInteractionPoint(closePointer),
+                "the hide timer retains the group while the pointer rests in the just-closed card");
+            closePointer = {-32000, -32000};
+            SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsCleared() && boundary.live.empty(),
+                "leaving the original preview area dismisses the retained group through its real timer");
+            preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
+            preview.RemoveWindow(replacement.window);
+            check(boundary.live.empty() && preview.IsCleared(),
+                "removing the final source clears the group and all registrations");
             show();
             preview.Show({}, anchor, DockPosition::Bottom, false);
             check(boundary.live.empty() && preview.IsCleared(), "empty target groups release all registrations");

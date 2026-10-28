@@ -19,4 +19,36 @@
     {
         return app.CollectDockWindowPreviewItems(app.ReadDockAppIdentity(executable));
     }
+    static DockWindowPreview& PrepareClosePreview(DesktopApp& app,
+        const std::vector<DockWindowPreviewItem>& items, int legacyRoute)
+    {
+        app.dockWindowPreview_ = std::make_unique<DockWindowPreview>();
+        if (!app.dockWindowPreview_->Initialize(GetModuleHandleW(nullptr), [](HWND) {},
+                [&app, legacyRoute](HWND window) {
+                    // Restore each actual old dismissal route independently.
+                    if (legacyRoute == 1) app.dockWindowPreview_->Hide();
+                    if (legacyRoute == 2) app.DismissDockWindowPreviewUntilLeave();
+                    app.CloseDockWindowFromPreview(window);
+                })) throw std::runtime_error("initialize owned close-preview fixture");
+        app.dockWindowPreviewKey_ = L"close-preview-fixture";
+        app.dockWindowPreviewHover_.MarkPreviewShown(app.dockWindowPreviewKey_);
+        app.dockWindowPreviewAnchorScreen_ = {0, 0, 20, 20};
+        app.dockWindowPreview_->Show(items, app.dockWindowPreviewAnchorScreen_,
+            DockPosition::Bottom, false);
+        // Only test-owned nonactivating popups are moved; no desktop host exists.
+        const RECT bounds = app.dockWindowPreview_->GetBounds();
+        for (const HWND popup : app.dockWindowPreview_->GetWindows())
+        {
+            RECT rect{};
+            GetWindowRect(popup, &rect);
+            SetWindowPos(popup, nullptr, -12000 + rect.left - bounds.left,
+                -12000 + rect.top - bounds.top, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return *app.dockWindowPreview_;
+    }
+    static bool ClosePreviewSuppressed(DesktopApp& app)
+    {
+        return !app.dockWindowPreviewHover_.SuppressedTarget().empty();
+    }
 #include "native_running_refresh_access.inc"

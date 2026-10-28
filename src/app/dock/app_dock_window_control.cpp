@@ -258,8 +258,11 @@ DesktopApp::CollectDockWindowPreviewItems(
 void DesktopApp::CloseDockWindowFromPreview(
     HWND window)
 {
-    DismissDockWindowPreviewUntilLeave();
-    RequestTrackedDockWindowClose(window);
+    if (!RequestTrackedDockWindowClose(window)) return;
+    if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
+        dockWindowPreview_->RemoveWindow(window);
+    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible())
+        DismissDockWindowPreviewUntilLeave();
     RefreshDockRunningWindows();
 }
 

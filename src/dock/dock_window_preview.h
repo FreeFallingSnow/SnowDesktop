@@ -132,6 +132,7 @@ public:
         };
     }
     void Hide();
+    void RemoveWindow(HWND window);
     void ScheduleHide();
     void KeepVisible();
     bool IsVisible() const;
@@ -163,6 +164,7 @@ private:
     void OnMouseLeave(HWND window);
     void OnLeftButtonUp(POINT point);
     void OnMiddleButtonUp(POINT point);
+    void CloseWindowAtIndex(int index);
     void UpdatePeekTarget(HWND target);
     void OnPeekTimer();
     void CancelPeek(bool suppressUntilLeave = false);
@@ -198,6 +200,7 @@ private:
     std::vector<HTHUMBNAIL> measuredThumbnails_;
     SIZE panelSize_{};
     RECT anchorScreen_{};
+    RECT closeRetentionScreen_{};
     DockPosition dockPosition_ = DockPosition::Bottom;
     bool lightTheme_ = false;
     bool trackingMouse_ = false;
