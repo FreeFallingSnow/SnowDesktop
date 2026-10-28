@@ -137,7 +137,18 @@ int wmain(int argc, wchar_t** argv)
         const auto* samples = first.manifest.Find("posters"); const auto* repeated = second.manifest.Find("posters");
         Require(samples && repeated && samples->array.size() == repeated->array.size(), "sampled frame manifest is complete");
         for (std::size_t index = 0; index < samples->array.size(); ++index)
-            Require(samples->array[index].Find("sha256")->string == repeated->array[index].Find("sha256")->string, "all sampled native frames repeat exactly");
+        {
+            if (samples->array[index].Find("sha256")->string != repeated->array[index].Find("sha256")->string)
+            {
+                const auto evidence = std::filesystem::path(temporary.path.wstring() + L"-render-mismatch");
+                Require(std::filesystem::create_directory(evidence), "exclusively create frame difference evidence directory");
+                std::filesystem::copy(first.directory, evidence / L"first", std::filesystem::copy_options::recursive);
+                std::filesystem::copy(second.directory, evidence / L"second", std::filesystem::copy_options::recursive);
+                std::cerr << "different native sample=" << samples->array[index].Find("file")->string
+                    << " evidence=" << demo::Utf8(evidence.wstring()) << '\n';
+                Require(false, "all sampled native frames repeat exactly");
+            }
+        }
         auto longInput = scene.source; longInput.object["durationMs"] = control::Number(30000); longInput.object["fps"] = control::Number(60);
         const auto longScene = demo::ParseScene(longInput);
         Require(service.Start(longScene, executable, root, error), "start cancellable owned render worker"); service.Cancel();
