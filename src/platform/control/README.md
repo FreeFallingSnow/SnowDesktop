@@ -66,10 +66,12 @@ queries and cancellation remain available while playback is active. Completion
 means that the input sequence was delivered; confirm the resulting UI/model
 state separately. An operation may fail after delivering part of its input.
 
-Current catalogs cover desktop items, common native widget frames/member items
-and search, visible Dock entries, Quick Navigation and Lua accessibility nodes.
-The response explicitly lists pending surfaces: additional native chrome/tabs,
-popup-specific controls, legacy system menus, settings and external/system windows.
+Current catalogs cover desktop items, native widget frames/member items/search,
+view/date buttons, category/source tabs, detail headers/dividers, visible Dock
+entries, Quick Navigation, Lua accessibility nodes, modern menus and the refreshed
+settings UIA cache. Pending coverage includes search-result extra controls,
+popup-specific controls, native status bar/system panels, legacy system menus,
+settings floating popups and external/system windows.
 `coveredSurfaces` identifies available adapters, not exhaustive acceptance of
 every control or every visual state. Pointer motion follows current target
 geometry and uses the same procedural cursor renderer intended for later
@@ -141,7 +143,9 @@ A scene fixes locale, appearance, clock text, canvas, frame rate, named fixture
 items, surface layout and an ordered timeline. Supported native surfaces are
 collections, file categories, folder mappings, collection popups, Dock, status
 bar and Quick Navigation. Fixture items contain display text, glyph/color and
-category data. They do not reference personal files. Export does not load or
+category data. Popup and navigation layouts preserve their native aspect ratio
+and fit within the configured scene rectangles; other widgets lay out directly
+in their configured bounds. Fixture items do not reference personal files. Export does not load or
 replace the live desktop layout. `locale:"system"` is rejected; the chosen
 language must be installed in the host. Canvas dimensions are even, up to
 3840x2160; duration is at most 30 seconds, 60fps, with a further work budget.
