@@ -586,13 +586,14 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     trace.sample.buttons = buttonsDown;
     trace.sample.previous = previousButtonsDown;
     trace.sample.recent = pressedSinceLastSample;
+    const bool physicalPointerPressed = snowdesktop::floating_dock_rules::
+        HasNewPointerButtonPress(
+            buttonsDown,
+            previousButtonsDown,
+            pressedSinceLastSample,
+            observedButtons.has_value());
     const bool pointerPressed =
-        externalActivation || deferredOutsidePress || snowdesktop::floating_dock_rules::
-            HasNewPointerButtonPress(
-                buttonsDown,
-                previousButtonsDown,
-                pressedSinceLastSample,
-                observedButtons.has_value());
+        externalActivation || deferredOutsidePress || physicalPointerPressed;
     const bool leftButtonPressed =
         snowdesktop::floating_dock_rules::HasNewPointerButtonPress(
             buttonsDown & leftButtonBit,
@@ -638,7 +639,9 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 return host && host->active && host->container && IsWindowVisible(host->hwnd) &&
                     host->container->ContainsInteractivePoint(desktopPoint);
             });
-        dockStartMenu_->ObservePointer(buttonsDown != 0, pointerPressed,
+        // Start activates its own external window after the opening press is
+        // released. That foreground change is not another click on the Dock.
+        dockStartMenu_->ObservePointer(buttonsDown != 0, physicalPointerPressed,
             onDock || (statusBar_ && statusBar_->ContainsPoint(cursor)));
     }
 

@@ -8466,6 +8466,12 @@ int main(int argc, char** argv)
              "HRESULT CreateSmoothStepAnimation(", {"DWMWA_TRANSITIONS_FORCEDISABLED"}},
             {"src/app/widgets/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
             {"src/app/dock/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
+            // Start's own foreground activation must not become an owned-
+            // surface click while the pointer remains on the opening button.
+            // The pointer/session behavior is exercised by start_menu_tests;
+            // this boundary protects the production sampler's input route.
+            {"src/app/dock/app_floating_dock_lifecycle.cpp", "if (dockStartMenu_ && dockStartMenu_->Active())",
+             "GUITHREADINFO dragGui", {"pointerPressed", "externalActivation", "deferredOutsidePress"}},
             {"src/app/popup/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},
             {"src/app/dock/app_floating_dock_lifecycle.cpp", "bool DesktopApp::UpdatePassiveDragRevealHosts(",
              "void DesktopApp::UpdateFloatingDockEdgeSwipe()",
