@@ -122,6 +122,76 @@
             require(app.GetSelectedFilePreviewPath() == second.wstring(),
                 "native collection groups and file groups use their visible member projection");
         }
+        // Keep the real asynchronous search projection and native key route;
+        // replace only Everything SDK answers and the external preview program.
+        const auto searchRoot = first.parent_path() / L"preview-search-root";
+        const auto descendant = searchRoot / L"nested" / L"needle 中文.txt";
+        std::filesystem::create_directories(descendant.parent_path());
+        std::ofstream(descendant) << "recursive preview";
+        for (const bool list : {false, true})
+        for (const bool popup : {false, true})
+        for (int surface = 0; surface < 3; ++surface)
+        {
+            resetModel();
+            const bool grouped = surface == 2;
+            SeedFilterSurface(app, {first, searchRoot}, surface == 1
+                ? DesktopWidgetType::FolderMapping : DesktopWidgetType::FileCategories,
+                list, grouped);
+            const auto index = app.FindWidgetIndexById(grouped ? L"ordered-group" : L"ordered");
+            auto* view = dynamic_cast<ScrollingItemWidget*>(MemberContainer(app,
+                grouped ? L"ordered-group" : L"ordered"));
+            require(view && index < app.widgets_.size(), "preview search uses the actual native component");
+            if (popup)
+            {
+                app.widgets_[index].gridSpan = {1, 1};
+                app.widgets_[index].singleCellIconMode = true;
+                app.popupWidgetIndex_ = index;
+                app.popupRect_ = {0, 0, 500, 400};
+                app.popupAnimation_.ShowImmediately();
+                require(app.GetCategorizedPopupView() == view && app.IsCollectionPopupInteractive(),
+                    "preview search popup resolves the real active categorized view");
+            }
+            SetFolderSearchBoundary(*view, [descendant](const std::wstring&, DWORD) {
+                snowdesktop::QuickNavigationEverythingSearchResponse response;
+                response.results.push_back({descendant.filename().wstring(), descendant.wstring(), {}, false});
+                return response;
+            });
+            view->SetSearchText(L"needle");
+            await([&] { return !FolderSearchPending(*view); }, "preview Everything search must settle");
+            require(view->UsesFolderSearch() && view->FolderSearchCount() == 1,
+                "preview input has one recursive result without a persistent member");
+            auto* result = view->FolderSearchItem(0, true);
+            require(result && result->IsSearchResult(), "preview regression selects the transient Everything result");
+            result->SetSelected(true);
+            // A hidden direct member must never replace the selected result.
+            for (auto& item : app.items_) item.selected = item.parsingName == first.wstring();
+            for (auto& widget : app.widgets_)
+                for (auto& member : widget.folderEntries) member.selected = member.fullPath == first.wstring();
+            require(app.GetSelectedFilePreviewPath() == descendant.wstring(),
+                "Everything result in desktop-files, folder-mapping or file-group scope resolves its exact path");
+            const auto beforeSearch = count();
+            app.HandleInputMessage(completionWindow, WM_KEYDOWN, VK_SPACE, 1);
+            app.HandleInputMessage(completionWindow, WM_CHAR, L' ', 1);
+            await([&] { return count() == beforeSearch + 1; }, "native preview key dispatches the selected Everything result");
+            {
+                std::lock_guard lock(capture->mutex);
+                require(capture->requests.back().second == descendant.wstring(),
+                    "the preview provider receives the recursive file instead of a stale source member");
+            }
+            view->SetSearchFocused(true);
+            require(!app.TryHandleFilePreviewKey(VK_SPACE), "Everything search editing retains Space for text input");
+            view->SetSearchFocused(false);
+            view->FolderSearchItem(0, true)->SetSelected(false);
+            app.widgets_[index].selected = true;
+            require(app.GetSelectedFilePreviewPath().empty() && !app.TryHandleFilePreviewKey(VK_SPACE),
+                "an empty search selection never falls through to a hidden source member");
+            if (popup)
+            {
+                view->SetPopupFrame(nullptr);
+                app.popupWidgetIndex_ = static_cast<size_t>(-1);
+                app.popupAnimation_.ResetHidden();
+            }
+        }
         resetModel();
         PopulateModel(app, {first, second}, 0); app.LayoutItems();
         app.dockFolderPopupOpen_ = true;

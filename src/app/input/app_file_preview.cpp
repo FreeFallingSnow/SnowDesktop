@@ -3,11 +3,37 @@
 std::wstring DesktopApp::GetSelectedFilePreviewPath()
 {
     using snowdesktop::file_preview::IsFileSystemPath;
+    const auto searchPath = [](ScrollingItemWidget* view) -> std::optional<std::wstring> {
+        if (!view || !view->UsesFolderSearch()) return std::nullopt;
+        // Everything descendants belong to the current search projection, not
+        // to items_ or the source widget's persistent folderEntries.
+        for (auto* item : view->FolderSearchSelectedItems())
+        {
+            if (const auto* desktop = dynamic_cast<DesktopIcon*>(item);
+                desktop && !desktop->GetDesktopItem()->desktopIconClsid.empty()) continue;
+            auto path = item->GetPath();
+            if (snowdesktop::file_preview::IsFileSystemPath(path)) return path;
+        }
+        // An active search with no eligible selection owns the scope too.
+        return std::wstring{};
+    };
     std::vector<SelectionController::Target> targets;
     if (IsCollectionPopupInteractive())
+    {
+        if (auto path = searchPath(GetCategorizedPopupView())) return *path;
         targets = GetPopupSelectionTargets();
+    }
     else if (const auto index = GetSelectionWidgetIndex(); index < widgets_.size())
+    {
+        for (const auto& container : containers_)
+            if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+                view && view->GetWidgetData() == &widgets_[index])
+            {
+                if (auto path = searchPath(view)) return *path;
+                break;
+            }
         targets = GetWidgetSelectionTargets(index);
+    }
     else
     {
         for (const auto& entry : dockEntries_)
