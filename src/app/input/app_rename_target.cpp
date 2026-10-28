@@ -339,6 +339,8 @@ bool DesktopApp::IsRenamingItem(const DesktopItem* item) const
 bool DesktopApp::IsRenamingItem(const FolderEntry* entry) const
 {
     if (!renameInputWindow_ || !renameController_.IsFolderEntry()) return false;
+    if (renameController_.IsSearchResult())
+        return entry && _wcsicmp(entry->fullPath.c_str(), renameController_.Path().c_str()) == 0;
     const auto index = renameController_.Index();
     if (renameController_.IsDockFolderEntry())
         return dockFolderPopupOpen_ && index < dockFolderPopupWidget_.folderEntries.size() &&

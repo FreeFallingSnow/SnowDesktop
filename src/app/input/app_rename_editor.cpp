@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "ui/render/file_search_result_row.h"
 
 // Native rename editor creation.
 
@@ -17,7 +18,54 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     renameController_.BeginFolderEntry(
         widgetIndex, memberIndex);
 
-    RECT rect = GetFolderEntryRenameRect(widgetIndex, memberIndex);
+    const size_t owner = ResolveRenameVisibilityWidgetIndex(widgetIndex);
+    BeginFolderEntryRenameEditor(widgets_[widgetIndex].folderEntries[memberIndex],
+        GetFolderEntryRenameRect(widgetIndex, memberIndex), owner,
+        owner < widgets_.size() && widgets_[owner].listMode);
+}
+
+void DesktopApp::BeginRenameSearchResult(const std::wstring& path)
+{
+    if (renameController_.IsActive() || path.empty()) return;
+    for (const auto& container : containers_)
+    {
+        auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+        if (!view || !view->UsesFolderSearch()) continue;
+        const RECT viewport = view->GetContentViewportRect();
+        for (const auto& slot : view->GetSlots())
+        {
+            const auto* item = slot->GetItem();
+            const RECT bounds = slot->GetBounds();
+            if (!item || !item->IsSelected() || item->GetPath() != path ||
+                !RectsIntersect(bounds, viewport)) continue;
+            FolderEntry entry;
+            entry.fullPath = path;
+            entry.name = PathFindFileNameW(path.c_str());
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES) return;
+            entry.isDirectory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            RECT rect = view->SingleColumn() ? view->GetListItemTextRect(bounds)
+                : GetItemRenameRect(bounds, ResolveItemTitleLines(view->GetWidgetData()));
+            if (item->IsSearchResult())
+            {
+                namespace row = snowdesktop::file_search_result_row;
+                rect = row::Resolve(bounds, {view->Cu(28.0f), view->Cu(12.0f), view->Cu(10.0f),
+                    view->Cu(6.0f), view->Cu(19.0f), view->Cu(5.0f), view->Cu(118.0f),
+                    view->Cu(156.0f), view->Cu(8.0f)}, false).name;
+            }
+            IntersectRect(&rect, &rect, &viewport);
+            renameCommitPending_ = false;
+            renameController_.BeginSearchResult(path);
+            BeginFolderEntryRenameEditor(entry, rect,
+                FindWidgetIndexById(view->GetWidgetData()->id), item->IsSearchResult() || view->SingleColumn());
+            return;
+        }
+    }
+}
+
+void DesktopApp::BeginFolderEntryRenameEditor(
+    const FolderEntry& entry, RECT rect, size_t owner, bool listMode)
+{
     if (IsRectEmptyRect(rect))
     {
         renameController_.Reset();
@@ -29,11 +77,9 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     RECT screenRect = rect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
-    const size_t owner = ResolveRenameVisibilityWidgetIndex(widgetIndex);
-    const bool listMode = owner < widgets_.size() && widgets_[owner].listMode;
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(listMode, !listMode);
     renameInputWindow_ = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        snowdesktop::text_input::WindowClass(), widgets_[widgetIndex].folderEntries[memberIndex].DisplayName().c_str(), style,
+        snowdesktop::text_input::WindowClass(), entry.DisplayName().c_str(), style,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
@@ -64,12 +110,11 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
-            widgets_[widgetIndex].folderEntries[memberIndex].DisplayName(),
-            widgets_[widgetIndex].folderEntries[memberIndex].fullPath,
-            widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
+            entry.DisplayName(),
+            entry.fullPath,
+            entry.isDirectory));
     SetFocus(renameInputWindow_);
-    const size_t visibilityWidgetIndex =
-        ResolveRenameVisibilityWidgetIndex(widgetIndex);
+    const size_t visibilityWidgetIndex = owner;
     if (visibilityWidgetIndex < widgets_.size())
     {
         interactionPinnedWidgetId_ =

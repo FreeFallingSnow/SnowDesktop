@@ -138,6 +138,21 @@ inline void Run()
             if (entry.is_regular_file() && entry.path().filename().wstring().starts_with(L"overlap-needle")) ++copies;
         Require(copies == 1 && Read(desktop / file.filename()) == "unique-reference" && Read(file) == "unique-reference",
             "two selected search references create exactly one correct destination and retain the source on copy");
+        // The host menu targets a physical path, never a transient row index.
+        // Exercise its production rename commit and the actual Shell worker.
+        Access::CaptureSearchRename(app, file.wstring());
+        Access::CommitSearchRename(app, L"cancelled.txt", true);
+        Require(fs::exists(file) && !fs::exists(file.parent_path() / L"cancelled.txt"),
+            "cancelling search-result rename never changes the file");
+        Access::CaptureSearchRename(app, file.wstring());
+        Access::RebuildFolderSearch(app);
+        const auto renamed = file.parent_path() / L"overlap-needle-renamed.txt";
+        Access::CommitSearchRename(app, renamed.filename().wstring(), false);
+        native_drag_async_reload_cases::Wait([&] { return Access::SearchRenameIdle(app); },
+            "path-based search rename finishes its actual Shell transaction");
+        Require(!fs::exists(file) && fs::exists(renamed) && Read(renamed) == "unique-reference" &&
+            dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, L"ordered-group"))->GetSearchText() == L"needle",
+            "renaming after a view rebuild uses the owned path and preserves the search query");
         Access::UnbindAsync(app); Access::StopModel(app);
         fs::remove(desktop / file.filename()); fs::remove_all(project); ++scenes;
     }

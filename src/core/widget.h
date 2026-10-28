@@ -424,6 +424,7 @@ public:
     // Runtime-only search results; never added to persisted folder contents.
     bool UsesFolderSearch() const;
     void EnsureFolderSearch() const;
+    void RefreshFolderSearch();
     size_t FolderSearchCount() const;
     RECT FolderSearchItemRect(size_t index) const;
     int FolderSearchContentHeight() const;

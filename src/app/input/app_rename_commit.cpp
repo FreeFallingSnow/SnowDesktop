@@ -185,7 +185,14 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
     const size_t widgetIndex = renameController_.OwnerIndex();
     const size_t memberIndex = renameController_.Index();
     const bool dockPopupEntry = renameController_.IsDockFolderEntry();
+    const std::wstring searchPath = renameController_.IsSearchResult() ? renameController_.Path() : L"";
     renameController_.Reset();
+    if (!searchPath.empty())
+    {
+        if (!cancel && !newName.empty() && newName != PathFindFileNameW(searchPath.c_str()) &&
+            !QueueRename({searchPath, newName, {}})) MessageBeep(MB_ICONWARNING);
+        return;
+    }
 
     const FolderEntry* entry = nullptr;
     if (dockPopupEntry)

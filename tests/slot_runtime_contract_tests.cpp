@@ -2957,6 +2957,16 @@ void TestRenameControllerKeepsTargetsExclusive()
             !controller.IsQuickNavigationPresentation(),
         "dock popup entries must not retain stale owner or presentation state");
 
+    controller.BeginSearchResult(L"C:\\project\\nested\\report.txt");
+    const auto searchSession = controller.SessionId();
+    Check(controller.IsSearchResult() && controller.IsFolderEntry() &&
+            controller.OwnerIndex() == RenameController::InvalidIndex &&
+            controller.Index() == RenameController::InvalidIndex &&
+            controller.Path() == L"C:\\project\\nested\\report.txt",
+        "search rename owns a path without aliasing persistent member indices");
+    controller.BeginFolderEntry(1, 2);
+    Check(controller.Path().empty() && !controller.IsSearchResult() && !controller.MatchesSession(searchSession),
+        "replacing a search editor retires its path and focus-loss session");
     controller.Reset();
     controller.SetQuickNavigationPresentation(true);
     Check(!controller.IsActive() &&

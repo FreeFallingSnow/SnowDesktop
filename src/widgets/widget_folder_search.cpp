@@ -109,6 +109,13 @@ void ScrollingItemWidget::RestoreSearchPresentation(const SearchPresentation& st
     InvalidateSlots();
 }
 
+void ScrollingItemWidget::RefreshFolderSearch()
+{
+    if (!folderSearch_ || searchText_.empty()) return;
+    folderSearch_->refreshRequested = true;
+    InvalidateSlots();
+}
+
 void ScrollingItemWidget::EnsureFolderSearch() const
 {
     if (IsPreviewRendering()) return;
@@ -692,7 +699,7 @@ void ScrollingItemWidget::DrawFolderSearch(ID2D1DeviceContext* context)
             app_->DrawD2DRoundedRectangle(context, geometry.icon, static_cast<float>(Cu(4.0f)),
                 D2D1::ColorF(1, 1, 1, 0.08f), D2D1::ColorF(1, 1, 1, 0.12f));
             app_->DrawQuickNavSysIcon(context, systemIcon, geometry.icon);
-            app_->DrawD2DTextEllipsis(context, item->GetTitle(), geometry.name, GetCuTextFormat(13.0f, false, false),
+            if (drawTitle) app_->DrawD2DTextEllipsis(context, item->GetTitle(), geometry.name, GetCuTextFormat(13.0f, false, false),
                 light ? D2D1::ColorF(0, 0, 0, 0.92f) : D2D1::ColorF(1, 1, 1, 0.92f),
                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             app_->DrawD2DTextEllipsis(context, item->GetPath(), geometry.path, GetCuTextFormat(11.0f, false, false),

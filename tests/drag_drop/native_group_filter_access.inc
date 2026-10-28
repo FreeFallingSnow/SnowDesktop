@@ -267,6 +267,12 @@
                 return !desktop || (desktop->GetDesktopItem() && !app.IsProtectedDesktopIcon(*desktop->GetDesktopItem()));
             });
     }
+    static void CaptureSearchRename(DesktopApp& app, const std::wstring& path)
+    { app.renameController_.BeginSearchResult(path); }
+    static void CommitSearchRename(DesktopApp& app, const std::wstring& name, bool cancel)
+    { app.CommitFolderEntryRename(name, cancel); }
+    static bool SearchRenameIdle(const DesktopApp& app)
+    { return app.shellFileOperationInFlight_ == 0 && app.pendingRenames_.empty(); }
     static void RebuildFolderSearch(DesktopApp& app) { app.RebuildContainersAndItems(); }
     static void WheelFolderSearch(DesktopApp& app, ScrollingItemWidget& view, int delta)
     {

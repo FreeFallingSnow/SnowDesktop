@@ -39,11 +39,6 @@ void DesktopApp::ShowFolderEntryContextMenu(
     const std::vector<std::wstring> selectedPaths =
         GetSelectedFolderEntryPaths();
     if (searchSelection && selectedPaths.empty()) return;
-    if (searchSelection && selectedPaths.size() == 1)
-    {
-        ShowShellItemContextMenuForPaths(selectedPaths, screenPoint);
-        return;
-    }
     PrepareMenuIconsForPoint(screenPoint);
     const std::wstring fullPath = searchSelection ? selectedPaths.front()
         : widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
@@ -202,7 +197,9 @@ void DesktopApp::ShowFolderEntryContextMenu(
     case kContextRenameCommand:
         if (singleSelection)
         {
-            if (keepQuickNavigationOpen)
+            if (searchSelection)
+                BeginRenameSearchResult(fullPath);
+            else if (keepQuickNavigationOpen)
                 BeginQuickNavigationFolderEntryRename(
                     widgetIndex, memberIndex);
             else

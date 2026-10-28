@@ -3719,6 +3719,8 @@ private:
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
     /** @brief 开始重命名文件夹条目。 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex);
+    void BeginRenameSearchResult(const std::wstring& path);
+    void BeginFolderEntryRenameEditor(const FolderEntry& entry, RECT rect, size_t owner, bool listMode);
     void BeginRenameDockFolderPopupEntry(size_t memberIndex);
     /** @brief 提交或取消文件夹条目重命名。 @param newName 新名称 @param cancel true 取消 */
     void CommitFolderEntryRename(const std::wstring& newName, bool cancel);
