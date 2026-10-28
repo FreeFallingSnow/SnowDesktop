@@ -490,7 +490,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
 {
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
-    if (host.updatingMergedPresentation) return;
+    if (host.updatingMergedPresentation || host.revealPending) return;
     struct PromotionInputScope
     {
         DesktopApp& app; HWND window;
@@ -1048,9 +1048,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         return;
     }
 
-    const bool firstReveal =
-        floatingDockRevealPending_ ||
-        !IsWindowVisible(dockHostHwnd);
+    const bool firstReveal = !IsWindowVisible(dockHostHwnd);
     if (firstReveal)
     {
         // Create the hidden host in its eventual Z-order band. Desktop mode
@@ -1081,7 +1079,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             SWP_NOZORDER | SWP_NOACTIVATE);
     }
     bool renderedResizeFrame = false;
-    if (!firstReveal && sourceRectChanged)
+    if (!firstReveal && sourceRectChanged && !floatingDockRevealPending_)
     {
         // The host is now resized to the expanded source rect. Submit the
         // replacement frame synchronously so the new region never presents

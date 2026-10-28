@@ -327,7 +327,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     if (!host.active || !host.hwnd ||
         !IsWindow(host.hwnd))
         return;
-    if (dockWindowTransitionLayerUpdateActive_)
+    if (host.revealPending || dockWindowTransitionLayerUpdateActive_)
         return;
     const bool wasTopmost =
         snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd);

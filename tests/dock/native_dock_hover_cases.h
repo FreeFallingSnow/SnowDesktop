@@ -46,6 +46,29 @@ inline void CheckOriginalRoute(native_drag_commit_cases::Profile& profile)
 
 inline void Run(bool legacy = false)
 {
+    if (!legacy)
+    {
+        std::exception_ptr failure;
+        const std::wstring name = L"SnowDesktop.DockFirstFrame." + std::to_wstring(GetCurrentProcessId());
+        const HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+        native_drag_commit_cases::Require(desktop != nullptr, "create a private first-frame test desktop");
+        std::thread([&] {
+            try
+            {
+                native_drag_commit_cases::Require(SetThreadDesktop(desktop) != FALSE,
+                    "first-frame fixture uses a desktop that is never switched to");
+                ImmDisableIME(0);
+                native_drag_commit_cases::Profile frameProfile;
+                auto& frameApp = NativeDragIntegrationAccess::CreateDockFrameScene(frameProfile.root / L"dock-first-frame");
+                frameProfile.apps.push_back(&frameApp);
+                NativeDragIntegrationAccess::CheckDockFrameTransitions(frameApp);
+            }
+            catch (...) { failure = std::current_exception(); }
+        }).join();
+        const bool closed = CloseDesktop(desktop) != FALSE;
+        if (failure) std::rethrow_exception(failure);
+        native_drag_commit_cases::Require(closed, "release the private first-frame test desktop");
+    }
     native_drag_commit_cases::Profile profile;
     auto& app = profile.Model(false, profile.root / L"dock-hover");
     NativeDragIntegrationAccess::CheckDockHoverFrameRouting(app, legacy);

@@ -810,3 +810,4 @@
         app.d2dContext_.Reset(); app.d2dDevice_.Reset(); app.d2dFactory_.Reset(); app.d3dDevice_.Reset();
         std::cout << "R08 actual pointer/foreground routing, retained/full WARP pixels, hits, state, commits and exit frames passed\n";
     }
+#include "native_dock_frame_access.inc"
