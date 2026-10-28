@@ -49,6 +49,9 @@ inline void CheckOrder(DesktopApp& app, const Surface& surface, std::wstring_vie
                 if (surface.type == DesktopWidgetType::FolderMapping) expectedConfig.folderSortMode = order::sort::kManual;
             }
         }
+        if (pair::Configuration(after) != pair::Configuration(expectedConfig))
+            std::cerr << "filter config widget=" << WideToUtf8(before.id) << " expected=" << pair::Configuration(expectedConfig)
+                << " actual=" << pair::Configuration(after) << '\n';
         Require(pair::Configuration(after) == pair::Configuration(expectedConfig),
             "D12/D02: only accepted member order and automatic-sort state may change; inactive child and group settings stay fixed");
     }

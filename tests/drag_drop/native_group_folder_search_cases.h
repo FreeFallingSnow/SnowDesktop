@@ -194,7 +194,7 @@ inline void Pagination()
             for (const auto& file : answers) response.results.push_back({file.filename().wstring(), file.wstring(), {}, false});
             return response;
         });
-        view()->SetSearchText(L"needle"); view()->SetSearchCursorPosition(3); view()->SetSearchFocused(true);
+        view()->SetSearchText(L"needle"); view()->SetSearchFocused(true); view()->SetSearchCursorPosition(3);
         native_drag_async_reload_cases::Wait([&] { return !Access::FolderSearchPending(*view()); }, "pagination query completes");
         const auto sections = Access::FolderSearchSections(*view());
         Require(sections.size() == (surface == 2 ? 4u : 2u), "every source keeps separate direct and recursive sections");
@@ -228,7 +228,11 @@ inline void Pagination()
         expand();
         Require(Access::FolderSearchSections(*view())[index].count == 45 && IsRectEmptyRect(view()->GetFolderSearchMoreRect(index)),
             "last expansion reveals only the remaining five and removes the footer");
-        view()->ClearSearchText(); Require(!view()->UsesFolderSearch(), "explicit clear exits result mode");
+        Require(view()->GetWidgetData()->scrollOffset > 0, "clear-scroll regression starts from the actually scrolled search results");
+        view()->ClearSearchText();
+        Require(view()->GetWidgetData()->scrollOffset == 0 && view()->GetScrollOffset() == 0,
+            "clearing the search resets persisted content scroll instead of carrying result position into normal contents");
+        Require(!view()->UsesFolderSearch(), "explicit clear exits result mode");
         Access::StopModel(app);
         for (const auto& file : direct) { std::error_code error; fs::remove_all(file, error); }
     }

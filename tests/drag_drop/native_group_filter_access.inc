@@ -30,6 +30,13 @@
             return response;
         });
         view->SetSearchText(query);
+        view->EnsureFolderSearch();
+        const auto deadline = GetTickCount64() + 8000;
+        while (FolderSearchPending(*view))
+        {
+            if (GetTickCount64() > deadline) throw std::runtime_error("unavailable SDK fixture must settle before legacy direct-only assertions");
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+        }
     }
     static std::wstring SortFreeType(DesktopApp& app, bool ascending)
     {
