@@ -9,6 +9,7 @@
 #include <thread>
 #include <chrono>
 #include <functional>
+#include <fstream>
 
 using namespace snowdesktop::hook_entry;
 #ifdef _WIN64
@@ -75,6 +76,53 @@ int Target(const wchar_t* name)
 }
 int wmain(int argc, wchar_t** argv)
 {
+    // Optional package-context probe. The outer, unpackaged invocation checks
+    // these production Prepare results without touching Explorer or user HWNDs.
+    if (argc == 6 && std::wstring_view(argv[1]) == L"--prepare-path-probe")
+    {
+        const std::filesystem::path cache(argv[2]);
+        std::filesystem::create_directories(cache);
+        const auto implementation = cache / L"implementation.dll";
+        std::filesystem::copy_file(argv[4], implementation);
+        const auto entry = Prepare(cache, argv[3], kTestPayload, implementation);
+        if (entry.empty()) { std::cerr << "Prepare failed: " << GetLastError() << '\n'; return 1; }
+        std::ofstream report(std::filesystem::path(argv[5]), std::ios::binary);
+        for (const auto& path : {std::filesystem::path(entry), CurrentImplementation(kTestPayload),
+                cache / L"entry-v1" / std::filesystem::path(argv[3]).filename(), implementation})
+        {
+            const auto bytes = path.u8string();
+            report.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            report.put('\n');
+        }
+        return report ? 0 : 1;
+    }
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--verify-path-probe")
+    {
+        std::ifstream report(std::filesystem::path(argv[2]), std::ios::binary);
+        std::array<std::filesystem::path, 4> paths;
+        for (auto& path : paths)
+        {
+            std::string line;
+            if (!std::getline(report, line) || line.empty()) return 1;
+            path = std::u8string(line.begin(), line.end());
+        }
+        bool passed = true;
+        for (std::size_t index = 0; index < 2; ++index)
+        {
+            const HMODULE module = LoadLibraryExW(paths[index].c_str(), nullptr,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+            const DWORD error = module ? ERROR_SUCCESS : GetLastError();
+            const bool exported = module && GetProcAddress(module, kTestExport);
+            const bool logicalMissing = !std::filesystem::exists(paths[index + 2]);
+            const bool physical = paths[index] != paths[index + 2];
+            passed = passed && exported && logicalMissing && physical;
+            std::cout << "image=" << index << " loadError=" << error << " export=" << exported
+                << " logicalMissing=" << logicalMissing << " physicalPath=" << physical << '\n';
+            if (module) FreeLibrary(module);
+        }
+        std::cout << (passed ? "PASS" : "FAIL") << " packaged Prepare paths are usable outside the package\n";
+        return passed ? 0 : 1;
+    }
     if (argc == 6 && std::wstring_view(argv[1]) == L"--run32")
     {
         std::wstring command = L"\"" + std::wstring(argv[2]) + L"\"";
@@ -146,6 +194,24 @@ int wmain(int argc, wchar_t** argv)
     const auto entryCache = std::filesystem::temp_directory_path() /
         L"SnowDesktopHookEntryTests" / L"abi-1";
     const auto entry = Prepare(entryCache, entrySource, payload, first);
+    // A volume-GUID alias reaches the same file through a different logical
+    // root. The returned entry and published payload must retain DOS identity.
+    wchar_t volumeRoot[32768]{}, volumeName[128]{};
+    const bool volumeKnown = GetVolumePathNameW(entryCache.c_str(), volumeRoot, 32768) &&
+        GetVolumeNameForVolumeMountPointW(volumeRoot, volumeName, 128);
+    if (volumeKnown)
+    {
+        const auto alias = [&](const std::filesystem::path& path) {
+            return std::filesystem::path(volumeName) / path.lexically_relative(volumeRoot);
+        };
+        const auto aliasedEntry = Prepare(alias(entryCache), entrySource, payload, alias(first));
+        const auto published = CurrentImplementation(payload);
+        const bool sameEntry = !aliasedEntry.empty() && _wcsicmp(aliasedEntry.c_str(), entry.c_str()) == 0;
+        const bool samePayload = _wcsicmp(published.c_str(), first.c_str()) == 0;
+        std::cout << "physicalEntryIdentity=" << sameEntry << " physicalPayloadIdentity=" << samePayload << '\n';
+        passed = passed && sameEntry && samePayload;
+    }
+    else { std::cerr << "FAIL cannot obtain the fixture volume alias: " << GetLastError() << '\n'; passed = false; }
     if (!entry.empty() && snowdesktop::deployment::InjectableRuntimeCache::Digest(entry) !=
             snowdesktop::deployment::InjectableRuntimeCache::Digest(entrySource))
     {
