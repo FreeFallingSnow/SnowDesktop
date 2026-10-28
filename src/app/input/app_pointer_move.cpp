@@ -565,7 +565,7 @@ void DesktopApp::OnMouseMoveAt(
                 : nullptr);
         if (resizedWidget)
         {
-            auto& widget = *resizedWidget;
+            auto& widget = *ResolveWidgetContentViewData(resizedWidget);
             const float proposed = static_cast<float>(
                 current.x - detailColumnResizeHeaderLeft_) /
                 static_cast<float>(detailColumnResizeHeaderWidth_);
@@ -597,13 +597,13 @@ void DesktopApp::OnMouseMoveAt(
             if (detailColumnResizePopup_)
             {
                 const RECT popup =
-                    GetCollectionPopupRect(widget);
+                    GetCollectionPopupRect(*resizedWidget);
                 (void)PresentDesktopForegroundComposition(
                     popup);
             }
             else
             {
-                (void)QueueDesktopWidgetComposition(widget.id);
+                (void)QueueDesktopWidgetComposition(resizedWidget->id);
             }
         }
         SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));

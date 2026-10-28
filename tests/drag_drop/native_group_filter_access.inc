@@ -107,7 +107,7 @@
     {
         const auto index = app.FindWidgetIndexById(grouped ? L"ordered-group" : L"ordered");
         if (index >= app.widgets_.size()) throw std::runtime_error("filtered date fixture requires its actual target");
-        app.widgets_[index].dateHeaders = true;
+        app.ResolveWidgetContentViewData(&app.widgets_[index])->dateHeaders = true;
         auto* view = MemberContainer(app, grouped ? L"ordered-group" : L"ordered");
         if (auto* group = dynamic_cast<FileGroup*>(view)) group->InvalidateHostedView();
         else if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();

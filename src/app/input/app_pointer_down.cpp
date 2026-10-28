@@ -1225,7 +1225,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgets_[wi].type == DesktopWidgetType::CollectionGroup ||
                 widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
-                widgets_[wi].listMode = !widgets_[wi].listMode;
+                auto* view = wc->GetContentViewData();
+                if (!view) return;
+                view->listMode = !view->listMode;
                 if (auto* group =
                         dynamic_cast<FileGroup*>(wc))
                     group->InvalidateHostedView();
@@ -1242,7 +1244,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgets_[wi].type == DesktopWidgetType::FolderMapping ||
                 widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
-                widgets_[wi].dateHeaders = !widgets_[wi].dateHeaders;
+                auto* view = wc->GetContentViewData();
+                if (!view) return;
+                view->dateHeaders = !view->dateHeaders;
+                view->scrollOffset = 0;
                 widgets_[wi].scrollOffset = 0;
                 if (auto* mapping = dynamic_cast<FolderMapping*>(wc))
                     mapping->InvalidateFilterCache();

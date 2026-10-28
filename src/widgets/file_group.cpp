@@ -270,17 +270,6 @@ public:
         savedPopupHosted_ = source_->IsPopupHosted();
         savedFrame_ = source_->GetLayoutFrameRect();
         savedCellScale_ = sourceData_->cellScale;
-        savedListMode_ = sourceData_->listMode;
-        savedListColumns_ = sourceData_->listColumns;
-        savedShowDetails_ = sourceData_->showDetails;
-        savedDetailShowModified_ = sourceData_->detailShowModified;
-        savedDetailShowType_ = sourceData_->detailShowType;
-        savedDetailShowSize_ = sourceData_->detailShowSize;
-        savedDetailModifiedPosition_ = sourceData_->detailModifiedPosition;
-        savedDetailTypePosition_ = sourceData_->detailTypePosition;
-        savedDetailSizePosition_ = sourceData_->detailSizePosition;
-        savedDateHeaders_ = sourceData_->dateHeaders;
-        savedShowCategories_ = sourceData_->showFileCategories;
         savedShowSearch_ = sourceData_->showSearchBox;
         savedPrivacy_ = sourceData_->privacyMode;
         savedScrollOffset_ = sourceData_->scrollOffset;
@@ -303,18 +292,6 @@ public:
         sourceData_->gridCell = groupData_->gridCell;
         sourceData_->bounds = groupData_->bounds;
         sourceData_->cellScale = groupData_->cellScale;
-        sourceData_->listMode = groupData_->listMode;
-        sourceData_->listColumns = groupData_->listColumns;
-        sourceData_->showDetails = groupData_->showDetails;
-        sourceData_->detailShowModified = groupData_->detailShowModified;
-        sourceData_->detailShowType = groupData_->detailShowType;
-        sourceData_->detailShowSize = groupData_->detailShowSize;
-        sourceData_->detailModifiedPosition = groupData_->detailModifiedPosition;
-        sourceData_->detailTypePosition = groupData_->detailTypePosition;
-        sourceData_->detailSizePosition = groupData_->detailSizePosition;
-        sourceData_->dateHeaders = groupData_->dateHeaders;
-        sourceData_->showFileCategories =
-            groupData_->showFileCategories;
         sourceData_->showSearchBox = groupData_->showSearchBox;
         sourceData_->privacyMode = groupData_->privacyMode;
         sourceData_->scrollOffset = groupData_->scrollOffset;
@@ -344,7 +321,7 @@ public:
             true,
             snowdesktop::collection_group_rules::
                 ShouldShowInnerCategoryTabs(
-                    groupData_->showFileCategories,
+                    sourceData_->showFileCategories,
                     groupData_->showSearchBox,
                     !searching),
             true);
@@ -362,17 +339,6 @@ public:
         sourceData_->gridCell = savedGridCell_;
         sourceData_->bounds = savedBounds_;
         sourceData_->cellScale = savedCellScale_;
-        sourceData_->listMode = savedListMode_;
-        sourceData_->listColumns = savedListColumns_;
-        sourceData_->showDetails = savedShowDetails_;
-        sourceData_->detailShowModified = savedDetailShowModified_;
-        sourceData_->detailShowType = savedDetailShowType_;
-        sourceData_->detailShowSize = savedDetailShowSize_;
-        sourceData_->detailModifiedPosition = savedDetailModifiedPosition_;
-        sourceData_->detailTypePosition = savedDetailTypePosition_;
-        sourceData_->detailSizePosition = savedDetailSizePosition_;
-        sourceData_->dateHeaders = savedDateHeaders_;
-        sourceData_->showFileCategories = savedShowCategories_;
         sourceData_->showSearchBox = savedShowSearch_;
         sourceData_->privacyMode = savedPrivacy_;
         sourceData_->scrollOffset = savedScrollOffset_;
@@ -404,20 +370,6 @@ private:
     bool savedHosted_ = false;
     bool savedPopupHosted_ = false;
     float savedCellScale_ = 1.0f;
-    bool savedListMode_ = false;
-    int savedListColumns_ = 1;
-    bool savedShowDetails_ = false;
-    bool savedDetailShowModified_ = false;
-    bool savedDetailShowType_ = false;
-    bool savedDetailShowSize_ = false;
-    float savedDetailModifiedPosition_ =
-        snowdesktop::list_detail_rules::kDefaultModifiedPosition;
-    float savedDetailTypePosition_ =
-        snowdesktop::list_detail_rules::kDefaultTypePosition;
-    float savedDetailSizePosition_ =
-        snowdesktop::list_detail_rules::kDefaultSizePosition;
-    bool savedDateHeaders_ = false;
-    bool savedShowCategories_ = false;
     bool savedShowSearch_ = false;
     bool savedPrivacy_ = false;
     int savedScrollOffset_ = 0;
@@ -1232,7 +1184,8 @@ int FileGroup::GetMemberColumnCount() const
 
 bool FileGroup::SingleColumn() const
 {
-    return data_ && data_->listMode;
+    const auto* view = GetContentViewData();
+    return view && view->listMode;
 }
 
 Item* FileGroup::GetSlotItem(size_t idx) const
@@ -1509,6 +1462,15 @@ RECT FileGroup::GetMemberLayoutRect(size_t index) const
     HostedFileSourceScope hosted(
         const_cast<FileGroup*>(this), source);
     return hosted ? source->GetMemberLayoutRect(index) : RECT{};
+}
+
+DesktopWidget* FileGroup::GetContentViewData() const
+{
+    // Cross-source search has one combined view and keeps the group's options.
+    if (IsGroupSearchActive()) return data_;
+    auto* child = FindFileGroupSource(
+        const_cast<FileGroup*>(this), GetActiveSourceId());
+    return child && IsFileGroupSourceType(child->type) ? child : data_;
 }
 
 const DesktopWidget* FileGroup::GetDetailsSortData() const
@@ -1860,7 +1822,7 @@ std::wstring FileGroup::GetDragHint(
     if (!source)
         return WidgetContainer::GetDragHint(
             slot, region, sourceItems, origin, mods);
-    if (data_ && data_->dateHeaders && app_ &&
+    if (source->GetWidgetData() && source->GetWidgetData()->dateHeaders && app_ &&
         app_->dragSession_.SourceList().origin == source &&
         app_->dragSession_.Action() == DropAction::Move)
         return _LW("widget.desktop.sort_after_date");
@@ -2354,8 +2316,8 @@ void FileGroup::DrawButtons(
     };
     draw(buttons.date,
         snowdesktop::menu_fluent_glyphs::kDateHeader,
-        data_->dateHeaders);
+        GetContentViewData()->dateHeaders);
     draw(buttons.list,
-        data_->listMode ? L"\uF462" : L"\uF4ED", true);
+        GetContentViewData()->listMode ? L"\uF462" : L"\uF4ED", true);
     if (includeOpen) draw(buttons.open, L"\uF42E", true);
 }

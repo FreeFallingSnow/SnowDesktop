@@ -232,11 +232,12 @@ snowdesktop::widget_item_layout::Layout CollectionGroupLocalLayout(
     const RECT content = CollectionGroupContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
     const auto spacing = widget->GetScrollingIconSpacing();
-    if (data->listMode)
+    const auto* view = widget->GetContentViewData();
+    if (view && view->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
+                metrics.minimumListHeight), widget->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*view));
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
@@ -478,6 +479,13 @@ RECT CollectionGroup::GetContentViewportRect() const
         const_cast<CollectionGroup*>(this));
 }
 
+DesktopWidget* CollectionGroup::GetContentViewData() const
+{
+    auto* child = FindCollectionWidget(
+        const_cast<CollectionGroup*>(this), GetActiveCollectionId());
+    return child && child->type == DesktopWidgetType::Collection ? child : data_;
+}
+
 const DesktopWidget* CollectionGroup::GetDetailsSortData() const
 {
     return CollectionGroupActiveCollection(
@@ -635,7 +643,8 @@ int CollectionGroup::GetMemberColumnCount() const
 
 bool CollectionGroup::SingleColumn() const
 {
-    return data_ && data_->listMode;
+    const auto* view = GetContentViewData();
+    return view && view->listMode;
 }
 
 Item* CollectionGroup::GetSlotItem(size_t idx) const
@@ -1094,6 +1103,7 @@ void CollectionGroup::DrawContent(
     ID2D1DeviceContext* context, RECT)
 {
     if (!data_ || !app_ || !context) return;
+    const auto* contentView = GetContentViewData();
     const bool light = UsesLightContentTheme();
     const RECT frame = GetFrameRect();
     const bool privacyActive =
@@ -1222,7 +1232,7 @@ void CollectionGroup::DrawContent(
         if (!icon) continue;
         DesktopItem* item = icon->GetDesktopItem();
         if (!item) continue;
-        if (data_->listMode)
+        if (contentView->listMode)
         {
             if (privacyActive)
                 DrawPrivacyPlaceholder(
@@ -1308,7 +1318,7 @@ void CollectionGroup::DrawButtons(
             &listToggle, app_->lastMousePoint_) != FALSE;
     app_->DrawD2DText(
         context,
-        data_->listMode ? L"\uF462" : L"\uF4ED",
+        GetContentViewData()->listMode ? L"\uF462" : L"\uF4ED",
         listToggle, fallback,
         light
             ? D2D1::ColorF(

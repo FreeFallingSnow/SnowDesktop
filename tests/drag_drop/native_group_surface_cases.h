@@ -410,6 +410,82 @@ inline void RunSearch()
     }
     std::cout << scenes << " native group search scope, real capture, cancellation and storage scenes passed\n";
 }
+// Conflicting parent/child options exercise real hosted geometry. This guards
+// against restoring the old temporary projection of group options onto children.
+inline void RunContentViewSettings()
+{
+    Profile profile;
+    size_t scenes = 0;
+    for (const auto type : {collection, files, mapping})
+    for (const bool popup : {false, true})
+    {
+        context = "per-tab content options type=" + std::to_string(static_cast<int>(type)) +
+            " popup=" + std::to_string(popup);
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, type != collection, false, false);
+        const std::wstring childId = type == mapping ? L"B" : L"A";
+        for (auto& data : widgets)
+        {
+            if (data.id == L"surface-group")
+            {
+                data.activeCategoryId = childId;
+                data.listMode = false;
+                data.detailShowModified = data.detailShowType = data.detailShowSize = false;
+            }
+            else if (data.id == childId)
+            {
+                data.listMode = true; data.listColumns = 1;
+                data.detailShowModified = data.detailShowType = false;
+                data.detailShowSize = true; data.showDetails = true;
+                data.showFileCategories = false;
+            }
+        }
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
+        const auto check = [&] {
+            auto* view = dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, L"surface-group"));
+            Require(view != nullptr, "content options require the actual native scrolling group");
+            const RECT frame{0, 0, 700, 600};
+            if (popup) view->SetPopupFrame(&frame);
+            Require(view->SingleColumn() && view->GetMemberColumnCount() == 1,
+                "active child's list view overrides conflicting group icon view");
+            const RECT viewport = view->GetContentViewportRect();
+            const RECT header = view->GetDetailsHeaderRectFromViewport(viewport);
+            Require(view->IsDetailsVisible() && !IsRectEmptyRect(header),
+                "active child's metadata columns produce a real hosted details header");
+            Require(view->HitTestDetailsHeader({header.right - 2, (header.top + header.bottom) / 2}, viewport) ==
+                    WidgetHit::DetailsSizeHeader,
+                "hosted details hit geometry uses the child's enabled size column");
+            const auto* group = view->GetWidgetData();
+            const auto* child = view->GetContentViewData();
+            Require(child && child->id == childId && !group->listMode && !group->detailShowSize,
+                "geometry queries preserve both parent and child configuration ownership");
+            if (popup) view->SetPopupFrame(nullptr);
+        };
+        check();
+        Require(Access::Save(app), "persist independent group and child display options");
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        auto* view = dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, L"surface-group"));
+        auto* child = view->GetContentViewData();
+        child->detailShowSize = child->showDetails = false;
+        child->listColumns = 3;
+        view->InvalidateSlots();
+        if (auto* group = dynamic_cast<FileGroup*>(view)) group->InvalidateHostedView();
+        Require(!view->IsDetailsVisible() && view->GetMemberColumnCount() == 3,
+            "changing the child to three list columns updates hosted content without changing group defaults");
+        Require(!view->GetWidgetData()->listMode && !view->GetWidgetData()->detailShowSize,
+            "child display changes do not propagate to the group configuration");
+        Require(Access::Save(app), "save child's independent multi-column layout");
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true);
+        view = dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, L"surface-group"));
+        Require(!view->IsDetailsVisible() && view->GetMemberColumnCount() == 3,
+            "child multi-column options survive an actual layout reload");
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " per-tab child list/details geometry and storage scenes passed\n";
+}
 inline void RunDateHeaders()
 {
     Profile profile;
@@ -448,7 +524,7 @@ inline void RunDateHeaders()
         const auto check = [&] {
             Require(Access::Widgets(app).size() == original.size(), "date-header refusal preserves all native components");
             for (const auto& widget : original) CheckChild(app, widget);
-            Require(native_widget_pair_cases::Widget(app, L"ordered-group").dateHeaders && native_widget_pair_cases::Widget(app, L"ordered").contentSortColumn ==
+            Require(native_widget_pair_cases::Widget(app, L"ordered").dateHeaders && native_widget_pair_cases::Widget(app, L"ordered").contentSortColumn ==
                 snowdesktop::list_detail_rules::Column::Name,
                 "U11/D02: rejected hosted member drag preserves date headers and automatic sorting");
             for (std::size_t index = 0; index < members.size(); ++index)
@@ -737,7 +813,7 @@ inline void Run(std::string_view mode)
 {
     if (mode == "labels") { RunSortResponse(); RunDesktopComponentTabs(); RunLabels(); RunInsertionZones(); }
     else if (mode == "search") RunSearch();
-    else if (mode == "date") RunDateHeaders();
+    else if (mode == "date") { RunContentViewSettings(); RunDateHeaders(); }
     else if (mode == "inactive") RunInactiveTab();
     else if (mode == "inactive-external") RunExternalInactiveTab();
     else throw std::runtime_error("unknown native group surface mode");

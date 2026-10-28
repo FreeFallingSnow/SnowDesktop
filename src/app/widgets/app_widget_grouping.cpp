@@ -17,6 +17,24 @@
 
 // Widget creation, collection/file-group membership and release operations.
 
+DesktopWidget* DesktopApp::ResolveWidgetContentViewData(DesktopWidget* widget) const
+{
+    if (!widget || !IsGroupWidgetType(widget->type)) return widget;
+    for (const auto& container : containers_)
+        if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+            view && view->GetWidgetData() == widget)
+            return view->GetContentViewData();
+    // Icon/Dock menus may be opened before a content container exists.
+    if (widget->type == DesktopWidgetType::CollectionGroup)
+    {
+        CollectionGroup view(widget, const_cast<DesktopApp*>(this));
+        return view.GetContentViewData();
+    }
+    FileGroup view(widget, const_cast<DesktopApp*>(this));
+    return view.GetContentViewData();
+}
+
+
 namespace
 {
 bool NeedsNativeHelperConsent(const snowdesktop::widget::InstalledPackage& package)

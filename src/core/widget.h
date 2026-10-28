@@ -118,6 +118,8 @@ public:
     ComPtr<IDataObject> CreateDataObject() override;
 
     DesktopWidget* GetWidgetData() const { return data_; }
+    // Content options belong to the active child; the outer frame keeps its own data.
+    virtual DesktopWidget* GetContentViewData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
     virtual float GetCellScale() const;
     float GetLayoutSpacingScale() const;
@@ -867,6 +869,7 @@ public:
     RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    DesktopWidget* GetContentViewData() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
@@ -968,6 +971,7 @@ public:
     RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    DesktopWidget* GetContentViewData() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;

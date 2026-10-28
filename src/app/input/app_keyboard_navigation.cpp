@@ -407,12 +407,9 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
 
     // Fallback for non-item surfaces that cannot provide member geometry.
     int columns = std::max(1, widget.gridSpan.columns);
-    bool listMode = ((widget.type == DesktopWidgetType::CollectionGroup ||
-                      widget.type == DesktopWidgetType::FileGroup) &&
-                     (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::FileCategories && (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::FolderMapping && (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::Collection && widget.listMode);
+    const auto* contentView = wc->GetContentViewData();
+    const bool listMode = contentView && (contentView->listMode ||
+        (contentView->type != DesktopWidgetType::Collection && contentView->dateHeaders));
 
     size_t memberCount = (widget.type == DesktopWidgetType::FolderMapping)
         ? widget.folderEntries.size()
@@ -551,7 +548,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         };
 
         const bool showCategoryRow =
-            widget.showFileCategories &&
+            group->GetContentViewData()->showFileCategories &&
             !(widget.showSearchBox &&
               !group->GetSearchText().empty());
         const std::vector<std::wstring> categoryIds =
@@ -926,7 +923,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     case DesktopWidgetType::CollectionGroup:
         memberCount = 0;
         columns = memberColumns();
-        if (widget.listMode)
+        if (ResolveWidgetContentViewData(&widget)->listMode)
         {
             isListMode = columns == 1;
         }

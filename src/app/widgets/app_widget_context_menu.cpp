@@ -386,6 +386,8 @@ void DesktopApp::ShowWidgetContextMenu(
             }
         }
     }
+    const auto& contentView = *ResolveWidgetContentViewData(&widgets_[widgetIndex]);
+    const std::wstring contentViewId = contentView.id;
     const auto statusLabel = [](const wchar_t* title,
                                 const wchar_t* status) {
         std::wstring label = title;
@@ -402,7 +404,7 @@ void DesktopApp::ShowWidgetContextMenu(
     };
     const std::wstring displayTypeLabel = statusLabel(
         _LW("app.interact.display_type"),
-        widget.listMode
+        contentView.listMode
             ? _LW("app.interact.list_view_state")
             : _LW("app.interact.icon_view_state"));
     HMENU detailsMenu = nullptr;
@@ -450,14 +452,14 @@ void DesktopApp::ShowWidgetContextMenu(
         HMENU columnsMenu = CreatePopupMenu();
         if (columnsMenu)
         {
-            const int selected = snowdesktop::list_detail_rules::ListColumns(widget);
+            const int selected = snowdesktop::list_detail_rules::ListColumns(contentView);
             for (int columns = 1; columns <= 4; ++columns)
             {
                 const UINT id = kContextWidgetListColumnsFirst + columns - 1;
                 AppendMenuW(columnsMenu, MF_STRING | (columns == selected ? MF_CHECKED : 0),
                     id, std::to_wstring(columns).c_str());
             }
-            AppendMenuW(menu, MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
+            AppendMenuW(menu, MF_POPUP | (contentView.listMode ? 0 : MF_GRAYED),
                 reinterpret_cast<UINT_PTR>(columnsMenu), _LW("app.interact.list_columns"));
             setFluentIcon(menu, reinterpret_cast<UINT_PTR>(columnsMenu),
                 snowdesktop::menu_fluent_glyphs::kContentLayout);
@@ -470,33 +472,33 @@ void DesktopApp::ShowWidgetContextMenu(
             _LW("widget.details.name"));
         AppendMenuW(detailsMenu,
             MF_STRING |
-                (widget.detailShowModified ? MF_CHECKED : 0),
+                (contentView.detailShowModified ? MF_CHECKED : 0),
             kContextWidgetDetailModified,
             _LW("widget.details.modified"));
         AppendMenuW(detailsMenu,
             MF_STRING |
-                (widget.detailShowType ? MF_CHECKED : 0),
+                (contentView.detailShowType ? MF_CHECKED : 0),
             kContextWidgetDetailType,
             _LW("widget.details.type"));
         AppendMenuW(detailsMenu,
             MF_STRING |
-                (widget.detailShowSize ? MF_CHECKED : 0),
+                (contentView.detailShowSize ? MF_CHECKED : 0),
             kContextWidgetDetailSize,
             _LW("widget.details.size"));
         AppendMenuW(menu,
-            MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
+            MF_POPUP | (contentView.listMode ? 0 : MF_GRAYED),
             reinterpret_cast<UINT_PTR>(detailsMenu),
             _LW("app.interact.show_details"));
     };
     const std::wstring categoryVisibilityLabel = visibilityLabel(
         _LW("app.interact.file_categories"),
-        widget.showFileCategories);
+        contentView.showFileCategories);
     const std::wstring searchVisibilityLabel = visibilityLabel(
         _LW("app.interact.search_box"),
         widget.showSearchBox);
     const std::wstring dateVisibilityLabel = visibilityLabel(
         _LW("app.interact.date_header"),
-        widget.dateHeaders);
+        contentView.dateHeaders);
     const std::wstring collectionModeLabel = statusLabel(
         _LW("app.interact.display_mode"),
         widget.scrollContainerMode
@@ -1189,6 +1191,20 @@ void DesktopApp::ShowWidgetContextMenu(
         }
     };
 
+    const size_t contentViewIndex = FindWidgetIndexById(contentViewId);
+    if (contentViewIndex >= widgets_.size()) return;
+    const auto invalidateContentView = [&]() {
+        for (const auto& container : containers_)
+        {
+            auto* view = dynamic_cast<WidgetContainer*>(container.get());
+            if (!view || (view->GetWidgetData() != &widgets_[widgetIndex] &&
+                    view->GetWidgetData() != &widgets_[contentViewIndex])) continue;
+            if (auto* group = dynamic_cast<FileGroup*>(view)) group->InvalidateHostedView();
+            else if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
+            else if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
+            else view->InvalidateSlots();
+        }
+    };
     bool needsDesktopFocus = true;
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
@@ -1259,10 +1275,10 @@ void DesktopApp::ShowWidgetContextMenu(
     case kContextWidgetListColumnsLast:
     case kContextWidgetToggleListMode:
         if (command == kContextWidgetToggleListMode)
-            widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+            widgets_[contentViewIndex].listMode = !widgets_[contentViewIndex].listMode;
         else
         {
-            auto& view = widgets_[widgetIndex];
+            auto& view = widgets_[contentViewIndex];
             if (!view.listMode) break;
             snowdesktop::list_detail_rules::SetListColumns(view,
                 static_cast<int>(command - kContextWidgetListColumnsFirst) + 1);
@@ -1270,19 +1286,8 @@ void DesktopApp::ShowWidgetContextMenu(
                 view.detailShowModified, view.detailShowType, view.detailShowSize);
             view.scrollOffset = 0;
         }
-        for (auto& c : containers_)
-        {
-            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-            if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
-            {
-                if (auto* group =
-                        dynamic_cast<FileGroup*>(wc))
-                    group->InvalidateHostedView();
-                else
-                    wc->InvalidateSlots();
-                break;
-            }
-        }
+        widgets_[widgetIndex].scrollOffset = 0;
+        invalidateContentView();
         SaveLayoutSlots();
         refreshOpenPopupDisplay();
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -1291,8 +1296,8 @@ void DesktopApp::ShowWidgetContextMenu(
     case kContextWidgetDetailType:
     case kContextWidgetDetailSize:
     {
-        if (!widgets_[widgetIndex].listMode) break;
-        auto& detailWidget = widgets_[widgetIndex];
+        if (!widgets_[contentViewIndex].listMode) break;
+        auto& detailWidget = widgets_[contentViewIndex];
         auto column = snowdesktop::list_detail_rules::Column::Modified;
         bool enabling = false;
         if (command == kContextWidgetDetailModified)
@@ -1344,102 +1349,32 @@ void DesktopApp::ShowWidgetContextMenu(
                 detailWidget.detailShowType,
                 detailWidget.detailShowSize);
         detailWidget.scrollOffset = 0;
-        for (auto& container : containers_)
-        {
-            auto* widgetContainer =
-                dynamic_cast<WidgetContainer*>(container.get());
-            if (widgetContainer &&
-                widgetContainer->GetWidgetData() ==
-                    &widgets_[widgetIndex])
-            {
-                if (auto* group =
-                        dynamic_cast<FileGroup*>(widgetContainer))
-                    group->InvalidateHostedView();
-                else
-                    widgetContainer->InvalidateSlots();
-                break;
-            }
-        }
+        widgets_[widgetIndex].scrollOffset = 0;
+        invalidateContentView();
         SaveLayoutSlots();
         refreshOpenPopupDisplay();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     }
     case kContextWidgetToggleDateGroup:
-        widgets_[widgetIndex].dateHeaders = !widgets_[widgetIndex].dateHeaders;
+        widgets_[contentViewIndex].dateHeaders = !widgets_[contentViewIndex].dateHeaders;
+        widgets_[contentViewIndex].scrollOffset = 0;
         widgets_[widgetIndex].scrollOffset = 0;
-        if (widgets_[widgetIndex].type ==
-            DesktopWidgetType::FileGroup)
-        {
-            for (auto& c : containers_)
-            {
-                auto* group =
-                    dynamic_cast<FileGroup*>(c.get());
-                if (group &&
-                    group->GetWidgetData() ==
-                        &widgets_[widgetIndex])
-                {
-                    group->InvalidateHostedView();
-                    break;
-                }
-            }
-        }
-        else if (widgets_[widgetIndex].type ==
-                 DesktopWidgetType::FolderMapping)
-        {
-            for (auto& c : containers_)
-            {
-                auto* mapping = dynamic_cast<FolderMapping*>(c.get());
-                if (mapping &&
-                    mapping->GetWidgetData() == &widgets_[widgetIndex])
-                {
-                    mapping->InvalidateFilterCache();
-                    break;
-                }
-            }
-        }
-        else
-        {
-            RebuildContainersAndItems();
-        }
+        invalidateContentView();
         SaveLayoutSlots();
+        refreshOpenPopupDisplay();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetToggleFileCategories:
-        if (widgets_[widgetIndex].type ==
-                DesktopWidgetType::FileCategories ||
-            widgets_[widgetIndex].type ==
-                DesktopWidgetType::FolderMapping ||
-            widgets_[widgetIndex].type ==
-                DesktopWidgetType::FileGroup)
+        if (widgets_[contentViewIndex].type == DesktopWidgetType::FileCategories ||
+            widgets_[contentViewIndex].type == DesktopWidgetType::FolderMapping ||
+            widgets_[contentViewIndex].type == DesktopWidgetType::FileGroup)
         {
-            widgets_[widgetIndex].showFileCategories =
-                !widgets_[widgetIndex].showFileCategories;
+            auto& view = widgets_[contentViewIndex];
+            view.showFileCategories = !view.showFileCategories;
+            view.scrollOffset = view.tabScrollOffset = 0;
             widgets_[widgetIndex].scrollOffset = 0;
-            widgets_[widgetIndex].tabScrollOffset = 0;
-            for (auto& c : containers_)
-            {
-                auto* scrolling =
-                    dynamic_cast<ScrollingItemWidget*>(c.get());
-                if (scrolling &&
-                    scrolling->GetWidgetData() ==
-                        &widgets_[widgetIndex])
-                {
-                    if (auto* categories =
-                            dynamic_cast<FileCategories*>(
-                                scrolling))
-                        categories->InvalidateCategoryCache();
-                    else if (auto* mapping =
-                            dynamic_cast<FolderMapping*>(
-                                scrolling))
-                        mapping->InvalidateFilterCache();
-                    else if (auto* fileGroup =
-                                 dynamic_cast<FileGroup*>(
-                                     scrolling))
-                        fileGroup->InvalidateHostedView();
-                    break;
-                }
-            }
+            invalidateContentView();
             SaveLayoutSlots();
             refreshOpenPopupDisplay();
             InvalidateRect(hwnd_, nullptr, TRUE);

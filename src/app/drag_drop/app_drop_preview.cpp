@@ -728,13 +728,6 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             if (preview.targetWidget)
                 if (auto* source = group->GetSourceContainerById(preview.targetWidget->id))
                     resolvedTarget = source;
-        if (auto* group =
-                dynamic_cast<FileGroup*>(widget);
-            group && group->GetWidgetData() &&
-            group->GetWidgetData()->dateHeaders &&
-            sourceList.origin == resolvedTarget &&
-            preview.action == DropAction::Move)
-            return preview;
         if (preview.targetWidget &&
             preview.targetWidget->dateHeaders &&
             sourceList.origin == resolvedTarget &&

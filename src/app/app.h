@@ -3418,6 +3418,11 @@ private:
         return GetOpenPopupWidget() != nullptr &&
             popupAnimation_.IsInteractive();
     }
+    DesktopWidget* ResolveWidgetContentViewData(DesktopWidget* widget) const;
+    const DesktopWidget* ResolveWidgetContentViewData(const DesktopWidget* widget) const
+    {
+        return ResolveWidgetContentViewData(const_cast<DesktopWidget*>(widget));
+    }
     DesktopWidget* GetOpenPopupWidget();
     const DesktopWidget* GetOpenPopupWidget() const;
     size_t GetPopupItemCount(const DesktopWidget& widget) const;

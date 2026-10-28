@@ -1060,7 +1060,8 @@ size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) c
  */
 bool ScrollingItemWidget::SingleColumn() const
 {
-    return data_ && data_->listMode;
+    const auto* view = GetContentViewData();
+    return view && view->listMode;
 }
 
 /**
@@ -1078,7 +1079,8 @@ int ScrollingItemWidget::GetScrollOffset() const
  */
 BarStyle ScrollingItemWidget::GetInsertionStyle() const
 {
-    return data_ && data_->listMode && snowdesktop::list_detail_rules::ListColumns(*data_) == 1
+    const auto* view = GetContentViewData();
+    return view && view->listMode && snowdesktop::list_detail_rules::ListColumns(*view) == 1
         ? BarStyle::HBar : BarStyle::VBar;
 }
 
@@ -2200,11 +2202,12 @@ int ScrollingItemWidget::GetDetailsHeaderHeight() const
 
 bool ScrollingItemWidget::IsDetailsVisible() const
 {
-    return data_ && data_->listMode &&
+    const auto* view = GetContentViewData();
+    return view && view->listMode &&
         snowdesktop::list_detail_rules::HasMetadataColumns(
-            data_->detailShowModified,
-            data_->detailShowType,
-            data_->detailShowSize);
+            view->detailShowModified,
+            view->detailShowType,
+            view->detailShowSize);
 }
 
 RECT ScrollingItemWidget::ApplyDetailsHeaderToViewport(
@@ -2236,16 +2239,17 @@ snowdesktop::list_detail_rules::Columns
 ScrollingItemWidget::GetDetailsColumns(
     int availableWidth) const
 {
+    const auto* view = GetContentViewData();
     return snowdesktop::list_detail_rules::BuildColumns(
         std::max(1, availableWidth),
-        data_ && data_->detailShowModified,
-        data_ && data_->detailShowType,
-        data_ && data_->detailShowSize,
-        data_ ? data_->detailModifiedPosition :
+        view && view->detailShowModified,
+        view && view->detailShowType,
+        view && view->detailShowSize,
+        view ? view->detailModifiedPosition :
             snowdesktop::list_detail_rules::kDefaultModifiedPosition,
-        data_ ? data_->detailTypePosition :
+        view ? view->detailTypePosition :
             snowdesktop::list_detail_rules::kDefaultTypePosition,
-        data_ ? data_->detailSizePosition :
+        view ? view->detailSizePosition :
             snowdesktop::list_detail_rules::kDefaultSizePosition);
 }
 

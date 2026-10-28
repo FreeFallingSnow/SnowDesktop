@@ -151,7 +151,7 @@
     {
         const auto index = app.FindWidgetIndexById(L"ordered-group");
         if (index >= app.widgets_.size()) throw std::runtime_error("date header fixture requires its group model");
-        app.widgets_[index].dateHeaders = enabled;
+        app.ResolveWidgetContentViewData(&app.widgets_[index])->dateHeaders = enabled;
         auto* view = MemberContainer(app, L"ordered-group");
         if (auto* group = dynamic_cast<FileGroup*>(view)) group->InvalidateHostedView();
         else view->InvalidateSlots();
