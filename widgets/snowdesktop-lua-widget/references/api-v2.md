@@ -234,10 +234,12 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   从直接桌面手势重复打开当前辅助面板时，宿主复用现有场景，不重播动画、不重发 opened/closed，
   并保留焦点与滚动状态。同一弹窗按组件实例、surface、title 和 popover 的 anchorKey 识别；
   仅尺寸或位置变化不构成新弹窗。不同标题、锚点或 surface 仍会切换内容。普通非手势调用
-  保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。点击非模态面板所属组件的
-  有效交互元素时，宿主先交给组件处理；点击所属组件的空白区域也按外部点击处理，遵守
-  `dismissOnOutside`；其他外部点击和 Escape 继续关闭。关闭中的相同桌面请求
+  保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。弹窗外任意位置的点击
+  均按 `dismissOnOutside` 关闭弹窗，所属组件、空白区域和交互元素不享有豁免；
+  Escape 继续按 `dismissOnEscape` 关闭。关闭中的相同桌面请求
   不会反向重播打开动画。此行为纠正保持 API/schema v2，不新增 feature；较早构建仍可能重开。
+  非模态辅助面板外仍分发桌面组件悬停。通过辅助面板内的可信指针操作调用 `widget.openPanel`
+  打开另一面板时，宿主保留该次触发位置；切换面板会重新计算锚点，不沿用旧面板位置。
   `showTitle=true` 会启用宿主移动底栏并显示组件标题；默认值 `false` 表示无底栏，悬停时
   由宿主在左下角显示紧凑移动手柄、右下角显示缩放手柄，其余桌面 surface 均由组件内容和
   指针交互使用。

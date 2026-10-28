@@ -65,21 +65,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         const RECT panel = GetLuaWidgetPanelRect();
         if (!PtInRect(&panel, pt))
         {
-            // Only an actual interaction target keeps the owner's nonmodal
-            // surface alive for opener reuse or switching. Empty content is
-            // still an outside press, even inside the owning widget's frame.
-            const size_t owner = HitTestStandaloneWidgetIndex(pt);
-            bool onOwnerControl = false;
-            if (!luaWidgetPanelRequest_.modal && widgetEngine_ &&
-                owner < widgets_.size() &&
-                widgets_[owner].id == luaWidgetPanelRequest_.widgetId &&
-                HitTestStandaloneWidget(owner, pt) == WidgetHit::Content)
-            {
-                const RECT frame = GetStandaloneWidgetFrameRect(widgets_[owner]);
-                onOwnerControl = widgetEngine_->HasInteractionTargetAt(
-                    widgets_[owner].id, pt.x - frame.left, pt.y - frame.top);
-            }
-            if (luaWidgetPanelRequest_.dismissOnOutside && !onOwnerControl)
+            if (luaWidgetPanelRequest_.dismissOnOutside)
                 CloseLuaWidgetPanel(
                     luaWidgetPanelRequest_.widgetId,
                     "outside");

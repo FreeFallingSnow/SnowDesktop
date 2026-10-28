@@ -397,8 +397,11 @@ void DesktopApp::OnMouseMoveAt(
         if (widgetEngine_)
         {
             bool interactionHoverRouted = false;
-            if (!luaWidgetPanelRequest_.widgetId.empty() &&
-                luaWidgetPanelAnimation_.IsInteractive())
+            const bool luaPanelInteractive = !luaWidgetPanelRequest_.widgetId.empty() &&
+                luaWidgetPanelAnimation_.IsInteractive();
+            const RECT luaPanel = luaPanelInteractive ? GetLuaWidgetPanelRect() : RECT{};
+            if (luaPanelInteractive &&
+                (luaWidgetPanelRequest_.modal || PtInRect(&luaPanel, current)))
             {
                 widgetEngine_->ClearInteractionHover("desktop");
                 const RECT content = GetLuaWidgetPanelContentRect();
@@ -417,6 +420,8 @@ void DesktopApp::OnMouseMoveAt(
             }
             else
             {
+                if (luaPanelInteractive)
+                    widgetEngine_->ClearInteractionHover(luaWidgetPanelRequest_.surface);
                 const size_t interactionWidget =
                     HitTestStandaloneWidgetIndex(current);
                 if (interactionWidget < widgets_.size() &&

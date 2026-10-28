@@ -351,6 +351,24 @@ function checkEntry(d)
     hovered='';localModel.player.status='playing';assert(contains(d.view(context,model),'aurora.utilities'))
     localModel.player.status='loading';assert(contains(d.view(context,model),'aurora.utilities'))
     localModel.player.status='paused';assert(not contains(d.view(context,model),'aurora.utilities'))
+    for _,id in ipairs({'local.playlist','local.options'}) do
+        d.event(context,model,{kind='action',id=id})
+        d.event(context,model,{kind='panel',action='opened'})
+        -- Opening the real playlist/options action must keep all three desktop
+        -- utilities present after hover has left the component for its panel.
+        local desktop=d.view(context,model)
+        assert(contains(desktop,'local.playlist') and contains(desktop,'local.options') and
+            contains(desktop,'system.audio.open'),'an open playlist/options panel keeps all three utilities visible')
+        d.event(context,model,{kind='action',id='media.hover'})
+        assert(contains(d.view(context,model),'aurora.utilities'),'hover reconciliation cannot hide utilities behind an open panel')
+        d.event(context,model,{kind='panel',action='closed'})
+        assert(not contains(d.view(context,model),'aurora.utilities'),'closing an idle panel restores ordinary hover visibility')
+    end
+    d.event(context,model,{kind='popover',action='opened'})
+    d.event(context,model,{kind='panel',action='closed'})
+    assert(contains(d.view(context,model),'aurora.utilities'),'an old panel close cannot hide utilities for a current popover')
+    d.event(context,model,{kind='popover',action='closed'})
+    assert(not contains(d.view(context,model),'aurora.utilities'))
     localModel.itemExtent=30;localModel.listOffset=0;localModel.listTop=0;localModel.listViewport=120
     local key=localModel.player.tracks[1].key
     d.event(context,model,{kind='action',id='local.drag.start',button=1,value=key,y=10})

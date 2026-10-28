@@ -827,7 +827,7 @@ local function viewTree(context, model)
         {secondaryButton=utilitySize})}
     if localActive then table.insert(utilities,1,controlButton("local.playlist",glyphs.playlist,
         l10n.tr("music.playlist"),true,colors,false,{secondaryButton=utilitySize})) end
-    local showUtilities=model.systemAudio.surface~=nil or localActive and
+    local showUtilities=model.auxiliarySurface~=nil or model.systemAudio.surface~=nil or localActive and
         (playing or model.localPlayback.player.status=="loading")
     if widget.hasFeature("interaction.pointerActions") then
         for _,key in ipairs({"aurora.surface","media.previous","media.toggle","media.next",
@@ -904,6 +904,13 @@ local function commitSeek(model, session, timeline, fraction)
 end
 
 local function event(context, model, value)
+    if value.kind=="panel" or value.kind=="popover" then
+        if value.action=="opened" then model.auxiliarySurface=value.kind
+        elseif value.action=="closed" and model.auxiliarySurface==value.kind then
+            model.auxiliarySurface=nil
+        end
+        widget.invalidate()
+    end
     if systemAudio.event(model.systemAudio,value,model.localPlayback) then return end
     local previousSource=model.localPlayback.source
     if localPlayback.event(context,model.localPlayback,value) then

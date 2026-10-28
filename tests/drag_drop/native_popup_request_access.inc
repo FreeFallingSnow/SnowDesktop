@@ -88,6 +88,28 @@
             app.pendingLuaWidgetPanelOpen_.reset();
             app.luaWidgetPanelFinalizing_ = false;
         }
+        for (const bool closing : {false, true})
+        for (const bool explicitAnchor : {false, true})
+        {
+            LuaWidgetPanelRequest request;
+            request.widgetId = L"lua-popup-owner";
+            request.title = L"Playback settings";
+            app.luaWidgetPanelRequest_ = request;
+            app.luaWidgetPanelAnchorPoint_ = {20, 30};
+            app.luaWidgetPanelAnimation_.ShowImmediately();
+            if (closing) app.luaWidgetPanelAnimation_.Close(1000);
+            request.title = L"Playlist";
+            request.desktopGesture = !explicitAnchor;
+            request.hasAnchor = explicitAnchor;
+            request.anchorRect = {610, 420, 610, 420};
+            app.lastMousePoint_ = {230, 110};
+            app.OpenLuaWidgetPanel(request);
+            const POINT expected = explicitAnchor ? POINT{610, 420} : POINT{230, 110};
+            check(app.luaWidgetPanelAnchorPoint_.x == expected.x &&
+                app.luaWidgetPanelAnchorPoint_.y == expected.y,
+                "switching from playback settings to a playlist must use the new trigger anchor, including during close");
+            app.FinalizeCloseLuaWidgetPanel(false);
+        }
         // Execute the real pointer-down route against this process's isolated
         // model/window. No desktop host, live component or presentation opens.
         app.luaWidgetPanelRequest_ = {};
@@ -580,11 +602,12 @@
             "description":"Isolated host scrollbar routing","author":"SnowDesktop","license":"MIT",
             "minHostVersion":"1.0.12.0","defaultSize":{"columns":2,"rows":2},
             "requiredFeatures":["view.tree.core","view.scroll","view.flex.layout",
-                "view.surface.panel","view.surface.dialog","view.surface.popover"]})json");
+                "view.surface.panel","view.surface.dialog","view.surface.popover","widget.panel"]})json");
         write(L"main.lua", R"lua(local function body()
             return view.scroll({key="outer",width="fill",height="fill",children={
                 view.column({key="body",height=1800,padding=12,children={
-                    view.text({key="title",text="Output devices",height=40})}})}})
+                    view.text({key="title",text="Output devices",height=40}),
+                    view.button({key="nested.open",label="List",height=32,action={id="nested.open"}})}})}})
             end
             local function desktop()
                 return view.column({key="desktop",width="fill",height="fill",gap=8,children={
@@ -592,7 +615,12 @@
                     view.button({key="disabled",label="Disabled",width=100,height=32,enabled=false}),
                     view.text({key="label",text="Static label",width=100,height=24})}})
             end
-            return widget.define({apiVersion=2,view=desktop,panel=body,dialog=body,popover=body}))lua");
+            return widget.define({apiVersion=2,view=desktop,panel=body,dialog=body,popover=body,
+                event=function(_,_,event)
+                    if event.kind=="action" and event.id=="nested.open" then
+                        widget.openPanel({title="List",width=400,height=400})
+                    end
+                end}))lua");
         app.widgetEngine_ = std::make_unique<WidgetEngine>();
         check(app.widgetEngine_->InitPreview(ctx.Get(), app.dwriteFactory_.Get()),
             "initialize render-only scrollbar engine");
@@ -619,6 +647,25 @@
             check(SUCCEEDED(ctx->EndDraw()), "paint actual popup including gutter track");
             const auto panel = app.GetLuaWidgetPanelRect();
             const auto content = app.GetLuaWidgetPanelContentRect();
+            std::optional<LuaWidgetPanelRequest> nestedRequest;
+            app.widgetEngine_->SetOpenWidgetPanelCallback(
+                [&](const LuaWidgetPanelRequest& request) { nestedRequest = request; });
+            const auto* nested = app.widgetEngine_->GetWidgets().front().panelInteractionRegions.Find("nested.open");
+            check(nested != nullptr, "nested panel opener must exist in the actual committed panel scene");
+            const int nestedX = static_cast<int>(nested->shape.x + 10);
+            const int nestedY = static_cast<int>(nested->shape.y + 10);
+            for (const auto* suffix : {"MouseDown", "MouseUp", "Click"})
+            {
+                const std::string callback = std::string("on") +
+                    (surface == std::string_view("dialog") ? "Dialog" :
+                        surface == std::string_view("popover") ? "Popover" : "Panel") + suffix;
+                app.widgetEngine_->InvokeMouseEvent(L"lua-popup-owner", callback.c_str(), nestedX, nestedY, 1, 0);
+            }
+            app.widgetEngine_->SetOpenWidgetPanelCallback({});
+            check(nestedRequest && nestedRequest->hasAnchor && !nestedRequest->desktopGesture &&
+                nestedRequest->anchorRect.left == content.left + nestedX &&
+                nestedRequest->anchorRect.top == content.top + nestedY,
+                "a panel action must carry the actual nested opener point into its next panel request");
             ComPtr<ID2D1Bitmap1> pixels;
             auto readProps = props;
             readProps.bitmapOptions = static_cast<D2D1_BITMAP_OPTIONS>(
@@ -732,13 +779,6 @@
         // The static label and the column's unused space are both noninteractive.
         const POINT labelPoint{frame.left + 10, frame.top + 90};
         const POINT blankPoint{frame.left + 150, frame.top + 30};
-        check(app.widgetEngine_->HasInteractionTargetAt(owner.id,
-                openerPoint.x - frame.left, openerPoint.y - frame.top) &&
-            !app.widgetEngine_->HasInteractionTargetAt(owner.id,
-                disabledPoint.x - frame.left, disabledPoint.y - frame.top) &&
-            !app.widgetEngine_->HasInteractionTargetAt(owner.id, 10, 90) &&
-            !app.widgetEngine_->HasInteractionTargetAt(owner.id, 150, 30),
-            "only enabled interactive content may retain the owner's popup");
         const int mode = snowdesktop::animation::detail::mode.exchange(snowdesktop::animation::AlwaysOn);
         const int effect = snowdesktop::animation::detail::popupEffect.load();
         for (const auto* surface : {"panel", "popover"})
@@ -758,9 +798,27 @@
                 app.HitTestStandaloneWidget(0, point) == WidgetHit::Content,
                 "outside test must click actual owner content beyond its popup");
             const bool onOpener = point.x == openerPoint.x && point.y == openerPoint.y;
+            if (onOpener)
+            {
+                app.OnMouseMoveAt(0, point);
+                check(app.widgetEngine_->RuntimeInteractionHovered(owner.id, "opener"),
+                    "a nonmodal popup must preserve real desktop button hover outside its frame");
+                app.luaWidgetPanelRequest_.modal = true;
+                app.OnMouseMoveAt(0, point);
+                check(!app.widgetEngine_->RuntimeInteractionHovered(owner.id, "opener"),
+                    "a modal dialog must still suppress desktop hover");
+                app.luaWidgetPanelRequest_.modal = false;
+                const RECT content = app.GetLuaWidgetPanelContentRect();
+                app.OnMouseMoveAt(0, {content.left + 20, content.top + 20});
+                check(!app.widgetEngine_->RuntimeInteractionHovered(owner.id, "opener"),
+                    "entering the popup must clear hover on the desktop below it");
+                app.OnMouseMoveAt(0, point);
+                check(app.widgetEngine_->RuntimeInteractionHovered(owner.id, "opener"),
+                    "returning from a nonmodal popup must restore desktop hover");
+            }
             app.OnLeftButtonDown(MK_LBUTTON, MAKELPARAM(point.x, point.y));
-            check(app.luaWidgetPanelAnimation_.IsInteractive() == (!dismiss || onOpener),
-                "owner blank, static label and disabled control must dismiss when outside dismissal is enabled");
+            check(app.luaWidgetPanelAnimation_.IsInteractive() == !dismiss,
+                "every outside press must dismiss regardless of owner, blank content or interactive target");
             check(app.widgetEngine_->RuntimeInteractionPressed(owner.id, "opener") == onOpener,
                 "outside classification must leave the desktop pointer dispatch intact");
             app.widgetEngine_->CancelInteractionPointerPress("desktop");

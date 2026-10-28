@@ -26524,16 +26524,6 @@ std::string WidgetEngine::InteractionCursorAt(
         static_cast<float>(x), static_cast<float>(y));
 }
 
-bool WidgetEngine::HasInteractionTargetAt(
-    const std::wstring& widgetId, int x, int y,
-    std::string_view surface) const
-{
-    const int index = FindWidget(widgetId);
-    return index >= 0 &&
-        !InteractionRegionsForSurface(widgets_[index], surface).TargetAt(
-            static_cast<float>(x), static_cast<float>(y)).empty();
-}
-
 bool WidgetEngine::RuntimeCanWriteWidgetStorage(
     const std::wstring& widgetId) const
 {
@@ -31849,6 +31839,20 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
     request.height = std::clamp(height, 280, 900);
+    const std::string_view sourceSurface = CurrentWidgetSurface(d2dState_);
+    const int index = FindWidget(widgetId);
+    if (trustedGestureState_.Active() && IsPanelSurface(sourceSurface) && index >= 0)
+    {
+        const auto& widget = widgets_[index];
+        float x = 0.0f, y = 0.0f;
+        if (InteractionRegionsForSurface(widget, sourceSurface).LastPointer(x, y))
+        {
+            const LONG left = widget.panelBounds.left + static_cast<LONG>(std::floor(x));
+            const LONG top = widget.panelBounds.top + static_cast<LONG>(std::floor(y));
+            request.hasAnchor = true;
+            request.anchorRect = {left, top, left, top};
+        }
+    }
     openWidgetPanelCallback_(request);
 }
 
