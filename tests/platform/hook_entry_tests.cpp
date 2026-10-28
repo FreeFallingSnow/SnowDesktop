@@ -194,6 +194,7 @@ int wmain(int argc, wchar_t** argv)
     const auto entryCache = std::filesystem::temp_directory_path() /
         L"SnowDesktopHookEntryTests" / L"abi-1";
     const auto entry = Prepare(entryCache, entrySource, payload, first);
+    const auto originalPayload = CurrentImplementation(payload);
     // A volume-GUID alias reaches the same file through a different logical
     // root. The returned entry and published payload must retain DOS identity.
     wchar_t volumeRoot[32768]{}, volumeName[128]{};
@@ -207,7 +208,8 @@ int wmain(int argc, wchar_t** argv)
         const auto aliasedEntry = Prepare(alias(entryCache), entrySource, payload, alias(first));
         const auto published = CurrentImplementation(payload);
         const bool sameEntry = !aliasedEntry.empty() && _wcsicmp(aliasedEntry.c_str(), entry.c_str()) == 0;
-        const bool samePayload = _wcsicmp(published.c_str(), first.c_str()) == 0;
+        const bool samePayload = _wcsicmp(published.c_str(), originalPayload.c_str()) == 0 &&
+            std::filesystem::equivalent(published, first);
         std::cout << "physicalEntryIdentity=" << sameEntry << " physicalPayloadIdentity=" << samePayload << '\n';
         passed = passed && sameEntry && samePayload;
     }
@@ -282,7 +284,8 @@ int wmain(int argc, wchar_t** argv)
         if (Module32FirstW(snapshot, &image)) do {
             const auto path = std::filesystem::path(image.szExePath);
             if (path == std::filesystem::path(entry)) ++entryImages;
-            if (path.parent_path() == root && path.filename().wstring().starts_with(L"implementation-")) ++implementationImages;
+            if (path.filename().wstring().starts_with(L"implementation-") &&
+                std::filesystem::equivalent(path.parent_path(), root)) ++implementationImages;
         } while (Module32NextW(snapshot, &image));
         CloseHandle(snapshot);
     }
