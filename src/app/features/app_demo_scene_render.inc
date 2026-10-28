@@ -216,7 +216,7 @@ if (request.component == "demo-scene")
                 }
                 else if (surface.kind == "navigation")
                 {
-                    quickNavigationOpen_ = true; quickNavigationCollapsed_ = false;
+                    quickNavigationOpen_ = true; quickNavigationCollapsed_ = surface.listMode;
                     quickNavigationSearchText_ = quickNavigationEffectiveSearchText_ = demo::Wide(surface.search);
                     quickNavigationOpenPoint_ = {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
                     quickNavigationRect_ = GetQuickNavigationRect(); quickNavigationHostRect_ = quickNavigationRect_;

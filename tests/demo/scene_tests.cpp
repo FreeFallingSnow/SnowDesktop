@@ -80,6 +80,13 @@ int main()
         Reject([](auto& value) { value.object["surfaces"].array[0].object["kind"] = control::String("dock"); });
         Reject([](auto& value) { value.object["timeline"].array[0].object["element"] = control::String("view"); });
         Reject([](auto& value) { value.object["surfaces"].array[0].object["scrollContainer"] = control::Boolean(false); });
+        Reject([](auto& value) {
+            value.object["surfaces"].array[0].object["kind"] = control::String("collection");
+            value.object["surfaces"].array[0].object["scrollContainer"] = control::Boolean(false);
+            value.object["timeline"] = control::Array();
+            value.object["timeline"].array.push_back(control::Object({{"atMs", control::Number(0)}, {"action", control::String("surface.view")},
+                {"target", control::String("work")}, {"value", control::String("list")}}));
+        });
         std::cout << "fixed scene and virtual timeline checks passed\n"; return 0;
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

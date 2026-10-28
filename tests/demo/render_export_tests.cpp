@@ -10,6 +10,7 @@
 #include "demo/builtin_scenes.h"
 #include "test_temporary_directory.h"
 #include <chrono>
+#include <algorithm>
 #include <atomic>
 #include <iostream>
 #include <set>
@@ -45,6 +46,7 @@ demo::Scene Scene()
         {"atMs":500,"action":"surface.category","target":"files","value":"all"},
         {"atMs":550,"action":"surface.show","target":"popup"},
         {"atMs":700,"action":"surface.hide","target":"popup"},
+        {"atMs":730,"action":"surface.view","target":"navigation","value":"list"},
         {"atMs":740,"action":"surface.show","target":"navigation"}]})", value), "decode fixed host-render fixture");
     return demo::ParseScene(value);
 }
@@ -157,6 +159,15 @@ int wmain(int argc, wchar_t** argv)
                 Require(false, "all sampled native frames repeat exactly");
             }
         }
+        auto expandedInput = scene.source;
+        for (auto& step : expandedInput.object["timeline"].array)
+            if (step.Find("target") && step.Find("target")->string == "navigation" && step.Find("action")->string == "surface.view")
+                step.object["value"] = control::String("grid");
+        Require(service.Start(demo::ParseScene(expandedInput), executable, root, error), "render native expanded navigation alternative");
+        const auto expanded = Wait(service); Require(expanded.status == "completed", "expanded navigation export completed");
+        Require(demo::Sha256(first.directory / L"frame-4.png") == demo::Sha256(expanded.directory / L"frame-4.png") &&
+            demo::Sha256(first.directory / L"frame-5.png") != demo::Sha256(expanded.directory / L"frame-5.png"),
+            "native navigation view changes only the frames after its timed operation");
         auto movedInput = scene.source;
         movedInput.object["surfaces"].array[1].object["x"] = control::Number(70);
         movedInput.object["surfaces"].array[1].object["y"] = control::Number(110);
@@ -170,6 +181,18 @@ int wmain(int argc, wchar_t** argv)
         const auto absent = Wait(service);
         Require(absent.status == "failed" && absent.error.find("demo_element_not_available") != std::string::npos &&
             !std::filesystem::exists(absent.directory / L"scene-result.json"), "missing controls fail instead of clicking an approximate location");
+        auto exampleInput = *demo::Describe().Find("example");
+        exampleInput.object["durationMs"] = control::Number(1000); exampleInput.object["fps"] = control::Number(6);
+        for (auto& step : exampleInput.object["timeline"].array)
+        {
+            step.object["atMs"] = control::Number(static_cast<int>(step.Find("atMs")->number) / 8);
+            if (const auto* duration = step.Find("durationMs")) step.object["durationMs"] = control::Number(std::max(1, static_cast<int>(duration->number) / 8));
+        }
+        Require(service.Start(demo::ParseScene(exampleInput), executable, root, error), "render the discoverable example using its full native geometry");
+        const auto example = Wait(service);
+        Require(example.status == "completed" && example.manifest.Find("resolvedTargets")->array.size() == 3 &&
+            example.manifest.Find("resolvedTargets")->array[2].Find("element")->string == "open",
+            "the advertised example has an actual native Show all target, not only a valid JSON schema");
         auto longInput = scene.source; longInput.object["durationMs"] = control::Number(30000); longInput.object["fps"] = control::Number(60);
         const auto longScene = demo::ParseScene(longInput);
         Require(service.Start(longScene, executable, root, error), "start cancellable owned render worker"); service.Cancel();

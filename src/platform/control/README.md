@@ -168,6 +168,13 @@ collection's optional `scrollContainer:false` selects its native mosaic/Show all
 presentation; the default remains `true` for existing scenes. These changes are
 additive within scene schema 1 and do not alter Lua APIs.
 
+`surface.view` follows native presentation: scrolling collections, files,
+mapping and popups use their list/grid view; navigation uses its native collapsed
+list versus expanded grid (native search rules still apply). A mosaic collection
+has no list toggle, so `surface.view` on `scrollContainer:false` is rejected.
+Interactive scene previews use the configured pointer for native button, tab
+and search-box feedback; static noninteractive previews keep that feedback off.
+
 Rendering runs in an owned instance of the existing private preview host. The
 live host returns immediately with a task ID; poll state for `completedFrames`,
 `frames`, terminal status and a result manifest. Only one export runs at a time;

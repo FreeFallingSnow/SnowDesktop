@@ -442,7 +442,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     bool privacyActive = data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
-        !PtInRect(&data_->bounds, app_->lastMousePoint_);
+        !PtInRect(&data_->bounds, GetRenderPointer());
 
     // ── Scroll container mode (like FolderMapping) ───────────
     if (data_->scrollContainerMode)
@@ -486,7 +486,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     DrawPrivacyPlaceholder(context, cell, di.name, false);
                 else
                 {
-                    bool hovered = !preview && !di.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&content, app_->lastMousePoint_);
+                    bool hovered = !preview && !di.selected && PtInRect(&cell, GetRenderPointer()) && PtInRect(&content, GetRenderPointer());
                     const auto titleLayers =
                         snowdesktop::item_render_layer_rules::
                             ResolveTitleLayerPlan(di.selected);
@@ -595,9 +595,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 RECT bodyRect = GetFrameRect();
                 const bool pointerOver = !preview &&
                     PtInRect(&slotRect,
-                        app_->lastMousePoint_) != FALSE &&
+                        GetRenderPointer()) != FALSE &&
                     PtInRect(&bodyRect,
-                        app_->lastMousePoint_) != FALSE;
+                        GetRenderPointer()) != FALSE;
                 if (titlelessLargeFolder)
                 {
                     icon->Draw(context, slotRect,
@@ -658,7 +658,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                     break;
                 }
             }
-            if (!hasRemainingIcon && !PtInRect(&allRect, app_->lastMousePoint_))
+            if (!hasRemainingIcon && !PtInRect(&allRect, GetRenderPointer()))
             {
                 finishTitleLayers();
                 return;
@@ -715,7 +715,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,
-                    app_->lastMousePoint_) != FALSE)
+                    GetRenderPointer()) != FALSE)
             {
                 hoveredTooltipTitle = collectionTitle;
                 hoveredTooltipAnchor = mosaicRect;
@@ -1326,7 +1326,7 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
 
-    bool hot = PtInRect(&toggleBtn, app_->lastMousePoint_) != FALSE;
+    bool hot = IsPreviewInteractive() && PtInRect(&toggleBtn, GetRenderPointer()) != FALSE;
     app_->DrawD2DText(context,
         data_->listMode ? L"\uF462" : L"\uF4ED", toggleBtn,
         fluentFormat ? fluentFormat :

@@ -204,8 +204,10 @@ Scene ParseScene(const Value& value)
                 step.value = StringField(entry, "value", {}, 384, step.action == "surface.search");
                 if (!entry.Find("value")) Invalid("Surface value is required");
                 if (step.action == "surface.view" && step.value != "grid" && step.value != "list") Invalid("Unknown native surface view");
-                const auto& kind = std::find_if(scene.surfaces.begin(), scene.surfaces.end(), [&](const Surface& surface) { return surface.id == step.target; })->kind;
+                const auto& targetSurface = *std::find_if(scene.surfaces.begin(), scene.surfaces.end(), [&](const Surface& surface) { return surface.id == step.target; });
+                const auto& kind = targetSurface.kind;
                 if (kind == "dock" || kind == "status-bar" ||
+                    (step.action == "surface.view" && kind == "collection" && !targetSurface.scrollContainer) ||
                     (step.action == "surface.search" && kind != "files" && kind != "mapping" && kind != "navigation") ||
                     (step.action == "surface.category" && kind != "files" && kind != "mapping"))
                     Invalid("Surface does not implement this native operation");

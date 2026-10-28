@@ -435,7 +435,7 @@ bool Widget::ShouldRegisterBackdrop() const
 
 POINT Widget::GetRenderPointer() const
 {
-    return renderOptions_ ? renderOptions_->pointer : POINT{};
+    return renderOptions_ ? renderOptions_->pointer : (app_ ? app_->lastMousePoint_ : POINT{});
 }
 
 IDWriteTextFormat* Widget::GetCuFluentTextFormat(float value) const
@@ -1997,7 +1997,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
 
     const bool light = UsesLightContentTheme();
     const bool hovered =
-        PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
+        IsPreviewInteractive() && PtInRect(&searchRect, GetRenderPointer()) != FALSE;
     const bool keyboardSelected =
         snowdesktop::widget_chrome_rules::
             UsesCategorizedControlAccentOutline(

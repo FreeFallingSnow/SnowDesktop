@@ -166,7 +166,7 @@ bool Service::Screenshot(std::wstring monitorId, std::filesystem::path root, boo
     GUID guid{}; wchar_t identifier[40]{};
     if (FAILED(CoCreateGuid(&guid)) || !StringFromGUID2(guid, identifier, 40)) { error = "capture_id_failed"; return false; }
     const std::wstring wideId(identifier + 1, 36);
-    const std::string id(wideId.begin(), wideId.end());
+    const auto id = winrt::to_string(winrt::hstring{wideId});
     if (impl_->worker.joinable()) impl_->worker.join();
     State state; state.id = id; state.status = "running"; state.monitor = selected;
     state.systemCursor = systemCursor; state.startedUnixMs = UnixMs();

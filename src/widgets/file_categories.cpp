@@ -1211,7 +1211,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     bool privacyActive = data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
-        !PtInRect(&data_->bounds, app_->lastMousePoint_);
+        !PtInRect(&data_->bounds, GetRenderPointer());
     const bool lt = UsesLightContentTheme();
 
     const auto& categoryIds = CachedVisibleCategoryIds();
@@ -1277,7 +1277,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                 {
                     RECT bodyRect = GetBodyRect();
-                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
                     const auto titleLayers =
                         snowdesktop::item_render_layer_rules::
                             ResolveTitleLayerPlan(di.selected);
@@ -1337,8 +1337,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 continue;
 
             bool active = categoryIds[i] == activeCategory;
-            bool hovered = !IsPreviewRendering() &&
-                PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
+            bool hovered = IsPreviewInteractive() &&
+                PtInRect(&hitTab, GetRenderPointer()) != FALSE;
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
                 context, hitTab, layoutTab, label,
@@ -1411,7 +1411,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
                 const auto titleLayers =
                     snowdesktop::item_render_layer_rules::
                         ResolveTitleLayerPlan(di.selected);
@@ -1457,8 +1457,8 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     const bool lt = UsesLightContentTheme();
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
-    bool dateHot = !IsPreviewRendering() &&
-        PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
+    bool dateHot = IsPreviewInteractive() &&
+        PtInRect(&dateToggle, GetRenderPointer()) != FALSE;
     const float bs = GetBarScale();
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
@@ -1479,8 +1479,8 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
                 : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
 
     RECT toggle = FileCategoryToggleRect(this);
-    bool hot = !IsPreviewRendering() &&
-        PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
+    bool hot = IsPreviewInteractive() &&
+        PtInRect(&toggle, GetRenderPointer()) != FALSE;
     app_->DrawD2DText(context,
         data_->listMode ? L"\uF462" : L"\uF4ED", toggle,
         iconFormat,

@@ -923,7 +923,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     bool privacyActive = data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
-        !PtInRect(&data_->bounds, app_->lastMousePoint_);
+        !PtInRect(&data_->bounds, GetRenderPointer());
     const bool lt = UsesLightContentTheme();
 
     DrawSearchBox(context);
@@ -974,8 +974,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                     IsRectEmptyRect(tab))
                     continue;
                 bool active = visibleCategoryIds_[i] == activeCategory;
-                bool hovered = !IsPreviewRendering() &&
-                    PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                bool hovered = IsPreviewInteractive() &&
+                    PtInRect(&tab, GetRenderPointer()) != FALSE;
                 DrawCategorizedTab(
                     context, tab, layoutTab,
                     FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
@@ -1072,7 +1072,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                bool hovered = !preview && !entry.selected && PtInRect(&cell, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
                 const auto titleLayers =
                     snowdesktop::item_render_layer_rules::
                         ResolveTitleLayerPlan(entry.selected);
@@ -1155,8 +1155,8 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
         GetCuFluentTextFormat(14.0f * bs);
 
     auto drawFluentButton = [&](RECT rect, const std::wstring& glyph, bool active) {
-        bool hot = !IsPreviewRendering() &&
-            PtInRect(&rect, app_->lastMousePoint_) != FALSE;
+        bool hot = IsPreviewInteractive() &&
+            PtInRect(&rect, GetRenderPointer()) != FALSE;
         app_->DrawD2DText(context, glyph, rect,
             fluentFormat ? fluentFormat :
                 (app_->fluentIconTextFormat_

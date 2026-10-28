@@ -17,7 +17,8 @@ control::Value Describe()
         {"id":"design","title":"设计草图","glyph":"\uf489","color":9868649,"category":"images","dateGroup":"This week"},
         {"id":"books","title":"阅读清单","glyph":"\ue179","color":5928104,"category":"documents","dateGroup":"This week"},
         {"id":"music","title":"音乐","glyph":"\ue855","color":8022939,"category":"others"},
-        {"id":"browser","title":"浏览器","glyph":"\ue6b2","color":5209980,"category":"others"}],
+        {"id":"browser","title":"浏览器","glyph":"\ue6b2","color":5209980,"category":"others"},
+        {"id":"archive","title":"资料归档","glyph":"\uf42e","color":7179383,"category":"folders","directory":true}],
       "surfaces":[
         {"id":"status","kind":"status-bar","x":0,"y":0,"width":1920,"height":40},
         {"id":"work","kind":"files","title":"工作空间","x":80,"y":160,"width":540,"height":540,"items":["notes","travel","budget","books"],"showSearch":true,"showCategories":true},
