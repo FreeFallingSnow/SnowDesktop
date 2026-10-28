@@ -80,6 +80,28 @@ inline void Run()
             "mixed direct and recursive selection preserves every chosen file in one operation");
         Access::ClearFolderSearchSelection(app);
         Require(view->GetSelectedMemberIndices().empty(), "clear-selection includes runtime-only entries");
+        const RECT originalBounds = view->GetWidgetData()->bounds;
+        view->GetWidgetData()->bounds.bottom = originalBounds.top + view->Cu(180.0f);
+        view->GetWidgetData()->scrollOffset = view->GetMaxScrollOffset();
+        view->InvalidateSlots();
+        const auto& scrolled = view->GetSlots();
+        const RECT viewport = view->GetContentViewportRect();
+        Require(!scrolled.empty() && scrolled.size() < expected && scrolled.back()->GetIndex() == expected - 1,
+            "scrolling materializes the final visible results and excludes earlier sections");
+        for (const auto& slot : scrolled)
+        {
+            const RECT cell = slot->GetBounds();
+            Require(slot->GetItem() && cell.bottom > viewport.top && cell.top < viewport.bottom,
+                "source headers never become file slots and only viewport-intersecting result cells are materialized");
+        }
+        RECT marquee = scrolled.back()->GetBounds(); OffsetRect(&marquee, 0, view->GetScrollOffset());
+        view->ApplyMarqueeSelection(marquee);
+        Require(view->GetSelectedMemberIndices() == std::vector<size_t>{expected - 1},
+            "marquee uses the same source-header offsets as scrolled native hit slots");
+        Access::ClearFolderSearchSelection(app);
+        view->GetWidgetData()->bounds = originalBounds;
+        view->GetWidgetData()->scrollOffset = 0;
+        view->InvalidateSlots();
         for (const auto& widget : original)
         {
             const auto& current = pair::Widget(app, widget.id);

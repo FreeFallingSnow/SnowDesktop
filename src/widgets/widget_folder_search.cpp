@@ -313,12 +313,16 @@ RECT ScrollingItemWidget::FolderSearchItemRect(size_t index) const
 {
     int y = 0;
     const auto layout = SearchLayout(*this);
+    // Geometry must not re-enter UsesFolderSearch/scan source membership for
+    // every result while materializing slots or extending a marquee.
+    const int scroll = std::clamp(data_->scrollOffset, 0,
+        std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f)));
     for (const auto& section : folderSearch_->sections)
     {
         if (!section.title.empty()) y += Cu(data_->listMode ? 28.0f : 36.0f);
         if (index >= section.first && index - section.first < section.count)
         {
-            RECT cell = snowdesktop::widget_item_layout::ItemRect(layout, index - section.first, GetScrollOffset());
+            RECT cell = snowdesktop::widget_item_layout::ItemRect(layout, index - section.first, scroll);
             OffsetRect(&cell, 0, y);
             return cell;
         }
@@ -357,13 +361,28 @@ std::vector<std::unique_ptr<Slot>> ScrollingItemWidget::BuildFolderSearchSlots()
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> slots;
     const RECT viewport = GetContentViewportRect();
-    for (size_t i = 0; i < FolderSearchCount(); ++i)
+    const auto layout = SearchLayout(*this);
+    const int scroll = GetScrollOffset();
+    const int visibleHeight = std::max<int>(1, viewport.bottom - viewport.top);
+    int y = 0;
+    for (const auto& section : folderSearch_->sections)
     {
-        const RECT cell = FolderSearchItemRect(i);
-        if (cell.bottom <= viewport.top || cell.top >= viewport.bottom) continue;
-        auto slot = std::make_unique<Slot>(this, cell, i);
-        slot->SetItem(FolderSearchItem(i, false));
-        slots.push_back(std::move(slot));
+        if (!section.title.empty()) y += Cu(data_->listMode ? 28.0f : 36.0f);
+        const int height = snowdesktop::widget_item_layout::ContentHeight(layout, section.count);
+        if (y < scroll + visibleHeight && y + height > scroll)
+        {
+            const auto range = snowdesktop::widget_item_layout::VisibleRange(layout, section.count, scroll - y, visibleHeight);
+            for (size_t local = range.first; local < range.second; ++local)
+            {
+                const size_t index = section.first + local;
+                const RECT cell = snowdesktop::widget_item_layout::ItemRect(layout, local, scroll - y);
+                if (cell.bottom <= viewport.top || cell.top >= viewport.bottom) continue;
+                auto slot = std::make_unique<Slot>(this, cell, index);
+                slot->SetItem(FolderSearchItem(index, false));
+                slots.push_back(std::move(slot));
+            }
+        }
+        y += height;
     }
     return slots;
 }
@@ -403,12 +422,15 @@ std::vector<Item*> ScrollingItemWidget::FolderSearchSelectedItems() const
 void ScrollingItemWidget::ApplyFolderSearchMarquee(const RECT& contentRect)
 {
     dragSourceCache_.clear();
+    for (size_t index : FolderSearchSelectedIndices())
+        if (auto* item = FolderSearchItem(index, true)) item->SetSelected(false);
+    const int scroll = GetScrollOffset();
     for (size_t i = 0; i < FolderSearchCount(); ++i)
-        if (auto* item = FolderSearchItem(i, true))
-        {
-            RECT cell = item->GetBounds(); OffsetRect(&cell, 0, GetScrollOffset());
-            item->SetSelected(RectsIntersect(cell, contentRect));
-        }
+    {
+        RECT cell = FolderSearchItemRect(i); OffsetRect(&cell, 0, scroll);
+        if (RectsIntersect(cell, contentRect))
+            if (auto* item = FolderSearchItem(i, true)) item->SetSelected(true);
+    }
 }
 
 std::wstring ScrollingItemWidget::FolderSearchSourceId(const Item* item) const

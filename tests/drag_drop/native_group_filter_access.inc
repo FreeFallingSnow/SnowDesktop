@@ -153,10 +153,13 @@
             if (widget.id == L"surface-group")
             {
                 widget.activeCategoryId = L"A";
-                widget.showFileCategories = true;
                 widget.showSearchBox = false;
             }
-            else if (widget.id == L"A" || widget.id == L"B") widget.activeCategoryId = L"all";
+            else if (widget.id == L"A" || widget.id == L"B")
+            {
+                widget.activeCategoryId = L"all";
+                widget.showFileCategories = true;
+            }
         }
         app.RebuildContainersAndItems();
     }
