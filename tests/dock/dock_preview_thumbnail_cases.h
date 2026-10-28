@@ -382,10 +382,10 @@ void Run(Check check)
             const LONG anchorY = (monitor.rcWork.top + monitor.rcWork.bottom) / 2;
             const RECT centeredAnchor{anchorX - 10, anchorY - 10, anchorX + 10, anchorY + 10};
             ImportPatch cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&ClosePointer));
-            for (const UINT dpi : {96u, 144u, 192u})
+            for (const UINT caseDpi : {96u, 144u, 192u})
             for (const DockPosition position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
             {
-                boundary.dpi = dpi;
+                boundary.dpi = caseDpi;
                 closePointer = {-32000, -32000};
                 DockWindowPreview preview(snowdesktop::dock_peek::Api{nullptr});
                 check(preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [](HWND) {}),
@@ -405,7 +405,7 @@ void Run(Check check)
                 const RECT bounds = preview.GetBounds();
                 const bool horizontal = position == DockPosition::Bottom || position == DockPosition::Top;
                 check(horizontal ? std::abs((bounds.left + bounds.right) / 2 - anchorX) <= 1
-                                 : std::abs((bounds.top + bounds.bottom) / 2 - anchorY - MulDiv(4, static_cast<int>(dpi), 96)) <= 1,
+                                 : std::abs((bounds.top + bounds.bottom) / 2 - anchorY - MulDiv(4, static_cast<int>(caseDpi), 96)) <= 1,
                     "remaining preview group recenters around its Dock anchor in every orientation and DPI");
                 for (const HWND popup : preview.GetWindows())
                     check(GetWindow(popup, GW_OWNER) == dockOwner.window,
