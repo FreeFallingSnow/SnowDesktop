@@ -72,6 +72,9 @@ inline void Run()
         const auto captured = Access::CaptureFolderSearch(app, *view);
         Require(captured.entries.size() == 1 && captured.entries.front().filePath == selectedPath,
             "real native drag capture retains the recursive file identity");
+        const auto desktopPreview = Access::FolderSearchDesktopPreview(app, *view);
+        Require(!desktopPreview.Empty() && desktopPreview.fileBacked && desktopPreview.targetKind == DropTargetKind::Desktop,
+            "recursive file result must reach the real desktop target and publish a physical file landing, not stop at capture or source-member reorder");
         view->GetMemberItem(0)->SetSelected(true);
         const auto mixed = Access::FolderSearchClipboard(app);
         const auto firstDirect = surface == 1 ? mappedDirect.wstring() : direct.wstring();

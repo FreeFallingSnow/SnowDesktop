@@ -226,3 +226,19 @@
     static auto FolderSearchTargets(DesktopApp& app, const std::wstring& id) { return app.GetWidgetSelectionTargets(app.FindWidgetIndexById(id)); }
     static void ClearFolderSearchSelection(DesktopApp& app) { app.ClearSelection(); }
     static auto CaptureFolderSearch(DesktopApp& app, ScrollingItemWidget& view) { return app.BuildDragSourceList(view.GetSelectedItems(), &view); }
+    static DropPreviewList FolderSearchDesktopPreview(DesktopApp& app, ScrollingItemWidget& view)
+    {
+        auto items = view.GetSelectedItems();
+        if (items.empty()) throw std::runtime_error("search drag requires actual selected runtime items");
+        const RECT bounds = items.front()->GetBounds();
+        const POINT start{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+        const POINT destination{850, 650};
+        auto captured = app.BuildDragSourceList(items, &view);
+        app.dragGroupOriginX_ = bounds.left; app.dragGroupOriginY_ = bounds.top; app.mouseDownPoint_ = start;
+        app.dragSession_.Begin(&view, std::move(items), captured, start, destination);
+        app.ResolveCurrentDragTargetAt(destination);
+        auto preview = app.BuildDropPreviewList(app.dragSession_.SourceList(), app.dragSession_.TargetContainer(),
+            app.dragSession_.TargetSlot(), app.dragSession_.TargetRegion(), 0, destination);
+        app.dragSession_.End();
+        return preview;
+    }
