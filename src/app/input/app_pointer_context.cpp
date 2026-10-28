@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "layout/page_navigation_rules.h"
 #include "ui/menu/right_click_contract.h"
@@ -1118,6 +1119,30 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             RECT bounds = slot->GetBounds();
             if (!PtInRect(&bounds, pt)) continue;
             if (!PtInRect(&bodyRect, pt)) continue;
+
+            if (auto* search = dynamic_cast<ScrollingItemWidget*>(wc); search && search->UsesFolderSearch() &&
+                slot->GetItem() && snowdesktop::widget_search_context_menu::NeedsPathMenu(*search, *slot->GetItem()))
+            {
+                const size_t parentIndex = FindWidgetIndexById(wc->GetWidgetData()->id);
+                const auto paths = snowdesktop::widget_search_context_menu::Prepare(*search, pt,
+                    [this] { ClearSelection(); },
+                    [this, parentIndex] {
+                        ClearSelectionOutsideWidget(parentIndex);
+                        if (parentIndex < widgets_.size()) widgets_[parentIndex].selected = true;
+                    },
+                    [this](Item* candidate) {
+                        const auto* desktop = dynamic_cast<DesktopIcon*>(candidate);
+                        return !desktop || (desktop->GetDesktopItem() && !IsProtectedDesktopIcon(*desktop->GetDesktopItem()));
+                    });
+                if (paths)
+                {
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    // The sentinel pair denotes a transient search selection,
+                    // whose files are identified by paths instead of members.
+                    ShowFolderEntryContextMenu(screenPt, static_cast<size_t>(-1), static_cast<size_t>(-1));
+                    return;
+                }
+            }
 
             auto* desktopIcon =
                 dynamic_cast<DesktopIcon*>(slot->GetItem());

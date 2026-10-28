@@ -76,7 +76,24 @@ inline void Run()
         const auto desktopPreview = Access::FolderSearchDesktopPreview(app, *view);
         Require(!desktopPreview.Empty() && desktopPreview.fileBacked && desktopPreview.targetKind == DropTargetKind::Desktop,
             "recursive file result must reach the real desktop target and publish a physical file landing, not stop at capture or source-member reorder");
+        // Expose the actual recursive row through the viewport before invoking
+        // the same selection/request boundary used by OnRightButtonUp.
+        const auto showMember = [&](size_t index) {
+            const auto rect = view->GetMemberLayoutRect(index);
+            const auto viewport = view->GetContentViewportRect();
+            view->GetWidgetData()->scrollOffset = std::clamp<int>(view->GetScrollOffset() + rect.top - viewport.top,
+                0, view->GetMaxScrollOffset()); view->InvalidateSlots();
+            const auto visible = view->GetMemberLayoutRect(index);
+            return POINT{(visible.left + visible.right) / 2, (visible.top + visible.bottom) / 2};
+        };
+        const auto contextPaths = Access::SearchContextPaths(app, *view, showMember(recursive));
+        Require(contextPaths && *contextPaths == std::vector<std::wstring>{selectedPath},
+            "right-click preparation accepts transient recursive rows without a persistent folder-member index");
         view->GetMemberItem(0)->SetSelected(true);
+        const auto mixedContext = Access::SearchContextPaths(app, *view, showMember(0));
+        Require(mixedContext && mixedContext->size() == 2 &&
+            std::find(mixedContext->begin(), mixedContext->end(), selectedPath) != mixedContext->end(),
+            "right-clicking an already selected direct match retains selected descendants from the other section");
         const auto mixed = Access::FolderSearchClipboard(app);
         const auto firstDirect = surface == 1 ? mappedDirect.wstring() : direct.wstring();
         Require(mixed.size() == 2 && std::find(mixed.begin(), mixed.end(), selectedPath) != mixed.end() &&
@@ -84,6 +101,11 @@ inline void Run()
             "mixed direct and recursive selection preserves every chosen file in one operation");
         Access::ClearFolderSearchSelection(app);
         Require(view->GetSelectedMemberIndices().empty(), "clear-selection includes runtime-only entries");
+        const auto newlySelected = Access::SearchContextPaths(app, *view, showMember(recursive));
+        Require(newlySelected && *newlySelected == std::vector<std::wstring>{selectedPath},
+            "right-clicking an unselected result selects that real file before preparing its menu");
+        Access::ClearFolderSearchSelection(app);
+        view->GetWidgetData()->scrollOffset = 0; view->InvalidateSlots();
         const RECT originalBounds = view->GetWidgetData()->bounds;
         view->GetWidgetData()->bounds.bottom = originalBounds.top + view->Cu(180.0f);
         view->GetWidgetData()->scrollOffset = view->GetMaxScrollOffset();
@@ -212,6 +234,7 @@ inline void Pagination()
             const RECT button = view()->GetFolderSearchMoreRect(index);
             const POINT point{(button.left + button.right) / 2, (button.top + button.bottom) / 2};
             Require(view()->HitTestWidget(point) == WidgetHit::SearchMoreBtn, "expansion footer is a real button, never a file slot");
+            Require(!Access::SearchContextPaths(app, *view(), point), "a section expansion footer is not a file context-menu target");
             Slot* slot = nullptr;
             Require(view()->WidgetContainer::HitTestDrag(point, slot) == HitRegion::Blocked && !slot,
                 "expansion footer cannot accidentally accept a file drop");
@@ -229,10 +252,27 @@ inline void Pagination()
         Require(Access::FolderSearchSections(*view())[index].count == 45 && IsRectEmptyRect(view()->GetFolderSearchMoreRect(index)),
             "last expansion reveals only the remaining five and removes the footer");
         Require(view()->GetWidgetData()->scrollOffset > 0, "clear-scroll regression starts from the actually scrolled search results");
+        if (auto* group = dynamic_cast<FileGroup*>(view()))
+            group->GetActiveSourceContainer()->GetWidgetData()->scrollOffset = 91;
         view()->ClearSearchText();
         Require(view()->GetWidgetData()->scrollOffset == 0 && view()->GetScrollOffset() == 0,
             "clearing the search resets persisted content scroll instead of carrying result position into normal contents");
+        Require(view()->GetContentViewData()->scrollOffset == 0, "clearing a file group also resets the active hosted source's content scroll");
         Require(!view()->UsesFolderSearch(), "explicit clear exits result mode");
+        for (int clear = 0; clear < 3; ++clear)
+        {
+            view()->SetSearchText(L"needle"); view()->GetWidgetData()->scrollOffset = 123;
+            if (clear == 0) view()->SetSearchText(L"");
+            else if (clear == 1) view()->BackspaceSearchText(true);
+            else { view()->SetSearchCursorPosition(0); view()->DeleteSearchText(true); }
+            Require(view()->GetSearchText().empty() && view()->GetWidgetData()->scrollOffset == 0,
+                "setting empty text and deleting all text in either direction also clears stored scroll");
+        }
+        Require(Access::Save(app), "persist the cleared search scroll through the actual layout store");
+        view()->GetWidgetData()->scrollOffset = 99;
+        Access::Load(app); Access::RebuildFolderSearch(app);
+        Require(view()->GetWidgetData()->scrollOffset == 0 && view()->GetContentViewData()->scrollOffset == 0,
+            "layout reload does not revive the cleared search's content offset");
         Access::StopModel(app);
         for (const auto& file : direct) { std::error_code error; fs::remove_all(file, error); }
     }

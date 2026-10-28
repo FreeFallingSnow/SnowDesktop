@@ -371,6 +371,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/layout/app_page_grid.cpp
     src/app/render/app_paint.cpp
     src/app/input/app_pointer_context.cpp
+    src/app/input/widget_search_context_menu.h
     src/app/input/app_pointer_down.cpp
     src/app/input/app_pointer_move.cpp
     src/app/input/native_item_drag_source.h

@@ -30,17 +30,23 @@ void DesktopApp::ShowFolderEntryContextMenu(
     size_t memberIndex,
     bool keepQuickNavigationOpen)
 {
-    if (widgetIndex >= widgets_.size() ||
+    const bool searchSelection = widgetIndex == static_cast<size_t>(-1) && memberIndex == static_cast<size_t>(-1);
+    if (!searchSelection && (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
-        memberIndex >= widgets_[widgetIndex].folderEntries.size())
+        memberIndex >= widgets_[widgetIndex].folderEntries.size()))
         return;
 
-    PrepareMenuIconsForPoint(screenPoint);
-
-    const std::wstring fullPath =
-        widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
     const std::vector<std::wstring> selectedPaths =
         GetSelectedFolderEntryPaths();
+    if (searchSelection && selectedPaths.empty()) return;
+    if (searchSelection && selectedPaths.size() == 1)
+    {
+        ShowShellItemContextMenuForPaths(selectedPaths, screenPoint);
+        return;
+    }
+    PrepareMenuIconsForPoint(screenPoint);
+    const std::wstring fullPath = searchSelection ? selectedPaths.front()
+        : widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
     bool administratorLaunchSelected = false;
@@ -106,10 +112,15 @@ void DesktopApp::ShowFolderEntryContextMenu(
     AppendMenuW(menu,
         hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextDeleteCommand, _LW("app.settings.delete"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextMoreCommand, _LW("app.menu.more_options"));
+    // A search selection can span different parents. Native folder extensions
+    // require one parent; the host's path-based batch commands work across them.
+    if (!searchSelection)
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu,
+            hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextMoreCommand, _LW("app.menu.more_options"));
+    }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");

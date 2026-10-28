@@ -233,6 +233,20 @@
     static auto FolderSearchTargets(DesktopApp& app, const std::wstring& id) { return app.GetWidgetSelectionTargets(app.FindWidgetIndexById(id)); }
     static void ClearFolderSearchSelection(DesktopApp& app) { app.ClearSelection(); }
     static auto CaptureFolderSearch(DesktopApp& app, ScrollingItemWidget& view) { return app.BuildDragSourceList(view.GetSelectedItems(), &view); }
+    static auto SearchContextPaths(DesktopApp& app, ScrollingItemWidget& view, POINT point)
+    {
+        const auto parent = app.FindWidgetIndexById(view.GetWidgetData()->id);
+        return snowdesktop::widget_search_context_menu::Prepare(view, point,
+            [&] { app.ClearSelection(); },
+            [&] {
+                app.ClearSelectionOutsideWidget(parent);
+                if (parent < app.widgets_.size()) app.widgets_[parent].selected = true;
+            },
+            [&](Item* item) {
+                const auto* desktop = dynamic_cast<DesktopIcon*>(item);
+                return !desktop || (desktop->GetDesktopItem() && !app.IsProtectedDesktopIcon(*desktop->GetDesktopItem()));
+            });
+    }
     static void RebuildFolderSearch(DesktopApp& app) { app.RebuildContainersAndItems(); }
     static void AddSearchDropTarget(DesktopApp& app, const std::filesystem::path& mapped, int kind)
     {

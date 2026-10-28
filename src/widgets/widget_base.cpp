@@ -1397,6 +1397,20 @@ bool ScrollingItemWidget::EraseSearchSelection()
     return true;
 }
 
+namespace
+{
+bool ResetClearedSearchScroll(ScrollingItemWidget& widget)
+{
+    if (!widget.GetSearchText().empty()) return false;
+    auto* root = widget.GetWidgetData();
+    auto* content = widget.GetContentViewData();
+    const bool changed = (root && root->scrollOffset != 0) || (content && content->scrollOffset != 0);
+    if (root) root->scrollOffset = 0;
+    if (content) content->scrollOffset = 0;
+    return changed;
+}
+}
+
 void ScrollingItemWidget::ReplaceSearchSelection(
     const std::wstring& text)
 {
@@ -1408,6 +1422,7 @@ void ScrollingItemWidget::ReplaceSearchSelection(
     searchCursorPos_ += text.size();
     searchSelectionAnchor_ = searchCursorPos_;
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
     InvalidateSlots();
 }
 
@@ -1421,6 +1436,7 @@ void ScrollingItemWidget::SetSearchText(
     searchSelectionAnchor_ = searchCursorPos_;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
+    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
     InvalidateSlots();
 }
 
@@ -1456,6 +1472,7 @@ void ScrollingItemWidget::BackspaceSearchText(bool word)
         searchSelectionAnchor_ = searchCursorPos_;
     }
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
     InvalidateSlots();
 }
 
@@ -1472,6 +1489,7 @@ void ScrollingItemWidget::DeleteSearchText(bool word)
         searchSelectionAnchor_ = searchCursorPos_;
     }
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
     InvalidateSlots();
 }
 
@@ -1486,6 +1504,7 @@ void ScrollingItemWidget::ClearSearchText()
     searchCompositionCursor_ = 0;
     searchFocused_ = false;
     searchPointerSelecting_ = false;
+    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
     InvalidateSlots();
 }
 
@@ -1584,7 +1603,12 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
         const bool changed = key == 'Y' || shift
             ? searchHistory_.Redo(searchText_, searchCursorPos_, searchSelectionAnchor_)
             : searchHistory_.Undo(searchText_, searchCursorPos_, searchSelectionAnchor_);
-        if (changed) { ClearSearchComposition(); InvalidateSlots(); }
+        if (changed)
+        {
+            ClearSearchComposition();
+            if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+            InvalidateSlots();
+        }
         return true;
     }
     searchCursorPos_ =
@@ -1642,6 +1666,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
             const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
             EraseSearchSelection();
             searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+            if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
             InvalidateSlots();
         }
         ClearSearchComposition();
