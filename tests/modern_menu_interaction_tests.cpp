@@ -1319,7 +1319,15 @@ void CheckControlSnapshots(HWND owner)
             if (control.name == L"Disabled") Expect(!control.enabled, "disabled menu state is preserved");
         }
         Expect(commands == 0 && changes == 0, "querying controls has no command or edit side effects");
-        SendMessageW(root, WM_KEYDOWN, VK_END, 0); SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+        const auto groupControl = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Group"; });
+        Expect(groupControl != controls.end(), "cascade has an exported hit target");
+        RECT groupHit{}; IntersectRect(&groupHit, &groupControl->bounds, &groupControl->clip);
+        POINT groupPoint{groupHit.left + (groupHit.right - groupHit.left) / 2, groupHit.top + (groupHit.bottom - groupHit.top) / 2};
+        Expect(ScreenToClient(root, &groupPoint) != FALSE, "convert exported physical target to menu input coordinates");
+        const auto groupPosition = MAKELPARAM(groupPoint.x, groupPoint.y);
+        SendMessageW(root, WM_MOUSEMOVE, 0, groupPosition);
+        SendMessageW(root, WM_LBUTTONDOWN, MK_LBUTTON, groupPosition);
+        SendMessageW(root, WM_LBUTTONUP, 0, groupPosition);
         controls = ActiveControls();
         const auto parent = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Group"; });
         Expect(parent != controls.end() && parent->expanded, "opening a real cascade updates expanded state");
