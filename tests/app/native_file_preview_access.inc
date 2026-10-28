@@ -41,7 +41,7 @@
         previewTestModifiers = 0;
         InputSafetyImport keys("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&PreviewTestKeys));
         const auto count = [&] { std::lock_guard lock(capture->mutex); return capture->requests.size(); };
-        const auto first = root / L"files/one 中文.txt", second = root / L"files/two.txt";
+        const auto first = root / L"files" / L"one 中文.txt", second = root / L"files" / L"two.txt";
         std::filesystem::create_directories(first.parent_path());
         std::ofstream(first) << "first"; std::ofstream(second) << "second";
         app.generalSettings_.pageNavigationKeyboardEnabled = false;
