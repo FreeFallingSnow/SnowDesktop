@@ -28,9 +28,13 @@ inline void Run()
         if (target == 1 || target == 2) Access::AddSearchDropTarget(app, root / L"target", target);
         Access::PrepareReload(app); Access::BindAsync(app);
         auto view = [&]() { return dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, source == 2 ? L"ordered-group" : L"ordered")); };
-        Access::SetFolderSearchBoundary(*view(), [file](const std::wstring&, DWORD) {
+        auto providerCalls = std::make_shared<std::atomic<int>>(0);
+        auto providerExists = std::make_shared<std::atomic<bool>>(false);
+        Access::SetFolderSearchBoundary(*view(), [file, providerCalls, providerExists](const std::wstring&, DWORD) {
             snowdesktop::QuickNavigationEverythingSearchResponse response;
-            if (fs::exists(file)) response.results.push_back({file.filename().wstring(), file.wstring(), {}, false});
+            const bool exists = fs::exists(file);
+            ++*providerCalls; providerExists->store(exists);
+            if (exists) response.results.push_back({file.filename().wstring(), file.wstring(), {}, false});
             return response;
         });
         view()->SetSearchText(L"needle");
@@ -84,6 +88,8 @@ inline void Run()
         }
         catch (...)
         {
+            std::cerr << "provider calls=" << providerCalls->load() << " lastExists=" << providerExists->load() << '\n';
+            Access::DumpFolderSearch(app, *view());
             std::cerr << "search refreshed count=" << view()->GetSlotCount() << " expected=" << expectedCount
                 << " pending=" << Access::FolderSearchPending(*view()) << '\n';
             for (size_t i = 0; i < view()->GetSlotCount(); ++i)

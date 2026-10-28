@@ -229,6 +229,26 @@
     }
     static const auto& FolderSearchSections(const ScrollingItemWidget& view) { return view.folderSearch_->sections; }
     static bool FolderSearchPending(ScrollingItemWidget& view) { view.EnsureFolderSearch(); return view.folderSearch_ && view.folderSearch_->pending; }
+    static void DumpFolderSearch(DesktopApp& app, ScrollingItemWidget& view)
+    {
+        std::cerr << "search box=" << view.GetWidgetData()->showSearchBox << " query=" << WideToUtf8(view.GetSearchText()) << '\n';
+        if (const auto& state = view.folderSearch_)
+        {
+            std::cerr << "boundary=" << static_cast<bool>(state->search) << " generation=" << state->generation
+                << " available=" << state->available << " pending=" << state->pending
+                << " results=" << state->results.size() << " rows=" << state->rows.size() << '\n';
+            for (const auto& row : state->rows)
+                std::cerr << "row source=" << WideToUtf8(row.sourceId) << " recursive=" << static_cast<bool>(row.recursive)
+                    << " key=" << WideToUtf8(row.desktopKey) << " index=" << row.folderIndex << '\n';
+        }
+        for (const auto& widget : app.widgets_)
+        {
+            std::cerr << "widget " << WideToUtf8(widget.id) << " type=" << static_cast<int>(widget.type)
+                << " search=" << widget.showSearchBox << " root=" << WideToUtf8(widget.sourceFolderPath) << '\n';
+            for (const auto& entry : widget.folderEntries) std::cerr << " entry " << WideToUtf8(entry.fullPath) << '\n';
+            for (const auto& key : widget.itemKeys) std::cerr << " key " << WideToUtf8(key) << '\n';
+        }
+    }
     static std::vector<std::wstring> FolderSearchClipboard(const DesktopApp& app) { return app.GetSelectedFolderEntryPaths(); }
     static auto FolderSearchTargets(DesktopApp& app, const std::wstring& id) { return app.GetWidgetSelectionTargets(app.FindWidgetIndexById(id)); }
     static void ClearFolderSearchSelection(DesktopApp& app) { app.ClearSelection(); }
