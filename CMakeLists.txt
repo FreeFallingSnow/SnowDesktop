@@ -400,6 +400,10 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/demo_cursor.h
     src/ui/preview/screen_capture.cpp
     src/ui/preview/screen_capture.h
+    src/ui/preview/video_writer.cpp
+    src/ui/preview/video_writer.h
+    src/demo/scene.cpp
+    src/demo/scene.h
     src/settings/settings_automation.cpp
     src/settings/settings_automation.h
     src/app/navigation/app_quick_navigation_layout.cpp
@@ -1242,7 +1246,7 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleacc oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
+    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi mfuuid ole32 oleacc oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
     version wbemuuid taskschd
 )
 
@@ -2122,6 +2126,24 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32 advapi32 gdi32
         LABELS contract integration ipc)
+
+    snowdesktop_add_test(
+        SnowDesktopDemoSceneTests
+        demo_scene
+        SOURCES tests/demo/scene_tests.cpp
+            src/demo/scene.cpp src/platform/control/control_protocol.cpp
+            src/ui/input/control_pointer.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS contract render)
+
+    snowdesktop_add_test(
+        SnowDesktopVideoWriterTests
+        video_writer
+        SOURCES tests/ui/video_writer_tests.cpp src/ui/preview/video_writer.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES mfplat mfreadwrite mfuuid ole32
+        LABELS contract integration render)
 
     snowdesktop_add_test(
         SnowDesktopSettingsAutomationTests
