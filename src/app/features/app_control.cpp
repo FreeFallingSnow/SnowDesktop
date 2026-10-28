@@ -74,6 +74,20 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     using namespace snowdesktop::control;
     if (!startupInitializationComplete_ || exitRequested_)
         throw Error("not_ready", "Application is starting or shutting down");
+    if (method == "ui.snapshot") { Fields(params, {}); return ApplicationControlElements().ToJson(); }
+    if (method == "ui.pointerState")
+    {
+        Fields(params, {"includeTrace"});
+        const auto* trace = params.Find("includeTrace");
+        if (trace && !trace->IsBoolean()) throw Error("invalid_params", "includeTrace must be boolean", -32602);
+        return ApplicationControlPointerState(trace && trace->boolean);
+    }
+    if (method == "ui.cancelPointer")
+    {
+        Fields(params, {}); applicationControlPointer_.Cancel(); applicationControlCursor_.Hide();
+        return ApplicationControlPointerState(false);
+    }
+    if (method == "ui.perform") return PerformApplicationControlElement(params);
     if (method == "app.getState")
     {
         Fields(params, {});
@@ -110,7 +124,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             {"layoutRevision", ApplicationControlLayout().object.at("layoutRevision")}});
     }
     // Do not enter UI actions from a nested modal loop or interrupt a live drag.
-    if (mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
+    if (applicationControlPointer_.Current().status == "running" || mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
         throw Error("busy", "A pointer operation or context menu is active");
     if (desktopStartupPresentationPending_)
         throw Error("not_ready", "The first desktop frame is not ready");

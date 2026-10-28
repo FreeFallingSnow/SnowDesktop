@@ -5,6 +5,62 @@ is running. External automation and scene replay use this same operation
 contract. CLI, MCP and Skill adapters are not required by the host protocol.
 The existing settings-child and elevated-window-helper protocols stay private.
 
+## Element and pointer capabilities
+
+`api.describe.capabilities` advertises `elements:1`, `controlledPointer:1` and
+`demoCursor:1`. These are additive capabilities within protocol v1; the original
+13 methods retain their parameters and behavior. Clients must inspect capabilities
+before using an extension.
+
+- `ui.snapshot {}` returns `snapshotRevision`, `coordinateSpace`, `elements`,
+  `coveredSurfaces` and `pendingSurfaces`. Coordinates are physical screen pixels,
+  including negative monitor origins. Each element has an opaque ID, parent ID,
+  surface, role, name, bounds, clipping rectangle, state and supported actions.
+  Password values are omitted. IDs use model identities rather than screen
+  coordinates; repeated references to the same item are disambiguated within
+  their parent. IDs remain valid only while that model object remains present.
+- `ui.perform {elementId,action,ifSnapshotRevision,...}` checks the complete
+  current snapshot before applying an action. A stale snapshot, hidden/disabled
+  element or unsupported action fails explicitly. Take a new snapshot before
+  preparing another action. `setValue` accepts `value` (including the empty
+  string); `setRangeValue` and `setScrollOffset` accept finite `number` values.
+  Lua semantic actions use the existing accessibility implementation. Widget
+  and navigation search fields use their existing editor/model path.
+- Pointer actions are `hover`, `click`, `doubleClick`, `contextMenu`, `drag` and
+  `scroll`, as advertised by each element. `drag` requires `targetId` for a
+  current element supporting `drop`; `scroll` requires a nonzero integer `number`
+  in [-12000,12000], using Windows wheel units (120 per standard notch).
+  Optional `durationMs` is an integer in [100,10000] (default 400);
+  optional `showCursor` renders the demo cursor, trail and press/click feedback.
+  Pointer actions return an operation ID and `running` state, then execute
+  asynchronously through the normal Windows input path. They can launch or
+  modify an item in the same way as its ordinary desktop click or drag; use
+  isolated data for unattended demonstrations.
+- `ui.pointerState {includeTrace?:boolean}` returns operation ID, status,
+  error, source/target IDs and current cursor sample. With `includeTrace:true`,
+  it includes up to 4096 timestamped physical-screen samples with button state
+  and phase. Terminal states are `completed`, `failed` and `cancelled`.
+- `ui.cancelPointer {}` cancels the current operation and returns its state.
+  Cancellation releases buttons owned by playback; an active drag also receives
+  Escape. It does not roll back changes already applied by the application.
+
+Playback cancels on observed physical or untagged input, never suppresses that
+input, and fails if display geometry changes or the destination is occluded by
+another window. Injection is subject to normal Windows integrity rules. State
+queries and cancellation remain available while playback is active. Completion
+means that the input sequence was delivered; confirm the resulting UI/model
+state separately. An operation may fail after delivering part of its input.
+
+Current catalogs cover desktop items, common native widget frames/member items
+and search, visible Dock entries, Quick Navigation and Lua accessibility nodes.
+The response explicitly lists pending surfaces: additional native chrome/tabs,
+popup-specific controls, context menus, settings and external/system windows.
+`coveredSurfaces` identifies available adapters, not exhaustive acceptance of
+every control or every visual state. Pointer motion follows current target
+geometry and uses the same procedural cursor renderer intended for later
+capture/offline compositing. Scene configuration and video export are a later
+stage and are not provided by these methods.
+
 ## Connection
 
 The Windows named pipe is

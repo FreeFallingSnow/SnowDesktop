@@ -1953,6 +1953,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");
     applicationControl_.Stop();
+    applicationControlPointer_.Stop();
+    applicationControlCursor_.Hide();
     operationFeedback.Drain();
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();

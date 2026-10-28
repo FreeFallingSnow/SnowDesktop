@@ -47,6 +47,10 @@ void Protocol()
     Check(mutations == 1, "invalid requests must not mutate backend");
     const auto discovery = invoke(R"({"jsonrpc":"2.0","id":9,"method":"api.describe"})");
     Check(discovery.Find("result")->Find("methods")->array.size() >= 10, "discovery lists supported methods");
+    const auto* capabilities = discovery.Find("result")->Find("capabilities");
+    Check(capabilities && capabilities->Find("elements")->number == 1 &&
+        capabilities->Find("controlledPointer")->number == 1 && capabilities->Find("demoCursor")->number == 1,
+        "clients can negotiate element and pointer capabilities without changing protocol v1");
     Check(mutations == 1, "discovery is independent of UI mutations");
     const auto failure = Parse(Dispatch(R"({"jsonrpc":"2.0","id":"old","method":"widgets.place"})",
         [](std::string_view, const Value&) -> Value { throw Error("stale_layout", "refresh required"); }));
@@ -187,8 +191,9 @@ void Transport()
 }
 }
 
+void ApplicationControlElementChecks();
 int main()
 {
-    try { Protocol(); Transport(); std::cout << "Application control protocol and real-pipe checks passed\n"; return 0; }
+    try { Protocol(); ApplicationControlElementChecks(); Transport(); std::cout << "Application control protocol, element, cursor and real-pipe checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

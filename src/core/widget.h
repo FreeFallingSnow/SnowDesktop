@@ -1103,10 +1103,11 @@ public:
     void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
     std::vector<Item*> GetSelectedItems() const override { return {}; }
     void ToggleDetails() { detailsExpanded_ = !detailsExpanded_; }
-
-private:
+    // Shared drawing, hit testing and internal automation geometry.
     RECT GetPrimaryButtonRect(RECT body) const;
     RECT GetSecondaryButtonRect(RECT body) const;
+
+private:
     bool detailsExpanded_ = false;
 };
 

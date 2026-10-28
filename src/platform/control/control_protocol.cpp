@@ -97,6 +97,10 @@ Value Describe()
     };
     add("api.describe", false, "{}");
     add("app.getState", false, "{}");
+    add("ui.snapshot", false, "{}");
+    add("ui.perform", true, "{elementId:string,action:string,ifSnapshotRevision:string,targetId?:string,value?:string,number?:number,durationMs?:integer,showCursor?:boolean}");
+    add("ui.pointerState", false, "{includeTrace?:boolean}");
+    add("ui.cancelPointer", true, "{}");
     add("desktop.getLayout", false, "{}");
     add("widgets.list", false, "{}");
     add("widgets.get", false, "{id:string}");
@@ -109,7 +113,8 @@ Value Describe()
     add("dock.show", true, "{}");
     add("dock.hide", true, "{}");
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
-        {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))}});
+        {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
+        {"capabilities", Object({{"elements", Number(1)}, {"controlledPointer", Number(1)}, {"demoCursor", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler) noexcept

@@ -20,6 +20,9 @@
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
 #include "ui/input/text_input_window.h"
+#include "ui/input/control_pointer.h"
+#include "ui/render/demo_cursor.h"
+#include "platform/control/control_elements.h"
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "data/layout_save_queue.h"
@@ -1640,6 +1643,9 @@ private:
     void InitializeSettingsController();
     void InitializeApplicationControl();
     snowdesktop::control::Value ApplicationControlLayout() const;
+    snowdesktop::control::ElementSnapshot ApplicationControlElements();
+    snowdesktop::control::Value PerformApplicationControlElement(const snowdesktop::control::Value& params);
+    snowdesktop::control::Value ApplicationControlPointerState(bool trace) const;
     snowdesktop::control::Value HandleApplicationControl(
         std::string_view method, const snowdesktop::control::Value& params);
     /** Release settings UI and services while their borrowed owners are alive. */
@@ -4470,6 +4476,8 @@ private:
     std::unique_ptr<snowdesktop::single_instance::PreparedRestart> preparedRestart_;
     bool startupInitializationComplete_ = false;
     snowdesktop::control::Server applicationControl_;
+    snowdesktop::controlled_pointer::Player applicationControlPointer_;
+    snowdesktop::demo_cursor::Overlay applicationControlCursor_;
     bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;

@@ -387,8 +387,13 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_preview.cpp
     src/app/features/app_theme_preview.cpp
     src/app/features/app_control.cpp
+    src/app/features/app_control_elements.cpp
+    src/app/features/app_control_pointer.cpp
     src/platform/control/control_protocol.cpp
     src/platform/control/control_server.cpp
+    src/platform/control/control_elements.cpp
+    src/ui/input/control_pointer.cpp
+    src/ui/render/demo_cursor.cpp
     src/app/navigation/app_quick_navigation_layout.cpp
     src/app/navigation/app_quick_navigation_messages.cpp
     src/app/navigation/app_quick_navigation_model.cpp
@@ -2099,10 +2104,14 @@ if (BUILD_TESTING)
         SnowDesktopApplicationControlTests
         application_control
         SOURCES tests/platform/app_control_ipc_tests.cpp
+            tests/platform/control_elements_tests.cpp
             src/platform/control/control_protocol.cpp
             src/platform/control/control_server.cpp
+            src/platform/control/control_elements.cpp
+            src/ui/input/control_pointer.cpp
+            src/ui/render/demo_cursor.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32 advapi32
+        LINK_LIBRARIES user32 advapi32 gdi32
         LABELS contract integration ipc)
 
     snowdesktop_add_test(
