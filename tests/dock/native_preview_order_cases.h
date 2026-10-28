@@ -199,14 +199,29 @@ inline void CheckClosePreview(int legacyRoute)
     RECT afterFirst{}, afterLast{};
     GetWindowRect(popups[0], &afterFirst);
     GetWindowRect(popups[2], &afterLast);
-    Require(EqualRect(&firstBounds, &afterFirst) && EqualRect(&lastBounds, &afterLast),
-        "remaining controls stay in place for repeated close actions");
+    if (legacyRoute == 3)
+    {
+        // Restore the original no-relayout geometry on the same native cards.
+        for (const auto& [popup, rect] : {std::pair{popups[0], firstBounds}, std::pair{popups[2], lastBounds}})
+            SetWindowPos(popup, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        GetWindowRect(popups[0], &afterFirst);
+        GetWindowRect(popups[2], &afterLast);
+    }
+    const LONG originalCenter = (firstBounds.left + lastBounds.right) / 2;
+    Require(afterLast.right - afterFirst.left < lastBounds.right - firstBounds.left &&
+            std::abs((afterFirst.left + afterLast.right) / 2 - originalCenter) <= 1,
+        "remaining cards must compact and recenter around the same Dock anchor");
     Require(Access::PreviewItems(app, fixture.executable).size() == 2,
         "accepted close is excluded from the real host preview collector");
     SendMessageW(popups[0], WM_MBUTTONUP, 0, MAKELPARAM(10, 10));
     Require(preview.IsVisible() && preview.GetWindows() == std::vector<HWND>{popups[2]} &&
             preview.IsShowingWindow(last) && !preview.IsShowingWindow(first),
         "middle-clicking the primary card retains the final card and transfers timer ownership");
+    RECT finalBounds{};
+    GetWindowRect(popups[2], &finalBounds);
+    Require(std::abs((finalBounds.left + finalBounds.right) / 2 - originalCenter) <= 1,
+        "the final surviving card must recenter without another Dock hover");
     clickClose(popups[2]);
     Require(preview.IsCleared() && Access::ClosePreviewSuppressed(app),
         "closing the final window dismisses the preview until pointer leave");
@@ -219,18 +234,20 @@ inline void CheckClosePreview(int legacyRoute)
 
 inline void RunClosePreview()
 {
-    for (const int legacyRoute : {1, 2})
+    for (const int legacyRoute : {1, 2, 3})
     {
         bool rejected = false;
         try { CheckClosePreview(legacyRoute); }
         catch (const std::runtime_error& error)
         {
-            if (std::string_view(error.what()) !=
-                "closing one window must keep the remaining preview cards open") throw;
+            const std::string_view expected = legacyRoute == 3
+                ? "remaining cards must compact and recenter around the same Dock anchor"
+                : "closing one window must keep the remaining preview cards open";
+            if (std::string_view(error.what()) != expected) throw;
             rejected = true;
         }
-        Require(rejected, "each original popup/host dismissal must fail the same retention assertion");
-        std::cout << "old close dismissal route " << legacyRoute << " rejected by preview retention assertion\n";
+        Require(rejected, "old dismissal and no-relayout routes must fail their corresponding business assertions");
+        std::cout << "old close route " << legacyRoute << " rejected by its preview business assertion\n";
     }
     CheckClosePreview(0);
 }

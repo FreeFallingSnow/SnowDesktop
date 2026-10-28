@@ -436,6 +436,11 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     namespace inputTrace = snowdesktop::dock_input_diagnostics;
     inputTrace::Scope trace(floatingDockVisible_ || floatingDockKeyboardSessionActive_,
         static_cast<bool>(floatingDockEdgeSwipeMouseHook_));
+    // Consume every sample, even without a new press, so a receipt cannot be
+    // carried into an unrelated later outside click. It survives preview
+    // relayout/hide until this sampler observes the native input it handled.
+    const HMONITOR previewInteractionMonitor = dockWindowPreview_
+        ? dockWindowPreview_->TakePointerInteractionMonitor() : nullptr;
     if (trace.Observe(inputTrace::Gate::Fullscreen,
             FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)))
     {
@@ -470,7 +475,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
     DWORD foregroundProcess = 0;
     if (layerForeground) GetWindowThreadProcessId(layerForeground, &foregroundProcess);
-    const bool inputHeld = dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+    const bool inputHeld = previewInteractionMonitor || dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
         HasActiveContextMenuSession() || shellPopupMenuLayerDepth_ > 0 || shellFileOperationInFlight_ > 0 ||
         (dockStartMenu_ && dockStartMenu_->Active()) ||
         (dockWindowTransition_ && dockWindowTransition_->IsActive());
@@ -488,7 +493,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         return;
     }
     ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
-    bool externalActivation = snowdesktop::floating_dock_rules::
+    bool externalActivation = !previewInteractionMonitor && snowdesktop::floating_dock_rules::
         ShouldDismissForForegroundActivation(
             floatingDockVisible_, foregroundChangedWhilePromoted,
             foregroundProcess != 0 && foregroundProcess != GetCurrentProcessId() &&
@@ -743,6 +748,10 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             if (!heldMerged && !separateReveal) continue;
             barSession = barSession || heldMerged;
             const bool ownSurface = (IsDockStartMenuActive(host.monitor) && dockStartMenu_->ContainsPoint(cursor)) ||
+                (previewInteractionMonitor && previewInteractionMonitor == host.monitor) ||
+                (dockWindowPreview_ && dockWindowPreview_->IsVisible() &&
+                    dockWindowPreview_->ContainsInteractionPoint(cursor) &&
+                    MonitorFromRect(&dockWindowPreviewAnchorScreen_, MONITOR_DEFAULTTONEAREST) == host.monitor) ||
                 (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
                 (statusBar_ && statusBar_->ContainsTrayMenuPoint(host.monitor, cursor)) ||
                 (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
@@ -772,7 +781,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             !trace.Observe(inputTrace::Gate::BarSession, barSession) &&
             !trace.Observe(inputTrace::Gate::Bar, onBar) &&
             !trace.Observe(inputTrace::Gate::RevealedDock, onRevealedDockSurface) &&
-            !trace.Observe(inputTrace::Gate::PromotedDock, IsPointOnPromotedDock(desktopPoint)) &&
+            !trace.Observe(inputTrace::Gate::PromotedDock,
+                IsPointOnPromotedDock(desktopPoint) || previewInteractionMonitor != nullptr) &&
             trace.Observe(inputTrace::Gate::DismissRule, snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     trace.Observe(inputTrace::Gate::Drag, dragSession_.IsActive() ||

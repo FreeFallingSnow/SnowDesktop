@@ -324,7 +324,8 @@ void Run(Check check)
             }
             RECT closedCard{};
             GetWindowRect(preview.GetWindow(), &closedCard);
-            closePointer = {closedCard.left + 10, closedCard.top + 10};
+            const RECT oldGroup = preview.GetBounds();
+            closePointer = {oldGroup.right - 5, closedCard.top + 10};
             // Supply pointer input without moving the user's mouse. The real
             // popup timer, transition rules and thumbnail cleanup still execute.
             ImportPatch cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&ClosePointer));
@@ -337,12 +338,18 @@ void Run(Check check)
             check(!preview.IsShowingWindow(second.window) && preview.IsVisible(),
                 "accepted close removes only its source and retains the surviving preview");
             checkLinks({replacement.window});
-            check(boundary.registrations == 0 && boundary.queries == 0 && boundary.updates == 0 &&
-                    boundary.retirements == 1,
-                "closing one card releases only its relationship without refreshing the survivors");
+            check(boundary.registrations == 1 && boundary.queries == 2 && boundary.updates == 1 &&
+                    boundary.retirements == 2,
+                "close relayout measures and refreshes the one surviving source without leaving stale relationships");
+            check(!preview.ContainsInteractionPoint(closePointer),
+                "the vacated edge of the old group must not remain an interaction region after recentering");
+            RECT survivorBounds{};
+            GetWindowRect(preview.GetWindow(), &survivorBounds);
+            closePointer = {(survivorBounds.left + survivorBounds.right) / 2,
+                (survivorBounds.top + survivorBounds.bottom) / 2};
             SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsVisible() && preview.ContainsInteractionPoint(closePointer),
-                "the hide timer retains the group while the pointer rests in the just-closed card");
+                "entering the new preview during the close grace period cancels dismissal");
             closePointer = {-32000, -32000};
             SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsCleared() && boundary.live.empty(),
@@ -355,6 +362,70 @@ void Run(Check check)
             preview.Show({}, anchor, DockPosition::Bottom, false);
             check(boundary.live.empty() && preview.IsCleared(), "empty target groups release all registrations");
             show();
+        }
+        {
+            Source firstCard, middleCard, lastCard, dockOwner, otherTopmost;
+            check(firstCard.window && middleCard.window && lastCard.window && dockOwner.window && otherTopmost.window,
+                "recenter fixture owns all source, Dock-owner and comparison windows");
+            boundary.sizes[firstCard.window] = {1000, 500};
+            boundary.sizes[middleCard.window] = {500, 1000};
+            boundary.sizes[lastCard.window] = {600, 400};
+            const auto above = [](HWND upper, HWND lower) {
+                for (HWND current = GetWindow(lower, GW_HWNDPREV); current; current = GetWindow(current, GW_HWNDPREV))
+                    if (current == upper) return true;
+                return false;
+            };
+            constexpr UINT preserve = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW;
+            SetWindowPos(otherTopmost.window, HWND_TOPMOST, 0, 0, 0, 0, preserve);
+            SetWindowPos(dockOwner.window, HWND_TOPMOST, 0, 0, 0, 0, preserve);
+            const LONG anchorX = (monitor.rcWork.left + monitor.rcWork.right) / 2;
+            const LONG anchorY = (monitor.rcWork.top + monitor.rcWork.bottom) / 2;
+            const RECT centeredAnchor{anchorX - 10, anchorY - 10, anchorX + 10, anchorY + 10};
+            ImportPatch cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&ClosePointer));
+            for (const UINT dpi : {96u, 144u, 192u})
+            for (const DockPosition position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+            {
+                boundary.dpi = dpi;
+                closePointer = {-32000, -32000};
+                DockWindowPreview preview(snowdesktop::dock_peek::Api{nullptr});
+                check(preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [](HWND) {}),
+                    "recenter fixture initializes without invoking real system Peek");
+                preview.Show({{firstCard.window, L"first"}, {middleCard.window, L"middle"}, {lastCard.window, L"last"}},
+                    centeredAnchor, position, false, dockOwner.window);
+                const auto popups = preview.GetWindows();
+                if (popups.size() != 3)
+                {
+                    check(false, "recenter fixture requires three initialized native cards");
+                    continue;
+                }
+                preview.RemoveWindow(middleCard.window);
+                check(preview.GetWindows() == std::vector<HWND>{popups[0], popups[2]},
+                    "reflow retains the native HWNDs of surviving cards");
+                checkGeometry(preview, {{1000, 500}, {600, 400}});
+                const RECT bounds = preview.GetBounds();
+                const bool horizontal = position == DockPosition::Bottom || position == DockPosition::Top;
+                check(horizontal ? std::abs((bounds.left + bounds.right) / 2 - anchorX) <= 1
+                                 : std::abs((bounds.top + bounds.bottom) / 2 - anchorY - MulDiv(4, static_cast<int>(dpi), 96)) <= 1,
+                    "remaining preview group recenters around its Dock anchor in every orientation and DPI");
+                for (const HWND popup : preview.GetWindows())
+                    check(GetWindow(popup, GW_OWNER) == dockOwner.window,
+                        "reflow retains each preview card's existing Dock owner");
+                check((GetWindowLongPtrW(dockOwner.window, GWL_EXSTYLE) & WS_EX_TOPMOST) &&
+                        above(dockOwner.window, otherTopmost.window),
+                    "closing a card preserves the native Dock owner's topmost band and relative order");
+                RECT card{};
+                GetWindowRect(preview.GetWindow(), &card);
+                closePointer = {(card.left + card.right) / 2, (card.top + card.bottom) / 2};
+                // No WM_MOUSEMOVE: relayout must establish tracking for the
+                // stationary pointer, then reject a stale leave notification.
+                preview.UpdateAnchor(centeredAnchor, position);
+                SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
+                check(preview.IsVisible(), "a queued leave cannot dismiss a card that now contains the pointer");
+                closePointer = {-32000, -32000};
+                SendMessageW(preview.GetWindow(), WM_MOUSELEAVE, 0, 0);
+                check(preview.IsCleared(),
+                    "the next real leave is still tracked after reflow and a stale leave notification");
+            }
         }
         check(boundary.live.empty() && boundary.errors == 0,
             "destruction unregisters each remaining relationship once without stale or double-released handles");

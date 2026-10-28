@@ -22,7 +22,7 @@
     static DockWindowPreview& PrepareClosePreview(DesktopApp& app,
         const std::vector<DockWindowPreviewItem>& items, int legacyRoute)
     {
-        app.dockWindowPreview_ = std::make_unique<DockWindowPreview>();
+        app.dockWindowPreview_ = std::make_unique<DockWindowPreview>(snowdesktop::dock_peek::Api{nullptr});
         if (!app.dockWindowPreview_->Initialize(GetModuleHandleW(nullptr), [](HWND) {},
                 [&app, legacyRoute](HWND window) {
                     // Restore each actual old dismissal route independently.
@@ -32,19 +32,14 @@
                 })) throw std::runtime_error("initialize owned close-preview fixture");
         app.dockWindowPreviewKey_ = L"close-preview-fixture";
         app.dockWindowPreviewHover_.MarkPreviewShown(app.dockWindowPreviewKey_);
-        app.dockWindowPreviewAnchorScreen_ = {0, 0, 20, 20};
+        MONITORINFO monitor{sizeof(monitor)};
+        if (!GetMonitorInfoW(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &monitor))
+            throw std::runtime_error("resolve close-preview anchor monitor");
+        const LONG x = (monitor.rcWork.left + monitor.rcWork.right) / 2;
+        const LONG y = (monitor.rcWork.top + monitor.rcWork.bottom) / 2;
+        app.dockWindowPreviewAnchorScreen_ = {x - 10, y - 10, x + 10, y + 10};
         app.dockWindowPreview_->Show(items, app.dockWindowPreviewAnchorScreen_,
             DockPosition::Bottom, false);
-        // Only test-owned nonactivating popups are moved; no desktop host exists.
-        const RECT bounds = app.dockWindowPreview_->GetBounds();
-        for (const HWND popup : app.dockWindowPreview_->GetWindows())
-        {
-            RECT rect{};
-            GetWindowRect(popup, &rect);
-            SetWindowPos(popup, nullptr, -12000 + rect.left - bounds.left,
-                -12000 + rect.top - bounds.top, 0, 0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        }
         return *app.dockWindowPreview_;
     }
     static bool ClosePreviewSuppressed(DesktopApp& app)

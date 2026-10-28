@@ -892,6 +892,96 @@ end})
         std::cout << "External window selection: native focus and foreground routes, owned surfaces and menu/drag retention passed\n";
     }
 
+    static SHORT WINAPI PreviewReceiptKey(int key)
+    {
+        return static_cast<SHORT>(key == previewReceiptButton ? 1 : 0); // Completed press after native button-up.
+    }
+    static inline int previewReceiptButton = 0;
+    static BOOL WINAPI PreviewReceiptCursor(POINT* point) { *point = {-32000, -32000}; return TRUE; }
+    static void RunPreviewCloseLayerSafety()
+    {
+        // Run on the same inactive fixture desktop as the other input cases.
+        // Keep real popup messages, preview removal, the pointer sampler and
+        // the Dock close/layer policy. Only physical input is supplied.
+        auto* app = new DesktopApp;
+        app->generalSettings_.dockEnabled = true;
+        app->generalSettings_.statusBar.enabled = false;
+        app->dockSettings_.showOnlyWhenSummoned = true;
+        const auto make = [] {
+            return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"preview-close-layer-fixture",
+                WS_POPUP, -16000, -16000, 300, 180, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        };
+        const HWND owner = make(), first = make(), second = make();
+        if (!owner || !first || !second) throw std::runtime_error("create preview close layer fixture");
+        const HWND previousForeground = inputSafetyForeground;
+        struct Cleanup
+        {
+            DesktopApp& app; HWND owner, first, second, foreground;
+            ~Cleanup()
+            {
+                app.dockWindowPreview_.reset();
+                app.uiAnimationScheduler_.CancelAll();
+                app.persistentDockHosts_.clear();
+                DestroyWindow(owner); DestroyWindow(first); DestroyWindow(second);
+                inputSafetyForeground = foreground;
+                previewReceiptButton = 0;
+                snowdesktop::window_support::WindowSupport().SetNativeCapability(
+                    snowdesktop::window_support::Capability::PointerObservation, false);
+            }
+        } cleanup{*app, owner, first, second, previousForeground};
+        inputSafetyForeground = nullptr;
+        InputSafetyImport focus("GetForegroundWindow", reinterpret_cast<ULONG_PTR>(&InputSafetyForeground));
+        InputSafetyImport cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&PreviewReceiptCursor));
+        InputSafetyImport keys("GetAsyncKeyState", reinterpret_cast<ULONG_PTR>(&PreviewReceiptKey));
+        snowdesktop::window_support::WindowSupport().SetNativeCapability(
+            snowdesktop::window_support::Capability::PointerObservation, true);
+        auto ownedHost = std::make_unique<DesktopApp::PersistentDockHost>();
+        ownedHost->active = true;
+        ownedHost->hwnd = owner;
+        ownedHost->monitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        auto& host = *ownedHost;
+        app->persistentDockHosts_.push_back(std::move(ownedHost));
+        app->dockWindowPreview_ = std::make_unique<DockWindowPreview>(snowdesktop::dock_peek::Api{nullptr});
+        auto& preview = *app->dockWindowPreview_;
+        if (!preview.Initialize(GetModuleHandleW(nullptr), [](HWND) {}, [&](HWND target) { preview.RemoveWindow(target); }))
+            throw std::runtime_error("initialize preview layer fixture");
+        const auto check = [](bool ok, const char* message) { if (!ok) throw std::runtime_error(message); };
+        for (int variant = 0; variant < 3; ++variant)
+        {
+            const bool finalCard = variant == 1, dropReceipt = variant == 2;
+            app->floatingDockPointerButtonsDown_ = 0;
+            app->floatingDockVisible_ = host.promoted = host.frameReady = true;
+            SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            preview.Show(finalCard ? std::vector<DockWindowPreviewItem>{{first, L"first"}}
+                                  : std::vector<DockWindowPreviewItem>{{first, L"first"}, {second, L"second"}},
+                {0, 0, 20, 20}, DockPosition::Bottom, false, owner);
+            RECT client{};
+            GetClientRect(preview.GetWindow(), &client);
+            const RECT close = CalculateDockWindowPreviewCloseButtonRect(client, GetDpiForWindow(preview.GetWindow()));
+            const LPARAM point = MAKELPARAM((close.left + close.right) / 2, (close.top + close.bottom) / 2);
+            SendMessageW(preview.GetWindow(), finalCard ? WM_MBUTTONDOWN : WM_LBUTTONDOWN, 0, point);
+            SendMessageW(preview.GetWindow(), finalCard ? WM_MBUTTONUP : WM_LBUTTONUP, 0, point);
+            check(preview.IsVisible() == !finalCard, "preview close reaches real multi/final-card cleanup before sampling");
+            if (dropReceipt) (void)preview.TakePointerInteractionMonitor();
+            previewReceiptButton = finalCard ? VK_MBUTTON : VK_LBUTTON;
+            app->UpdateFloatingDockEdgeSwipe();
+            const bool retained = host.promoted && (GetWindowLongPtrW(owner, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+            check(retained == !dropReceipt, dropReceipt
+                ? "dropping the handled press must reproduce native Dock dismissal through the real sampler"
+                : "sampling a handled preview close after reflow/hide must not lower its Dock");
+            if (!dropReceipt)
+            {
+                previewReceiptButton = 0;
+                app->UpdateFloatingDockEdgeSwipe();
+                previewReceiptButton = VK_LBUTTON;
+                app->UpdateFloatingDockEdgeSwipe();
+                check(!host.promoted, "the next independent outside press must still dismiss the Dock");
+            }
+        }
+        std::cout << "Preview close: delayed input preserves Dock Z band; final-card and missing-receipt controls passed\n";
+    }
+
     static void RunInputSafety()
     {
         std::vector<std::string> failures;
@@ -903,6 +993,7 @@ end})
         WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr); cls.lpfnWndProc = InputSafetyWindowProc;
         cls.lpszClassName = L"SnowDesktop.NativeInputSafety";
         if (!RegisterClassW(&cls)) throw std::runtime_error("register isolated input windows");
+        RunPreviewCloseLayerSafety();
         RunExternalWindowSelectionSafety(cls.lpszClassName);
         std::cerr << "Input safety: queued item release\n";
         RunQueuedDragReleaseSafety(cls.lpszClassName);

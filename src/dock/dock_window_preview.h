@@ -133,6 +133,8 @@ public:
     }
     void Hide();
     void RemoveWindow(HWND window);
+    // One-shot input provenance survives card reflow and final-card Hide.
+    HMONITOR TakePointerInteractionMonitor() { return std::exchange(pointerInteractionMonitor_, nullptr); }
     void ScheduleHide();
     void KeepVisible();
     bool IsVisible() const;
@@ -165,6 +167,8 @@ private:
     void OnLeftButtonUp(POINT point);
     void OnMiddleButtonUp(POINT point);
     void CloseWindowAtIndex(int index);
+    void RecordPointerInteraction();
+    void RefreshPointerTracking();
     void UpdatePeekTarget(HWND target);
     void OnPeekTimer();
     void CancelPeek(bool suppressUntilLeave = false);
@@ -200,7 +204,7 @@ private:
     std::vector<HTHUMBNAIL> measuredThumbnails_;
     SIZE panelSize_{};
     RECT anchorScreen_{};
-    RECT closeRetentionScreen_{};
+    HMONITOR pointerInteractionMonitor_ = nullptr;
     DockPosition dockPosition_ = DockPosition::Bottom;
     bool lightTheme_ = false;
     bool trackingMouse_ = false;
