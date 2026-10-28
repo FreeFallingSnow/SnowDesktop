@@ -1,6 +1,7 @@
 #include "export_service.h"
 #include "artifact_io.h"
 #include <windows.h>
+#include <objbase.h>
 #include <atomic>
 #include <chrono>
 #include <mutex>

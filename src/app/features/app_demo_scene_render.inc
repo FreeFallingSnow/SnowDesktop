@@ -110,6 +110,7 @@ if (request.component == "demo-scene")
                 throw std::runtime_error("demo_material_failed");
         };
         const auto mapRect = [](RECT from, RECT to) {
+            if (IsRectEmpty(&from) || IsRectEmpty(&to)) throw std::runtime_error("demo_native_surface_has_no_bounds");
             const float sx = static_cast<float>(to.right - to.left) / (from.right - from.left);
             const float sy = static_cast<float>(to.bottom - to.top) / (from.bottom - from.top);
             return D2D1::Matrix3x2F::Scale(sx, sy) * D2D1::Matrix3x2F::Translation(to.left - from.left * sx, to.top - from.top * sy);
@@ -152,7 +153,10 @@ if (request.component == "demo-scene")
                 {
                     std::vector<DockEntry> entries;
                     for (const auto& id : surface.items) { DockEntry entry; entry.type = DockEntryType::DesktopItem; entry.reference = L"__demo_item_" + demo::Wide(id); entries.push_back(std::move(entry)); }
-                    DockContainer dock(this, &entries, rect);
+                    // DockEntryItem and group counts resolve through the host
+                    // model as well as the container's entry pointer.
+                    dockEntries_ = std::move(entries);
+                    DockContainer dock(this, &dockEntries_, rect);
                     const auto bounds = dock.GetBounds(); material(bounds, appearance.cornerRadius);
                     dock.DrawChrome(context.Get(), lastMousePoint_); dock.DrawContents(context.Get());
                 }

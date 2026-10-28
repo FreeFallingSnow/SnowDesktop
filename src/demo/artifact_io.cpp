@@ -58,16 +58,30 @@ std::string Sha256(const std::filesystem::path& file)
 }
 control::Value ReadJson(const std::filesystem::path& file, std::size_t maximum)
 {
-    std::ifstream input(file, std::ios::binary | std::ios::ate);
-    if (!input || input.tellg() < 0 || static_cast<std::uint64_t>(input.tellg()) > maximum)
+    // Progress is atomically replaced by the worker while the host polls it.
+    // Hold a stable file object while allowing that directory entry to change.
+    struct Input { HANDLE value; ~Input() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); } } input{
+        CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr)};
+    LARGE_INTEGER size{};
+    if (input.value == INVALID_HANDLE_VALUE || !GetFileSizeEx(input.value, &size) || size.QuadPart < 0 ||
+        static_cast<std::uint64_t>(size.QuadPart) > maximum)
         throw std::runtime_error("demo_json_unavailable_or_oversized");
-    std::string text(static_cast<std::size_t>(input.tellg()), '\0'); input.seekg(0);
-    if (!text.empty() && !input.read(text.data(), static_cast<std::streamsize>(text.size()))) throw std::runtime_error("demo_json_read_failed");
+    std::string text(static_cast<std::size_t>(size.QuadPart), '\0'); std::size_t position = 0;
+    while (position < text.size())
+    {
+        DWORD read = 0;
+        if (!ReadFile(input.value, text.data() + position, static_cast<DWORD>(text.size() - position), &read, nullptr) || !read)
+            throw std::runtime_error("demo_json_read_failed");
+        position += read;
+    }
     control::Value result;
     if (!ParseJson(text, result)) throw std::runtime_error("demo_invalid_json"); return result;
 }
 void WriteJson(const std::filesystem::path& file, const control::Value& value)
 {
-    if (!atomic_file::WriteAll(file, control::Serialize(value))) throw std::runtime_error("demo_json_write_failed");
+    std::string error;
+    if (!atomic_file::WriteAll(file, control::Serialize(value), {}, &error))
+        throw std::runtime_error("demo_json_write_failed: " + Utf8(file.filename().wstring()) + ": " + error);
 }
 }

@@ -9,6 +9,7 @@
 #include "demo/builtin_scenes.h"
 #include "test_temporary_directory.h"
 #include <chrono>
+#include <atomic>
 #include <iostream>
 #include <set>
 #include <thread>
@@ -72,17 +73,39 @@ void Video(const std::filesystem::path& file)
     Check(MFStartup(MF_VERSION));
     struct Media { ~Media() { MFShutdown(); } } media;
     ComPtr<IMFSourceReader> reader; Check(MFCreateSourceReaderFromURL(file.c_str(), nullptr, &reader));
-    ComPtr<IMFMediaType> type; Check(reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &type));
+    constexpr auto videoStream = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+    ComPtr<IMFMediaType> type; Check(reader->GetNativeMediaType(videoStream, 0, &type));
     UINT64 size = 0; Check(type->GetUINT64(MF_MT_FRAME_SIZE, &size)); Require((size >> 32) == 960 && (size & 0xffffffff) == 540, "actual MP4 native size matches PNG");
     unsigned count = 0;
     for (int attempt = 0; attempt < 32; ++attempt)
     {
         DWORD stream = 0, flags = 0; LONGLONG time = 0; ComPtr<IMFSample> sample;
-        Check(reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &stream, &flags, &time, &sample));
+        Check(reader->ReadSample(videoStream, 0, &stream, &flags, &time, &sample));
         if (sample) ++count;
         if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
     }
     Require(count == 6, "every native desktop frame decodes to EOS");
+}
+void ProgressReplacement(const std::filesystem::path& file)
+{
+    const auto payload = control::String(std::string(256 * 1024, 'p'));
+    demo::WriteJson(file, control::Object({{"generation", control::Number(0)}, {"payload", payload}}));
+    std::atomic<bool> failed{false};
+    std::jthread reader([&](std::stop_token stopped) {
+        while (!stopped.stop_requested())
+        {
+            try
+            {
+                const auto snapshot = demo::ReadJson(file);
+                if (snapshot.Find("payload")->string.size() != 256 * 1024) failed.store(true);
+            }
+            catch (...) { failed.store(true); }
+        }
+    });
+    for (int generation = 1; generation <= 40; ++generation)
+        demo::WriteJson(file, control::Object({{"generation", control::Number(generation)}, {"payload", payload}}));
+    reader.request_stop(); reader.join();
+    Require(!failed.load(), "progress reads allow atomic replacement and never observe a partial JSON file");
 }
 }
 int wmain(int argc, wchar_t** argv)
@@ -91,6 +114,7 @@ int wmain(int argc, wchar_t** argv)
     {
         Require(argc == 2, "trusted host executable argument"); Apartment apartment; test::TemporaryDirectory temporary;
         const std::filesystem::path executable(argv[1]); const auto root = temporary.path / L"演示 exports";
+        ProgressReplacement(temporary.path / L"progress-replacement.json");
         const auto scene = Scene(); (void)demo::ParseScene(*demo::Describe().Find("example"));
         demo::ExportService service; std::string error;
         Require(!service.Start(scene, L"relative.exe", root, error), "relative/untrusted host path rejected before launch");
