@@ -1,4 +1,5 @@
 #include "settings_automation.h"
+#include <ole2.h>
 #include <UIAutomation.h>
 #include <wrl/client.h>
 #include <algorithm>
