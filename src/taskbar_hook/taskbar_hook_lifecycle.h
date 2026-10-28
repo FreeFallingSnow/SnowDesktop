@@ -14,10 +14,10 @@ inline constexpr wchar_t kHookOwnerProperty[] = L"SnowDesktop.Taskbar.HookOwner.
 inline constexpr wchar_t kHookHostProcessProperty[] = L"SnowDesktop.Taskbar.HookHostProcess.v1";
 inline constexpr wchar_t kHookConnectionProperty[] = L"SnowDesktop.Taskbar.HookConnection.v1";
 inline constexpr wchar_t kConnectHookMessageName[] = L"SnowDesktop.Taskbar.ConnectHook.v1";
-// v3 requires bounded repeated XAML endpoint discovery. A new host must not
-// silently keep the v2 single-pass initializer through resident adoption.
-inline constexpr wchar_t kResumeHookMessageName[] = L"SnowDesktop.Taskbar.ResumeHook.v3";
-inline constexpr wchar_t kHookResumeProtocolProperty[] = L"SnowDesktop.Taskbar.ResumeProtocol.v3";
+// v4 requires confirmed DWM cloak restoration and retained recovery on
+// failure. Do not resume an older resident DLL that can abandon a hidden bar.
+inline constexpr wchar_t kResumeHookMessageName[] = L"SnowDesktop.Taskbar.ResumeHook.v4";
+inline constexpr wchar_t kHookResumeProtocolProperty[] = L"SnowDesktop.Taskbar.ResumeProtocol.v4";
 inline constexpr wchar_t kRetireHookMessageName[] = L"SnowDesktop.Taskbar.RetireHook.v1";
 inline std::atomic_bool hookInstanceRetired{false};
 inline std::atomic<DWORD> taskViewMonitorThread{0};

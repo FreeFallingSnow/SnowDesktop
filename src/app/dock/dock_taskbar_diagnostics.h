@@ -336,7 +336,7 @@ inline void PollNativeAutoHideTrace()
     if (!count && !dropped) return;
     constexpr const wchar_t* kinds[] = {
         L"adapter", L"activate-before", L"activate-after", L"primary-unhide", L"secondary-unhide",
-        L"suppressed-activation", L"focus-enter", L"focus-leave", L"protection", L"explicit-reveal"};
+        L"suppressed-activation", L"focus-enter", L"focus-leave", L"protection", L"explicit-reveal", L"cloak-write"};
     for (LONG i = 0; i < count; ++i)
     {
         const auto& r = records[static_cast<size_t>(i)];
@@ -353,6 +353,8 @@ inline void PollNativeAutoHideTrace()
              << L" geometryValid=" << r.geometryValid
              << L" rect=" << r.rect.left << L"," << r.rect.top << L"," << r.rect.right << L"," << r.rect.bottom
              << L" cursor=" << r.cursor.x << L"," << r.cursor.y;
+        if (r.kind == AutoHideTraceKind::CloakWrite)
+            line << L" cloak=" << r.request << L" result=0x" << std::hex << static_cast<ULONG>(r.flags);
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, line.str().c_str());
     }
     if (dropped)

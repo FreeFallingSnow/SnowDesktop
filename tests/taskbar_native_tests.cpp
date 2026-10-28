@@ -24,6 +24,22 @@ UINT_PTR appBarState = 0;
 bool rejectAppBarChange = false;
 bool useSampleCursor = false;
 POINT sampleCursor{};
+enum class CloakRestoreFailure { None, Reject, IgnoreWrite };
+CloakRestoreFailure cloakRestoreFailure = CloakRestoreFailure::None;
+unsigned cloakRestoreAttempts = 0;
+// Replace only the DWM write boundary. The production ownership, subclass,
+// timers, readback and actual DWM state on private windows remain in use.
+HRESULT TestCloakWriter(HWND window, BOOL cloak,
+    snowdesktop::taskbar_hook::native::DwmAttributeWriter write)
+{
+    if (!cloak)
+    {
+        ++cloakRestoreAttempts;
+        if (cloakRestoreFailure == CloakRestoreFailure::Reject) return E_ACCESSDENIED;
+        if (cloakRestoreFailure == CloakRestoreFailure::IgnoreWrite) return S_OK;
+    }
+    return write(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
+}
 BOOL WINAPI TestCursorPosition(LPPOINT point)
 {
     if (!useSampleCursor) return GetCursorPos(point);
@@ -347,6 +363,17 @@ int RunNativeTaskbarTests()
         DWORD value = 0;
         return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &value, sizeof(value))) &&
             (value & DWM_CLOAKED_APP) != 0;
+    };
+    const auto pumpUntil = [](auto done) {
+        const ULONGLONG deadline = GetTickCount64() + 3000;
+        while (!done() && GetTickCount64() < deadline)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+            if (!done()) MsgWaitForMultipleObjectsEx(0, nullptr, 25, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        return done();
     };
     check(!cloaked(), "uncontrolled window provides an independent visible baseline");
     {
@@ -818,6 +845,46 @@ int RunNativeTaskbarTests()
     appBarState = 0;
     DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal));
 
+    for (const auto failure : {CloakRestoreFailure::Reject, CloakRestoreFailure::IgnoreWrite})
+    {
+        shared.enabled = TRUE;
+        shared.targets[0].shellPanelVisible = FALSE;
+        check(native::Attach(window, &shared, false, TestAppBarMessage, TestCursorPosition, TestCloakWriter) && cloaked(),
+            "restore-failure fixture starts with a real owned taskbar cloak");
+        cloakRestoreFailure = failure;
+        shared.targets[0].shellPanelVisible = TRUE;
+        SendMessageW(window, apply, 0, 0);
+        check(cloaked() && GetPropW(window, native::kAttachedProperty) && shared.suppressionStatus == kStatusFailed,
+            "a rejected or ineffective panel reveal retains cloak ownership for retry");
+        cloakRestoreFailure = CloakRestoreFailure::None;
+        SendMessageW(window, apply, 0, 0);
+        check(!cloaked(), "the next panel reveal retries the actual DWM restore");
+        shared.targets[0].shellPanelVisible = FALSE;
+        SendMessageW(window, apply, 0, 0);
+        check(cloaked(), "the private taskbar can enter the next independent suppression");
+        cloakRestoreFailure = failure;
+        shared.enabled = FALSE;
+        SendMessageW(window, apply, 0, 0);
+        check(cloaked() && GetPropW(window, native::kAttachedProperty) && shared.suppressionStatus == kStatusFailed,
+            "shutdown cannot abandon its recovery watcher while DWM restoration is unconfirmed");
+        check(!(appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
+            "a failed cloak restore does not prevent independent work-area restoration");
+        cloakRestoreFailure = CloakRestoreFailure::None;
+        check(pumpUntil([&] { return !GetPropW(window, native::kAttachedProperty); }) && !cloaked(),
+            "the real owner-thread timer completes failed shutdown restoration without a host message");
+        check(dwmEntry() == originalDwmEntry, "native hooks stop only after the pending DWM restore completes");
+    }
+    shared.enabled = TRUE;
+    check(native::Attach(window, &shared, false, TestAppBarMessage, TestCursorPosition, TestCloakWriter) && cloaked(),
+        "attach a private taskbar before replacement-style retirement");
+    cloakRestoreFailure = CloakRestoreFailure::Reject;
+    check(!native::Retire(window) && cloaked() && GetPropW(window, native::kAttachedProperty),
+        "replacement handoff cannot acknowledge a rejected DWM restore");
+    cloakRestoreFailure = CloakRestoreFailure::None;
+    check(pumpUntil([&] { return !GetPropW(window, native::kAttachedProperty); }) && !cloaked() &&
+        !(appBarState & ABS_AUTOHIDE) && dwmEntry() == originalDwmEntry,
+        "retirement remains in recovery even with the old enabled snapshot and finishes on its own timer");
+
     wchar_t executable[32768]{};
     GetModuleFileNameW(nullptr, executable, 32768);
     STARTUPINFOW startup{sizeof(startup)};
@@ -830,19 +897,17 @@ int RunNativeTaskbarTests()
     {
         shared.enabled = TRUE;
         shared.ownerProcessId = child.dwProcessId;
-        check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(), "takeover is bound to the live owner process handle");
+        check(native::Attach(window, &shared, false, TestAppBarMessage, TestCursorPosition, TestCloakWriter) && cloaked(),
+            "takeover is bound to the live owner process handle");
+        cloakRestoreFailure = CloakRestoreFailure::Reject;
+        const unsigned previousRestoreAttempts = cloakRestoreAttempts;
         TerminateProcess(child.hProcess, 0);
         WaitForSingleObject(child.hProcess, 2000);
-        const ULONGLONG deadline = GetTickCount64() + 3000;
-        while (GetPropW(window, native::kAttachedProperty) && GetTickCount64() < deadline)
-        {
-            MSG message{};
-            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
-            { TranslateMessage(&message); DispatchMessageW(&message); }
-            if (GetPropW(window, native::kAttachedProperty))
-                MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        }
-        check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
+        check(pumpUntil([&] { return cloakRestoreAttempts > previousRestoreAttempts; }) &&
+            cloaked() && GetPropW(window, native::kAttachedProperty),
+            "a failed DWM restore after owner death retains an independent recovery watcher");
+        cloakRestoreFailure = CloakRestoreFailure::None;
+        check(pumpUntil([&] { return !GetPropW(window, native::kAttachedProperty); }) && !cloaked(),
             "owner death restores the taskbar without any host cleanup message");
         check(!(appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
             "owner death also restores the original taskbar work-area policy");

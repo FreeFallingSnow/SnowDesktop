@@ -12,7 +12,7 @@ namespace snowdesktop::taskbar_hook
 enum class AutoHideTraceKind : LONG
 {
     Adapter = 0, ActivateBefore, ActivateAfter, PrimaryUnhide, SecondaryUnhide,
-    SuppressedActivation, FocusEnter, FocusLeave, Protection, ExplicitReveal
+    SuppressedActivation, FocusEnter, FocusLeave, Protection, ExplicitReveal, CloakWrite
 };
 
 struct AutoHideTraceRecord

@@ -42,6 +42,8 @@ struct WindowState
     bool primary = false, ownsAutoHide = false, updatingAutoHide = false;
     AppBarMessage appBarMessage = nullptr;
     CursorPosition cursorPosition = &GetCursorPos;
+    CloakWriter cloakWriter = nullptr;
+    bool detaching = false, updatingCloak = false;
     std::mutex mutex;
     bool cloaked = false, styled = false;
     MinimizeProtection minimize;
@@ -478,17 +480,49 @@ void RestoreAppearance(HWND window, const std::shared_ptr<WindowState>& state)
     }
 }
 
-void Restore(HWND window, const std::shared_ptr<WindowState>& state)
+HRESULT WriteCloak(HWND window, const std::shared_ptr<WindowState>& state, BOOL cloak, bool restoring)
+{
+    if (state->updatingCloak) return HRESULT_FROM_WIN32(ERROR_BUSY);
+    state->updatingCloak = true;
+    struct ResetFlag { bool& flag; ~ResetFlag() { flag = false; } } reset{state->updatingCloak};
+    HRESULT result = state->cloakWriter ? state->cloakWriter(window, cloak, originalDwm) :
+        originalDwm(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    if (SUCCEEDED(result) && restoring)
+    {
+        DWORD observed = 0;
+        result = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &observed, sizeof(observed));
+        if (SUCCEEDED(result) && ((observed & DWM_CLOAKED_APP) != 0) != (cloak != FALSE))
+            result = HRESULT_FROM_WIN32(ERROR_RETRY);
+    }
+    AutoHideTraceRecord record;
+    record.tick = GetTickCount64(); record.kind = AutoHideTraceKind::CloakWrite;
+    record.threadId = GetCurrentThreadId(); record.taskbar = reinterpret_cast<std::uintptr_t>(window);
+    record.request = cloak; record.flags = result;
+    AppendAutoHideTrace(state->mapping->autoHideTrace, record);
+    return result;
+}
+
+bool Restore(HWND window, const std::shared_ptr<WindowState>& state)
 {
     BOOL cloak;
     bool wasCloaked;
     {
         std::lock_guard lock(state->mutex);
-        wasCloaked = std::exchange(state->cloaked, false);
+        wasCloaked = state->cloaked;
         cloak = state->restoreCloak;
     }
     RestoreAppearance(window, state);
-    if (wasCloaked) originalDwm(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    if (!wasCloaked) return true;
+    const HRESULT result = WriteCloak(window, state, cloak, true);
+    if (FAILED(result))
+    {
+        // The cloak lives in Explorer, beyond the host's lifetime. Keep its
+        // ownership until restoration is confirmed so the timer can retry.
+        InterlockedExchange(&state->mapping->suppressionStatus, kStatusFailed);
+        return false;
+    }
+    { std::lock_guard lock(state->mutex); state->cloaked = false; }
+    return true;
 }
 
 bool UpdateAutoHide(HWND window, const std::shared_ptr<WindowState>& state, bool requested)
@@ -530,10 +564,13 @@ LRESULT CALLBACK Subclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroying = false)
 {
-    Restore(window, state);
+    state->detaching = true;
+    if (!destroying && (state->updatingCloak || state->updatingAutoHide)) return false;
+    const bool cloakRestored = Restore(window, state);
     // If Shell has not accepted the restore yet, retain the owner-thread timer
     // to retry after normal shutdown or owner death. Never retain a dead HWND.
-    if (!UpdateAutoHide(window, state, false) && !destroying) return false;
+    const bool autoHideRestored = UpdateAutoHide(window, state, false);
+    if ((!cloakRestored || !autoHideRestored) && !destroying) return false;
     KillTimer(window, kTimer);
     RemoveWindowSubclass(window, Subclass, kSubclass);
     RemovePropW(window, kAttachedProperty);
@@ -546,8 +583,8 @@ bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroy
 
 bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
 {
-    if (state->updatingAutoHide) return true;
-    if (WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT)
+    if (state->updatingAutoHide || state->updatingCloak) return true;
+    if (state->detaching || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT)
     {
         Detach(window, state);
         return false;
@@ -637,7 +674,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     if (cloakChanged)
     {
         const BOOL value = suppress ? TRUE : restoreCloak;
-        const HRESULT result = originalDwm(window, DWMWA_CLOAK, &value, sizeof(value));
+        const HRESULT result = WriteCloak(window, state, value, !suppress);
         InterlockedExchange(&state->mapping->suppressionStatus,
             FAILED(result) ? kStatusFailed : (snapshot.suppressTaskbar ? kStatusApplied : kStatusIdle));
         if (FAILED(result))
@@ -885,7 +922,8 @@ void ObserveMenuMessage(HWND source, UINT message) noexcept try
 }
 catch (...) {}
 
-bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBarMessage, CursorPosition cursorPosition) try
+bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBarMessage,
+    CursorPosition cursorPosition, CloakWriter cloakWriter) try
 {
     if (auto existing = Find(window)) return Update(window, existing, false);
     DWORD process = 0;
@@ -901,6 +939,7 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     state->primary = wcscmp(name, L"Shell_TrayWnd") == 0;
     state->appBarMessage = appBarMessage;
     state->cursorPosition = cursorPosition ? cursorPosition : &GetCursorPos;
+    state->cloakWriter = cloakWriter;
     state->owner = OpenProcess(SYNCHRONIZE, FALSE, state->ownerId);
     if (!state->owner || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return false;
     HMODULE pinned = nullptr;
