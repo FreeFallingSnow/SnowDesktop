@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <ole2.h>
 #include <mfapi.h>
+#include <mfidl.h>
 #include <mfreadwrite.h>
 #include <wincodec.h>
 #include <wrl/client.h>

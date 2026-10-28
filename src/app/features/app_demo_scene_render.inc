@@ -115,6 +115,20 @@ if (request.component == "demo-scene")
             const float sy = static_cast<float>(to.bottom - to.top) / (from.bottom - from.top);
             return D2D1::Matrix3x2F::Scale(sx, sy) * D2D1::Matrix3x2F::Translation(to.left - from.left * sx, to.top - from.top * sy);
         };
+        const auto fitRect = [](RECT native, RECT box) {
+            if (IsRectEmpty(&native) || IsRectEmpty(&box)) throw std::runtime_error("demo_native_surface_has_no_bounds");
+            const double scale = std::min(static_cast<double>(box.right - box.left) / (native.right - native.left),
+                static_cast<double>(box.bottom - box.top) / (native.bottom - native.top));
+            const auto width = static_cast<LONG>(std::lround((native.right - native.left) * scale));
+            const auto height = static_cast<LONG>(std::lround((native.bottom - native.top) * scale));
+            const LONG x = box.left + (box.right - box.left - width) / 2, y = box.top + (box.bottom - box.top - height) / 2;
+            return RECT{x, y, x + width, y + height};
+        };
+        const auto pointerIn = [&](D2D1_MATRIX_3X2_F transform, const demo_cursor::Pose& cursor) {
+            if (!D2D1InvertMatrix(&transform)) return POINT{-32000, -32000};
+            return POINT{static_cast<LONG>(std::lround(cursor.x * transform._11 + cursor.y * transform._21 + transform._31)),
+                static_cast<LONG>(std::lround(cursor.x * transform._12 + cursor.y * transform._22 + transform._32))};
+        };
         const auto videoPartial = root / L"video.partial.mp4";
         video_writer::Mp4 writer(videoPartial, scene.width, scene.height, scene.fps);
         const auto frameCount = scene.FrameCount(); const unsigned posterFrame = frameCount * 2 / 3;
@@ -135,6 +149,7 @@ if (request.component == "demo-scene")
                 const auto transform = D2D1::Matrix3x2F::Scale(presentation.scale, presentation.scale,
                     D2D1::Point2F((rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f));
                 context->SetTransform(transform);
+                lastMousePoint_ = pointerIn(transform, frame.cursor);
                 if (surface.kind == "status-bar")
                 {
                     material(rect, 0); const auto fill = StatusBarFillAppearance(appearance);
@@ -166,9 +181,12 @@ if (request.component == "demo-scene")
                     quickNavigationSearchText_ = quickNavigationEffectiveSearchText_ = demo::Wide(surface.search);
                     quickNavigationOpenPoint_ = {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
                     quickNavigationRect_ = GetQuickNavigationRect(); quickNavigationHostRect_ = quickNavigationRect_;
-                    quickNavigationLastMousePoint_ = lastMousePoint_; UpdateQuickNavTabWidths();
-                    material(rect, appearance.cornerRadius);
-                    context->SetTransform(mapRect(quickNavigationRect_, rect) * transform); DrawQuickNavigationSurface(context.Get());
+                    const auto fitted = fitRect(quickNavigationRect_, rect);
+                    const float scale = static_cast<float>(fitted.right - fitted.left) / (quickNavigationRect_.right - quickNavigationRect_.left);
+                    material(fitted, navigationSettings_.layout.cornerRadius * scale);
+                    const auto mapped = mapRect(quickNavigationRect_, fitted) * transform;
+                    quickNavigationLastMousePoint_ = pointerIn(mapped, frame.cursor); UpdateQuickNavTabWidths();
+                    context->SetTransform(mapped); DrawQuickNavigationSurface(context.Get());
                     quickNavigationOpen_ = false;
                 }
                 else
@@ -180,8 +198,11 @@ if (request.component == "demo-scene")
                     {
                         popupWidgetIndex_ = indices.at(surface.id); popupHasAnchor_ = popupAnchoredToDock_ = false;
                         collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light; collectionPopupGlassTheme_ = appearance.glassEnabled;
-                        const auto native = GetCollectionPopupRect(widget); material(rect, 18.f);
-                        context->SetTransform(mapRect(native, rect) * transform); DrawCollectionPopup(context.Get(), false);
+                        const auto native = GetCollectionPopupRect(widget); const auto fitted = fitRect(native, rect);
+                        const float scale = static_cast<float>(fitted.right - fitted.left) / (native.right - native.left);
+                        material(fitted, 18.f * scale);
+                        const auto mapped = mapRect(native, fitted) * transform; lastMousePoint_ = pointerIn(mapped, frame.cursor);
+                        context->SetTransform(mapped); DrawCollectionPopup(context.Get(), false);
                         popupWidgetIndex_ = static_cast<std::size_t>(-1);
                     }
                     else
