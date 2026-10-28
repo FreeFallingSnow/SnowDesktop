@@ -24,6 +24,14 @@ Value CaptureValue(const snowdesktop::screen_capture::State& state)
         {"finishedUnixMs", Number(static_cast<double>(state.finishedUnixMs))},
         {"frameTime100ns", String(std::to_string(state.frameTime100ns))}, {"processId", Number(GetCurrentProcessId())}});
 }
+Value SettingsAutomationValue(const snowdesktop::settings_automation::State& state)
+{
+    return Object({{"id", String(state.id)}, {"status", String(state.status)}, {"kind", String(state.kind)},
+        {"error", String(state.error)}, {"elementId", String(state.elementId)}, {"action", String(state.action)},
+        {"elementCount", Number(static_cast<double>(state.elementCount))}, {"truncated", Boolean(state.truncated)},
+        {"startedUnixMs", Number(static_cast<double>(state.startedUnixMs))},
+        {"finishedUnixMs", Number(static_cast<double>(state.finishedUnixMs))}});
+}
 Value WidgetValue(const DesktopWidget& widget, bool grouped)
 {
     const char* type = "unknown";
@@ -89,6 +97,19 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     using namespace snowdesktop::control;
     if (!startupInitializationComplete_ || exitRequested_)
         throw Error("not_ready", "Application is starting or shutting down");
+    if (method == "ui.settingsRefresh")
+    {
+        Fields(params, {}); std::string error;
+        if (!applicationControlRuntime_->settings.Refresh(settingsWindow_ ? settingsWindow_->Window() : nullptr, error))
+            throw Error(error, "Settings tree refresh could not start");
+        return SettingsAutomationValue(applicationControlRuntime_->settings.Current());
+    }
+    if (method == "ui.settingsState")
+    {
+        Fields(params, {"id"}); const auto state = applicationControlRuntime_->settings.Current();
+        if (Text(params, "id") != state.id) throw Error("settings_task_not_found", "This settings task is no longer current");
+        return SettingsAutomationValue(state);
+    }
     if (method == "capture.monitors")
     {
         Fields(params, {}); auto monitors = Array();

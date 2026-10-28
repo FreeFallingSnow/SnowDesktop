@@ -55,6 +55,8 @@ void Protocol()
         "clients can discover the optional monitor-capture extension");
     Check(capabilities->Find("menus") && capabilities->Find("menus")->number == 1,
         "clients can discover visible modern-menu controls");
+    Check(capabilities->Find("settingsAutomation") && capabilities->Find("settingsAutomation")->number == 1,
+        "clients can negotiate the asynchronous settings adapter");
     Check(mutations == 1, "discovery is independent of UI mutations");
     const auto failure = Parse(Dispatch(R"({"jsonrpc":"2.0","id":"old","method":"widgets.place"})",
         [](std::string_view, const Value&) -> Value { throw Error("stale_layout", "refresh required"); }));

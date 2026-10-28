@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app_control_runtime.h"
 #include "platform/control/control_elements.h"
 #include "ui/menu/menu_control_snapshot.h"
 #include "widget/view/widget_accessibility_snapshot.h"
@@ -37,7 +38,7 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
     result.coveredSurfaces = {"desktop-items", "native-widget-frames", "native-widget-members",
         "native-widget-search", "dock-items", "quick-navigation", "lua-accessibility", "modern-menus"};
     result.pendingSurfaces = {"native-widget-extra-chrome-and-category-tabs", "popup-extra-controls",
-        "legacy-system-menus", "settings-window", "system-dialogs-and-external-applications"};
+        "legacy-system-menus", "settings-floating-popups", "system-dialogs-and-external-applications"};
     const auto screen = [&](RECT rect) { OffsetRect(&rect, virtualLeft_, virtualTop_); return rect; };
     const RECT desktop = screen({0, 0, virtualWidth_, virtualHeight_});
     const auto add = [&](std::string id, std::string parent, std::string surface, std::string role,
@@ -247,5 +248,14 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
         }
         result.elements.push_back(std::move(element));
     }
+    const auto settings = applicationControlRuntime_->settings.Elements(settingsWindow_ ? settingsWindow_->Window() : nullptr);
+    if (!settings.empty())
+    {
+        result.coveredSurfaces.push_back("settings-uia-cached");
+        result.elements.insert(result.elements.end(), settings.begin(), settings.end());
+    }
+    else result.pendingSurfaces.push_back("settings-window-needs-refresh");
+    if (applicationControlRuntime_->settings.Current().truncated)
+        result.pendingSurfaces.push_back("settings-traversal-truncated");
     result.Finish(); return result;
 }

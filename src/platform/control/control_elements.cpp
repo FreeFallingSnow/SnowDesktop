@@ -95,7 +95,8 @@ const Element& ElementSnapshot::Resolve(std::string_view id, std::string_view ac
     {
         if (!found->enabled) throw Error("element_disabled", "Element is disabled");
         const auto bounds = VisibleBounds(*found);
-        if (!found->visible || IsRectEmpty(&bounds)) throw Error("element_not_visible", "Element is not visible");
+        const bool revealSettings = found->backend == ElementBackend::Settings && action == "scrollIntoView";
+        if (!revealSettings && (!found->visible || IsRectEmpty(&bounds))) throw Error("element_not_visible", "Element is not visible");
         if (!Supports(*found, action)) throw Error("unsupported_action", "Element does not support this action");
     }
     return *found;

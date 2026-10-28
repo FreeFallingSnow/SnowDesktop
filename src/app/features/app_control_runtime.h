@@ -3,6 +3,7 @@
 #include "ui/input/control_pointer.h"
 #include "ui/render/demo_cursor.h"
 #include "ui/preview/screen_capture.h"
+#include "settings/settings_automation.h"
 
 namespace snowdesktop::app_control
 {
@@ -13,7 +14,8 @@ struct Runtime
     controlled_pointer::Player pointer;
     demo_cursor::Overlay cursor;
     screen_capture::Service capture;
+    settings_automation::Service settings;
     ~Runtime() { Stop(); }
-    void Stop() noexcept { pointer.Stop(); cursor.Hide(); capture.Stop(); }
+    void Stop() noexcept { pointer.Stop(); cursor.Hide(); capture.Stop(); settings.Stop(); }
 };
 }

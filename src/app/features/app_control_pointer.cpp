@@ -68,6 +68,8 @@ snowdesktop::control::Value DesktopApp::PerformApplicationControlElement(const s
     Fields(params, {"elementId", "action", "ifSnapshotRevision", "targetId", "value", "number", "durationMs", "showCursor"});
     const auto action = Text(params, "action");
     const auto id = Text(params, "elementId");
+    if (applicationControlRuntime_->settings.Current().status == "running")
+        throw Error("settings_busy", "Wait for the current settings query or action");
     if (applicationControlRuntime_->pointer.Current().status == "running" || mouseDown_ || dragSession_.IsActive() ||
         widgetAction_ != WidgetAction::None)
         throw Error("busy", "Another pointer or widget operation is active");
@@ -124,7 +126,17 @@ snowdesktop::control::Value DesktopApp::PerformApplicationControlElement(const s
     }
     if (HasActiveContextMenuSession() && element.backend != ElementBackend::MenuText)
         throw Error("busy", "A context menu is active");
-    if (action == "setValue" && element.backend == ElementBackend::MenuText)
+    if (element.backend == ElementBackend::Settings)
+    {
+        std::string error;
+        if (!applicationControlRuntime_->settings.Perform(settingsWindow_ ? settingsWindow_->Window() : nullptr,
+            element, action, action == "setValue" ? InputText(params) : std::wstring{},
+            action == "setRangeValue" ? InputNumber(params) : 0, error))
+            throw Error(error, "Settings action could not start");
+        const auto state = applicationControlRuntime_->settings.Current();
+        return Object({{"status", String("accepted")}, {"kind", String("settings")}, {"id", String(state.id)}});
+    }
+    else if (action == "setValue" && element.backend == ElementBackend::MenuText)
     {
         if (!snowdesktop::modern_menu::SetControlText(element.nodeKey, InputText(params)))
             throw Error("action_rejected", "Menu editor rejected the value or no longer exists");

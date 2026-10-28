@@ -121,6 +121,36 @@ system-menu fallbacks and external dialogs remain outside this menu adapter.
 
 ## Connection
 
+### Settings window automation
+
+Capability `settingsAutomation: 1` adds `ui.settingsRefresh {}` and
+`ui.settingsState {id}`. Open settings normally, request a refresh, and poll its
+task until `completed`. Then `ui.snapshot` includes the cached `settings` surface.
+Refresh is read-only with respect to product settings. It replaces the previous
+settings catalog; one query/action may run at a time. Only the latest task ID is
+retained. `elementCount`, `truncated` and timestamps describe the query boundary.
+The catalog is limited to 256 controls, 32 levels and a five-second traversal
+budget, with UIA connection/transaction timeouts. A partial query is explicit.
+
+`ui.perform` accepts only the patterns advertised by each settings control:
+`invoke`, `toggle`, `select`, `setValue`, `setRangeValue`, `expand`, `collapse`,
+`focus`, `scrollIntoView`, or root-window `close`. It returns
+`{status:"accepted",kind:"settings",id}`; poll `ui.settingsState` for dispatch
+completion, then refresh and assert the desired product state. Pattern success
+alone does not confirm persistence or an asynchronous page transition.
+
+The UIA client runs on a windowless MTA worker and anchors traversal exclusively
+to the owned settings-process HWND supplied by the existing facade. Callers
+cannot supply HWNDs. IDs include process creation time, window and provider runtime
+identity; each action rediscovers its target under that root before dispatch.
+Changed name, value, geometry or state returns `stale_settings_element` rather
+than applying a cached decision to a recycled or independently edited control.
+Password values are omitted and cannot be set through this adapter. Semantic
+actions invalidate the cache. Human edits can also stale a cached query, so take
+an explicit refresh before making decisions. Native desktop elements still use
+their existing synchronous catalog. Settings floating popups outside this root,
+system dialogs and external applications are not covered.
+
 The Windows named pipe is
 `\\.\pipe\SnowDesktop.Control.v1.<sessionId>.<userSid>`.
 Resolve `sessionId` and `userSid` from the caller's Windows process token.

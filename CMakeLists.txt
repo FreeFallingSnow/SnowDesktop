@@ -400,6 +400,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/demo_cursor.h
     src/ui/preview/screen_capture.cpp
     src/ui/preview/screen_capture.h
+    src/settings/settings_automation.cpp
+    src/settings/settings_automation.h
     src/app/navigation/app_quick_navigation_layout.cpp
     src/app/navigation/app_quick_navigation_messages.cpp
     src/app/navigation/app_quick_navigation_model.cpp
@@ -2120,6 +2122,17 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32 advapi32 gdi32
         LABELS contract integration ipc)
+
+    snowdesktop_add_test(
+        SnowDesktopSettingsAutomationTests
+        settings_automation
+        SOURCES tests/settings/settings_automation_tests.cpp
+            src/settings/settings_automation.cpp
+            src/platform/control/control_protocol.cpp
+            src/platform/control/control_elements.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 ole32 oleaut32
+        LABELS contract integration settings)
 
     snowdesktop_add_test(
         SnowDesktopSettingsWindowOpenRulesTests
