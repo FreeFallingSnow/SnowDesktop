@@ -97,10 +97,7 @@ void DesktopApp::OnMouseLeave()
     }
     POINT cursorScreen{};
     const bool cursorValid = GetCursorPos(&cursorScreen) != FALSE;
-    const bool pointerStillInteractsWithDockPreview =
-        dockWindowPreview_ &&
-        dockWindowPreview_->ContainsInteractionPoint(cursorScreen);
-    if (pointerStillInteractsWithDockPreview)
+    if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
         dockWindowPreview_->ScheduleHide();
     else
         HideDockWindowPreview();
@@ -377,9 +374,10 @@ void DesktopApp::ReconcileDesktopHoverState(
     }
 
     desktopHoverForegroundObservedTick_ = foregroundTick;
-    // An external application terminates the Dock-preview bridge even when its
-    // old screen rectangle still contains the cursor.
-    HideDockWindowPreview();
+    // Reconcile through the current preview generation. A foreground handoff
+    // must not manufacture a leave before its first native pointer entry.
+    if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) dockWindowPreview_->ScheduleHide();
+    else HideDockWindowPreview();
     OnMouseLeave();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::ReconcileClear);

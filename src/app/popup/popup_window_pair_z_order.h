@@ -1,9 +1,19 @@
 #pragma once
 
 #include <windows.h>
+#include <dwmapi.h>
 
 namespace snowdesktop::popup_window_pair_z_order
 {
+inline bool SetExcludedFromPeek(HWND contentWindow, HWND backdropWindow, bool excluded)
+{
+    const BOOL value = excluded ? TRUE : FALSE;
+    const bool contentReady = contentWindow && SUCCEEDED(DwmSetWindowAttribute(
+        contentWindow, DWMWA_EXCLUDED_FROM_PEEK, &value, sizeof(value)));
+    const bool backdropReady = !backdropWindow || SUCCEEDED(DwmSetWindowAttribute(
+        backdropWindow, DWMWA_EXCLUDED_FROM_PEEK, &value, sizeof(value)));
+    return contentReady && backdropReady;
+}
 
 inline bool IsTopmost(HWND window)
 {

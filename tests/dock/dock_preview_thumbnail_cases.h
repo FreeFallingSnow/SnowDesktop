@@ -376,6 +376,11 @@ void Run(Check check)
                 check(preview.IsVisible() && preview.GetWindows().size() == 1,
                     "same-group membership refreshes retain the stationary close session without a new native move");
             }
+            closePointer = {oldGroup.right - 6, closedCard.top + 10};
+            preview.ScheduleHide();
+            SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsVisible() && preview.IsAwaitingPointerEntry(),
+                "moving toward the new card inside its entry triangle must not manufacture an initial leave");
             POINT movedFromClose = closePointer;
             ++movedFromClose.x;
             check(!preview.ContainsInteractionPoint(movedFromClose),
@@ -392,10 +397,25 @@ void Run(Check check)
             SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsCleared() && boundary.live.empty(),
                 "leaving the original preview area dismisses the retained group through its real timer");
-            preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
             closePointer = {oldGroup.right - 5, closedCard.top + 10};
+            preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
             SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
-            check(preview.IsCleared(), "a freshly opened group must not inherit the previous close pointer retention");
+            check(preview.IsVisible() && preview.IsAwaitingPointerEntry(),
+                "a fresh group waits for initial entry instead of treating its initial outside sample as a leave");
+            closePointer.x += 1000;
+            preview.ScheduleHide();
+            check(preview.IsCleared(), "excessive deviation from the first-entry triangle still dismisses an unentered group");
+            closePointer = {oldGroup.right - 5, closedCard.top + 10};
+            preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
+            RECT freshBounds{};
+            GetWindowRect(preview.GetWindow(), &freshBounds);
+            closeHitWindow = preview.GetWindow();
+            closePointer = {(freshBounds.left + freshBounds.right) / 2, (freshBounds.top + freshBounds.bottom) / 2};
+            SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(!preview.IsAwaitingPointerEntry(), "a live pointer hit arms the fresh group's subsequent leave");
+            closePointer = {-32000, -32000};
+            SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
+            check(preview.IsCleared(), "only leaving an actually entered fresh group automatically dismisses it");
             preview.Show({{replacement.window, L"replacement"}}, anchor, DockPosition::Bottom, false);
             preview.RemoveWindow(replacement.window);
             check(boundary.live.empty() && preview.IsCleared(),
@@ -498,6 +518,8 @@ void Run(Check check)
                     const RECT close = CalculateDockWindowPreviewCloseButtonRect(client, caseDpi);
                     const LPARAM closePoint = MAKELPARAM((close.left + close.right) / 2, (close.top + close.bottom) / 2);
                     ValidateRect(preview.GetWindow(), nullptr);
+                    closePointer = {(close.left + close.right) / 2, (close.top + close.bottom) / 2};
+                    ClientToScreen(preview.GetWindow(), &closePointer);
                     SendMessageW(preview.GetWindow(), WM_MOUSEMOVE, 0, closePoint);
                     check(GetUpdateRect(preview.GetWindow(), nullptr, FALSE) != FALSE,
                         "hover changes are painted after the bounded leave recovery");
@@ -506,7 +528,7 @@ void Run(Check check)
                     check(closeCallbacks == previousCloses + 1, "single and multiple cards still receive close input after repeated native leave notifications");
                     closeHitWindow = otherTopmost.window;
                     ++closePointer.x;
-                    preview.UpdateAnchor(centeredAnchor, position);
+                    preview.UpdateAnchor(shiftedAnchor, position);
                     SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
                     check(preview.IsCleared(), "an overlapping external surface is a real leave despite matching the card bounding box");
                     closePointer = {-32000, -32000};

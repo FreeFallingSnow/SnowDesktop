@@ -1,15 +1,26 @@
 #pragma once
 
 #include "app/popup/popup_window_pair_z_order.h"
+#include "../platform/native_import_patch.h"
 #include <imm.h>
 
 #include <array>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace snowdesktop::test::dock_pair_transition
 {
 namespace pair = snowdesktop::popup_window_pair_z_order;
+inline std::vector<HWND> peekSurfaces;
+inline HWND rejectedPeekSurface = nullptr;
+inline HRESULT WINAPI SetPeekAttribute(HWND window, DWORD attribute, LPCVOID value, DWORD size)
+{
+    if (attribute != DWMWA_EXCLUDED_FROM_PEEK || size != sizeof(BOOL) || !value || !*static_cast<const BOOL*>(value))
+        return E_INVALIDARG;
+    peekSurfaces.push_back(window);
+    return window == rejectedPeekSurface ? E_FAIL : S_OK;
+}
 
 struct Observation
 {
@@ -75,6 +86,18 @@ void Run(Check check, bool nativeVisibility = false)
         if (check(created, "create test-owned Dock, popup and ordinary application anchor"))
         {
             const auto [dock, glass, popup, popupGlass, anchor] = windows;
+            {
+                NativeImportPatch attribute("DwmSetWindowAttribute", reinterpret_cast<ULONG_PTR>(&SetPeekAttribute));
+                peekSurfaces.clear();
+                rejectedPeekSurface = nullptr;
+                check(pair::SetExcludedFromPeek(dock, glass, true) && peekSurfaces == std::vector<HWND>{dock, glass},
+                    "Peek exclusion always covers both Dock content and glass, preventing a target between native layers");
+                peekSurfaces.clear();
+                rejectedPeekSurface = glass;
+                check(!pair::SetExcludedFromPeek(dock, glass, true) && peekSurfaces.size() == 2,
+                    "a rejected glass exclusion is reported instead of treating content-only exclusion as a complete pair");
+                rejectedPeekSurface = nullptr;
+            }
             Observation observed{{{{dock, glass}, {popup, popupGlass}}}};
             observed.requireVisible = nativeVisibility;
             const auto place = [&](HWND content, HWND backdrop, HWND after, bool topmost, const char* step) {

@@ -2,6 +2,7 @@
 #include "dock_window_preview.h"
 #include "dock_window_preview_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "diagnostics/performance_trace.h"
 
 #include <shellscalingapi.h>
 #include <windowsx.h>
@@ -645,6 +646,26 @@ void DockPreviewHoverController::Reset()
     timerArmed_ = false;
 }
 
+bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance)
+{
+    if (IsRectEmpty(&preview)) return false;
+    tolerance = std::max(0, tolerance);
+    RECT expanded = preview;
+    InflateRect(&expanded, tolerance, tolerance);
+    if (PtInRect(&expanded, point) ||
+        (std::abs(point.x - origin.x) <= tolerance && std::abs(point.y - origin.y) <= tolerance)) return true;
+    const std::array<POINT, 4> corners{{{expanded.left, expanded.top}, {expanded.right, expanded.top},
+        {expanded.right, expanded.bottom}, {expanded.left, expanded.bottom}}};
+    for (size_t index = 0; index < corners.size(); ++index)
+    {
+        const POINT a = corners[index], b = corners[(index + 1) % corners.size()];
+        const auto area = static_cast<long long>(a.x - origin.x) * (b.y - origin.y) -
+            static_cast<long long>(a.y - origin.y) * (b.x - origin.x);
+        if (area != 0 && IsPointInTriangle(point, origin, a, b)) return true;
+    }
+    return false;
+}
+
 DockWindowPreview::~DockWindowPreview()
 {
     CancelPeek();
@@ -729,12 +750,13 @@ void DockWindowPreview::Show(
     RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
     HWND dockLayerOwner)
 {
-    // Live title/membership refreshes still belong to the current group. They
-    // must not turn layout movement into a pointer leave after a close.
+    snowdesktop::performance::Scope trace("dock.preview", "show");
     const bool sameGroup = IsVisible() && std::any_of(items.begin(), items.end(),
         [this](const auto& item) { return IsShowingWindow(item.window); });
-    if (!sameGroup) closeReflowPointerKnown_ = false;
-    CancelPeek();
+    if (!sameGroup) { pointerSession_ = PointerSession::AwaitingEntry; entryOriginKnown_ = false; }
+    const HWND peekTarget = windowPeek_.Active() ? windowPeek_.Target() : peekCandidate_.window;
+    if (!sameGroup || std::none_of(items.begin(), items.end(),
+            [peekTarget](const auto& item) { return item.window == peekTarget; })) CancelPeek();
     peekSurfacesReady_ = false;
     if (!EnsureWindow())
         return;
@@ -868,6 +890,7 @@ void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& it
 
 void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
 {
+    snowdesktop::performance::Scope trace("dock.preview", "layout");
     const int workWidth = std::max(1L,
         monitorWorkArea.right - monitorWorkArea.left);
     const int workHeight = std::max(1L,
@@ -928,6 +951,7 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
 
 void DockWindowPreview::RegisterThumbnails()
 {
+    snowdesktop::performance::Scope trace("dock.preview", "thumbnails.register");
     ReleaseThumbnails(thumbnails_);
     thumbnails_.swap(measuredThumbnails_);
     for (size_t index = 0; index < items_.size(); ++index)
@@ -977,6 +1001,7 @@ void DockWindowPreview::UnregisterThumbnails()
 void DockWindowPreview::UpdateAnchor(
     RECT anchorScreen, DockPosition dockPosition)
 {
+    snowdesktop::performance::Scope trace("dock.preview", "anchor");
     if (!hwnd_ || !IsWindowVisible(hwnd_) ||
         IsRectEmpty(&anchorScreen) ||
         panelSize_.cx <= 0 || panelSize_.cy <= 0)
@@ -1089,7 +1114,8 @@ void DockWindowPreview::RemoveWindow(HWND window)
 void DockWindowPreview::Hide()
 {
     pointerReconcilePending_ = false;
-    closeReflowPointerKnown_ = false;
+    pointerSession_ = PointerSession::AwaitingEntry;
+    entryOriginKnown_ = false;
     if (IsCleared())
         return;
     const bool wasVisible = IsVisible();
@@ -1123,12 +1149,12 @@ void DockWindowPreview::ScheduleHide()
         return;
     POINT pointer{};
     GetCursorPos(&pointer);
-    if (RetainsReflowPointer(pointer))
+    if (IsAwaitingPointerEntry())
     {
-        if (SetTimer(hwnd_, kHideTimerId, kTransitionHideDelayMs, nullptr)) hideTimerArmed_ = true;
+        if (IsPointerInEntryRegion(pointer)) RefreshPointerTracking();
+        else Hide();
         return;
     }
-    closeReflowPointerKnown_ = false;
     const RECT preview = GetBounds();
     if (RectContainsScreenPoint(anchorScreen_, pointer) ||
         RectContainsScreenPoint(preview, pointer))
@@ -1218,20 +1244,12 @@ bool DockWindowPreview::ContainsInteractionPoint(
     const RECT preview = GetBounds();
     return RectContainsScreenPoint(anchorScreen_, screenPoint) ||
         RectContainsScreenPoint(preview, screenPoint) ||
-        RetainsReflowPointer(screenPoint) ||
         IsPointerInTransitionRegion(screenPoint);
-}
-
-bool DockWindowPreview::RetainsReflowPointer(POINT screenPoint) const
-{
-    // Recentring moves the surface, not the user's pointer. Keep the surviving
-    // group until that pointer moves; do not manufacture a leave from layout.
-    return closeReflowPointerKnown_ && closeReflowPointer_.x == screenPoint.x &&
-        closeReflowPointer_.y == screenPoint.y;
 }
 
 void DockWindowPreview::Paint(HWND window)
 {
+    snowdesktop::performance::Scope trace("dock.preview", "paint");
     PAINTSTRUCT paint{};
     HDC dc = BeginPaint(window, &paint);
     if (!dc)
@@ -1425,8 +1443,15 @@ void DockWindowPreview::CancelPeek(bool suppressUntilLeave)
     peekCandidate_ = {};
     peekPendingForeground_ = nullptr;
     peekDue_ = peekLeaveDue_ = 0;
-    const bool stopped = windowPeek_.Stop();
-    windowPins_.SetPeekTarget(stopped ? nullptr : windowPeek_.Target());
+    bool stopped = false;
+    {
+        snowdesktop::performance::Scope trace("dock.preview", "peek.stop");
+        stopped = windowPeek_.Stop();
+    }
+    {
+        snowdesktop::performance::Scope trace("dock.preview", "peek.pins");
+        windowPins_.SetPeekTarget(stopped ? nullptr : windowPeek_.Target());
+    }
     if (peekTimerWindow_) KillTimer(peekTimerWindow_, kPeekTimerId);
     peekTimerWindow_ = nullptr;
     // Even an invisible panel retains its cleanup timer after a rejected stop.
@@ -1444,7 +1469,14 @@ void DockWindowPreview::UpdatePeekTarget(HWND target)
 {
     if (!target)
     {
-        CancelPeek();
+        peekCandidate_ = {};
+        peekDue_ = 0;
+        peekSuppressedWindow_ = nullptr;
+        if (windowPeek_.Active())
+        {
+            if (!peekLeaveDue_) peekLeaveDue_ = GetTickCount64() + 100;
+        }
+        else CancelPeek();
         return;
     }
     if (!windowPeek_.Available() || !peekSurfacesReady_ || peekSuppressedWindow_ == target)
@@ -1523,12 +1555,22 @@ void DockWindowPreview::OnPeekTimer()
         return;
     }
     if (GetTickCount64() < peekDue_) return;
-    windowPins_.SetPeekTarget(peekCandidate_.window);
-    if (!windowPeek_.Begin(peekCandidate_.window, peekOwner_)) CancelPeek(true);
+    {
+        snowdesktop::performance::Scope trace("dock.preview", "peek.pins");
+        windowPins_.SetPeekTarget(peekCandidate_.window);
+    }
+    bool began = false;
+    {
+        snowdesktop::performance::Scope trace("dock.preview", "peek.begin");
+        began = windowPeek_.Begin(peekCandidate_.window, peekOwner_);
+    }
+    if (!began) CancelPeek(true);
 }
 
 void DockWindowPreview::OnMouseMove(HWND window, POINT point)
 {
+    snowdesktop::performance::Scope trace("dock.input", "preview.move");
+    if (CardIndexAtPoint(point) >= 0) pointerSession_ = PointerSession::Entered;
     KeepVisible();
     POINT screen = point;
     const auto index = std::find(windows_.begin(), windows_.end(), window);
@@ -1553,10 +1595,8 @@ void DockWindowPreview::OnMouseMove(HWND window, POINT point)
     const int hoveredClose =
         CloseButtonIndexAtPoint(point);
     const int hoveredPin = PinButtonIndexAtPoint(point);
-    const bool content = hovered >= 0 && static_cast<size_t>(hovered) < thumbnailRects_.size() &&
-        PtInRect(&thumbnailRects_[hovered], point);
-    UpdatePeekTarget(content && hoveredClose < 0 && hoveredPin < 0
-        ? items_[hovered].window : nullptr);
+    if (hoveredClose >= 0 || hoveredPin >= 0) CancelPeek();
+    else UpdatePeekTarget(hovered >= 0 ? items_[hovered].window : nullptr);
     if (hovered != hoveredIndex_ ||
         hoveredClose != hoveredCloseIndex_ || hoveredPin != hoveredPinIndex_)
     {
@@ -1597,8 +1637,12 @@ void DockWindowPreview::ArmPointerTracking(HWND window, POINT screenPoint)
 
 void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
 {
+    snowdesktop::performance::Scope trace("dock.input", "preview.reconcile");
     if (layoutChanged)
     {
+        if (pointerSession_ != PointerSession::AwaitingEntry || !entryOriginKnown_)
+            entryOriginKnown_ = GetCursorPos(&entryOriginScreen_) != FALSE;
+        pointerSession_ = PointerSession::AwaitingEntry;
         if (trackingWindow_)
         {
             TRACKMOUSEEVENT cancel{sizeof(cancel), TME_CANCEL | TME_LEAVE, trackingWindow_, 0};
@@ -1608,7 +1652,6 @@ void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
         trackingWindow_ = retainedLeaveWindow_ = nullptr;
         retainedLeaveRearmed_ = false;
         hoveredIndex_ = hoveredCloseIndex_ = hoveredPinIndex_ = -1;
-        CancelPeek();
         // The geometry can change before User32 finishes its hit-test handoff.
         // Sample now for a stationary initial entry, then once after this
         // native dispatch turn. A stale old-layout leave cannot win that race.
@@ -1633,7 +1676,7 @@ void DockWindowPreview::RefreshPointerTracking(bool layoutChanged)
     trackingMouse_ = false;
     trackingWindow_ = nullptr;
     hoveredIndex_ = hoveredCloseIndex_ = hoveredPinIndex_ = -1;
-    CancelPeek();
+    UpdatePeekTarget(nullptr);
     InvalidatePopups();
     // Relayout can move a card away from a stationary pointer without a new
     // native mouse message. Recheck the new geometry after the normal delay.
@@ -1695,11 +1738,7 @@ void DockWindowPreview::OnMouseLeave(HWND window)
         if (SetTimer(hwnd_, kHideTimerId, kTransitionHideDelayMs, nullptr)) hideTimerArmed_ = true;
         return;
     }
-    peekCandidate_ = {};
-    peekDue_ = 0;
-    peekSuppressedWindow_ = nullptr;
-    if (windowPeek_.Active()) peekLeaveDue_ = GetTickCount64() + 60;
-    else CancelPeek();
+    UpdatePeekTarget(nullptr);
     trackingMouse_ = false;
     trackingWindow_ = nullptr;
     hoveredIndex_ = -1;
@@ -1771,6 +1810,7 @@ void DockWindowPreview::CloseWindowAtIndex(int index)
 {
     CancelPeek(true);
     if (index < 0 || static_cast<size_t>(index) >= items_.size()) return;
+    pointerSession_ = PointerSession::Entered; // Reflow starts a new entry generation after this interaction.
     const HWND target = items_[index].window;
     const HWND foreground = GetForegroundWindow();
     DWORD process = 0;
@@ -1779,7 +1819,6 @@ void DockWindowPreview::CloseWindowAtIndex(int index)
     closeForeground_ = foreground;
     closeSuccessor_ = nullptr;
     closeRetentionUntil_ = (foreground == target || process == GetCurrentProcessId()) ? GetTickCount64() + 2000 : 0;
-    closeReflowPointerKnown_ = items_.size() > 1 && GetCursorPos(&closeReflowPointer_);
     if (items_.size() == 1) Hide();
     else KeepVisible();
     if (closeCallback_ && target && IsWindow(target)) closeCallback_(target);
@@ -1789,12 +1828,21 @@ void DockWindowPreview::HideIfPointerOutside()
 {
     POINT pointer{};
     GetCursorPos(&pointer);
-    if (RetainsReflowPointer(pointer)) return;
-    closeReflowPointerKnown_ = false;
+    if (IsAwaitingPointerEntry())
+    {
+        if (IsPointerInEntryRegion(pointer)) RefreshPointerTracking();
+        else Hide();
+        return;
+    }
     const RECT preview = GetBounds();
     if (RectContainsScreenPoint(preview, pointer) && !PointerWindowAt(pointer))
     {
-        Hide();
+        const bool coveredCard = std::any_of(windows_.begin(), windows_.end(), [pointer](HWND window) {
+            RECT bounds{};
+            return window && GetWindowRect(window, &bounds) && PtInRect(&bounds, pointer);
+        });
+        if (coveredCard) Hide();
+        else RefreshPointerTracking(); // The gap belongs to the logical panel.
         return;
     }
     if (RectContainsScreenPoint(anchorScreen_, pointer) ||
@@ -1833,6 +1881,13 @@ bool DockWindowPreview::IsPointerInTransitionRegion(
         dockPosition_, tolerance);
 }
 
+bool DockWindowPreview::IsPointerInEntryRegion(POINT screenPoint) const
+{
+    if (RectContainsScreenPoint(anchorScreen_, screenPoint)) return true;
+    return entryOriginKnown_ && IsPointInDockPreviewEntryRegion(screenPoint, entryOriginScreen_, GetBounds(),
+        std::max(4, ScaleForDpi(12, dpi_)));
+}
+
 LRESULT CALLBACK DockWindowPreview::WindowProc(
     HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -1868,11 +1923,16 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_MOUSEMOVE:
+    {
         preview->pointerReconcilePending_ = false;
-        preview->OnMouseMove(window, preview->ToLayoutPoint(window, {
-            GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
-        }));
+        // Reflow can leave queued client coordinates from the old geometry.
+        // Only a live hit may complete the new generation's initial entry.
+        POINT screen{};
+        if (GetCursorPos(&screen) && preview->PointerWindowAt(screen) == window && ScreenToClient(window, &screen))
+            preview->OnMouseMove(window, preview->ToLayoutPoint(window, screen));
+        else preview->RefreshPointerTracking();
         return 0;
+    }
     case WM_MOUSELEAVE:
         preview->OnMouseLeave(window);
         return 0;

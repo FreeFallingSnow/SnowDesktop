@@ -158,9 +158,14 @@ void Run(Check report)
             const auto show = [&] {
                 preview.Show({{first.window, L"first"}, {second.window, L"second"}},
                     {0, 0, 30, 30}, DockPosition::Bottom, false);
+                const RECT group = preview.GetBounds();
                 for (HWND popup : preview.GetWindows())
-                    SetWindowPos(popup, nullptr, -16000, -16000, 0, 0,
+                {
+                    RECT card{};
+                    GetWindowRect(popup, &card);
+                    SetWindowPos(popup, nullptr, -16000 + card.left - group.left, -16000 + card.top - group.top, 0, 0,
                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
             };
             const auto hover = [&](size_t index) {
                 RECT card{};
@@ -188,9 +193,27 @@ void Run(Check report)
             const size_t firstCalls = calls.size();
             hover(0);
             check(calls.size() == firstCalls, "movement within one thumbnail does not restart Peek");
+            RECT firstCard{}, secondCard{};
+            GetWindowRect(preview.GetWindows()[0], &firstCard);
+            GetWindowRect(preview.GetWindows()[1], &secondCard);
+            check(secondCard.left > firstCard.right, "Peek switching fixture retains a real gap between native cards");
+            pointerWindow = nullptr;
+            pointerPosition = {(firstCard.right + secondCard.left) / 2, (firstCard.top + firstCard.bottom) / 2};
+            SendPointer(preview.GetWindows()[0], WM_MOUSELEAVE, 0, 0);
+            Wait([] { return false; }, 35);
+            check(Peeking(first.window) && preview.IsVisible() && calls.size() == firstCalls,
+                "crossing the native card gap retains Peek without a stop/restart or closing the group");
             hover(1);
             check(Peeking(second.window) && IsIconic(second.window),
                 "moving to a second thumbnail switches immediately without restoring its source");
+            check(calls.size() == firstCalls + 1 && calls.back().active,
+                "a card-to-card switch issues one direct Peek switch without an intermediate desktop flash");
+            const size_t switchedCalls = calls.size();
+            SendPointer(preview.GetWindows()[1], WM_MOUSEMOVE, 0, MAKELPARAM(20, 10));
+            preview.UpdateItems({{first.window, L"first refreshed"}, {second.window, L"second refreshed"}});
+            check(Peeking(second.window) && calls.size() == switchedCalls,
+                "caption hover and live title/layout reconciliation preserve an existing Peek session");
+            hover(1);
             SendPointer(preview.GetWindows()[0], WM_MOUSELEAVE, 0, 0);
             check(Peeking(second.window), "a late leave from the previous popup cannot cancel its successor");
             const auto& popups = preview.GetWindows();

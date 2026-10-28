@@ -466,6 +466,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     const ULONGLONG layerNow = GetTickCount64();
     (void)ObserveDockPromotionActivation(GetForegroundWindow());
     const HWND layerForeground = GetForegroundWindow();
+    const bool previewAwaitingEntry = dockWindowPreview_ && dockWindowPreview_->IsAwaitingPointerEntry();
     const bool previewCloseForeground = dockWindowPreview_ &&
         dockWindowPreview_->RetainsCloseForeground(layerForeground);
     bool foregroundChangedWhilePromoted = false;
@@ -481,7 +482,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     }
     DWORD foregroundProcess = 0;
     if (layerForeground) GetWindowThreadProcessId(layerForeground, &foregroundProcess);
-    const bool inputHeld = previewInteractionMonitor || previewCloseForeground || dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+    const bool inputHeld = previewInteractionMonitor || previewCloseForeground || previewAwaitingEntry || dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
         HasActiveContextMenuSession() || shellPopupMenuLayerDepth_ > 0 || shellFileOperationInFlight_ > 0 ||
         (dockStartMenu_ && dockStartMenu_->Active()) ||
         (dockWindowTransition_ && dockWindowTransition_->IsActive());
@@ -499,7 +500,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         return;
     }
     ULONGLONG minimizeTick = dockSystemMinimizeStartedTick_.load();
-    bool externalActivation = !previewInteractionMonitor && !previewCloseForeground && snowdesktop::floating_dock_rules::
+    bool externalActivation = !previewInteractionMonitor && !previewCloseForeground && !previewAwaitingEntry && snowdesktop::floating_dock_rules::
         ShouldDismissForForegroundActivation(
             floatingDockVisible_, foregroundChangedWhilePromoted,
             foregroundProcess != 0 && foregroundProcess != GetCurrentProcessId() &&

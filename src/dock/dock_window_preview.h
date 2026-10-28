@@ -55,6 +55,7 @@ bool IsPointInDockPreviewTransitionRegion(
     const RECT& anchorScreen,
     const RECT& previewScreen, DockPosition dockPosition,
     int tolerance);
+bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance);
 
 struct DockPreviewHoverTransition
 {
@@ -139,7 +140,8 @@ public:
     HMONITOR TakePointerInteractionMonitor() { return std::exchange(pointerInteractionMonitor_, nullptr); }
     void ObserveForwardedPointer(UINT message, DWORD time);
     bool RetainsCloseForeground(HWND foreground);
-    void ReleaseCloseRetention() { closeRetentionUntil_ = 0; closeReflowPointerKnown_ = false; }
+    void ReleaseCloseRetention() { closeRetentionUntil_ = 0; }
+    bool IsAwaitingPointerEntry() const { return IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
     void ScheduleHide();
     void KeepVisible();
     bool IsVisible() const;
@@ -182,7 +184,7 @@ private:
     void CancelPeek(bool suppressUntilLeave = false);
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
-    bool RetainsReflowPointer(POINT screenPoint) const;
+    bool IsPointerInEntryRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
     int CloseButtonIndexAtPoint(POINT point) const;
     int PinButtonIndexAtPoint(POINT point) const;
@@ -227,8 +229,10 @@ private:
     HWND closeForeground_ = nullptr;
     HWND closeSuccessor_ = nullptr;
     ULONGLONG closeRetentionUntil_ = 0;
-    POINT closeReflowPointer_{};
-    bool closeReflowPointerKnown_ = false;
+    enum class PointerSession { AwaitingEntry, Entered };
+    PointerSession pointerSession_ = PointerSession::AwaitingEntry;
+    POINT entryOriginScreen_{};
+    bool entryOriginKnown_ = false;
     DockPosition dockPosition_ = DockPosition::Bottom;
     bool lightTheme_ = false;
     bool trackingMouse_ = false;

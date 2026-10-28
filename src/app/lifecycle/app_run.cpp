@@ -650,7 +650,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }, [this] {
                 if (exitRequested_) return;
                 for (const auto& host : persistentDockHosts_)
-                    if (host && host->active) UpdateFloatingDockWindowBounds(*host, false, true);
+                    if (host && host->active)
+                    {
+                        // Both native layers must remain above a Peek target.
+                        // Excluding only the content splits the glass/content pair.
+                        host->backdrop.SetExcludedFromPeek(true);
+                        UpdateFloatingDockWindowBounds(*host, false, true);
+                    }
                 InvalidateDockRects();
             }))
         dockWindowPreview_.reset();

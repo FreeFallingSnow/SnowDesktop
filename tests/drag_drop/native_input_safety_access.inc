@@ -1008,6 +1008,25 @@ end})
         inputSafetyStableExternalIdentity = true;
         inputSafetyExternalIdentityWindow = second;
         InputSafetyImport thread("GetWindowThreadProcessId", reinterpret_cast<ULONG_PTR>(&InputSafetyThread));
+        app->hwnd_ = owner;
+        inputSafetyForeground = second;
+        previewReceiptButton = 0;
+        app->floatingDockVisible_ = host.promoted = host.frameReady = true;
+        host.desktopLayerForegroundWindow = first;
+        SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        preview.Show({{first, L"awaiting entry"}, {second, L"second"}},
+            {0, 0, 20, 20}, DockPosition::Bottom, false, owner);
+        app->floatingDockKeyboardSessionActive_ = app->floatingDockInputDeactivated_ = true;
+        app->UpdateFloatingDockEdgeSwipe();
+        check(host.promoted && preview.IsAwaitingPointerEntry(),
+            "passive foreground/deactivation changes must not close a summoned preview before initial entry");
+        app->OnMouseLeave();
+        app->ReconcileDesktopHoverState(snowdesktop::desktop_hover_rules::ReconcileMode::DeactivateOnly);
+        check(preview.IsVisible() && preview.IsAwaitingPointerEntry(),
+            "Dock host leave and foreground reconciliation must respect the preview's waiting-for-entry state");
+        app->floatingDockKeyboardSessionActive_ = false;
+        app->floatingDockInputDeactivated_ = false;
         inputSafetyForeground = first;
         previewReceiptButton = 0;
         app->floatingDockVisible_ = host.promoted = host.frameReady = true;
