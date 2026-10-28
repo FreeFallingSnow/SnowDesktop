@@ -31,10 +31,10 @@ void TestContainerMenuMatrix()
     {
         const Menu menu = contract::ResolveContainerMenu(
             descriptor.kind);
-        if (descriptor.kind == Surface::External)
+        if (descriptor.kind == Surface::External || descriptor.kind == Surface::SearchResults)
         {
             Check(menu == Menu::None,
-                "external ingress has no container to right-click");
+                "external ingress and search provenance have no separate runtime container to right-click");
             continue;
         }
 

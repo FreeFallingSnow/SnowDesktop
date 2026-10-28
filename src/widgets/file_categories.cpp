@@ -799,7 +799,7 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
     if (!data) return {};
     RECT content = FileCategoryContentRect(widget);
     const auto layout = FileCategoryLocalLayout(widget);
-    int scroll = std::clamp(data->scrollOffset, 0, FileCategoryMaxScrollOffset(widget));
+    int scroll = widget->GetScrollOffset();
 
     if (data->dateHeaders &&
         (!data->showSearchBox || !widget->IsSearchActive()))
@@ -906,7 +906,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 
     RECT content = FileCategoryContentRect(this);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    const int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
+    const int scroll = GetScrollOffset();
 
     if (data_->dateHeaders &&
         (!data_->showSearchBox || searchText_.empty()))
@@ -1370,7 +1370,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         EnsureLayout();
         IDWriteTextFormat* headerFormat = GetCuTextFormat(13.0f, false, false);
         IDWriteTextFormat* lightHeaderFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : nullptr;
-        int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
+        int scroll = GetScrollOffset();
         for (const auto& seg : layoutCache_)
         {
             if (!seg.isHeader) continue;

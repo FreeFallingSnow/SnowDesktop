@@ -581,7 +581,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     if (!data) return {};
     RECT content = FolderMappingContentRect(widget);
     const auto layout = FolderMappingLocalLayout(widget);
-    int scroll = std::clamp(data->scrollOffset, 0, FolderMappingMaxScrollOffset(widget));
+    int scroll = widget->GetScrollOffset();
     if (data->dateHeaders && !widget->IsSearchActive())
     {
         widget->EnsureDateLayout();
@@ -677,9 +677,7 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     const RECT content = FolderMappingContentRect(this);
     const int visibleHeight = std::max<int>(
         1, content.bottom - content.top);
-    const int scroll = std::clamp(
-        data_->scrollOffset, 0,
-        FolderMappingMaxScrollOffset(this));
+    const int scroll = GetScrollOffset();
 
     std::vector<size_t> visibleSlotIndices;
     const auto localLayout = FolderMappingLocalLayout(this);
@@ -1028,8 +1026,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             ? GetCuTextFormatWeight(
                 13.0f, DWRITE_FONT_WEIGHT_LIGHT, false)
             : nullptr;
-        int scroll = std::clamp(
-            data_->scrollOffset, 0, FolderMappingMaxScrollOffset(this));
+        int scroll = GetScrollOffset();
         for (const auto& segment : dateLayoutCache_)
         {
             if (!segment.isHeader) continue;

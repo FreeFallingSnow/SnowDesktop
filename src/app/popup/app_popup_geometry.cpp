@@ -62,7 +62,7 @@ FolderMapping* DesktopApp::GetDateGroupedPopupView(const RECT& popup) const
     if (!view) return nullptr;
     const RECT frame = GetCategorizedPopupFrame(popup);
     view->SetPopupFrame(&frame);
-    view->GetWidgetData()->scrollOffset = popupScrollOffset_;
+    if (!view->IsSearchActive()) view->GetWidgetData()->scrollOffset = popupScrollOffset_;
     return view;
 }
 

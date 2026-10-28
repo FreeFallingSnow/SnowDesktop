@@ -1072,6 +1072,8 @@ bool ScrollingItemWidget::SingleColumn() const
  */
 int ScrollingItemWidget::GetScrollOffset() const
 {
+    EnsureFolderSearch();
+    if (folderSearch_ && !searchText_.empty()) return GetFolderSearchScrollOffset();
     return data_ ? std::clamp(data_->scrollOffset, 0, GetMaxScrollOffset()) : 0;
 }
 
@@ -1397,20 +1399,6 @@ bool ScrollingItemWidget::EraseSearchSelection()
     return true;
 }
 
-namespace
-{
-bool ResetClearedSearchScroll(ScrollingItemWidget& widget)
-{
-    if (!widget.GetSearchText().empty()) return false;
-    auto* root = widget.GetWidgetData();
-    auto* content = widget.GetContentViewData();
-    const bool changed = (root && root->scrollOffset != 0) || (content && content->scrollOffset != 0);
-    if (root) root->scrollOffset = 0;
-    if (content) content->scrollOffset = 0;
-    return changed;
-}
-}
-
 void ScrollingItemWidget::ReplaceSearchSelection(
     const std::wstring& text)
 {
@@ -1422,7 +1410,7 @@ void ScrollingItemWidget::ReplaceSearchSelection(
     searchCursorPos_ += text.size();
     searchSelectionAnchor_ = searchCursorPos_;
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
-    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1436,7 +1424,7 @@ void ScrollingItemWidget::SetSearchText(
     searchSelectionAnchor_ = searchCursorPos_;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
-    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1472,7 +1460,7 @@ void ScrollingItemWidget::BackspaceSearchText(bool word)
         searchSelectionAnchor_ = searchCursorPos_;
     }
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
-    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1489,7 +1477,7 @@ void ScrollingItemWidget::DeleteSearchText(bool word)
         searchSelectionAnchor_ = searchCursorPos_;
     }
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
-    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1504,7 +1492,7 @@ void ScrollingItemWidget::ClearSearchText()
     searchCompositionCursor_ = 0;
     searchFocused_ = false;
     searchPointerSelecting_ = false;
-    if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1606,7 +1594,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
         if (changed)
         {
             ClearSearchComposition();
-            if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+            if (searchText_.empty()) folderSearch_.reset();
             InvalidateSlots();
         }
         return true;
@@ -1666,7 +1654,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
             const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
             EraseSearchSelection();
             searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
-            if (ResetClearedSearchScroll(*this) && app_) app_->RequestLayoutSave();
+            if (searchText_.empty()) folderSearch_.reset();
             InvalidateSlots();
         }
         ClearSearchComposition();

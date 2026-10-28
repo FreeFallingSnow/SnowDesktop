@@ -81,8 +81,8 @@ inline void Run()
         const auto showMember = [&](size_t index) {
             const auto rect = view->GetMemberLayoutRect(index);
             const auto viewport = view->GetContentViewportRect();
-            view->GetWidgetData()->scrollOffset = std::clamp<int>(view->GetScrollOffset() + rect.top - viewport.top,
-                0, view->GetMaxScrollOffset()); view->InvalidateSlots();
+            view->SetFolderSearchScrollOffset(std::clamp<int>(view->GetScrollOffset() + rect.top - viewport.top,
+                0, view->GetMaxScrollOffset())); view->InvalidateSlots();
             const auto visible = view->GetMemberLayoutRect(index);
             return POINT{(visible.left + visible.right) / 2, (visible.top + visible.bottom) / 2};
         };
@@ -105,10 +105,10 @@ inline void Run()
         Require(newlySelected && *newlySelected == std::vector<std::wstring>{selectedPath},
             "right-clicking an unselected result selects that real file before preparing its menu");
         Access::ClearFolderSearchSelection(app);
-        view->GetWidgetData()->scrollOffset = 0; view->InvalidateSlots();
+        view->SetFolderSearchScrollOffset(0); view->InvalidateSlots();
         const RECT originalBounds = view->GetWidgetData()->bounds;
         view->GetWidgetData()->bounds.bottom = originalBounds.top + view->Cu(180.0f);
-        view->GetWidgetData()->scrollOffset = view->GetMaxScrollOffset();
+        view->SetFolderSearchScrollOffset(view->GetMaxScrollOffset());
         view->InvalidateSlots();
         const auto& scrolled = view->GetSlots();
         const RECT viewport = view->GetContentViewportRect();
@@ -126,7 +126,7 @@ inline void Run()
             "marquee uses the same source-header offsets as scrolled native hit slots");
         Access::ClearFolderSearchSelection(app);
         view->GetWidgetData()->bounds = originalBounds;
-        view->GetWidgetData()->scrollOffset = 0;
+        view->SetFolderSearchScrollOffset(0);
         view->InvalidateSlots();
         for (const auto& widget : original)
         {
@@ -211,13 +211,27 @@ inline void Pagination()
             surface == 0 ? DesktopWidgetType::FileCategories : DesktopWidgetType::FolderMapping, true, false);
         const auto id = surface == 2 ? L"ordered-group" : L"ordered";
         auto view = [&]() { return dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, id)); };
-        Access::SetFolderSearchBoundary(*view(), [answers](const std::wstring&, DWORD) {
+        const auto provider = [answers](const std::wstring&, DWORD) {
             snowdesktop::QuickNavigationEverythingSearchResponse response;
             for (const auto& file : answers) response.results.push_back({file.filename().wstring(), file.wstring(), {}, false});
             return response;
-        });
+        };
+        Access::SetFolderSearchBoundary(*view(), provider);
+        view()->GetWidgetData()->scrollOffset = 137;
+        if (auto* group = dynamic_cast<FileGroup*>(view()))
+            group->GetActiveSourceContainer()->GetWidgetData()->scrollOffset = 91;
         view()->SetSearchText(L"needle"); view()->SetSearchFocused(true); view()->SetSearchCursorPosition(3);
         native_drag_async_reload_cases::Wait([&] { return !Access::FolderSearchPending(*view()); }, "pagination query completes");
+        Require(view()->GetScrollOffset() == 0 && view()->GetWidgetData()->scrollOffset == 137,
+            "a new search starts at the top without replacing the component's stored content position");
+        Access::WheelFolderSearch(app, *view(), -WHEEL_DELTA);
+        Require(view()->GetScrollOffset() == 60 && view()->GetWidgetData()->scrollOffset == 137,
+            "the actual mouse-wheel router scrolls results without writing the component's offset");
+        view()->SetFolderSearchScrollOffset(0);
+        Access::RevealFolderSearch(app, *view(), view()->GetSlotCount() - 1);
+        Require(view()->GetScrollOffset() > 0 && view()->GetWidgetData()->scrollOffset == 137,
+            "actual keyboard reveal scrolls the result view instead of the stored component");
+        view()->SetFolderSearchScrollOffset(0);
         const auto sections = Access::FolderSearchSections(*view());
         Require(sections.size() == (surface == 2 ? 4u : 2u), "every source keeps separate direct and recursive sections");
         for (const auto& section : sections) Require(section.count == 20, "each title initially exposes exactly twenty items");
@@ -229,8 +243,8 @@ inline void Pagination()
         const auto expand = [&] {
             const RECT before = view()->GetFolderSearchMoreRect(index);
             const RECT viewport = view()->GetContentViewportRect();
-            view()->GetWidgetData()->scrollOffset = std::clamp<int>(view()->GetScrollOffset() + before.top - viewport.top,
-                0, view()->GetMaxScrollOffset()); view()->InvalidateSlots();
+            view()->SetFolderSearchScrollOffset(std::clamp<int>(view()->GetScrollOffset() + before.top - viewport.top,
+                0, view()->GetMaxScrollOffset())); view()->InvalidateSlots();
             const RECT button = view()->GetFolderSearchMoreRect(index);
             const POINT point{(button.left + button.right) / 2, (button.top + button.bottom) / 2};
             Require(view()->HitTestWidget(point) == WidgetHit::SearchMoreBtn, "expansion footer is a real button, never a file slot");
@@ -243,36 +257,47 @@ inline void Pagination()
         expand();
         Require(Access::FolderSearchSections(*view())[index].count == 40, "first expansion adds exactly twenty");
         Require(Access::FolderSearchSections(*view())[0].count == 20, "expanding one title does not expand its neighbor");
+        const int searchScroll = view()->GetScrollOffset();
         Access::RebuildFolderSearch(app);
         Require(view()->GetSearchText() == L"needle" && view()->GetSearchCursorPosition() == 3 && view()->IsSearchFocused(),
             "container rebuild preserves query, cursor and focus");
         native_drag_async_reload_cases::Wait([&] { return !Access::FolderSearchPending(*view()); }, "rebuild refreshes the preserved query");
         Require(Access::FolderSearchSections(*view())[index].count == 40, "refresh preserves independent expansion limits");
+        Require(view()->GetScrollOffset() == searchScroll && view()->GetWidgetData()->scrollOffset == 137,
+            "runtime rebuild preserves search scroll and leaves ordinary component scroll untouched");
+        Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
+        native_drag_async_reload_cases::Wait([&] { return !Access::FolderSearchPending(*view()); }, "actual refresh completes the retained search");
+        Require(view()->GetScrollOffset() == searchScroll && Access::FolderSearchSections(*view())[index].count == 40 &&
+            view()->GetWidgetData()->scrollOffset == 137, "actual asynchronous refresh retains search scroll, expansion and ordinary component offset independently");
+        Access::UnbindAsync(app);
         expand();
         Require(Access::FolderSearchSections(*view())[index].count == 45 && IsRectEmptyRect(view()->GetFolderSearchMoreRect(index)),
             "last expansion reveals only the remaining five and removes the footer");
-        Require(view()->GetWidgetData()->scrollOffset > 0, "clear-scroll regression starts from the actually scrolled search results");
-        if (auto* group = dynamic_cast<FileGroup*>(view()))
-            group->GetActiveSourceContainer()->GetWidgetData()->scrollOffset = 91;
+        Require(view()->GetScrollOffset() > 0, "reset regression starts from actually scrolled search results");
+        const int ordinaryContentScroll = surface == 2 ? 91 : 137;
         view()->ClearSearchText();
-        Require(view()->GetWidgetData()->scrollOffset == 0 && view()->GetScrollOffset() == 0,
-            "clearing the search resets persisted content scroll instead of carrying result position into normal contents");
-        Require(view()->GetContentViewData()->scrollOffset == 0, "clearing a file group also resets the active hosted source's content scroll");
-        Require(!view()->UsesFolderSearch(), "explicit clear exits result mode");
+        Require(!view()->UsesFolderSearch() && view()->GetWidgetData()->scrollOffset == 137 &&
+            view()->GetContentViewData()->scrollOffset == ordinaryContentScroll,
+            "clearing search discards only search state and preserves both ordinary component and active-source offsets");
         for (int clear = 0; clear < 3; ++clear)
         {
-            view()->SetSearchText(L"needle"); view()->GetWidgetData()->scrollOffset = 123;
+            Access::SetFolderSearchBoundary(*view(), provider);
+            view()->SetSearchText(L"needle"); view()->EnsureFolderSearch();
+            Require(view()->GetScrollOffset() == 0 && view()->GetWidgetData()->scrollOffset == 137,
+                "the same query after clearing never inherits the previous search's offset");
+            view()->SetFolderSearchScrollOffset(123);
             if (clear == 0) view()->SetSearchText(L"");
             else if (clear == 1) view()->BackspaceSearchText(true);
             else { view()->SetSearchCursorPosition(0); view()->DeleteSearchText(true); }
-            Require(view()->GetSearchText().empty() && view()->GetWidgetData()->scrollOffset == 0,
-                "setting empty text and deleting all text in either direction also clears stored scroll");
+            Require(view()->GetSearchText().empty() && view()->GetWidgetData()->scrollOffset == 137,
+                "deleting or setting empty query text does not clear the component's own scroll data");
         }
-        Require(Access::Save(app), "persist the cleared search scroll through the actual layout store");
+        Require(Access::Save(app), "save ordinary component scroll independently of discarded search scroll");
         view()->GetWidgetData()->scrollOffset = 99;
         Access::Load(app); Access::RebuildFolderSearch(app);
-        Require(view()->GetWidgetData()->scrollOffset == 0 && view()->GetContentViewData()->scrollOffset == 0,
-            "layout reload does not revive the cleared search's content offset");
+        Require(view()->GetWidgetData()->scrollOffset == 137 && view()->GetContentViewData()->scrollOffset == ordinaryContentScroll,
+            "layout reload preserves ordinary scroll without persisting a search offset over it");
         Access::StopModel(app);
         for (const auto& file : direct) { std::error_code error; fs::remove_all(file, error); }
     }

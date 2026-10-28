@@ -356,6 +356,10 @@ DragSourceList DesktopApp::BuildDragSourceList(
                 const_cast<DesktopApp*>(this));
             entry.item = entry.retainedItem.get();
         }
+        std::unordered_set<std::wstring> paths;
+        std::erase_if(list.entries, [&](const auto& entry) {
+            return !entry.filePath.empty() && !paths.insert(ToUpperInvariant(entry.filePath)).second;
+        });
         list.BindRuntimeOrigin(list.origin);
     }
     return list;

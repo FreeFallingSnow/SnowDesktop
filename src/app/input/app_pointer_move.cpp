@@ -505,10 +505,12 @@ void DesktopApp::OnMouseMoveAt(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
                     popupScrollbarDragStartOffset_, GetOpenCollectionPopupLayoutMetrics().scale);
-            popupScrollOffset_ = snowdesktop::widget_scroll_rules::
+            const int scroll = snowdesktop::widget_scroll_rules::
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,
                     current.y - popupScrollbarDragStartY_, geometry);
+            auto* search = GetCategorizedPopupView();
+            if (!search || !search->SetFolderSearchScrollOffset(scroll)) popupScrollOffset_ = scroll;
             (void)PresentDesktopForegroundComposition(popup);
         }
         return;
@@ -529,10 +531,10 @@ void DesktopApp::OnMouseMoveAt(
                 container->GetCellScale());
         if (data)
         {
-            data->scrollOffset = snowdesktop::widget_scroll_rules::
-                ApplyScrollbarThumbDrag(
-                    widgetScrollbarDragStartOffset_,
-                    current.y - widgetScrollbarDragStartY_, geometry);
+            const int next = snowdesktop::widget_scroll_rules::ApplyScrollbarThumbDrag(
+                widgetScrollbarDragStartOffset_, current.y - widgetScrollbarDragStartY_, geometry);
+            auto* search = dynamic_cast<ScrollingItemWidget*>(container);
+            if (!search || !search->SetFolderSearchScrollOffset(next)) data->scrollOffset = next;
             if (auto* group = dynamic_cast<FileGroup*>(container))
                 group->InvalidateHostedView();
             else

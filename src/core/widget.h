@@ -427,6 +427,8 @@ public:
     size_t FolderSearchCount() const;
     RECT FolderSearchItemRect(size_t index) const;
     int FolderSearchContentHeight() const;
+    int GetFolderSearchScrollOffset() const;
+    bool SetFolderSearchScrollOffset(int offset);
     std::vector<std::unique_ptr<Slot>> BuildFolderSearchSlots();
     Item* FolderSearchItem(size_t index, bool dragCache) const;
     std::vector<size_t> FolderSearchSelectedIndices() const;

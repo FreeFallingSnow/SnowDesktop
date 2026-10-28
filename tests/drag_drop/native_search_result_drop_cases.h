@@ -74,8 +74,23 @@ inline void Run()
         Require(view()->GetSearchText() == L"needle", "drag completion keeps the search query");
         native_drag_async_reload_cases::Refresh(app);
         Require(view()->GetSearchText() == L"needle", "explicit asynchronous refresh keeps the query");
-        native_drag_async_reload_cases::Wait([&] { return !Access::FolderSearchPending(*view()); }, "preserved search refreshes its results");
-        Require(view()->GetSlotCount() == (target == 3 ? move ? 1u : 2u : move ? 0u : 1u),
+        const size_t expectedCount = target == 3 ? move ? 1u : 2u : move ? 0u : 1u;
+        try
+        {
+            native_drag_async_reload_cases::Wait([&] {
+                const auto count = view()->GetSlotCount();
+                return !Access::FolderSearchPending(*view()) && count == expectedCount;
+            }, "preserved search must settle with the actual post-operation file set");
+        }
+        catch (...)
+        {
+            std::cerr << "search refreshed count=" << view()->GetSlotCount() << " expected=" << expectedCount
+                << " pending=" << Access::FolderSearchPending(*view()) << '\n';
+            for (size_t i = 0; i < view()->GetSlotCount(); ++i)
+                if (const auto* item = view()->GetMemberItem(i)) std::cerr << WideToUtf8(item->GetPath()) << '\n';
+            throw;
+        }
+        Require(view()->GetSlotCount() == expectedCount,
             "refresh removes moved recursive results, retains originals for copy/link and includes new direct members at the source target");
         if (target == 2)
         {
@@ -86,6 +101,39 @@ inline void Run()
         }
         Access::UnbindAsync(app); Access::StopModel(app);
         fs::remove(output); fs::remove_all(sourceRoot);
+    }
+    {
+        context = "overlapping project search references commit one physical file";
+        const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop;
+        const auto project = desktop / L"overlap-project";
+        const auto file = project / L"nested" / L"overlap-needle.txt";
+        fs::create_directories(file.parent_path());
+        { std::ofstream stream(file); stream << "unique-reference"; }
+        auto& app = profile.Model(false, profile.root / L"overlap-layout");
+        Access::SeedSearchTypeSurface(app, {project}, project, true);
+        Access::PrepareReload(app); Access::BindAsync(app);
+        auto* view = dynamic_cast<ScrollingItemWidget*>(Access::MemberContainer(app, L"ordered-group"));
+        Access::SetFolderSearchBoundary(*view, [file](const std::wstring&, DWORD) {
+            snowdesktop::QuickNavigationEverythingSearchResponse response;
+            response.results.push_back({file.filename().wstring(), file.wstring(), {}, false}); return response;
+        });
+        view->SetSearchText(L"needle");
+        native_drag_async_reload_cases::Wait([&] { return !Access::FolderSearchPending(*view); }, "overlapping project query settles");
+        Require(view->GetSlotCount() == 2, "two real sources can each present the same descendant");
+        for (size_t i = 0; i < 2; ++i) view->GetMemberItem(i)->SetSelected(true);
+        const auto captured = Access::BeginSearchDrop(app, *view, {850, 650}, MK_CONTROL);
+        Require(captured.entries.size() == 1 && captured.entries.front().filePath == file.wstring(),
+            "the physical drag deduplicates selected references without changing the original file identity");
+        Require(!Access::ObserveModelPreview(app, {850, 650}, MK_CONTROL).Empty(), "deduplicated search selection resolves its native target");
+        Access::SubmitSearchDrop(app, MK_CONTROL);
+        native_drag_async_reload_cases::Wait([&] { return Access::FileDropIdle(app); }, "deduplicated actual Shell copy completes");
+        size_t copies = 0;
+        for (const auto& entry : fs::directory_iterator(desktop))
+            if (entry.is_regular_file() && entry.path().filename().wstring().starts_with(L"overlap-needle")) ++copies;
+        Require(copies == 1 && Read(desktop / file.filename()) == "unique-reference" && Read(file) == "unique-reference",
+            "two selected search references create exactly one correct destination and retain the source on copy");
+        Access::UnbindAsync(app); Access::StopModel(app);
+        fs::remove(desktop / file.filename()); fs::remove_all(project); ++scenes;
     }
     std::cout << scenes << " actual recursive-search file transactions passed\n";
 }

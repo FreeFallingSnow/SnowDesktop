@@ -162,6 +162,7 @@ void ScrollingItemWidget::EnsureFolderSearch() const
         {
             state.rows.clear(); state.allRows.clear(); state.sections.clear(); state.results.clear();
             state.visibleLimits.clear();
+            state.scrollOffset = 0;
         }
         const_cast<ScrollingItemWidget*>(this)->InvalidateSlots();
         state.available = sameQuery && state.available;
@@ -375,6 +376,25 @@ bool ScrollingItemWidget::UsesFolderSearch() const
 
 size_t ScrollingItemWidget::FolderSearchCount() const { return folderSearch_->rows.size(); }
 
+int ScrollingItemWidget::GetFolderSearchScrollOffset() const
+{
+    if (!folderSearch_) return 0;
+    const int maximum = folderSearch_->available || folderSearch_->pending
+        ? std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f))
+        : GetMaxScrollOffset();
+    return std::clamp(folderSearch_->scrollOffset, 0, maximum);
+}
+
+bool ScrollingItemWidget::SetFolderSearchScrollOffset(int offset)
+{
+    EnsureFolderSearch();
+    if (!folderSearch_ || searchText_.empty()) return false;
+    folderSearch_->scrollOffset = std::max(0, offset);
+    folderSearch_->scrollOffset = GetFolderSearchScrollOffset();
+    InvalidateSlots();
+    return true;
+}
+
 int ScrollingItemWidget::FolderSearchContentHeight() const
 {
     int height = 0;
@@ -393,8 +413,7 @@ RECT ScrollingItemWidget::FolderSearchItemRect(size_t index) const
     int y = 0;
     // Geometry must not re-enter UsesFolderSearch/scan source membership for
     // every result while materializing slots or extending a marquee.
-    const int scroll = std::clamp(data_->scrollOffset, 0,
-        std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f)));
+    const int scroll = GetFolderSearchScrollOffset();
     for (const auto& section : folderSearch_->sections)
     {
         const auto layout = SearchLayout(*this, section.recursive);

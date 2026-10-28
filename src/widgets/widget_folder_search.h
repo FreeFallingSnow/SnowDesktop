@@ -55,6 +55,7 @@ struct WidgetFolderSearchState
     // Inject only the external SDK boundary in native integration tests.
     QuickNavigationEverythingSearchAsync::SearchFunction search;
     std::uint64_t generation = 0;
+    int scrollOffset = 0;
     bool available = false;
     bool pending = false;
     bool refreshRequested = false;

@@ -969,10 +969,12 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
                     popupScrollbarDragStartOffset_, GetOpenCollectionPopupLayoutMetrics().scale);
-            popupScrollOffset_ = snowdesktop::widget_scroll_rules::
+            const int scroll = snowdesktop::widget_scroll_rules::
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,
                     upPoint.y - popupScrollbarDragStartY_, geometry);
+            auto* search = GetCategorizedPopupView();
+            if (!search || !search->SetFolderSearchScrollOffset(scroll)) popupScrollOffset_ = scroll;
         }
         popupScrollbarDragging_ = false;
         mouseDown_ = false;
@@ -997,11 +999,10 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     visible + maximum, visible,
                     widgetScrollbarDragStartOffset_,
                     container->GetCellScale());
-            container->GetWidgetData()->scrollOffset =
-                snowdesktop::widget_scroll_rules::
-                    ApplyScrollbarThumbDrag(
-                        widgetScrollbarDragStartOffset_,
-                        upPoint.y - widgetScrollbarDragStartY_, geometry);
+            const int next = snowdesktop::widget_scroll_rules::ApplyScrollbarThumbDrag(
+                widgetScrollbarDragStartOffset_, upPoint.y - widgetScrollbarDragStartY_, geometry);
+            auto* search = dynamic_cast<ScrollingItemWidget*>(container);
+            if (!search || !search->SetFolderSearchScrollOffset(next)) container->GetWidgetData()->scrollOffset = next;
             if (auto* group = dynamic_cast<FileGroup*>(container))
                 group->InvalidateHostedView();
             else

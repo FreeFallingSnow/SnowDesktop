@@ -435,9 +435,7 @@ RECT FileGroupSearchItemRect(
     DesktopWidget* data =
         group ? group->GetWidgetData() : nullptr;
     if (!data) return {};
-    const int scroll = std::clamp(
-        data->scrollOffset, 0,
-        group->GetMaxScrollOffset());
+    const int scroll = group->GetScrollOffset();
     return snowdesktop::widget_item_layout::ItemRect(
         FileGroupSearchLocalLayout(group), index, scroll);
 }
@@ -1085,9 +1083,7 @@ std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
         RECT content = GetContentViewportRect();
         const int visibleHeight = std::max<int>(
             1, content.bottom - content.top);
-        const int scroll = std::clamp(
-            data_->scrollOffset, 0,
-            GetMaxScrollOffset());
+        const int scroll = GetScrollOffset();
         const auto range = snowdesktop::widget_item_layout::VisibleRange(
             FileGroupSearchLocalLayout(this), results.size(),
             scroll, visibleHeight);

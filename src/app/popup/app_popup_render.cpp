@@ -56,8 +56,10 @@ void DesktopApp::DrawCollectionPopup(
         return color;
     };
     popupRect_ = GetCollectionPopupRect(widget);
-    popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
-        GetCollectionPopupMaxScrollOffset(widget, popupRect_));
+    auto* offsetView = GetCategorizedPopupView();
+    if (!offsetView || !offsetView->IsSearchActive())
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+            GetCollectionPopupMaxScrollOffset(widget, popupRect_));
 
     const auto animation =
         popupAnimation_.GetVisual();
@@ -652,9 +654,12 @@ void DesktopApp::DrawCollectionPopup(
         popupAnimation_.IsInteractive() &&
         PtInRect(&popupRect_, lastMousePoint_);
     popupHovered = popupHovered || popupScrollbarDragging_;
+    auto* searchPopup = GetCategorizedPopupView();
+    const int contentScroll = searchPopup && searchPopup->IsSearchActive()
+        ? searchPopup->GetScrollOffset() : popupScrollOffset_;
     if (!fan) DrawScrollbarAt(
         ctx, snowdesktop::popup_scrollbar_layout::Viewport(popupRect_, content), contentHeight, visibleHeight,
-        popupScrollOffset_, popupHovered,
+        contentScroll, popupHovered,
         collectionPopupLightTheme_, popupMetrics.scale);
 
     if (!fan) (void)DrawWidgetPanelEdgeHighlight(

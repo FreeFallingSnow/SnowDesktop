@@ -383,8 +383,9 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
 
     auto applyScroll = [&](int scroll) {
         scroll = std::clamp(scroll, 0, maxScroll);
-        if (scroll == widget.scrollOffset) return;
-        widget.scrollOffset = scroll;
+        if (scroll == wc->GetScrollOffset()) return;
+        auto* search = dynamic_cast<ScrollingItemWidget*>(wc);
+        if (!search || !search->SetFolderSearchScrollOffset(scroll)) widget.scrollOffset = scroll;
         if (auto* group = dynamic_cast<FileGroup*>(wc))
             group->InvalidateHostedView();
         else
@@ -401,7 +402,7 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
     {
         applyScroll(snowdesktop::widget_item_layout::
             ScrollOffsetToReveal(viewport, target,
-                widget.scrollOffset, maxScroll));
+                wc->GetScrollOffset(), maxScroll));
         return;
     }
 
@@ -529,7 +530,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             {
                 widget.activeCategoryId =
                     sourceIds[index];
-                widget.scrollOffset = 0;
+                if (!group->SetFolderSearchScrollOffset(0)) widget.scrollOffset = 0;
                 group->InvalidateHostedView();
             }
             const size_t childIndex =

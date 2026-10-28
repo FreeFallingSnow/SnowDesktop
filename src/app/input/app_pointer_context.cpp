@@ -983,7 +983,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                         childIds.begin(), childIt));
         ClearSelection();
         widgets_[groupIndex].activeCategoryId = childId;
-        widgets_[groupIndex].scrollOffset = 0;
+        if (!group->SetFolderSearchScrollOffset(0)) widgets_[groupIndex].scrollOffset = 0;
         widgets_[childIndex].selected = true;
         group->InvalidateHostedView();
         group->EnsureSourceTabVisible(tabIndex);

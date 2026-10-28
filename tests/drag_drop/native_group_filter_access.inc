@@ -248,6 +248,17 @@
             });
     }
     static void RebuildFolderSearch(DesktopApp& app) { app.RebuildContainersAndItems(); }
+    static void WheelFolderSearch(DesktopApp& app, ScrollingItemWidget& view, int delta)
+    {
+        const RECT viewport = view.GetContentViewportRect();
+        POINT point{(viewport.left + viewport.right) / 2, (viewport.top + viewport.bottom) / 2};
+        ClientToScreen(app.hwnd_, &point);
+        app.OnMouseWheel(MAKEWPARAM(0, delta), MAKELPARAM(point.x, point.y));
+    }
+    static void RevealFolderSearch(DesktopApp& app, ScrollingItemWidget& view, size_t index)
+    {
+        app.ScrollWidgetToMember(app.FindWidgetIndexById(view.GetWidgetData()->id), static_cast<int>(index));
+    }
     static void AddSearchDropTarget(DesktopApp& app, const std::filesystem::path& mapped, int kind)
     {
         // Release wrappers before growing their model vector.

@@ -383,17 +383,20 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
+            auto* searchPopup = GetCategorizedPopupView();
+            const int scroll = searchPopup && searchPopup->IsSearchActive()
+                ? searchPopup->GetScrollOffset() : popupScrollOffset_;
             const auto geometry = snowdesktop::widget_scroll_rules::
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollOffset_, scrollbarScale);
+                    scroll, scrollbarScale);
             if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
                     geometry, pt.y, pt.x, viewport.right, scrollbarScale))
             {
                 popupScrollbarDragging_ = true;
                 popupScrollbarDragStartY_ = pt.y;
-                popupScrollbarDragStartOffset_ = popupScrollOffset_;
+                popupScrollbarDragStartOffset_ = scroll;
                 mouseDownHit_ = nullptr;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, &popup, FALSE);
@@ -1290,7 +1293,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (!id.empty())
             {
                 widgets_[wi].activeCategoryId = id;
-                widgets_[wi].scrollOffset = 0;
+                if (!group->SetFolderSearchScrollOffset(0)) widgets_[wi].scrollOffset = 0;
                 group->InvalidateHostedView();
                 ClearSelection();
                 const size_t childIndex =
