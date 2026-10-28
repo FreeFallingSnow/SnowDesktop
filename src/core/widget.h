@@ -43,6 +43,7 @@ struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
 class WidgetEngine;
+namespace snowdesktop { struct WidgetFolderSearchState; }
 struct GridPage;
 namespace snowdesktop
 {
@@ -317,6 +318,8 @@ struct ListItemDetails
 
 class ScrollingItemWidget : public WidgetContainer
 {
+    friend struct NativeDragIntegrationAccess;
+    friend class DesktopApp;
 public:
     using WidgetContainer::WidgetContainer;
 
@@ -406,6 +409,19 @@ public:
     bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
+    // Runtime-only search results; never added to persisted folder contents.
+    bool UsesFolderSearch() const;
+    void EnsureFolderSearch() const;
+    size_t FolderSearchCount() const;
+    RECT FolderSearchItemRect(size_t index) const;
+    int FolderSearchContentHeight() const;
+    std::vector<std::unique_ptr<Slot>> BuildFolderSearchSlots();
+    Item* FolderSearchItem(size_t index, bool dragCache) const;
+    std::vector<size_t> FolderSearchSelectedIndices() const;
+    std::vector<Item*> FolderSearchSelectedItems() const;
+    void ApplyFolderSearchMarquee(const RECT& contentRect);
+    void DrawFolderSearch(ID2D1DeviceContext* context);
+    std::wstring FolderSearchSourceId(const Item* item) const;
     void DrawSearchBox(ID2D1DeviceContext* context);
     /** @brief 分类滚动组件共用的搜索框布局。 */
     RECT GetCategorizedSearchBoxRect(bool visible) const;
@@ -471,6 +487,7 @@ public:
     BarStyle GetInsertionStyle() const override;
 
 protected:
+    mutable std::shared_ptr<snowdesktop::WidgetFolderSearchState> folderSearch_;
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     snowdesktop::ScrollContentFadeCache tabContentFadeCache_;
     std::wstring searchText_;
@@ -1011,6 +1028,7 @@ private:
     // Desktop selection uses the complete filtered list, including rows that
     // have no materialized Slot while outside the scrolling viewport.
     friend class DesktopApp;
+    friend class ScrollingItemWidget;
 
     const std::vector<SearchResultRef>&
         GetGroupSearchResults() const;

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "app/dock/dock_running_drag_state.h"
@@ -1148,6 +1149,7 @@ struct NativeDragIntegrationAccess
 #include "native_owned_content_cases.h"
 #include "native_owned_content_rejection_cases.h"
 #include "native_group_filter_cases.h"
+#include "native_group_folder_search_cases.h"
 #include "native_popup_request_cases.h"
 #include "native_ole_pending_cases.h"
 #include "native_dock_partition_cases.h"
@@ -1289,6 +1291,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--owned-content-cancel") native_owned_content_cases::Run(argv[2], true);
         else if (argc == 3 && std::string_view(argv[1]) == "--group-filter") native_group_filter_cases::RunFiltered(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--group-type") native_group_filter_cases::RunType(argv[2]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--widget-folder-search") native_group_folder_search_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--group-type-search") native_group_filter_cases::RunTypeSearch();
         else if (argc == 2 && std::string_view(argv[1]) == "--group-dwell") native_group_filter_cases::RunDwell();
         else if (argc == 2 && std::string_view(argv[1]) == "--group-dwell-category") native_group_filter_cases::RunCategoryDwell();

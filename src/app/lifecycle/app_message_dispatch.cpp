@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "app/dock/dock_input_diagnostics.h"
@@ -113,6 +114,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(source))
                 KeepDockTopmostForAction(target->anchor, dockSettings_.summonOnAppMinimize);
         return 1;
+    }
+    if (msg >= 0xC000 && msg == snowdesktop::WidgetFolderSearchReadyMessage())
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        return 0;
     }
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
         return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;

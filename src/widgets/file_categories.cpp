@@ -636,6 +636,7 @@ RECT FileCategories::GetContentViewportRect() const
 
 void FileCategories::ApplyMarqueeSelection(const RECT& contentRect)
 {
+    if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
     if (!data_ || !app_)
         return;
 
@@ -893,6 +894,7 @@ static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIn
  */
 std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 {
+    if (!IsSingleCellPresentation() && UsesFolderSearch()) return BuildFolderSearchSlots();
     if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
@@ -968,6 +970,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
  */
 Item* FileCategories::GetSlotItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, false);
     if (!data_ || !app_) return nullptr;
     const auto& keys = GetSearchResultKeys();
     if (idx >= keys.size()) return nullptr;
@@ -999,6 +1002,7 @@ Item* FileCategories::GetSlotItem(size_t idx) const
  */
 Item* FileCategories::GetMemberItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, true);
     if (!data_ || !app_) return nullptr;
     const auto& keys = GetSearchResultKeys();
     if (idx >= keys.size()) return nullptr;
@@ -1017,6 +1021,7 @@ Item* FileCategories::GetMemberItem(size_t idx) const
  */
 std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedIndices();
     std::vector<size_t> result;
     if (!data_ || !app_) return result;
     const auto& keys = GetSearchResultKeys();
@@ -1037,6 +1042,7 @@ std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
  */
 void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
+    if (UsesFolderSearch()) return;
     if (!data_ || !app_) return;
     if (data_->dateHeaders) return;
 
@@ -1074,6 +1080,7 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
  */
 size_t FileCategories::GetSlotCount() const
 {
+    if (UsesFolderSearch()) return FolderSearchCount();
     if (!data_) return 0;
     return GetSearchResultKeys().size();
 }
@@ -1110,6 +1117,7 @@ int FileCategories::GetMemberColumnCount() const
  */
 int FileCategories::GetMaxScrollOffset() const
 {
+    if (UsesFolderSearch()) return std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f));
     return FileCategoryMaxScrollOffset(const_cast<FileCategories*>(this));
 }
 
@@ -1119,6 +1127,7 @@ int FileCategories::GetMaxScrollOffset() const
  */
 int FileCategories::GetTotalContentHeight() const
 {
+    if (UsesFolderSearch()) return FolderSearchContentHeight();
     const auto& keys = GetSearchResultKeys();
     return FileCategoryContentHeight(const_cast<FileCategories*>(this), keys.size());
 }
@@ -1159,6 +1168,17 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
  */
 size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
 {
+    if (UsesFolderSearch())
+    {
+        if (targetSlot)
+            if (const auto* item = dynamic_cast<const DesktopIcon*>(targetSlot->GetItem()); item && item->GetDesktopItem())
+            {
+                const auto found = std::find(data_->itemKeys.begin(), data_->itemKeys.end(), item->GetDesktopItem()->layoutKey);
+                if (found != data_->itemKeys.end())
+                    return static_cast<size_t>(std::distance(data_->itemKeys.begin(), found)) + (region == HitRegion::SortAfter ? 1u : 0u);
+            }
+        return data_->itemKeys.size();
+    }
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
     if (targetSlot && region == HitRegion::SortAfter)
         ++visibleInsert;
@@ -1184,6 +1204,7 @@ bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
  */
 void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
+    if (UsesFolderSearch()) { DrawSearchBox(context); DrawFolderSearch(context); return; }
     if (!data_ || !app_) return;
     (void)body;
     const bool preview = IsPreviewRendering();
@@ -1419,6 +1440,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
 RECT FileCategories::GetMemberLayoutRect(size_t index) const
 {
+    if (UsesFolderSearch()) return FolderSearchItemRect(index);
     return FileCategoryItemRect(
         const_cast<FileCategories*>(this), index);
 }
@@ -1599,6 +1621,7 @@ void FileCategories::EnsureCategoryTabVisible(
  */
 std::vector<Item*> FileCategories::GetSelectedItems() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedItems();
     dragSourceCache_.clear();
     std::vector<Item*> result;
     if (!data_ || !app_) return result;

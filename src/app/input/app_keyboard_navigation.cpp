@@ -1039,6 +1039,12 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         return;
     }
 
+    const bool folderSearch = categorizedWidget && categorizedWidget->UsesFolderSearch();
+    if (folderSearch)
+    {
+        memberCount = categorizedWidget->FolderSearchCount();
+        visibleKeys.clear(); visibleFolderIndices.clear(); categoryIds.clear();
+    }
     const bool searchAvailable =
         categorizedWidget &&
         !IsRectEmptyRect(
@@ -1092,6 +1098,20 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     auto selectVisibleItem = [&](size_t index) {
         if (index >= memberCount) return;
+        if (folderSearch)
+        {
+            categorizedWidget->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
+            auto* item = categorizedWidget->FolderSearchItem(index, true);
+            if (!item) return;
+            item->SetSelected(true);
+            keyboardNavInsideWidget_ = true; keyboardNavWidgetIndex_ = navigationWidgetIndex;
+            keyboardNavMemberIndex_ = static_cast<int>(index);
+            ScrollWidgetToMember(navigationWidgetIndex, static_cast<int>(index));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
         size_t selectedItemIndex =
             static_cast<size_t>(-1);
         size_t selectedEntryIndex =
@@ -1181,6 +1201,11 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     int currentIdx = keyboardNavMemberIndex_;
     if (currentIdx < 0) currentIdx = 0;
 
+    if (folderSearch)
+    {
+        const auto selected = categorizedWidget->FolderSearchSelectedIndices();
+        if (!selected.empty()) currentIdx = static_cast<int>(selected.front());
+    }
     // FileCategories：基于当前可见选中项确定导航起点
     if (!visibleKeys.empty())
     {
@@ -1318,6 +1343,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     }
 
     if (nextIdx == currentIdx) return;
+
+    if (folderSearch) { selectVisibleItem(static_cast<size_t>(nextIdx)); return; }
 
     // 取消旧成员选中
     if (currentIdx >= 0)

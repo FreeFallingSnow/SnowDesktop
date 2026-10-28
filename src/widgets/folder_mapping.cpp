@@ -410,6 +410,7 @@ RECT FolderMapping::GetContentViewportRect() const
 
 void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
 {
+    if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
     if (!data_)
         return;
 
@@ -631,6 +632,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
  */
 Item* FolderMapping::GetSlotItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, false);
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
     if (auto* scene = GetPreviewScene())
     {
@@ -660,6 +662,7 @@ Item* FolderMapping::GetSlotItem(size_t idx) const
  */
 std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
 {
+    if (!IsSingleCellPresentation() && UsesFolderSearch()) return BuildFolderSearchSlots();
     if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
@@ -751,6 +754,7 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
  */
 Item* FolderMapping::GetMemberItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, true);
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
     auto icon = std::make_unique<FolderEntryIcon>(&data_->folderEntries[idx],
         const_cast<FolderMapping*>(this), app_);
@@ -765,6 +769,7 @@ Item* FolderMapping::GetMemberItem(size_t idx) const
  */
 std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedIndices();
     std::vector<size_t> result;
     if (!data_) return result;
     for (size_t i = 0; i < data_->folderEntries.size(); ++i)
@@ -782,6 +787,7 @@ std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
  */
 void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
+    if (UsesFolderSearch()) return;
     if (!data_ || !snowdesktop::folder_member_order::Reorder(*data_, indices, insertBefore)) return;
     InvalidateSlots();
 }
@@ -789,6 +795,18 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
 size_t FolderMapping::GetDropInsertIndex(
     Slot* targetSlot, HitRegion region) const
 {
+    if (UsesFolderSearch())
+    {
+        if (targetSlot && targetSlot->GetItem())
+        {
+            const auto path = targetSlot->GetItem()->GetPath();
+            const auto found = std::find_if(data_->folderEntries.begin(), data_->folderEntries.end(),
+                [&](const auto& entry) { return _wcsicmp(entry.fullPath.c_str(), path.c_str()) == 0; });
+            if (found != data_->folderEntries.end())
+                return static_cast<size_t>(std::distance(data_->folderEntries.begin(), found)) + (region == HitRegion::SortAfter ? 1u : 0u);
+        }
+        return data_->folderEntries.size();
+    }
     const auto& visibleEntries = GetVisibleEntryIndices();
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : visibleEntries.size();
     if (targetSlot && region == HitRegion::SortAfter)
@@ -804,6 +822,7 @@ size_t FolderMapping::GetDropInsertIndex(
  */
 size_t FolderMapping::GetSlotCount() const
 {
+    if (UsesFolderSearch()) return FolderSearchCount();
     return data_ ? GetVisibleEntryIndices().size() : 0;
 }
 
@@ -841,6 +860,7 @@ int FolderMapping::GetMemberColumnCount() const
  */
 int FolderMapping::GetMaxScrollOffset() const
 {
+    if (UsesFolderSearch()) return std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f));
     return FolderMappingMaxScrollOffset(const_cast<FolderMapping*>(this));
 }
 
@@ -850,6 +870,7 @@ int FolderMapping::GetMaxScrollOffset() const
  */
 int FolderMapping::GetTotalContentHeight() const
 {
+    if (UsesFolderSearch()) return FolderSearchContentHeight();
     return FolderMappingContentHeight(const_cast<FolderMapping*>(this),
         data_ ? GetVisibleEntryIndices().size() : 0);
 }
@@ -897,6 +918,7 @@ void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
  */
 void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
+    if (UsesFolderSearch()) { DrawSearchBox(context); DrawFolderSearch(context); return; }
     if (!data_ || !app_) return;
     (void)body;
     const bool preview = IsPreviewRendering();
@@ -1081,6 +1103,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
 RECT FolderMapping::GetMemberLayoutRect(size_t index) const
 {
+    if (UsesFolderSearch()) return FolderSearchItemRect(index);
     return FolderMappingItemRect(
         const_cast<FolderMapping*>(this), index);
 }
@@ -1284,6 +1307,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
  */
 std::vector<Item*> FolderMapping::GetSelectedItems() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedItems();
     dragSourceCache_.clear();
     std::vector<Item*> result;
     if (!data_) return result;

@@ -696,6 +696,7 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_workshop_sync.cpp
     src/system/system_snapshot.cpp
     src/platform/http_runtime.cpp
+    src/widgets/widget_folder_search.cpp
     src/widgets/widget_base.cpp
     src/widgets/collection.cpp
     src/widgets/collection_group.cpp
@@ -3069,6 +3070,7 @@ if (BUILD_TESTING)
         endif()
     endforeach()
     foreach(NATIVE_ADDITIONAL_CASE IN ITEMS
+        "native_widget_folder_search|--widget-folder-search"
         "native_group_search_type|--group-type-search"
         "native_group_tab_dwell|--group-dwell"
         "native_popup_request_lifecycle|--popup-request"

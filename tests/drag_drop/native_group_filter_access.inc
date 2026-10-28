@@ -22,6 +22,13 @@
     {
         auto* view = dynamic_cast<ScrollingItemWidget*>(MemberContainer(app, grouped ? L"ordered-group" : L"ordered"));
         if (!view) throw std::runtime_error("filter fixture requires its real native scrolling surface");
+        // Legacy filter/type scenarios explicitly exercise the unavailable-SDK
+        // branch; scoped Everything scenarios inject their own boundary.
+        SetFolderSearchBoundary(*view, [](const std::wstring&, DWORD) {
+            snowdesktop::QuickNavigationEverythingSearchResponse response;
+            response.error = ERROR_NOT_READY;
+            return response;
+        });
         view->SetSearchText(query);
     }
     static std::wstring SortFreeType(DesktopApp& app, bool ascending)
@@ -201,3 +208,18 @@
         app.savedPageColumns_[page.id] = 12; app.savedPageRows_[page.id] = 8;
         app.LayoutItems();
     }
+
+    static void SetFolderSearchBoundary(ScrollingItemWidget& view,
+        snowdesktop::QuickNavigationEverythingSearchAsync::SearchFunction provider)
+    {
+        if (view.folderSearch_ && view.folderSearch_->worker) view.folderSearch_->worker->Stop();
+        view.folderSearch_ = std::make_shared<snowdesktop::WidgetFolderSearchState>();
+        view.folderSearch_->search = std::move(provider);
+        view.InvalidateSlots();
+    }
+    static const auto& FolderSearchSections(const ScrollingItemWidget& view) { return view.folderSearch_->sections; }
+    static bool FolderSearchPending(ScrollingItemWidget& view) { view.EnsureFolderSearch(); return view.folderSearch_ && view.folderSearch_->pending; }
+    static std::vector<std::wstring> FolderSearchClipboard(const DesktopApp& app) { return app.GetSelectedFolderEntryPaths(); }
+    static auto FolderSearchTargets(DesktopApp& app, const std::wstring& id) { return app.GetWidgetSelectionTargets(app.FindWidgetIndexById(id)); }
+    static void ClearFolderSearchSelection(DesktopApp& app) { app.ClearSelection(); }
+    static auto CaptureFolderSearch(DesktopApp& app, ScrollingItemWidget& view) { return app.BuildDragSourceList(view.GetSelectedItems(), &view); }

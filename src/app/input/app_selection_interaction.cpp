@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
 #include "shell/shell_extension_service.h"
 #include "drag_drop/drag_input_rules.h"
 #include "widgets/single_cell_widget_rules.h"
@@ -87,6 +88,21 @@ DesktopApp::GetWidgetSelectionTargets(size_t widgetIndex)
     {
         auto* view = dynamic_cast<WidgetContainer*>(container.get());
         if (!view || view->GetWidgetData() != &widget) continue;
+        if (auto* search = dynamic_cast<ScrollingItemWidget*>(view); search && search->UsesFolderSearch())
+        {
+            for (size_t i = 0; i < search->FolderSearchCount(); ++i)
+            {
+                auto* item = search->FolderSearchItem(i, true);
+                if (auto* desktop = dynamic_cast<DesktopIcon*>(item))
+                    targets.push_back({DesktopSelectionKey(*desktop->GetDesktopItem()), &desktop->GetDesktopItem()->selected});
+                else if (auto* folder = dynamic_cast<FolderEntryIcon*>(item))
+                {
+                    const size_t owner = FindWidgetIndexById(search->folderSearch_->rows[i].sourceId);
+                    if (owner < widgets_.size()) targets.push_back({FolderSelectionKey(widgets_[owner], *folder->GetFolderEntry()), &folder->GetFolderEntry()->selected});
+                }
+            }
+            break;
+        }
         if (auto* fileGroup = dynamic_cast<FileGroup*>(view))
         {
             if (fileGroup->IsGroupSearchActive())
@@ -231,6 +247,10 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
 
 void DesktopApp::ClearSelection()
 {
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
+            for (const auto& row : view->folderSearch_->rows) if (row.recursive) row.recursive->selected = false;
+
     selectionController_.ClearAll(
         items_, dockEntries_,
         dockUnpinnedRunningApps_, widgets_);
@@ -324,6 +344,9 @@ bool DesktopApp::HasSelectedFilesInWidget(
     };
 
     const auto& widget = widgets_[widgetIndex];
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->GetWidgetData() == &widget && view->folderSearch_)
+            for (const auto& row : view->folderSearch_->rows) if (row.recursive && row.recursive->selected) return true;
     if (hasDirectSelection(widget))
         return true;
     if (widget.type != DesktopWidgetType::CollectionGroup &&
@@ -370,6 +393,17 @@ void DesktopApp::SyncKeyboardNavFromSelection()
         const auto& w = widgets_[wi];
         if (IsGroupedWidget(w))
             continue;
+        for (const auto& container : containers_)
+            if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->GetWidgetData() == &w && view->UsesFolderSearch())
+            {
+                const auto selected = view->FolderSearchSelectedIndices();
+                if (!selected.empty())
+                {
+                    keyboardNavInsideWidget_ = true; keyboardNavWidgetIndex_ = wi;
+                    keyboardNavMemberIndex_ = static_cast<int>(selected.front());
+                    return;
+                }
+            }
         if (w.type == DesktopWidgetType::FileGroup)
         {
             for (auto& container : containers_)
@@ -526,6 +560,11 @@ void DesktopApp::SyncKeyboardNavFromSelection()
  */
 void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
 {
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_ &&
+            (widgetIndex >= widgets_.size() || view->GetWidgetData() != &widgets_[widgetIndex]))
+            for (const auto& row : view->folderSearch_->rows) if (row.recursive) row.recursive->selected = false;
+
     for (auto& entry : dockEntries_)
         entry.selected = false;
     std::unordered_set<std::wstring> allowedKeys;
@@ -588,6 +627,10 @@ void DesktopApp::ClearSelectionOutsideWidget(size_t widgetIndex)
  */
 void DesktopApp::ClearSelectionOutsideDesktop()
 {
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->folderSearch_)
+            for (const auto& row : view->folderSearch_->rows) if (row.recursive) row.recursive->selected = false;
+
     for (auto& entry : dockEntries_)
         entry.selected = false;
     for (auto& item : items_)

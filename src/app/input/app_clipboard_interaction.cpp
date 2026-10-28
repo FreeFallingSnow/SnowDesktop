@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/clipboard_file_operation.h"
 
@@ -76,6 +77,36 @@ std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstW
         return paths;
     }
 
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->UsesFolderSearch())
+        {
+            std::vector<std::wstring> paths;
+            for (const auto& row : view->folderSearch_->rows)
+                if (row.recursive && row.recursive->selected) paths.push_back(row.recursive->fullPath);
+            if (paths.empty()) continue;
+            // Mixed selection is one file operation, including direct desktop
+            // files and mapped entries alongside runtime-only descendants.
+            for (size_t index : view->FolderSearchSelectedIndices())
+                if (const auto& row = view->folderSearch_->rows[index]; !row.recursive)
+                {
+                    if (!row.desktopKey.empty())
+                    {
+                        const size_t item = FindItemIndexByKey(row.desktopKey);
+                        if (item < items_.size() && items_[item].desktopIconClsid.empty() && !items_[item].parsingName.empty())
+                            paths.push_back(items_[item].parsingName);
+                    }
+                    else
+                    {
+                        const size_t source = FindWidgetIndexById(row.sourceId);
+                        if (source < widgets_.size() && row.folderIndex < widgets_[source].folderEntries.size())
+                            paths.push_back(widgets_[source].folderEntries[row.folderIndex].fullPath);
+                    }
+                }
+            std::unordered_set<std::wstring> seen;
+            std::erase_if(paths, [&](const auto& path) { return !seen.insert(ToUpperInvariant(path)).second; });
+            if (firstWidgetIndex && view->GetWidgetData()) *firstWidgetIndex = FindWidgetIndexById(view->GetWidgetData()->id);
+            return paths;
+        }
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& widget = widgets_[i];

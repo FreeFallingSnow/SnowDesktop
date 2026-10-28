@@ -906,6 +906,7 @@ ScrollingItemWidget*
 FileGroup::GetSourceContainerForItem(
     const Item* item) const
 {
+    if (UsesFolderSearch()) return GetSourceContainerById(FolderSearchSourceId(item));
     if (!item) return nullptr;
     if (!IsGroupSearchActive())
         return GetActiveSourceContainer();
@@ -1073,6 +1074,7 @@ FileGroup::GetSourceTabItemAtPoint(POINT pt) const
 
 std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
 {
+    if (!IsSingleCellPresentation() && UsesFolderSearch()) return BuildFolderSearchSlots();
     if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> result;
@@ -1137,6 +1139,7 @@ std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
 
 size_t FileGroup::GetSlotCount() const
 {
+    if (UsesFolderSearch()) return FolderSearchCount();
     if (IsGroupSearchActive())
         return GetGroupSearchResults().size();
     auto* source = GetActiveSourceContainer();
@@ -1190,6 +1193,7 @@ bool FileGroup::SingleColumn() const
 
 Item* FileGroup::GetSlotItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, false);
     const auto& slots =
         const_cast<FileGroup*>(this)->GetSlots();
     for (const auto& slot : slots)
@@ -1200,6 +1204,7 @@ Item* FileGroup::GetSlotItem(size_t idx) const
 
 Item* FileGroup::GetMemberItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, true);
     if (IsGroupSearchActive())
         return CreateGroupSearchItem(idx, true);
     Item* item = GetSlotItem(idx);
@@ -1216,6 +1221,7 @@ Item* FileGroup::GetMemberItem(size_t idx) const
 
 std::vector<Item*> FileGroup::GetSelectedItems() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedItems();
     dragSourceCache_.clear();
     std::vector<Item*> result;
     if (!data_ || !app_) return result;
@@ -1257,6 +1263,7 @@ std::vector<Item*> FileGroup::GetSelectedItems() const
 std::vector<size_t>
 FileGroup::GetSelectedMemberIndices() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedIndices();
     std::vector<size_t> result;
     if (!data_ || !app_) return result;
     const auto& sources = GetVisibleSourceIds();
@@ -1286,6 +1293,7 @@ void FileGroup::ReorderMembers(
     const std::vector<size_t>& indices,
     size_t insertBefore)
 {
+    if (UsesFolderSearch()) return;
     if (!data_ || indices.empty()) return;
     data_->childWidgetIds =
         snowdesktop::collection_group_rules::ReorderItems(
@@ -1375,6 +1383,7 @@ size_t FileGroup::GetDropInsertIndex(
 
 int FileGroup::GetTotalContentHeight() const
 {
+    if (UsesFolderSearch()) return FolderSearchContentHeight();
     if (IsGroupSearchActive())
         return FileGroupSearchContentHeight(
             const_cast<FileGroup*>(this),
@@ -1394,6 +1403,7 @@ int FileGroup::GetVisibleContentHeight() const
 
 int FileGroup::GetMaxScrollOffset() const
 {
+    if (UsesFolderSearch()) return std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f));
     if (IsGroupSearchActive())
     {
         const int visible =
@@ -1454,6 +1464,7 @@ RECT FileGroup::GetContentViewportRect() const
 
 RECT FileGroup::GetMemberLayoutRect(size_t index) const
 {
+    if (UsesFolderSearch()) return FolderSearchItemRect(index);
     if (IsGroupSearchActive())
         return FileGroupSearchItemRect(
             const_cast<FileGroup*>(this), index);
@@ -1487,6 +1498,7 @@ const DesktopWidget* FileGroup::GetDetailsSortData() const
 void FileGroup::ApplyMarqueeSelection(
     const RECT& contentRect)
 {
+    if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
     if (IsGroupSearchActive())
     {
         const auto& results = GetGroupSearchResults();
@@ -2009,6 +2021,7 @@ void FileGroup::OnItemsDropped(
 void FileGroup::DrawContent(
     ID2D1DeviceContext* context, RECT)
 {
+    if (UsesFolderSearch()) { DrawSourceTabs(context); DrawSearchBox(context); DrawFolderSearch(context); return; }
     if (!data_ || !app_ || !context) return;
     if (IsGroupSearchActive())
     {
