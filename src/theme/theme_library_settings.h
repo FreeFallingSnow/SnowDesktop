@@ -380,9 +380,15 @@ inline bool ApplyFollowedGlobalBinding(Reference& reference, const Theme& nextTh
     if (!parent || parent->kind != Kind::Global || !FullScope(parent->scopes) ||
         (quick ? parent->quickPanel : parent->popup) != previous ||
         !saved || saved->kind != nextTheme.kind || surface.mode != -1 ||
-        !AppliedAppearanceMatches(parent->appearance, CaptureTarget("global", values).appearance) ||
-        !AppliedAppearanceMatches(saved->appearance, current.appearance) ||
-        (quick && (saved->layout != current.layout || saved->colors != current.colors))) return true;
+        !AppliedAppearanceMatches(parent->appearance, CaptureTarget("global", values).appearance)) return true;
+    const auto matches = [&](const Theme& source) {
+        return AppliedAppearanceMatches(source.appearance, current.appearance) &&
+            (!quick || (source.layout == current.layout && source.colors == current.colors));
+    };
+    // Saving a live draft can flush its preview before this reference commits.
+    // Same-ID updates may record those exact new values; source changes still
+    // require the old snapshot, preserving unrelated edits.
+    if (!matches(*saved) && (previous != nextTheme.id || !matches(nextTheme))) return true;
     Library snapshotLibrary;
     snapshotLibrary.themes = reference.snapshot;
     auto& snapshotParent = snapshotLibrary.themes.at(reference.id);

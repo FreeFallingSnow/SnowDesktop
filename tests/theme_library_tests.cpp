@@ -810,6 +810,26 @@ int RunThemeLibraryTests()
                 updatedLibrary.references.at("global").snapshot.at(popup.id).appearance.widgetAlpha == .37f &&
                 appliedReferences.at("global").snapshot.at(popup.id).appearance.widgetAlpha == .47f,
                 "saving the selected child version follows its applied edge and stages its snapshot until settings commit");
+            auto alreadyFlushedValues = updatedValues;
+            auto alreadyFlushedReferences = updatedLibrary.references;
+            check(ApplySavedUpdate(updatedLibrary, popup.id, alreadyFlushedValues, error, &alreadyFlushedReferences) ==
+                    std::vector<std::string>{"global"} &&
+                alreadyFlushedReferences.at("global").snapshot.at(popup.id).appearance.widgetAlpha == .47f &&
+                updatedLibrary.references.at("global").snapshot.at(popup.id).appearance.widgetAlpha == .37f,
+                "saving an already-flushed popup draft records its exact new values only in the staged reference");
+            auto quickDraftLibrary = bound;
+            auto quickDraftValues = values;
+            check(SwitchAppliedVersion(quickDraftLibrary, remoteIds.at(quick.id), quick.id, quickDraftValues, targets, error),
+                "prepare an editable current quick binding");
+            quickDraftLibrary.themes.at(quick.id).layout.fontSize = 23;
+            quickDraftValues.navigation.layout.fontSize = 23;
+            auto quickDraftReferences = quickDraftLibrary.references;
+            check(ApplySavedUpdate(quickDraftLibrary, quick.id, quickDraftValues, error, &quickDraftReferences) ==
+                    std::vector<std::string>{"global"} &&
+                quickDraftReferences.at("global").snapshot.at(quick.id).layout.fontSize == 23 &&
+                quickDraftLibrary.references.at("global").snapshot.at(quick.id).layout.fontSize == 22 &&
+                quickDraftValues.general.quickNavigationAppearance.mode == -1,
+                "saving an already-flushed quick layout stages its current version without detaching follow mode");
             updatedLibrary.references = appliedReferences;
             check(SwitchAppliedVersion(updatedLibrary, popup.id, remoteIds.at(popup.id), updatedValues, targets, error) &&
                 targets == std::vector<std::string>{"global/popup"},
