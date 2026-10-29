@@ -1076,15 +1076,19 @@ end})
     {
         namespace pointer = snowdesktop::private_pointer;
         const auto check = [](bool value, const char* message) { if (!value) throw std::runtime_error(message); };
+        const auto note = [](const char* stage) { std::cerr << "Private rename stage: " << stage << '\n'; };
+        note("apartment");
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         check(SUCCEEDED(apartment), "initialize private rename fixture apartment");
         struct Apartment { ~Apartment() { CoUninitialize(); } } apartmentGuard;
+        note("application");
         auto* app = new DesktopApp; // Same process-lifetime model policy as the other native fixtures.
         app->instance_ = GetModuleHandleW(nullptr);
         app->initializationExperimentDirectory_ = std::filesystem::path(GetDataDirectoryPath()) / L"private-rename";
         std::filesystem::create_directories(app->initializationExperimentDirectory_);
         app->generalSettings_.dockEnabled = false;
         app->generalSettings_.statusBar.enabled = false;
+        note("runtime composition");
         app->applicationControlRuntime_ = std::make_unique<snowdesktop::app_control::Runtime>();
         app->generalSettings_.softwareDesktopEnabled = app->customDesktopVisible_ = true;
         app->virtualLeft_ = app->virtualTop_ = 0;
@@ -1111,25 +1115,35 @@ end})
             widget.itemKeys.push_back(item.layoutKey); app->items_.push_back(std::move(item));
         }
         app->widgets_ = {widget}; app->desktopItemsReady_ = true;
+        note("container model");
         app->RefreshDesktopItemIndexCache(); app->RefreshCollectedKeysCache(); app->RebuildContainersAndItems();
         WNDCLASSW cls{}; cls.hInstance = app->instance_; cls.lpfnWndProc = PrivateRenameWindowProc;
         cls.lpszClassName = L"SnowDesktop.PrivateRenameIsolation";
         check(RegisterClassW(&cls) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS, "register private rename native owner");
-        const HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, cls.lpszClassName, L"Private rename fixture",
-            WS_POPUP, 0, 0, 1200, 800, nullptr, nullptr, app->instance_, app);
+        note("owner create");
+        const HWND workerW = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"Unapproved WorkerW fixture",
+            WS_POPUP, 0, 0, 1200, 800, nullptr, nullptr, app->instance_, nullptr);
+        check(workerW != nullptr, "create unapproved top-level desktop parent");
+        ShowWindow(workerW, SW_SHOWNOACTIVATE);
+        const HWND owner = CreateWindowExW(WS_EX_NOACTIVATE, cls.lpszClassName, L"Private rename fixture",
+            WS_CHILD | WS_VISIBLE, 0, 0, 1200, 800, workerW, nullptr, app->instance_, app);
         check(owner != nullptr, "create private rename native owner");
         app->hwnd_ = app->inputHwnd_ = owner;
         ShowWindow(owner, SW_SHOWNOACTIVATE);
         pointer::Device device;
         struct Cleanup
         {
-            DesktopApp& app; pointer::Device& device; HWND owner;
+            DesktopApp& app; pointer::Device& device; HWND owner, workerW;
             ~Cleanup()
             {
-                device.End(); app.CommitRename(true); DestroyWindow(owner); app.hwnd_ = app.inputHwnd_ = nullptr;
+                std::cerr << "Private rename stage: cleanup native owner\n";
+                device.End(); app.CommitRename(true); DestroyWindow(owner); DestroyWindow(workerW);
+                app.hwnd_ = app.inputHwnd_ = nullptr;
+                std::cerr << "Private rename stage: cleanup runtime\n";
                 app.applicationControlRuntime_.reset();
+                std::cerr << "Private rename stage: cleanup complete\n";
             }
-        } cleanup{*app, device, owner};
+        } cleanup{*app, device, owner, workerW};
         const HWND physicalFocus = GetFocus(), physicalForeground = GetForegroundWindow(), physicalActive = GetActiveWindow();
         const auto unchanged = [&] {
             check(GetFocus() == physicalFocus && GetForegroundWindow() == physicalForeground && GetActiveWindow() == physicalActive,
@@ -1152,7 +1166,9 @@ end})
             value.resize(static_cast<std::size_t>(length)); return value;
         };
         const auto observedEditor = [&](HWND edit, const std::wstring& expected) {
+            note("snapshot enter");
             const auto snapshot = app->ApplicationControlElements();
+            note("snapshot returned");
             const snowdesktop::control::Element* found = nullptr;
             for (const auto& element : snapshot.elements)
                 if (element.id == "rename/editor")
@@ -1173,11 +1189,22 @@ end})
         };
         std::string error;
         const auto begin = [&] {
+            note("device begin");
             check(device.Begin(page.bounds, POINT{900, 650}, [&](POINT point) { return app->PrivatePointerWindowAt(point); },
                 [&](HWND window) { return app->OwnsPrivatePointerWindow(window); }, error), "begin private rename device");
-            drain(); app->SelectWidgetOnly(0); app->BeginRenameSelected();
+            drain(); app->SelectWidgetOnly(0);
+            note("native rename begin");
+            app->BeginRenameSelected();
+            note("native rename returned");
             const HWND edit = app->renameInputWindow_;
-            check(edit && IsWindow(edit) && pointer::FocusWindow() == edit, "production rename owns exact private focus");
+            check(edit && IsWindow(edit), "production rename creates its actual editor");
+            std::cerr << "Private rename topology: child=" << owner << " editor=" << edit << " popup owner=" << GetParent(edit)
+                << " root approved=" << app->OwnsPrivatePointerWindow(workerW) << " editor approved=" << app->OwnsPrivatePointerWindow(edit) << '\n';
+            check((GetWindowLongPtrW(owner, GWL_STYLE) & WS_CHILD) && GetParent(edit) == workerW && GetParent(edit) != owner,
+                "User32 promotes a desktop-child editor's popup owner to its top-level parent");
+            check(!app->OwnsPrivatePointerWindow(workerW) && app->OwnsPrivatePointerWindow(edit),
+                "only the exact production rename HWND is approved, never its unapproved desktop parent");
+            check(pointer::FocusWindow() == edit, "production rename owns exact private focus beneath a desktop child host");
             check((GetWindowLongPtrW(edit, GWL_EXSTYLE) & WS_EX_NOACTIVATE) != 0, "private rename editor must be nonactivating");
             observedEditor(edit, app->widgets_[0].title);
             unchanged(); return edit;
@@ -1185,11 +1212,15 @@ end})
         const auto typeAtObservedEditor = [&](HWND edit, const std::wstring& value) {
             const RECT bounds = observedEditor(edit, text(edit));
             const POINT point{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+            note("queue editor click and keyboard");
             check(device.Move(point, error) && device.Down(pointer::Button::Left, error) && device.Up(pointer::Button::Left, error),
                 "click the actual editor using its observed screen rectangle");
             check(device.KeyDown(VK_CONTROL, error) && device.KeyDown('A', error) && device.KeyUp('A', error) &&
                 device.KeyUp(VK_CONTROL, error) && device.Text(value, error), "replace actual editor text through private Ctrl+A and characters");
-            drain(); observedEditor(edit, value); unchanged();
+            note("private messages drain");
+            drain();
+            note("private messages drained");
+            observedEditor(edit, value); unchanged();
         };
         HWND edit = begin();
         SendMessageW(edit, WM_CHAR, L'X', 1);
@@ -1201,6 +1232,7 @@ end})
             "physical char, Enter and kill-focus cannot bypass the rename subclass gate");
         typeAtObservedEditor(edit, L"沟通协作");
         check(text(edit) == L"沟通协作" && device.Current().error.empty(), "private characters traverse subclass and actual text base exactly once");
+        note("Enter submit");
         check(device.KeyDown(VK_RETURN, error), "submit actual rename through private Enter"); drain();
         check(!app->renameInputWindow_ && !IsWindow(edit) && app->widgets_[0].title == L"沟通协作",
             "virtual Enter commits actual native rename text to the collection");
@@ -1213,6 +1245,7 @@ end})
         edit = begin();
         typeAtObservedEditor(edit, L"点击提交");
         check(text(edit) == L"点击提交", "second native editor receives actual characters");
+        note("click-away submit");
         check(device.Move(POINT{900, 650}, error) && device.Down(pointer::Button::Left, error) &&
             device.Up(pointer::Button::Left, error), "click away through actual desktop window messages"); drain();
         check(!app->renameInputWindow_ && app->widgets_[0].title == L"点击提交",
@@ -1222,6 +1255,7 @@ end})
         edit = begin();
         typeAtObservedEditor(edit, L"取消内容");
         check(text(edit) == L"取消内容", "cancelled editor first receives the actual text");
+        note("Escape cancel");
         check(device.KeyDown(VK_ESCAPE, error), "cancel actual rename through private Escape"); drain();
         check(!app->renameInputWindow_ && app->widgets_[0].title == L"点击提交",
             "private Escape cancels actual text without changing the collection title");
