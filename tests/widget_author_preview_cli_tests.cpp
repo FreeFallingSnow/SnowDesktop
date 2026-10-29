@@ -2488,6 +2488,79 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void TestNativeTitleBarPositions(const std::filesystem::path& host,
+    const std::filesystem::path& directory)
+{
+    const auto invoke = [&](const std::wstring& name,
+                            const std::vector<std::wstring>& optional,
+                            const std::wstring& component = L"all") {
+        const auto output = directory / name;
+        const auto resultFile = directory / (name + L".json");
+        std::vector<std::wstring> arguments{
+            L"--native-component-preview", component, output.wstring(),
+            L"96", L"en-US", L"light", L"", L"640", L"480", L"48",
+            L"0", L"1", resultFile.wstring() };
+        arguments.insert(arguments.end(), optional.begin(), optional.end());
+        const auto process = Run(host, arguments);
+        std::ifstream file(resultFile, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(file)), {});
+        JsonValue result;
+        Check(ParseJson(text, result), "private native title bar result parses");
+        return std::pair{process.first, result};
+    };
+    const auto [bottomExit, bottom] = invoke(L"titlebar-bottom",
+        {L"", L"", L"none", L"0", L"bottom"});
+    const auto [topExit, top] = invoke(L"titlebar-top",
+        {L"", L"", L"none", L"0", L"top"});
+    Check(bottomExit == 0 && topExit == 0 && bottom.Find("outputs") && top.Find("outputs"),
+        "private native export accepts explicit top and bottom positions");
+    Check(bottom.Find("outputs")->IsArray() && top.Find("outputs")->IsArray() && !top.Find("outputs")->array.empty(),
+        "native title bar variants contain rendered output");
+    Check(bottom.Find("titleBarPosition") && bottom.Find("titleBarPosition")->string == "bottom" &&
+            top.Find("titleBarPosition") && top.Find("titleBarPosition")->string == "top",
+        "native result records the requested title bar position");
+    Check(bottom.Find("outputs")->array.size() == top.Find("outputs")->array.size(),
+        "title bar placement does not alter the available preset set");
+    for (const auto& output : top.Find("outputs")->array)
+    {
+        const auto* component = output.Find("component");
+        const auto* preset = output.Find("preset");
+        Check(component && preset, "native title bar output identifies its component and preset");
+        const bool single = preset->string == "icon" || preset->string == "icon-hover" || preset->string == "compact";
+        const bool collectionScroll = preset->string == "scroll-grid" || preset->string == "scroll-list";
+        const bool eligible = !single && (component->string != "collection" || collectionScroll);
+        const auto* supported = output.Find("topTitleBarSupported");
+        const auto* actual = output.Find("usesTopTitleBar");
+        Check(supported && supported->IsBoolean() && supported->boolean == eligible &&
+                actual && actual->IsBoolean() && actual->boolean == eligible,
+            "native renderer reports title bar support only for eligible multi-cell scrolling components");
+        const auto counterpart = std::find_if(bottom.Find("outputs")->array.begin(), bottom.Find("outputs")->array.end(), [&](const auto& value) {
+            return value.Find("component") && value.Find("preset") &&
+                value.Find("component")->string == component->string && value.Find("preset")->string == preset->string;
+        });
+        Check(counterpart != bottom.Find("outputs")->array.end() && counterpart->Find("usesTopTitleBar") &&
+                !counterpart->Find("usesTopTitleBar")->boolean,
+            "explicit bottom never enables a top title bar");
+        // Compare rendered pixels for representative modes, not just echoed flags.
+        if (preset->string == "grid" || preset->string == "scroll-grid" || preset->string == "compact" ||
+            preset->string == "large-folder" || preset->string == "large-folder-titleless")
+        {
+            const auto filename = component->string + "-" + preset->string + ".png";
+            const auto topPixels = ReadPng(directory / L"titlebar-top" / filename);
+            const auto bottomPixels = ReadPng(directory / L"titlebar-bottom" / filename);
+            Check((topPixels.pixels != bottomPixels.pixels) == eligible,
+                "top title bars change real eligible content while preserving compact and large-folder pixels");
+        }
+    }
+    const auto [legacyExit, legacy] = invoke(L"titlebar-legacy-theme-slots", {L"", L""}, L"collection");
+    Check(legacyExit == 0 && legacy.Find("titleBarPosition") && legacy.Find("titleBarPosition")->string == "bottom",
+        "the old sixteen-argument private form keeps its bottom-title behavior");
+    const auto [invalidExit, invalid] = invoke(L"titlebar-invalid", {L"", L"", L"none", L"0", L"middle"});
+    Check(invalidExit == 2 && invalid.Find("stage") && invalid.Find("stage")->string == "request.title-bar" &&
+            !std::filesystem::exists(directory / L"titlebar-invalid"),
+        "unknown title bar positions fail before creating output or rendering");
+}
+
 void TestGpuDiagnosticsCli(const std::filesystem::path& tool, const std::filesystem::path& directory)
 {
     // Exercise the shipped dispatch/capability boundary without collecting
@@ -2767,6 +2840,8 @@ int wmain(int argc, wchar_t** argv) try
             "native content-only export reports the requested layer mode");
         CheckContentLayerPreview(nativeContentDirectory /
             L"collection-group-grid-search.png", 640, 480);
+
+        TestNativeTitleBarPositions(host, temporary.path);
 
     }
     if (suite == L"background" || suite == L"all")

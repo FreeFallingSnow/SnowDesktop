@@ -9,6 +9,7 @@
 #include "widget/preview/widget_preview_stage.h"
 #include "system/panel/system_panel_preview.h"
 #include "system/status_bar/status_bar_preview.h"
+#include "widgets/storage_title_bar_layout.h"
 
 #include <shellapi.h>
 
@@ -206,6 +207,7 @@ std::string Result::ToJson() const
         << ",\"contentOnly\":" << (request.contentOnly ? "true" : "false")
         << ",\"iconPreset\":" << JsonString(request.iconPreset)
         << ",\"iconOnly\":" << (request.iconOnly ? "true" : "false")
+        << ",\"titleBarPosition\":" << JsonString(request.titleBarOnTop.value_or(false) ? "top" : "bottom")
         << ",\"canvasWidth\":" << request.canvasWidth
         << ",\"canvasHeight\":" << request.canvasHeight
         << ",\"padding\":" << request.padding
@@ -233,7 +235,9 @@ std::string Result::ToJson() const
             << ",\"componentWidth\":" << item.componentWidth
             << ",\"componentHeight\":" << item.componentHeight
             << ",\"placementX\":" << item.placementX
-            << ",\"placementY\":" << item.placementY << '}';
+            << ",\"placementY\":" << item.placementY
+            << ",\"topTitleBarSupported\":" << (item.topTitleBarSupported ? "true" : "false")
+            << ",\"usesTopTitleBar\":" << (item.usesTopTitleBar ? "true" : "false") << '}';
     }
     output << "]}";
     return output.str();
@@ -292,6 +296,8 @@ DesktopApp::ExportNativeComponentPreviews(
         appearance.glassEnabled = false;
         appearance.acrylicEnabled = false;
     }
+    if (request.titleBarOnTop)
+        appearance.scrollableTitleBarOnTop = *request.titleBarOnTop;
 
     std::wstring languageDirectory = GetExecutableDirectoryPath();
     languageDirectory += L"\\lang";
@@ -437,17 +443,18 @@ DesktopApp::ExportNativeComponentPreviews(
         std::string_view id;
         UINT command;
         std::size_t requiredCards;
+        DesktopWidgetType widgetType;
     };
     const std::array definitions{
         ComponentDefinition{ "collection", kContextAddCollectionWidget,
-            3 },
+            3, DesktopWidgetType::Collection },
         ComponentDefinition{ "collection-group",
-            kContextAddCollectionGroupWidget, 3 },
-        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 3 },
+            kContextAddCollectionGroupWidget, 3, DesktopWidgetType::CollectionGroup },
+        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 3, DesktopWidgetType::FileGroup },
         ComponentDefinition{ "file-categories",
-            kContextAddFileCategoryWidget, 3 },
+            kContextAddFileCategoryWidget, 3, DesktopWidgetType::FileCategories },
         ComponentDefinition{ "folder-mapping",
-            kContextAddFolderMappingWidget, 3 },
+            kContextAddFolderMappingWidget, 3, DesktopWidgetType::FolderMapping },
     };
     const auto filename = [](std::string_view prefix,
                               std::string_view id) {
@@ -613,6 +620,12 @@ DesktopApp::ExportNativeComponentPreviews(
                     "." + variant.id;
                 return result;
             }
+            DesktopWidget titleBarWidget;
+            titleBarWidget.type = definition.widgetType;
+            titleBarWidget.gridCell.pageId = page.id;
+            titleBarWidget.gridSpan.columns = settings.columns;
+            titleBarWidget.gridSpan.rows = settings.rows;
+            titleBarWidget.scrollContainerMode = settings.scrollContainerMode;
             result.outputs.push_back({ std::string(definition.id), variant.id,
                 outputPath, settings.listMode,
                 settings.scrollContainerMode,
@@ -620,7 +633,9 @@ DesktopApp::ExportNativeComponentPreviews(
                 settings.showFileCategories, settings.showSearchBox,
                 ScaleWidgetCu(appearance.cornerRadius,
                     GetGridPageCuScale(page)),
-                width, height, placementX, placementY });
+                width, height, placementX, placementY,
+                storage_title_bar::UsesTop(titleBarWidget, true),
+                storage_title_bar::UsesTop(titleBarWidget, appearance.scrollableTitleBarOnTop) });
         }
     }
 
@@ -650,7 +665,7 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     handled = true;
     Result result;
     std::filesystem::path resultPath;
-    if (argumentCount != 14 && argumentCount != 16 && argumentCount != 18)
+    if (argumentCount != 14 && argumentCount != 16 && argumentCount != 18 && argumentCount != 19)
     {
         result.stage = "request.arguments";
         result.error = "invalid native component preview host arguments";
@@ -685,7 +700,7 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     request.dpi = static_cast<unsigned>(dpi);
     request.transparent = std::wstring_view(arguments[11]) == L"1";
     request.contentOnly = std::wstring_view(arguments[12]) == L"1";
-    if (argumentCount == 18)
+    if (argumentCount >= 18)
     {
         request.iconPreset = WideToUtf8(arguments[16]);
         const std::wstring_view iconOnly = arguments[17];
@@ -696,6 +711,20 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
             releaseArguments(); return 2;
         }
         request.iconOnly = iconOnly == L"1";
+    }
+    if (argumentCount == 19)
+    {
+        const std::wstring_view position = arguments[18];
+        if (position != L"top" && position != L"bottom")
+        {
+            result.stage = "request.title-bar";
+            result.error = "title bar position must be top or bottom";
+            result.request = request;
+            WriteResultFile(resultPath, result);
+            releaseArguments();
+            return 2;
+        }
+        request.titleBarOnTop = position == L"top";
     }
     if (argumentCount >= 16 && (arguments[14][0] || arguments[15][0]))
     {
