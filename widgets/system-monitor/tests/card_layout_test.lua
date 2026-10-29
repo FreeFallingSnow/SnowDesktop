@@ -102,6 +102,36 @@ return {
         assert(seven == six)
     end,
 
+    ["a single grid row retains both insets without clipping or scrolling"] = function()
+        for _, scale in ipairs({ 1, 2 }) do
+            local viewport, inset = 116 * scale, 4 * scale
+            local height = cardLayout.cardHeight(1, 1, viewport,
+                viewport, inset, inset)
+            assert(height == 108 * scale,
+                "one-row cards must fit between the upper and lower insets")
+            assert(finalRowBottom(1, 1, height, inset, inset,
+                viewport, 0) == 112 * scale)
+            assert(cardLayout.contentHeight(1, 1, height,
+                inset, inset, viewport) == viewport)
+        end
+    end,
+
+    ["two visible rows keep their bottom inset and stable overflow height"] = function()
+        for _, scale in ipairs({ 1, 2 }) do
+            local viewport, gap, inset = 240 * scale, 4 * scale, 4 * scale
+            local height = cardLayout.cardHeight(2, 2, 116 * scale,
+                viewport, gap, inset)
+            assert(height == 114 * scale,
+                "two-row cards must leave the bottom inset visible")
+            assert(finalRowBottom(2, 2, height, gap, inset,
+                viewport, 0) == 236 * scale)
+            assert(cardLayout.contentHeight(2, 2, height,
+                gap, inset, viewport) == viewport)
+            assert(cardLayout.cardHeight(3, 2, 116 * scale,
+                viewport, gap, inset) == height)
+        end
+    end,
+
     ["the first overflow row starts outside the viewport"] = function()
         local viewport = 240
         local height = cardLayout.cardHeight(3, 2, 104,

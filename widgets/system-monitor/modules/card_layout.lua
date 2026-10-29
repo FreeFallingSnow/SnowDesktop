@@ -75,7 +75,9 @@ function cardLayout.cardHeight(rows, visibleRows, baseHeight,
     local fittedRows = math.min(rows, visibleRows)
     local fillHeight = math.floor((viewportHeight - inset * 2 -
         gap * (fittedRows - 1)) / fittedRows)
-    if fillHeight <= baseHeight then return baseHeight end
+    -- The viewport owns its top/bottom insets and inter-row gaps. Keeping the
+    -- full grid-cell height here clips the last card even when every row fits.
+    if fillHeight <= baseHeight then return math.max(1, fillHeight) end
     return math.min(fillHeight,
         baseHeight + math.max(1, math.floor(baseHeight * 0.10)))
 end
