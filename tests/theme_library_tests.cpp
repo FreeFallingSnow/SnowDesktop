@@ -751,9 +751,10 @@ int RunThemeLibraryTests()
         {
             auto bound = paired; bound.references.clear();
             bound.themes.at(quick.id).appearance.widgetAlpha = .27f;
-            bound.themes.at(quick.id).layout.fontSize = 25;
+            bound.themes.at(quick.id).layout.fontSize = 22;
             bound.themes.at(quick.id).colors["searchText"] = "#AABBCC";
             bound.themes.at(popup.id).appearance.widgetAlpha = .37f;
+            check(Validate(bound.themes, error), "source-switch fixture uses valid normalized theme and navigation values");
             SettingsValues values;
             values.general.quickNavigationAppearance.mode = -1;
             values.general.collectionPopupAppearance.mode = -1;
@@ -768,7 +769,7 @@ int RunThemeLibraryTests()
                 targets == std::vector<std::string>{"global/quickPanel"} &&
                 values.general.quickNavigationAppearance.mode == -1 &&
                 values.general.globalQuickNavigationAppearance.appearance.widgetAlpha == .27f &&
-                values.navigation.layout.fontSize == 25 && values.navigation.colors.at("searchText") == "#AABBCC" &&
+                values.navigation.layout.fontSize == 22 && values.navigation.colors.at("searchText") == "#AABBCC" &&
                 values.general.globalCollectionPopupAppearance == originalValues.general.globalCollectionPopupAppearance &&
                 values.personalization == originalValues.personalization && values.dock == originalValues.dock,
                 "a currently followed quick binding switches source without becoming independent or changing other surfaces");
@@ -813,12 +814,12 @@ int RunThemeLibraryTests()
             check(SwitchAppliedVersion(updatedLibrary, popup.id, remoteIds.at(popup.id), updatedValues, targets, error) &&
                 targets == std::vector<std::string>{"global/popup"},
                 "a successfully saved child snapshot can switch versions again without reverting to the authored parent edge");
-            auto independent = originalValues;
-            independent.general.collectionPopupAppearance.mode = 4;
-            independent.general.collectionPopupAppearance.appearance = originalValues.general.globalCollectionPopupAppearance.appearance;
+            auto independentValues = originalValues;
+            independentValues.general.collectionPopupAppearance.mode = 4;
+            independentValues.general.collectionPopupAppearance.appearance = originalValues.general.globalCollectionPopupAppearance.appearance;
             auto independentLibrary = paired; independentLibrary.references.clear();
             check(Select(independentLibrary, "global", parentId, Kind::Global, All, error), "prepare independent surface control");
-            check(SwitchAppliedVersion(independentLibrary, remoteIds.at(popup.id), popup.id, independent, targets, error) && targets.empty(),
+            check(SwitchAppliedVersion(independentLibrary, remoteIds.at(popup.id), popup.id, independentValues, targets, error) && targets.empty(),
                 "an independent popup stays independent even when its material equals the old global binding");
             auto staleIndependent = originalValues;
             auto staleLibrary = independentLibrary;
