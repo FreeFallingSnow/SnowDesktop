@@ -95,7 +95,7 @@ public:
         snapshot_.startedAt = now;
         snapshot_.stageStartedAt = now;
         confirmedIndices_.clear();
-        hasSubmitted_ = false;
+        submitPending_ = false;
     }
 
     void Update(const ComponentPublishProgress& progress,
@@ -124,7 +124,9 @@ public:
         snapshot_.total = steam.total;
         snapshot_.submitStarted = steam.submitStarted;
         snapshot_.stageComplete = steam.stage == PublishStage::Completed;
-        hasSubmitted_ = hasSubmitted_ || steam.submitStarted;
+        // Completed acknowledges this submission. A later language's local
+        // preparation must not inherit uncertainty from an earlier success.
+        submitPending_ = steam.submitStarted && !snapshot_.stageComplete;
         if (steam.publishedFileId != 0)
             snapshot_.publishedFileId = steam.publishedFileId;
 
@@ -179,8 +181,8 @@ public:
             (error.code == "agreementRequired" || error.code.empty()))
             snapshot_.outcome = ManagerPublishOutcome::NeedsLegalAgreement;
         else if (error.code == "publish_timed_out" ||
-            (hasSubmitted_ && error.code == "publish_interrupted") ||
-            (hasSubmitted_ && error.exitCode == kSteamOperationTimedOut))
+            (submitPending_ && error.code == "publish_interrupted") ||
+            (submitPending_ && error.exitCode == kSteamOperationTimedOut))
             snapshot_.outcome = ManagerPublishOutcome::Unknown;
         else if (snapshot_.baseSubmitted || snapshot_.confirmedSubmissions != 0)
             snapshot_.outcome = ManagerPublishOutcome::Partial;
@@ -193,6 +195,6 @@ public:
 private:
     ManagerPublishTaskSnapshot snapshot_;
     std::vector<std::size_t> confirmedIndices_;
-    bool hasSubmitted_ = false;
+    bool submitPending_ = false;
 };
 }

@@ -9,6 +9,7 @@
 #include <objbase.h>
 
 #include "workshop_project.h"
+#include "manager_workshop_item.h"
 #include "bridge_json.h"
 #include "workshop_staging.h"
 
@@ -880,24 +881,14 @@ std::string BuildWorkshopMetadata(
 std::optional<WorkshopMetadata> ParseWorkshopMetadata(
     std::string_view metadata, std::string& error)
 {
-    JsonValue root;
-    if (!ParseJson(metadata, root, error) || !root.IsObject())
-    {
-        if (error.empty()) error = "Workshop metadata must be a JSON object";
-        return std::nullopt;
-    }
-    const auto format = JsonString(root, "format");
-    const auto artifact = JsonString(root, "artifact");
-    const auto packageId = JsonString(root, "packageId");
-    const auto version = JsonString(root, "version");
-    if (!format || *format != "snowdesktop-widget" ||
-        !artifact || *artifact != "package.snowwidget" ||
-        !packageId || packageId->empty() || !version || version->empty())
+    error.clear();
+    const auto item = DescribeManagerWorkshopItem(metadata);
+    if (item.kind != ManagerWorkshopItemKind::Widget || !item.Complete())
     {
         error = "Workshop metadata is not a complete SnowDesktop component association";
         return std::nullopt;
     }
-    return WorkshopMetadata{ *packageId, *version };
+    return WorkshopMetadata{ item.identity, item.version };
 }
 
 bool CanBindWorkshopItem(const WorkshopProject& project,
@@ -917,7 +908,8 @@ bool CanBindWorkshopItem(const WorkshopProject& project,
     }
     const auto parsed = ParseWorkshopMetadata(metadata, error);
     if (!parsed) return false;
-    if (!project.packageId.empty() && parsed->packageId != project.packageId)
+    if (!ManagerWorkshopUuid(project.packageId) ||
+        parsed->packageId != project.packageId)
     {
         error = "Workshop metadata packageId does not match the local component UUID";
         return false;

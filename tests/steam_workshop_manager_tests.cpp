@@ -4,6 +4,8 @@
 #include "manager_frame_scheduler.h"
 #include "manager_localization.h"
 #include "steam/manager_connection_state_tests.h"
+#include "steam/manager_workshop_item_tests.h"
+#include "steam/manager_workspace_state_tests.h"
 #include "steam/manager_publish_task_tests.h"
 #include "package_tool.h"
 #include "preview_cache.h"
@@ -11,6 +13,7 @@
 #include "../steam_bridge/src/steam_app_identity.h"
 #include "steam/steam_child_environment.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_account_cache.h"
 #include "steam/steam_workshop_sync.h"
 #include "steam/steam_workshop_watch_thread.h"
 #include "widget/package_source_lookup_cases.h"
@@ -2038,6 +2041,44 @@ void TestSteamWorkshopLocalCache()
         cache.readyItems[0].contentDirectory == content / L"100",
         "local Workshop cache keeps current subscribed items ready while another item downloads and ignores stale unsubscribed details");
 
+    const auto accountFile = temporary.path / L"5080330_subscriptions.vdf";
+    const auto writeAccount = [&](const std::string& text) {
+        std::ofstream(accountFile, std::ios::binary | std::ios::trunc) << text;
+    };
+    writeAccount(R"("subscribedfiles" { "appid" "5080330" "time_last_updated" "123"
+        "0" { "publishedfileid" "100" "disabled_locally" "1" }
+        "1" { "publishedfileid" "500" "disabled_locally" "0" } })");
+    auto accountCache = cache;
+    accountCache.partial = true;
+    accountCache.skippedLibraries.push_back("offline library");
+    Check(ApplySteamWorkshopAccountCache(accountFile, 5080330u, accountCache) &&
+        accountCache.authoritative && !accountCache.partial &&
+        accountCache.subscribedPublishedFileIds == std::vector<std::string>({"100", "500"}) &&
+        accountCache.readyItems.size() == 1 && !accountCache.skippedLibraries.empty(),
+        "complete current-account membership permits unsubscribe and pending new subscriptions despite an offline content library");
+    Check(std::find(accountCache.locallyUnsubscribedPublishedFileIds.begin(),
+        accountCache.locallyUnsubscribedPublishedFileIds.end(), "200") != accountCache.locallyUnsubscribedPublishedFileIds.end(),
+        "a retired library item is absent from the authoritative account list");
+    for (const auto* invalid : {
+        R"("subscribedfiles" { "appid" "5080330" "time_last_updated" "123")",
+        R"("subscribedfiles" { "appid" "730" "time_last_updated" "123" })",
+        R"("subscribedfiles" { "appid" "5080330" })",
+        R"("subscribedfiles" { "appid" "5080330" "time_last_updated" "0" })",
+        R"("subscribedfiles" { "appid" "5080330" "time_last_updated" "123" "0" { "publishedfileid" "100" } "1" { "publishedfileid" "100" } })",
+        R"("subscribedfiles" { "appid" "5080330" "time_last_updated" "123" "0" { "publishedfileid" "18446744073709551616" } })"})
+    {
+        writeAccount(invalid);
+        auto unchanged = accountCache;
+        Check(!ApplySteamWorkshopAccountCache(accountFile, 5080330u, unchanged) &&
+            unchanged.subscribedPublishedFileIds == accountCache.subscribedPublishedFileIds &&
+            unchanged.readyItems.size() == accountCache.readyItems.size(),
+            "invalid, wrong-app, incomplete or duplicate account data never authorizes changes");
+    }
+    writeAccount(R"("subscribedfiles" { "appid" "5080330" "time_last_updated" "123" })");
+    Check(ApplySteamWorkshopAccountCache(accountFile, 5080330u, accountCache) &&
+        accountCache.authoritative && accountCache.subscribedPublishedFileIds.empty() && accountCache.readyItems.empty(),
+        "a fully parsed empty account list authorizes removing subscriptions without keeping stale downloads");
+
     std::ofstream(workshop / L"appworkshop_5080330.acf",
         std::ios::binary | std::ios::trunc) <<
         "\"AppWorkshop\" { \"appid\" \"5080330\"";
@@ -2220,6 +2261,9 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
 int wmain(int argc, wchar_t** argv)
 {
     TestManagerConnectionState(Check);
+    TestManagerWorkshopItem(Check);
+    try { TestManagerWorkspaceState(); }
+    catch (const std::exception& error) { Check(false, error.what()); }
     try { TestManagerPublishTask(); }
     catch (const std::exception& error) { Check(false, error.what()); }
     try { package_source_lookup_cases::Run(); }

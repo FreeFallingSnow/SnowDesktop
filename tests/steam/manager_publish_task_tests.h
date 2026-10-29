@@ -4,7 +4,11 @@
 #pragma once
 
 #include "../../steam_bridge/src/manager_publish_task.h"
+#include "../../steam_bridge/src/manager_prepared_preview.h"
+#include "../test_temporary_directory.h"
 
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 
 inline void TestManagerPublishTask()
@@ -84,6 +88,41 @@ inline void TestManagerPublishTask()
         task.Snapshot().publishedFileId == 700 &&
         task.Snapshot().localId == "project-a",
         "a later language failure retains the confirmed content and original project owner");
+
+    ComponentPublishResult primaryConfirmed;
+    primaryConfirmed.baseSubmitted = true;
+    primaryConfirmed.contentUploaded = true;
+    primaryConfirmed.publishedFileId = 700;
+    primaryConfirmed.localizedSubmissions = 1;
+    primaryConfirmed.failedLanguage = "schinese";
+    task.Begin("preflight-after-success", "Confirmed primary upload");
+    task.Update(progress(1, 2, "english", PublishStage::UploadingContent, 10, 10));
+    task.Update(progress(1, 2, "english", PublishStage::Completed));
+    task.Update(progress(2, 2, "schinese", PublishStage::Preparing, 0, 0, false));
+    task.Finish(primaryConfirmed, false,
+        CoreError{kSteamOperationTimedOut, "query_timed_out", "Second language preflight"});
+    require(task.Snapshot().outcome == ManagerPublishOutcome::Partial &&
+        task.Snapshot().baseSubmitted && task.Snapshot().contentUploaded &&
+        task.Snapshot().confirmedSubmissions == 1 &&
+        task.Snapshot().confirmedLanguages == 1 &&
+        task.Snapshot().failedLanguage == "schinese" &&
+        task.Snapshot().localId == "preflight-after-success",
+        "a later language preflight timeout preserves confirmed work without inventing an uncertain submit");
+
+    task.Begin("second-submit-timeout", "Unconfirmed second language");
+    task.Update(progress(1, 2, "english", PublishStage::UploadingContent, 10, 10));
+    task.Update(progress(1, 2, "english", PublishStage::Completed));
+    task.Update(progress(2, 2, "schinese", PublishStage::Preparing, 0, 0, false));
+    task.Update(progress(2, 2, "schinese", PublishStage::CommittingChanges));
+    task.Finish(primaryConfirmed, false,
+        CoreError{kSteamOperationTimedOut, "publish_timed_out", "Second language callback"});
+    require(task.Snapshot().outcome == ManagerPublishOutcome::Unknown &&
+        task.Snapshot().baseSubmitted && task.Snapshot().contentUploaded &&
+        task.Snapshot().confirmedSubmissions == 1 &&
+        task.Snapshot().confirmedLanguages == 1 &&
+        task.Snapshot().failedLanguage == "schinese" &&
+        task.Snapshot().localId == "second-submit-timeout",
+        "a timeout after the next submit starts distinguishes its unknown outcome from the confirmed primary upload");
 
     task.Begin("metadata-project", "Listing update");
     task.Update(progress(1, 1, {}, PublishStage::CommittingChanges));
@@ -193,4 +232,58 @@ inline void TestManagerPublishTask()
         task.Snapshot().StageElapsed(start + std::chrono::seconds(14)).count() == 2 &&
         task.Snapshot().StageElapsed(start).count() == 0,
         "a new language resets the interval even with the same stage and clamps earlier observations");
+
+    const auto writePreviewTestFile = [&](const std::filesystem::path& path,
+        std::string_view bytes) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        require(static_cast<bool>(output), "preview fixture writes its owned bytes");
+    };
+    const auto readPreviewTestFile = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>());
+    };
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto source = temporary.path / L"original.PNG";
+        const auto artifacts = temporary.path / L"artifacts";
+        std::filesystem::create_directory(artifacts);
+        writePreviewTestFile(source, "preview before review");
+        std::string error;
+        const auto frozen = FreezeManagerPreview(source, artifacts, error);
+        require(frozen && error.empty() &&
+            frozen->Path() == artifacts / L"prepared-preview.png",
+            "the real preview factory creates an owned snapshot with a legal normalized extension");
+        writePreviewTestFile(source, "preview replaced at the same original path");
+        require(readPreviewTestFile(frozen->Path()) == "preview before review" &&
+            readPreviewTestFile(source) == "preview replaced at the same original path",
+            "rewriting the original cover after preparation cannot change the actual frozen upload bytes");
+    }
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto source = temporary.path / L"original.png";
+        const auto artifacts = temporary.path / L"artifacts";
+        std::filesystem::create_directory(artifacts);
+        const auto package = artifacts / L"package.snowwidget";
+        const auto unrelated = artifacts / L"another-owned-file.txt";
+        writePreviewTestFile(source, "original preview");
+        writePreviewTestFile(package, "package retained");
+        writePreviewTestFile(unrelated, "unrelated file retained");
+        std::string error;
+        auto firstOwner = FreezeManagerPreview(source, artifacts, error);
+        require(firstOwner && error.empty(), "cleanup fixture freezes a real preview file");
+        const auto frozenPath = firstOwner->Path();
+        auto lastOwner = firstOwner;
+        firstOwner.reset();
+        require(std::filesystem::is_regular_file(frozenPath),
+            "a preview remains available while a prepared plan still shares its owner");
+        lastOwner.reset();
+        require(!std::filesystem::exists(frozenPath) &&
+            readPreviewTestFile(package) == "package retained" &&
+            readPreviewTestFile(unrelated) == "unrelated file retained" &&
+            readPreviewTestFile(source) == "original preview" &&
+            std::filesystem::is_directory(artifacts),
+            "the final preview owner deletes only its exact file and leaves the package, siblings and source intact");
+    }
 }
