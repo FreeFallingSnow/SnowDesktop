@@ -49,7 +49,7 @@ void Protocol()
     Check(discovery.Find("result")->Find("methods")->array.size() >= 10, "discovery lists supported methods");
     const auto* capabilities = discovery.Find("result")->Find("capabilities");
     Check(capabilities && capabilities->Find("elements")->number == 1 &&
-        capabilities->Find("controlledPointer")->number == 1 && capabilities->Find("demoCursor")->number == 1,
+        capabilities->Find("privatePointer")->number == 1 && capabilities->Find("demoCursor")->number == 1,
         "clients can negotiate element and pointer capabilities without changing protocol v1");
     Check(capabilities->Find("monitorCapture") && capabilities->Find("monitorCapture")->number == 1,
         "clients can discover the optional monitor-capture extension");
@@ -57,8 +57,14 @@ void Protocol()
         "clients can discover visible modern-menu controls");
     Check(capabilities->Find("settingsAutomation") && capabilities->Find("settingsAutomation")->number == 1,
         "clients can negotiate the asynchronous settings adapter");
-    Check(capabilities->Find("demoRender") && capabilities->Find("demoRender")->number == 1,
-        "clients can negotiate isolated native scene exports");
+    Check(capabilities->Find("previewRender") && capabilities->Find("previewRender")->number == 1 &&
+        !capabilities->Find("demoRender") && !capabilities->Find("controlledPointer"),
+        "preview composition must not advertise real-runtime rendering or system-input playback");
+    Check(capabilities->Find("monitorRecording") && capabilities->Find("monitorRecording")->number == 1,
+        "clients can discover real composed-monitor recording");
+    Check(ErrorCode(invoke(R"({"jsonrpc":"2.0","id":31,"method":"ui.perform"})")) == "method_not_found" &&
+        ErrorCode(invoke(R"({"jsonrpc":"2.0","id":32,"method":"demo.render"})")) == "method_not_found",
+        "unreleased system-input and misleading demo endpoints must not remain available");
     Check(capabilities->Find("nativeWidgetControls")->number == 1 && capabilities->Find("demoElementTargets")->number == 1,
         "clients can negotiate native control geometry and scene cursor targets");
     Check(mutations == 1, "discovery is independent of UI mutations");

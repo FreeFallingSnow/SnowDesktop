@@ -58,9 +58,6 @@ void ApplicationControlElementChecks()
     const POINT start{-500, 20}, end{900, 700};
     const auto first = Interpolate(start, end, 0), last = Interpolate(start, end, 1);
     Check(first.x == start.x && first.y == start.y && last.x == end.x && last.y == end.y, "curved pointer path retains exact endpoints");
-    Player player; Plan invalid; invalid.sourceId = "button"; invalid.durationMilliseconds = 0;
-    std::string error;
-    Check(!player.Start(invalid, [](const std::string&) { return Target{}; }, {}, error) && error == "invalid_pointer_plan", "invalid plans cannot inject input");
 
     using namespace snowdesktop::demo_cursor;
     std::vector<std::uint8_t> pixels(128 * 96 * 4);

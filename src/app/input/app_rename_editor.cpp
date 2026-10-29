@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "ui/render/file_search_result_row.h"
@@ -113,7 +114,7 @@ void DesktopApp::BeginFolderEntryRenameEditor(
             entry.DisplayName(),
             entry.fullPath,
             entry.isDirectory));
-    SetFocus(renameInputWindow_);
+    snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
     const size_t visibilityWidgetIndex = owner;
     if (visibilityWidgetIndex < widgets_.size())
     {
@@ -215,7 +216,7 @@ bool DesktopApp::BeginDockAnchoredRename(
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameInputWindow_, EM_SETSEL,
         0, selectionEnd);
-    SetFocus(renameInputWindow_);
+    snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
     return true;
 }
 
@@ -358,7 +359,7 @@ BeginRenameDockFolderPopupEntry(
             entry.DisplayName(),
             entry.fullPath,
             entry.isDirectory));
-    SetFocus(renameInputWindow_);
+    snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
     InvalidateCollectionPopupContent();
     InvalidateFloatingPopupWindow(false);
 }

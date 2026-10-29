@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget_package_source_capture.h"
 #include "desktop/folder_mapping_visibility_rules.h"
@@ -191,7 +192,7 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         ShowWindow(dialogWindow, SW_SHOWNORMAL);
         SetWindowPos(dialogWindow, HWND_TOPMOST, x, y, 0, 0,
             positionFlags);
-        SetForegroundWindow(dialogWindow);
+        snowdesktop::private_pointer::SetInputForeground(dialogWindow);
         return S_OK;
     };
     std::vector<TASKDIALOG_BUTTON> buttons;
@@ -1717,7 +1718,7 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
             ShowWindow(dialogWindow, SW_SHOWNORMAL);
             SetWindowPos(dialogWindow, HWND_TOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-            SetForegroundWindow(dialogWindow);
+            snowdesktop::private_pointer::SetInputForeground(dialogWindow);
             return;
         }
         if (sessionAction == snowdesktop::widget_runtime::

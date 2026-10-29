@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "desktop_passthrough_indicator.h"
 
 #include "ui/render/native_tooltip_preferences.h"
@@ -125,7 +126,7 @@ LRESULT CALLBACK DesktopPassthroughIndicator::WindowProc(HWND window,
         if (self)
         {
             TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window, 0};
-            TrackMouseEvent(&track);
+            snowdesktop::private_pointer::TrackLeave(&track);
             POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             ClientToScreen(window, &point);
             self->tooltip_.Configure(window, self->composition_.Get(), self->text_.Get(), NativeTooltipAppearance());
@@ -137,12 +138,12 @@ LRESULT CALLBACK DesktopPassthroughIndicator::WindowProc(HWND window,
         return 0;
     case WM_LBUTTONDOWN:
         if (self) self->tooltip_.Hide();
-        SetCapture(window);
+        snowdesktop::private_pointer::SetPointerCapture(window);
         return 0;
     case WM_LBUTTONUP:
-        if (GetCapture() == window)
+        if (snowdesktop::private_pointer::Capture() == window)
         {
-            ReleaseCapture();
+            snowdesktop::private_pointer::ReleasePointerCapture();
             RECT client{};
             GetClientRect(window, &client);
             const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};

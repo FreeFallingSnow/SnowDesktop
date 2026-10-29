@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "dock/dock_tray_targets.h"
 #include "app/navigation/quick_navigation_theme.h"
@@ -93,7 +94,7 @@ bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t item
     }
     if (IsRectEmpty(&anchor))
     {
-        POINT cursor{}; GetCursorPos(&cursor);
+        POINT cursor{}; snowdesktop::private_pointer::CursorPosition(&cursor);
         anchor = {cursor.x, cursor.y, cursor.x + 1, cursor.y + 1};
     }
     if (targets.size() == 1)
@@ -194,7 +195,7 @@ void DesktopApp::RefreshDockTrayPopup()
     const RECT popup = GetCollectionPopupRect(state.widget);
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(state.widget, popup));
     POINT pointer{};
-    if (GetCursorPos(&pointer) && ScreenToClient(hwnd_, &pointer))
+    if (snowdesktop::private_pointer::CursorPosition(&pointer) && ScreenToClient(hwnd_, &pointer))
         state.hovered = DockTrayPopupHitTest(pointer);
     else state.hovered = -1;
     InvalidateCollectionPopupContent();
@@ -238,7 +239,7 @@ bool DesktopApp::DockTrayPopupPointerUp(POINT point)
     const auto state = dockTrayPopup_;
     state->pointerDown = false;
     mouseDown_ = false; mouseDownHit_ = nullptr;
-    ReleaseCapture();
+    snowdesktop::private_pointer::ReleasePointerCapture();
     const int row = DockTrayPopupHitTest(point);
     if (row >= 0)
     {
@@ -313,7 +314,7 @@ bool DesktopApp::DockTrayPopupKeyDown(WPARAM key)
     const int count = static_cast<int>(state.targets.size()) + 1;
     if (key == VK_ESCAPE) { CloseCollectionPopup(false); return true; }
     if (key == VK_RETURN) { if (state.focused >= 0) ActivateDockTrayPopupRow(state.focused); return true; }
-    if ((key == VK_APPS || (key == VK_F10 && (GetKeyState(VK_SHIFT) & 0x8000))) &&
+    if ((key == VK_APPS || (key == VK_F10 && (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000))) &&
         state.focused >= 0) { ActivateDockTrayPopupRow(state.focused, true); return true; }
     if (key != VK_UP && key != VK_DOWN && key != VK_HOME && key != VK_END && key != VK_TAB)
         return key == VK_DELETE || key == VK_F2 || key == VK_BACK;
@@ -322,7 +323,7 @@ bool DesktopApp::DockTrayPopupKeyDown(WPARAM key)
     else if (key == VK_END) state.focused = count - 1;
     else
     {
-        const int direction = key == VK_UP || (key == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000)) ? -1 : 1;
+        const int direction = key == VK_UP || (key == VK_TAB && (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000)) ? -1 : 1;
         state.focused = state.focused < 0 ? 0 : (state.focused + direction + count) % count;
     }
     const RECT popup = GetCollectionPopupRect(state.widget);

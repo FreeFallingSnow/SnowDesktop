@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "layout/page_navigation_rules.h"
@@ -913,7 +914,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         }
     }
     widgetAction_ = WidgetAction::None;
-    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;
     detailColumnResizePopup_ = false;
@@ -958,14 +959,14 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 void DesktopApp::ReleaseCapturePreservingPointerState()
 {
     ++expectedCaptureReleaseDepth_;
-    ReleaseCapture();
+    snowdesktop::private_pointer::ReleasePointerCapture();
     --expectedCaptureReleaseDepth_;
 }
 
 void DesktopApp::CancelActiveItemDrag()
 {
     CancelPointerPressWithoutCaptureRelease();
-    ReleaseCapture();
+    snowdesktop::private_pointer::ReleasePointerCapture();
 }
 
 void DesktopApp::CommitDragVisualEndBeforeShellOperation()

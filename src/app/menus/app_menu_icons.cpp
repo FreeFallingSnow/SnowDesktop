@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "sort_menu.h"
 #include "tray_context_menu_placement.h"
@@ -105,7 +106,7 @@ snowdesktop::MenuQuickIcon ResolveQuickIcon(UINT_PTR command)
 
 bool TryGetTaskbarRectAtPoint(POINT screenPoint, RECT& taskbarRect)
 {
-    HWND window = WindowFromPoint(screenPoint);
+    HWND window = snowdesktop::private_pointer::WindowAtPoint(screenPoint);
     while (window)
     {
         wchar_t className[64]{};

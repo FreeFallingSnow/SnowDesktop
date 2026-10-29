@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
@@ -32,7 +33,7 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
         else if (hit == WidgetHit::CollapseToggleBtn) cursor = IDC_HAND;
     }
     if (!cursor) return false;
-    SetCursor(LoadCursorW(nullptr, cursor));
+    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, cursor));
     return true;
 }
 

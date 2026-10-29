@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "navigation/quick_navigation_rules.h"
@@ -24,9 +25,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return;
     }
     int currentMods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(
             currentMods,

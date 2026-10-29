@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 
 DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
@@ -127,9 +128,9 @@ namespace
 bool RenameClickUnmodified(WPARAM modifiers)
 {
     return (modifiers & (MK_CONTROL | MK_SHIFT | MK_RBUTTON | MK_MBUTTON)) == 0 &&
-        ((GetAsyncKeyState(VK_CONTROL) | GetAsyncKeyState(VK_SHIFT) |
-            GetAsyncKeyState(VK_MENU) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON)) & 0x8000) == 0;
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) | snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_MENU) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON)) & 0x8000) == 0;
 }
 }
 
@@ -156,7 +157,7 @@ void DesktopApp::CompleteRenameClick(WPARAM modifiers, POINT point)
             GetTickCount64(), delay))
         return;
     renameClickPoint_ = point;
-    renameClickForeground_ = GetForegroundWindow();
+    renameClickForeground_ = snowdesktop::private_pointer::ForegroundWindow();
     if (!SetTimer(hwnd_, kRenameClickTimerId, delay, nullptr))
         CancelRenameClick();
 }
@@ -182,8 +183,8 @@ void DesktopApp::OnRenameClickTimer()
     const bool eligible = !mouseDown_ && widgetAction_ == WidgetAction::None &&
         !middleButtonWidgetMove_ && !dragSession_.IsActive() &&
         !dragDropController_.IsTransportActive() &&
-        GetForegroundWindow() == renameClickForeground_ &&
-        (GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0 &&
+        snowdesktop::private_pointer::ForegroundWindow() == renameClickForeground_ &&
+        (snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) == 0 &&
         RenameClickUnmodified(0) && hit.selected && HasSingleRenameClickSelection();
     if (!renameClickController_.TakeReady(hit.target, hit.label, eligible, now)) return;
     BeginRenameSelected();

@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "ui/menu/modern_menu.h"
 
@@ -89,7 +90,7 @@ bool DesktopApp::HandleUsageGuidePointerDown(POINT point)
     }
     // The complete panel owns its hit area: reading or dragging it must not
     // click/select the desktop objects underneath.
-    SetCapture(hwnd_);
+    snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     return true;
 }
 
@@ -98,22 +99,22 @@ bool DesktopApp::HandleUsageGuidePointerMove(POINT point)
     if (!usageGuidePressedButton_) return false;
     if (usageGuidePlacement_.dragOffset)
     {
-        const bool ownsCapture = GetCapture() == hwnd_;
+        const bool ownsCapture = snowdesktop::private_pointer::Capture() == hwnd_;
         ClientToScreen(hwnd_, &point);
         // Follow the live sample only while the button remains physically down.
         // Do not let passive-hover resampling advance a released gesture.
-        GetCursorPos(&point);
-        const bool primaryButtonDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        snowdesktop::private_pointer::CursorPosition(&point);
+        const bool primaryButtonDown = (snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         if (usageGuidePlacement_.DragTo(point, primaryButtonDown, ownsCapture))
             InvalidateRect(hwnd_, nullptr, FALSE);
         if (!usageGuidePlacement_.dragOffset)
         {
             usageGuidePressedButton_ = 0;
-            if (ownsCapture) ReleaseCapture();
-            SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+            if (ownsCapture) snowdesktop::private_pointer::ReleasePointerCapture();
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
             return true;
         }
-        SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEALL));
     }
     return true;
 }
@@ -123,7 +124,7 @@ bool DesktopApp::HandleUsageGuidePointerUp(POINT point)
     const int pressed = std::exchange(usageGuidePressedButton_, 0);
     if (!pressed) return false;
     usageGuidePlacement_.EndDrag();
-    if (GetCapture() == hwnd_) ReleaseCapture();
+    if (snowdesktop::private_pointer::Capture() == hwnd_) snowdesktop::private_pointer::ReleasePointerCapture();
     if (!IsUsageGuideVisible()) return true;
     const auto& lesson = *snowdesktop::usage_guide::Find(*usageGuideTopic_);
     if (pressed == 1 && PtInRect(&usageGuidePauseRect_, point))

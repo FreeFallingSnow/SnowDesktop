@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "app/menus/sort_menu.h"
@@ -62,7 +63,7 @@ bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
         }
         else flags |= SWP_NOMOVE;
         SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, flags);
-        SetForegroundWindow(window);
+        snowdesktop::private_pointer::SetInputForeground(window);
         return S_OK;
     };
     int selected = IDCANCEL;
@@ -971,7 +972,7 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         shellRequest.paths.push_back(widgets_[effectiveSourceIndex].sourceFolderPath);
         shellRequest.background = true;
-        shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     }
     // Toggling an auto-collect option is a continuous configuration step: keep
     // the submenu open, refresh its check marks in place, and apply the

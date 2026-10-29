@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 
 #include <utility>
@@ -10,7 +11,7 @@ void DesktopApp::ReleaseLuaWidgetPanelCaptureIfOwned()
         std::exchange(luaWidgetPanelCaptureHwnd_, nullptr);
     if (snowdesktop::floating_popup_rules::
             ShouldReleaseRecordedPanelCapture(
-                recordedCapture, GetCapture()))
+                recordedCapture, snowdesktop::private_pointer::Capture()))
     {
         ReleaseCapturePreservingPointerState();
     }
@@ -244,8 +245,8 @@ void DesktopApp::CloseLuaWidgetPanel(
             reason ? reason : "",
             floatingPopupMouseHookGeneration_,
             GetOpenPopupWidget() ? 1 : 0,
-            GetCapture(),
-            GetFocus());
+            snowdesktop::private_pointer::Capture(),
+            snowdesktop::private_pointer::FocusWindow());
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, message);
     }
     const bool panelPressActive =

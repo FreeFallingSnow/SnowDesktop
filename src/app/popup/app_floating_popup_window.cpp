@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "ui/render/ui_presentation_scope.h"
 #include "drag_drop/drag_input_rules.h"
@@ -249,6 +250,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     std::uint32_t generation,
     std::uint64_t screenPointPayload)
 {
+    if (snowdesktop::private_pointer::Active()) return;
     if (!snowdesktop::floating_popup_rules::
             IsCurrentPointerNotification(
                 generation,
@@ -270,7 +272,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
                 desktopPoint,
                 floatingPopupCollectionRegion_,
                 floatingPopupLuaPanelRegion_);
-    HWND targetWindow = WindowFromPoint(screenPoint);
+    HWND targetWindow = snowdesktop::private_pointer::WindowAtPoint(screenPoint);
     if (!targetWindow && !pointOnHostedPopup)
         return;
     const DWORD currentProcessId = GetCurrentProcessId();
@@ -1297,12 +1299,12 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
         widgetAction_ == WidgetAction::Resize || largeIconGesture_;
     const HWND dialogOwner = ShellDialogOwnerHwnd();
     const auto observedButtons = snowdesktop::window_support::WindowSupport().PointerButtons();
-    const bool pointerPressed = GetCapture() || mouseDown_ ||
+    const bool pointerPressed = snowdesktop::private_pointer::Capture() || mouseDown_ ||
         dragSession_.HasContext() || middleButtonWidgetMove_ ||
         widgetAction_ != WidgetAction::None ||
         (observedButtons ? (*observedButtons & 7u) != 0 :
-            ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-                GetAsyncKeyState(VK_MBUTTON)) & 0x8000) != 0);
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
+                snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON)) & 0x8000) != 0);
     const bool interactionBusy = HasActiveContextMenuSession() ||
         renameController_.IsActive() ||
         detailColumnResizeActive_ || luaWidgetPanelMouseDown_ ||
@@ -1319,8 +1321,8 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
     // detaches only the outgoing popup target; keep the drag selection intact.
     popupMouseLeaveController_.Reset();
     if (dragging && !dragDropController_.IsTransportActive() &&
-        GetCapture() == floatingPopupHwnd_ && hwnd_ && IsWindow(hwnd_))
-        SetCapture(hwnd_);
+        snowdesktop::private_pointer::Capture() == floatingPopupHwnd_ && hwnd_ && IsWindow(hwnd_))
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     CloseCollectionPopup(!dragging);
 }
 
@@ -1354,6 +1356,7 @@ POINT DesktopApp::FloatingPopupClientToDesktop(
 LRESULT DesktopApp::HandleFloatingPopupMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     struct NativeMenuPresentationScope final
     {
@@ -1378,12 +1381,12 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
-            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
+            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
                 ShouldSampleFloatingWindowPointer(
                     nativeDragActive, primaryButtonDown) &&
-            GetCursorPos(&point) && hwnd_ && IsWindow(hwnd_) &&
+            snowdesktop::private_pointer::CursorPosition(&point) && hwnd_ && IsWindow(hwnd_) &&
             ScreenToClient(hwnd_, &point))
         {
             return point;
@@ -1409,7 +1412,10 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return ShouldShowFloatingPopupWindow()
             ? HTCLIENT : HTTRANSPARENT;
     case WM_SETCURSOR:
+    {
+        const snowdesktop::private_pointer::ForwardScope forward(hwnd_, msg);
         return HandleMessage(hwnd_, msg, wp, lp);
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT:
@@ -1420,7 +1426,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
         tracking.dwFlags = TME_LEAVE;
         tracking.hwndTrack = hwnd;
-        TrackMouseEvent(&tracking);
+        snowdesktop::private_pointer::TrackLeave(&tracking);
         handlingFloatingPopupInput_ = true;
         bool dragPreviewSynced = false;
         const bool pointerUpdated = OnNativeMouseMoveAt(
@@ -1435,8 +1441,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
     case WM_MOUSELEAVE:
     {
         POINT cursor{};
-        if (GetCursorPos(&cursor) &&
-            WindowFromPoint(cursor) == hwnd)
+        if (snowdesktop::private_pointer::CursorPosition(&cursor) &&
+            snowdesktop::private_pointer::WindowAtPoint(cursor) == hwnd)
             return 0;
         OnMouseLeave();
         return 0;
@@ -1458,7 +1464,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             SyncPopupMouseLeaveTimer();
             POINT point{};
             if (popupMouseLeaveTimerArmed_ && hwnd_ && IsWindow(hwnd_) &&
-                GetCursorPos(&point) && ScreenToClient(hwnd_, &point))
+                snowdesktop::private_pointer::CursorPosition(&point) && ScreenToClient(hwnd_, &point))
                 UpdatePopupCloseOnMouseLeave(point);
             return 0;
         }
@@ -1480,7 +1486,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         if (msg == WM_CANCELMODE) CancelRenameClick();
         ForgetLuaWidgetPanelCapture(hwnd);
         {
-            const HWND currentCapture = GetCapture();
+            const HWND currentCapture = snowdesktop::private_pointer::Capture();
             const HWND nextCapture =
                 reinterpret_cast<HWND>(lp);
             const bool shouldCancel =
@@ -1500,11 +1506,12 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         {
             CancelPointerPressWithoutCaptureRelease();
         }
-        if (msg == WM_CANCELMODE && GetCapture() == hwnd)
+        if (msg == WM_CANCELMODE && snowdesktop::private_pointer::Capture() == hwnd)
             ReleaseCapturePreservingPointerState();
         return 0;
     case WM_LBUTTONDBLCLK:
     {
+        const snowdesktop::private_pointer::ForwardScope forward(hwnd_, msg);
         handlingFloatingPopupInput_ = true;
         const LRESULT result =
             HandleMessage(hwnd_, msg, wp, desktopLParam());

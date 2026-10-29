@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/menus/sort_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -70,11 +71,11 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         dragDropController_.IsTransportActive() ||
         widgetAction_ != WidgetAction::None || largeIconGesture_ ||
         middleButtonWidgetMove_ || detailColumnResizeActive_ ||
-        luaWidgetPanelMouseDown_ || renameController_.IsActive() || GetCapture() ||
+        luaWidgetPanelMouseDown_ || renameController_.IsActive() || snowdesktop::private_pointer::Capture() ||
         HasActiveContextMenuSession() ||
         (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
-        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON)) & 0x8000))
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON)) & 0x8000))
     {
         CancelPopupHover(true);
         return;
@@ -361,7 +362,7 @@ void DesktopApp::TraceCollectionPopupDwell(
         message,
         L"Collection dwell trace: %ls point=(%ld,%ld) mouseDown=%d capture=%p",
         signature, point.x, point.y,
-        mouseDown_ ? 1 : 0, GetCapture());
+        mouseDown_ ? 1 : 0, snowdesktop::private_pointer::Capture());
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
 #endif
 }
@@ -926,11 +927,11 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     InvalidateRect(hwnd_, nullptr, FALSE);
 
     int mods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000)
         mods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)
         mods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)
         mods |= MK_SHIFT;
     RefreshDragTargetAt(lastMousePoint_, mods);
     return true;
@@ -1167,7 +1168,7 @@ ShowDockFolderPopupContextMenu(
     else if (dockFolderPopupAvailable_)
         shellRequest.paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
     shellRequest.background = !itemMenu;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     const UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_, false, false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);

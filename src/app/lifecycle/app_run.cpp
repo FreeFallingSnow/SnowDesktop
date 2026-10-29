@@ -3,6 +3,7 @@
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "ui/input/private_pointer.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "ui/menu/modern_menu.h"
@@ -1812,6 +1813,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     messageBatchStarted) &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
+            if (!snowdesktop::private_pointer::MessageAllowed(msg.hwnd, msg.message))
+            { ++processedMessages; continue; }
             if (msg.message == WM_QUIT)
             {
                 running = false;

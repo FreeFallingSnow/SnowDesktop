@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "widget/data/widget_system_control_data.h"
 #include "widget/data/widget_gpu_lua.h"
@@ -30655,9 +30656,9 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         (key == VK_RETURN || key == VK_ESCAPE)) return true;
     focusedHostInput_.pendingHighSurrogate = 0;
 
-    const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    const bool ctrl = (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (snowdesktop::private_pointer::KeyState(VK_MENU) & 0x8000) != 0;
     if (key == VK_TAB && !ctrl && !alt)
     {
         const std::wstring widgetId = focusedHostInput_.widgetId;

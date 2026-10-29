@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -186,11 +187,11 @@ void DesktopApp::OnRightButtonDown(
     DismissActiveContextMenuForPopupTransition();
     if (DockTrayPopupPointerDown(point, true))
     {
-        SetCapture(handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_);
+        snowdesktop::private_pointer::SetPointerCapture(handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_);
         return;
     }
     POINT cursor{};
-    if (quickNavigationOpen_ && GetCursorPos(&cursor))
+    if (quickNavigationOpen_ && snowdesktop::private_pointer::CursorPosition(&cursor))
     {
         const POINT quickNavigationPoint{cursor.x - virtualLeft_, cursor.y - virtualTop_};
         if (!PtInRect(&quickNavigationRect_, quickNavigationPoint)) CloseQuickNavigation(false);
@@ -239,7 +240,7 @@ void DesktopApp::OnRightButtonDown(
         widgetPreviewCell_ = widgetDragOriginalCell_;
         widgetPreviewSpan_ = widgetDragOriginalSpan_;
         widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[index].bounds, point);
-        SetCapture(hwnd_);
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
     };
     auto* popupGroup = IsPointOccludedByOpenPopup(point) ? GetGroupPopupView() : nullptr;
@@ -370,7 +371,7 @@ void DesktopApp::OnRightButtonDown(
     rightButtonItemDrag_ = true;
     const HWND capture = dockHost ? dockHost->hwnd :
         handlingFloatingPopupInput_ ? floatingPopupHwnd_ : hwnd_;
-    SetCapture(capture);
+    snowdesktop::private_pointer::SetPointerCapture(capture);
     SyncKeyboardNavFromSelection();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

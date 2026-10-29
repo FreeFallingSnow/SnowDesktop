@@ -1643,8 +1643,11 @@ private:
     void InitializeApplicationControl();
     snowdesktop::control::Value ApplicationControlLayout() const;
     snowdesktop::control::ElementSnapshot ApplicationControlElements();
-    snowdesktop::control::Value PerformApplicationControlElement(const snowdesktop::control::Value& params);
-    snowdesktop::control::Value ApplicationControlPointerState(bool trace) const;
+    snowdesktop::control::Value HandlePrivatePointer(std::string_view method, const snowdesktop::control::Value& params);
+    snowdesktop::control::Value PrivatePointerState(bool trace) const;
+    HWND PrivatePointerWindowAt(POINT point) const;
+    bool OwnsPrivatePointerWindow(HWND window) const;
+    void PresentPrivatePointer();
     snowdesktop::control::Value HandleApplicationControl(
         std::string_view method, const snowdesktop::control::Value& params);
     /** Release settings UI and services while their borrowed owners are alive. */

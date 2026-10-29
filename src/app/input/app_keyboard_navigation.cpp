@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget/runtime/widget_item_layout.h"
 
@@ -15,9 +16,9 @@ void DesktopApp::RefreshDragHintFromKeyboard()
         !dragDropController_.IsTransportActive()) return;
 
     int mods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(
             mods,
@@ -163,7 +164,7 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
         std::wstring mousePageId;
         {
             POINT screenPt{};
-            GetCursorPos(&screenPt);
+            snowdesktop::private_pointer::CursorPosition(&screenPt);
             for (const auto& gp : gridPages_)
             {
                 if (!gp.id.empty() && PtInRect(&gp.workArea, screenPt))

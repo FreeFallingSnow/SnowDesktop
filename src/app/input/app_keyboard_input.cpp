@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_keyboard_rules.h"
@@ -38,14 +39,14 @@ bool DesktopApp::TryHandlePageNavigationKey(
         return false;
 
     UINT pressedModifiers = 0;
-    if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
+    if ((snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0)
         pressedModifiers |= MOD_CONTROL;
-    if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+    if ((snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0)
         pressedModifiers |= MOD_ALT;
-    if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0)
+    if ((snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0)
         pressedModifiers |= MOD_SHIFT;
-    if ((GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0)
+    if ((snowdesktop::private_pointer::AsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_RWIN) & 0x8000) != 0)
         pressedModifiers |= MOD_WIN;
 
     using snowdesktop::page_navigation_rules::ShortcutMatches;
@@ -142,9 +143,9 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
     if (!widgetEngine_ || quickNavigationOpen_ ||
         IsCollectionPopupInteractive())
         return;
-    const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    const bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0;
     (void)widgetEngine_->DispatchHostViewKeyEvent(
         key, pressed, repeated, ctrl, shift, alt);
 }
@@ -158,8 +159,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         (key >= VK_PRIOR && key <= VK_HELP) ||
         (key >= VK_F1 && key <= VK_F24) ||
         key == VK_LWIN || key == VK_RWIN ||
-        (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+        (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0 ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0)
         typeToSelectSession_.Reset();
     if (DockTrayPopupKeyDown(key)) return true;
     CancelRenameClick();
@@ -237,9 +238,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
     }
 
-    bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+    bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool shift = (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool alt = (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
     if (key == VK_RETURN && repeated && IsCollectionPopupInteractive()) return true;
 
@@ -372,7 +373,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 
     if (ctrl && !alt && (key == 'Z' || key == 'Y') && widgetEngine_ &&
         !widgetEngine_->HasFocusedHostInput() &&
-        !(GetAsyncKeyState(VK_LWIN) & 0x8000) && !(GetAsyncKeyState(VK_RWIN) & 0x8000))
+        !(snowdesktop::private_pointer::AsyncKeyState(VK_LWIN) & 0x8000) && !(snowdesktop::private_pointer::AsyncKeyState(VK_RWIN) & 0x8000))
     {
         size_t selectedLua = static_cast<size_t>(-1);
         bool multipleSelected = false;
@@ -461,8 +462,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     bool handled = false;
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput()) return false;
     if (dragSession_.IsActive() && key != VK_ESCAPE) return false;
-    const bool win = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+    const bool win = (snowdesktop::private_pointer::AsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_RWIN) & 0x8000) != 0;
     const bool insertPaste = key == VK_INSERT && shift && !ctrl && !alt && !win;
     key = snowdesktop::desktop_keyboard_rules::NormalizeFileCommandKey(
         static_cast<UINT>(key), ctrl, shift, alt, win);
@@ -802,19 +803,19 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->HasCategoryTabPress())
             {
                 CancelPointerPressWithoutCaptureRelease();
-                ReleaseCapture();
+                snowdesktop::private_pointer::ReleasePointerCapture();
                 return true;
             }
         if (auto* view = GetCategorizedPopupView(); view && view->HasCategoryTabPress())
         {
             CancelPointerPressWithoutCaptureRelease();
-            ReleaseCapture();
+            snowdesktop::private_pointer::ReleasePointerCapture();
             return true;
         }
         if (widgetAction_ != WidgetAction::None)
         {
             CancelPointerPressWithoutCaptureRelease();
-            ReleaseCapture();
+            snowdesktop::private_pointer::ReleasePointerCapture();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         else if (dragSession_.IsActive())

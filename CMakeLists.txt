@@ -389,13 +389,15 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_control.cpp
     src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp
-    src/app/features/app_control_pointer.cpp
+    src/app/features/app_private_pointer.cpp
     src/platform/control/control_protocol.cpp
     src/platform/control/control_server.cpp
     src/platform/control/control_elements.cpp
     src/platform/control/control_elements.h
     src/ui/input/control_pointer.cpp
     src/ui/input/control_pointer.h
+    src/ui/input/private_pointer.cpp
+    src/ui/input/private_pointer.h
     src/ui/render/demo_cursor.cpp
     src/ui/render/demo_cursor.h
     src/ui/preview/screen_capture.cpp
@@ -410,6 +412,8 @@ set(SNOWDESKTOP_SOURCES
     src/demo/export_service.h
     src/demo/builtin_scenes.cpp
     src/demo/builtin_scenes.h
+    src/demo/runtime_workspace.cpp
+    src/demo/runtime_workspace.h
     src/app/features/app_demo_scene_render.inc
     src/settings/settings_automation.cpp
     src/settings/settings_automation.h
@@ -2133,6 +2137,34 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32 advapi32 gdi32
         LABELS contract integration ipc)
+
+    snowdesktop_add_test(
+        SnowDesktopPrivatePointerTests
+        private_pointer
+        SOURCES tests/ui/private_pointer_tests.cpp src/ui/input/private_pointer.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS contract integration input)
+
+    snowdesktop_add_test(
+        SnowDesktopScreenRecordingTests
+        screen_recording
+        SOURCES tests/ui/screen_recording_tests.cpp src/ui/preview/screen_capture.cpp
+            src/ui/preview/preview_png_writer.cpp src/ui/preview/video_writer.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES d3d11 dxgi ole32 user32 runtimeobject windowsapp windowscodecs mfuuid
+        LABELS contract integration render)
+
+    snowdesktop_add_test(
+        SnowDesktopRuntimeWorkspaceTests
+        demo_runtime_workspace
+        SOURCES tests/demo/runtime_workspace_tests.cpp src/demo/runtime_workspace.cpp
+            src/demo/artifact_io.cpp src/diagnostics/debug_profile.cpp src/data/atomic_file.cpp
+            src/platform/control/control_protocol.cpp src/ui/preview/preview_png_writer.cpp
+        INCLUDE_DIRECTORIES src tests
+        LINK_LIBRARIES user32 shell32 ole32 windowscodecs bcrypt uuid
+        LABELS contract integration data)
 
     snowdesktop_add_test(
         SnowDesktopDemoSceneTests

@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "modern_menu.h"
 #include "menu_control_snapshot.h"
@@ -254,8 +255,8 @@ public:
                 ShowWindow(previous, SW_HIDE);
                 PostMessageW(previous, kCancelMessage, TRUE, 0);
             }
-            SetForegroundWindow(rootWindow);
-            SetFocus(rootWindow);
+            snowdesktop::private_pointer::SetInputForeground(rootWindow);
+            snowdesktop::private_pointer::SetInputFocus(rootWindow);
             RestoreOwnedPopupZOrder();
             TraceOwnedPopupZOrder(
                 L"session-start", nullptr, true);
@@ -272,8 +273,8 @@ public:
                                       (popups_.front()->hoveredItem < 0 ||
                                        (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
                                       !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
-                                      !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
-                                      !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) &&
+                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000);
                 if (!pendingItems)
                     pendingItems = options_.pollItems(rootItems_, canApply);
                 else
@@ -331,6 +332,11 @@ public:
                 PeekMessageW(
                     &message, nullptr, 0, 0, PM_REMOVE))
             {
+                // Private events are sent to the real popup procedure from
+                // their own queue. Messages dequeued here are physical input;
+                // they must not dismiss or operate a private menu session.
+                if (!snowdesktop::private_pointer::MessageAllowed(message.hwnd, message.message))
+                { ++processedMessages; continue; }
                 if (message.message == WM_QUIT)
                 {
                     PostQuitMessage(
@@ -398,7 +404,7 @@ public:
         // Activation can change before its posted cancellation is dispatched.
         // Sample while our popup HWNDs still exist so their normal destruction
         // cannot be mistaken for the user switching to an unrelated window.
-        const HWND foreground = GetForegroundWindow();
+        const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
         if (foreground && !IsSessionWindow(foreground) &&
             !IsOwnerWindow(foreground))
             externalActivation_ = true;
@@ -421,8 +427,8 @@ public:
         {
             snowdesktop::fullscreen::GuardFocusRequest(false,
                 snowdesktop::fullscreen::ObserveForeground, [this]() {
-                    SetForegroundWindow(options_.owner);
-                    SetFocus(options_.owner);
+                    snowdesktop::private_pointer::SetInputForeground(options_.owner);
+                    snowdesktop::private_pointer::SetInputFocus(options_.owner);
                 });
         }
         TraceOwnedPopupZOrder(L"after-focus-restore", nullptr, true);
@@ -438,12 +444,13 @@ public:
     LRESULT HandleMessage(Popup& popup, HWND hwnd,
         UINT message, WPARAM wParam, LPARAM lParam)
     {
+        if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message)) return 0;
         switch (message)
         {
         case WM_MOUSEMOVE:
         {
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
-            TrackMouseEvent(&tracking);
+            snowdesktop::private_pointer::TrackLeave(&tracking);
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             const int hover = ScrollHintDirection(popup, point);
             const bool changed = popup.scrollHover != hover;
@@ -452,6 +459,9 @@ public:
             if (changed) Render(popup);
             return 0;
         }
+        case WM_CANCELMODE:
+            Cancel();
+            return 0;
         case WM_MOUSELEAVE:
             if (popup.scrollHover) { popup.scrollHover = 0; Render(popup); }
             if (popup.depth == ActiveDepth() &&
@@ -461,8 +471,14 @@ public:
             return 0;
 
         case WM_LBUTTONDOWN:
+        {
+            RECT client{}; GetClientRect(hwnd, &client);
+            const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (snowdesktop::private_pointer::Active() && !PtInRect(&client, point))
+            { Cancel(); return 0; }
             pointerPressed_ = true;
             return 0;
+        }
         case WM_LBUTTONUP:
         {
             pointerPressed_ = false;
@@ -550,6 +566,7 @@ public:
             ResetTextCaret(popup);
             return 0;
         case WM_ACTIVATE:
+            if (snowdesktop::private_pointer::Active()) return 0;
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
                 !closing_ && !IsSessionWindow(
                     reinterpret_cast<HWND>(lParam)))
@@ -579,13 +596,13 @@ public:
         case WM_SETCURSOR:
         {
             POINT point{};
-            GetCursorPos(&point);
+            snowdesktop::private_pointer::CursorPosition(&point);
             ScreenToClient(hwnd, &point);
             const int index = HitTest(popup, point);
             const bool overTextInput = index >= 0 &&
                 static_cast<size_t>(index) < popup.items->size() &&
                 (*popup.items)[index].textInput;
-            SetCursor(LoadCursorW(nullptr,
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr,
                 overTextInput ? IDC_IBEAM : IDC_ARROW));
             return TRUE;
         }
@@ -1735,7 +1752,7 @@ private:
     bool HandleAccessKeyMessage(const MSG& message)
     {
         if ((message.message != WM_KEYDOWN && message.message != WM_SYSKEYDOWN) ||
-            !IsPopupWindow(message.hwnd) || (GetKeyState(VK_CONTROL) & 0x8000))
+            !IsPopupWindow(message.hwnd) || (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000))
             return false;
         Popup* popup = ActivePopup();
         if (!popup || (FindFocusedTextInput(*popup) && message.message != WM_SYSKEYDOWN))
@@ -1745,7 +1762,7 @@ private:
         const auto key = message.wParam == VK_PROCESSKEY
             ? ImmGetVirtualKey(message.hwnd) : static_cast<UINT>(message.wParam);
         if ((key >= 'A' && key <= 'Z') ||
-            (key >= '0' && key <= '9' && !(GetKeyState(VK_SHIFT) & 0x8000)))
+            (key >= '0' && key <= '9' && !(snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000)))
             return SelectByAccessKey(static_cast<wchar_t>(key));
         return false;
     }
@@ -1987,7 +2004,7 @@ private:
         textDuplicateImeResult_.clear();
         if(textInputComposing_)return true;
         if (character == L'\b' || character < L' ' || character == 0x7F ||
-            (GetKeyState(VK_CONTROL) & 0x8000) != 0)
+            (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0)
             return true;
         if (character >= 0xd800 && character <= 0xdbff) { textHighSurrogate_ = character; return true; }
         std::wstring replacement;
@@ -2103,8 +2120,8 @@ private:
             }
         }
 
-        const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool control = (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool shift = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
         textInputCursor_ = std::min(textInputCursor_, input->inputText.size());
         textInputSelectionAnchor_ = std::min(
             textInputSelectionAnchor_, input->inputText.size());
@@ -2563,7 +2580,7 @@ private:
     OwnedPopupZOrderSnapshot CaptureOwnedPopupZOrder() const
     {
         OwnedPopupZOrderSnapshot snapshot;
-        snapshot.foreground = GetForegroundWindow();
+        snapshot.foreground = snowdesktop::private_pointer::ForegroundWindow();
         if (popups_.empty() || !popups_.front() ||
             !popups_.front()->hwnd ||
             !IsWindow(popups_.front()->hwnd))
@@ -2632,7 +2649,7 @@ private:
         line << L" root=" << snapshot.root
              << L" focusOwner=" << options_.owner
              << L" focusOwnerRoot=" << (options_.owner ? GetAncestor(options_.owner, GA_ROOT) : nullptr)
-             << L" active=" << GetActiveWindow() << L" focus=" << GetFocus()
+             << L" active=" << GetActiveWindow() << L" focus=" << snowdesktop::private_pointer::FocusWindow()
              << L" zOrderOwner=" << snapshot.zOrderOwner
              << L" rootOwner=" << snapshot.rootOwner
              << L" foreground=" << snapshot.foreground

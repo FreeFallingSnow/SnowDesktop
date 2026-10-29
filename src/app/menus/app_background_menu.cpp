@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
@@ -2142,7 +2143,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (!extensionDirectory.empty()) shellRequest.paths.push_back(extensionDirectory);
     shellRequest.background = true;
     shellRequest.context = snowdesktop::shell_extensions::Context::Desktop;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     auto prepareWidgetSubmenu = [&](UINT submenuCommand,
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)

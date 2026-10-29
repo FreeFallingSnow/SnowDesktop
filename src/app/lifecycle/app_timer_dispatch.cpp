@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "theme/theme_workshop.h"
 #include "theme/theme_library_settings.h"
@@ -385,11 +386,11 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
     }
 
     DWORD keyState = MK_LBUTTON;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000)
         keyState |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)
         keyState |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)
         keyState |= MK_SHIFT;
     if (route == DwellTargetRefreshRoute::ExternalLocalFeedback)
     {
@@ -504,9 +505,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 namespace pair = snowdesktop::widget_pair_drop;
                 auto action = pair::ResolveAction(pair::GetOptions(
                     widgets_[mouseDownWidgetIndex_].type, widgets_[widgetPairTargetIndex_].type),
-                    (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
-                    (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
-                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
+                    (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+                    (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0,
+                    (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0);
                 if ((action == pair::Action::CreateCollectionGroup ||
                      action == pair::Action::CreateFileGroup) &&
                     !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
@@ -523,7 +524,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         }
         if (dragDropController_.IsTransportActive() ||
-            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
+            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
             return;
 
         POINT recoveredPoint{};
@@ -613,7 +614,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             !detailColumnResizeActive_ && !luaWidgetPanelMouseDown_ &&
             widgetAction_ == WidgetAction::None && !renameController_.IsActive() && !luaInlineEdit_ &&
             shellPopupMenuLayerDepth_ == 0 && !snowdesktop::modern_menu::IsActive() &&
-            !settingsWindowOpening_ && !GetCapture(); };
+            !settingsWindowOpening_ && !snowdesktop::private_pointer::Capture(); };
         if (resourceRecovery.Poll(GetTickCount64(), userQuota, safeToRestart(),
                 [] { return GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS); },
                 [this, &safeToRestart] { return SaveLayoutSlots(false) && safeToRestart(); },

@@ -98,18 +98,20 @@ Value Describe()
     add("api.describe", false, "{}");
     add("app.getState", false, "{}");
     add("ui.snapshot", false, "{}");
-    add("ui.perform", true, "{elementId:string,action:string,ifSnapshotRevision:string,targetId?:string,value?:string,number?:number,durationMs?:integer,showCursor?:boolean}");
-    add("ui.pointerState", false, "{includeTrace?:boolean}");
-    add("ui.cancelPointer", true, "{}");
+    add("input.begin", true, "{monitorId:string,x?:integer,y?:integer,showCursor?:boolean}");
+    add("input.pointer", true, "{sessionId:string,type:string,x?:integer,y?:integer,button?:string,delta?:integer}");
+    add("input.state", false, "{includeTrace?:boolean}");
+    add("input.end", true, "{sessionId:string}");
     add("ui.dismissMenu", true, "{}");
     add("ui.settingsRefresh", false, "{}");
     add("ui.settingsState", false, "{id:string}");
-    add("demo.describe", false, "{}");
-    add("demo.render", true, "{scene:object}");
-    add("demo.state", false, "{id:string}");
-    add("demo.cancel", true, "{id:string}");
+    add("preview.describe", false, "{}");
+    add("preview.render", true, "{scene:object}");
+    add("preview.state", false, "{id:string}");
+    add("preview.cancel", true, "{id:string}");
     add("capture.monitors", false, "{}");
     add("capture.screenshot", true, "{monitorId?:string,includeSystemCursor?:boolean}");
+    add("capture.record", true, "{monitorId?:string,includeSystemCursor?:boolean,durationMs:integer,fps:integer}");
     add("capture.state", false, "{id:string}");
     add("capture.cancel", true, "{id:string}");
     add("desktop.getLayout", false, "{}");
@@ -125,9 +127,9 @@ Value Describe()
     add("dock.hide", true, "{}");
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
-        {"capabilities", Object({{"elements", Number(1)}, {"controlledPointer", Number(1)},
+        {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)},
             {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)},
-            {"settingsAutomation", Number(1)}, {"demoRender", Number(1)},
+            {"settingsAutomation", Number(1)}, {"previewRender", Number(1)}, {"monitorRecording", Number(1)},
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)}})}});
 }
 

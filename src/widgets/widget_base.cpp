@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 /**
  * @file widget_base.cpp
@@ -1634,9 +1635,9 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
     if(searchComposing_)return true;
 
     const bool control =
-        (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift =
-        (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     searchHighSurrogate_ = 0;
     if (control && (key == 'Z' || key == 'Y'))
     {

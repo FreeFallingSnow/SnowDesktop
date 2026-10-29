@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "widget/view/widget_title_layout.h"
@@ -261,7 +262,7 @@ void DesktopApp::BeginRenameSelected(
         SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         SendMessageW(renameInputWindow_, EM_SETSEL, 0, -1);
-        SetFocus(renameInputWindow_);
+        snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
         if (visibilityWidgetIndex < widgets_.size())
         {
             interactionPinnedWidgetId_ =
@@ -412,7 +413,7 @@ void DesktopApp::BeginRenameSelected(
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(items_[selectedIndex].name, path, isDirectory));
-    SetFocus(renameInputWindow_);
+    snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
     if (visibilityWidgetIndex < widgets_.size())
     {
         interactionPinnedWidgetId_ =

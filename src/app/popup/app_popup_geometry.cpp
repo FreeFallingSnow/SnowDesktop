@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/dock/dock_folder_popup_read.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -423,7 +424,7 @@ void DesktopApp::ShowAllCollectionPopupItems()
     {
         // The Dock's timer also samples physical presses. Consume this handled
         // press before publishing the full view, including the since-last-read bit.
-        const SHORT state = GetAsyncKeyState(VK_LBUTTON);
+        const SHORT state = snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON);
         constexpr UINT leftButtonBit = 1u << 0;
         floatingDockPointerButtonsDown_ =
             (floatingDockPointerButtonsDown_ & ~leftButtonBit) |

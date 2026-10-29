@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "platform/force_restart_hotkey.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
@@ -426,6 +427,15 @@ bool DesktopApp::FocusKeyboardWindow(
     if (!target || !IsWindow(target))
         return false;
 
+    // Private input owns logical focus only. Do not call the foreground-focus
+    // retry machinery, AttachThreadInput or SetActiveWindow for this device.
+    if (snowdesktop::private_pointer::Active())
+    {
+        if (requestForeground) (void)snowdesktop::private_pointer::SetInputForeground(target);
+        (void)snowdesktop::private_pointer::SetInputFocus(target);
+        return snowdesktop::private_pointer::FocusWindow() == target;
+    }
+
     HWND activationWindow = GetAncestor(target, GA_ROOT);
     if (!activationWindow)
         activationWindow = target;
@@ -447,7 +457,7 @@ bool DesktopApp::FocusKeyboardWindow(
     const auto observeFocus = [target, activationWindow,
                                   currentThread, requestForeground]() {
         FocusObservation observation;
-        observation.foreground = GetForegroundWindow();
+        observation.foreground = snowdesktop::private_pointer::ForegroundWindow();
         observation.foregroundThread = observation.foreground
             ? GetWindowThreadProcessId(
                 observation.foreground, nullptr)
@@ -464,7 +474,7 @@ bool DesktopApp::FocusKeyboardWindow(
         else if (observation.foregroundThread == currentThread)
         {
             observation.foregroundFocusKnown = true;
-            observation.foregroundFocus = GetFocus();
+            observation.foregroundFocus = snowdesktop::private_pointer::FocusWindow();
         }
         observation.ready = snowdesktop::desktop_keyboard_rules::
             IsForegroundFocusReady(
@@ -475,7 +485,7 @@ bool DesktopApp::FocusKeyboardWindow(
         return observation;
     };
     bool foregroundAttempted = false, foregroundAccepted = false;
-    const HWND previousActive = GetActiveWindow(), previousFocus = GetFocus();
+    const HWND previousActive = GetActiveWindow(), previousFocus = snowdesktop::private_pointer::FocusWindow();
     const auto requestFocus = [this, target, activationWindow,
                                   requestForeground, deliberateFullscreenExit,
                                   &foregroundAttempted, &foregroundAccepted]() {
@@ -487,13 +497,13 @@ bool DesktopApp::FocusKeyboardWindow(
                 {
                     ShowWindow(target, SW_SHOWNOACTIVATE);
                     foregroundAttempted = true;
-                    foregroundAccepted = SetForegroundWindow(activationWindow) != FALSE;
+                    foregroundAccepted = snowdesktop::private_pointer::SetInputForeground(activationWindow) != FALSE;
                     // Local activation/focus cannot grant global foreground.
                     // Do not leave the background queue focused on a rejected proxy.
-                    if (GetForegroundWindow() != activationWindow) return;
+                    if (snowdesktop::private_pointer::ForegroundWindow() != activationWindow) return;
                     (void)SetActiveWindow(activationWindow);
                 }
-                (void)SetFocus(target);
+                (void)snowdesktop::private_pointer::SetInputFocus(target);
             });
     };
 
@@ -531,7 +541,7 @@ bool DesktopApp::FocusKeyboardWindow(
         observation.foregroundThread,
         observation.foregroundFocus,
         observation.foregroundFocusKnown ? 1 : 0,
-        GetFocus(), foregroundAttempted ? 1 : 0, foregroundAccepted ? 1 : 0,
+        snowdesktop::private_pointer::FocusWindow(), foregroundAttempted ? 1 : 0, foregroundAccepted ? 1 : 0,
         currentThread, GetWindowThreadProcessId(target, nullptr), previousActive, previousFocus);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Runtime, message, DiagnosticLogLevel::Warning);
     return false;
@@ -570,7 +580,7 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 
     floatingDockInputForegroundSeen_ = false;
 
-    HWND foreground = GetForegroundWindow();
+    HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
     if (foreground)
     {
         if (HWND root = GetAncestor(foreground, GA_ROOT))
@@ -642,7 +652,7 @@ void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExi
 
     (void)FocusKeyboardWindow(floatingDockInputHwnd_, true,
         L"Floating Dock input proxy", deliberateFullscreenExit);
-    if (floatingDockKeyboardSessionActive_ && GetForegroundWindow() == floatingDockInputHwnd_)
+    if (floatingDockKeyboardSessionActive_ && snowdesktop::private_pointer::ForegroundWindow() == floatingDockInputHwnd_)
         floatingDockInputForegroundSeen_ = true;
 }
 
@@ -658,7 +668,7 @@ void DesktopApp::EndFloatingDockKeyboardSession(
         return;
     }
 
-    const HWND currentForeground = GetForegroundWindow();
+    const HWND currentForeground = snowdesktop::private_pointer::ForegroundWindow();
     DWORD currentForegroundProcess = 0;
     if (currentForeground)
         GetWindowThreadProcessId(currentForeground, &currentForegroundProcess);
@@ -693,7 +703,7 @@ void DesktopApp::EndFloatingDockKeyboardSession(
     {
         snowdesktop::fullscreen::GuardFocusRequest(false,
             snowdesktop::fullscreen::ObserveForeground,
-            [restoreWindow]() { SetForegroundWindow(restoreWindow); });
+            [restoreWindow]() { snowdesktop::private_pointer::SetInputForeground(restoreWindow); });
     }
 }
 
@@ -713,7 +723,7 @@ void DesktopApp::RestoreInteractionInputFocus(bool pointerPress)
 
 HWND DesktopApp::ResolveDockSemanticForegroundWindow()
 {
-    HWND actual = GetForegroundWindow();
+    HWND actual = snowdesktop::private_pointer::ForegroundWindow();
     if (!actual || !IsWindow(actual))
         actual = dockForegroundWindow_.load();
     if (actual)
@@ -762,7 +772,7 @@ void DesktopApp::UpdateHostInputImePosition()
 {
     // IMM positioning must use the same proxy that receives the composition
     // messages. Floating Dock keyboard sessions focus their own input window.
-    HWND imeInputHwnd = GetFocus();
+    HWND imeInputHwnd = snowdesktop::private_pointer::FocusWindow();
     if (!imeInputHwnd || (imeInputHwnd != inputHwnd_ &&
         imeInputHwnd != floatingDockInputHwnd_))
     {
@@ -1079,7 +1089,7 @@ void DesktopApp::WatchDesktopHost()
         middleButtonWidgetMove_ || detailColumnResizeActive_ ||
         luaWidgetPanelMouseDown_ || widgetAction_ != WidgetAction::None ||
         dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
-        GetCapture() != nullptr || HasActiveContextMenuSession();
+        snowdesktop::private_pointer::Capture() != nullptr || HasActiveContextMenuSession();
     const auto recovery = layer::TryRestore(hwnd_, currentHost, current.defView,
         {customDesktopVisible_, !desktopPassthroughActive_ &&
             !compositionPaintInProgress_ && !updatingDisplayTopology_ && !reloading_,

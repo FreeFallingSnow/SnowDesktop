@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "dock_platform_helpers.h"
@@ -53,11 +54,11 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         floatingDockPromotionInputToken_ = uiAnimationScheduler_.ScheduleInterval(50,
             [this](snowdesktop::UiScheduleToken token) {
                 if (token != floatingDockPromotionInputToken_) return;
-                (void)ObserveDockPromotionActivation(GetForegroundWindow());
+                (void)ObserveDockPromotionActivation(snowdesktop::private_pointer::ForegroundWindow());
                 RefreshFloatingDockPromotionInputs();
             });
 
-    const HWND foreground = GetForegroundWindow();
+    const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
     DWORD process = 0;
     if (foreground) GetWindowThreadProcessId(foreground, &process);
     const bool fullscreen = snowdesktop::fullscreen::ObserveForeground().has_value();
@@ -111,7 +112,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     auto* visibleHost = FindPersistentDockHost(hostWindow);
     if (borrowForeground && visibleHost && visibleHost->active && visibleHost->frameReady &&
         IsWindowVisible(hostWindow) && snowdesktop::popup_window_pair_z_order::IsTopmost(hostWindow) &&
-        GetForegroundWindow() == foreground)
+        snowdesktop::private_pointer::ForegroundWindow() == foreground)
     {
         // A registered hotkey supplies activation permission. A polled gesture
         // may not; allow one more request only when new native Dock input arrives.
@@ -127,7 +128,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         BeginFloatingDockKeyboardSession(false);
         if (auto* current = FindPersistentDockHost(hostWindow))
             current->promotionInputBorrowedFocus = floatingDockKeyboardSessionActive_ && borrowSession;
-        const HWND observed = GetForegroundWindow();
+        const HWND observed = snowdesktop::private_pointer::ForegroundWindow();
         DWORD observedProcess = 0;
         if (observed) GetWindowThreadProcessId(observed, &observedProcess);
         if (auto* current = FindPersistentDockHost(hostWindow))
@@ -149,7 +150,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     }
     if (auto* current = FindPersistentDockHost(hostWindow))
     {
-        const HWND actualForeground = GetForegroundWindow();
+        const HWND actualForeground = snowdesktop::private_pointer::ForegroundWindow();
         DWORD actualProcess = 0;
         if (actualForeground) GetWindowThreadProcessId(actualForeground, &actualProcess);
         if (floatingDockKeyboardSessionActive_ && actualForeground == floatingDockInputHwnd_)
@@ -222,7 +223,7 @@ void DesktopApp::ShowFloatingDock(
     if (!targetMonitor)
     {
         POINT cursorScreen{};
-        GetCursorPos(&cursorScreen);
+        snowdesktop::private_pointer::CursorPosition(&cursorScreen);
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
     }
@@ -276,7 +277,7 @@ void DesktopApp::ShowFloatingDock(
         if (!hostWasVisible)
         {
             POINT cursorDesktop{};
-            if (GetCursorPos(&cursorDesktop))
+            if (snowdesktop::private_pointer::CursorPosition(&cursorDesktop))
             {
                 if (hwnd_ && IsWindow(hwnd_))
                     ScreenToClient(hwnd_, &cursorDesktop);
@@ -382,9 +383,9 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
         // Hosts alike, before an outside-pointer timer can sample it.
         const auto buttons = snowdesktop::window_support::WindowSupport().PointerButtons();
         floatingDockPointerButtonsDown_ |= buttons ? *buttons : (
-            ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
-            ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
-            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));
         if (!IsWindowVisible(ownedHost->hwnd))
         {
             const bool alreadyPromoted = ownedHost->promoted;
@@ -627,7 +628,7 @@ void DesktopApp::ToggleFloatingDock()
     if (desktopPassthroughActive_)
         return;
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    snowdesktop::private_pointer::CursorPosition(&cursorScreen);
     const HMONITOR monitor = MonitorFromPoint(
         cursorScreen, MONITOR_DEFAULTTONEAREST);
     if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, monitor))

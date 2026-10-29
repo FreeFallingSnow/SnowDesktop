@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/layout/interactive_layout_save.h"
@@ -16,7 +17,7 @@ namespace
 bool RetainStartButtonHover(const auto& hosts, HMONITOR monitor, int left, int top)
 {
     POINT cursor{};
-    if (!monitor || !GetCursorPos(&cursor)) return false;
+    if (!monitor || !snowdesktop::private_pointer::CursorPosition(&cursor)) return false;
     cursor.x -= left; cursor.y -= top;
     return std::any_of(hosts.begin(), hosts.end(), [&](const auto& host) {
         return host && host->active && host->monitor == monitor && host->container &&
@@ -52,7 +53,7 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 void DesktopApp::OnMouseLeave()
 {
     POINT popupPoint{};
-    if (hwnd_ && IsWindow(hwnd_) && GetCursorPos(&popupPoint) &&
+    if (hwnd_ && IsWindow(hwnd_) && snowdesktop::private_pointer::CursorPosition(&popupPoint) &&
         ScreenToClient(hwnd_, &popupPoint))
     {
         DockTrayPopupPointerMove(popupPoint);
@@ -68,7 +69,7 @@ void DesktopApp::OnMouseLeave()
     POINT hoverScreenPoint = hoverPoint;
     const HWND hoverWindow = hoverPointAvailable &&
         ClientToScreen(hwnd_, &hoverScreenPoint)
-        ? WindowFromPoint(hoverScreenPoint) : nullptr;
+        ? snowdesktop::private_pointer::WindowAtPoint(hoverScreenPoint) : nullptr;
     const HWND hoverRoot = hoverWindow
         ? GetAncestor(hoverWindow, GA_ROOT) : nullptr;
     // A leave belongs to an HWND, not the logical Dock. Capture release or
@@ -96,7 +97,7 @@ void DesktopApp::OnMouseLeave()
         return;
     }
     POINT cursorScreen{};
-    const bool cursorValid = GetCursorPos(&cursorScreen) != FALSE;
+    const bool cursorValid = snowdesktop::private_pointer::CursorPosition(&cursorScreen) != FALSE;
     if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
         dockWindowPreview_->ScheduleHide();
     else
@@ -131,7 +132,7 @@ void DesktopApp::OnMouseLeave()
     // window. Preserve that pointer state, but clear passive hover immediately.
     // The preview owns its independent screen-space transition triangle, so
     // Dock magnification can still be reset while the preview stays reachable.
-    const HWND captureWindow = GetCapture();
+    const HWND captureWindow = snowdesktop::private_pointer::Capture();
     const bool ownsInteractionCapture =
         snowdesktop::desktop_hover_rules::
             OwnsInteractionCapture(
@@ -242,7 +243,7 @@ void DesktopApp::ReconcileDesktopHoverState(
             lastMousePoint_.y == LONG_MIN;
         POINT dockScreenPoint = cursorPoint;
         const HWND dockHitWindow = ClientToScreen(hwnd_, &dockScreenPoint)
-                ? WindowFromPoint(dockScreenPoint) : nullptr;
+                ? snowdesktop::private_pointer::WindowAtPoint(dockScreenPoint) : nullptr;
         const bool pointerOnBaseDesktopSurface =
             IsBaseDesktopHoverSurfaceWindow(dockHitWindow);
         bool pointerInDockLayer = false;
@@ -276,7 +277,7 @@ void DesktopApp::ReconcileDesktopHoverState(
             detailColumnResizeActive_ ||
             luaWidgetPanelMouseDown_;
         const bool passiveHoverAllowed =
-            GetCapture() == nullptr &&
+            snowdesktop::private_pointer::Capture() == nullptr &&
             snowdesktop::desktop_hover_rules::
                 ShouldResamplePassiveMouseMove(
                     mouseDown_,
@@ -304,7 +305,7 @@ void DesktopApp::ReconcileDesktopHoverState(
             TRACKMOUSEEVENT tracking{ sizeof(tracking) };
             tracking.dwFlags = TME_LEAVE;
             tracking.hwndTrack = dockHitWindow;
-            TrackMouseEvent(&tracking);
+            snowdesktop::private_pointer::TrackLeave(&tracking);
         }
         if (activateHover || refreshActiveHover)
         {
@@ -332,7 +333,7 @@ void DesktopApp::ReconcileDesktopHoverState(
         return;
     }
 
-    const HWND captureWindow = GetCapture();
+    const HWND captureWindow = snowdesktop::private_pointer::Capture();
     DWORD captureProcessId = 0;
     if (captureWindow)
     {
@@ -456,11 +457,11 @@ void DesktopApp::RecordShellHoverTrace(
     entry.event = event;
     entry.eventPoint = eventPoint;
     entry.lastMousePoint = lastMousePoint_;
-    GetCursorPos(&entry.cursorScreen);
+    snowdesktop::private_pointer::CursorPosition(&entry.cursorScreen);
     entry.hoverOnlyVisibleMask =
         HoverOnlyVisibleMask();
-    entry.foregroundWindow = GetForegroundWindow();
-    entry.captureWindow = GetCapture();
+    entry.foregroundWindow = snowdesktop::private_pointer::ForegroundWindow();
+    entry.captureWindow = snowdesktop::private_pointer::Capture();
     entry.popupDepth = shellPopupMenuLayerDepth_;
     if (compositionCommitPending_)
         entry.flags |= 1u << 0;
@@ -709,7 +710,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
-    ReleaseCapture();
+    snowdesktop::private_pointer::ReleasePointerCapture();
     InvalidateDragStaticScene();
     const bool popupEntryOnFloatingDock =
         (IsLogicalDockEntryType(entryType) ||
@@ -919,7 +920,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -932,7 +933,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             mouseDown_ = false;
             mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             mouseDownHit_ = nullptr;
-            ReleaseCapture();
+            snowdesktop::private_pointer::ReleasePointerCapture();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -978,7 +979,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -1011,7 +1012,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         RequestLayoutSave();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -1032,7 +1033,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         if (dockFolderPopupResize)
             CommitDockFolderPopupStateToSource();
         else
@@ -1121,7 +1122,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ =
             static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         UpdateHostInputImePosition();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -1165,7 +1166,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         if (!IsRectEmpty(&widgetBounds))
             InvalidateRect(hwnd_, &widgetBounds, FALSE);
 
@@ -1231,7 +1232,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                         snowdesktop::widget_pair_drop::GetOptions(
                             widgets_[mouseDownWidgetIndex_].type, widgets_[pairTarget].type),
                         (wp & MK_CONTROL) != 0, (wp & MK_SHIFT) != 0,
-                        (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+                        (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0)
                     : snowdesktop::widget_pair_drop::Action::None;
                 const auto movingPayload = snowdesktop::slot_contract::
                     PayloadForWidgetType(
@@ -1300,7 +1301,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 {
                     Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
                     int mods = rightDrop ? static_cast<int>(wp & MK_CONTROL) :
-                        (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
+                        (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
                     CommitDockDrop({ &dockSource }, nullptr, dock,
                         widgetDockInsertIndex_, mods);
                     RequestLayoutSave();
@@ -1327,7 +1328,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         // PendingMove/PendingResize: just cancel without displacement
         widgetAction_ = WidgetAction::None;
         rightButtonItemDrag_ = false;
-        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
         UpdateWidgetHandleCursor(upPoint);
         widgetDockTarget_ = false;
         widgetDockTargetContainer_ = nullptr;
@@ -1343,7 +1344,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -1450,7 +1451,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         // Popup wrappers still exist here; normal capture release must not
         // cancel the rename delay through pointer-abort cleanup.
         ++expectedCaptureReleaseDepth_;
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         --expectedCaptureReleaseDepth_;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -1466,9 +1467,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     {
         ResolveCurrentDragTargetAt(upPoint);
         DWORD releaseKeyState = MK_RBUTTON;
-        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) releaseKeyState |= MK_CONTROL;
-        if (GetAsyncKeyState(VK_MENU) & 0x8000) releaseKeyState |= MK_ALT;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) releaseKeyState |= MK_SHIFT;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) releaseKeyState |= MK_CONTROL;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) releaseKeyState |= MK_ALT;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) releaseKeyState |= MK_SHIFT;
         if (!ChooseRightDragDropAction(upPoint, releaseKeyState,
                 DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, false))
             goto cleanup;
@@ -1493,7 +1494,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if ((!rightDrop || widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None) &&
         TryCommitWidgetPairDragDrop(upPoint, rightDrop ? dropPreviewMods :
             static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
-            ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
         goto cleanup;
 
     ResolveCurrentDragTargetAt(upPoint);
@@ -1522,9 +1523,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (!rightDrop)
     {
         dropPreviewMods = 0;
-        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) dropPreviewMods |= MK_CONTROL;
-        if (GetAsyncKeyState(VK_MENU) & 0x8000) dropPreviewMods |= MK_ALT;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) dropPreviewMods |= MK_SHIFT;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) dropPreviewMods |= MK_CONTROL;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) dropPreviewMods |= MK_ALT;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) dropPreviewMods |= MK_SHIFT;
     }
     commitVisualBeforeDrop =
         dragSession_.TargetRegion() == HitRegion::Handoff;
@@ -1820,7 +1821,7 @@ cleanup:
     ClearDockPressedState();
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
-    ReleaseCapture();
+    snowdesktop::private_pointer::ReleasePointerCapture();
     if (generalSettings_.dockEnabled && !reloading_ &&
         dockRunningWindowsRefreshTick_ == 0)
         RefreshDockRunningWindows(false);

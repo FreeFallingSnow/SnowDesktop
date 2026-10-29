@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/input/widget_search_context_menu.h"
 #include "icons/large_icon_steam.h"
@@ -626,7 +627,7 @@ void DesktopApp::ShowItemContextMenu(
         IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     const bool placeOutsideDock = dockRenameAnchor.has_value() ||
         dockFrequentItem || dockApplicationItem;
     namespace presets = snowdesktop::large_icon_preset_rules;
@@ -698,7 +699,7 @@ void DesktopApp::ShowItemContextMenu(
     };
     snowdesktop::shell_extensions::Request shellRequest;
     if (canCopyPath) shellRequest.paths = selectedFilePaths;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = 0;
     {
         LargeIconMenuScope titleScope(*this,
@@ -1205,7 +1206,7 @@ void DesktopApp::ShowShellContextMenu(
     std::optional<RECT> dockRenameAnchor,
     std::optional<size_t> dockMappingEntryIndex)
 {
-    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
+    const UINT extendedFlags = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     std::vector<LPCITEMIDLIST> pidls;
     std::vector<std::wstring> invocationPaths;
     const auto collectPath = [&invocationPaths](const DesktopItem& item) {
@@ -1268,7 +1269,7 @@ void DesktopApp::ShowShellContextMenu(
 
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(false);
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     UINT cmd = 0;
     {
         const bool desktopLargeIcon = itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() &&

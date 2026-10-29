@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
@@ -541,7 +542,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             else host.mergedAnimation.Close(now);
             host.mergedPresentation.inputEnabled = false;
             host.tooltipRect = {};
-            if (GetCapture() == host.hwnd) ReleaseCapture();
+            if (snowdesktop::private_pointer::Capture() == host.hwnd) snowdesktop::private_pointer::ReleasePointerCapture();
             if (rightButtonDownDockHost_ == &host) rightButtonDownDockHost_ = nullptr;
             if (floatingDockHost_ == &host)
             {
@@ -754,7 +755,7 @@ DockContainer*
 DesktopApp::SelectFloatingDockContainerAtCursor() const
 {
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    snowdesktop::private_pointer::CursorPosition(&cursorScreen);
     const HMONITOR cursorMonitor =
         MonitorFromPoint(cursorScreen, MONITOR_DEFAULTTONEAREST);
     return SelectFloatingDockContainerForMonitor(

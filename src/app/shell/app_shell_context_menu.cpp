@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/input/widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -147,10 +148,10 @@ void DesktopApp::ShowFolderEntryContextMenu(
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
 
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     snowdesktop::shell_extensions::Request shellRequest;
     shellRequest.paths = selectedPaths;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(
         menu, screenPoint, menuOwner, false, false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);

@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "desktop/desktop_hover_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
@@ -203,7 +204,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
         // third-party entries rather than inventing labels or commands.
         newMenu.Context()->QueryInterface(IID_PPV_ARGS(newMenuContextMenu_.GetAddressOf()));
         const HWND menuOwner = ShellDialogOwnerHwnd();
-        SetForegroundWindow(menuOwner);
+        snowdesktop::private_pointer::SetInputForeground(menuOwner);
         ShellPopupMenuLayerGuard shellMenuLayer(*this);
         cmd = TrackShellPopupMenuWithDesktopPump(
             newMenu.Menu(),
@@ -226,7 +227,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
-    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
+    const UINT extendedFlags = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     // Shell initialization can pump desktop paints before TrackPopupMenuEx.
     // Keep their content commits and hover state covered for the whole handoff.
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
@@ -256,7 +257,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     UINT cmd = TrackShellPopupMenuWithDesktopPump(
         menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint, menuOwner);
@@ -347,7 +348,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     host.desktopLayerRestorePending = false;
     host.desktopLayerRestoreRetryTick = GetTickCount64() +
         snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
-    host.desktopLayerForegroundWindow = GetForegroundWindow();
+    host.desktopLayerForegroundWindow = snowdesktop::private_pointer::ForegroundWindow();
     if (merged)
     {
         // The visible merged strip is one topmost surface. Summon/hover policy
@@ -461,11 +462,11 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             },
             [&host](HWND anchor) {
                 return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
-            }, GetAncestor(GetForegroundWindow(), GA_ROOT));
+            }, GetAncestor(snowdesktop::private_pointer::ForegroundWindow(), GA_ROOT));
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
             snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
-        host.desktopLayerForegroundWindow = GetForegroundWindow();
+        host.desktopLayerForegroundWindow = snowdesktop::private_pointer::ForegroundWindow();
         if (wasTopmost && restored)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-returned-to-desktop-band", host.hwnd);
@@ -538,7 +539,7 @@ void DesktopApp::EndShellPopupMenuLayer()
     // A verb may have activated an external dialog or application. Restore
     // Dock keyboard ownership only while the foreground still belongs to us.
     DWORD foregroundProcess = 0;
-    if (const HWND foreground = GetForegroundWindow())
+    if (const HWND foreground = snowdesktop::private_pointer::ForegroundWindow())
         GetWindowThreadProcessId(foreground, &foregroundProcess);
     if (foregroundProcess == GetCurrentProcessId())
         RefocusFloatingDockKeyboardSession();
@@ -580,7 +581,7 @@ bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
  */
 void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
 {
-    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
+    const UINT extendedFlags = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     PIDLIST_ABSOLUTE pidl = nullptr;
@@ -627,7 +628,7 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     contextMenu.As(&activeContextMenu2_);
     contextMenu.As(&activeContextMenu3_);
 
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     UINT command = TrackShellPopupMenuWithDesktopPump(
         menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint, menuOwner);
@@ -665,7 +666,7 @@ ShowShellItemContextMenuForPaths(
     POINT screenPoint)
 {
     if (itemPaths.empty()) return;
-    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
+    const UINT extendedFlags = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     ComPtr<IShellFolder> boundParent;
@@ -716,7 +717,7 @@ ShowShellItemContextMenuForPaths(
         &activeContextMenu2_);
     contextMenu.As(
         &activeContextMenu3_);
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     const UINT command =
         TrackShellPopupMenuWithDesktopPump(
             menu,

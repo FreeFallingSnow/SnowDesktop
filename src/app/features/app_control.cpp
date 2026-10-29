@@ -19,6 +19,19 @@ Value CaptureValue(const snowdesktop::screen_capture::State& state)
 {
     return Object({{"id", String(state.id)}, {"status", String(state.status)}, {"error", String(state.error)},
         {"path", String(WideToUtf8(state.path.wstring()))}, {"monitorId", String(WideToUtf8(state.monitor.id))},
+        {"kind", String(state.kind)}, {"source", String(state.source)},
+        {"directory", String(WideToUtf8(state.directory.wstring()))},
+        {"manifestPath", String(WideToUtf8(state.manifestPath.wstring()))},
+        {"frameMapPath", String(WideToUtf8(state.frameMapPath.wstring()))},
+        {"fps", Number(state.fps)}, {"durationMs", Number(state.durationMs)},
+        {"frames", String(std::to_string(state.frames))}, {"capturedFrames", String(std::to_string(state.capturedFrames))},
+        {"duplicatedFrames", String(std::to_string(state.duplicatedFrames))},
+        {"discardedFrames", String(std::to_string(state.discardedFrames))},
+        {"firstFrameTime100ns", String(std::to_string(state.firstFrameTime100ns))},
+        {"lastFrameTime100ns", String(std::to_string(state.lastFrameTime100ns))},
+        {"captureStartedUnixMs", Number(static_cast<double>(state.captureStartedUnixMs))},
+        {"elapsed100ns", String(std::to_string(state.elapsed100ns))},
+        {"encodedDuration100ns", String(std::to_string(state.encodedDuration100ns))},
         {"monitorBounds", Rect(state.monitor.bounds)}, {"width", Number(state.width)}, {"height", Number(state.height)},
         {"includeSystemCursor", Boolean(state.systemCursor)}, {"colorSpace", String("sdr-bgra8")},
         {"startedUnixMs", Number(static_cast<double>(state.startedUnixMs))},
@@ -106,8 +119,10 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     using namespace snowdesktop::control;
     if (!startupInitializationComplete_ || exitRequested_)
         throw Error("not_ready", "Application is starting or shutting down");
-    if (method == "demo.describe") { Fields(params, {}); return snowdesktop::demo::Describe(); }
-    if (method == "demo.render")
+    if (method == "input.begin" || method == "input.pointer" || method == "input.state" || method == "input.end")
+        return HandlePrivatePointer(method, params);
+    if (method == "preview.describe") { Fields(params, {}); return snowdesktop::demo::Describe(); }
+    if (method == "preview.render")
     {
         Fields(params, {"scene"}); const auto* value = params.Find("scene");
         if (!value) throw Error("invalid_params", "scene is required", -32602);
@@ -121,11 +136,11 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             throw Error(error, "Scene export could not start");
         return DemoValue(applicationControlRuntime_->demo.Current());
     }
-    if (method == "demo.state" || method == "demo.cancel")
+    if (method == "preview.state" || method == "preview.cancel")
     {
         Fields(params, {"id"}); const auto state = applicationControlRuntime_->demo.Current();
         if (Text(params, "id") != state.id) throw Error("demo_not_found", "This export is no longer the current task");
-        if (method == "demo.cancel" && state.status == "running") applicationControlRuntime_->demo.Cancel();
+        if (method == "preview.cancel" && state.status == "running") applicationControlRuntime_->demo.Cancel();
         return DemoValue(applicationControlRuntime_->demo.Current());
     }
     if (method == "ui.settingsRefresh")
@@ -161,6 +176,20 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             throw Error(error.empty() ? "capture_unavailable" : error, "Screenshot request could not start");
         return CaptureValue(applicationControlRuntime_->capture.Current());
     }
+    if (method == "capture.record")
+    {
+        Fields(params, {"monitorId", "includeSystemCursor", "durationMs", "fps"});
+        auto monitor = Text(params, "monitorId", false); if (monitor.empty()) monitor = "primary";
+        const auto* cursor = params.Find("includeSystemCursor");
+        if (cursor && !cursor->IsBoolean()) throw Error("invalid_params", "includeSystemCursor must be boolean", -32602);
+        const unsigned duration = static_cast<unsigned>(Integer(params, "durationMs", 100, 120000));
+        const unsigned fps = static_cast<unsigned>(Integer(params, "fps", 1, 60));
+        std::string error;
+        if (!applicationControlRuntime_->capture.Record(Utf8ToWide(monitor),
+            std::filesystem::path(GetDataDirectoryPath()) / L"Automation" / L"Captures", cursor && cursor->boolean,
+            duration, fps, error)) throw Error(error.empty() ? "capture_unavailable" : error, "Recording request could not start");
+        return CaptureValue(applicationControlRuntime_->capture.Current());
+    }
     if (method == "capture.state" || method == "capture.cancel")
     {
         Fields(params, {"id"}); const auto state = applicationControlRuntime_->capture.Current();
@@ -172,24 +201,11 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     if (method == "ui.dismissMenu")
     {
         Fields(params, {});
-        if (applicationControlRuntime_->pointer.Current().status == "running")
-            throw Error("busy", "Wait for pointer playback before dismissing its menu");
+        if (applicationControlRuntime_->privatePointer.Current().pendingEvents)
+            throw Error("busy", "Wait for private pointer events before dismissing its menu");
         snowdesktop::modern_menu::DismissActive();
         return Object({{"status", String("accepted")}});
     }
-    if (method == "ui.pointerState")
-    {
-        Fields(params, {"includeTrace"});
-        const auto* trace = params.Find("includeTrace");
-        if (trace && !trace->IsBoolean()) throw Error("invalid_params", "includeTrace must be boolean", -32602);
-        return ApplicationControlPointerState(trace && trace->boolean);
-    }
-    if (method == "ui.cancelPointer")
-    {
-        Fields(params, {}); applicationControlRuntime_->pointer.Cancel(); applicationControlRuntime_->cursor.Hide();
-        return ApplicationControlPointerState(false);
-    }
-    if (method == "ui.perform") return PerformApplicationControlElement(params);
     if (method == "app.getState")
     {
         Fields(params, {});
@@ -227,7 +243,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             {"layoutRevision", ApplicationControlLayout().object.at("layoutRevision")}});
     }
     // Do not enter UI actions from a nested modal loop or interrupt a live drag.
-    if (applicationControlRuntime_->pointer.Current().status == "running" || mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
+    if (applicationControlRuntime_->privatePointer.Current().enabled || mouseDown_ || dragSession_.IsActive() || widgetAction_ != WidgetAction::None || HasActiveContextMenuSession())
         throw Error("busy", "A pointer operation or context menu is active");
     if (desktopStartupPresentationPending_)
         throw Error("not_ready", "The first desktop frame is not ready");

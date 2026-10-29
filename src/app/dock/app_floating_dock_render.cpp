@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "dock_input_diagnostics.h"
 #include "ui/render/ui_presentation_scope.h"
@@ -342,13 +343,14 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if (host.active && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
         (msg == WM_NCHITTEST || msg == WM_MOUSEACTIVATE || msg == WM_LBUTTONDOWN) &&
         (!host.mergedPresentationActive || host.mergedPresentation.inputEnabled))
     {
         POINT screen{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-        if (msg == WM_MOUSEACTIVATE) GetCursorPos(&screen);
+        if (msg == WM_MOUSEACTIVATE) snowdesktop::private_pointer::CursorPosition(&screen);
         else if (msg != WM_NCHITTEST) ClientToScreen(hwnd, &screen);
         POINT point = screen;
         if (hwnd_) ScreenToClient(hwnd_, &point);
@@ -396,12 +398,12 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
-            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
+            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
                 ShouldSampleFloatingWindowPointer(
                     nativeDragActive, primaryButtonDown) &&
-            GetCursorPos(&point) &&
+            snowdesktop::private_pointer::CursorPosition(&point) &&
             hwnd_ && IsWindow(hwnd_) &&
             ScreenToClient(hwnd_, &point))
         {
@@ -459,13 +461,13 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     {
         snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
         POINT livePointer{};
-        const bool cursorKnown = GetCursorPos(&livePointer) != FALSE;
+        const bool cursorKnown = snowdesktop::private_pointer::CursorPosition(&livePointer) != FALSE;
         if (cursorKnown)
             snowdesktop::desktop_hover_rules::ObserveRetainedDockLeavePointer(
                 host.retainedLeaveTracking, livePointer.x, livePointer.y);
         constexpr WPARAM buttons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
         if (!(wp & buttons) && cursorKnown && host.promoted &&
-            host.promotionInputCapabilityMissing == true && WindowFromPoint(livePointer) == hwnd)
+            host.promotionInputCapabilityMissing == true && snowdesktop::private_pointer::WindowAtPoint(livePointer) == hwnd)
         {
             auto* identity = &host;
             RefreshFloatingDockPromotionInput(host, false, true);
@@ -478,7 +480,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
         tracking.dwFlags = TME_LEAVE;
         tracking.hwndTrack = hwnd;
-        TrackMouseEvent(&tracking);
+        snowdesktop::private_pointer::TrackLeave(&tracking);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
         bool dragPreviewSynced = false;
@@ -519,9 +521,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             floatingDockHoverHandoffRect_ = {};
         }
         POINT cursorScreen{};
-        if (GetCursorPos(&cursorScreen))
+        if (snowdesktop::private_pointer::CursorPosition(&cursorScreen))
         {
-            const HWND hitWindow = WindowFromPoint(cursorScreen);
+            const HWND hitWindow = snowdesktop::private_pointer::WindowAtPoint(cursorScreen);
             POINT desktopCursor = cursorScreen;
             const bool pointerOnBaseDesktopDockSurface =
                 ShouldShowPersistentDockHost(host) &&
@@ -547,7 +549,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
                         tracking.dwFlags = TME_LEAVE;
                         tracking.hwndTrack = target;
-                        TrackMouseEvent(&tracking);
+                        snowdesktop::private_pointer::TrackLeave(&tracking);
                     }))
             {
                 snowdesktop::dock_taskbar_diagnostics::Record(
@@ -604,8 +606,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_CAPTURECHANGED:
         if (msg == WM_CANCELMODE) CancelRenameClick();
         if (snowdesktop::floating_popup_rules::ShouldCancelPointerPressForHostMessage(
-                msg == WM_CANCELMODE, hwnd, GetCapture(),
-                IsOwnedPointerCaptureWindow(GetCapture()),
+                msg == WM_CANCELMODE, hwnd, snowdesktop::private_pointer::Capture(),
+                IsOwnedPointerCaptureWindow(snowdesktop::private_pointer::Capture()),
                 IsOwnedPointerCaptureWindow(reinterpret_cast<HWND>(lp))))
         {
             if (rightButtonDownDockHost_ == &host)
@@ -614,12 +616,13 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             {
                 CancelPointerPressWithoutCaptureRelease();
             }
-            if (msg == WM_CANCELMODE && GetCapture() == hwnd)
+            if (msg == WM_CANCELMODE && snowdesktop::private_pointer::Capture() == hwnd)
                 ReleaseCapturePreservingPointerState();
         }
         return 0;
     case WM_LBUTTONDBLCLK:
     {
+        const snowdesktop::private_pointer::ForwardScope forward(hwnd_, msg);
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;

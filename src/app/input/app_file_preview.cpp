@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 
 std::wstring DesktopApp::GetSelectedFilePreviewPath()
@@ -87,10 +88,10 @@ bool DesktopApp::TryHandleFilePreviewKey(WPARAM key, bool repeated)
         marqueeActive_ || detailColumnResizeActive_ || widgetScrollbarDragging_ || popupScrollbarDragging_;
     if (!AllowsPreview(context)) return false;
     Shortcut pressed{static_cast<UINT>(key), 0};
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) pressed.modifiers |= MOD_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000) pressed.modifiers |= MOD_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) pressed.modifiers |= MOD_SHIFT;
-    if ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000) pressed.modifiers |= MOD_WIN;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) pressed.modifiers |= MOD_CONTROL;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) pressed.modifiers |= MOD_ALT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) pressed.modifiers |= MOD_SHIFT;
+    if ((snowdesktop::private_pointer::AsyncKeyState(VK_LWIN) | snowdesktop::private_pointer::AsyncKeyState(VK_RWIN)) & 0x8000) pressed.modifiers |= MOD_WIN;
     if (!MatchProvider(available, pressed)) return false;
     auto path = GetSelectedFilePreviewPath();
     if (path.empty()) return false;

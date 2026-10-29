@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 
 void DesktopApp::UpdateDesktopIdleHide()
@@ -42,11 +43,11 @@ void DesktopApp::UpdateDesktopIdleHide()
     }
 
     POINT pointer{};
-    sample.pointerValid = GetCursorPos(&pointer) != FALSE;
+    sample.pointerValid = snowdesktop::private_pointer::CursorPosition(&pointer) != FALSE;
     sample.pointerX = pointer.x;
     sample.pointerY = pointer.y;
     sample.pointerOnDesktop = sample.pointerValid &&
-        IsBaseDesktopHoverSurfaceWindow(WindowFromPoint(pointer));
+        IsBaseDesktopHoverSurfaceWindow(snowdesktop::private_pointer::WindowAtPoint(pointer));
     LASTINPUTINFO input{sizeof(input)};
     sample.inputKnown = GetLastInputInfo(&input) != FALSE;
     if (sample.inputKnown)

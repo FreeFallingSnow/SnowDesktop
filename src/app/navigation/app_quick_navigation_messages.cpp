@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "navigation/quick_navigation_rules.h"
 
@@ -53,11 +54,11 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
         quickNavTabDragIndex_ != static_cast<size_t>(-1) || quickNavScrollbarDragging_ ||
         quickNavigationKeyboardTargetKind_ != QuickNavigationKeyboardTargetKind::None ||
         renameController_.IsActive() || dragSession_.HasContext() ||
-        dragDropController_.IsTransportActive() || GetCapture() ||
+        dragDropController_.IsTransportActive() || snowdesktop::private_pointer::Capture() ||
         HasActiveContextMenuSession() ||
         snowdesktop::text_input::HasEditingMenu(quickNavigationSearchEdit_) ||
-        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON)) & 0x8000))
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON)) & 0x8000))
     {
         CancelQuickNavigationTabHover();
         return;
@@ -66,7 +67,7 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
     if (allowSwitch)
     {
         POINT screenPoint{};
-        if (!GetCursorPos(&screenPoint) || WindowFromPoint(screenPoint) != quickNavigationHwnd_)
+        if (!snowdesktop::private_pointer::CursorPosition(&screenPoint) || snowdesktop::private_pointer::WindowAtPoint(screenPoint) != quickNavigationHwnd_)
         {
             CancelQuickNavigationTabHover();
             return;
@@ -112,6 +113,7 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
 
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;
@@ -241,7 +243,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                         quickNavScrollbarDragStartY_ = appPoint.y;
                         quickNavScrollbarDragThumbTop_ = static_cast<int>(thumb.top);
                         quickNavScrollbarDragStartOffset_ = quickNavigationScrollOffset_;
-                        SetCapture(hwnd);
+                        snowdesktop::private_pointer::SetPointerCapture(hwnd);
                         return 0;
                     }
                     if (PtInRect(&track, appPoint))
@@ -294,7 +296,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                     quickNavTabDragStartPoint_ = appPoint;
                     quickNavTabDragDeltaX_ = 0;
                     quickNavTabDragging_ = false;
-                    SetCapture(hwnd);
+                    snowdesktop::private_pointer::SetPointerCapture(hwnd);
                     return 0;
                 }
             }
@@ -372,7 +374,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         mouseTrack.cbSize = sizeof(mouseTrack);
         mouseTrack.dwFlags = TME_LEAVE;
         mouseTrack.hwndTrack = hwnd;
-        TrackMouseEvent(&mouseTrack);
+        snowdesktop::private_pointer::TrackLeave(&mouseTrack);
 
         auto queuePointerFrame = [&]() {
             InvalidateQuickNavigationWindow(true);
@@ -456,7 +458,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     {
         if (quickNavScrollbarDragging_)
         {
-            ReleaseCapture();
+            snowdesktop::private_pointer::ReleasePointerCapture();
             quickNavScrollbarDragging_ = false;
             InvalidateQuickNavigationWindow();
             return 0;
@@ -464,7 +466,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
 
         if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
-            ReleaseCapture();
+            snowdesktop::private_pointer::ReleasePointerCapture();
             size_t dragTab = quickNavTabDragIndex_;
 
             if (quickNavTabDragging_)
@@ -538,7 +540,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         {
             if (quickNavScrollbarDragging_)
             {
-                ReleaseCapture();
+                snowdesktop::private_pointer::ReleasePointerCapture();
                 quickNavScrollbarDragging_ = false;
                 quickNavigationScrollOffset_ = quickNavScrollbarDragStartOffset_;
                 InvalidateQuickNavigationWindow();
@@ -546,7 +548,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             }
             if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
             {
-                ReleaseCapture();
+                snowdesktop::private_pointer::ReleasePointerCapture();
                 quickNavTabDragIndex_ = static_cast<size_t>(-1);
                 quickNavTabDragDeltaX_ = 0;
                 quickNavTabDragging_ = false;
@@ -579,7 +581,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 return 0;
             if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
             {
-                ReleaseCapture();
+                snowdesktop::private_pointer::ReleasePointerCapture();
                 quickNavTabDragIndex_ = static_cast<size_t>(-1);
                 quickNavTabDragDeltaX_ = 0;
                 quickNavTabDragging_ = false;

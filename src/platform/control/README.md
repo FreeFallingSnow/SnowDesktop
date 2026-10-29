@@ -1,82 +1,60 @@
-# Application control IPC v1
+# Application control IPC v1 (unreleased)
 
-SnowDesktop exposes a local JSON-RPC 2.0 endpoint while the normal desktop host
-is running. External automation and scene replay use this same operation
-contract. CLI, MCP and Skill adapters are not required by the host protocol.
-The existing settings-child and elevated-window-helper protocols stay private.
+The complete, normally running SnowDesktop host exposes one local JSON-RPC
+endpoint. Scene replay and future Skill adapters use the same public pipe.
+Settings-child and privileged-helper IPC remain private. This contract has not
+been released; the former system-input playback endpoints have been removed.
 
-## Element and pointer capabilities
+## Application-private pointer
 
-`nativeWidgetControls: 1` adds native widget view/date buttons, category and
-group-source tabs, detail headers and column dividers. Their `nativeControlKey`
-is stable within the widget and independent of translated labels. The catalog
-uses the renderer's geometry and verifies each visible center with the real
-widget hit test, including collapsed and hosted modes. Existing common control
-IDs remain valid. Inspect `pendingSurfaces` for remaining coverage; native status
-bar/system panels, search-result extra controls and external/system windows are
-not currently included in this adapter.
+Capability `privatePointer:1` provides a software input device owned by the
+application UI thread. It never moves the OS cursor, injects `SendInput`, or takes
+system capture/focus. Normal physical operation keeps its existing Win32 path
+when there is no private session. During a session, SnowDesktop native hosts
+ignore physical pointer/keyboard input; other applications receive it normally.
 
-`api.describe.capabilities` advertises `elements:1`, `controlledPointer:1` and
-`demoCursor:1`. These are additive capabilities within protocol v1; the original
-13 methods retain their parameters and behavior. Clients must inspect capabilities
-before using an extension.
+- `input.begin {monitorId,x?,y?,showCursor?}` binds a fresh session to one exact
+  entry from `capture.monitors`. Coordinates are physical screen pixels, including
+  negative monitor origins. Supply x/y together, or start at the monitor center.
+  `showCursor` defaults to true. The returned `sessionId` identifies this lifetime.
+- `input.pointer {sessionId,type,...}` queues one raw event. `type:"move"` needs
+  integer x/y; `"down"` or `"up"` needs `button:"left"|"right"|"middle"`;
+  `"wheel"` needs a nonzero integer `delta` in [-12000,12000]. Fields from another
+  event type are rejected. Build a click with move/down/up; build a drag by moving
+  while a button is held. Repeated presses use normal double-click thresholds.
+- `input.state {includeTrace?:boolean}` returns coordinates/buttons, logical
+  hover/capture/focus flags, sequence, pendingEvents and errors. A bounded trace
+  records the actual messages delivered to real application windows. Events are
+  asynchronous: wait for pendingEvents=0, inspect error and verify product state.
+  Input delivery alone does not establish that the intended business action ran.
+- `input.end {sessionId}` cancels queued input and native presses without sending
+  an accidental click/drop, clears hover/capture and hides the decorative cursor.
+  It does not roll back a completed action. Always end a recording session.
 
-- `ui.snapshot {}` returns `snapshotRevision`, `coordinateSpace`, `elements`,
-  `coveredSurfaces` and `pendingSurfaces`. Coordinates are physical screen pixels,
-  including negative monitor origins. Each element has an opaque ID, parent ID,
-  surface, role, name, bounds, clipping rectangle, state and supported actions.
-  Password values are omitted. IDs use model identities rather than screen
-  coordinates; repeated references to the same item are disambiguated within
-  their parent. IDs remain valid only while that model object remains present.
-- `ui.perform {elementId,action,ifSnapshotRevision,...}` checks the complete
-  current snapshot before applying an action. A stale snapshot, hidden/disabled
-  element or unsupported action fails explicitly. Take a new snapshot before
-  preparing another action. `setValue` accepts `value` (including the empty
-  string); `setRangeValue` and `setScrollOffset` accept finite `number` values.
-  Lua semantic actions use the existing accessibility implementation. Widget
-  and navigation search fields use their existing editor/model path.
-- Pointer actions are `hover`, `click`, `doubleClick`, `contextMenu`, `drag` and
-  `scroll`, as advertised by each element. `drag` requires `targetId` for a
-  current element supporting `drop`; `scroll` requires a nonzero integer `number`
-  in [-12000,12000], using Windows wheel units (120 per standard notch).
-  Optional `durationMs` is an integer in [100,10000] (default 400);
-  optional `showCursor` renders the demo cursor, trail and press/click feedback.
-  Pointer actions return an operation ID and `running` state, then execute
-  asynchronously through the normal Windows input path. They can launch or
-  modify an item in the same way as its ordinary desktop click or drag; use
-  isolated data for unattended demonstrations.
-- `ui.pointerState {includeTrace?:boolean}` returns operation ID, status,
-  error, source/target IDs and current cursor sample. With `includeTrace:true`,
-  it includes up to 4096 timestamped physical-screen samples with button state
-  and phase. Terminal states are `completed`, `failed` and `cancelled`.
-  When an untagged input interrupts playback, optional `interruption` records
-  device, Windows message/flags, injection/integrity flags, event coordinates,
-  virtual key (keyboard only), and received/expected extra-info tags. Tags are
-  decimal strings to preserve pointer-width values beyond JSON's safe integers.
-  The `interrupted_by_user` error also covers unrecognized injected input; it
-  alone does not establish that a human operated the device.
-- `ui.cancelPointer {}` cancels the current operation and returns its state.
-  Cancellation releases buttons owned by playback; an active drag also receives
-  Escape. It does not roll back changes already applied by the application.
+The private device routes coordinates through the real desktop, widget, popup,
+Quick Navigation, Dock and modern-menu window procedures. Existing native hit
+testing and control handlers decide which control responds. IPC does not accept
+an element command, arbitrary HWND or external target. Hover state, button state,
+logical capture/focus and timers read the same private device. The demo cursor
+only visualizes those delivered events. Moving to an unsupported region never
+falls back to operating the system mouse. Monitor geometry changes end the
+session with an explicit error. Settings-process input is a separate pending
+adapter; its read-only catalog is not proof of pointer support.
 
-Playback cancels on observed physical or untagged input, never suppresses that
-input, and fails if display geometry changes or the destination is occluded by
-another window. Injection is subject to normal Windows integrity rules. State
-queries and cancellation remain available while playback is active. Completion
-means that the input sequence was delivered; confirm the resulting UI/model
-state separately. An operation may fail after delivering part of its input.
+## Element discovery
 
-Current catalogs cover desktop items, native widget frames/member items/search,
-view/date buttons, category/source tabs, detail headers/dividers, visible Dock
-entries, Quick Navigation, Lua accessibility nodes, modern menus and the refreshed
-settings UIA cache. Pending coverage includes search-result extra controls,
-popup-specific controls, native status bar/system panels, legacy system menus,
-settings floating popups and external/system windows.
-`coveredSurfaces` identifies available adapters, not exhaustive acceptance of
-every control or every visual state. Pointer motion follows current target
-geometry and uses the same procedural cursor renderer intended for later
-capture/offline compositing. Scene configuration and video export are a later
-stage and are not provided by these methods.
+`ui.snapshot {}` returns snapshotRevision, coordinateSpace, coveredSurfaces,
+pendingSurfaces and visible native element geometry/state. Opaque IDs identify
+models for inspection; actions describe pointer affordances. Use the current
+visible rectangle to choose a coordinate, then send raw private pointer events.
+The removed `ui.perform`, `ui.pointerState` and `ui.cancelPointer` are unavailable.
+
+`nativeWidgetControls:1` covers native view/date buttons, category/source tabs,
+detail headers/dividers and common frame controls. Geometry comes from the real
+renderer and widget hit test. `nativeControlKey` is independent of translations.
+Catalog coverage does not claim acceptance of every control or every state.
+Native status-bar/system panels, extra popup/search-result controls, system and
+external windows remain explicit coverage boundaries.
 
 ## Monitor screenshots
 
@@ -104,10 +82,31 @@ interactive session and graphics support.
 Outputs go into a newly created UUID directory under the current data directory's
 `Automation/Captures/`; callers cannot supply a destination filename or overwrite
 an existing capture. GPU readback and PNG encoding run on a windowless MTA worker,
-keeping UI/input dispatch available. Capture can run while pointer playback is
-active. The format is SDR BGRA8/PNG; HDR tone mapping and video export are not part
-of this extension. Frame acquisition times out after five seconds. Unsupported
+keeping UI/input dispatch available. Capture can run during a private input
+session. Screenshots use SDR BGRA8/PNG. Frame acquisition times out after five seconds. Unsupported
 cursor exclusion fails explicitly instead of silently including a system cursor.
+
+## Real monitor video
+
+Capability `monitorRecording:1` adds `capture.record {monitorId?,includeSystemCursor?,durationMs,fps}`.
+Duration is 100..120000 real milliseconds; rate is 1..60 fps. The complete selected
+monitor is captured at its actual, even pixel dimensions up to 3840x2160. There is
+one WGC capture session, real DWM composition and no preview-model renderer. Wait
+for `captureStartedUnixMs>0` and at least one output frame before starting actions.
+
+Use `capture.state` and `capture.cancel` as for screenshots. Recording state adds
+`kind:"recording"`, `source:"wgc-monitor"`, frames/capturedFrames/duplicatedFrames/
+discardedFrames, first/last WGC frame timestamps, actual elapsed time, encoded
+duration and manifest/frame-map paths. Integer counts and 100ns timestamps are
+decimal strings. Each output frame maps to a real acquired frame in frames.csv;
+repeated frames are explicit. The CFR length can round up by one frame. Capture
+waits for the full requested real duration, independently of that rounding.
+
+The UUID output directory contains H264 MP4 and provenance. Cancellation or
+failure retains diagnostics/partial output without reporting completed. Changed
+monitor geometry, a closed capture source or an encoder falling behind the real
+clock fails explicitly. Capture includes visible external content on the chosen
+monitor: prepare the isolated real desktop and verify the target screen first.
 
 ## Modern menus
 
@@ -120,22 +119,20 @@ opening a cascade. Closing and reopening a menu creates a new session identity.
 
 Use advertised `click` and `hover` actions for menu items, and `scroll` on a popup
 pane. Submenu entries expose `expanded`; wait for the cascade before querying its
-items. Menu text fields support `setValue` through the same editing/history/change
-callback path as normal input, with the existing limit of 96 UTF-16 code units.
-This does not submit the field or invoke a command.
+items. Menu text editing requires the corresponding private keyboard adapter.
 
 `ui.dismissMenu {}` closes the active modern menu without selecting a command.
-Wait for pointer playback to finish first; a running playback returns `busy`.
+Wait for the private pointer event queue to drain first; pending input returns `busy`.
 `app.getState.menuOpen` indicates whether a modern menu is still active. Query and
 pointer dispatch continue through the menu's existing nested event pump. Native
 system-menu fallbacks and external dialogs remain outside this menu adapter.
 
 ## Connection
 
-### Isolated native scene export
+### Offline preview composition (not a complete running desktop)
 
-Capability `demoRender: 1` adds `demo.describe {}`, `demo.render {scene}`,
-`demo.state {id}` and `demo.cancel {id}` to this endpoint. `demo.describe` returns
+Capability `previewRender: 1` adds `preview.describe {}`, `preview.render {scene}`,
+`preview.state {id}` and `preview.cancel {id}` to this endpoint. `preview.describe` returns
 the supported schema, bounds, surface/action lists and an editable complete
 example. Scene schema version 1 is independent of the pipe protocol and Lua API.
 
@@ -153,7 +150,7 @@ language must be installed in the host. Canvas dimensions are even, up to
 Timeline actions use virtual milliseconds: cursor movement/press/release,
 surface show/hide/move/resize, grid/list presentation, search text and category.
 They update the private native render model. These exports demonstrate native
-presentation with fixed data; live end-to-end operation checks use `ui.perform`
+presentation with fixed data; live end-to-end operation checks use `input.pointer`
 and observable product state. The render clock advances by frame index, with
 native popup motion and the same pointer interpolation/cursor artwork. Idle
 frames continue animating trails and click rings. Arbitrary programs, shell
@@ -206,24 +203,11 @@ retained. `elementCount`, `truncated` and timestamps describe the query boundary
 The catalog is limited to 256 controls, 32 levels and a five-second traversal
 budget, with UIA connection/transaction timeouts. A partial query is explicit.
 
-`ui.perform` accepts only the patterns advertised by each settings control:
-`invoke`, `toggle`, `select`, `setValue`, `setRangeValue`, `expand`, `collapse`,
-`focus`, `scrollIntoView`, or root-window `close`. It returns
-`{status:"accepted",kind:"settings",id}`; poll `ui.settingsState` for dispatch
-completion, then refresh and assert the desired product state. Pattern success
-alone does not confirm persistence or an asynchronous page transition.
-
-The UIA client runs on a windowless MTA worker and anchors traversal exclusively
-to the owned settings-process HWND supplied by the existing facade. Callers
-cannot supply HWNDs. IDs include process creation time, window and provider runtime
-identity; each action rediscovers its target under that root before dispatch.
-Changed name, value, geometry or state returns `stale_settings_element` rather
-than applying a cached decision to a recycled or independently edited control.
-Password values are omitted and cannot be set through this adapter. Semantic
-actions invalidate the cache. Human edits can also stale a cached query, so take
-an explicit refresh before making decisions. Native desktop elements still use
-their existing synchronous catalog. Settings floating popups outside this root,
-system dialogs and external applications are not covered.
+The UIA worker currently provides read-only geometry and state for the owned
+settings-process window. Direct Invoke/SetValue automation has been removed.
+Settings mouse demonstration must use the settings process's own input adapter;
+a UIA pattern action is not a substitute for a hover/press/release sequence.
+This adapter is pending and must be validated on the actual XAML island.
 
 The Windows named pipe is
 `\\.\pipe\SnowDesktop.Control.v1.<sessionId>.<userSid>`.
@@ -264,7 +248,7 @@ objects; unknown fields are rejected. JSON-RPC replies contain either `result`
 or `error`; domain failures carry a stable string at `error.data.code`.
 
 `api.describe` returns `protocolVersion`, frame limits and supported operations.
-This registry is the discovery source for later adapters. v1 changes may add
+This registry is the discovery source for later adapters. After the first public release, v1 changes may add
 methods or optional result fields; existing meanings remain stable. Incompatible
 changes require a new protocol major version and endpoint name. This API version
 is independent of the Lua component `apiVersion`.
@@ -323,5 +307,5 @@ Failure to acquire the endpoint is logged without disabling the desktop.
 The endpoint provides live discovery/operations plus isolated native render
 exports. Fixture data and virtual clocks belong to the private renderer; they
 do not replace the live user profile. Creating/removing live widgets, general
-settings mutation outside advertised UIA patterns, external application control
+settings mutation outside the native input path, external application control
 and package publication remain outside this endpoint's current contract.

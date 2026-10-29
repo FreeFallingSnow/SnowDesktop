@@ -1,9 +1,11 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app_control_runtime.h"
 #include "platform/control/control_elements.h"
 #include "ui/menu/menu_control_snapshot.h"
 #include "widget/view/widget_accessibility_snapshot.h"
 #include <cmath>
+#include <algorithm>
 #include <unordered_set>
 
 namespace
@@ -106,7 +108,7 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
             }
         }
     }
-    POINT pointer{}; GetCursorPos(&pointer); pointer.x -= virtualLeft_; pointer.y -= virtualTop_;
+    POINT pointer{}; snowdesktop::private_pointer::CursorPosition(&pointer); pointer.x -= virtualLeft_; pointer.y -= virtualTop_;
     for (const auto& host : persistentDockHosts_)
     {
         auto* dock = host->container;
@@ -247,5 +249,12 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
     else result.pendingSurfaces.push_back("settings-window-needs-refresh");
     if (applicationControlRuntime_->settings.Current().truncated)
         result.pendingSurfaces.push_back("settings-traversal-truncated");
+    // The unreleased semantic action dispatcher has been removed. Catalogs
+    // describe pointer affordances; clients dispatch real coordinate events.
+    for (auto& element : result.elements)
+        std::erase_if(element.actions, [](const auto& action) {
+            return action != "hover" && action != "click" && action != "doubleClick" &&
+                action != "contextMenu" && action != "drag" && action != "drop" && action != "scroll";
+        });
     result.Finish(); return result;
 }

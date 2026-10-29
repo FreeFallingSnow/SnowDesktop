@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "diagnostics/performance_trace.h"
 
@@ -43,7 +44,7 @@ TryActivateDockPopupFromMenuPointerPress(
     if (!HasActiveContextMenuSession())
         return false;
     if (!IsPersistentDockHostWindow(
-            WindowFromPoint(screenPoint)))
+            snowdesktop::private_pointer::WindowAtPoint(screenPoint)))
     {
         return false;
     }
