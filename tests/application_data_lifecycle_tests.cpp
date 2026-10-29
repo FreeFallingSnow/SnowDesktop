@@ -935,6 +935,107 @@ void TestDebugProfile(const std::filesystem::path& fixture)
     profile::runtimeSession = {};
 }
 
+void TestNamedDebugEnvironments(const std::filesystem::path& fixture)
+{
+    namespace profile = snowdesktop::debug_profile;
+    const auto root = fixture / L"named-debug-environments";
+    const auto original = profile::ResolvePaths(root / L"normal");
+    const auto realDesktop = root / L"real-desktop";
+    Write(original.normalData / L"settings.json", "normal-settings");
+    Write(original.data / L"layout.json", "existing-debug-layout");
+    Write(original.defaultDesktop / L"keep.txt", "original-desktop-file");
+    Write(realDesktop / L"keep.txt", "real-desktop-file");
+    // Exact old on-disk schema: upgrading must retain its root and content.
+    const auto encodedDesktop = original.defaultDesktop.u8string();
+    Write(original.control, "{\"enabled\":false,\"pendingReset\":false,\"pendingDesktopChange\":false,\"desktop\":\"" +
+        snowdesktop::json::EscapeString(std::string(encodedDesktop.begin(), encodedDesktop.end())) + "\"}");
+    profile::Configuration config;
+    std::string error;
+    Expect(profile::Read(original, config, error) && config.environments.size() == 1 &&
+        config.selectedEnvironment == L"default" && config.desktop == original.defaultDesktop,
+        "legacy single-profile control becomes the first default environment without moving data");
+
+    const auto screenshotDesktop = root / L"Screenshot Assets" / L"Desktop";
+    Write(screenshotDesktop / L"Project Brief.txt", "real screenshot sample");
+    Expect(profile::CreateEnvironment(original, config, L"  Screenshots  ", error), "create a trimmed named screenshot environment");
+    const auto screenshotId = config.selectedEnvironment;
+    const auto screenshots = profile::ResolvePaths(original.normalData, screenshotId);
+    Expect(screenshotId != L"default" && screenshots.data != original.data &&
+        screenshots.root.parent_path() == original.environmentsRoot,
+        "opaque environment ID chooses a separate application-owned data root");
+    config.desktop = screenshotDesktop;
+    Expect(profile::SelectEnvironment(config, L"default", error) && profile::Write(original, config, error) &&
+        profile::Read(original, config, error) && config.selectedEnvironment == L"default" && !config.enabled &&
+        config.environments.size() == 2 && config.environments[1].name == L"Screenshots" &&
+        config.environments[1].desktop == screenshotDesktop,
+        "registering the second screenshot environment persists its binding without activating or changing mode");
+    Expect(Read(original.data / L"layout.json") == "existing-debug-layout",
+        "registering another environment does not rewrite existing debug layout");
+    Expect(profile::SelectEnvironment(config, screenshotId, error), "select the screenshot environment");
+    config.enabled = true;
+    Expect(profile::Prepare(screenshots, config, {realDesktop}, error) && profile::Write(original, config, error) &&
+        profile::Initialize(original.normalData, {realDesktop}, error) && profile::Current().paths.data == screenshots.data &&
+        snowdesktop::desktop_source::Directory() == screenshotDesktop.wstring(),
+        "production initialization and desktop routing activate the selected environment");
+    Write(screenshots.data / L"settings.json", "screenshots-settings");
+    Write(screenshots.data / L"layout.json", "screenshots-layout");
+    Write(screenshots.data / L"widgets/storage.json", "screenshots-widgets");
+    Write(screenshots.root / L"FullBackups/backup.txt", "screenshots-backup");
+    config.pendingDesktopChange = true;
+    Expect(profile::Write(original, config, error) && profile::CreateEnvironment(original, config, L"Dock Lab", error),
+        "a second named environment preserves the first environment pending state");
+    const auto dockId = config.selectedEnvironment;
+    const auto dock = profile::ResolvePaths(original.normalData, dockId);
+    Expect(profile::Prepare(dock, config, {realDesktop}, error) && profile::Write(original, config, error) &&
+        profile::Initialize(original.normalData, {realDesktop}, error) && profile::Current().paths.data == dock.data,
+        "switching to another named environment uses its own root after initialization");
+    Write(dock.data / L"layout.json", "dock-layout");
+    Write(dock.root / L"FullBackups/backup.txt", "dock-backup");
+    Write(dock.defaultDesktop / L"keep.txt", "dock-desktop-file");
+    const auto beforeRename = Read(dock.data / L"layout.json");
+    Expect(profile::RenameEnvironment(config, L"Animation Lab", error) && config.selectedEnvironment == dockId &&
+        profile::Write(original, config, error) && profile::Read(original, config, error) &&
+        profile::ResolvePaths(original.normalData, config.selectedEnvironment).root == dock.root &&
+        Read(dock.data / L"layout.json") == beforeRename,
+        "renaming changes only presentation and retains ID, data root and files");
+    const auto previousControl = Read(original.control);
+    Expect(!profile::RenameEnvironment(config, L"screenshots", error) &&
+        !profile::CreateEnvironment(original, config, L"\n", error) && Read(original.control) == previousControl,
+        "duplicate and invalid names leave the persisted catalog unchanged");
+    Expect(!profile::SelectEnvironment(config, L"env-does-not-exist", error) && config.selectedEnvironment == dockId,
+        "unknown selection does not mutate the current environment");
+    for (const auto& forbidden : {original.data, screenshots.data, screenshots.root, screenshotDesktop})
+        Expect(!profile::ValidateDesktop(dock, forbidden, {realDesktop, screenshotDesktop}, error),
+            "a named environment cannot use another environment data root or a protected desktop");
+    Expect(profile::SelectEnvironment(config, screenshotId, error) && config.pendingDesktopChange &&
+        profile::Write(original, config, error) && profile::Initialize(original.normalData, {realDesktop}, error),
+        "switching back restores the saved desktop selection and pending layout refresh");
+    config.pendingReset = true;
+    Expect(profile::Write(original, config, error) && profile::Initialize(original.normalData, {realDesktop}, error),
+        "reset is performed for the selected named environment at startup");
+    Expect(!std::filesystem::exists(screenshots.data / L"settings.json") &&
+        !std::filesystem::exists(screenshots.data / L"layout.json") &&
+        !std::filesystem::exists(screenshots.data / L"widgets") &&
+        !std::filesystem::exists(screenshots.root / L"FullBackups"),
+        "selected reset clears its settings, layout, component state and backups");
+    Expect(Read(dock.data / L"layout.json") == "dock-layout" &&
+        Read(dock.root / L"FullBackups/backup.txt") == "dock-backup" &&
+        Read(dock.defaultDesktop / L"keep.txt") == "dock-desktop-file" &&
+        Read(screenshotDesktop / L"Project Brief.txt") == "real screenshot sample" &&
+        Read(original.data / L"layout.json") == "existing-debug-layout" &&
+        Read(original.normalData / L"settings.json") == "normal-settings" &&
+        Read(realDesktop / L"keep.txt") == "real-desktop-file",
+        "reset preserves other environments, all actual desktop files and normal application data");
+    auto invalid = screenshots;
+    invalid.data = original.data;
+    Expect(!profile::Clear(invalid, error) && Read(original.data / L"layout.json") == "existing-debug-layout",
+        "a mismatched reset root is rejected before deleting anything");
+    Expect(profile::Read(original, config, error), "read final environment catalog");
+    config.environments[1].id = L"../normal";
+    Expect(!profile::Write(original, config, error), "path traversal environment IDs cannot be persisted");
+    profile::runtimeSession = {};
+}
+
 void TestWidgetRemoval(const std::filesystem::path& root)
 {
     using snowdesktop::widget_runtime::ConfirmWidgetRemoval;
@@ -1324,6 +1425,7 @@ int main()
     TestDockFolderOrderPersistence(root);
     TestWidgetCatalogRediscovery(root);
     TestDebugProfile(root);
+    TestNamedDebugEnvironments(root);
     TestWidgetRemoval(root);
     TestDockLayoutBackup(root);
     failures += RunDesktopMembershipRecoveryTests(root);

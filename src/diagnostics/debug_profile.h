@@ -1,5 +1,7 @@
 #pragma once
 
+#include "data/debug_environment_catalog.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -12,6 +14,8 @@ struct Configuration
     bool pendingReset = false;
     bool pendingDesktopChange = false;
     std::filesystem::path desktop;
+    std::wstring selectedEnvironment = L"default";
+    std::vector<Environment> environments;
 };
 
 struct Paths
@@ -21,6 +25,8 @@ struct Paths
     std::filesystem::path data;
     std::filesystem::path control;
     std::filesystem::path defaultDesktop;
+    std::filesystem::path environmentsRoot;
+    std::wstring environmentId = L"default";
 };
 
 struct Session
@@ -30,9 +36,14 @@ struct Session
     bool initialized = false;
 };
 
-Paths ResolvePaths(const std::filesystem::path& normalData);
+Paths ResolvePaths(const std::filesystem::path& normalData,
+    std::wstring_view environmentId = L"default");
 bool Read(const Paths& paths, Configuration& config, std::string& error);
 bool Write(const Paths& paths, const Configuration& config, std::string& error);
+bool SelectEnvironment(Configuration& config, std::wstring_view id, std::string& error);
+bool CreateEnvironment(const Paths& paths, Configuration& config,
+    std::wstring_view name, std::string& error);
+bool RenameEnvironment(Configuration& config, std::wstring_view name, std::string& error);
 bool PathsOverlap(const std::filesystem::path& left, const std::filesystem::path& right);
 bool ValidateDesktop(const Paths& paths, const std::filesystem::path& desktop,
     const std::vector<std::filesystem::path>& systemDesktops, std::string& error);

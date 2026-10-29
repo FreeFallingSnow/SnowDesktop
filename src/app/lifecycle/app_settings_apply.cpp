@@ -567,8 +567,18 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
     if (!snowdesktop::debug_profile::Read(profile.paths, configuration, profileError))
         configuration = profile.configuration;
     patch.debugProfileEnabled = snowdesktop::debug_profile::Enabled();
-    patch.debugDataDirectory = profile.paths.data.wstring();
+    const auto selectedPaths = snowdesktop::debug_profile::ResolvePaths(
+        profile.paths.normalData, configuration.selectedEnvironment);
+    patch.debugDataDirectory = selectedPaths.data.wstring();
     patch.debugDesktopDirectory = configuration.desktop.wstring();
+    patch.debugEnvironmentId = configuration.selectedEnvironment;
+    patch.debugEnvironments = std::vector<snowdesktop::winui::DebugEnvironmentSummary>{};
+    for (const auto& environment : configuration.environments)
+    {
+        patch.debugEnvironments->push_back({environment.id, environment.name});
+        if (environment.id == configuration.selectedEnvironment)
+            patch.debugEnvironmentName = environment.name;
+    }
 
     patch.animationDiagnosticsStatus =
         BuildAnimationDiagnosticsStatus();
@@ -827,15 +837,35 @@ snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(
     const auto flushed = settingsController_->FlushAll();
     if (!flushed.Succeeded()) return flushed;
     if (!SaveLayoutSlots()) return Result::Failure(_LW("settings.debug.profile.failed"));
-    const auto& paths = profile::Current().paths;
+    const auto& sessionPaths = profile::Current().paths;
     profile::Configuration previous;
     std::string error;
     const auto failure = [&]() {
         return Result::Failure(std::wstring(_LW("settings.debug.profile.failed")) + L"\n" + Utf8ToWide(error));
     };
-    if (!profile::Read(paths, previous, error)) return failure();
+    if (!profile::Read(sessionPaths, previous, error)) return failure();
     auto next = previous;
-    if (request.action == Action::SetDebugProfileEnabled)
+    auto paths = profile::ResolvePaths(sessionPaths.normalData, previous.selectedEnvironment);
+    if (request.action == Action::CreateDebugEnvironment)
+    {
+        if (!profile::CreateEnvironment(paths, next, request.value, error)) return failure();
+        paths = profile::ResolvePaths(sessionPaths.normalData, next.selectedEnvironment);
+        if (!profile::Prepare(paths, next, snowdesktop::desktop_source::SystemDesktops(), error)) return failure();
+    }
+    else if (request.action == Action::SelectDebugEnvironment)
+    {
+        if (request.value == previous.selectedEnvironment) return Result::Success();
+        if (!profile::SelectEnvironment(next, request.value, error)) return failure();
+        paths = profile::ResolvePaths(sessionPaths.normalData, next.selectedEnvironment);
+        if (next.enabled && !profile::Prepare(paths, next, snowdesktop::desktop_source::SystemDesktops(), error)) return failure();
+    }
+    else if (request.action == Action::RenameDebugEnvironment)
+    {
+        if (!profile::RenameEnvironment(next, request.value, error) || !profile::Write(paths, next, error)) return failure();
+        PublishHomeAboutStatus();
+        return Result::Success();
+    }
+    else if (request.action == Action::SetDebugProfileEnabled)
     {
         next.enabled = request.boolValue;
         if (next.enabled == profile::Enabled()) return Result::Success();
@@ -866,6 +896,11 @@ snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(
         }
     }
     if (!profile::Write(paths, next, error)) return failure();
+    if (!profile::Enabled() && !next.enabled)
+    {
+        PublishHomeAboutStatus();
+        return Result::Success();
+    }
     if (!RequestRestart())
     {
         std::string rollbackError;
@@ -1557,6 +1592,9 @@ public:
         case Action::SetDebugProfileEnabled:
         case Action::SetDebugDesktopDirectory:
         case Action::ClearDebugProfile:
+        case Action::CreateDebugEnvironment:
+        case Action::SelectDebugEnvironment:
+        case Action::RenameDebugEnvironment:
             return app_.ChangeDebugProfile(request);
         case Action::SetTemporaryGridInitialization:
             return app_.SetTemporaryGridInitialization(request.boolValue);

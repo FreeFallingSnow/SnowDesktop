@@ -712,6 +712,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
+    if (snowdesktop::debug_profile::Enabled())
+        SetPropW(controlHwnd_, (L"SnowDesktop.DebugEnvironment." +
+            snowdesktop::debug_profile::Current().configuration.selectedEnvironment).c_str(),
+            reinterpret_cast<HANDLE>(1));
     auto& windowSupport = snowdesktop::window_support::WindowSupport();
     windowSupport.Start();
     windowSupport.SetStatusChangedHandler([this] {
