@@ -1137,7 +1137,13 @@ end})
             ~Cleanup()
             {
                 std::cerr << "Private rename stage: cleanup native owner\n";
-                device.End(); app.CommitRename(true); DestroyWindow(owner); DestroyWindow(workerW);
+                device.End(); app.CommitRename(true);
+                // This windowed fixture keeps its DesktopApp process-lived,
+                // so Profile::apps cannot retire its background model work.
+                std::cerr << "Private rename stage: cleanup model workers\n";
+                NativeDragIntegrationAccess::StopModel(app);
+                std::cerr << "Private rename stage: cleanup model stopped\n";
+                DestroyWindow(owner); DestroyWindow(workerW);
                 app.hwnd_ = app.inputHwnd_ = nullptr;
                 std::cerr << "Private rename stage: cleanup runtime\n";
                 app.applicationControlRuntime_.reset();
