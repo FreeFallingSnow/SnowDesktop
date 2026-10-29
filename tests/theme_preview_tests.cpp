@@ -3,6 +3,8 @@
 #include "theme/theme_workshop_tags.h"
 #include "../src/winui/theme_edit_state.h"
 #include "theme/theme_workshop.h"
+#include "steam/steam_workshop_account_cache.h"
+#include "steam/steam_app_identity.h"
 #include "ui/preview/preview_png_writer.h"
 #include <windows.h>
 #include <algorithm>
@@ -97,6 +99,19 @@ int wmain(int argc, wchar_t** argv)
 {
     using namespace snowdesktop;
     using namespace themes;
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--inspect-workshop-cache")
+    {
+        std::string error;
+        const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
+        const auto cache = widget::ReadCurrentSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+        std::cout << "account=" << widget::ReadSteamActiveUserSteamId()
+            << " authoritative=" << cache.authoritative << " partial=" << cache.partial << '\n';
+        for (const auto& id : cache.subscribedPublishedFileIds) std::cout << "subscribed=" << id << '\n';
+        for (const auto& item : cache.readyItems) std::cout << "ready=" << item.publishedFileId << '\n';
+        for (const auto& skipped : cache.skippedLibraries) std::cout << "skipped=" << skipped << '\n';
+        std::cout << "error=" << cache.error << '\n';
+        return cache.authoritative && !cache.partial ? 0 : 1;
+    }
     // One-shot mock children exercise the actual bounded process runner.
     if (argc >= 2 && std::wstring_view(argv[1]) == L"--child-wait")
     {

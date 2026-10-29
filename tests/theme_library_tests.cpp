@@ -701,6 +701,46 @@ int RunThemeLibraryTests()
         const auto localPopup = ManagementEntries(paired,{}, {{popup.id,popup.id}},FilterTab::Popup);
         check(localPopup.size() == 1 && localPopup.front().id == popup.id && paired.references.at("popup").id == remoteIds.at(popup.id),
             "viewing a preferred local card never rewrites the active library reference");
+        {
+            auto switching = paired;
+            SettingsValues values;
+            const auto generalBytes = [&](const GeneralSettings& general) {
+                const auto path = root / L"source-switch-general.json";
+                check(SaveGeneralSettings(path.c_str(), general), "serialize unrelated general values for source-switch comparison");
+                std::ifstream input(path, std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(input), {});
+            };
+            std::vector<std::string> targets;
+            const auto initialValues = values;
+            const auto initialLibrary = EncodeLibrary(switching, error);
+            check(SwitchAppliedVersion(switching, remoteIds.at(global.id), global.id, values, targets, error) &&
+                targets.empty() && values.personalization == initialValues.personalization &&
+                values.dock == initialValues.dock && generalBytes(values.general) == generalBytes(initialValues.general) &&
+                values.navigation == initialValues.navigation && EncodeLibrary(switching, error) == initialLibrary,
+                "switching an inactive management card never applies that theme");
+            check(ApplyTarget(switching, "popup", remoteIds.at(popup.id), values, error),
+                "prepare actual subscribed popup appearance");
+            const auto before = values;
+            check(SwitchAppliedVersion(switching, remoteIds.at(popup.id), popup.id, values, targets, error) &&
+                targets == std::vector<std::string>{"popup"} && switching.references.at("popup").id == popup.id &&
+                values.dock == before.dock && values.personalization == before.personalization,
+                "switching the active popup replaces only that corresponding surface");
+            check(ApplyTarget(switching, "dock", global.id, values, error) &&
+                Select(switching, "dock", global.id, Kind::Global, Dock, error),
+                "prepare a global family used only for Dock");
+            const auto dockBefore = values;
+            check(SwitchAppliedVersion(switching, global.id, remoteIds.at(global.id), values, targets, error) &&
+                targets == std::vector<std::string>{"dock"} && values.personalization == dockBefore.personalization &&
+                generalBytes(values.general) == generalBytes(dockBefore.general),
+                "a card version change cannot expand a Dock-only selection into the whole global theme");
+            Detach(switching, "dock");
+            check(SwitchAppliedVersion(switching, remoteIds.at(global.id), global.id, values, targets, error) &&
+                targets == std::vector<std::string>{"dock"},
+                "an unchanged detached snapshot can follow its corresponding version without changing unrelated scopes");
+            values.dock.customAppearance.widgetAlpha = .123f;
+            check(SwitchAppliedVersion(switching, global.id, remoteIds.at(global.id), values, targets, error) && targets.empty(),
+                "a stale reference cannot overwrite an independently edited current appearance");
+        }
         auto& updatedRemote = paired.themes.at(remoteIds.at(global.id)); updatedRemote.scopes = Dock;
         updatedRemote.quickPanel.clear(); updatedRemote.popup.clear();
         const auto globalCard = ManagementEntries(paired,{}, {{global.id,updatedRemote.id}},FilterTab::Global);
