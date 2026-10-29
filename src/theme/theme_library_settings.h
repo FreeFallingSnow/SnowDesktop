@@ -382,4 +382,41 @@ inline std::vector<std::string> ApplySavedUpdate(const Library& library, std::st
     }
     return targets;
 }
+// A management-card source selection only replaces surfaces still displaying
+// that source's saved snapshot. Detached snapshots can survive unsubscribe;
+// compare actual appearance before following them back to a local version.
+inline bool SwitchAppliedVersion(Library& library, std::string_view previous,
+    std::string_view replacement, SettingsValues& values,
+    std::vector<std::string>& targets, std::string& error)
+{
+    const auto nextTheme = Resolve(library.themes, replacement);
+    if (!nextTheme) { error = "themeNotFound"; return false; }
+    auto nextLibrary = library;
+    auto nextValues = values;
+    std::vector<std::string> changed;
+    for (const auto target : AppearanceTargets)
+    {
+        const auto found = library.references.find(std::string(target));
+        if (found == library.references.end() ||
+            (!found->second.id.empty() && found->second.id != previous)) continue;
+        const auto saved = Resolve(found->second.snapshot, previous);
+        if (!saved || saved->kind != TargetKind(target) || nextTheme->kind != saved->kind) continue;
+        if (nextTheme->kind == Kind::Global &&
+            (target == "global" ? !FullScope(nextTheme->scopes) :
+                !(nextTheme->scopes & TargetScope(target)))) continue;
+        const auto current = CaptureTarget(target, values);
+        if (current.kind == Kind::Icon ? !SameIconTheme(saved->icon, current.icon) :
+            !AppliedAppearanceMatches(saved->appearance, current.appearance)) continue;
+        if (current.kind == Kind::QuickPanel &&
+            (saved->layout != current.layout || saved->colors != current.colors)) continue;
+        if (!ApplyTarget(nextLibrary, target, replacement, nextValues, error) ||
+            !Select(nextLibrary, std::string(target), replacement, TargetKind(target),
+                target == "global" ? nextTheme->scopes : TargetScope(target), error)) return false;
+        changed.emplace_back(target);
+    }
+    library = std::move(nextLibrary);
+    values = std::move(nextValues);
+    targets = std::move(changed);
+    return true;
+}
 }

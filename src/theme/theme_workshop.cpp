@@ -3,6 +3,7 @@
 #include "theme_workshop_tags.h"
 #include "theme_bridge_availability_cache.h"
 #include "steam/steam_app_identity.h"
+#include "steam/steam_workshop_account_cache.h"
 #include "common/json_value.h"
 #include <fstream>
 #include <chrono>
@@ -368,10 +369,11 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
 bool Sync(const std::filesystem::path&, const std::filesystem::path& library,
     Library& output, std::string& error, const std::atomic_bool* cancel)
 {
+    const auto account = widget::ReadSteamActiveUserSteamId();
     const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
-    if (!error.empty()) return false;
-    return SyncLocal(widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId),
-        widget::ReadSteamActiveUserSteamId(), library, output, error, cancel);
+    const auto cache = widget::ReadCurrentSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+    if (account != widget::ReadSteamActiveUserSteamId()) return Fail(error, "accountChanged");
+    return SyncLocal(cache, account, library, output, error, cancel);
 }
 bool SyncLocal(const widget::SteamWorkshopLocalCache& cache, std::string account,
     const std::filesystem::path& library, Library& output, std::string& error,

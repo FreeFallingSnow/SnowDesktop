@@ -710,7 +710,12 @@ private:
                 const auto token = version.SelectionChanged([this, version, local, remote](const auto&, const auto&) {
                     if (syncing_ || busy_ || closed_) return;
                     const auto index = version.SelectedIndex();
-                    if (index >= 0) Run(ThemeLibraryCommand::Apply, index == 0 ? local : remote);
+                    if (index < 0) return;
+                    const auto desired = index == 0 ? local : remote;
+                    managementVersions_[local] = desired;
+                    // replacement makes this a conditional source switch. The
+                    // host rechecks fresh settings and never applies an idle card.
+                    Run(ThemeLibraryCommand::Apply, desired, index == 0 ? remote : local);
                 });
                 cardRevoke_.push_back([version, token] { version.SelectionChanged(token); });
             }
@@ -1015,7 +1020,8 @@ private:
         if (result.succeeded)
         {
             library_ = result.library; sharing_ = result.sharingAvailable; workshop_ = result.workshopAvailable; publishedUrls_ = result.publishedUrls;
-            if (command == ThemeLibraryCommand::Apply)
+            if (command == ThemeLibraryCommand::Apply &&
+                (request.replacement.empty() || !result.updatedIds.empty()))
             {
                 if (auto applied = themes::Resolve(library_.themes, request.id))
                 {

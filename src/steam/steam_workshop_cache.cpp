@@ -4,12 +4,14 @@
  */
 
 #include "steam_workshop_cache.h"
+#include "steam_workshop_account_cache.h"
 #include "common/bounded_file_query.h"
 
 #include <windows.h>
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cwctype>
 #include <fstream>
 #include <iterator>
@@ -662,5 +664,123 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
     for (auto& [id, directory] : ready)
         result.readyItems.push_back({std::move(id), std::move(directory)});
     return result;
+}
+
+std::filesystem::path CurrentSteamWorkshopAccountCachePath(std::uint32_t appId)
+{
+    const auto account = ReadSteamActiveUserAccountId();
+    const auto steam = ReadRegistryString(HKEY_CURRENT_USER,
+        L"Software\\Valve\\Steam", L"SteamPath");
+    if (account.empty() || steam.empty()) return {};
+    return std::filesystem::path(steam) / L"userdata" / account / L"ugc" /
+        (std::to_wstring(appId) + L"_subscriptions.vdf");
+}
+
+namespace
+{
+bool PositiveInteger(std::string_view value)
+{
+    std::uint64_t number = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
+    return DigitsOnly(value) && parsed.ec == std::errc{} &&
+        parsed.ptr == value.data() + value.size() && number != 0;
+}
+
+void ApplyAccountMembership(const std::vector<std::string>& ids,
+    SteamWorkshopLocalCache& cache)
+{
+    const std::set<std::string> subscribed(ids.begin(), ids.end());
+    std::set<std::string> removed(cache.locallyUnsubscribedPublishedFileIds.begin(),
+        cache.locallyUnsubscribedPublishedFileIds.end());
+    for (const auto& id : cache.subscribedPublishedFileIds)
+        if (!subscribed.contains(id)) removed.insert(id);
+    for (const auto& id : subscribed) removed.erase(id);
+    cache.subscribedPublishedFileIds.assign(subscribed.begin(), subscribed.end());
+    cache.locallyUnsubscribedPublishedFileIds.assign(removed.begin(), removed.end());
+    std::erase_if(cache.readyItems, [&](const auto& item) {
+        return !subscribed.contains(item.publishedFileId);
+    });
+    for (auto& [root, members] : cache.librarySubscriptions)
+    {
+        (void)root;
+        std::erase_if(members, [&](const auto& id) { return !subscribed.contains(id); });
+    }
+    // The account list is complete even if a content drive is unavailable.
+    // Missing downloads remain pending; they are never evidence of retirement.
+    cache.authoritative = true;
+    cache.partial = false;
+    cache.error.clear();
+}
+}
+
+bool ApplySteamWorkshopAccountCache(const std::filesystem::path& path,
+    std::uint32_t appId, SteamWorkshopLocalCache& cache)
+{
+    std::error_code ec;
+    const auto before = std::filesystem::last_write_time(path, ec);
+    if (ec) return false;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return false;
+    VdfObject root;
+    std::string error;
+    if (!ParseVdfFile(path, root, error) || root.entries.size() != 1) return false;
+    const auto list = FindObject(root, "subscribedfiles");
+    if (!list) return false;
+    std::set<std::string> keys, ids;
+    for (const auto& entry : list->entries)
+    {
+        if (!keys.insert(entry.key).second) return false;
+        if (entry.key == "appid")
+        {
+            if (entry.object || entry.value != std::to_string(appId)) return false;
+        }
+        else if (entry.key == "time_last_updated")
+        {
+            if (entry.object || !PositiveInteger(entry.value)) return false;
+        }
+        else
+        {
+            if (!DigitsOnly(entry.key) || !entry.object) return false;
+            std::set<std::string> fields;
+            for (const auto& field : entry.object->entries)
+                if (field.object || !fields.insert(field.key).second) return false;
+            const auto id = FindValue(*entry.object, "publishedfileid");
+            if (!id || !PositiveInteger(*id) || !ids.insert(*id).second) return false;
+            // disabled_locally controls availability, not subscription membership.
+        }
+    }
+    if (!keys.contains("appid") || !keys.contains("time_last_updated")) return false;
+    if (std::filesystem::last_write_time(path, ec) != before || ec ||
+        std::filesystem::file_size(path, ec) != size || ec) return false;
+    ApplyAccountMembership({ids.begin(), ids.end()}, cache);
+    return true;
+}
+
+SteamWorkshopLocalCache ReadCurrentSteamWorkshopLocalCache(
+    const std::vector<std::filesystem::path>& libraryRoots, std::uint32_t appId)
+{
+    const auto account = ReadSteamActiveUserAccountId();
+    const auto path = CurrentSteamWorkshopAccountCachePath(appId);
+    auto& queries = BoundedFileQuery<SteamWorkshopLocalCache>::ForProcess();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(750);
+    const auto job = queries.Request(L"account:" + PathKey(path), [path, appId] {
+        SteamWorkshopLocalCache membership;
+        if (!path.empty()) (void)ApplySteamWorkshopAccountCache(path, appId, membership);
+        return membership;
+    });
+    auto cache = ReadSteamWorkshopLocalCache(libraryRoots, appId);
+    const auto membership = queries.Wait(job, deadline);
+    if (!account.empty() && account == ReadSteamActiveUserAccountId() &&
+        membership && membership->authoritative)
+        ApplyAccountMembership(membership->subscribedPublishedFileIds, cache);
+    else
+    {
+        // Aggregate subscribedby markers do not identify the current account.
+        // An unreadable/changing account list must preserve installed content.
+        cache.authoritative = false;
+        cache.partial = true;
+        cache.error = "Steam account subscription cache is unavailable or changed";
+    }
+    return cache;
 }
 }

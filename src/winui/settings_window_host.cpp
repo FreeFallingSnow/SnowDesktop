@@ -2709,6 +2709,14 @@ struct SettingsWindowHost::Impl
         if (!controller->FlushAll().Succeeded())
         { error = "writeFailed"; feedback(); return result; }
         if (!themes::Load(themes::LibraryPath(), result.library, error)) { feedback(); return result; }
+        for (const auto& [id, theme] : result.library.themes)
+        {
+            (void)theme;
+            auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+            if (url.empty()) for (const auto& [item, origin] : result.library.workshop)
+                if (origin.ids.contains(id)) { url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item; break; }
+            if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
+        }
         themes::ReconcileReferences(result.library, current->values);
         if (request.command == ThemeLibraryCommand::Export)
         {
@@ -2740,6 +2748,22 @@ struct SettingsWindowHost::Impl
             result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
                 themes::ReconcileReferences(library, current->values);
                 auto next = current->values;
+                if (!request.replacement.empty())
+                {
+                    const auto source = themes::Find(library.themes, request.replacement);
+                    const auto destination = themes::Find(library.themes, request.id);
+                    if (!source || !destination ||
+                        theme_controls::VersionCounterpart(library, result.publishedUrls, *source) != request.id ||
+                        theme_controls::VersionCounterpart(library, result.publishedUrls, *destination) != request.replacement)
+                    { detail = "invalidSelection"; return false; }
+                    std::vector<std::string> targets;
+                    if (!themes::SwitchAppliedVersion(library, request.replacement, request.id, next, targets, detail)) return false;
+                    if (targets.empty()) return true;
+                    settingsTouched = true;
+                    if (apply(next).Succeeded()) { result.updatedIds.push_back(request.id); return true; }
+                    detail = "writeFailed";
+                    return false;
+                }
                 if (!themes::ApplyTarget(library, request.target, request.id, next, detail)) return false;
                 const auto theme = themes::Resolve(library.themes, request.id);
                 if (request.target == "global" && !themes::FullScope(theme->scopes))

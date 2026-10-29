@@ -4,6 +4,7 @@
 #include "data/atomic_file.h"
 #include "steam/steam_app_identity.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_account_cache.h"
 #include "../../steam_bridge/src/icon_pack_workshop_publish.h"
 #include "../../steam_bridge/src/bridge_json.h"
 #include <algorithm>
@@ -222,8 +223,7 @@ IconLibrarySnapshot Run(IconLibrary& library,const IconLibraryRequest& request,c
         if(progress)progress->store(4);
         const auto account = widget::ReadSteamActiveUserSteamId();
         const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
-        if (!error.empty()) return Error(library, "subscriptionsUnavailable");
-        const auto cache = widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+        const auto cache = widget::ReadCurrentSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
         if (request.action == "autoSyncSubscriptions")
         {
             const auto before = library.Read();

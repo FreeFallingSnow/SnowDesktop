@@ -2,6 +2,7 @@
 
 #include "steam/steam_app_identity.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_account_cache.h"
 #include "steam/steam_workshop_watch_thread.h"
 
 namespace
@@ -13,6 +14,7 @@ struct WorkshopWatchEntry
     OVERLAPPED overlapped{};
     std::vector<BYTE> buffer;
     bool pending = false;
+    bool accountCache = false;
 };
 
 bool IsRelevantWorkshopPath(std::wstring relativePath)
@@ -32,7 +34,7 @@ bool IsRelevantWorkshopPath(std::wstring relativePath)
         relativePath[content.size()] == L'\\';
 }
 
-bool ContainsRelevantWorkshopChange(const BYTE* buffer, DWORD bytes)
+bool ContainsRelevantWorkshopChange(const BYTE* buffer, DWORD bytes, bool accountCache)
 {
     // A zero-byte completion means the kernel notification buffer overflowed;
     // reconcile conservatively because at least one change was lost.
@@ -44,7 +46,9 @@ bool ContainsRelevantWorkshopChange(const BYTE* buffer, DWORD bytes)
             buffer + offset);
         const std::wstring relativePath(info->FileName,
             info->FileNameLength / sizeof(wchar_t));
-        if (IsRelevantWorkshopPath(relativePath)) return true;
+        if (accountCache ? _wcsicmp(relativePath.c_str(),
+                (std::to_wstring(snowdesktop::kSnowDesktopSteamAppId) + L"_subscriptions.vdf").c_str()) == 0
+            : IsRelevantWorkshopPath(relativePath)) return true;
         if (info->NextEntryOffset == 0) break;
         offset += info->NextEntryOffset;
     }
@@ -159,14 +163,26 @@ DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
         // ReadDirectoryChangesW retains the OVERLAPPED and buffer addresses.
         // Heap-own each entry so vector growth never moves armed storage.
         std::vector<std::unique_ptr<WorkshopWatchEntry>> watches;
-        watches.reserve(libraries.size());
+        watches.reserve(libraries.size() + 1);
+        std::vector<std::pair<std::filesystem::path, bool>> directories;
+        const auto accountCache = snowdesktop::widget::CurrentSteamWorkshopAccountCachePath(
+            snowdesktop::kSnowDesktopSteamAppId);
+        if (!accountCache.empty()) directories.emplace_back(accountCache.parent_path(), true);
         for (const auto& library : libraries)
+        {
+            // Network redirectors can block CreateFile indefinitely. Local
+            // notifications stay responsive; the bounded scan still reads all
+            // registered roots during the existing recovery timer.
+            if (GetDriveTypeW(library.root_path().c_str()) == DRIVE_REMOTE) continue;
+            directories.emplace_back(library / L"steamapps" / L"workshop", false);
+        }
+        for (const auto& [directory, isAccountCache] : directories)
         {
             if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0 ||
                 watches.size() >= MAXIMUM_WAIT_OBJECTS - 1) break;
-            const auto workshop = library / L"steamapps" / L"workshop";
             auto watch = std::make_unique<WorkshopWatchEntry>();
-            watch->directory = CreateFileW(workshop.c_str(),
+            watch->accountCache = isAccountCache;
+            watch->directory = CreateFileW(directory.c_str(),
                 FILE_LIST_DIRECTORY,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 nullptr, OPEN_EXISTING,
@@ -200,7 +216,7 @@ DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
                 waitHandles.push_back(watch->event);
             const DWORD waitResult = WaitForMultipleObjects(
                 static_cast<DWORD>(waitHandles.size()), waitHandles.data(),
-                FALSE, INFINITE);
+                FALSE, 60000);
             if (waitResult == WAIT_OBJECT_0) break;
             if (waitResult == WAIT_FAILED)
             {
@@ -221,7 +237,7 @@ DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
             const DWORD completionError = completed
                 ? ERROR_SUCCESS : GetLastError();
             const bool relevant = completed
-                ? ContainsRelevantWorkshopChange(watch.buffer.data(), bytes)
+                ? ContainsRelevantWorkshopChange(watch.buffer.data(), bytes, watch.accountCache)
                 : completionError == ERROR_NOTIFY_ENUM_DIR;
             if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
             if (!ArmWorkshopWatch(watch))

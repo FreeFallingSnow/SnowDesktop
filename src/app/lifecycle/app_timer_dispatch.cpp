@@ -3,6 +3,7 @@
 #include "theme/theme_workshop.h"
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_account_cache.h"
 #include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_app_identity.h"
 #include "layout/layout_scroll_save_rules.h"
@@ -333,15 +334,16 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             using namespace snowdesktop;
             themes::Library library; std::string error;
             bool relevant = themes::Load(themes::LibraryPath(), library, error) && !library.workshop.empty();
+            const auto account = widget::ReadSteamActiveUserSteamId();
             const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
-            const auto cache = widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+            const auto cache = widget::ReadCurrentSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
             for (const auto& item : cache.readyItems)
             {
                 std::error_code ec;
                 relevant = relevant || std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", ec);
             }
-            if (relevant && error.empty())
-                (void)themes::workshop::SyncLocal(cache, widget::ReadSteamActiveUserSteamId(),
+            if (relevant && account == widget::ReadSteamActiveUserSteamId())
+                (void)themes::workshop::SyncLocal(cache, account,
                     themes::LibraryPath(), library, error);
         }
         catch (...) { /* Failed/partial queries never remove installed themes. */ }
