@@ -953,25 +953,33 @@
         // File components use a different source classification and the
         // opposite lane. Measure the real component/control plate, rather
         // than its small preview thumbnails whose inset grows with the icon.
-        const auto platePaintBounds = [&](const std::vector<std::uint32_t>& pixels, RECT anchor) {
+        const auto platePaintBounds = [&](const std::vector<std::uint32_t>& pixels, RECT anchor, size_t fromTrailing) {
             std::vector<std::uint8_t> visited(pixels.size());
             std::vector<size_t> pending;
-            RECT best{};
-            long long bestDistance = std::numeric_limits<long long>::max();
+            std::vector<RECT> plates;
+            const bool vertical = app.dockSettings_.position == DockPosition::Left || app.dockSettings_.position == DockPosition::Right;
             const auto white = [&](size_t index) {
-                return (pixels[index] >> 24) >= 250 && (pixels[index] & 0xffffffu) == 0xffffffu;
+                // read() copies PREMULTIPLIED BGRA, not the straight-alpha
+                // colour returned by a PNG decoder. White fill/outline have
+                // RGB equal to alpha (within one UNORM quantization step).
+                const auto pixel = pixels[index], alpha = pixel >> 24;
+                return alpha > 0 && std::abs(static_cast<int>((pixel >> 16) & 255) - static_cast<int>(alpha)) <= 1 &&
+                    std::abs(static_cast<int>((pixel >> 8) & 255) - static_cast<int>(alpha)) <= 1 &&
+                    std::abs(static_cast<int>(pixel & 255) - static_cast<int>(alpha)) <= 1;
             };
             for (size_t seed = 0; seed < pixels.size(); ++seed)
             {
                 if (visited[seed] || !white(seed)) continue;
                 pending.clear(); pending.push_back(seed); visited[seed] = 1;
                 RECT region{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
+                std::array<size_t, 256> alphaCounts{};
                 const auto append = [&](size_t index) {
                     if (!visited[index] && white(index)) { visited[index] = 1; pending.push_back(index); }
                 };
                 for (size_t next = 0; next < pending.size(); ++next)
                 {
                     const size_t index = pending[next];
+                    ++alphaCounts[pixels[index] >> 24];
                     const auto x = static_cast<LONG>(index % width), y = static_cast<LONG>(index / width);
                     region.left = std::min(region.left, x); region.top = std::min(region.top, y);
                     region.right = std::max(region.right, x + 1); region.bottom = std::max(region.bottom, y + 1);
@@ -980,13 +988,39 @@
                     if (y > 0) append(index - width);
                     if (y + 1 < static_cast<LONG>(height)) append(index + width);
                 }
-                if (region.right - region.left < 20 || region.bottom - region.top < 20) continue;
-                const long long dx = static_cast<long long>(region.left + region.right) - anchor.left - anchor.right;
-                const long long dy = static_cast<long long>(region.top + region.bottom) - anchor.top - anchor.bottom;
-                const auto distance = dx * dx + dy * dy;
-                if (distance < bestDistance) { bestDistance = distance; best = region; }
+                const LONG minimumSide = std::max(20L, std::min(anchor.right - anchor.left, anchor.bottom - anchor.top) / 2);
+                if (region.right - region.left < minimumSide || region.bottom - region.top < minimumSide) continue;
+                const auto fillAlpha = static_cast<std::uint32_t>(std::distance(alphaCounts.begin(),
+                    std::max_element(alphaCounts.begin() + 1, alphaCounts.end())));
+                const LONG first = vertical ? region.top : region.left;
+                const LONG end = vertical ? region.bottom : region.right;
+                const LONG cross = vertical ? (region.left + region.right) / 2 : (region.top + region.bottom) / 2;
+                const auto pixelIndex = [&](LONG axis) { return vertical ? static_cast<size_t>(axis) * width + cross : static_cast<size_t>(cross) * width + axis; };
+                const auto fillAt = [&](LONG axis) { const auto index = pixelIndex(axis); return white(index) && (pixels[index] >> 24) == fillAlpha; };
+                LONG outerFirst = first, outerEnd = end, innerFirst = end, innerEnd = first;
+                while (outerFirst < end && !white(pixelIndex(outerFirst))) ++outerFirst;
+                while (outerEnd > first && !white(pixelIndex(outerEnd - 1))) --outerEnd;
+                for (LONG axis = outerFirst; axis + 2 < outerEnd; ++axis)
+                    if (fillAt(axis) && fillAt(axis + 1) && fillAt(axis + 2)) { innerFirst = axis; break; }
+                for (LONG axis = outerEnd - 1; axis - 2 >= outerFirst; --axis)
+                    if (fillAt(axis) && fillAt(axis - 1) && fillAt(axis - 2)) { innerEnd = axis + 1; break; }
+                if (innerFirst >= innerEnd) continue;
+                // The real outline stroke scales with the icon. Recover its
+                // path edge from both painted sides of that stroke, rather
+                // than treating an expanding outline as fixed slot padding.
+                const LONG pathFirst = static_cast<LONG>(std::lround((outerFirst + innerFirst) / 2.0));
+                const LONG pathEnd = static_cast<LONG>(std::lround((outerEnd + innerEnd) / 2.0));
+                if (vertical) { region.top = pathFirst; region.bottom = pathEnd; }
+                else { region.left = pathFirst; region.right = pathEnd; }
+                plates.push_back(region);
             }
-            return best;
+            std::sort(plates.begin(), plates.end(), [&](RECT left, RECT right) {
+                return vertical ? left.top + left.bottom < right.top + right.bottom : left.left + left.right < right.left + right.right;
+            });
+            // Actual paint order is Start, optional FileGroup, then Search or
+            // Trash. A trailing wave can move the target centre farther than
+            // its neighbour, so nearest-base distance is not its identity.
+            return fromTrailing < plates.size() ? plates[plates.size() - 1 - fromTrailing] : RECT{};
         };
         DesktopWidget fileSource;
         fileSource.id = L"paint-file-source"; fileSource.type = DesktopWidgetType::FolderMapping;
@@ -1034,7 +1068,18 @@
             const auto leading = [&](RECT rect) { return vertical ? rect.top : rect.left; };
             const auto trailing = [&](RECT rect) { return vertical ? rect.bottom : rect.right; };
             app.lastMousePoint_ = outside; app.widgetAction_ = DesktopApp::WidgetAction::None;
-            const RECT baselinePlate = platePaintBounds(drawFilePixels(dock, false, 0), base);
+            const auto baselineFilePixels = drawFilePixels(dock, false, 0);
+            check(complete->GetPixelFormat().alphaMode == D2D1_ALPHA_MODE_PREMULTIPLIED,
+                "file paint oracle reads the actual premultiplied target format");
+            const auto sample = baselineFilePixels[static_cast<size_t>((base.top + base.bottom) / 2) * width + (base.left + base.right) / 2];
+            std::cout << "File baseline raw BGRA=0x" << std::hex << sample << std::dec << " alphaMode=PREMULTIPLIED\n";
+            if (position == DockPosition::Bottom && effect == 1 && !attached && !folders)
+            {
+                std::string error;
+                check(snowdesktop::preview_png::Save(paintEvidence / L"file-baseline-first.png", static_cast<int>(width),
+                    static_cast<int>(height), baselineFilePixels, error), "save first file baseline raw target: " + error);
+            }
+            const RECT baselinePlate = platePaintBounds(baselineFilePixels, base, folders ? 1 : 0);
             check(!IsRectEmpty(&baselinePlate), "real file component/Search plate must be observable before hover");
             const LONG leadingPadding = leading(baselinePlate) - leading(base);
             const LONG trailingPadding = trailing(base) - trailing(baselinePlate);
@@ -1069,7 +1114,7 @@
                 }
                 check(dock->RestorePresentationState(state), "supply file-lane initial/intermediate/completed real hover frame");
                 const auto contentPixels = drawFilePixels(dock, false, boundary);
-                const RECT plate = platePaintBounds(contentPixels, base);
+                const RECT plate = platePaintBounds(contentPixels, base, folders ? 1 : 0);
                 check(!IsRectEmpty(&plate), "animated file target retains an independently observable plate");
                 const LONG expected = folders && side ? trailing(plate) + trailingPadding : leading(plate) - leadingPadding;
                 const auto markerPixels = drawFilePixels(dock, true, boundary);
@@ -1134,7 +1179,7 @@
             const auto trailing = [&](RECT rect) { return vertical ? rect.bottom : rect.right; };
             app.lastMousePoint_ = outside; app.widgetAction_ = DesktopApp::WidgetAction::None;
             const auto baselinePixels = drawFilePixels(dock, false, 1);
-            const RECT baselinePaint = trash ? platePaintBounds(baselinePixels, base) : iconPaintBounds(baselinePixels);
+            const RECT baselinePaint = trash ? platePaintBounds(baselinePixels, base, 0) : iconPaintBounds(baselinePixels);
             check(!IsRectEmpty(&baselinePaint), "hidden-Search fallback neighbour has actual painted pixels");
             const LONG padding = trash ? leading(baselinePaint) - leading(base) : trailing(base) - trailing(baselinePaint);
             POINT pointer{(base.left + base.right) / 2, (base.top + base.bottom) / 2};
@@ -1151,7 +1196,7 @@
                 "real FileCategories source targets the first empty file lane with Search hidden");
             dock->AdvanceMagnificationAnimation(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 1000);
             const auto contentPixels = drawFilePixels(dock, false, 1);
-            const RECT painted = trash ? platePaintBounds(contentPixels, base) : iconPaintBounds(contentPixels);
+            const RECT painted = trash ? platePaintBounds(contentPixels, base, 0) : iconPaintBounds(contentPixels);
             const int halfSpacing = std::max(1, static_cast<int>(std::round(kDockSpacing * ResolveDockScale(app.dockSettings_, false)))) / 2;
             const LONG expected = !trash && attached ? trailing(panel) - halfSpacing :
                 trash ? leading(painted) - padding : trailing(painted) + padding;
