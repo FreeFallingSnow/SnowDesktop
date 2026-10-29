@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -21,6 +22,8 @@ struct Sample
     HWND window = nullptr;
     UINT message = 0;
     std::string phase;
+    unsigned virtualKey = 0;
+    std::uint16_t codeUnit = 0;
 };
 
 struct State
@@ -29,6 +32,7 @@ struct State
     RECT bounds{};
     POINT point{};
     unsigned buttons = 0;
+    std::array<bool, 256> keys{};
     HWND hovered = nullptr, captured = nullptr, focused = nullptr, foreground = nullptr;
     HCURSOR cursor = nullptr;
     std::uint64_t sequence = 0;
@@ -46,15 +50,24 @@ public:
     using Route = std::function<HWND(POINT)>;
     using Owns = std::function<bool(HWND)>;
     using Observe = std::function<void(const State&)>;
+    // Embedded, offscreen text proxies use their visible host's coordinates.
+    // A supplied mapper owns all approved targets; failure never falls back.
+    using MapPoint = std::function<bool(HWND, POINT screen, POINT& client)>;
     Device();
     ~Device();
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
-    bool Begin(RECT bounds, POINT initial, Route route, Owns owns, std::string& error);
+    bool Begin(RECT bounds, POINT initial, Route route, Owns owns, std::string& error, MapPoint map = {});
     bool Move(POINT point, std::string& error);
     bool Down(Button button, std::string& error);
     bool Up(Button button, std::string& error);
     bool Wheel(int delta, std::string& error);
+    // Key events and UTF-16 WM_CHAR data share the same ordered queue. They
+    // require an exact current owned focus; text never follows a focus change.
+    // Text is nonempty, at most 4096 code units, with valid surrogate pairs.
+    bool KeyDown(unsigned virtualKey, std::string& error);
+    bool KeyUp(unsigned virtualKey, std::string& error);
+    bool Text(std::wstring text, std::string& error);
     void SetObserver(Observe observe);
     void End() noexcept;
     const State& Current() const noexcept;
@@ -68,7 +81,9 @@ bool Enabled() noexcept;
 bool IsDispatchingVirtualInput() noexcept;
 // Call once at each application window-procedure entry. A dispatch permit is
 // consumed by that exact HWND/message, so a modal loop cannot admit real input.
-bool MessageAllowed(HWND window, UINT message) noexcept;
+// Rejected WM_INPUT/WM_TOUCH/WM_GESTURE resources are disposed here. A false
+// result must be dropped immediately, without forwarding or DefWindowProc.
+bool MessageAllowed(HWND window, UINT message, WPARAM wp, LPARAM lp) noexcept;
 
 // Explicit authorization for synchronous forwarding to a second owned host.
 // This is deliberately narrower than a process-wide "synthetic input" flag.

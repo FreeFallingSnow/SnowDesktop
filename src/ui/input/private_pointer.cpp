@@ -16,7 +16,7 @@ constexpr wchar_t DispatcherClass[] = L"SnowDesktop.PrivatePointer.Dispatch.v1";
 constexpr UINT DispatchEvent = WM_APP + 71;
 constexpr std::size_t MaxPending = 512, MaxTrace = 4096;
 
-enum class Kind { Move, Down, Up, Wheel };
+enum class Kind { Move, Down, Up, Wheel, KeyDown, KeyUp, Text };
 struct Event
 {
     Kind kind = Kind::Move;
@@ -24,6 +24,8 @@ struct Event
     Button button = Button::Left;
     int delta = 0;
     std::uint64_t sequence = 0;
+    unsigned key = 0;
+    std::wstring text;
 };
 
 struct Permit
@@ -47,15 +49,68 @@ bool ValidButton(Button button)
 {
     return button == Button::Left || button == Button::Right || button == Button::Middle;
 }
+bool Modifier(unsigned key)
+{
+    return key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
+        (key >= VK_LSHIFT && key <= VK_RMENU);
+}
+bool ValidKey(unsigned key)
+{
+    return Modifier(key) || (key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') ||
+        (key >= VK_F1 && key <= VK_F24) ||
+        (key >= VK_PRIOR && key <= VK_DOWN) || key == VK_BACK || key == VK_TAB ||
+        key == VK_RETURN || key == VK_ESCAPE || key == VK_SPACE || key == VK_INSERT || key == VK_DELETE;
+}
+bool Held(const State& state, unsigned key)
+{
+    if (key >= state.keys.size()) return false;
+    if (state.keys[key]) return true;
+    if (key == VK_SHIFT) return state.keys[VK_LSHIFT] || state.keys[VK_RSHIFT];
+    if (key == VK_CONTROL) return state.keys[VK_LCONTROL] || state.keys[VK_RCONTROL];
+    if (key == VK_MENU) return state.keys[VK_LMENU] || state.keys[VK_RMENU];
+    if (key == VK_LSHIFT) return state.keys[VK_SHIFT];
+    if (key == VK_LCONTROL) return state.keys[VK_CONTROL];
+    if (key == VK_LMENU) return state.keys[VK_MENU];
+    return false;
+}
+bool ValidText(const std::wstring& text)
+{
+    if (text.empty() || text.size() > 4096) return false;
+    for (std::size_t index = 0; index < text.size(); ++index)
+    {
+        const auto unit = static_cast<std::uint16_t>(text[index]);
+        if (!unit) return false;
+        if (unit >= 0xd800 && unit <= 0xdbff)
+        {
+            if (++index == text.size()) return false;
+            const auto low = static_cast<std::uint16_t>(text[index]);
+            if (low < 0xdc00 || low > 0xdfff) return false;
+        }
+        else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+    }
+    return true;
+}
+LPARAM KeyParameter(unsigned key, bool released, bool alt)
+{
+    std::uint32_t value = 1U | ((MapVirtualKeyW(key, MAPVK_VK_TO_VSC) & 0xffU) << 16);
+    if ((key >= VK_PRIOR && key <= VK_DOWN) || key == VK_INSERT || key == VK_DELETE || key == VK_RCONTROL || key == VK_RMENU)
+        value |= 1U << 24;
+    if (alt) value |= 1U << 29;
+    if (released) value |= (1U << 30) | (1U << 31);
+    return static_cast<LPARAM>(value);
+}
 bool PointerMessage(UINT message)
 {
     return (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
         (message >= WM_NCMOUSEMOVE && message <= WM_NCXBUTTONDBLCLK) ||
         message == WM_MOUSELEAVE || message == WM_NCMOUSELEAVE ||
+        message == WM_MOUSEHOVER || message == WM_NCMOUSEHOVER ||
         message == WM_CAPTURECHANGED || message == WM_CANCELMODE ||
+        message == WM_SETFOCUS || message == WM_KILLFOCUS ||
         message == WM_MOUSEACTIVATE || message == WM_SETCURSOR ||
-        message == WM_POINTERDOWN || message == WM_POINTERUP ||
-        message == WM_POINTERUPDATE || message == WM_TOUCH ||
+        (message >= WM_NCPOINTERUPDATE && message <= WM_POINTERROUTEDRELEASED) ||
+        message == WM_TOUCH || message == WM_CONTEXTMENU ||
+        message == WM_GESTURE || message == WM_GESTURENOTIFY ||
         (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
         message == WM_IME_CHAR || message == WM_IME_COMPOSITION ||
         message == WM_IME_STARTCOMPOSITION || message == WM_IME_ENDCOMPOSITION ||
@@ -68,11 +123,14 @@ bool PackedPoint(POINT point)
         point.y >= std::numeric_limits<short>::min() && point.y <= std::numeric_limits<short>::max();
 }
 LPARAM PointParameter(POINT point) { return MAKELPARAM(static_cast<short>(point.x), static_cast<short>(point.y)); }
-WPARAM ButtonParameter(unsigned buttons)
+WPARAM ButtonParameter(const State& state)
 {
+    const unsigned buttons = state.buttons;
     return ((buttons & 1U) ? MK_LBUTTON : 0U) |
         ((buttons & 2U) ? MK_RBUTTON : 0U) |
-        ((buttons & 4U) ? MK_MBUTTON : 0U);
+        ((buttons & 4U) ? MK_MBUTTON : 0U) |
+        (Held(state, VK_CONTROL) ? MK_CONTROL : 0U) |
+        (Held(state, VK_SHIFT) ? MK_SHIFT : 0U);
 }
 
 struct Session
@@ -81,11 +139,13 @@ struct Session
     Device::Route route;
     Device::Owns owns;
     Device::Observe observe;
+    Device::MapPoint map;
     HWND dispatcher = nullptr;
     DWORD thread = 0;
     std::deque<Event> pending;
     POINT projectedPoint{};
     unsigned projectedButtons = 0, dispatchDepth = 0;
+    std::array<bool, 256> projectedKeys{};
     std::uint64_t nextSequence = 0;
     bool wakePosted = false;
     double started = 0, lastClickTime = 0;
@@ -113,16 +173,19 @@ struct Session
         if (ownerThread != thread || process != GetCurrentProcessId()) return false;
         try { return owns(window); } catch (...) { return false; }
     }
-    HWND Hit(POINT point) const noexcept
+    HWND Hit(POINT point, bool allowClosing = false) const noexcept
     {
-        if (!route || !PtInRect(&state.bounds, point)) return nullptr;
+        // Native leave handlers resample this facade to distinguish an actual
+        // departure from a paired-backdrop transition. Ending is a real leave,
+        // even though the last virtual coordinate remains inside that window.
+        if ((state.closing && !allowClosing) || !route || !PtInRect(&state.bounds, point)) return nullptr;
         try { const HWND window = route(point); return Owned(window) ? window : nullptr; }
         catch (...) { return nullptr; }
     }
-    void Record(HWND window, UINT message, const char* phase)
+    void Record(HWND window, UINT message, const char* phase, unsigned key = 0, std::uint16_t codeUnit = 0)
     {
         state.trace.push_back({state.sequence, std::max(0.0, ClockMilliseconds() - started),
-            state.point, state.buttons, window, message, phase});
+            state.point, state.buttons, window, message, phase, key, codeUnit});
         if (state.trace.size() > MaxTrace) state.trace.erase(state.trace.begin());
     }
     LRESULT Deliver(HWND window, UINT message, WPARAM wp = 0, LPARAM lp = 0) noexcept
@@ -136,11 +199,27 @@ struct Session
         permit = previous;
         return result;
     }
+    HWND Focus(HWND target) noexcept
+    {
+        const HWND previous = Owned(state.focused) ? state.focused : nullptr;
+        if ((target && (!Owned(target) || state.closing)) || !state.enabled || current != this) return previous;
+        if (previous == target) { state.focused = target; return previous; }
+        const bool wasClosing = state.closing;
+        state.focused = target;
+        Deliver(previous, WM_KILLFOCUS, reinterpret_cast<WPARAM>(target));
+        // Killing the previous focus may synchronously select a third target,
+        // destroy the proposed target, or end the complete input session.
+        if (state.enabled && !state.closing && current == this && state.focused == target && Owned(target))
+            Deliver(target, WM_SETFOCUS, reinterpret_cast<WPARAM>(previous));
+        if (!wasClosing && state.closing && !dispatchDepth) Deactivate();
+        return previous;
+    }
     void Deactivate() noexcept
     {
         state.enabled = false;
         state.closing = false;
         state.buttons = 0;
+        state.keys.fill(false);
         state.captured = state.hovered = state.focused = state.foreground = nullptr;
         state.cursor = nullptr;
         if (current == this) { current = nullptr; permit = {}; }
@@ -149,8 +228,13 @@ struct Session
     {
         if (!state.enabled || state.closing) return;
         state.closing = true;
+        // A button-up may have opened a modal popup without another move, so
+        // the stored hovered HWND can still name its previous desktop host.
+        const HWND currentHit = Hit(state.point, true);
         pending.clear(); state.pendingEvents = 0;
         projectedButtons = state.buttons = 0;
+        const auto heldKeys = state.keys;
+        state.keys.fill(false); projectedKeys.fill(false);
         const HWND captured = state.captured, hovered = state.hovered;
         state.captured = state.hovered = nullptr;
         // A cancellation is never a button-up: an unfinished press must not
@@ -158,8 +242,17 @@ struct Session
         Deliver(captured, WM_CANCELMODE);
         Deliver(captured, WM_CAPTURECHANGED);
         if (hovered != captured) Deliver(hovered, WM_CANCELMODE);
+        if (currentHit != captured && currentHit != hovered) Deliver(currentHit, WM_CANCELMODE);
         Deliver(hovered, WM_MOUSELEAVE);
-        state.focused = state.foreground = nullptr;
+        const HWND keyboardTarget = Owned(state.focused) ? state.focused : nullptr;
+        for (unsigned key = 0; key < heldKeys.size(); ++key)
+            if (heldKeys[key] && Modifier(key))
+            {
+                try { Record(keyboardTarget, WM_KEYUP, "cancel-key-up", key); } catch (...) {}
+                Deliver(keyboardTarget, WM_KEYUP, key, KeyParameter(key, true, false));
+            }
+        (void)Focus(nullptr);
+        state.foreground = nullptr;
         try { Record(nullptr, 0, "ended"); } catch (...) {}
         if (!dispatchDepth) Deactivate();
         Notify();
@@ -192,14 +285,63 @@ struct Session
         destination = state.captured ? state.captured : state.hovered;
         if (!Owned(destination)) { state.error = "private_pointer_target_unavailable"; return false; }
         client = state.point;
-        if (!ScreenToClient(destination, &client) || !PackedPoint(client))
+        if (map)
+        {
+            bool mapped = false;
+            try { mapped = map(destination, state.point, client); } catch (...) {}
+            if (!mapped) { state.error = "private_pointer_coordinate_mapping_failed"; return false; }
+        }
+        else if (!ScreenToClient(destination, &client))
+        { state.error = "private_pointer_coordinate_mapping_failed"; return false; }
+        if (!PackedPoint(client))
         { state.error = "private_pointer_coordinate_range"; return false; }
         return true;
+    }
+    void ProcessKeyboard(const Event& event)
+    {
+        const HWND destination = Owned(state.focused) ? state.focused : nullptr;
+        if (event.kind == Kind::Text)
+        {
+            if (!destination) { state.error = "private_keyboard_focus_unavailable"; Record(nullptr, 0, "rejected"); return; }
+            for (const wchar_t unit : event.text)
+            {
+                if (!state.enabled || state.closing || current != this) return;
+                if (state.sequence != event.sequence) { state.error = "private_keyboard_interrupted"; return; }
+                if (state.focused != destination || !Owned(destination))
+                { state.error = "private_keyboard_focus_changed"; return; }
+                Record(destination, WM_CHAR, "char", 0, static_cast<std::uint16_t>(unit));
+                if (!Notify() || !state.enabled || state.closing || current != this) return;
+                if (state.sequence != event.sequence) { state.error = "private_keyboard_interrupted"; return; }
+                if (state.focused != destination || !Owned(destination))
+                { state.error = "private_keyboard_focus_changed"; return; }
+                Deliver(destination, WM_CHAR, static_cast<WPARAM>(unit), 1);
+            }
+            return;
+        }
+        const bool released = event.kind == Kind::KeyUp;
+        const bool alt = Held(state, VK_MENU);
+        if (released) state.keys[event.key] = false;
+        if (!destination)
+        { state.error = "private_keyboard_focus_unavailable"; Record(nullptr, 0, "rejected", event.key); return; }
+        if (!released) state.keys[event.key] = true;
+        const UINT message = released ? WM_KEYUP : WM_KEYDOWN;
+        Record(destination, message, released ? "key-up" : "key-down", event.key);
+        if (!Notify() || !state.enabled || state.closing || current != this) return;
+        if (state.sequence != event.sequence) { state.error = "private_keyboard_interrupted"; return; }
+        if (state.focused != destination || !Owned(destination))
+        {
+            if (!released) state.keys[event.key] = false;
+            state.error = "private_keyboard_focus_changed";
+            return;
+        }
+        Deliver(destination, message, event.key, KeyParameter(event.key, released, alt || Held(state, VK_MENU)));
     }
     void Process(const Event& event)
     {
         state.sequence = event.sequence;
         state.error.clear();
+        if (event.kind == Kind::KeyDown || event.kind == Kind::KeyUp || event.kind == Kind::Text)
+        { ProcessKeyboard(event); return; }
         state.point = event.point;
         const HWND hit = Hit(event.point);
         if (hit != state.hovered)
@@ -220,14 +362,14 @@ struct Session
             return;
         }
         UINT message = WM_MOUSEMOVE;
-        WPARAM wp = ButtonParameter(state.buttons);
+        WPARAM wp = ButtonParameter(state);
         LPARAM lp = PointParameter(client);
         const char* phase = "moving";
         if (event.kind == Kind::Down)
         {
             const unsigned bit = static_cast<unsigned>(event.button);
             if (state.buttons & bit) { state.error = "private_pointer_button_already_down"; Record(destination, 0, "rejected"); return; }
-            state.buttons |= bit; wp = ButtonParameter(state.buttons); phase = "pressed";
+            state.buttons |= bit; wp = ButtonParameter(state); phase = "pressed";
             const double now = ClockMilliseconds();
             doublePress = lastClickEligible && lastClickButton == event.button && lastClickWindow == destination &&
                 now - lastClickTime <= GetDoubleClickTime() &&
@@ -238,13 +380,15 @@ struct Session
                 event.button == Button::Right ? (doublePress ? WM_RBUTTONDBLCLK : WM_RBUTTONDOWN) :
                     (doublePress ? WM_MBUTTONDBLCLK : WM_MBUTTONDOWN);
             lastClickEligible = false;
-            state.focused = state.foreground = destination;
+            // Native handlers decide which editor/input proxy takes focus;
+            // assigning it here would skip their normal focus notifications.
+            state.foreground = destination;
         }
         else if (event.kind == Kind::Up)
         {
             const unsigned bit = static_cast<unsigned>(event.button);
             if (!(state.buttons & bit)) { state.error = "private_pointer_button_not_down"; Record(destination, 0, "rejected"); return; }
-            state.buttons &= ~bit; wp = ButtonParameter(state.buttons); phase = "released";
+            state.buttons &= ~bit; wp = ButtonParameter(state); phase = "released";
             message = event.button == Button::Left ? WM_LBUTTONUP : event.button == Button::Right ? WM_RBUTTONUP : WM_MBUTTONUP;
             lastClickEligible = !doublePress;
             lastClickTime = ClockMilliseconds(); lastClickPoint = state.point;
@@ -254,7 +398,7 @@ struct Session
         {
             if (!PackedPoint(state.point)) { state.error = "private_pointer_coordinate_range"; Record(destination, 0, "rejected"); return; }
             message = WM_MOUSEWHEEL; phase = "scroll";
-            wp = MAKEWPARAM(static_cast<WORD>(ButtonParameter(state.buttons)), static_cast<short>(event.delta));
+            wp = MAKEWPARAM(static_cast<WORD>(ButtonParameter(state)), static_cast<short>(event.delta));
             lp = PointParameter(state.point);
         }
         Record(destination, message, phase);
@@ -303,7 +447,7 @@ Device::~Device()
     if (impl_->session.dispatcher) DestroyWindow(impl_->session.dispatcher);
 }
 const State& Device::Current() const noexcept { return impl_->session.state; }
-bool Device::Begin(RECT bounds, POINT initial, Route route, Owns owns, std::string& error)
+bool Device::Begin(RECT bounds, POINT initial, Route route, Owns owns, std::string& error, MapPoint map)
 {
     error.clear(); auto& session = impl_->session;
     if (current || session.state.enabled) { error = "private_pointer_busy"; return false; }
@@ -322,8 +466,8 @@ bool Device::Begin(RECT bounds, POINT initial, Route route, Owns owns, std::stri
         if (!session.dispatcher) { error = "private_pointer_dispatch_unavailable"; return false; }
     }
     session.state = {}; session.state.enabled = true; session.state.bounds = bounds; session.state.point = initial;
-    session.route = std::move(route); session.owns = std::move(owns); session.thread = thread;
-    session.projectedPoint = initial; session.projectedButtons = 0;
+    session.route = std::move(route); session.owns = std::move(owns); session.map = std::move(map); session.thread = thread;
+    session.projectedPoint = initial; session.projectedButtons = 0; session.projectedKeys.fill(false);
     session.pending.clear(); session.nextSequence = 0; session.lastClickEligible = false;
     session.started = ClockMilliseconds(); current = &session;
     if (!session.Queue({Kind::Move, initial}, error)) { session.End(); return false; }
@@ -357,6 +501,30 @@ bool Device::Wheel(int delta, std::string& error)
     if (!delta || delta < -32768 || delta > 32767) { error = "invalid_private_pointer_wheel"; return false; }
     return impl_->session.Queue({Kind::Wheel, impl_->session.projectedPoint, Button::Left, delta}, error);
 }
+bool Device::KeyDown(unsigned key, std::string& error)
+{
+    auto& session = impl_->session;
+    if (!ValidKey(key)) { error = "invalid_private_keyboard_key"; return false; }
+    if (session.projectedKeys[key]) { error = "private_keyboard_key_already_down"; return false; }
+    Event event; event.kind = Kind::KeyDown; event.key = key;
+    if (!session.Queue(std::move(event), error)) return false;
+    session.projectedKeys[key] = true; return true;
+}
+bool Device::KeyUp(unsigned key, std::string& error)
+{
+    auto& session = impl_->session;
+    if (!ValidKey(key)) { error = "invalid_private_keyboard_key"; return false; }
+    if (!session.projectedKeys[key]) { error = "private_keyboard_key_not_down"; return false; }
+    Event event; event.kind = Kind::KeyUp; event.key = key;
+    if (!session.Queue(std::move(event), error)) return false;
+    session.projectedKeys[key] = false; return true;
+}
+bool Device::Text(std::wstring text, std::string& error)
+{
+    if (!ValidText(text)) { error = "invalid_private_keyboard_text"; return false; }
+    Event event; event.kind = Kind::Text; event.text = std::move(text);
+    return impl_->session.Queue(std::move(event), error);
+}
 void Device::End() noexcept
 {
     auto& session = impl_->session;
@@ -367,11 +535,21 @@ void Device::SetObserver(Observe observe) { impl_->session.observe = std::move(o
 bool Active() noexcept { return current && current->state.enabled; }
 bool Enabled() noexcept { return Active(); }
 bool IsDispatchingVirtualInput() noexcept { return Active() && current->dispatchDepth != 0; }
-bool MessageAllowed(HWND window, UINT message) noexcept
+bool MessageAllowed(HWND window, UINT message, WPARAM wp, LPARAM lp) noexcept
 {
     if (!Active() || !PointerMessage(message)) return true;
     if (permit.available && permit.window == window && permit.message == message)
     { permit.available = false; return true; }
+    // These messages own OS-managed data. This is the terminal rejection
+    // branch: callers must not dispatch or default-process the same message
+    // afterwards. A main-loop rejection therefore never reaches a WndProc
+    // rejection, and a synchronous WndProc rejection is disposed only here.
+    if (message == WM_INPUT && GET_RAWINPUT_CODE_WPARAM(wp) == RIM_INPUT)
+        (void)DefWindowProcW(window, message, wp, lp);
+    else if (message == WM_TOUCH && lp)
+        (void)CloseTouchInputHandle(reinterpret_cast<HTOUCHINPUT>(lp));
+    else if (message == WM_GESTURE && lp)
+        (void)CloseGestureInfoHandle(reinterpret_cast<HGESTUREINFO>(lp));
     return false;
 }
 ForwardScope::ForwardScope(HWND destination, UINT message) noexcept
@@ -394,7 +572,7 @@ SHORT KeyState(int key) noexcept
 {
     if (!Active()) return GetKeyState(key);
     const unsigned bit = key == VK_LBUTTON ? 1U : key == VK_RBUTTON ? 2U : key == VK_MBUTTON ? 4U : 0U;
-    return static_cast<SHORT>(bit && (current->state.buttons & bit) ? 0x8000 : 0);
+    return static_cast<SHORT>((bit ? (current->state.buttons & bit) != 0 : Held(current->state, static_cast<unsigned>(key))) ? 0x8000 : 0);
 }
 SHORT AsyncKeyState(int key) noexcept
 {
@@ -440,9 +618,7 @@ HWND FocusWindow() noexcept
 HWND SetInputFocus(HWND window) noexcept
 {
     if (!Active()) return SetFocus(window);
-    const HWND previous = FocusWindow();
-    if (!window || current->Owned(window)) current->state.focused = window;
-    return previous;
+    return current->Focus(window);
 }
 HWND ForegroundWindow() noexcept
 {
