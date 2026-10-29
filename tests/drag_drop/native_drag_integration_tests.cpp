@@ -1408,6 +1408,8 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-hover") native_list_hover_cases::RunHover();
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-fonts") native_list_hover_cases::RunFonts();
         else if (argc == 2 && std::string_view(argv[1]) == "--popup-display-menu") native_popup_display_menu_cases::Run();
+        else if (argc == 3 && std::string_view(argv[1]) == "--input-safety-worker")
+            native_input_safety_cases::RunWorkerOnInitialDesktop(Utf8ToWide(argv[2]));
         else if (argc == 2 && std::string_view(argv[1]) == "--private-rename") native_input_safety_cases::Run(true);
         else if (argc == 2 && std::string_view(argv[1]) == "--input-safety") {
             native_input_safety_cases::Run();
