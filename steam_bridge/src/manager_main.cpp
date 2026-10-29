@@ -35,6 +35,7 @@
 #include <cctype>
 #include <cfloat>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <ctime>
@@ -197,6 +198,47 @@ void ContinueButtonRow(const char* label)
             ButtonWidth(label) <= ImGui::GetCursorScreenPos().x +
                 ImGui::GetContentRegionAvail().x)
         ImGui::SameLine();
+}
+
+bool TwoLineProjectSelectable(const std::string& label, bool selected,
+    const std::string& metadata, const std::string& version = {})
+{
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float lineHeight = ImGui::GetTextLineHeight();
+    const float gap = 3.0f * gDpiScale;
+    const float height = lineHeight * 2.0f + gap;
+    const bool pressed = ImGui::Selectable(label.c_str(), selected, 0,
+        ImVec2(width, height));
+    auto* draw = ImGui::GetWindowDrawList();
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const float versionWidth = version.empty() ? 0.0f :
+        ImGui::CalcTextSize(version.c_str()).x;
+    const float metadataRight = origin.x + width - versionWidth -
+        (version.empty() ? 0.0f : ImGui::GetStyle().ItemSpacing.x);
+    draw->PushClipRect(origin, ImVec2(std::max(origin.x, metadataRight),
+        origin.y + height), true);
+    draw->AddText(ImVec2(origin.x, origin.y + lineHeight + gap), color,
+        metadata.c_str());
+    draw->PopClipRect();
+    if (!version.empty())
+    {
+        draw->PushClipRect(origin, ImVec2(origin.x + width, origin.y + height), true);
+        draw->AddText(ImVec2(origin.x + width - versionWidth,
+            origin.y + lineHeight + gap), color, version.c_str());
+        draw->PopClipRect();
+    }
+    return pressed;
+}
+
+bool BeginProjectTab(const char* label, bool select)
+{
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+        ImVec2(14.0f * gDpiScale, 8.0f * gDpiScale));
+    const bool active = ImGui::BeginTabItem(label, nullptr,
+        select ? ImGuiTabItemFlags_SetSelected : 0);
+    ImGui::PopStyleVar();
+    return active;
 }
 
 std::string WideToUtf8(std::wstring_view value)
@@ -522,17 +564,26 @@ public:
             ImGuiWindowFlags_NoScrollWithMouse);
         RenderHeader(window);
         ImGui::Spacing();
-        float footerHeight = 40.0f * gDpiScale;
+        bool hasTask;
+        bool runningTask;
         {
             std::lock_guard lock(mutex_);
-            if (publishTask_.Snapshot().HasTask())
-                footerHeight = (taskDetailsOpen_ ? 250.0f : 158.0f) * gDpiScale;
+            hasTask = publishTask_.Snapshot().HasTask();
+            runningTask = publishTask_.Snapshot().Running();
         }
-        footerHeight = std::min(footerHeight,
-            ImGui::GetContentRegionAvail().y * 0.45f);
+        const float splitterHeight = hasTask ? 8.0f * gDpiScale : 0.0f;
+        const float maximumFooterHeight = std::max(40.0f * gDpiScale,
+            ImGui::GetContentRegionAvail().y - 180.0f * gDpiScale - splitterHeight);
+        const float naturalHeight = std::max(runningTask ? 104.0f : 70.0f,
+            taskPanelNaturalHeightDip_);
+        const float idleFooterHeight = ImGui::GetTextLineHeight() +
+            ImGui::GetStyle().WindowPadding.y * 2.0f + ImGui::GetStyle().ItemSpacing.y;
+        const float footerHeight = hasTask ? std::clamp(
+            (taskPanelUserSized_ ? taskPanelHeightDip_ : naturalHeight) * gDpiScale,
+            40.0f * gDpiScale, maximumFooterHeight) : idleFooterHeight;
         const float mainHeight = std::max(1.0f,
-            ImGui::GetContentRegionAvail().y - footerHeight -
-                ImGui::GetStyle().ItemSpacing.y);
+            ImGui::GetContentRegionAvail().y - footerHeight - splitterHeight -
+                ImGui::GetStyle().ItemSpacing.y * (hasTask ? 2.0f : 1.0f));
         const float sidebarPadding = 8.0f * gDpiScale;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
             ImVec2(sidebarPadding, sidebarPadding));
@@ -559,9 +610,38 @@ public:
         default: activePage_ = 0; break;
         }
         ImGui::EndChild();
-        ImGui::BeginChild("manager-task", ImVec2(0, 0),
+        if (hasTask)
+        {
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const float width = ImGui::GetContentRegionAvail().x;
+            ImGui::InvisibleButton("task-panel-resize", ImVec2(width, splitterHeight));
+            if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            if (ImGui::IsItemActive() && ImGui::GetIO().MouseDelta.y != 0)
+            {
+                taskPanelUserSized_ = true;
+                taskPanelHeightDip_ = std::clamp(
+                    (footerHeight - ImGui::GetIO().MouseDelta.y) / gDpiScale,
+                    40.0f, maximumFooterHeight / gDpiScale);
+                RequestManagerFrame();
+            }
+            ImGui::GetWindowDrawList()->AddLine(
+                ImVec2(origin.x + width * 0.5f - 24.0f * gDpiScale,
+                    origin.y + splitterHeight * 0.5f),
+                ImVec2(origin.x + width * 0.5f + 24.0f * gDpiScale,
+                    origin.y + splitterHeight * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Border), 3.0f * gDpiScale);
+        }
+        ImGui::BeginChild("manager-task", ImVec2(0, footerHeight),
             ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
         RenderTaskArea();
+        const float naturalTaskHeight = (ImGui::GetCursorPosY() +
+            ImGui::GetStyle().WindowPadding.y) / gDpiScale;
+        if (std::abs(naturalTaskHeight - taskPanelNaturalHeightDip_) > 1.0f)
+        {
+            taskPanelNaturalHeightDip_ = naturalTaskHeight;
+            if (hasTask && !taskPanelUserSized_) RequestManagerFrame();
+        }
         ImGui::EndChild();
         ImGui::End();
     }
@@ -724,10 +804,6 @@ private:
     void RenderHeader(HWND window)
     {
         (void)window;
-        ImGui::TextUnformatted(T("SnowDesktop 创意工坊创作者管理器",
-            "SnowDesktop Workshop Creator Manager"));
-        ImGui::SameLine();
-        ImGui::TextDisabled("v%s", SNOWDESKTOP_VERSION);
         const SteamStatus status = steam_.Status();
         const bool connected = status.initialized && status.loggedOn;
         const char* state = T("Steam 未连接", "Steam disconnected");
@@ -736,17 +812,41 @@ private:
             state = T("正在连接 Steam…", "Connecting to Steam…");
         else if (status.connectionState == ManagerConnectionState::Offline)
             state = T("Steam 离线", "Steam offline");
+        const char* check = T("检查连接", "Check connection");
+        const char* details = T("连接详情", "Connection details");
+        const float rightWidth = ImGui::CalcTextSize(state).x + ButtonWidth(check) +
+            ButtonWidth(details) + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
+        const bool headerTable = ImGui::BeginTable("manager-header", 2,
+            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
+                ImGuiTableFlags_NoPadOuterX);
+        if (headerTable)
+        {
+            ImGui::TableSetupColumn("title", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("connection", ImGuiTableColumnFlags_WidthFixed, rightWidth);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(T("SnowDesktop 创意工坊创作者管理器",
+            "SnowDesktop Workshop Creator Manager"));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", WindowTitle());
+        ImGui::SameLine();
+        ImGui::TextDisabled("v%s", SNOWDESKTOP_VERSION);
+        if (headerTable) ImGui::TableSetColumnIndex(1);
+        ImGui::AlignTextToFramePadding();
         ImGui::TextColored(connected ?
             ImVec4(0.18f, 0.58f, 0.32f, 1.0f) :
             ImVec4(0.64f, 0.38f, 0.06f, 1.0f), "%s", state);
-        const char* check = T("检查连接", "Check connection");
-        ContinueButtonRow(check);
+        ImGui::SameLine();
         ImGui::BeginDisabled(!status.compiled || busy_.load());
         if (SecondaryButton(check)) CheckConnection();
         ImGui::EndDisabled();
-        const char* details = T("连接详情", "Connection details");
-        ContinueButtonRow(details);
-        if (SecondaryButton(details)) ImGui::OpenPopup("connection-details");
+        ImGui::SameLine();
+        const bool openDetails = SecondaryButton(details);
+        if (headerTable) ImGui::EndTable();
+        ImGui::PopStyleVar();
+        if (openDetails) ImGui::OpenPopup("connection-details");
         ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
             ImVec2(std::min(620.0f * gDpiScale,
                 ImGui::GetIO().DisplaySize.x - 24.0f * gDpiScale), FLT_MAX));
@@ -853,12 +953,12 @@ private:
                 if (localSearch_[0] && item.title.find(localSearch_) == std::string::npos)
                     continue;
                 matched = true;
-                if (ImGui::Selectable((item.title + "##" +
-                        std::to_string(item.publishedFileId)).c_str(),
-                        selectedWorkshopId_ == item.publishedFileId))
+                if (TwoLineProjectSelectable(item.title + "##" +
+                        std::to_string(item.publishedFileId),
+                        selectedWorkshopId_ == item.publishedFileId,
+                        FormatLocalTime(item.updatedAt)))
                     selectedWorkshopId_ = item.publishedFileId;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", item.title.c_str());
-                ImGui::TextDisabled("%s", FormatLocalTime(item.updatedAt).c_str());
                 ImGui::Spacing();
             }
         }
@@ -873,17 +973,12 @@ private:
                 if (localSearch_[0] && haystack.find(localSearch_) == std::string::npos)
                     continue;
                 matched = true;
-                if (ImGui::Selectable((name + "##" + project.localId).c_str(),
-                        selectedLocalId_ == project.localId))
+                if (TwoLineProjectSelectable(name + "##" + project.localId,
+                        selectedLocalId_ == project.localId,
+                        project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") :
+                            T("未绑定", "Not bound"), project.lastPublishedVersion))
                     SelectLocalProjectUnlocked(project);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
-                ImGui::TextDisabled("%s", project.publishedFileId ?
-                    T("已绑定 Workshop", "Workshop bound") : T("未绑定", "Not bound"));
-                if (!project.lastPublishedVersion.empty())
-                {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", project.lastPublishedVersion.c_str());
-                }
                 ImGui::Spacing();
             }
         }
@@ -905,11 +1000,9 @@ private:
     void RenderTaskArea()
     {
         ManagerPublishTaskSnapshot task;
-        std::string message;
         {
             std::lock_guard lock(mutex_);
             task = publishTask_.Snapshot();
-            message = message_;
         }
         if (!task.HasTask())
         {
@@ -917,11 +1010,29 @@ private:
             else ImGui::TextDisabled("%s", T("正常", "Ready"));
             return;
         }
+        const char* returnToProject = T("返回任务项目", "Back to task project");
+        const char* detailLabel = T("任务详情", "Task details");
+        const char* openItem = T("打开 Steam 项目管理页", "Open Steam item controls");
+        const bool showItem = !task.Running() && task.publishedFileId != 0;
+        const float actionsWidth = ButtonWidth(returnToProject) + ButtonWidth(detailLabel) +
+            ImGui::GetStyle().ItemSpacing.x + (showItem ?
+                ButtonWidth(openItem) + ImGui::GetStyle().ItemSpacing.x : 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
+        const bool heading = ImGui::BeginTable("task-heading", 2,
+            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
+                ImGuiTableFlags_NoPadOuterX);
+        if (heading)
+        {
+            ImGui::TableSetupColumn("task", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+        }
+        ImGui::AlignTextToFramePadding();
         if (task.Running())
             ImGui::TextUnformatted(T("正在发布：%s", "Publishing: %s", task.name.c_str()).c_str());
         else ImGui::TextUnformatted(task.name.c_str());
-        const char* returnToProject = T("返回任务项目", "Back to task project");
-        ContinueButtonRow(returnToProject);
+        if (heading) ImGui::TableSetColumnIndex(1);
         if (SecondaryButton(returnToProject))
         {
             std::lock_guard lock(mutex_);
@@ -932,17 +1043,17 @@ private:
                 localSearch_[0] = 0;
             }
         }
-        const char* detailLabel = T("任务详情", "Task details");
-        ContinueButtonRow(detailLabel);
+        ImGui::SameLine();
         if (SecondaryButton(detailLabel)) taskDetailsOpen_ = !taskDetailsOpen_;
-        if (!task.Running() && task.publishedFileId != 0)
+        if (showItem)
         {
-            const char* openItem = T("打开 Steam 项目管理页", "Open Steam item controls");
-            ContinueButtonRow(openItem);
+            ImGui::SameLine();
             if (SecondaryButton(openItem))
                 OpenSteamUrlWithWebFallback(SteamCommunityItemClientUrl(task.publishedFileId),
                     CommunityItemUrl(task.publishedFileId));
         }
+        if (heading) ImGui::EndTable();
+        ImGui::PopStyleVar();
         const char* phase = T("正在准备提交", "Preparing submission");
         if (!task.Running())
         {
@@ -980,9 +1091,11 @@ private:
                 static_cast<unsigned long long>(task.StageElapsed().count())).c_str());
         if (task.submissionTotal > 0)
         {
-            ImGui::TextUnformatted(T("已完成 %zu/%zu 次提交", "Completed %zu of %zu submissions",
-                task.confirmedSubmissions, task.submissionTotal).c_str());
-            if (!task.language.empty())
+            const std::string count = T("已完成 %zu/%zu 次提交", "Completed %zu of %zu submissions",
+                task.confirmedSubmissions, task.submissionTotal);
+            ContinueButtonRow(count.c_str());
+            ImGui::TextDisabled("%s", count.c_str());
+            if (task.Running() && !task.language.empty())
             {
                 ImGui::SameLine();
                 ImGui::TextDisabled("(%s)", task.language.c_str());
@@ -1005,7 +1118,7 @@ private:
             }
             else ImGui::TextDisabled("%s", T("正在处理…", "Working…"));
         }
-        if (task.submitStarted)
+        if (task.submitStarted && closeBlocked_)
             ImGui::TextWrapped("%s", T("Steam 正在提交，请保持此窗口打开，可以最小化。",
                 "Steam is submitting. Keep this window open; you can minimize it."));
         else if (task.Running() && closeBlocked_)
@@ -1017,6 +1130,8 @@ private:
         if (taskDetailsOpen_)
         {
             ImGui::Separator();
+            if (task.publishedFileId != 0)
+                ImGui::Text("%s: %llu", T("已绑定 Workshop", "Workshop bound"), task.publishedFileId);
             if (!task.failedLanguage.empty())
                 ImGui::TextWrapped("%s: %s", T("Steam 语言", "Steam language"), task.failedLanguage.c_str());
             if (!task.errorMessage.empty())
@@ -1025,7 +1140,6 @@ private:
                 SecondaryButton(T("打开 Steam 项目管理页", "Open Steam item controls")))
                 OpenSteamUrlWithWebFallback(SteamCommunityItemClientUrl(task.publishedFileId),
                     CommunityItemUrl(task.publishedFileId));
-            if (!message.empty()) ImGui::TextWrapped("%s", message.c_str());
         }
     }
 
@@ -1038,7 +1152,6 @@ private:
             message = message_;
             success = messageSuccess_;
         }
-        ImGui::BeginChild("operation-feedback", ImVec2(0, 42.0f * gDpiScale));
         if (busy_.load() && !publishInProgress_.load())
             ImGui::TextDisabled("%s", T("正在处理…", "Working…"));
         if (!message.empty())
@@ -1047,8 +1160,8 @@ private:
                 ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
             ImGui::TextWrapped("%s", message.c_str());
             ImGui::PopStyleColor();
+            ImGui::Spacing();
         }
-        ImGui::EndChild();
     }
 
     void RenderLocalProjects(HWND window)
@@ -1104,9 +1217,9 @@ private:
             if (texture.view)
             {
                 const float scale = std::min(
-                    std::min(360.0f * gDpiScale,
+                    std::min(220.0f * gDpiScale,
                         ImGui::GetContentRegionAvail().x) / texture.width,
-                    (180.0f * gDpiScale) / texture.height);
+                    (220.0f * gDpiScale) / texture.height);
                 ImGui::Image(ImTextureRef(static_cast<ImTextureID>(
                     reinterpret_cast<std::uintptr_t>(texture.view))),
                     ImVec2(texture.width * scale, texture.height * scale));
@@ -1117,23 +1230,120 @@ private:
         }
     }
 
-    void RenderProjectDetailsUnlocked(HWND window, WorkshopProject& project)
+    void RenderProjectOverviewUnlocked(WorkshopProject& project)
     {
-        ImGui::SeparatorText(WideToUtf8(
-            project.sourceDirectory.filename().wstring()).c_str());
-        ImGui::TextWrapped("%s", WideToUtf8(project.sourceDirectory.wstring()).c_str());
-        if (project.publishedFileId)
+        const auto details = [&]
         {
-            ImGui::TextColored(ImVec4(0.18f, 0.58f, 0.32f, 1.0f),
-                "%s  %llu", T("已绑定 Workshop", "Workshop bound"),
-                *project.publishedFileId);
+            const bool facts = ImGui::BeginTable("project-facts", 2,
+                ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
+                    ImGuiTableFlags_NoPadOuterX);
+            if (facts)
+            {
+                ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed,
+                    std::min(156.0f * gDpiScale, ImGui::GetContentRegionAvail().x * 0.4f));
+                ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+                const auto row = [](const char* label, const std::string& value)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::PushStyleColor(ImGuiCol_Text,
+                        ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+                    ImGui::TextWrapped("%s", label);
+                    ImGui::PopStyleColor();
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextWrapped("%s", value.c_str());
+                };
+                row(T("状态", "Status"), project.publishedFileId ?
+                    std::string(T("已绑定 Workshop", "Workshop bound")) + "  " +
+                        std::to_string(*project.publishedFileId) :
+                    T("本地草稿 · 尚未创建 Workshop 项目", "Local draft · no Workshop item yet"));
+                if (!project.lastPublishedVersion.empty())
+                    row(T("最后发布版本", "Last published version"), project.lastPublishedVersion);
+                if (!project.packageId.empty()) row("Package ID", project.packageId);
+                ImGui::EndTable();
+            }
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+            ImGui::TextWrapped("%s", WideToUtf8(project.sourceDirectory.wstring()).c_str());
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+            if (SecondaryButton(T("打开目录", "Open folder"))) OpenDirectory(project.sourceDirectory);
+            const char* validate = T("校验", "Validate");
+            ContinueButtonRow(validate);
+            ImGui::BeginDisabled(busy_.load());
+            if (SecondaryButton(validate)) StartInspect(project.localId, false);
+            const char* pack = T("校验并打包", "Validate and pack");
+            ContinueButtonRow(pack);
+            if (SecondaryButton(pack)) StartInspect(project.localId, true);
+            ImGui::EndDisabled();
+            ImGui::Spacing();
+            if (BlueButton(T("核对发布", "Review and publish")))
+            {
+                requestedProjectTab_ = 2;
+                RequestManagerFrame();
+            }
+        };
+        const float previewWidth = 220.0f * gDpiScale;
+        const bool columns = !project.primaryPreview.empty() &&
+            ImGui::GetContentRegionAvail().x >= previewWidth + 280.0f * gDpiScale +
+                ImGui::GetStyle().CellPadding.x * 4.0f;
+        if (columns && ImGui::BeginTable("project-overview", 2,
+                ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings |
+                    ImGuiTableFlags_NoPadOuterX))
+        {
+            ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthFixed, previewWidth);
+            ImGui::TableSetupColumn("details", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            RenderProjectPreviewUnlocked(project);
+            ImGui::TableSetColumnIndex(1);
+            details();
+            ImGui::EndTable();
         }
         else
-            ImGui::TextDisabled("%s", T(
-                "本地草稿 · 尚未创建 Workshop 项目",
-                "Local draft · no Workshop item yet"));
-        if (!project.packageId.empty())
-            ImGui::TextDisabled("Package ID: %s", project.packageId.c_str());
+        {
+            RenderProjectPreviewUnlocked(project);
+            ImGui::Spacing();
+            details();
+        }
+    }
+
+    void RenderProjectDetailsUnlocked(HWND window, WorkshopProject& project)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(WideToUtf8(project.sourceDirectory.filename().wstring()).c_str());
+        const char* more = T("更多", "More");
+        const float moreX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ButtonWidth(more);
+        if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x <
+                ImGui::GetWindowPos().x + moreX)
+            ImGui::SameLine(moreX);
+        else ImGui::SetCursorPosX(moreX);
+        if (SecondaryButton(more)) ImGui::OpenPopup("local-project-actions");
+        bool removed = false;
+        if (ImGui::BeginPopup("local-project-actions"))
+        {
+            ImGui::BeginDisabled(busy_.load());
+            if (SecondaryButton(T("仅移除本地记录", "Remove local record only")))
+            {
+                const std::string id = project.localId;
+                std::string error;
+                if (store_.Remove(id, error))
+                {
+                    InvalidatePreparedPublishUnlocked();
+                    selectedLocalId_.clear();
+                    removed = true;
+                    if (store_.Save(error))
+                        SetMessageUnlocked(true, T("已移除记录；源码和 Workshop 内容未删除",
+                            "Record removed; source and Workshop content were not deleted"));
+                    else SetMessageUnlocked(false, error);
+                }
+                else SetMessageUnlocked(false, error);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::EndPopup();
+        }
+        if (removed) return;
         const bool creating = !project.publishedFileId.has_value();
         if (localizationStateProjectId_ != project.localId ||
             localizationStateCreating_ != creating)
@@ -1158,52 +1368,31 @@ private:
             localizationPreviewLoading_ = false;
         }
         const int requestedTab = std::exchange(requestedProjectTab_, -1);
-        if (!ImGui::BeginTabBar("project-sections")) return;
-        if (ImGui::BeginTabItem(T("概览", "Overview"), nullptr,
-                requestedTab == 0 ? ImGuiTabItemFlags_SetSelected : 0))
+        const ImVec4 selectedFill(0.84f, 0.90f, 0.99f, 1.0f);
+        const ImVec4 accent = ImGui::GetStyle().Colors[ImGuiCol_Button];
+        ImGui::PushStyleColor(ImGuiCol_TabSelected, selectedFill);
+        ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, selectedFill);
+        ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, accent);
+        ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, accent);
+        ImGui::PushStyleVar(ImGuiStyleVar_TabBarOverlineSize, 3.0f * gDpiScale);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+            ImVec2(14.0f * gDpiScale, 8.0f * gDpiScale));
+        const bool tabs = ImGui::BeginTabBar("project-sections",
+            ImGuiTabBarFlags_DrawSelectedOverline);
+        ImGui::PopStyleVar();
+        if (!tabs)
+        {
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(4);
+            return;
+        }
+        if (BeginProjectTab(T("概览", "Overview"), requestedTab == 0))
         {
             ImGui::Spacing();
-            const char* openLabel = T("打开目录", "Open folder");
-            const std::string openProjectButton =
-                std::string(openLabel) + "###OpenProjectDirectory";
-            const char* validateLabel = T("校验", "Validate");
-            const char* packLabel = T("校验并打包", "Validate and pack");
-            if (SecondaryButton(openProjectButton.c_str()))
-                OpenDirectory(project.sourceDirectory);
-            ContinueButtonRow(T("校验", "Validate"));
-            ImGui::BeginDisabled(busy_.load());
-            if (SecondaryButton(validateLabel))
-            {
-                const std::string id = project.localId;
-                StartInspect(id, false);
-            }
-            ContinueButtonRow(packLabel);
-            if (SecondaryButton(packLabel))
-            {
-                const std::string id = project.localId;
-                StartInspect(id, true);
-            }
-            ImGui::EndDisabled();
-            const char* review = T("核对发布", "Review and publish");
-            ContinueButtonRow(review);
-            if (BlueButton(review))
-            {
-                requestedProjectTab_ = 2;
-                RequestManagerFrame();
-            }
-            if (!project.lastPublishedVersion.empty())
-            {
-                BeginSettingRow(T("最后发布版本", "Last published version"),
-                    SettingControlWidth());
-                ImGui::TextDisabled("%s",
-                    project.lastPublishedVersion.c_str());
-            }
-
-            RenderProjectPreviewUnlocked(project);
+            RenderProjectOverviewUnlocked(project);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(T("发布资料", "Publishing details"), nullptr,
-                requestedTab == 1 ? ImGuiTabItemFlags_SetSelected : 0))
+        if (BeginProjectTab(T("发布资料", "Publishing details"), requestedTab == 1))
         {
             ImGui::Spacing();
             ImGui::SeparatorText(T("主预览", "Primary preview"));
@@ -1447,8 +1636,7 @@ private:
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(T("核对发布", "Review and publish"), nullptr,
-                requestedTab == 2 ? ImGuiTabItemFlags_SetSelected : 0))
+        if (BeginProjectTab(T("核对发布", "Review and publish"), requestedTab == 2))
         {
             const bool missingManualTitle = creating &&
                 !syncPackageLocalization_ && titleBuffer_.empty();
@@ -1580,24 +1768,8 @@ private:
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
-        ImGui::Spacing();
-        ImGui::BeginDisabled(busy_.load());
-        if (ImGui::CollapsingHeader(T("更多", "More")) &&
-            SecondaryButton(T("仅移除本地记录", "Remove local record only")))
-        {
-            const std::string id = project.localId;
-            std::string error;
-            if (store_.Remove(id, error) && store_.Save(error))
-            {
-                InvalidatePreparedPublishUnlocked();
-                selectedLocalId_.clear();
-                SetMessageUnlocked(true, T(
-                    "已移除记录；源码和 Workshop 内容未删除",
-                    "Record removed; source and Workshop content were not deleted"));
-            }
-            else SetMessageUnlocked(false, error);
-        }
-        ImGui::EndDisabled();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
     }
 
     void StartInspect(std::string localId, bool pack)
@@ -2022,6 +2194,9 @@ private:
     std::atomic_bool publishInProgress_ = false;
     ManagerPublishTask publishTask_;
     bool taskDetailsOpen_ = false;
+    bool taskPanelUserSized_ = false;
+    float taskPanelHeightDip_ = 104.0f;
+    float taskPanelNaturalHeightDip_ = 0.0f;
     bool closeBlocked_ = false;
     int requestedProjectTab_ = -1;
     std::string selectedLocalId_;
