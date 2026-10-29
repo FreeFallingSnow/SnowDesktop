@@ -44,6 +44,11 @@ bool DesktopApp::OwnsPrivatePointerWindow(HWND window) const
     if (GetWindowThreadProcessId(window, &process) != GetCurrentThreadId() || process != GetCurrentProcessId()) return false;
     if (window == hwnd_ || window == inputHwnd_ || window == floatingDockInputHwnd_ ||
         window == floatingPopupHwnd_ || window == quickNavigationHwnd_) return true;
+    // The desktop host is a child of Explorer's WorkerW. Windows promotes a
+    // popup's native owner to that top-level window, so parent recursion is
+    // not an ownership proof for this exact, application-created editor.
+    if (window == renameInputWindow_)
+        return snowdesktop::text_input::IsPrivatePointerHost(window);
     for (const auto& host : persistentDockHosts_) if (host && host->hwnd == window) return true;
     for (const auto& control : snowdesktop::modern_menu::ActiveControls()) if (control.window == window) return true;
     if (window == snowdesktop::modern_menu::ActiveCompanionWindow()) return true;

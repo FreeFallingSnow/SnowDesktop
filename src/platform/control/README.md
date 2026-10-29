@@ -87,6 +87,10 @@ current text and logical focus. Click that rectangle, then use raw
 `input.keyboard` events to edit; this catalog does not provide a value setter
 or a rename command. Values longer than 4096 UTF-16 units are marked by
 `rename-editor-value-truncated` in `pendingSurfaces`.
+The exact live rename HWND is accepted only on the application's own process
+and UI thread and only while it is a known interactive text host. A desktop
+embedded below Explorer's WorkerW can have that popup's native owner promoted
+to the Shell; this does not make WorkerW an input target.
 
 `nativeWidgetControls:1` covers native view/date buttons, category/source tabs,
 detail headers/dividers and common frame controls. Geometry comes from the real
