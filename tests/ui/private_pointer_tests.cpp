@@ -40,6 +40,7 @@ struct NativeControl
     unsigned moves = 0, clicks = 0, doubles = 0, cancelled = 0, blocked = 0, wheels = 0, leaves = 0;
     POINT lastScreen{}, lastClient{};
     int wheel = 0;
+    std::vector<UINT> receivedMessages;
 
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
@@ -50,6 +51,7 @@ struct NativeControl
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(control));
         }
         if (!control) return DefWindowProcW(window, message, wp, lp);
+        control->receivedMessages.push_back(message);
         if (!pointer::MessageAllowed(window, message, wp, lp)) { ++control->blocked; return 0; }
         POINT client{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
         switch (message)
@@ -370,13 +372,26 @@ void InputFamiliesAndForwarding()
         WM_POINTERWHEEL, WM_POINTERHWHEEL, WM_POINTERROUTEDTO, WM_POINTERROUTEDAWAY,
         WM_POINTERROUTEDRELEASED, WM_GESTURENOTIFY, WM_IME_CHAR, WM_IME_COMPOSITION,
         WM_TOUCH, WM_GESTURE, WM_INPUT};
+    struct Observation { UINT message; std::size_t received; unsigned blocked; LRESULT result; };
+    std::vector<Observation> observations;
     for (const UINT message : blockedMessages)
     {
         // No system input is injected. Handle-bearing messages have no real
         // resource here; their valid-handle disposal follows the Win32 contract
         // in production and is not claimed as a synthetic touch-device test.
         const WPARAM wp = message == WM_INPUT ? RIM_INPUTSINK : 0;
-        SendMessageW(first.window, message, wp, 0);
+        const auto beforeReceived = first.receivedMessages.size();
+        const auto beforeBlocked = first.blocked;
+        const LRESULT result = SendMessageW(first.window, message, wp, 0);
+        observations.push_back({message, first.receivedMessages.size() - beforeReceived, first.blocked - beforeBlocked, result});
+    }
+    if (first.blocked != 1 + std::size(blockedMessages) || first.moves != 1)
+    {
+        std::cerr << "Input-family totals: blocked=" << first.blocked << " expected=" << 1 + std::size(blockedMessages)
+            << " moves=" << first.moves << '\n';
+        for (const auto& observation : observations)
+            std::cerr << "  message=0x" << std::hex << observation.message << std::dec
+                << " received=" << observation.received << " blocked=" << observation.blocked << " result=" << observation.result << '\n';
     }
     Check(first.blocked == 1 + std::size(blockedMessages) && first.moves == 1,
         "complete pointer, hover, context, gesture and raw-input families remain private");
