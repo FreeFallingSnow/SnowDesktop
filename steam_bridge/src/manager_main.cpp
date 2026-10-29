@@ -149,6 +149,19 @@ void SetupLightTheme()
     colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.60f, 0.60f, 0.65f, 1.00f);
 }
 
+void ApplyManagerDpi(float scale)
+{
+    // Rebuild from DIP sizes so repeated monitor changes do not accumulate
+    // rounding error in padding. ImGui scales/rasterizes fonts separately.
+    ImGui::GetStyle() = ImGuiStyle();
+    SetupLightTheme();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.FrameRounding = 5.0f;
+    style.ScaleAllSizes(scale);
+    style.FontScaleDpi = scale;
+    gDpiScale = scale;
+}
+
 bool BlueButton(const char* label, const ImVec2& size = ImVec2(0, 0))
 {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
@@ -212,7 +225,7 @@ float BeginSettingRow(const char* label, float controlWidth)
 float SettingControlWidth()
 {
     return std::min(kSettingControlWidthDip * gDpiScale,
-        ImGui::GetContentRegionAvail().x);
+        ImGui::GetContentRegionAvail().x * 0.60f);
 }
 
 float ButtonWidth(const char* label)
@@ -229,34 +242,63 @@ void ContinueButtonRow(const char* label)
         ImGui::SameLine();
 }
 
-bool TwoLineProjectSelectable(const std::string& label, bool selected,
+void DrawEllipsizedText(ImVec2 origin, float width, ImU32 color,
+    const std::string& text)
+{
+    if (width <= 0.0f || text.empty()) return;
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->PushClipRect(origin,
+        ImVec2(origin.x + width, origin.y + ImGui::GetTextLineHeight()), true);
+    if (ImGui::CalcTextSize(text.c_str(), text.c_str() + text.size()).x <= width)
+        draw->AddText(origin, color, text.c_str(), text.c_str() + text.size());
+    else
+    {
+        const char* ellipsis = "…";
+        const float ellipsisWidth = ImGui::CalcTextSize(ellipsis).x;
+        const char* end = text.c_str();
+        ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(),
+            std::max(1.0f, width - ellipsisWidth), 0.0f,
+            text.c_str(), text.c_str() + text.size(), &end);
+        draw->AddText(origin, color, text.c_str(), end);
+        draw->AddText(ImVec2(origin.x + ImGui::CalcTextSize(text.c_str(), end).x,
+            origin.y), color, ellipsis);
+    }
+    draw->PopClipRect();
+}
+
+bool TwoLineProjectSelectable(const std::string& id,
+    const std::string& title, bool selected,
     const std::string& metadata, const std::string& version = {})
 {
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float width = ImGui::GetContentRegionAvail().x;
+    const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
     const float lineHeight = ImGui::GetTextLineHeight();
     const float gap = 3.0f * gDpiScale;
-    const float height = lineHeight * 2.0f + gap;
-    const bool pressed = ImGui::Selectable(label.c_str(), selected, 0,
+    const ImVec2 padding(8.0f * gDpiScale, 6.0f * gDpiScale);
+    const float height = lineHeight * 2.0f + gap + padding.y * 2.0f;
+    ImGui::PushID(id.c_str());
+    // The explicit row includes its padding; keep the hit/selection rectangle
+    // inside it rather than letting Selectable expand into adjacent rows.
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    const bool pressed = ImGui::Selectable("##project-row", selected, 0,
         ImVec2(width, height));
-    auto* draw = ImGui::GetWindowDrawList();
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+    const ImVec2 textOrigin(origin.x + padding.x, origin.y + padding.y);
+    const float textWidth = std::max(0.0f, width - padding.x * 2.0f);
+    DrawEllipsizedText(textOrigin, textWidth,
+        ImGui::GetColorU32(ImGuiCol_Text), title);
     const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const float versionWidth = version.empty() ? 0.0f :
-        ImGui::CalcTextSize(version.c_str()).x;
-    const float metadataRight = origin.x + width - versionWidth -
+        std::min(ImGui::CalcTextSize(version.c_str()).x, textWidth * 0.42f);
+    const float metadataWidth = textWidth - versionWidth -
         (version.empty() ? 0.0f : ImGui::GetStyle().ItemSpacing.x);
-    draw->PushClipRect(origin, ImVec2(std::max(origin.x, metadataRight),
-        origin.y + height), true);
-    draw->AddText(ImVec2(origin.x, origin.y + lineHeight + gap), color,
-        metadata.c_str());
-    draw->PopClipRect();
+    const float metadataY = textOrigin.y + lineHeight + gap;
+    DrawEllipsizedText(ImVec2(textOrigin.x, metadataY), metadataWidth,
+        color, metadata);
     if (!version.empty())
-    {
-        draw->PushClipRect(origin, ImVec2(origin.x + width, origin.y + height), true);
-        draw->AddText(ImVec2(origin.x + width - versionWidth,
-            origin.y + lineHeight + gap), color, version.c_str());
-        draw->PopClipRect();
-    }
+        DrawEllipsizedText(ImVec2(textOrigin.x + textWidth - versionWidth,
+            metadataY), versionWidth, color, version);
     return pressed;
 }
 
@@ -1093,8 +1135,11 @@ private:
         const float pagerHeight = activePage_ == 1 ?
             ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +
                 ImGui::GetStyle().ItemSpacing.y * 2.0f : 0.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 4.0f * gDpiScale));
         ImGui::BeginChild(activePage_ == 0 ? "local-items" : "published-items",
-            ImVec2(0, std::max(1.0f, ImGui::GetContentRegionAvail().y - pagerHeight)));
+            ImVec2(0, std::max(1.0f, ImGui::GetContentRegionAvail().y - pagerHeight)),
+            ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PopStyleVar();
         {
             std::lock_guard lock(mutex_);
             bool matched = false;
@@ -1102,19 +1147,20 @@ private:
             {
                 for (const auto& item : publishedPages_.Snapshot().items)
                 {
-                if (search[0] && item.title.find(search) == std::string::npos) continue;
+                    if (search[0] && item.title.find(search) == std::string::npos) continue;
                     matched = true;
                     const auto identity = DescribeManagerWorkshopItem(item.metadata);
-                    if (TwoLineProjectSelectable(item.title + "##" +
-                            std::to_string(item.publishedFileId),
+                    const std::string metadata = std::string(ItemTypeLabel(identity.kind)) +
+                        " · " + FormatLocalTime(item.updatedAt);
+                    if (TwoLineProjectSelectable(std::to_string(item.publishedFileId), item.title,
                             publishedPages_.Snapshot().selectedId == item.publishedFileId,
-                            std::string(ItemTypeLabel(identity.kind)) + " · " + FormatLocalTime(item.updatedAt)))
+                            metadata))
                     {
                         publishedPages_.Select(item.publishedFileId);
                         bindingTargetId_.clear();
                         RequestManagerFrame();
                     }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", item.title.c_str());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", item.title.c_str(), metadata.c_str());
                     ImGui::Spacing();
                 }
             }
@@ -1127,24 +1173,28 @@ private:
                     const std::string haystack = name + " " + project.packageId + " " + project.localId + " " + path;
                     if (search[0] && haystack.find(search) == std::string::npos) continue;
                     matched = true;
-                    if (TwoLineProjectSelectable(name + "##" + project.localId,
+                    if (TwoLineProjectSelectable(project.localId, name,
                             selectedLocalId_ == project.localId,
                             project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") :
                                 T("未绑定", "Not bound"), project.lastPublishedVersion))
                         SelectLocalProjectUnlocked(project);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", path.c_str());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s%s%s", path.c_str(),
+                        project.publishedFileId ? T("已绑定 Workshop", "Workshop bound") : T("未绑定", "Not bound"),
+                        project.lastPublishedVersion.empty() ? "" : " · ", project.lastPublishedVersion.c_str());
                     ImGui::Spacing();
                 }
             }
             if (!matched)
             {
                 const auto& online = publishedPages_.Snapshot();
+                ImGui::Indent(8.0f * gDpiScale);
                 ImGui::TextWrapped("%s", search[0] ? T("没有匹配的项目", "No matching projects") :
                     activePage_ == 0 ? T("没有本地项目", "No local projects") :
                     online.loading ? T("正在加载项目…", "Loading items…") :
                     !steam_.Status().loggedOn ? T("Steam 未连接", "Steam disconnected") :
                     online.loaded ? T("没有已发布的项目", "No published items") :
                     T("选择一个项目", "Select an item"));
+                ImGui::Unindent(8.0f * gDpiScale);
             }
         }
         ImGui::EndChild();
@@ -1296,8 +1346,9 @@ private:
             ImGui::TextDisabled("%s", count.c_str());
             if (task.Running() && !task.language.empty())
             {
-                ImGui::SameLine();
-                ImGui::TextDisabled("(%s)", task.language.c_str());
+                const std::string language = "(" + task.language + ")";
+                ContinueButtonRow(language.c_str());
+                ImGui::TextDisabled("%s", language.c_str());
             }
         }
         const bool byteStage = task.stage == PublishStage::UploadingContent ||
@@ -1466,8 +1517,11 @@ private:
                     ImVec2(texture.width * scale, texture.height * scale));
             }
             else if (!texture.error.empty())
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
-                    "%s", texture.error.c_str());
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.4f, 1.0f));
+                ImGui::TextWrapped("%s", texture.error.c_str());
+                ImGui::PopStyleColor();
+            }
         }
     }
 
@@ -1546,15 +1600,22 @@ private:
 
     void RenderProjectDetailsUnlocked(HWND window, WorkshopProject& project)
     {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextWrapped("%s", WideToUtf8(project.sourceDirectory.filename().wstring()).c_str());
         const char* more = T("更多", "More");
-        const float moreX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ButtonWidth(more);
-        if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x <
-                ImGui::GetWindowPos().x + moreX)
-            ImGui::SameLine(moreX);
-        else ImGui::SetCursorPosX(moreX);
-        if (SecondaryButton(more)) ImGui::OpenPopup("local-project-actions");
+        bool openActions = false;
+        if (ImGui::BeginTable("project-heading", 2, ImGuiTableFlags_SizingFixedFit |
+                ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
+        {
+            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, ButtonWidth(more));
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextWrapped("%s", WideToUtf8(project.sourceDirectory.filename().wstring()).c_str());
+            ImGui::TableSetColumnIndex(1);
+            openActions = SecondaryButton(more);
+            ImGui::EndTable();
+        }
+        if (openActions) ImGui::OpenPopup("local-project-actions");
         bool removed = false;
         if (ImGui::BeginPopup("local-project-actions"))
         {
@@ -1757,9 +1818,10 @@ private:
                 }
                 else if (!localizationPreviewError_.empty())
                 {
-                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
-                        "%s: %s", T("文案预览失败", "Text preview failed"),
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.4f, 1.0f));
+                    ImGui::TextWrapped("%s: %s", T("文案预览失败", "Text preview failed"),
                         localizationPreviewError_.c_str());
+                    ImGui::PopStyleColor();
                 }
                 else if (localizationPreview_.empty())
                 {
@@ -1808,9 +1870,9 @@ private:
                 std::array<char, 256> title{};
                 std::copy_n(titleBuffer_.c_str(),
                     std::min(titleBuffer_.size(), title.size() - 1), title.data());
-                BeginSettingRow(T("初始标题", "Initial title"),
-                    SettingControlWidth());
-                ImGui::SetNextItemWidth(SettingControlWidth());
+                const float titleWidth = SettingControlWidth();
+                BeginSettingRow(T("初始标题", "Initial title"), titleWidth);
+                ImGui::SetNextItemWidth(titleWidth);
                 if (ImGui::InputText("##initial-title", title.data(), title.size()))
                 {
                     draft.EditTitle(title.data());
@@ -1827,11 +1889,11 @@ private:
                 std::copy_n(descriptionBuffer_.c_str(),
                     std::min(descriptionBuffer_.size(), description.size() - 1),
                     description.data());
-                BeginSettingRow(T("初始说明", "Initial description"),
-                    SettingControlWidth());
+                const float descriptionWidth = SettingControlWidth();
+                BeginSettingRow(T("初始说明", "Initial description"), descriptionWidth);
                 if (ImGui::InputTextMultiline("##initial-description",
                         description.data(), description.size(),
-                        ImVec2(SettingControlWidth(),
+                        ImVec2(descriptionWidth,
                             90.0f * gDpiScale)))
                 {
                     draft.EditDescription(description.data());
@@ -1909,22 +1971,22 @@ private:
                     action = T("更新组件内容", "Update component content");
                 else if (plan.action == ComponentPublishAction::UpdateMetadata)
                     action = T("仅更新资料", "Update listing metadata only");
-                ImGui::Text("%s: %s", T("操作", "Action"), action);
+                ImGui::TextWrapped("%s: %s", T("操作", "Action"), action);
                 if (plan.action == ComponentPublishAction::Create)
-                    ImGui::Text("%s: %s", T("可见性", "Visibility"),
+                    ImGui::TextWrapped("%s: %s", T("可见性", "Visibility"),
                         plan.visibility == 0 ? T("公开", "Public") : T("私有", "Private"));
-                ImGui::Text("%s: %s", T("版本", "Version"),
+                ImGui::TextWrapped("%s: %s", T("版本", "Version"),
                     plan.version.c_str());
                 ImGui::TextWrapped("SHA-256: %s", plan.sha256.c_str());
-                ImGui::Text("%s: %s", T("组件内容", "Component content"),
+                ImGui::TextWrapped("%s: %s", T("组件内容", "Component content"),
                     plan.updateContent ? T("将上传", "Upload") :
                         T("未变化，不上传", "Unchanged; do not upload"));
                 if (plan.localizations.empty())
-                    ImGui::Text("%s: %s", T("标题和说明", "Title and description"),
+                    ImGui::TextWrapped("%s: %s", T("标题和说明", "Title and description"),
                         T("保留 Steam 当前内容", "Preserve current Steam text"));
                 else
                 {
-                    ImGui::Text(T("标题和说明：提交 %zu 种 Steam 语言",
+                    ImGui::TextWrapped("%s", T("标题和说明：提交 %zu 种 Steam 语言",
                         "Title and description: submit %zu Steam languages",
                         plan.localizations.size()).c_str());
                     const std::string listingLabel = T(
@@ -1964,7 +2026,7 @@ private:
                         ImGui::EndTable();
                     }
                 }
-                ImGui::Text("%s: %s", T("主预览", "Primary preview"),
+                ImGui::TextWrapped("%s: %s", T("主预览", "Primary preview"),
                     plan.preview ? T("使用本地预览", "Use local preview") :
                         T("保留 Steam 当前预览", "Preserve Steam preview"));
                 if (plan.preview)
@@ -1981,7 +2043,7 @@ private:
                     }
                     else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
                 }
-                ImGui::Text("%s: %s", T("标签", "Tags"),
+                ImGui::TextWrapped("%s: %s", T("标签", "Tags"),
                     plan.tags ? T("提交本地标签", "Submit local tags") :
                         T("保留 Steam 当前标签", "Preserve Steam tags"));
                 if (plan.tags)
@@ -2541,6 +2603,7 @@ private:
             if (SecondaryButton(T("打开 Steam 项目管理页", "Open Steam item controls")))
                 OpenSteamUrlWithWebFallback(SteamCommunityItemClientUrl(item->publishedFileId), CommunityItemUrl(item->publishedFileId));
             RenderWorkshopBindingUnlocked(*item, descriptor);
+            RenderOperationFeedbackUnlocked();
         };
         if (!item->previewUrl.empty() && ImGui::GetContentRegionAvail().x >= 540.0f * gDpiScale &&
             ImGui::BeginTable("workshop-overview", 2, ImGuiTableFlags_SizingFixedFit |
@@ -2552,7 +2615,6 @@ private:
             ImGui::TableSetColumnIndex(1); details(); ImGui::EndTable();
         }
         else { preview(); ImGui::Spacing(); details(); }
-        RenderOperationFeedbackUnlocked();
         ImGui::EndChild();
         ImGui::PopID();
     }
@@ -2710,6 +2772,8 @@ void RenderManagerFrame(HWND window)
     if (!gFrameScheduler.BeginFrame(canRender)) return;
 
     gRenderingFrame = true;
+    const float scale = std::max(1.0f, static_cast<float>(GetDpiForWindow(window)) / 96.0f);
+    if (std::abs(scale - gDpiScale) > 0.001f) ApplyManagerDpi(scale);
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -3136,7 +3200,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     const UINT dpi = GetDpiForWindow(window);
     const float scale = std::max(1.0f, static_cast<float>(dpi) / 96.0f);
-    gDpiScale = scale;
     MONITORINFO monitor{ sizeof(monitor) };
     RECT initialBounds{};
     if (GetWindowRect(window, &initialBounds) && GetMonitorInfoW(
@@ -3151,11 +3214,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
             std::clamp(initialBounds.top, monitor.rcWork.top, monitor.rcWork.bottom - height),
             width, height, SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    SetupLightTheme();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.ScaleAllSizes(scale);
-    style.WindowRounding = 0.0f;
-    style.FrameRounding = 5.0f * scale;
+    ApplyManagerDpi(scale);
     wchar_t windowsDirectory[MAX_PATH]{};
     if (!GetWindowsDirectoryW(windowsDirectory,
             static_cast<UINT>(std::size(windowsDirectory))))
@@ -3169,8 +3228,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         chineseFont : regularFont;
     ImFont* managerFont = io.Fonts->AddFontFromFileTTF(
         WideToUtf8(font.wstring()).c_str(),
-        17.0f * scale, nullptr, io.Fonts->GetGlyphRangesChineseFull());
-    if (!managerFont) managerFont = io.Fonts->AddFontDefault();
+        17.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+    if (!managerFont)
+    {
+        ImFontConfig fallbackConfig{};
+        fallbackConfig.SizePixels = 17.0f;
+        managerFont = io.Fonts->AddFontDefault(&fallbackConfig);
+    }
     if (managerFont && std::filesystem::exists(koreanFont))
     {
         ImFontConfig koreanConfig{};
@@ -3178,7 +3242,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         koreanConfig.PixelSnapH = true;
         io.Fonts->AddFontFromFileTTF(
             WideToUtf8(koreanFont.wstring()).c_str(),
-            17.0f * scale, &koreanConfig,
+            17.0f, &koreanConfig,
             io.Fonts->GetGlyphRangesKorean());
     }
     ImGui_ImplWin32_Init(window);
