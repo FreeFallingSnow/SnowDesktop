@@ -2690,6 +2690,42 @@ int wmain(int argc, wchar_t** argv) try
                 "the production icon preview reveals its external resize arc only in the hover state");
         }
 
+        const auto beautifiedDirectory = temporary.path / L"native-light-glass-icons";
+        const auto [beautifiedExit, beautifiedJson] = Run(snowwidget, {
+            L"preview-native", L"all", beautifiedDirectory.wstring(),
+            L"--dpi", L"96", L"--locale", L"en-US", L"--appearance", L"dark",
+            L"--transparent", L"--icon-preset", L"light-glass", L"--icon-only",
+            L"--canvas-width", L"640", L"--canvas-height", L"480",
+            L"--padding", L"48", L"--host", host.wstring() });
+        Check(beautifiedExit == 0 && beautifiedJson.find("\"iconPreset\":\"light-glass\"") != std::string::npos &&
+                beautifiedJson.find("\"iconOnly\":true") != std::string::npos,
+            "native icon export reports the explicitly selected production beautification preset");
+        Check(std::distance(std::filesystem::directory_iterator(beautifiedDirectory),
+                std::filesystem::directory_iterator{}) == 10,
+            "icon-only export contains exactly five component families and both pointer states");
+        for (const wchar_t* component : {L"collection", L"collection-group", L"file-group", L"file-categories", L"folder-mapping"})
+        {
+            for (const wchar_t* state : {L"-icon.png", L"-icon-hover.png"})
+            {
+                const auto filename = std::wstring(component) + state;
+                const auto styled = ReadPng(beautifiedDirectory / filename);
+                const auto original = ReadPng(transparentOutputDirectory / filename);
+                Check(styled.width == 640 && styled.height == 480 &&
+                        PixelAt(styled, 0, 0)[3] == 0 && PixelAt(styled, 639, 479)[3] == 0,
+                    "beautified icon export preserves the transparent canvas and dimensions");
+                Check(CountDifferingPixels(styled, original, nativeCanvasBounds) > 200,
+                    "each icon-mode family and pointer state uses the selected native material");
+            }
+            Check(ReadPng(beautifiedDirectory / (std::wstring(component) + L"-icon.png")).pixels !=
+                    ReadPng(beautifiedDirectory / (std::wstring(component) + L"-icon-hover.png")).pixels,
+                "beautification preserves the production hover treatment");
+        }
+        const auto rejectedPreset = Run(snowwidget, { L"preview-native", L"all", beautifiedDirectory.wstring(),
+            L"--icon-preset", L"not-a-preset", L"--host", host.wstring() });
+        Check(rejectedPreset.first == 2, "unknown native icon presets fail before starting the host");
+        const auto missingPreset = Run(snowwidget, { L"preview-native", L"all", beautifiedDirectory.wstring(), L"--icon-preset" });
+        Check(missingPreset.first == 2, "a missing icon preset value is rejected safely");
+
         const auto groupPopupOutput = temporary.path / L"native-group-popup";
         const auto groupPopup = Run(host, {
             L"--native-component-preview", L"popup-group", groupPopupOutput.wstring(),

@@ -23,6 +23,9 @@ struct Request
     int padding = 72;
     bool transparent = false;
     bool contentOnly = false;
+    // Explicit offscreen icon appearance; never changes desktop defaults.
+    std::string iconPreset = "none";
+    bool iconOnly = false;
     // Private offscreen input. It never loads host settings or live providers.
     std::optional<themes::Theme> theme;
 };
