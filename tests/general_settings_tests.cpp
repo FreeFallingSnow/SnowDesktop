@@ -1330,6 +1330,8 @@ int main(int argc, char** argv)
     std::filesystem::remove(path, error);
 
     GeneralSettings saved;
+    Check(!saved.steamShowRunningStatus, "Steam running status is opt-in for new settings");
+    saved.steamShowRunningStatus = true;
     Check(!saved.contextMenuExpandQuickActions && !saved.contextMenuHidePageManagement &&
         !saved.contextMenuHideMoreManagement,
         "context-menu layout and page hiding are opt-in");
@@ -1382,6 +1384,7 @@ int main(int argc, char** argv)
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
+    Check(loaded.steamShowRunningStatus, "Steam running-status choice survives disk roundtrip");
     Check(loaded.diagnosticLogModules == saved.diagnosticLogModules,
         "independent log module choices survive save and restart");
     for (const auto modules : {snowdesktop::diagnostics::AllLogModules, 0u})
@@ -2153,6 +2156,12 @@ int main(int argc, char** argv)
         "nonfinite pin-border values save as usable defaults rather than invalid JSON");
     std::filesystem::remove(personalizationPath, error);
 
+    {
+        std::ofstream legacy(path, std::ios::binary | std::ios::trunc); legacy << "{}";
+    }
+    loaded.steamShowRunningStatus = true;
+    Check(LoadGeneralSettings(path.c_str(), loaded) && !loaded.steamShowRunningStatus,
+        "legacy settings reset Steam presence to off even when reusing an enabled value");
     std::filesystem::remove(path, error);
     if (failures == 0)
         std::cout << "All general settings tests passed.\n";

@@ -172,6 +172,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "platform/auto_start_rules.h"
 #include "platform/deployment_context.h"
 #include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
 #include "layout/page_layout_settings.h"
 #include "layout/page_management_rules.h"
 
@@ -2107,7 +2108,8 @@ private:
     /** @brief 处理定时器事件。 @param timerId 定时器标识 */
     void OnTimer(WPARAM timerId);
     void PollSteamWorkshopSubscriptions(bool bypassThrottle = false);
-    ULONGLONG iconWorkshopLastPoll_ = 0;
+    std::unique_ptr<snowdesktop::steam_presence::Service> steamPresenceService_;
+    void UpdateSteamPresence();
     void StartSteamWorkshopWatcher();
     void StopSteamWorkshopWatcher();
     static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);

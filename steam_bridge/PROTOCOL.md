@@ -1,7 +1,14 @@
 # SnowDesktop Steam Bridge protocol v1
 
-The bridge is a one-shot command-line process. It does not host an always-on
-server, accept arbitrary executable paths, change subscriptions without an
+The bridge normally runs one-shot commands. The opt-in `presence` command
+keeps one Steam API session until its host exits or signals its inherited stop
+event. Its `--parent-handle` and `--stop-handle` arguments are inherited Windows
+handles, not PIDs or named objects. It retries Steam initialization in the same
+process when the client is unavailable; it never launches Steam. The host enables
+this session only when the saved General setting requests Steam running status
+(default: off) and a compatible SDK-enabled bridge is available. Background
+component, icon-pack, and theme synchronization reads only local Steam caches.
+The bridge does not host an always-on server, accept arbitrary executable paths, change subscriptions without an
 explicit command, or load component code.
 
 `configuration` is the only command that never initializes Steam. It reports

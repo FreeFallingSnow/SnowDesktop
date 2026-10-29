@@ -477,6 +477,40 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     entry.object["details"] = details;
     const auto downloaded = directory / L"downloaded"; std::filesystem::create_directory(downloaded);
     check(WritePackage(downloaded / L"package.snowtheme",package,error), "download fixture contains only the published artifact");
+    {
+        widget::SteamWorkshopLocalCache cache;
+        cache.authoritative = true;
+        cache.subscribedPublishedFileIds = {"123"};
+        cache.readyItems = {{"123", downloaded}};
+        workshop::SubscriptionSnapshot local;
+        check(workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) &&
+            local.downloads.size() == 1 && local.downloads.front().owner.empty(),
+            "local theme download validates without bridge metadata or a fabricated author");
+        Library fromCache;
+        check(workshop::Reconcile(fromCache, local, error) && fromCache.workshop.size() == 1,
+            "theme package installs from local Steam content without online queries");
+        const auto localPath = directory / L"local-theme-library.json";
+        check(atomic_file::WriteAll(localPath, EncodeLibrary(fromCache, error)) && Load(localPath, fromCache, error) &&
+            fromCache.workshop.at("123").owner.empty(), "unknown theme author survives production storage roundtrip");
+        check(atomic_file::WriteAll(downloaded / L"unrelated.txt", "mixed content") &&
+            workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) && local.downloads.empty() &&
+            workshop::Reconcile(fromCache, local, error) && fromCache.workshop.size() == 1,
+            "mixed Steam content cannot replace an installed local theme");
+        std::filesystem::remove(downloaded / L"unrelated.txt");
+        cache.readyItems.clear();
+        check(workshop::SyncLocal(cache, "76561198000000001", localPath, fromCache, error) &&
+            fromCache.workshop.size() == 1, "pending theme download keeps the installed snapshot");
+        cache.partial = true;
+        check(!workshop::SyncLocal(cache, "76561198000000001", localPath, fromCache, error) &&
+            fromCache.workshop.size() == 1, "unavailable Steam library cannot remove themes");
+        cache.partial = false;
+        check(!workshop::ReadLocalSubscriptions(cache, "", local, error), "unknown Steam account cannot reconcile themes");
+        cache.subscribedPublishedFileIds.clear();
+        check(workshop::SyncLocal(cache, "76561198000000002", localPath, fromCache, error) &&
+            fromCache.workshop.size() == 1, "new Steam account cannot inherit theme removals");
+        check(workshop::SyncLocal(cache, "76561198000000001", localPath, fromCache, error) &&
+            fromCache.workshop.empty(), "complete known-account local unsubscribe retires its themes");
+    }
     auto install = bridge::JsonValue::Object(); install.object["available"] = bridge::JsonValue::Boolean(true);
     const auto utf8 = downloaded.generic_u8string(); install.object["folder"] = bridge::JsonValue::String(std::string(utf8.begin(),utf8.end()));
     entry.object["installInfo"] = install; response.object["items"] = bridge::JsonValue::Array(); response.object["items"].array.push_back(entry);

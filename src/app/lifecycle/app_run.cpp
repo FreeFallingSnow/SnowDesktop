@@ -837,6 +837,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             std::filesystem::path(
                 GetDataFilePath(L"SnowDesktop.entitlement.bin")));
 
+    steamPresenceService_ = std::make_unique<snowdesktop::steam_presence::Service>(
+        executableDirectory / L"SnowDesktopSteamBridge.exe");
+    UpdateSteamPresence();
+
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
     settingsHostOptions.largeIconSettings = [this](auto request) { return EditLargeIcon(std::move(request)); };
     settingsHostOptions.iconAppearance = [this](auto request) { return EditIconAppearance(std::move(request)); };
@@ -1977,7 +1981,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
                 snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
             snowdesktop::StatusBarSupportsSystemQuickSettings(),
             CurrentPersonalization().contextMenuStyle,
-            snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
+            snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
+            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

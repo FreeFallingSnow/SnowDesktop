@@ -1230,6 +1230,7 @@ public:
         }
         if (generalCommitted)
         {
+            app_.UpdateSteamPresence();
             app_.ApplyRuntimeModulePolicy();
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);

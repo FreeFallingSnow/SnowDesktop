@@ -133,6 +133,41 @@ bool DecodeSubscriptions(std::string_view output,IconPackSubscriptions& subscrip
     }
     next.authoritative=true;subscriptions=std::move(next);error.clear();return true;
 }
+bool ReadLocalSubscriptions(const widget::SteamWorkshopLocalCache& cache, std::string account,
+    IconPackSubscriptions& subscriptions, std::string& error)
+{
+    subscriptions = {};
+    // An unavailable library or unknown account cannot prove an unsubscribe.
+    if (!cache.authoritative || cache.partial || !Digits(account))
+    { error = "subscriptionsUnavailable"; return false; }
+    IconPackSubscriptions next;
+    next.localCache = true;
+    next.account = std::move(account);
+    next.subscribed.insert(cache.subscribedPublishedFileIds.begin(), cache.subscribedPublishedFileIds.end());
+    for (const auto& item : cache.readyItems)
+    {
+        if (!Digits(item.publishedFileId) || !next.subscribed.contains(item.publishedFileId) ||
+            !icon_package::SafePath(item.contentDirectory, true)) continue;
+        const auto path = item.contentDirectory / L"package.snowicons";
+        if (!icon_package::SafePath(path)) continue;
+        std::error_code ec;
+        unsigned files = 0;
+        for (const auto& file : std::filesystem::directory_iterator(item.contentDirectory, ec))
+        { ++files; if (file.path() != path || !file.is_regular_file(ec)) { files = 2; break; } }
+        if (ec || files != 1) continue;
+        IconPackDownload download;
+        download.item = item.publishedFileId;
+        download.sha256 = steam_bridge::IconPackFileHash(path);
+        std::string detail;
+        if (download.sha256.empty() || !icon_package::Read(path, download.package, detail) ||
+            steam_bridge::IconPackFileHash(path) != download.sha256) continue;
+        next.downloads.push_back(std::move(download));
+    }
+    next.authoritative = true;
+    subscriptions = std::move(next);
+    error.clear();
+    return true;
+}
 bool RenderCover(const icon_package::Package& package,const std::filesystem::path& output,std::string& error)
 {
     using Microsoft::WRL::ComPtr;
@@ -182,24 +217,30 @@ IconLibrarySnapshot Run(IconLibrary& library,const IconLibraryRequest& request,c
     const std::filesystem::path& data,const std::atomic_bool* cancel,std::atomic_uint* progress)
 {
     std::string error,output;
-    if(request.action=="autoSyncSubscriptions")
-    {
-        const auto snapshot=library.Read();bool relevant=std::any_of(snapshot.groups.begin(),snapshot.groups.end(),[](const auto& group){return !group.workshopItem.empty();});
-        const auto roots=widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId,error);
-        const auto cache=widget::ReadSteamWorkshopLocalCache(roots,kSnowDesktopSteamAppId);
-        for(const auto& item:cache.readyItems){std::error_code ec;relevant=relevant||std::filesystem::is_regular_file(item.contentDirectory/L"package.snowicons",ec);}
-        if(!relevant)return snapshot;
-    }
     if(request.action=="syncSubscriptions"||request.action=="autoSyncSubscriptions")
     {
         if(progress)progress->store(4);
-        if(!Available(bridge))return Error(library,"bridgeUnavailable");
-        if(!Child(bridge,{L"workshop",L"list-subscribed",L"--details"},output,error,60000,cancel))return Error(library,error);
-        IconPackSubscriptions subscriptions;std::vector<std::wstring> rejected;
-        if(!DecodeSubscriptions(output,subscriptions,error,&rejected))return Error(library,error);
+        const auto account = widget::ReadSteamActiveUserSteamId();
+        const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
+        if (!error.empty()) return Error(library, "subscriptionsUnavailable");
+        const auto cache = widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+        if (request.action == "autoSyncSubscriptions")
+        {
+            const auto before = library.Read();
+            bool relevant = std::any_of(before.groups.begin(), before.groups.end(),
+                [](const auto& group) { return !group.workshopItem.empty(); });
+            for (const auto& item : cache.readyItems)
+            {
+                std::error_code ec;
+                relevant = relevant || std::filesystem::is_regular_file(item.contentDirectory / L"package.snowicons", ec);
+            }
+            if (!relevant) return before;
+        }
+        IconPackSubscriptions subscriptions;
+        if (account != widget::ReadSteamActiveUserSteamId() ||
+            !ReadLocalSubscriptions(cache, account, subscriptions, error)) return Error(library, "subscriptionsUnavailable");
         if(cancel&&cancel->load())return Error(library,"cancelled");
-        auto result=library.Reconcile(subscriptions);result.failures=std::move(rejected);
-        if(!result.failures.empty()){result.succeeded=false;if(result.error.empty())result.error="iconWorkshop.operationFailed";}return result;
+        return library.Reconcile(subscriptions);
     }
     icon_package::Package package;
     if(progress)progress->store(1);

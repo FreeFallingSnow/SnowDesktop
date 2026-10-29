@@ -56,6 +56,17 @@ int main()
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
 
     GeneralSettings general;
+    {
+        auto shortcut = general;
+        shortcut.forceRestartHotkeyEnabled = !general.forceRestartHotkeyEnabled;
+        shortcut.steamShowRunningStatus = true;
+        auto logs = general;
+        logs.diagnosticLogModules = snowdesktop::diagnostics::ModuleBit(DiagnosticLogModule::Input);
+        logs.steamShowRunningStatus = true;
+        Check(!IsGeneralShortcutOnlyCommit(general, shortcut) &&
+            !snowdesktop::settings_update_rules::IsGeneralLoggingOnlyCommit(general, logs),
+            "mixed shortcut/logging commits still apply the Steam presence choice");
+    }
     auto logging = general;
     for (int field = 0; field < 3; ++field)
     {

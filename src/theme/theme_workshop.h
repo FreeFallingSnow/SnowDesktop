@@ -1,5 +1,6 @@
 #pragma once
 #include "theme_library.h"
+#include "steam/steam_workshop_cache.h"
 #include "../../steam_bridge/src/theme_workshop_publish.h"
 #include <atomic>
 
@@ -25,8 +26,15 @@ struct SubscriptionSnapshot
     std::string account;
     std::set<std::string> subscribed, deleted;
     std::vector<Download> downloads;
+    // Steam local caches have no verified online author identity.
+    bool localCache = false;
 };
 bool DecodeSubscriptions(std::string_view json, SubscriptionSnapshot&, std::string& error);
+bool ReadLocalSubscriptions(const widget::SteamWorkshopLocalCache&, std::string account,
+    SubscriptionSnapshot&, std::string& error);
+bool SyncLocal(const widget::SteamWorkshopLocalCache&, std::string account,
+    const std::filesystem::path& library, Library& output, std::string& error,
+    const std::atomic_bool* cancel = nullptr);
 bool Reconcile(Library&, const SubscriptionSnapshot&, std::string& error, const NewId& = CreateId);
 bool Sync(const std::filesystem::path& bridge, const std::filesystem::path& library,
     Library& output, std::string& error, const std::atomic_bool* cancel = nullptr);

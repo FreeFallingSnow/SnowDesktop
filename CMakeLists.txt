@@ -492,6 +492,8 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_runtime_context.h
     src/steam/steam_entitlement.cpp
     src/steam/steam_entitlement.h
+    src/steam/steam_presence.cpp
+    src/steam/steam_presence.h
     src/system/calendar/calendar_service.cpp
     src/system/calendar/calendar_display.cpp
     src/data/full_data_backup.cpp
@@ -2119,6 +2121,7 @@ if (BUILD_TESTING)
             src/icons/icon_beautify.cpp
             src/theme/theme_preview.cpp
             src/theme/theme_workshop.cpp
+            src/steam/steam_workshop_cache.cpp
             src/ui/preview/preview_png_writer.cpp
             src/widget/preview/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src steam_bridge/src
@@ -2274,6 +2277,13 @@ if (BUILD_TESTING)
         SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}")
     add_dependencies(SnowDesktopSteamEntitlementTests
         SnowDesktopSteamEntitlementBridgeFixture)
+
+    snowdesktop_add_test(
+        SnowDesktopSteamPresenceTests
+        steam_presence
+        SOURCES tests/steam/steam_presence_tests.cpp src/steam/steam_presence.cpp
+        INCLUDE_DIRECTORIES src steam_bridge/src
+        LABELS contract integration steam)
 
     snowdesktop_add_test(
         SnowDesktopLauncherIconResourceTests

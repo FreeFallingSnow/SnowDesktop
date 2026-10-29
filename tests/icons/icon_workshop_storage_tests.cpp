@@ -1,5 +1,6 @@
 #include "icons/icon_library.h"
 #include "icons/icon_package.h"
+#include "icons/icon_workshop.h"
 #include "data/atomic_file.h"
 #include <algorithm>
 #include <fstream>
@@ -37,6 +38,42 @@ int RunIconWorkshopStorageTests(const std::filesystem::path& root)
     const auto asset=icon_package::Hash(bytes)+".webp";package.images.push_back({asset,"Authored image",bytes});
     const auto path=root/L"roundtrip.snowicons";
     check(icon_package::Write(path,package,error),"write icon package with no license and no mandatory rights checkbox");
+    {
+        const auto folder = root / L"local-workshop-icons";
+        std::filesystem::create_directory(folder);
+        check(icon_package::Write(folder / L"package.snowicons", package, error), "local Steam download fixture uses the real icon package codec");
+        widget::SteamWorkshopLocalCache cache;
+        cache.authoritative = true;
+        cache.subscribedPublishedFileIds = {"901"};
+        cache.readyItems = {{"901", folder}};
+        IconPackSubscriptions local;
+        check(icon_workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) &&
+            local.downloads.size() == 1 && local.downloads.front().owner.empty(),
+            "local icon subscriptions require no bridge or fabricated online author");
+        IconLibrary localLibrary(root / L"local-cache-library");
+        check(localLibrary.Reconcile(local).groups.size() == 1, "local icon download installs without an online metadata request");
+        IconLibrary reopened(root / L"local-cache-library");
+        const auto firstLocal = reopened.Read();
+        check(firstLocal.groups.size() == 1 && firstLocal.groups.front().workshopOwner.empty(), "unknown local author roundtrips honestly");
+        check(atomic_file::WriteAll(folder / L"unrelated.txt", "mixed content") &&
+            icon_workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) && local.downloads.empty() &&
+            reopened.Reconcile(local).groups.size() == 1, "mixed local Steam folders cannot replace the installed icon package");
+        std::filesystem::remove(folder / L"unrelated.txt");
+        cache.readyItems.clear();
+        check(icon_workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) &&
+            reopened.Reconcile(local).groups.size() == 1, "pending icon download retains the prior installed group");
+        cache.partial = true;
+        check(!icon_workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) &&
+            !reopened.Reconcile(local).succeeded && reopened.Read().groups.size() == 1,
+            "incomplete local libraries cannot remove icon subscriptions");
+        cache.partial = false;
+        check(!icon_workshop::ReadLocalSubscriptions(cache, "", local, error), "unknown Steam account cannot reconcile local icons");
+        cache.subscribedPublishedFileIds.clear();
+        check(icon_workshop::ReadLocalSubscriptions(cache, "76561198000000002", local, error) &&
+            reopened.Reconcile(local).groups.size() == 1, "switching accounts does not inherit the other account's removals");
+        check(icon_workshop::ReadLocalSubscriptions(cache, "76561198000000001", local, error) &&
+            reopened.Reconcile(local).groups.empty(), "complete local unsubscribe retires only the known account's icon group");
+    }
     icon_package::Package read;
     check(icon_package::Read(path,read,error)&&read.license.empty()&&read.images.size()==1&&read.images[0].bytes==bytes&&
         icon_package::Fingerprint(read)==icon_package::Fingerprint(package),"roundtrip retains exact original bytes and optional license");

@@ -29,6 +29,7 @@ struct GeneralSettings
     // not serialized into SnowDesktop.general.json.
     bool autoStartEnabled = false;
     bool showAdvancedSettings = false;
+    bool steamShowRunningStatus = false;
     snowdesktop::runtime_modules::Policy runtimeModules;
     bool softwareDesktopEnabled = true;
     bool softwareDesktopHotkeyEnabled = false;

@@ -53,10 +53,6 @@ const char* HostTimerPhase(WPARAM timerId) noexcept
 void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
     snowdesktop::performance::Scope trace("shared.maintenance", "steam.subscriptions");
-    if(GetTickCount64()-iconWorkshopLastPoll_>=60000)
-    {
-        iconWorkshopLastPoll_=GetTickCount64();snowdesktop::IconLibraryRequest request;request.action="autoSyncSubscriptions";(void)EditIconLibrary(request);
-    }
     if (!widgetEngine_) return;
 
     std::optional<SteamWorkshopSubscriptionPollState::ReadyQuery> ready;
@@ -293,6 +289,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             kSteamWorkshopSubscriptionFallbackPollIntervalMs)
         return;
     steamWorkshopSubscriptionLastQueryTick_ = now;
+    snowdesktop::IconLibraryRequest iconRequest;
+    iconRequest.action = "autoSyncSubscriptions";
+    (void)EditIconLibrary(iconRequest);
     const std::string locale = Locale::Instance().GetEffectiveLanguage();
     const auto installedPackages = widgetEngine_->ListWidgetPackages();
     const auto subscriptionHistory =
@@ -327,8 +326,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
         trace("phase=theme_probe.begin");
-        // Local cache inspection decides whether theme work is relevant. All
-        // online theme requests still go through the independently capable bridge.
+        // Background reconciliation consumes only Steam's local manifests and
+        // completed downloads. It must never start a Steam API process.
         try
         {
             using namespace snowdesktop;
@@ -341,9 +340,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 std::error_code ec;
                 relevant = relevant || std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", ec);
             }
-            const auto bridge = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe";
-            if (relevant && themes::workshop::Available(bridge, SNOWDESKTOP_VERSION))
-                (void)themes::workshop::Sync(bridge, themes::LibraryPath(), library, error);
+            if (relevant && error.empty())
+                (void)themes::workshop::SyncLocal(cache, widget::ReadSteamActiveUserSteamId(),
+                    themes::LibraryPath(), library, error);
         }
         catch (...) { /* Failed/partial queries never remove installed themes. */ }
         trace("phase=theme_probe.end");

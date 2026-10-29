@@ -203,7 +203,7 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(workshopOperation)
                 {
                     auto result=snowdesktop::icon_workshop::Run(*library,request,bridge,data,cancellation.get(),progress.get());
-                    result.workshopAvailable=snowdesktop::icon_workshop::Available(bridge);result.operationId=request.operationId;result.completedAction=request.action;
+                    result.workshopAvailable=request.action=="autoSyncSubscriptions"?previousAvailability:snowdesktop::icon_workshop::Available(bridge);result.operationId=request.operationId;result.completedAction=request.action;
                     return result;
                 }
                 if(request.action=="collectRetired") {auto result=library->CollectRetired(protectedIds);result.workshopAvailable=previousAvailability;return result;}

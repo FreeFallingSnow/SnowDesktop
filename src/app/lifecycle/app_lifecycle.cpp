@@ -124,6 +124,7 @@ void DesktopApp::ShutdownSettingsInfrastructure() noexcept
     settingsWindowOpening_ = false;
     settingsWindowOpenRequest_.Cancel();
     steamEntitlementService_.reset();
+    steamPresenceService_.reset();
     settingsWindow_.reset();
     if (widgetSettingsService_)
     {

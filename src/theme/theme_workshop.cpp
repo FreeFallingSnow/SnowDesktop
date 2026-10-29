@@ -252,6 +252,39 @@ bool DecodeSubscriptions(std::string_view text, SubscriptionSnapshot& snapshot, 
     }
     next.authoritative = true; snapshot = std::move(next); error.clear(); return true;
 }
+bool ReadLocalSubscriptions(const widget::SteamWorkshopLocalCache& cache, std::string account,
+    SubscriptionSnapshot& snapshot, std::string& error)
+{
+    snapshot = {};
+    if (!cache.authoritative || cache.partial || !Digits(account)) return Fail(error, "subscriptionsUnavailable");
+    SubscriptionSnapshot next;
+    next.localCache = true;
+    next.account = std::move(account);
+    next.subscribed.insert(cache.subscribedPublishedFileIds.begin(), cache.subscribedPublishedFileIds.end());
+    for (const auto& item : cache.readyItems)
+    {
+        if (!Digits(item.publishedFileId) || !next.subscribed.contains(item.publishedFileId) ||
+            !steam_bridge::ThemeSafePath(item.contentDirectory, true)) continue;
+        const auto path = item.contentDirectory / L"package.snowtheme";
+        if (!steam_bridge::ThemeSafePath(path)) continue;
+        std::error_code ec;
+        unsigned files = 0;
+        for (const auto& file : std::filesystem::directory_iterator(item.contentDirectory, ec))
+        { ++files; if (file.path() != path || !file.is_regular_file(ec)) { files = 2; break; } }
+        if (ec || files != 1) continue;
+        Download download;
+        download.item = item.publishedFileId;
+        download.sha256 = steam_bridge::ThemeFileSha256(path);
+        std::string detail;
+        if (download.sha256.empty() || !ReadPackage(path, download.package, detail) ||
+            steam_bridge::ThemeFileSha256(path) != download.sha256) continue;
+        next.downloads.push_back(std::move(download));
+    }
+    next.authoritative = true;
+    snapshot = std::move(next);
+    error.clear();
+    return true;
+}
 bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::string& error, const NewId& newId)
 {
     if (!snapshot.authoritative || !Digits(snapshot.account) ||
@@ -262,10 +295,11 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
     next.subscriptionAccounts[snapshot.account] = snapshot.subscribed;
     for (const auto& download : snapshot.downloads)
     {
-        if (!snapshot.subscribed.contains(download.item) || !Digits(download.item) || !Digits(download.owner) ||
+        if (!snapshot.subscribed.contains(download.item) || !Digits(download.item) || (!snapshot.localCache && !Digits(download.owner)) ||
             download.sha256.size() != 64 || !Validate(download.package, error)) return Fail(error, "invalidPackage");
         const auto previous = next.workshop.find(download.item);
-        if (previous != next.workshop.end() && previous->second.owner != download.owner) return Fail(error, "authorMismatch");
+        if (previous != next.workshop.end() && !snapshot.localCache && !previous->second.owner.empty() && previous->second.owner != download.owner) return Fail(error, "authorMismatch");
+        if (previous != next.workshop.end() && !snapshot.localCache && previous->second.owner.empty()) previous->second.owner = download.owner;
         if (previous != next.workshop.end() && previous->second.sha256 == download.sha256)
         {
             if (previous->second.sourceIds.empty()) previous->second.sourceIds = RecoverSourceIds(next, previous->second, download.package);
@@ -302,7 +336,7 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
         }
         std::set<std::string> retired;
         if (previous != next.workshop.end()) retired = previous->second.ids;
-        auto& origin = next.workshop[download.item]; origin.owner = download.owner; origin.sha256 = download.sha256;
+        auto& origin = next.workshop[download.item]; if (!snapshot.localCache) origin.owner = download.owner; origin.sha256 = download.sha256;
         origin.accounts.insert(snapshot.account); origin.ids.clear(); origin.sourceIds.clear();
         for (const auto& [authored, installed] : remap)
         { origin.ids.insert(installed); origin.sourceIds.emplace(installed, authored); retired.erase(installed); }
@@ -331,13 +365,20 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
     if (!Validate(next.themes, error)) return false;
     library = std::move(next); return true;
 }
-bool Sync(const std::filesystem::path& bridge, const std::filesystem::path& library,
+bool Sync(const std::filesystem::path&, const std::filesystem::path& library,
     Library& output, std::string& error, const std::atomic_bool* cancel)
 {
-    std::string text;
-    if (!preview::Run(bridge, {L"workshop", L"list-subscribed", L"--details"}, text, 60000, error, cancel)) return false;
+    const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
+    if (!error.empty()) return false;
+    return SyncLocal(widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId),
+        widget::ReadSteamActiveUserSteamId(), library, output, error, cancel);
+}
+bool SyncLocal(const widget::SteamWorkshopLocalCache& cache, std::string account,
+    const std::filesystem::path& library, Library& output, std::string& error,
+    const std::atomic_bool* cancel)
+{
     SubscriptionSnapshot snapshot;
-    if (!DecodeSubscriptions(text, snapshot, error)) return false;
+    if (!ReadLocalSubscriptions(cache, std::move(account), snapshot, error)) return false;
     if (cancel && cancel->load()) return Fail(error, "cancelled");
     return Transact(library, [&](Library& into, std::string& detail) {
         if (cancel && cancel->load()) return Fail(detail, "cancelled");

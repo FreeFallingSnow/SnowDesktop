@@ -1101,7 +1101,8 @@ struct SettingsWindowHost::Impl
                 advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings(),
                 snapshot ? snapshot->values.personalization.contextMenuStyle : 0,
                 snapshot && ResolveBarSettingsAvailability(snapshot->values.general.dockEnabled,
-                    snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
+                    snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
+                options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable);
         }
         if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
             snapshot->values.personalization.contextMenuStyle == 6))
@@ -1110,6 +1111,9 @@ struct SettingsWindowHost::Impl
                 return descriptor.focusId == "contextMenu.expandQuickActions";
             });
         }
+        const bool steamBridgeAvailable = options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable;
+        for (auto& descriptor : input.staticSettings)
+            if (descriptor.focusId == "general.steamRunningStatus") descriptor.visible = steamBridgeAvailable;
         if (!advancedFeaturesVisible)
         {
             for (auto& descriptor : input.staticSettings)

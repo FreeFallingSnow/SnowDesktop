@@ -387,6 +387,14 @@ int main(int argc, char* argv[])
             find("quickNav.view") == catalog.staticSettings.end(),
         "functional search settings stay on navigation and the obsolete opening preference is absent");
     Check(!find("general.advancedFeatures")->visible && find("statusBar.controlCenterPanel") == catalog.staticSettings.end(),"shared catalog honors advanced and system capability visibility");
+    Check(find("general.steamRunningStatus") != catalog.staticSettings.end() && !find("general.steamRunningStatus")->visible,
+        "Steam presence is hidden from search without a compatible bridge");
+    SettingsSearchIndexInput steamCatalog;
+    PopulateSettingsSearchCatalog(steamCatalog, [](std::string_view key) { return std::wstring(key.begin(), key.end()); },
+        false, false, 0, false, true);
+    Check(std::any_of(steamCatalog.staticSettings.begin(), steamCatalog.staticSettings.end(),
+        [](const auto& entry) { return entry.focusId == "general.steamRunningStatus" && entry.visible; }),
+        "Steam presence search does not depend on advanced-feature unlock visibility");
     Check(find("dock.mergedIconScale") == catalog.staticSettings.end(),
         "search does not navigate to hidden merged bar controls when no bar is merged");
     SettingsSearchIndexInput mergedCatalog;

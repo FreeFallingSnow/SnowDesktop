@@ -325,6 +325,13 @@ std::string ReadSteamActiveUserAccountId()
         ? std::to_string(*activeUser) : std::string{};
 }
 
+std::string ReadSteamActiveUserSteamId()
+{
+    const auto account = ReadSteamActiveUserAccountId();
+    return account.empty() ? std::string{} :
+        std::to_string(76561197960265728ull + std::stoull(account));
+}
+
 namespace
 {
 struct LibraryDiscovery

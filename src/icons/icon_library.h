@@ -75,6 +75,8 @@ struct IconPackSubscriptions
     std::string account;
     std::set<std::string> subscribed, deleted;
     std::vector<IconPackDownload> downloads;
+    // Steam local caches have no verified online author identity.
+    bool localCache = false;
 };
 using IconLibraryAction = std::function<IconLibrarySnapshot(IconLibraryRequest)>;
 

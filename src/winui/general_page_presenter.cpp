@@ -185,6 +185,9 @@ struct GeneralPagePresenter::Impl
     SettingsCard desktopPassthroughCard;
 
     muxc::ToggleSwitch autoStartToggle{nullptr};
+    muxc::ToggleSwitch steamPresenceToggle{nullptr};
+    SettingRow steamPresenceRow;
+    winrt::event_token steamPresenceToken{};
     muxc::StackPanel advancedFeatureControls{nullptr};
     muxc::Expander advancedFeatureExpander{nullptr};
     muxc::TextBlock advancedFeatureStatus{nullptr};
@@ -312,6 +315,11 @@ struct GeneralPagePresenter::Impl
         autoStartRow.Initialize(autoStartToggle);
         autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         startupCard.content.Children().Append(autoStartRow.root);
+        steamPresenceToggle = muxc::ToggleSwitch{};
+        steamPresenceRow.Initialize(steamPresenceToggle);
+        steamPresenceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        steamPresenceRow.root.Visibility(mux::Visibility::Collapsed);
+        startupCard.content.Children().Append(steamPresenceRow.root);
         startupOwnershipNotice = muxc::InfoBar{};
         startupOwnershipNotice.Severity(
             muxc::InfoBarSeverity::Informational);
@@ -739,6 +747,10 @@ struct GeneralPagePresenter::Impl
                 const bool enabled = autoStartToggle.IsOn();
                 actions.setAutoStart(generation, enabled);
             });
+        steamPresenceToken = steamPresenceToggle.Toggled([this](const auto&, const auto&) {
+            const bool enabled = steamPresenceToggle.IsOn();
+            CommitGeneral([enabled](GeneralSettings& settings) { settings.steamShowRunningStatus = enabled; });
+        });
         const auto registerClick = [this](const auto&, const auto&) {
                 if (closed || !active)
                     return;
@@ -941,6 +953,7 @@ struct GeneralPagePresenter::Impl
     void PatchGeneral(const GeneralSettings& settings)
     {
         autoStartToggle.IsOn(settings.autoStartEnabled);
+        steamPresenceToggle.IsOn(settings.steamShowRunningStatus);
         softwareDesktopToggle.IsOn(settings.softwareDesktopEnabled);
         softwareDesktopHotkeyToggle.IsOn(settings.softwareDesktopHotkeyEnabled);
         softwareDesktopHotkey.SetValue(Chord(settings.softwareDesktopHotkeyModifiers,
@@ -1155,6 +1168,8 @@ struct GeneralPagePresenter::Impl
             "settings.desktop.passthrough");
 
         autoStartRow.SetText(L("app.settings.auto_start"));
+        steamPresenceRow.SetText(L("settings.general.steamRunningStatus"));
+        muxa::AutomationProperties::SetName(steamPresenceToggle, L("settings.general.steamRunningStatus"));
         advancedFeatureRow.SetText(L("settings.general.advancedFeatures"));
         muxa::AutomationProperties::SetName(advancedFeatureExpander,
             L("settings.general.advancedFeatures"));
@@ -1333,6 +1348,7 @@ struct GeneralPagePresenter::Impl
         GeneralAdvancedFeatureStatus status;
         if (actions.queryAdvancedFeatureStatus)
             status = actions.queryAdvancedFeatureStatus();
+        steamPresenceRow.root.Visibility(status.bridgeAvailable ? mux::Visibility::Visible : mux::Visibility::Collapsed);
 
         advancedFeaturesCard.root.Visibility(status.cardVisible
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
@@ -1567,6 +1583,7 @@ struct GeneralPagePresenter::Impl
             onboarding->Close();
             root.ActualThemeChanged(themeToken);
             autoStartToggle.Toggled(autoStartToken);
+            steamPresenceToggle.Toggled(steamPresenceToken);
             enableWindowSupport.Click(enableWindowSupportToken);
             disableWindowSupport.Click(disableWindowSupportToken);
             registerAdvancedFeaturesButton.Click(
@@ -1677,6 +1694,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
 
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
+    registerAliases(impl_->steamPresenceToggle, {"general.steamRunningStatus"});
     registerAliases(impl_->windowSupportExpander, {"general.windowSupport"});
     registerAliases(impl_->advancedFeatureExpander,
         {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});

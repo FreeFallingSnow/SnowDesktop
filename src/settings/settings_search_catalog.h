@@ -166,6 +166,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.auto_start",
         "settings.general.startup.description"},
     {SettingsPage::General, "general.windowSupport", "settings.general.windowSupport.title", "settings.general.windowSupport.disabled"},
+    {SettingsPage::General, "general.steamRunningStatus", "settings.general.steamRunningStatus", ""},
     {SettingsPage::General, "general.advancedFeatures",
         "settings.general.advancedFeatures",
         "settings.general.advancedFeatures.description"},
@@ -710,7 +711,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
 inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
     const std::function<std::wstring(std::string_view)>& L,
     bool advancedFeaturesVisible, bool supportsQuickSettings,
-    int contextMenuStyle = 0, bool mergedBarVisible = false)
+    int contextMenuStyle = 0, bool mergedBarVisible = false, bool steamBridgeAvailable = false)
 {
             const auto pageContext = [&L](SettingsPage page) {
                 const auto title = L(SettingsPageTitleKey(page));
@@ -800,6 +801,7 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                         ? input.developerToolsVisible
                         : input.debugVisible);
                 if (descriptor.focusId == "general.advancedFeatures" && !advancedFeaturesVisible) descriptor.visible = false;
+                if (descriptor.focusId == "general.steamRunningStatus" && !steamBridgeAvailable) descriptor.visible = false;
                 if (!descriptor.label.empty())
                     input.staticSettings.push_back(std::move(descriptor));
             }

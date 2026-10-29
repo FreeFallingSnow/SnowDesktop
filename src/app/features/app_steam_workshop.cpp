@@ -102,6 +102,13 @@ bool DesktopApp::OpenSteamWorkshop()
         web.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
 }
 
+void DesktopApp::UpdateSteamPresence()
+{
+    if (steamPresenceService_)
+        steamPresenceService_->SetEnabled(generalSettings_.steamShowRunningStatus &&
+            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable);
+}
+
 void DesktopApp::StartSteamWorkshopWatcher()
 {
     if (steamWorkshopWatcherActive_.load()) return;

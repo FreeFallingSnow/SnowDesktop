@@ -448,6 +448,7 @@ void TestCodec()
     settings.revision = UINT64_MAX;
     settings.externalReplacementPending = true;
     settings.values.general.animationMode = 1;
+    settings.values.general.steamShowRunningStatus = true;
     settings.values.general.popupAnimationEffect = 1;
     settings.values.general.animationSpeed = 5;
     settings.values.general.animationFrameLimit = 120;
@@ -625,6 +626,7 @@ void TestCodec()
     Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
         restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
         "independent surface modes and custom gradients reach the settings process intact");
+    Check(restored.values.general.steamShowRunningStatus, "settings IPC preserves the explicit Steam presence choice");
     Check(restored.values.general.animationMode == 1 && restored.values.general.popupAnimationEffect == 1 &&
               restored.values.general.animationSpeed == 5 && restored.values.general.animationFrameLimit == 120 &&
               !restored.values.general.animationEnergySaver && restored.values.general.animationOnBattery,
