@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shobjidl.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 #include <d3d11.h>
 #include <dxgi.h>
@@ -21,6 +22,7 @@
 #include "manager_localization.h"
 #include "manager_publish_task.h"
 #include "manager_prepared_preview.h"
+#include "manager_package_export.h"
 #include "manager_workspace_state.h"
 #include "manager_workshop_item.h"
 #include "package_tool.h"
@@ -199,18 +201,18 @@ float BeginSettingRow(const char* label, float controlWidth)
     const float controlX = std::max(rowStart,
         rowRight - std::max(1.0f, controlWidth));
     ImGui::AlignTextToFramePadding();
+    ImGui::PushTextWrapPos(std::max(rowStart + 1.0f,
+        controlX - ImGui::GetStyle().ItemSpacing.x));
     ImGui::TextWrapped("%s", label);
-    if (!label[0] || ImGui::CalcTextSize(label).x +
-            ImGui::GetStyle().ItemSpacing.x + controlWidth <=
-            rowRight - rowStart)
-        ImGui::SameLine(controlX);
+    ImGui::PopTextWrapPos();
+    ImGui::SameLine(controlX);
     return controlX;
 }
 
 float SettingControlWidth()
 {
     return std::min(kSettingControlWidthDip * gDpiScale,
-        ImGui::GetContentRegionAvail().x);
+        ImGui::GetContentRegionAvail().x * 0.68f);
 }
 
 float ButtonWidth(const char* label)
@@ -336,6 +338,31 @@ void OpenDirectory(const std::filesystem::path& path)
 {
     ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr,
         SW_SHOWNORMAL);
+}
+
+bool OpenFileLocation(const std::filesystem::path& path)
+{
+    PIDLIST_ABSOLUTE item = nullptr;
+    if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &item, 0, nullptr)))
+    {
+        PIDLIST_ABSOLUTE parent = ILCloneFull(item);
+        if (parent && ILRemoveLastID(parent))
+        {
+            PCUITEMID_CHILD children[] = { ILFindLastID(item) };
+            const HRESULT result = SHOpenFolderAndSelectItems(parent, 1, children, 0);
+            ILFree(parent);
+            CoTaskMemFree(item);
+            if (SUCCEEDED(result)) return true;
+        }
+        else
+        {
+            ILFree(parent);
+            CoTaskMemFree(item);
+        }
+    }
+    const HINSTANCE result = ShellExecuteW(nullptr, L"open", path.parent_path().c_str(),
+        nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
 std::optional<std::filesystem::path> PickPath(HWND owner, bool folder)
@@ -686,7 +713,7 @@ public:
             std::lock_guard lock(mutex_);
             for (auto it = feedback_.begin(); it != feedback_.end();)
             {
-                if (it->second.success)
+                if (it->second.success && it->second.expires != std::chrono::steady_clock::time_point::max())
                 {
                     RequestManagerFrame();
                     if (std::chrono::steady_clock::now() >= it->second.expires)
@@ -754,9 +781,11 @@ private:
         bool success = false;
         std::string text;
         std::chrono::steady_clock::time_point expires{};
+        std::filesystem::path outputFile;
     };
 
-    void SetMessageUnlocked(bool success, std::string value)
+    void SetMessageUnlocked(bool success, std::string value,
+        std::filesystem::path outputFile = {}, bool retain = false)
     {
         WorkTarget target;
         if (std::this_thread::get_id() == worker_.get_id())
@@ -772,8 +801,8 @@ private:
         // Publication results already have a persistent task view.
         if (target.kind == WorkKind::Publish && success) return;
         feedback_[{target.page, target.localId}] = {success, std::move(value),
-            success ? std::chrono::steady_clock::now() + std::chrono::seconds(5) :
-                std::chrono::steady_clock::time_point::max()};
+            success && outputFile.empty() && !retain ? std::chrono::steady_clock::now() + std::chrono::seconds(5) :
+                std::chrono::steady_clock::time_point::max(), std::move(outputFile)};
         RequestManagerFrame();
     }
 
@@ -1331,11 +1360,38 @@ private:
             { feedback_.erase(found); return; }
             ImGui::Spacing();
             ImGui::PushID(found->first.second.c_str());
-            ImGui::PushStyleColor(ImGuiCol_Text, found->second.success ?
-                ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
-            ImGui::TextWrapped("%s", found->second.text.c_str());
-            ImGui::PopStyleColor();
-            if (ImGui::SmallButton("X##dismiss-feedback")) feedback_.erase(found);
+            const auto outputFile = found->second.outputFile;
+            const char* openLabel = T("打开所在位置", "Open file location");
+            const float actionsWidth = ButtonWidth("X") + (outputFile.empty() ? 0.0f :
+                ButtonWidth(openLabel) + ImGui::GetStyle().ItemSpacing.x);
+            bool dismiss = false;
+            bool open = false;
+            if (ImGui::BeginTable("operation-feedback", 2, ImGuiTableFlags_SizingFixedFit |
+                    ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
+            {
+                ImGui::TableSetupColumn("message", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("actions", ImGuiTableColumnFlags_WidthFixed, actionsWidth);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                ImGui::PushStyleColor(ImGuiCol_Text, found->second.success ?
+                    ImVec4(0.18f, 0.58f, 0.32f, 1) : ImVec4(0.78f, 0.20f, 0.18f, 1));
+                ImGui::TextWrapped("%s", found->second.text.c_str());
+                ImGui::PopStyleColor();
+                ImGui::TableSetColumnIndex(1);
+                if (!outputFile.empty())
+                {
+                    open = BlueButton(openLabel);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",
+                        WideToUtf8(outputFile.wstring()).c_str());
+                    ImGui::SameLine();
+                }
+                dismiss = BlueButton("X##dismiss-feedback");
+                ImGui::EndTable();
+            }
+            if (dismiss) feedback_.erase(found);
+            else if (open && !OpenFileLocation(outputFile))
+                SetMessageUnlocked(false, T("无法打开所在位置。", "Could not open the file location."), outputFile);
             ImGui::PopID();
         };
         render({activePage_, {}});
@@ -1461,6 +1517,7 @@ private:
             ContinueButtonRow(pack);
             if (SecondaryButton(pack)) StartInspect(project.localId, true);
             ImGui::EndDisabled();
+            RenderOperationFeedbackUnlocked();
         };
         const float previewWidth = 220.0f * gDpiScale;
         const bool columns = !project.primaryPreview.empty() &&
@@ -1562,7 +1619,6 @@ private:
             ImGui::BeginChild("overview-body", ImVec2(0, 0));
             ImGui::Spacing();
             RenderProjectOverviewUnlocked(project);
-            RenderOperationFeedbackUnlocked();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -1571,11 +1627,8 @@ private:
             ImGui::BeginChild("publishing-body", ImVec2(0, 0));
             ImGui::BeginDisabled(busy_.load());
             ImGui::Spacing();
-            ImGui::SeparatorText(T("主预览", "Primary preview"));
-            ImGui::TextWrapped("%s", project.primaryPreview.empty() ?
-                T("未绑定", "Not bound") :
-                WideToUtf8(project.primaryPreview.wstring()).c_str());
-            RenderProjectPreviewUnlocked(project);
+            BeginSettingRow(T("主预览", "Primary preview"),
+                ButtonWidth(T("选择主预览", "Choose primary preview")));
             if (SecondaryButton(T("选择主预览", "Choose primary preview")))
             {
                 if (const auto path = PickPath(window, false))
@@ -1588,16 +1641,33 @@ private:
                         T("已保存主预览", "Primary preview saved"));
                 }
             }
+            if (ImGui::IsItemHovered() && !project.primaryPreview.empty())
+                ImGui::SetTooltip("%s", WideToUtf8(project.primaryPreview.wstring()).c_str());
+            RenderProjectPreviewUnlocked(project);
             std::array<char, 1024> tags{};
             std::copy_n(tagsBuffer_.c_str(),
                 std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
-            BeginSettingRow(T("标签（逗号分隔）", "Tags (comma-separated)"),
-                SettingControlWidth());
-            ImGui::SetNextItemWidth(SettingControlWidth());
-            if (ImGui::InputText("##project-tags", tags.data(), tags.size()))
-                draft.EditTags(tags.data());
-            BeginSettingRow("", ButtonWidth(T("保存标签", "Save tags")));
-            if (SecondaryButton(T("保存标签", "Save tags")))
+            bool saveTags = false;
+            if (ImGui::BeginTable("tags-row", 3, ImGuiTableFlags_SizingFixedFit |
+                    ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
+            {
+                ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("input", ImGuiTableColumnFlags_WidthFixed,
+                    std::min(SettingControlWidth(), ImGui::GetContentRegionAvail().x * 0.38f));
+                ImGui::TableSetupColumn("save", ImGuiTableColumnFlags_WidthFixed,
+                    ButtonWidth(T("保存标签", "Save tags")));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextWrapped("%s", T("标签（逗号分隔）", "Tags (comma-separated)"));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::InputText("##project-tags", tags.data(), tags.size())) draft.EditTags(tags.data());
+                ImGui::TableSetColumnIndex(2);
+                saveTags = SecondaryButton(T("保存标签", "Save tags"));
+                ImGui::EndTable();
+            }
+            if (saveTags)
             {
                 InvalidatePreparedPublishUnlocked();
                 project.tags = SplitTags(tagsBuffer_);
@@ -1607,19 +1677,10 @@ private:
             }
             if (creating)
             {
-                ImGui::TextWrapped("%s", T(
-                    "新项目默认公开。关闭“公开发布”可创建私有项目。",
-                    "New items are public by default. Turn off Publish publicly to create a private item."));
                 BeginSettingRow(T("公开发布", "Publish publicly"), ImGui::GetFrameHeight());
                 bool value = publishPublic_;
                 if (ImGui::Checkbox("##publish-publicly", &value))
                 { draft.SetPublishPublic(value); InvalidatePreparedPublishUnlocked(); }
-            }
-            else
-            {
-                ImGui::TextWrapped("%s", T(
-                    "更新默认保留网页端标题和说明。开启包内文案复用后，会同步组件包中 Steam 支持的全部本地化。",
-                    "Updates preserve web-managed titles and descriptions by default. Enable package reuse to synchronize every supported localization from the component package."));
             }
             BeginSettingRow(T(
                 "复用组件包内的标题和说明",
@@ -1659,9 +1720,28 @@ private:
                     localizationPreviewLoading_ = true;
                     StartLocalizationPreview(project.localId);
                 }
-                ImGui::BeginDisabled(busy_.load());
-                if (SecondaryButton(T(
-                        "刷新文案预览", "Refresh text preview")))
+                bool previewOpen = false;
+                bool refreshPreview = false;
+                const std::string previewLabel = T(
+                    "多语言文案预览（%zu 种 Steam 语言）",
+                    "Localized text preview (%zu Steam languages)", localizationPreview_.size());
+                if (ImGui::BeginTable("localization-preview-heading", 2, ImGuiTableFlags_SizingFixedFit |
+                        ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
+                {
+                    ImGui::TableSetupColumn("heading", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("refresh", ImGuiTableColumnFlags_WidthFixed,
+                        ButtonWidth(T("刷新文案预览", "Refresh text preview")));
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    previewOpen = ImGui::CollapsingHeader((previewLabel + "###localization-preview").c_str());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", previewLabel.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::BeginDisabled(busy_.load());
+                    refreshPreview = SecondaryButton(T("刷新文案预览", "Refresh text preview"));
+                    ImGui::EndDisabled();
+                    ImGui::EndTable();
+                }
+                if (refreshPreview)
                 {
                     localizationPreviewProjectId_ = project.localId;
                     localizationPreview_.clear();
@@ -1669,10 +1749,6 @@ private:
                     localizationPreviewLoading_ = true;
                     StartLocalizationPreview(project.localId);
                 }
-                ImGui::EndDisabled();
-                ImGui::TextWrapped("%s", T(
-                    "发布时会重新读取组件包内的最新文案",
-                    "The latest package text is read again when publishing"));
                 if (localizationPreviewLoading_)
                 {
                     ImGui::TextDisabled("%s", T(
@@ -1693,11 +1769,7 @@ private:
                 }
                 else
                 {
-                    const std::string previewLabel = T(
-                        "多语言文案预览（%zu 种 Steam 语言）",
-                        "Localized text preview (%zu Steam languages)",
-                        localizationPreview_.size());
-                    if (ImGui::CollapsingHeader(previewLabel.c_str()) &&
+                    if (previewOpen &&
                         ImGui::BeginTable("package-localization-preview", 3,
                             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                             ImGuiTableFlags_Resizable |
@@ -1829,13 +1901,7 @@ private:
             PreparedManagerPublish* prepared = preparedPublish_ &&
                 preparedPublish_->localId == project.localId ?
                 &*preparedPublish_ : nullptr;
-            if (!prepared)
-            {
-                ImGui::TextWrapped("%s", T(
-                    "先准备计划以校验组件并明确本次会创建项目、上传内容还是只更新资料。准备计划不会连接 Steam。",
-                    "Prepare a plan first to validate the component and see whether this run creates an item, uploads content, or only updates listing metadata. Planning does not connect to Steam."));
-            }
-            else
+            if (prepared)
             {
                 const ComponentPublishPlan& plan = prepared->plan;
                 const char* action = T("创建项目", "Create item");
@@ -1924,9 +1990,6 @@ private:
                     ImGui::TextWrapped("%s", plannedTags.empty() ?
                         T("（无标签）", "(no tags)") : plannedTags.c_str());
                 }
-                ImGui::TextWrapped("%s", T(
-                    "确认按钮只提交上面这份已打包计划；修改发布设置后必须重新准备。",
-                    "The confirmation button submits only this prepared package plan; changing publishing settings requires a new plan."));
             }
             const bool hasPreparedPlan = prepared != nullptr;
             const ComponentPublishAction preparedAction = hasPreparedPlan ?
@@ -1993,8 +2056,13 @@ private:
                 SetMessage(false, error);
                 return;
             }
-            if (pack) success = T("打包完成：%s", "Package complete: %s",
-                artifact.sha256.c_str());
+            std::filesystem::path exported;
+            if (pack)
+            {
+                if (!ExportManagerPackage(artifact, managerRoot_ / L"exports", exported, error))
+                { SetMessage(false, error); return; }
+                success = T("打包完成：%s", "Package complete: %s", inspection.version.c_str());
+            }
             std::lock_guard lock(mutex_);
             if (auto* project = FindProjectUnlocked(localId))
             {
@@ -2002,8 +2070,8 @@ private:
                 project->packageId = inspection.packageId;
                 if (project->primaryPreview.empty())
                     project->primaryPreview = inspection.preview;
-                if (!store_.Save(error)) SetMessageUnlocked(false, error);
-                else SetMessageUnlocked(true, std::move(success));
+                if (!store_.Save(error)) SetMessageUnlocked(false, error, exported);
+                else SetMessageUnlocked(true, std::move(success), exported, true);
             }
         });
     }

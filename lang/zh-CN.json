@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "可见性",
     "workshop_manager.visibility_public": "公开",
     "workshop_manager.visibility_private": "私有",
-    "workshop_manager.creation_help": "新项目默认公开。关闭“公开发布”可创建私有项目。",
     "workshop_manager.package_localization": "复用组件包内的标题和说明",
     "workshop_manager.refresh_text_preview": "刷新文案预览",
-    "workshop_manager.latest_package_text": "发布时会重新读取组件包内的最新文案",
     "workshop_manager.loading_localized_text": "正在读取多语言文案…",
     "workshop_manager.text_preview_failed": "文案预览失败",
     "workshop_manager.no_publishable_localized_text": "组件包没有可发布到 Steam 的多语言文案",
@@ -1054,7 +1052,6 @@
     "workshop_manager.localization_failed": "Steam 本地化 %s 提交失败：%s",
     "workshop_manager.initial_title": "初始标题",
     "workshop_manager.initial_description": "初始说明",
-    "workshop_manager.update_help": "更新默认保留网页端标题和说明。开启包内文案复用后，会同步组件包中 Steam 支持的全部本地化。",
     "workshop_manager.update_preview": "同时更新主预览",
     "workshop_manager.update_tags": "同时更新标签",
     "workshop_manager.submit_locked": "Steam 正在提交，请保持此窗口打开，可以最小化。",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "打开 Steam 项目管理页",
   "workshop_manager.local_workspace": "本地项目工作区",
   "workshop_manager.local_draft": "本地草稿 · 尚未创建 Workshop 项目",
-  "workshop_manager.plan_help": "先准备计划以校验组件并明确本次会创建项目、上传内容还是只更新资料。准备计划不会连接 Steam。",
   "workshop_manager.update_content": "更新组件内容",
   "workshop_manager.update_metadata": "仅更新资料",
   "workshop_manager.plan_action": "操作",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "提交本地标签",
   "workshop_manager.preserve_tags": "保留 Steam 当前标签",
   "workshop_manager.no_tags": "（无标签）",
-  "workshop_manager.plan_confirm_help": "确认按钮只提交上面这份已打包计划；修改发布设置后必须重新准备。",
   "workshop_manager.prepare_again": "重新准备计划",
   "workshop_manager.prepare_plan": "准备发布计划",
   "workshop_manager.confirm_content": "确认更新内容",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "图标包在 SnowDesktop 的图标库中管理。",
   "workshop_manager.binding_other_local": "此项目已绑定到另一个本地组件。",
   "workshop_manager.binding_owner_only": "只能绑定当前 Steam 账号拥有的项目。",
-  "workshop_manager.cancel": "取消"
+  "workshop_manager.cancel": "取消",
+  "workshop_manager.open_file_location": "打开文件所在位置",
+  "workshop_manager.open_file_location_failed": "无法打开所在位置。"
 }

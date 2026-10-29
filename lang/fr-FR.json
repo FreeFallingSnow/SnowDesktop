@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "Visibilité",
     "workshop_manager.visibility_public": "Public",
     "workshop_manager.visibility_private": "Privé",
-    "workshop_manager.creation_help": "Les nouveaux éléments sont publics par défaut. Désactivez « Publier publiquement » pour créer un élément privé.",
   "workshop_manager.package_localization": "Réutiliser les titres et descriptions du paquet de composant",
   "workshop_manager.refresh_text_preview": "Actualiser l’aperçu des textes",
-  "workshop_manager.latest_package_text": "Les derniers textes du paquet sont relus lors de la publication",
   "workshop_manager.loading_localized_text": "Chargement des textes localisés…",
   "workshop_manager.text_preview_failed": "Échec de l’aperçu des textes",
   "workshop_manager.no_publishable_localized_text": "Le paquet de composant ne contient aucun texte localisé publiable sur Steam",
@@ -1054,7 +1052,6 @@
   "workshop_manager.localization_failed": "Échec de la localisation Workshop %s : %s",
   "workshop_manager.initial_title": "Titre initial",
   "workshop_manager.initial_description": "Description initiale",
-  "workshop_manager.update_help": "Les mises à jour conservent par défaut les titres et descriptions gérés sur le Web. Activez la réutilisation du paquet pour synchroniser toutes les localisations prises en charge depuis le paquet de composant.",
   "workshop_manager.update_preview": "Mettre également à jour l'aperçu principal",
   "workshop_manager.update_tags": "Mettre également à jour les balises",
   "workshop_manager.submit_locked": "Steam transmet les données. Gardez cette fenêtre ouverte ; vous pouvez la réduire.",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "Gérer l’élément Steam",
   "workshop_manager.local_workspace": "Espace de travail du projet local",
   "workshop_manager.local_draft": "Brouillon local · aucun élément Workshop créé",
-  "workshop_manager.plan_help": "Préparez d’abord un plan pour valider le composant et voir si cette opération crée un élément, envoie du contenu ou met uniquement à jour les informations de la fiche. La préparation du plan ne se connecte pas à Steam.",
   "workshop_manager.update_content": "Mettre à jour le contenu du composant",
   "workshop_manager.update_metadata": "Mettre à jour uniquement les informations de la fiche",
   "workshop_manager.plan_action": "Action",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "Envoyer les étiquettes locales",
   "workshop_manager.preserve_tags": "Conserver les étiquettes Steam",
   "workshop_manager.no_tags": "(aucune étiquette)",
-  "workshop_manager.plan_confirm_help": "Le bouton de confirmation envoie uniquement ce plan de paquet préparé. Toute modification des paramètres de publication nécessite de préparer un nouveau plan.",
   "workshop_manager.prepare_again": "Préparer à nouveau",
   "workshop_manager.prepare_plan": "Préparer le plan de publication",
   "workshop_manager.confirm_content": "Confirmer la mise à jour du contenu",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "Les packs d’icônes sont gérés dans la bibliothèque d’icônes de SnowDesktop.",
   "workshop_manager.binding_other_local": "Cet élément est déjà associé à un autre composant local.",
   "workshop_manager.binding_owner_only": "Seuls les éléments appartenant au compte Steam actuel peuvent être associés.",
-  "workshop_manager.cancel": "Annuler"
+  "workshop_manager.cancel": "Annuler",
+  "workshop_manager.open_file_location": "Ouvrir l’emplacement du fichier",
+  "workshop_manager.open_file_location_failed": "Impossible d’ouvrir l’emplacement du fichier."
 }

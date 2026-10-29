@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "Visibility",
     "workshop_manager.visibility_public": "Public",
     "workshop_manager.visibility_private": "Private",
-    "workshop_manager.creation_help": "New items are public by default. Turn off Publish publicly to create a private item.",
     "workshop_manager.package_localization": "Reuse component package titles and descriptions",
     "workshop_manager.refresh_text_preview": "Refresh text preview",
-    "workshop_manager.latest_package_text": "The latest package text is read again when publishing",
     "workshop_manager.loading_localized_text": "Loading localized text…",
     "workshop_manager.text_preview_failed": "Text preview failed",
     "workshop_manager.no_publishable_localized_text": "The component package has no localized text publishable to Steam",
@@ -1054,7 +1052,6 @@
     "workshop_manager.localization_failed": "Workshop localization %s failed: %s",
     "workshop_manager.initial_title": "Initial title",
     "workshop_manager.initial_description": "Initial description",
-    "workshop_manager.update_help": "Updates preserve web-managed titles and descriptions by default. Enable package reuse to synchronize every supported localization from the component package.",
     "workshop_manager.update_preview": "Also update primary preview",
     "workshop_manager.update_tags": "Also update tags",
     "workshop_manager.submit_locked": "Steam is submitting. Keep this window open; you can minimize it.",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "Open Steam item controls",
   "workshop_manager.local_workspace": "Local project workspace",
   "workshop_manager.local_draft": "Local draft · no Workshop item yet",
-  "workshop_manager.plan_help": "Prepare a plan first to validate the component and see whether this run creates an item, uploads content, or only updates listing metadata. Planning does not connect to Steam.",
   "workshop_manager.update_content": "Update component content",
   "workshop_manager.update_metadata": "Update listing metadata only",
   "workshop_manager.plan_action": "Action",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "Submit local tags",
   "workshop_manager.preserve_tags": "Preserve Steam tags",
   "workshop_manager.no_tags": "(no tags)",
-  "workshop_manager.plan_confirm_help": "The confirmation button submits only this prepared package plan; changing publishing settings requires a new plan.",
   "workshop_manager.prepare_again": "Prepare again",
   "workshop_manager.prepare_plan": "Prepare publish plan",
   "workshop_manager.confirm_content": "Confirm content update",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "Icon packs are managed in SnowDesktop's Icon Library.",
   "workshop_manager.binding_other_local": "This item is already bound to another local component.",
   "workshop_manager.binding_owner_only": "Only items owned by the current Steam account can be bound.",
-  "workshop_manager.cancel": "Cancel"
+  "workshop_manager.cancel": "Cancel",
+  "workshop_manager.open_file_location": "Open file location",
+  "workshop_manager.open_file_location_failed": "Could not open the file location."
 }

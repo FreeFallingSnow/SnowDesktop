@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "公開範囲",
     "workshop_manager.visibility_public": "公開",
     "workshop_manager.visibility_private": "非公開",
-    "workshop_manager.creation_help": "新しいアイテムは既定で公開されます。「公開する」をオフにすると非公開で作成できます。",
   "workshop_manager.package_localization": "コンポーネントパッケージのタイトルと説明を再利用する",
   "workshop_manager.refresh_text_preview": "テキストプレビューを更新",
-  "workshop_manager.latest_package_text": "公開時にパッケージ内の最新テキストを再読み込みします",
   "workshop_manager.loading_localized_text": "ローカライズ済みテキストを読み込み中…",
   "workshop_manager.text_preview_failed": "テキストのプレビューに失敗しました",
   "workshop_manager.no_publishable_localized_text": "コンポーネントパッケージに Steam へ公開可能なローカライズ済みテキストがありません",
@@ -1054,7 +1052,6 @@
   "workshop_manager.localization_failed": "Workshop の %s ローカライズに失敗しました: %s",
   "workshop_manager.initial_title": "初期タイトル",
   "workshop_manager.initial_description": "初期説明",
-  "workshop_manager.update_help": "更新時は、Web で管理されているタイトルと説明が既定で保持されます。パッケージの再利用を有効にすると、コンポーネントパッケージ内の Steam 対応ローカライズがすべて同期されます。",
   "workshop_manager.update_preview": "プライマリ プレビューも更新します",
   "workshop_manager.update_tags": "タグも更新します",
   "workshop_manager.submit_locked": "Steam が送信中です。このウィンドウを開いたままにしてください。最小化は可能です。",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "Steam のアイテム管理を開く",
   "workshop_manager.local_workspace": "ローカルプロジェクトのワークスペース",
   "workshop_manager.local_draft": "ローカル下書き · Workshop アイテムは未作成",
-  "workshop_manager.plan_help": "まず計画を準備してコンポーネントを検証し、今回の操作がアイテムの作成、コンテンツのアップロード、掲載情報のみの更新のどれに該当するかを確認してください。計画の準備では Steam に接続しません。",
   "workshop_manager.update_content": "コンポーネントの内容を更新",
   "workshop_manager.update_metadata": "掲載情報のみを更新",
   "workshop_manager.plan_action": "操作",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "ローカルのタグを送信",
   "workshop_manager.preserve_tags": "Steam のタグを保持",
   "workshop_manager.no_tags": "（タグなし）",
-  "workshop_manager.plan_confirm_help": "確認ボタンで送信するのは、この準備済みのパッケージ計画のみです。公開設定を変更した場合は、計画を再度準備する必要があります。",
   "workshop_manager.prepare_again": "再度準備",
   "workshop_manager.prepare_plan": "公開計画を準備",
   "workshop_manager.confirm_content": "コンテンツの更新を確定",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "アイコンパックは SnowDesktop のアイコンライブラリで管理します。",
   "workshop_manager.binding_other_local": "このアイテムは別のローカルコンポーネントに紐付け済みです。",
   "workshop_manager.binding_owner_only": "現在の Steam アカウントが所有するアイテムのみ紐付けできます。",
-  "workshop_manager.cancel": "キャンセル"
+  "workshop_manager.cancel": "キャンセル",
+  "workshop_manager.open_file_location": "ファイルの場所を開く",
+  "workshop_manager.open_file_location_failed": "ファイルの場所を開けませんでした。"
 }

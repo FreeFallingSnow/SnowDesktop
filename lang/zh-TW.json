@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "可見性",
     "workshop_manager.visibility_public": "公開",
     "workshop_manager.visibility_private": "私人",
-    "workshop_manager.creation_help": "新項目預設公開。關閉「公開發佈」可建立私人項目。",
   "workshop_manager.package_localization": "沿用元件套件內的標題與說明",
   "workshop_manager.refresh_text_preview": "重新整理文案預覽",
-  "workshop_manager.latest_package_text": "發布時會重新讀取元件套件內的最新文案",
   "workshop_manager.loading_localized_text": "正在讀取多語言文案…",
   "workshop_manager.text_preview_failed": "文案預覽失敗",
   "workshop_manager.no_publishable_localized_text": "元件套件沒有可發布到 Steam 的多語言文案",
@@ -1054,7 +1052,6 @@
   "workshop_manager.localization_failed": "Steam 本地化 %s 提交失敗：%s",
   "workshop_manager.initial_title": "初始標題",
   "workshop_manager.initial_description": "初始說明",
-  "workshop_manager.update_help": "更新預設保留網頁端的標題與說明。啟用套件文案沿用後，會同步元件套件中 Steam 支援的所有本地化內容。",
   "workshop_manager.update_preview": "同時更新主預覽",
   "workshop_manager.update_tags": "同時更新標籤",
   "workshop_manager.submit_locked": "Steam 正在提交，請保持此視窗開啟，可以最小化。",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "開啟 Steam 項目管理頁",
   "workshop_manager.local_workspace": "本機專案工作區",
   "workshop_manager.local_draft": "本機草稿 · 尚未建立 Workshop 項目",
-  "workshop_manager.plan_help": "請先準備計畫，以驗證元件並確認本次會建立項目、上傳內容或僅更新資料。準備計畫不會連線至 Steam。",
   "workshop_manager.update_content": "更新元件內容",
   "workshop_manager.update_metadata": "僅更新資料",
   "workshop_manager.plan_action": "操作",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "提交本機標籤",
   "workshop_manager.preserve_tags": "保留 Steam 目前的標籤",
   "workshop_manager.no_tags": "（無標籤）",
-  "workshop_manager.plan_confirm_help": "確認按鈕只會提交這份已打包的計畫；變更發布設定後，必須重新準備計畫。",
   "workshop_manager.prepare_again": "重新準備計畫",
   "workshop_manager.prepare_plan": "準備發布計畫",
   "workshop_manager.confirm_content": "確認更新內容",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "圖示套件可在 SnowDesktop 的圖示庫中管理。",
   "workshop_manager.binding_other_local": "此項目已繫結至另一個本機元件。",
   "workshop_manager.binding_owner_only": "只能繫結目前 Steam 帳號擁有的項目。",
-  "workshop_manager.cancel": "取消"
+  "workshop_manager.cancel": "取消",
+  "workshop_manager.open_file_location": "開啟檔案所在位置",
+  "workshop_manager.open_file_location_failed": "無法開啟所在位置。"
 }

@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "Sichtbarkeit",
     "workshop_manager.visibility_public": "Öffentlich",
     "workshop_manager.visibility_private": "Privat",
-    "workshop_manager.creation_help": "Neue Einträge sind standardmäßig öffentlich. Deaktivieren Sie „Öffentlich veröffentlichen“, um einen privaten Eintrag zu erstellen.",
   "workshop_manager.package_localization": "Titel und Beschreibungen des Komponentenpakets wiederverwenden",
   "workshop_manager.refresh_text_preview": "Textvorschau aktualisieren",
-  "workshop_manager.latest_package_text": "Beim Veröffentlichen wird der neueste Pakettext erneut eingelesen",
   "workshop_manager.loading_localized_text": "Lokalisierte Texte werden geladen…",
   "workshop_manager.text_preview_failed": "Textvorschau fehlgeschlagen",
   "workshop_manager.no_publishable_localized_text": "Das Komponentenpaket enthält keine auf Steam veröffentlichbaren lokalisierten Texte",
@@ -1054,7 +1052,6 @@
   "workshop_manager.localization_failed": "Workshop-Lokalisierung %s fehlgeschlagen: %s",
   "workshop_manager.initial_title": "Ursprünglicher Titel",
   "workshop_manager.initial_description": "Erstbeschreibung",
-  "workshop_manager.update_help": "Bei Aktualisierungen bleiben im Web verwaltete Titel und Beschreibungen standardmäßig erhalten. Aktivieren Sie die Paketwiederverwendung, um alle unterstützten Lokalisierungen aus dem Komponentenpaket zu synchronisieren.",
   "workshop_manager.update_preview": "Aktualisieren Sie auch die primäre Vorschau",
   "workshop_manager.update_tags": "Aktualisieren Sie auch Tags",
   "workshop_manager.submit_locked": "Steam übermittelt die Daten. Lassen Sie dieses Fenster geöffnet; Sie können es minimieren.",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "Steam-Eintrag verwalten",
   "workshop_manager.local_workspace": "Lokaler Projektarbeitsbereich",
   "workshop_manager.local_draft": "Lokaler Entwurf · noch kein Workshop-Eintrag",
-  "workshop_manager.plan_help": "Bereiten Sie zuerst einen Plan vor, um die Komponente zu validieren und zu prüfen, ob ein Eintrag erstellt, Inhalt hochgeladen oder nur die Eintragsdaten aktualisiert werden. Beim Planen wird keine Verbindung zu Steam hergestellt.",
   "workshop_manager.update_content": "Komponenteninhalt aktualisieren",
   "workshop_manager.update_metadata": "Nur Eintragsdaten aktualisieren",
   "workshop_manager.plan_action": "Aktion",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "Lokale Tags übermitteln",
   "workshop_manager.preserve_tags": "Steam-Tags beibehalten",
   "workshop_manager.no_tags": "(keine Tags)",
-  "workshop_manager.plan_confirm_help": "Die Bestätigung übermittelt nur diesen vorbereiteten Paketplan. Nach Änderungen an den Veröffentlichungseinstellungen muss der Plan neu vorbereitet werden.",
   "workshop_manager.prepare_again": "Erneut vorbereiten",
   "workshop_manager.prepare_plan": "Veröffentlichungsplan vorbereiten",
   "workshop_manager.confirm_content": "Inhaltsaktualisierung bestätigen",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "Symbolpakete werden in der Symbolbibliothek von SnowDesktop verwaltet.",
   "workshop_manager.binding_other_local": "Dieser Eintrag ist bereits mit einer anderen lokalen Komponente verknüpft.",
   "workshop_manager.binding_owner_only": "Es können nur Einträge verknüpft werden, die dem aktuellen Steam-Konto gehören.",
-  "workshop_manager.cancel": "Abbrechen"
+  "workshop_manager.cancel": "Abbrechen",
+  "workshop_manager.open_file_location": "Dateispeicherort öffnen",
+  "workshop_manager.open_file_location_failed": "Der Dateispeicherort konnte nicht geöffnet werden."
 }

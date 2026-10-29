@@ -6,6 +6,7 @@
 #include "steam/manager_connection_state_tests.h"
 #include "steam/manager_workshop_item_tests.h"
 #include "steam/manager_workspace_state_tests.h"
+#include "steam/manager_package_export_tests.h"
 #include "steam/manager_publish_task_tests.h"
 #include "package_tool.h"
 #include "preview_cache.h"
@@ -2263,6 +2264,8 @@ int wmain(int argc, wchar_t** argv)
     TestManagerConnectionState(Check);
     TestManagerWorkshopItem(Check);
     try { TestManagerWorkspaceState(); }
+    catch (const std::exception& error) { Check(false, error.what()); }
+    try { TestManagerPackageExport(); }
     catch (const std::exception& error) { Check(false, error.what()); }
     try { TestManagerPublishTask(); }
     catch (const std::exception& error) { Check(false, error.what()); }

@@ -1040,10 +1040,8 @@
     "workshop_manager.visibility": "Visibilidade",
     "workshop_manager.visibility_public": "Público",
     "workshop_manager.visibility_private": "Privado",
-    "workshop_manager.creation_help": "Os novos itens são públicos por padrão. Desative “Publicar publicamente” para criar um item privado.",
   "workshop_manager.package_localization": "Reutilizar títulos e descrições do pacote do componente",
   "workshop_manager.refresh_text_preview": "Atualizar prévia do texto",
-  "workshop_manager.latest_package_text": "O texto mais recente do pacote é relido ao publicar",
   "workshop_manager.loading_localized_text": "Carregando texto localizado…",
   "workshop_manager.text_preview_failed": "Falha na prévia do texto",
   "workshop_manager.no_publishable_localized_text": "O pacote do componente não contém texto localizado publicável na Steam",
@@ -1054,7 +1052,6 @@
   "workshop_manager.localization_failed": "Falha na localização da Oficina %s: %s",
   "workshop_manager.initial_title": "Título inicial",
   "workshop_manager.initial_description": "Descrição inicial",
-  "workshop_manager.update_help": "As atualizações preservam por padrão os títulos e as descrições gerenciados na Web. Ative a reutilização do pacote para sincronizar todas as localizações compatíveis do pacote do componente.",
   "workshop_manager.update_preview": "Atualizar também a visualização principal",
   "workshop_manager.update_tags": "Atualizar também as tags",
   "workshop_manager.submit_locked": "O Steam está enviando os dados. Mantenha esta janela aberta; você pode minimizá-la.",
@@ -2698,7 +2695,6 @@
   "workshop_manager.open_item_controls": "Gerenciar o item no Steam",
   "workshop_manager.local_workspace": "Área de trabalho do projeto local",
   "workshop_manager.local_draft": "Rascunho local · nenhum item da Oficina criado",
-  "workshop_manager.plan_help": "Prepare um plano primeiro para validar o widget e verificar se esta operação cria um item, envia conteúdo ou apenas atualiza os dados da página. A preparação do plano não se conecta ao Steam.",
   "workshop_manager.update_content": "Atualizar o conteúdo do widget",
   "workshop_manager.update_metadata": "Atualizar apenas os dados da página",
   "workshop_manager.plan_action": "Ação",
@@ -2716,7 +2712,6 @@
   "workshop_manager.submit_tags": "Enviar os marcadores locais",
   "workshop_manager.preserve_tags": "Manter os marcadores do Steam",
   "workshop_manager.no_tags": "(sem marcadores)",
-  "workshop_manager.plan_confirm_help": "O botão de confirmação envia apenas este plano do pacote preparado. Alterar as configurações de publicação exige preparar um novo plano.",
   "workshop_manager.prepare_again": "Preparar novamente",
   "workshop_manager.prepare_plan": "Preparar o plano de publicação",
   "workshop_manager.confirm_content": "Confirmar a atualização do conteúdo",
@@ -2748,5 +2743,7 @@
   "workshop_manager.icon_pack_managed_hint": "Os pacotes de ícones são gerenciados na Biblioteca de Ícones do SnowDesktop.",
   "workshop_manager.binding_other_local": "Este item já está vinculado a outro widget local.",
   "workshop_manager.binding_owner_only": "Só é possível vincular itens pertencentes à conta atual do Steam.",
-  "workshop_manager.cancel": "Cancelar"
+  "workshop_manager.cancel": "Cancelar",
+  "workshop_manager.open_file_location": "Abrir local do arquivo",
+  "workshop_manager.open_file_location_failed": "Não foi possível abrir o local do arquivo."
 }
