@@ -7,8 +7,7 @@ control::Value Describe()
 {
     using namespace control;
     Value scene;
-    // l10n-allow: fixed bilingual sample data for isolated render exports.
-    ParseJson(R"({"schemaVersion":1,"name":"Desktop overview","locale":"zh-CN","appearance":"glass-light","width":1920,"height":1080,"fps":30,"durationMs":8000,"clock":"2026/10/29  09:41",
+    ParseJson(/* l10n-allow: fixed locale-specific sample data for isolated render exports. */ R"({"schemaVersion":1,"name":"Desktop overview","locale":"zh-CN","appearance":"glass-light","width":1920,"height":1080,"fps":30,"durationMs":8000,"clock":"2026/10/29  09:41",
       "items":[
         {"id":"notes","title":"项目笔记","glyph":"\uf379","color":5938338,"category":"documents","dateGroup":"Today"},
         {"id":"travel","title":"旅行计划","glyph":"\uf56c","color":10057790,"category":"documents","dateGroup":"Today"},

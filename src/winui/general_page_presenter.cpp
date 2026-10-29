@@ -318,6 +318,10 @@ struct GeneralPagePresenter::Impl
         steamPresenceToggle = muxc::ToggleSwitch{};
         steamPresenceRow.Initialize(steamPresenceToggle);
         steamPresenceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        // The group pass skips collapsed rows. Initialize the shared surface
+        // before runtime bridge availability decides whether this row is shown.
+        presenter_controls::StyleSettingsSubrow(steamPresenceRow.root, false, 0.0);
+        steamPresenceRow.root.MinHeight(66.0);
         steamPresenceRow.root.Visibility(mux::Visibility::Collapsed);
         startupCard.content.Children().Append(steamPresenceRow.root);
         startupOwnershipNotice = muxc::InfoBar{};

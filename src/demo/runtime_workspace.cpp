@@ -351,24 +351,24 @@ RuntimeWorkspace PrepareRuntimeWorkspace(const std::filesystem::path& parent, st
     auto workspace = CreateWorkspace(parent, locale);
 
     const bool chinese = locale == "zh-CN";
-    const auto projects = workspace.desktop / (chinese ? L"项目资料" : L"Projects");
-    const auto photos = workspace.desktop / (chinese ? L"旅行照片" : L"Travel photos");
-    const auto archive = workspace.desktop / (chinese ? L"资料归档" : L"Archive");
+    const auto projects = workspace.desktop / (chinese ? L"项目资料" : L"Projects"); // l10n-allow: locale-selected isolated demo file name or document content.
+    const auto photos = workspace.desktop / (chinese ? L"旅行照片" : L"Travel photos"); // l10n-allow: locale-selected isolated demo file name or document content.
+    const auto archive = workspace.desktop / (chinese ? L"资料归档" : L"Archive"); // l10n-allow: locale-selected isolated demo file name or document content.
     for (const auto& path : {projects, photos, archive}) NewDirectory(path);
-    const auto note = workspace.desktop / (chinese ? L"会议笔记.txt" : L"Meeting notes.txt");
-    NewFile(note, chinese ? "\xef\xbb\xbf周五设计讨论\r\n\r\n主题：让桌面操作更清晰。\r\n待办：整理项目文件、挑选旅行照片、检查演示流程。\r\n"
+    const auto note = workspace.desktop / (chinese ? L"会议笔记.txt" : L"Meeting notes.txt"); // l10n-allow: locale-selected isolated demo file name or document content.
+    NewFile(note, chinese ? "\xef\xbb\xbf周五设计讨论\r\n\r\n主题：让桌面操作更清晰。\r\n待办：整理项目文件、挑选旅行照片、检查演示流程。\r\n" // l10n-allow: locale-selected isolated demo file name or document content.
                          : "Friday design meeting\r\n\r\nTopic: a clearer desktop workflow.\r\nTasks: organize project files, select travel photos, review the demonstration.\r\n");
-    NewFile(projects / (chinese ? L"项目说明.md" : L"Project brief.md"), chinese
-        ? "# 桌面设计项目\n\n这是隔离演示目录中的真实 Markdown 文件。\n\n- 调整集合视图\n- 查看文件详情\n- 归档完成的资料\n"
+    NewFile(projects / (chinese ? L"项目说明.md" : L"Project brief.md"), chinese // l10n-allow: locale-selected isolated demo file name or document content.
+        ? "# 桌面设计项目\n\n这是隔离演示目录中的真实 Markdown 文件。\n\n- 调整集合视图\n- 查看文件详情\n- 归档完成的资料\n" // l10n-allow: locale-selected isolated demo file name or document content.
         : "# Desktop design project\n\nThis is a real Markdown file in the isolated demonstration directory.\n\n- Change the collection view\n- Inspect file details\n- Archive completed work\n");
-    NewFile(projects / (chinese ? L"任务清单.csv" : L"Task list.csv"),
+    NewFile(projects / (chinese ? L"任务清单.csv" : L"Task list.csv"), // l10n-allow: locale-selected isolated demo file name or document content.
         "Task,Owner,Status\r\nLayout,Snow,Ready\r\nFiles,Snow,Ready\r\nDemo,Snow,In progress\r\n");
-    NewFile(archive / (chinese ? L"归档说明.txt" : L"Archive notes.txt"),
+    NewFile(archive / (chinese ? L"归档说明.txt" : L"Archive notes.txt"), // l10n-allow: locale-selected isolated demo file name or document content.
         "This folder contains demonstration files only.\r\nAll paths are local to this workspace.\r\n");
-    NewPicture(photos / (chinese ? L"山间日出.png" : L"Mountain sunrise.png"), true);
-    NewPicture(photos / (chinese ? L"湖畔清晨.png" : L"Lakeside morning.png"), false);
+    NewPicture(photos / (chinese ? L"山间日出.png" : L"Mountain sunrise.png"), true); // l10n-allow: locale-selected isolated demo file name or document content.
+    NewPicture(photos / (chinese ? L"湖畔清晨.png" : L"Lakeside morning.png"), false); // l10n-allow: locale-selected isolated demo file name or document content.
     NewPicture(workspace.assets / L"wallpaper.png", false);
-    NewShortcut(workspace.desktop / (chinese ? L"打开项目资料.lnk" : L"Open projects.lnk"), projects);
+    NewShortcut(workspace.desktop / (chinese ? L"打开项目资料.lnk" : L"Open projects.lnk"), projects); // l10n-allow: locale-selected isolated demo file name or document content.
 
     Value fixtures = Array();
     std::vector<std::filesystem::path> paths;
