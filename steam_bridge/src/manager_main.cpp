@@ -212,7 +212,7 @@ float BeginSettingRow(const char* label, float controlWidth)
 float SettingControlWidth()
 {
     return std::min(kSettingControlWidthDip * gDpiScale,
-        ImGui::GetContentRegionAvail().x * 0.68f);
+        ImGui::GetContentRegionAvail().x);
 }
 
 float ButtonWidth(const char* label)
