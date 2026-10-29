@@ -206,9 +206,10 @@ std::string Result::ToJson() const
         << ",\"transparent\":" << (request.transparent ? "true" : "false")
         << ",\"contentOnly\":" << (request.contentOnly ? "true" : "false")
         << ",\"iconPreset\":" << JsonString(request.iconPreset)
-        << ",\"iconOnly\":" << (request.iconOnly ? "true" : "false")
-        << ",\"titleBarPosition\":" << JsonString(request.titleBarOnTop.value_or(false) ? "top" : "bottom")
-        << ",\"canvasWidth\":" << request.canvasWidth
+        << ",\"iconOnly\":" << (request.iconOnly ? "true" : "false");
+    if (request.titleBarOnTop.has_value())
+        output << ",\"titleBarPosition\":" << JsonString(*request.titleBarOnTop ? "top" : "bottom");
+    output << ",\"canvasWidth\":" << request.canvasWidth
         << ",\"canvasHeight\":" << request.canvasHeight
         << ",\"padding\":" << request.padding
         << ",\"outputs\":[";
@@ -235,9 +236,11 @@ std::string Result::ToJson() const
             << ",\"componentWidth\":" << item.componentWidth
             << ",\"componentHeight\":" << item.componentHeight
             << ",\"placementX\":" << item.placementX
-            << ",\"placementY\":" << item.placementY
-            << ",\"topTitleBarSupported\":" << (item.topTitleBarSupported ? "true" : "false")
-            << ",\"usesTopTitleBar\":" << (item.usesTopTitleBar ? "true" : "false") << '}';
+            << ",\"placementY\":" << item.placementY;
+        if (request.titleBarOnTop.has_value())
+            output << ",\"topTitleBarSupported\":" << (item.topTitleBarSupported ? "true" : "false")
+                << ",\"usesTopTitleBar\":" << (item.usesTopTitleBar ? "true" : "false");
+        output << '}';
     }
     output << "]}";
     return output.str();

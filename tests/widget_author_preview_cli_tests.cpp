@@ -2552,9 +2552,27 @@ void TestNativeTitleBarPositions(const std::filesystem::path& host,
                 "top title bars change real eligible content while preserving compact and large-folder pixels");
         }
     }
-    const auto [legacyExit, legacy] = invoke(L"titlebar-legacy-theme-slots", {L"", L""}, L"collection");
-    Check(legacyExit == 0 && legacy.Find("titleBarPosition") && legacy.Find("titleBarPosition")->string == "bottom",
-        "the old sixteen-argument private form keeps its bottom-title behavior");
+    const std::vector<std::vector<std::wstring>> legacyForms{
+        {}, {L"", L""}, {L"", L"", L"none", L"0"} };
+    for (std::size_t index = 0; index < legacyForms.size(); ++index)
+    {
+        const auto name = L"titlebar-legacy-" + std::to_wstring(index);
+        const auto [legacyExit, legacy] = invoke(name, legacyForms[index], L"collection");
+        Check(legacyExit == 0 && !legacy.Find("titleBarPosition") &&
+                legacy.Find("outputs") && legacy.Find("outputs")->IsArray(),
+            "legacy fourteen/sixteen/eighteen-argument forms preserve the original result fields");
+        for (const auto& output : legacy.Find("outputs")->array)
+        {
+            Check(!output.Find("topTitleBarSupported") && !output.Find("usesTopTitleBar"),
+                "legacy native output omits private title bar metadata");
+            const auto* preset = output.Find("preset");
+            Check(preset, "legacy output preserves its preset name");
+            const auto filename = "collection-" + preset->string + ".png";
+            Check(ReadPng(directory / name / filename).pixels ==
+                    ReadPng(directory / L"titlebar-bottom" / filename).pixels,
+                "all legacy forms preserve bottom-title pixels for every collection mode");
+        }
+    }
     const auto [invalidExit, invalid] = invoke(L"titlebar-invalid", {L"", L"", L"none", L"0", L"middle"});
     Check(invalidExit == 2 && invalid.Find("stage") && invalid.Find("stage")->string == "request.title-bar" &&
             !std::filesystem::exists(directory / L"titlebar-invalid"),
