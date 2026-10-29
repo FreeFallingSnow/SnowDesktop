@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "選擇資料夾",
   "settings.debug.profile.chooseHint": "重新啟動後使用所選目錄，不搬移現有檔案。",
   "settings.debug.profile.clear": "清除偵錯資料",
-  "settings.debug.profile.clearHint": "重設偵錯設定、配置、元件及備份，保留桌面檔案與目錄選擇。",
-  "settings.debug.profile.clearConfirm": "刪除以下目錄中的偵錯應用程式資料、元件金鑰、備份及還原暫存資料？模擬桌面檔案與目錄選擇會保留。處於偵錯模式時將重新啟動。",
+  "settings.debug.profile.clearHint": "只重設所選環境的設定、版面配置、元件及備份，保留桌面檔案與目錄選擇。",
+  "settings.debug.profile.clearConfirm": "清除所選環境的應用程式資料、元件金鑰、備份與還原暫存資料？模擬桌面檔案與目錄選擇會保留。在偵錯模式中操作會重新啟動軟體。",
   "settings.debug.profile.exclusive": "請先關閉暫時初始化，再進入偵錯模式；兩種模式不能同時使用。",
   "settings.debug.profile.failed": "無法更新偵錯環境。",
     "app.startup.starting": "啟動中",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "只能繫結目前 Steam 帳號擁有的項目。",
   "workshop_manager.cancel": "取消",
   "workshop_manager.open_file_location": "開啟檔案所在位置",
-  "workshop_manager.open_file_location_failed": "無法開啟所在位置。"
+  "workshop_manager.open_file_location_failed": "無法開啟所在位置。",
+  "settings.debug.profile.environment": "測試環境",
+  "settings.debug.profile.switchHint": "每套環境分別儲存設定、版面配置、元件及備份；在偵錯模式中切換會重新啟動軟體。",
+  "settings.debug.profile.defaultName": "預設環境",
+  "settings.debug.profile.create": "新增環境",
+  "settings.debug.profile.rename": "重新命名環境",
+  "settings.debug.profile.name": "環境名稱",
+  "settings.debug.profile.nameHint": "請輸入不重複的名稱，長度為1至60個字元。新環境使用空白設定與版面配置。"
 }

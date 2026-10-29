@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "Ordner wählen",
   "settings.debug.profile.chooseHint": "Nach dem Neustart wird der gewählte Ordner verwendet. Vorhandene Dateien werden nicht verschoben.",
   "settings.debug.profile.clear": "Debug-Daten löschen",
-  "settings.debug.profile.clearHint": "Debug-Einstellungen, Layout, Komponenten und Sicherungen zurücksetzen. Desktop-Dateien und Ordnerauswahl bleiben erhalten.",
-  "settings.debug.profile.clearConfirm": "Debug-Daten, private Komponentendaten, Sicherungen und temporäre Wiederherstellungsdaten in den folgenden Ordnern löschen? Desktop-Dateien und Ordnerauswahl bleiben erhalten. Eine aktive Debug-Umgebung wird neu gestartet.",
+  "settings.debug.profile.clearHint": "Nur Einstellungen, Layouts, Widgets und Sicherungen der gewählten Umgebung zurücksetzen; Desktopdateien und Ordnerauswahl bleiben erhalten.",
+  "settings.debug.profile.clearConfirm": "App-Daten, Widget-Schlüssel, Sicherungen und zwischengespeicherte Wiederherstellungsdaten der gewählten Umgebung löschen? Simulierte Desktopdateien und Ordnerauswahl bleiben erhalten. Im Debugmodus wird die App neu gestartet.",
   "settings.debug.profile.exclusive": "Vor dem Debug-Modus die temporäre Initialisierung deaktivieren. Beide Modi können nicht gleichzeitig laufen.",
   "settings.debug.profile.failed": "Die Debug-Umgebung konnte nicht aktualisiert werden.",
     "app.startup.starting": "Wird gestartet…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "Es können nur Einträge verknüpft werden, die dem aktuellen Steam-Konto gehören.",
   "workshop_manager.cancel": "Abbrechen",
   "workshop_manager.open_file_location": "Dateispeicherort öffnen",
-  "workshop_manager.open_file_location_failed": "Der Dateispeicherort konnte nicht geöffnet werden."
+  "workshop_manager.open_file_location_failed": "Der Dateispeicherort konnte nicht geöffnet werden.",
+  "settings.debug.profile.environment": "Testumgebung",
+  "settings.debug.profile.switchHint": "Jede Umgebung speichert eigene Einstellungen, Layouts, Widgets und Sicherungen. Ein Wechsel im Debugmodus startet die App neu.",
+  "settings.debug.profile.defaultName": "Standardumgebung",
+  "settings.debug.profile.create": "Umgebung erstellen",
+  "settings.debug.profile.rename": "Umgebung umbenennen",
+  "settings.debug.profile.name": "Name der Umgebung",
+  "settings.debug.profile.nameHint": "Geben Sie einen eindeutigen Namen mit 1–60 Zeichen ein. Neue Umgebungen beginnen mit leeren Einstellungen und Layouts."
 }

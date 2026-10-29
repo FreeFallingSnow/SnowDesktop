@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "Choose folder",
   "settings.debug.profile.chooseHint": "Restart to use the selected folder. Existing files are not moved.",
   "settings.debug.profile.clear": "Clear debug data",
-  "settings.debug.profile.clearHint": "Reset debug settings, layout, components and backups. Keep desktop files and folder selection.",
-  "settings.debug.profile.clearConfirm": "Delete debug application data, private component storage, backups and restore staging in the directories below? Desktop files and folder selection are retained. The active debug environment will restart.",
+  "settings.debug.profile.clearHint": "Reset only the selected environment’s settings, layouts, widgets and backups; keep desktop files and the chosen folder.",
+  "settings.debug.profile.clearConfirm": "Clear the selected environment’s app data, widget secrets, backups and staged restore data? Simulated desktop files and the chosen folder are kept. The app restarts if debug mode is active.",
   "settings.debug.profile.exclusive": "Turn off temporary initialization before entering debug mode. These modes cannot run together.",
   "settings.debug.profile.failed": "Could not update the debug environment.",
     "app.startup.starting": "Starting…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "Only items owned by the current Steam account can be bound.",
   "workshop_manager.cancel": "Cancel",
   "workshop_manager.open_file_location": "Open file location",
-  "workshop_manager.open_file_location_failed": "Could not open the file location."
+  "workshop_manager.open_file_location_failed": "Could not open the file location.",
+  "settings.debug.profile.environment": "Test environment",
+  "settings.debug.profile.switchHint": "Each environment keeps separate settings, layouts, widgets and backups. Switching while debug mode is active restarts the app.",
+  "settings.debug.profile.defaultName": "Default environment",
+  "settings.debug.profile.create": "Create environment",
+  "settings.debug.profile.rename": "Rename environment",
+  "settings.debug.profile.name": "Environment name",
+  "settings.debug.profile.nameHint": "Enter a unique name of 1–60 characters. New environments start with empty settings and layouts."
 }

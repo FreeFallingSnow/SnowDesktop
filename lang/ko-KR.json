@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "폴더 선택",
   "settings.debug.profile.chooseHint": "다시 시작한 후 선택한 폴더를 사용합니다. 기존 파일은 이동하지 않습니다.",
   "settings.debug.profile.clear": "디버그 데이터 지우기",
-  "settings.debug.profile.clearHint": "설정, 배치, 구성 요소 및 백업을 초기화합니다. 바탕 화면 파일과 폴더 선택은 유지합니다.",
-  "settings.debug.profile.clearConfirm": "아래 폴더의 디버그 데이터, 구성 요소 비밀 정보, 백업 및 복원 임시 데이터를 삭제할까요? 바탕 화면 파일과 폴더 선택은 유지됩니다. 디버그 모드가 실행 중이면 다시 시작합니다.",
+  "settings.debug.profile.clearHint": "선택한 환경의 설정, 레이아웃, 위젯 및 백업만 초기화하고 바탕 화면 파일과 선택한 폴더는 유지합니다.",
+  "settings.debug.profile.clearConfirm": "선택한 환경의 앱 데이터, 위젯 키, 백업 및 임시 복원 데이터를 지울까요? 모의 바탕 화면 파일과 선택한 폴더는 유지됩니다. 디버그 모드가 켜져 있으면 앱이 다시 시작됩니다.",
   "settings.debug.profile.exclusive": "디버그 모드에 들어가기 전에 임시 초기화를 끄세요. 두 모드는 동시에 사용할 수 없습니다.",
   "settings.debug.profile.failed": "디버그 환경을 업데이트하지 못했습니다.",
     "app.startup.starting": "시작 중…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "현재 Steam 계정이 소유한 항목만 연결할 수 있습니다.",
   "workshop_manager.cancel": "취소",
   "workshop_manager.open_file_location": "파일 위치 열기",
-  "workshop_manager.open_file_location_failed": "파일 위치를 열 수 없습니다."
+  "workshop_manager.open_file_location_failed": "파일 위치를 열 수 없습니다.",
+  "settings.debug.profile.environment": "테스트 환경",
+  "settings.debug.profile.switchHint": "각 환경은 설정, 레이아웃, 위젯 및 백업을 따로 저장합니다. 디버그 모드에서 환경을 전환하면 앱이 다시 시작됩니다.",
+  "settings.debug.profile.defaultName": "기본 환경",
+  "settings.debug.profile.create": "환경 만들기",
+  "settings.debug.profile.rename": "환경 이름 변경",
+  "settings.debug.profile.name": "환경 이름",
+  "settings.debug.profile.nameHint": "중복되지 않는 이름을 1~60자로 입력하세요. 새 환경은 빈 설정과 레이아웃으로 시작합니다."
 }

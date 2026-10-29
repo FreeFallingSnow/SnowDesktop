@@ -378,14 +378,33 @@ void TestCodec()
     guide.debugProfileEnabled = true;
     guide.debugDataDirectory = L"D:\\data.debug\\data";
     guide.debugDesktopDirectory = L"D:\\模拟桌面";
+    guide.debugEnvironments = std::vector<snowdesktop::winui::DebugEnvironmentSummary>{
+        {L"default", L""}, {L"env-capture", L"截图环境"}};
+    guide.debugEnvironmentId = L"env-capture";
+    guide.debugEnvironmentName = L"截图环境";
     const auto restoredGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
     Check(restoredGuide.debugProfileEnabled == guide.debugProfileEnabled &&
         restoredGuide.debugDataDirectory == guide.debugDataDirectory &&
-        restoredGuide.debugDesktopDirectory == guide.debugDesktopDirectory,
-        "debug profile status crosses the process boundary without losing paths or mode");
+        restoredGuide.debugDesktopDirectory == guide.debugDesktopDirectory &&
+        restoredGuide.debugEnvironments == guide.debugEnvironments &&
+        restoredGuide.debugEnvironmentId == guide.debugEnvironmentId &&
+        restoredGuide.debugEnvironmentName == guide.debugEnvironmentName,
+        "debug environment identities, names, paths and mode survive the private process boundary");
     Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
+    for (const auto action : {snowdesktop::SettingsHostActions::Action::CreateDebugEnvironment,
+            snowdesktop::SettingsHostActions::Action::SelectDebugEnvironment,
+            snowdesktop::SettingsHostActions::Action::RenameDebugEnvironment})
+    {
+        snowdesktop::SettingsHostActions::Request environmentRequest;
+        environmentRequest.action = action;
+        environmentRequest.value = action == snowdesktop::SettingsHostActions::Action::SelectDebugEnvironment
+            ? L"env-capture" : L"Screenshot / 截图环境";
+        const auto restored = Unpack<snowdesktop::SettingsHostActions::Request>(Pack(environmentRequest));
+        Check(restored.action == action && restored.value == environmentRequest.value,
+            "named environment actions preserve identity or Unicode names across settings IPC");
+    }
     NavigationSettings navigation; navigation.lastCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
     navigation.desktopViewMode = QuickNavigationDesktopViewMode::Frequency;
     navigation.appSuggestionsEnabled = true;

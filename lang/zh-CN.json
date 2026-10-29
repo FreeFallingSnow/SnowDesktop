@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "选择文件夹",
   "settings.debug.profile.chooseHint": "重启后使用所选目录，不搬迁已有文件。",
   "settings.debug.profile.clear": "清空调试数据",
-  "settings.debug.profile.clearHint": "重置调试设置、布局、组件和备份，保留桌面文件及目录选择。",
-  "settings.debug.profile.clearConfirm": "删除以下目录中的调试应用数据、组件密钥、备份及恢复暂存数据？模拟桌面文件和目录选择会保留。当前处于调试模式时将重启。",
+  "settings.debug.profile.clearHint": "只重置所选环境的设置、布局、组件和备份，保留桌面文件及目录选择。",
+  "settings.debug.profile.clearConfirm": "清空所选环境的应用数据、组件密钥、备份及恢复暂存数据？模拟桌面文件和目录选择会保留。在调试模式中操作会重启软件。",
   "settings.debug.profile.exclusive": "请先关闭临时初始化，再进入调试模式；两种模式不能同时使用。",
   "settings.debug.profile.failed": "无法更新调试环境。",
     "app.startup.starting": "启动中",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "只能绑定当前 Steam 账号拥有的项目。",
   "workshop_manager.cancel": "取消",
   "workshop_manager.open_file_location": "打开文件所在位置",
-  "workshop_manager.open_file_location_failed": "无法打开所在位置。"
+  "workshop_manager.open_file_location_failed": "无法打开所在位置。",
+  "settings.debug.profile.environment": "测试环境",
+  "settings.debug.profile.switchHint": "每套环境分别保存设置、布局、组件和备份；在调试模式中切换会重启软件。",
+  "settings.debug.profile.defaultName": "默认环境",
+  "settings.debug.profile.create": "新建环境",
+  "settings.debug.profile.rename": "重命名环境",
+  "settings.debug.profile.name": "环境名称",
+  "settings.debug.profile.nameHint": "请输入不重复的名称，长度为1至60个字符。新环境使用空白设置和布局。"
 }

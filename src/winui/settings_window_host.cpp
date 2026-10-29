@@ -2494,6 +2494,47 @@ struct SettingsWindowHost::Impl
         homeAbout.setDebugProfileEnabled = [invokeDebugProfile](std::uint64_t generation, bool enabled) {
             invokeDebugProfile(generation, SettingsHostActions::Action::SetDebugProfileEnabled, enabled, {});
         };
+        homeAbout.selectDebugEnvironment = [invokeDebugProfile](std::uint64_t generation, std::wstring id) {
+            invokeDebugProfile(generation, SettingsHostActions::Action::SelectDebugEnvironment, false, std::move(id));
+        };
+        const auto editEnvironmentName = [weak, invokeDebugProfile](std::uint64_t generation, bool create) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->shell || !state->owner->DebugPageVisible() ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            auto& owner = *state->owner;
+            if (!owner.options.homeAboutStatus) return;
+            const auto status = owner.options.homeAboutStatus(generation, owner.controller->Snapshot()->revision);
+            const auto expectedId = status.debugEnvironmentId.value_or(L"");
+            if (!create && expectedId.empty()) return;
+            shell_impl::SettingsShellDialogRequest request;
+            request.generation = generation;
+            request.title = owner.L(create ? "settings.debug.profile.create" : "settings.debug.profile.rename");
+            request.message = owner.L("settings.debug.profile.nameHint");
+            request.primaryButtonText = request.title;
+            request.closeButtonText = owner.L("settings.dialog.cancel");
+            shell_impl::SettingsShellDialogRequest::TextInput input;
+            input.label = owner.L("settings.debug.profile.name");
+            input.value = create ? L"" : status.debugEnvironmentName.value_or(L"");
+            if (!create && input.value.empty()) input.value = owner.L("settings.debug.profile.defaultName");
+            input.completed = [weak, invokeDebugProfile, generation, create, expectedId](std::wstring name) {
+                const auto current = weak.lock();
+                if (!current || !current->alive.load() || !current->owner || !current->owner->controller ||
+                    !current->owner->DebugPageVisible() || !current->owner->controller->IsGenerationCurrent(generation)) return;
+                if (!create)
+                {
+                    if (!current->owner->options.homeAboutStatus) return;
+                    const auto latest = current->owner->options.homeAboutStatus(generation, current->owner->controller->Snapshot()->revision);
+                    if (latest.debugEnvironmentId.value_or(L"") != expectedId) return;
+                }
+                invokeDebugProfile(generation, create ? SettingsHostActions::Action::CreateDebugEnvironment
+                    : SettingsHostActions::Action::RenameDebugEnvironment, false, std::move(name));
+            };
+            request.textInput = std::move(input);
+            owner.shell->ShowConfirmation(std::move(request), [](bool) {});
+        };
+        homeAbout.createDebugEnvironment = [editEnvironmentName](std::uint64_t generation) { editEnvironmentName(generation, true); };
+        homeAbout.renameDebugEnvironment = [editEnvironmentName](std::uint64_t generation) { editEnvironmentName(generation, false); };
         homeAbout.chooseDebugDesktop = [weak, invokeDebugProfile](std::uint64_t generation) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
@@ -2512,7 +2553,9 @@ struct SettingsWindowHost::Impl
             const auto status = owner.options.homeAboutStatus(generation, owner.controller->Snapshot()->revision);
             if (!status.debugDataDirectory || status.debugDataDirectory->empty()) return;
             const auto root = std::filesystem::path(*status.debugDataDirectory).parent_path();
+            const auto environmentName = status.debugEnvironmentName.value_or(L"");
             const auto detail = owner.L("settings.debug.profile.clearConfirm") + L"\n\n" +
+                (environmentName.empty() ? owner.L("settings.debug.profile.defaultName") : environmentName) + L"\n" +
                 *status.debugDataDirectory + L"\n" + (root / L"FullBackups").wstring() +
                 L"\n" + (root / L"TempState").wstring() + L"\n" + (root / L"PrivateState").wstring();
             owner.ShowGenerationConfirmation(generation, owner.L("settings.debug.profile.clear"), detail,
@@ -2806,9 +2849,10 @@ struct SettingsWindowHost::Impl
         if (result.succeeded && request.command == ThemeLibraryCommand::Update)
         {
             auto next = current->values;
+            auto appliedReferences = result.library.references;
             std::vector<std::string> targets;
             for (const auto& changedId : result.updatedIds)
-                for (const auto& target : themes::ApplySavedUpdate(result.library, changedId, next, error))
+                for (const auto& target : themes::ApplySavedUpdate(result.library, changedId, next, error, &appliedReferences))
                     if (std::find(targets.begin(), targets.end(), target) == targets.end()) targets.push_back(target);
             bool applied = true;
             if (!targets.empty())
@@ -2854,6 +2898,15 @@ struct SettingsWindowHost::Impl
                         const auto found = library.references.find(target);
                         if (found == library.references.end() || found->second.id.empty()) continue;
                         const auto reference = found->second;
+                        if (target == "global" && std::find(result.updatedIds.begin(), result.updatedIds.end(),
+                                reference.id) == result.updatedIds.end())
+                        {
+                            const auto staged = appliedReferences.find(target);
+                            if (staged != appliedReferences.end() && !staged->second.id.empty() &&
+                                staged->second.id == reference.id)
+                                found->second = staged->second;
+                            continue;
+                        }
                         if (!themes::Select(library, target, reference.id, reference.kind, reference.scope, detail)) return false;
                     }
                     return true;

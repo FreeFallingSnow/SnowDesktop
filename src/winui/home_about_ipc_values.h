@@ -8,6 +8,10 @@
 // contains no XAML controls and does not require a running WinUI application.
 namespace snowdesktop::settings_ipc
 {
+template<> struct Fields<winui::DebugEnvironmentSummary>
+{
+    template<class Value> static auto Tie(Value& v) { return std::tie(v.id, v.name); }
+};
 template<> struct Fields<winui::HomeAboutStatusPatch>
 {
     template<class Value> static auto Tie(Value& v)
@@ -15,7 +19,8 @@ template<> struct Fields<winui::HomeAboutStatusPatch>
         return std::tie(v.generation, v.revision, v.applicationVersion, v.installedWidgetCount,
             v.packaged, v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
             v.animationDiagnosticsStatus, v.temporaryInitializationEnabled,
-            v.usageGuideExpanded, v.debugProfileEnabled, v.debugDataDirectory, v.debugDesktopDirectory);
+            v.usageGuideExpanded, v.debugProfileEnabled, v.debugDataDirectory, v.debugDesktopDirectory,
+            v.debugEnvironments, v.debugEnvironmentId, v.debugEnvironmentName);
     }
 };
 }

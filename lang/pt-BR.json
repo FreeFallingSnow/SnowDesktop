@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "Escolher pasta",
   "settings.debug.profile.chooseHint": "Usa a pasta escolhida após reiniciar, sem mover os arquivos existentes.",
   "settings.debug.profile.clear": "Limpar dados de depuração",
-  "settings.debug.profile.clearHint": "Redefine configurações, layout, componentes e backups. Mantém os arquivos da área de trabalho e a pasta escolhida.",
-  "settings.debug.profile.clearConfirm": "Excluir dados de depuração, dados privados de componentes, backups e dados temporários de restauração nas pastas abaixo? Os arquivos da área de trabalho e a pasta escolhida serão mantidos. O modo de depuração ativo será reiniciado.",
+  "settings.debug.profile.clearHint": "Redefinir apenas configurações, layouts, widgets e backups do ambiente selecionado; manter os arquivos da área de trabalho e a pasta escolhida.",
+  "settings.debug.profile.clearConfirm": "Apagar os dados do aplicativo, as chaves de widgets, os backups e os dados temporários de restauração do ambiente selecionado? Os arquivos da área de trabalho simulada e a pasta escolhida são mantidos. O aplicativo reinicia se o modo de depuração estiver ativo.",
   "settings.debug.profile.exclusive": "Desative a inicialização temporária antes de entrar no modo de depuração. Os dois modos não podem funcionar juntos.",
   "settings.debug.profile.failed": "Não foi possível atualizar o ambiente de depuração.",
     "app.startup.starting": "Iniciando…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "Só é possível vincular itens pertencentes à conta atual do Steam.",
   "workshop_manager.cancel": "Cancelar",
   "workshop_manager.open_file_location": "Abrir local do arquivo",
-  "workshop_manager.open_file_location_failed": "Não foi possível abrir o local do arquivo."
+  "workshop_manager.open_file_location_failed": "Não foi possível abrir o local do arquivo.",
+  "settings.debug.profile.environment": "Ambiente de teste",
+  "settings.debug.profile.switchHint": "Cada ambiente mantém suas próprias configurações, layouts, widgets e backups. Trocar de ambiente no modo de depuração reinicia o aplicativo.",
+  "settings.debug.profile.defaultName": "Ambiente padrão",
+  "settings.debug.profile.create": "Criar ambiente",
+  "settings.debug.profile.rename": "Renomear ambiente",
+  "settings.debug.profile.name": "Nome do ambiente",
+  "settings.debug.profile.nameHint": "Digite um nome exclusivo de 1 a 60 caracteres. Novos ambientes começam com configurações e layouts vazios."
 }

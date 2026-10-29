@@ -1517,6 +1517,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         status.backupState = SettingsBackupState::Ready; status.backupCount = 3;
         status.debugDataDirectory = L"C:\\Preview\\SnowDesktop";
         status.debugDesktopDirectory = L"C:\\Preview\\Desktop";
+        status.debugEnvironments = std::vector<DebugEnvironmentSummary>{{L"default", L""}, {L"env-preview", L"Screenshot Demo"}};
+        status.debugEnvironmentId = L"env-preview";
+        status.debugEnvironmentName = L"Screenshot Demo";
         (void)shell->ApplyHomeAboutStatusPatch(status);
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
         {

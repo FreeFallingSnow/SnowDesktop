@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -19,6 +20,13 @@ enum class SettingsBackupState : std::uint8_t
     Running,
     Succeeded,
     Failed,
+};
+
+struct DebugEnvironmentSummary
+{
+    std::wstring id;
+    std::wstring name;
+    bool operator==(const DebugEnvironmentSummary&) const = default;
 };
 
 /** Host-owned Home/About/Debug status for one matching settings session. */
@@ -41,6 +49,9 @@ struct HomeAboutStatusPatch
     std::optional<std::wstring> debugDesktopDirectory;
     std::optional<std::wstring> animationDiagnosticsStatus;
     std::optional<bool> usageGuideExpanded;
+    std::optional<std::vector<DebugEnvironmentSummary>> debugEnvironments;
+    std::optional<std::wstring> debugEnvironmentId;
+    std::optional<std::wstring> debugEnvironmentName;
 };
 
 // Shared by requested snapshots and unsolicited host publications. This

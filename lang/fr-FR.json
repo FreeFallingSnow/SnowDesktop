@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "Choisir un dossier",
   "settings.debug.profile.chooseHint": "Utilise le dossier choisi après redémarrage, sans déplacer les fichiers existants.",
   "settings.debug.profile.clear": "Effacer les données de débogage",
-  "settings.debug.profile.clearHint": "Réinitialise les paramètres, la disposition, les composants et les sauvegardes. Conserve les fichiers du bureau et le choix du dossier.",
-  "settings.debug.profile.clearConfirm": "Supprimer les données de débogage, les données privées des composants, les sauvegardes et les données temporaires de restauration dans les dossiers ci-dessous ? Les fichiers du bureau et le choix du dossier sont conservés. Le mode débogage actif redémarrera.",
+  "settings.debug.profile.clearHint": "Réinitialiser uniquement les paramètres, dispositions, widgets et sauvegardes de l’environnement sélectionné ; conserver les fichiers du bureau et le dossier choisi.",
+  "settings.debug.profile.clearConfirm": "Effacer les données de l’application, secrets des widgets, sauvegardes et données de restauration temporaires de l’environnement sélectionné ? Les fichiers du bureau simulé et le dossier choisi sont conservés. L’application redémarre si le mode débogage est actif.",
   "settings.debug.profile.exclusive": "Désactivez l’initialisation temporaire avant le mode débogage. Ces modes ne peuvent pas fonctionner ensemble.",
   "settings.debug.profile.failed": "Impossible de mettre à jour l’environnement de débogage.",
     "app.startup.starting": "Démarrage en cours…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "Seuls les éléments appartenant au compte Steam actuel peuvent être associés.",
   "workshop_manager.cancel": "Annuler",
   "workshop_manager.open_file_location": "Ouvrir l’emplacement du fichier",
-  "workshop_manager.open_file_location_failed": "Impossible d’ouvrir l’emplacement du fichier."
+  "workshop_manager.open_file_location_failed": "Impossible d’ouvrir l’emplacement du fichier.",
+  "settings.debug.profile.environment": "Environnement de test",
+  "settings.debug.profile.switchHint": "Chaque environnement conserve ses propres paramètres, dispositions, widgets et sauvegardes. Changer d’environnement en mode débogage redémarre l’application.",
+  "settings.debug.profile.defaultName": "Environnement par défaut",
+  "settings.debug.profile.create": "Créer un environnement",
+  "settings.debug.profile.rename": "Renommer l’environnement",
+  "settings.debug.profile.name": "Nom de l’environnement",
+  "settings.debug.profile.nameHint": "Saisissez un nom unique de 1 à 60 caractères. Les nouveaux environnements démarrent avec des paramètres et dispositions vierges."
 }

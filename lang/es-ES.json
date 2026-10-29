@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "Elegir carpeta",
   "settings.debug.profile.chooseHint": "Usa la carpeta elegida tras reiniciar, sin mover los archivos existentes.",
   "settings.debug.profile.clear": "Borrar datos de depuración",
-  "settings.debug.profile.clearHint": "Restablece ajustes, distribución, componentes y copias de seguridad. Conserva los archivos del escritorio y la carpeta elegida.",
-  "settings.debug.profile.clearConfirm": "¿Eliminar datos de depuración, datos privados de componentes, copias de seguridad y datos temporales de restauración en las carpetas siguientes? Se conservarán los archivos del escritorio y la carpeta elegida. Si el modo de depuración está activo, se reiniciará.",
+  "settings.debug.profile.clearHint": "Restablecer solo los ajustes, diseños, widgets y copias de seguridad del entorno seleccionado; conservar los archivos del escritorio y la carpeta elegida.",
+  "settings.debug.profile.clearConfirm": "¿Borrar los datos de la aplicación, las claves de widgets, las copias de seguridad y los datos temporales de restauración del entorno seleccionado? Se conservan los archivos del escritorio simulado y la carpeta elegida. La aplicación se reinicia si el modo de depuración está activo.",
   "settings.debug.profile.exclusive": "Desactiva la inicialización temporal antes de entrar en depuración. Los dos modos no pueden usarse a la vez.",
   "settings.debug.profile.failed": "No se pudo actualizar el entorno de depuración.",
     "app.startup.starting": "Iniciando…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "Solo se pueden vincular elementos que pertenezcan a la cuenta de Steam actual.",
   "workshop_manager.cancel": "Cancelar",
   "workshop_manager.open_file_location": "Abrir ubicación del archivo",
-  "workshop_manager.open_file_location_failed": "No se pudo abrir la ubicación del archivo."
+  "workshop_manager.open_file_location_failed": "No se pudo abrir la ubicación del archivo.",
+  "settings.debug.profile.environment": "Entorno de prueba",
+  "settings.debug.profile.switchHint": "Cada entorno guarda sus propios ajustes, diseños, widgets y copias de seguridad. Cambiar de entorno en modo de depuración reinicia la aplicación.",
+  "settings.debug.profile.defaultName": "Entorno predeterminado",
+  "settings.debug.profile.create": "Crear entorno",
+  "settings.debug.profile.rename": "Cambiar nombre del entorno",
+  "settings.debug.profile.name": "Nombre del entorno",
+  "settings.debug.profile.nameHint": "Introduce un nombre único de 1 a 60 caracteres. Los entornos nuevos comienzan con ajustes y diseños vacíos."
 }

@@ -3908,6 +3908,33 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         }
         dialog.PrimaryButtonText(request.primaryButtonText);
         dialog.CloseButtonText(request.closeButtonText);
+        muxc::TextBox nameInput{nullptr};
+        if (request.textInput)
+        {
+            muxc::StackPanel inputContent;
+            inputContent.Spacing(12);
+            muxc::TextBlock help;
+            help.Text(request.message);
+            help.TextWrapping(mux::TextWrapping::Wrap);
+            inputContent.Children().Append(help);
+            nameInput = muxc::TextBox{};
+            nameInput.Header(winrt::box_value(request.textInput->label));
+            nameInput.MaxLength(request.textInput->maxLength);
+            nameInput.Text(request.textInput->value);
+            nameInput.SelectAll();
+            muxa::AutomationProperties::SetAutomationId(nameInput, L"SettingsDialogNameInput");
+            const auto nonBlank = [](std::wstring_view text) {
+                return text.find_first_not_of(L" \t\r\n") != std::wstring_view::npos;
+            };
+            dialog.IsPrimaryButtonEnabled(nonBlank(nameInput.Text().c_str()));
+            nameInput.TextChanged([weakInput = winrt::make_weak(nameInput), weakDialog = winrt::make_weak(dialog), nonBlank](const auto&, const auto&) {
+                if (const auto input = weakInput.get())
+                    if (const auto current = weakDialog.get())
+                        current.IsPrimaryButtonEnabled(nonBlank(input.Text().c_str()));
+            });
+            inputContent.Children().Append(nameInput);
+            dialog.Content(inputContent);
+        }
         dialog.DefaultButton(
             (request.destructive || request.defaultClose) ? muxc::ContentDialogButton::Close
                                 : muxc::ContentDialogButton::Primary);
@@ -3921,6 +3948,8 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         if (!closed_ && request.generation == navigation_.Generation() &&
             completed)
         {
+            if (result == muxc::ContentDialogResult::Primary && request.textInput && request.textInput->completed)
+                request.textInput->completed(nameInput.Text().c_str());
             completed(result == muxc::ContentDialogResult::Primary);
         }
     }

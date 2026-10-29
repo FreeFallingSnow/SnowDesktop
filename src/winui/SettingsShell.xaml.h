@@ -60,6 +60,12 @@ struct SettingsShellProgress
 struct SettingsShellDialogRequest
 {
     struct PreviewImage { std::wstring title, path; };
+    struct TextInput
+    {
+        std::wstring label, value;
+        std::int32_t maxLength = 60;
+        std::function<void(std::wstring)> completed;
+    };
     std::uint64_t generation = 0;
     std::wstring title;
     std::wstring message;
@@ -69,6 +75,7 @@ struct SettingsShellDialogRequest
     bool defaultClose = false;
     std::wstring previewImagePath;
     std::vector<PreviewImage> previewImages;
+    std::optional<TextInput> textInput;
 };
 
 /**

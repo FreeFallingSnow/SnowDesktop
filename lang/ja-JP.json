@@ -104,8 +104,8 @@
   "settings.debug.profile.choose": "フォルダーを選択",
   "settings.debug.profile.chooseHint": "再起動後に選択したフォルダーを使用します。既存のファイルは移動しません。",
   "settings.debug.profile.clear": "デバッグデータを消去",
-  "settings.debug.profile.clearHint": "設定、配置、コンポーネント、バックアップをリセットします。デスクトップのファイルとフォルダー選択は保持します。",
-  "settings.debug.profile.clearConfirm": "以下のフォルダーにあるデバッグデータ、コンポーネントの秘密情報、バックアップ、復元用一時データを削除しますか？デスクトップのファイルとフォルダー選択は保持します。デバッグ中の場合は再起動します。",
+  "settings.debug.profile.clearHint": "選択した環境の設定、レイアウト、ウィジェット、バックアップのみをリセットし、デスクトップのファイルと選択フォルダーを保持します。",
+  "settings.debug.profile.clearConfirm": "選択した環境のアプリデータ、ウィジェットのキー、バックアップ、一時的な復元データを消去しますか？仮想デスクトップのファイルと選択フォルダーは保持されます。デバッグモードが有効な場合はアプリが再起動します。",
   "settings.debug.profile.exclusive": "デバッグモードに入る前に一時初期化をオフにしてください。同時には使用できません。",
   "settings.debug.profile.failed": "デバッグ環境を更新できませんでした。",
     "app.startup.starting": "起動中…",
@@ -2745,5 +2745,12 @@
   "workshop_manager.binding_owner_only": "現在の Steam アカウントが所有するアイテムのみ紐付けできます。",
   "workshop_manager.cancel": "キャンセル",
   "workshop_manager.open_file_location": "ファイルの場所を開く",
-  "workshop_manager.open_file_location_failed": "ファイルの場所を開けませんでした。"
+  "workshop_manager.open_file_location_failed": "ファイルの場所を開けませんでした。",
+  "settings.debug.profile.environment": "テスト環境",
+  "settings.debug.profile.switchHint": "環境ごとに設定、レイアウト、ウィジェット、バックアップを個別に保存します。デバッグモード中に切り替えるとアプリが再起動します。",
+  "settings.debug.profile.defaultName": "既定の環境",
+  "settings.debug.profile.create": "環境を作成",
+  "settings.debug.profile.rename": "環境名を変更",
+  "settings.debug.profile.name": "環境名",
+  "settings.debug.profile.nameHint": "重複しない名前を1～60文字で入力してください。新しい環境は空の設定とレイアウトで開始します。"
 }
