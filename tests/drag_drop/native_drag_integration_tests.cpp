@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/features/app_control_runtime.h"
 #include "ui/input/private_pointer.h"
 #include "app/input/widget_search_context_menu.h"
 #include "widgets/widget_folder_search.h"
@@ -1327,6 +1328,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-hover") native_list_hover_cases::RunHover();
         else if (argc == 2 && std::string_view(argv[1]) == "--list-title-fonts") native_list_hover_cases::RunFonts();
         else if (argc == 2 && std::string_view(argv[1]) == "--popup-display-menu") native_popup_display_menu_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--private-rename") native_input_safety_cases::Run(true);
         else if (argc == 2 && std::string_view(argv[1]) == "--input-safety") {
             native_input_safety_cases::Run();
             native_status_selection_cases::Run();

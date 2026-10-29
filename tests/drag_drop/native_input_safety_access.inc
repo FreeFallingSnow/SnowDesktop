@@ -1085,6 +1085,10 @@ end})
         std::filesystem::create_directories(app->initializationExperimentDirectory_);
         app->generalSettings_.dockEnabled = false;
         app->generalSettings_.statusBar.enabled = false;
+        app->applicationControlRuntime_ = std::make_unique<snowdesktop::app_control::Runtime>();
+        app->generalSettings_.softwareDesktopEnabled = app->customDesktopVisible_ = true;
+        app->virtualLeft_ = app->virtualTop_ = 0;
+        app->virtualWidth_ = 1200; app->virtualHeight_ = 800;
         GridPage page;
         page.id = L"__page:2"; page.monitorId = L"private-rename-monitor";
         page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
@@ -1120,7 +1124,11 @@ end})
         struct Cleanup
         {
             DesktopApp& app; pointer::Device& device; HWND owner;
-            ~Cleanup() { device.End(); app.CommitRename(true); DestroyWindow(owner); app.hwnd_ = app.inputHwnd_ = nullptr; }
+            ~Cleanup()
+            {
+                device.End(); app.CommitRename(true); DestroyWindow(owner); app.hwnd_ = app.inputHwnd_ = nullptr;
+                app.applicationControlRuntime_.reset();
+            }
         } cleanup{*app, device, owner};
         const HWND physicalFocus = GetFocus(), physicalForeground = GetForegroundWindow(), physicalActive = GetActiveWindow();
         const auto unchanged = [&] {
@@ -1143,6 +1151,26 @@ end})
             const int length = GetWindowTextW(edit, value.data(), static_cast<int>(value.size()));
             value.resize(static_cast<std::size_t>(length)); return value;
         };
+        const auto observedEditor = [&](HWND edit, const std::wstring& expected) {
+            const auto snapshot = app->ApplicationControlElements();
+            const snowdesktop::control::Element* found = nullptr;
+            for (const auto& element : snapshot.elements)
+                if (element.id == "rename/editor")
+                { check(!found, "rename snapshot must contain one exact editor leaf"); found = &element; }
+            check(found && found->window == edit && found->surface == "rename" && found->role == "edit" &&
+                found->visible && found->enabled && found->focused, "snapshot observes the actual visible focused rename HWND");
+            RECT actual{};
+            check(GetWindowRect(edit, &actual) && !IsRectEmpty(&actual) && EqualRect(&found->bounds, &actual) &&
+                EqualRect(&found->clip, &actual), "rename leaf bounds and clip match the actual native editor rectangle");
+            check(found->value == WideToUtf8(expected) && text(edit) == expected,
+                "rename leaf value matches actual native text without a semantic write");
+            return found->bounds;
+        };
+        const auto noEditor = [&] {
+            const auto snapshot = app->ApplicationControlElements();
+            for (const auto& element : snapshot.elements)
+                check(element.id != "rename/editor", "committed or cancelled editor disappears from the real snapshot");
+        };
         std::string error;
         const auto begin = [&] {
             check(device.Begin(page.bounds, POINT{900, 650}, [&](POINT point) { return app->PrivatePointerWindowAt(point); },
@@ -1151,7 +1179,17 @@ end})
             const HWND edit = app->renameInputWindow_;
             check(edit && IsWindow(edit) && pointer::FocusWindow() == edit, "production rename owns exact private focus");
             check((GetWindowLongPtrW(edit, GWL_EXSTYLE) & WS_EX_NOACTIVATE) != 0, "private rename editor must be nonactivating");
+            observedEditor(edit, app->widgets_[0].title);
             unchanged(); return edit;
+        };
+        const auto typeAtObservedEditor = [&](HWND edit, const std::wstring& value) {
+            const RECT bounds = observedEditor(edit, text(edit));
+            const POINT point{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+            check(device.Move(point, error) && device.Down(pointer::Button::Left, error) && device.Up(pointer::Button::Left, error),
+                "click the actual editor using its observed screen rectangle");
+            check(device.KeyDown(VK_CONTROL, error) && device.KeyDown('A', error) && device.KeyUp('A', error) &&
+                device.KeyUp(VK_CONTROL, error) && device.Text(value, error), "replace actual editor text through private Ctrl+A and characters");
+            drain(); observedEditor(edit, value); unchanged();
         };
         HWND edit = begin();
         SendMessageW(edit, WM_CHAR, L'X', 1);
@@ -1161,30 +1199,33 @@ end})
         drain();
         check(app->renameInputWindow_ == edit && IsWindow(edit) && text(edit) == L"集合" && !app->renameCommitPending_,
             "physical char, Enter and kill-focus cannot bypass the rename subclass gate");
-        check(device.Text(L"沟通协作", error), "queue real private collection rename characters"); drain();
+        typeAtObservedEditor(edit, L"沟通协作");
         check(text(edit) == L"沟通协作" && device.Current().error.empty(), "private characters traverse subclass and actual text base exactly once");
         check(device.KeyDown(VK_RETURN, error), "submit actual rename through private Enter"); drain();
         check(!app->renameInputWindow_ && !IsWindow(edit) && app->widgets_[0].title == L"沟通协作",
             "virtual Enter commits actual native rename text to the collection");
+        noEditor();
         check(device.KeyUp(VK_RETURN, error), "release Enter after its editor is destroyed"); drain();
         check(!device.Current().keys[VK_RETURN] && device.Current().error == "private_keyboard_focus_unavailable",
             "a destroyed editor release clears private key state without falling back to desktop");
         device.End(); unchanged();
 
         edit = begin();
-        check(device.Text(L"点击提交", error), "type second actual native rename"); drain();
+        typeAtObservedEditor(edit, L"点击提交");
         check(text(edit) == L"点击提交", "second native editor receives actual characters");
         check(device.Move(POINT{900, 650}, error) && device.Down(pointer::Button::Left, error) &&
             device.Up(pointer::Button::Left, error), "click away through actual desktop window messages"); drain();
         check(!app->renameInputWindow_ && app->widgets_[0].title == L"点击提交",
             "ordinary desktop pointer-down commits actual private rename text");
+        noEditor();
         device.End(); unchanged();
         edit = begin();
-        check(device.Text(L"取消内容", error), "type native rename before cancellation"); drain();
+        typeAtObservedEditor(edit, L"取消内容");
         check(text(edit) == L"取消内容", "cancelled editor first receives the actual text");
         check(device.KeyDown(VK_ESCAPE, error), "cancel actual rename through private Escape"); drain();
         check(!app->renameInputWindow_ && app->widgets_[0].title == L"点击提交",
             "private Escape cancels actual text without changing the collection title");
+        noEditor();
         check(device.KeyUp(VK_ESCAPE, error), "release Escape after the cancelled editor is destroyed"); drain();
         device.End(); unchanged();
         std::cout << "Private rename: real editor text, subclass gating, Enter and click-away preserve native input state\n";
