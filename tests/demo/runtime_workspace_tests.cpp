@@ -8,6 +8,7 @@
 #include <shlguid.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -68,6 +69,151 @@ void Shortcut(const std::filesystem::path& file, const std::filesystem::path& ex
     wchar_t path[MAX_PATH]{};
     Require(SUCCEEDED(shortcut->GetPath(path, static_cast<int>(std::size(path)), nullptr, SLGP_RAWPATH)) &&
         std::filesystem::path(path) == expected, "shortcut may only target the actual internal folder");
+}
+
+std::uint64_t LastWrite(const std::filesystem::path& path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    Require(GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data) != FALSE, "source fixture metadata unavailable");
+    return (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+}
+
+void SetLastWrite(const std::filesystem::path& path, std::uint64_t value)
+{
+    const HANDLE file = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(file != INVALID_HANDLE_VALUE, "test timestamp handle unavailable");
+    const FILETIME time{static_cast<DWORD>(value), static_cast<DWORD>(value >> 32)};
+    const bool written = SetFileTime(file, nullptr, nullptr, &time) != FALSE;
+    CloseHandle(file);
+    Require(written, "test timestamp update failed");
+}
+
+void CopyChecks()
+{
+    TestDirectory temporary;
+    const auto source = temporary.path / L"source";
+    const auto parent = temporary.path / L"copies";
+    const auto nested = source / L"原有子目录";
+    const auto emptyDirectory = source / L"原有空目录";
+    std::filesystem::create_directories(nested);
+    std::filesystem::create_directory(emptyDirectory);
+    std::filesystem::create_directory(parent);
+    const auto note = source / L"原始笔记.txt";
+    const auto emptyDocument = nested / L"原有空文档.docx";
+    const auto hidden = source / L"hidden.txt";
+    const auto linkPath = source / L"入口.lnk";
+    { std::ofstream file(note, std::ios::binary); file << "original bytes\r\n"; }
+    { std::ofstream file(emptyDocument, std::ios::binary); }
+    { std::ofstream file(hidden, std::ios::binary); file << "hidden source bytes"; }
+    const auto missingTarget = temporary.path / L"unavailable-program.exe";
+    ComPtr<IShellLinkW> link;
+    ComPtr<IPersistFile> persistence;
+    Require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link->SetPath(missingTarget.c_str())) && SUCCEEDED(link.As(&persistence)) &&
+        SUCCEEDED(persistence->Save(linkPath.c_str(), TRUE)), "test must create a real shortcut with an unavailable target");
+    persistence.Reset(); link.Reset();
+    Require(SetFileAttributesW(hidden.c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE) != FALSE,
+        "hidden test file attribute failed");
+    const std::array<std::filesystem::path, 4> originals{note, emptyDocument, hidden, linkPath};
+    std::array<std::string, 4> hashes{};
+    std::array<std::uint64_t, 4> dates{};
+    for (std::size_t index = 0; index < originals.size(); ++index)
+    {
+        const auto date = 132541956000000000ULL + index * 1234567ULL;
+        SetLastWrite(originals[index], date);
+        hashes[index] = demo::Sha256(originals[index]);
+        dates[index] = LastWrite(originals[index]);
+    }
+    SetLastWrite(nested, 132541950000000000ULL);
+    SetLastWrite(emptyDirectory, 132541940000000000ULL);
+    SetLastWrite(source, 132541930000000000ULL);
+    const auto sourceRootTime = LastWrite(source);
+    const auto nestedTime = LastWrite(nested);
+    const auto emptyDirectoryTime = LastWrite(emptyDirectory);
+    const auto workspace = demo::PrepareRuntimeWorkspaceFromDesktop(parent, source, "en-US");
+    Require(std::filesystem::equivalent(workspace.sourceDesktop, source), "existing-source identity must remain explicit");
+    auto manifest = demo::ValidateRuntimeWorkspace(workspace);
+    Require(control::Text(manifest, "dataMode") == "copied-existing-desktop" && manifest.Find("fixtures")->array.size() == 6,
+        "small real source must stay a six-entry copy without generated replacements");
+    for (std::size_t index = 0; index < originals.size(); ++index)
+    {
+        const auto copied = workspace.desktop / originals[index].lexically_relative(source);
+        Require(std::filesystem::is_regular_file(copied) && demo::Sha256(copied) == hashes[index] &&
+            std::filesystem::file_size(copied) == std::filesystem::file_size(originals[index]) &&
+            LastWrite(copied) == dates[index], "every real file must retain bytes, length and its original date");
+        Require(demo::Sha256(originals[index]) == hashes[index] && LastWrite(originals[index]) == dates[index],
+            "preparing a copy must leave original file bytes and dates unchanged");
+    }
+    Require(std::filesystem::file_size(workspace.desktop / L"原有子目录" / L"原有空文档.docx") == 0,
+        "original zero-byte documents must stay zero-byte documents");
+    Require(LastWrite(source) == sourceRootTime && LastWrite(workspace.desktop) == sourceRootTime &&
+        LastWrite(workspace.desktop / L"原有子目录") == nestedTime &&
+        LastWrite(workspace.desktop / L"原有空目录") == emptyDirectoryTime,
+        "source and copied directory dates must remain exact");
+    Require((GetFileAttributesW((workspace.desktop / L"hidden.txt").c_str()) & FILE_ATTRIBUTE_HIDDEN) != 0,
+        "copying a desktop must preserve hidden-file presentation");
+    Shortcut(workspace.desktop / L"入口.lnk", missingTarget);
+    Require(!std::filesystem::exists(missingTarget) &&
+        std::filesystem::is_empty(workspace.assets) && !std::filesystem::exists(workspace.desktop / L"Meeting notes.txt"),
+        "shortcut targets must not be materialized and no generated artwork or files may be added");
+    const auto audit = demo::ReadJson(workspace.root / L"source-desktop.json");
+    Require(audit.Find("beforeAfterMatched")->boolean && audit.Find("shortcutsCopiedAsBytes")->boolean &&
+        control::Serialize(*audit.Find("before")) == control::Serialize(*audit.Find("after")),
+        "source audit must retain matching before/after metadata and opaque shortcut copying");
+    const auto general = demo::ReadJson(workspace.activeData / L"SnowDesktop.general.json");
+    Require(control::Text(general, "language") == "en-US" && std::filesystem::exists(workspace.desktop / L"原始笔记.txt"),
+        "UI locale must not translate or replace original filenames");
+
+    const auto entriesBeforeFailures = std::distance(std::filesystem::directory_iterator(parent), std::filesystem::directory_iterator{});
+    Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(parent, source / L"missing"); }, "missing source must fail without fallback");
+    Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(parent, note); }, "source must be a real directory");
+    Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(temporary.path, source); }, "source inside parent must be rejected");
+    const auto nestedParent = source / L"output-inside-source";
+    std::filesystem::create_directory(nestedParent);
+    Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(nestedParent, source); }, "parent inside source must be rejected");
+    std::filesystem::remove(nestedParent);
+    Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(source, source); }, "equal source and parent must be rejected");
+    Require(std::distance(std::filesystem::directory_iterator(parent), std::filesystem::directory_iterator{}) == entriesBeforeFailures,
+        "invalid source preflight must not create substitute workspaces");
+
+    const auto loop = source / L"cycle";
+    if (CreateSymbolicLinkW(loop.c_str(), source.c_str(), SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE))
+    {
+        Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(parent, source); }, "recursive source links must be rejected before traversal");
+        Require(RemoveDirectoryW(loop.c_str()) != FALSE, "test loop link removal must not touch its target");
+        const auto sourceAlias = temporary.path / L"source-alias";
+        Require(CreateSymbolicLinkW(sourceAlias.c_str(), source.c_str(),
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != FALSE, "source alias setup failed");
+        Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(parent, sourceAlias); }, "reparse source root must be rejected");
+        Require(RemoveDirectoryW(sourceAlias.c_str()) != FALSE, "source alias removal failed");
+        const auto parentAlias = temporary.path / L"parent-alias";
+        Require(CreateSymbolicLinkW(parentAlias.c_str(), parent.c_str(),
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != FALSE, "parent alias setup failed");
+        Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(parentAlias, source); }, "reparse parent root must be rejected");
+        Require(RemoveDirectoryW(parentAlias.c_str()) != FALSE, "parent alias removal failed");
+        const auto fileAlias = source / L"file-alias.txt";
+        Require(CreateSymbolicLinkW(fileAlias.c_str(), note.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != FALSE,
+            "file alias setup failed");
+        Reject([&] { demo::PrepareRuntimeWorkspaceFromDesktop(parent, source); }, "reparse source files must be rejected instead of dereferenced");
+        Require(DeleteFileW(fileAlias.c_str()) != FALSE, "file alias removal must not touch the original note");
+    }
+    else
+    {
+        const DWORD result = GetLastError();
+        Require(result == ERROR_PRIVILEGE_NOT_HELD || result == ERROR_INVALID_PARAMETER,
+            "unexpected source-link setup failure");
+        std::cout << "source-cycle probe unavailable: Windows symbolic-link privilege not enabled\n";
+    }
+
+    { std::ofstream changed(workspace.desktop / L"原始笔记.txt", std::ios::app); changed << "owned change"; }
+    Reject([&] { demo::ValidateRuntimeWorkspace(workspace); }, "changed owned copy must invalidate the recorded baseline");
+    Require(demo::Sha256(note) == hashes[0], "changing the owned copy cannot change the source file");
+    const auto reset = demo::PrepareRuntimeWorkspaceFromDesktop(parent, source, "zh-CN");
+    Require(reset.id != workspace.id && demo::Sha256(reset.desktop / L"原始笔记.txt") == hashes[0],
+        "reset preparation must create a fresh original-data copy without deleting either tree");
+    { std::ofstream extra(reset.desktop / L"unexpected.txt"); extra << "extra"; }
+    Reject([&] { demo::ValidateRuntimeWorkspace(reset); }, "unrecorded copied-desktop entries must be rejected");
 }
 
 void Checks()
@@ -155,8 +301,14 @@ int wmain(int argc, wchar_t** argv)
             std::cout << control::Serialize(demo::ValidateRuntimeWorkspace(workspace)) << '\n';
             CoUninitialize(); return 0;
         }
-        if (argc != 1) throw std::runtime_error("usage: --prepare EXISTING_ABSOLUTE_PARENT zh-CN|en-US");
-        Checks(); CoUninitialize();
+        if (argc == 5 && std::wstring_view(argv[1]) == L"--prepare-from")
+        {
+            const auto workspace = demo::PrepareRuntimeWorkspaceFromDesktop(argv[2], argv[3], demo::Utf8(argv[4]));
+            std::cout << control::Serialize(demo::ValidateRuntimeWorkspace(workspace)) << '\n';
+            CoUninitialize(); return 0;
+        }
+        if (argc != 1) throw std::runtime_error("usage: --prepare PARENT zh-CN|en-US | --prepare-from PARENT SOURCE_DESKTOP zh-CN|en-US");
+        Checks(); CopyChecks(); CoUninitialize();
         std::cout << "real runtime workspace checks passed\n";
         return 0;
     }
