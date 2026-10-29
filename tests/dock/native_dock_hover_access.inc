@@ -1278,6 +1278,36 @@
         }
         std::cout << "True-overflow insertion clip: 4 positions x 2 effects x 2 boundaries passed\n";
 
+        // These older matrices deliberately exercise a lane that fits. Their
+        // original seven 136px cells did not fit the 760px vertical reserve.
+        // Derive the fixture scale from real page icon metrics and the full
+        // cell/gap budget, with one rounding pixel for each layout term.
+        const auto fitLegacyScene = [&](DockPosition position, size_t cellCount) {
+            app.dockSettings_.thicknessScale = 1.0f;
+            const int icon = app.GetDockPageItemIconSize(app.gridPages_.front());
+            const int cells = static_cast<int>(cellCount);
+            const int axis = position == DockPosition::Left || position == DockPosition::Right ? 760 : 1200;
+            constexpr int maximumSeparators = 3;
+            const int roundingTerms = cells + maximumSeparators + 3;
+            const double budget = cells * (icon + kDockSpacing) + maximumSeparators * kDockSeparatorGap + 3 * kDockSpacing;
+            app.dockSettings_.thicknessScale = ClampDockScale(std::min(1.0f,
+                static_cast<float>((axis - roundingTerms) / budget)));
+        };
+        const auto requireNoOverflow = [&](DockContainer* dock) {
+            // A fresh container has not built its slots yet. Restore a large
+            // presentation offset, then let the real BuildSlots clamp it to
+            // GetMaxScrollOffset; zero proves the actual layout fits without
+            // relying on a wheel event at an arbitrary non-scrollable point.
+            const auto initial = dock->CapturePresentationState();
+            auto probe = initial; probe.scrollOffset = std::numeric_limits<int>::max();
+            check(dock->RestorePresentationState(probe), "set private fixture's max-scroll observation");
+            (void)dock->GetSlots();
+            const int maximum = dock->CapturePresentationState().scrollOffset;
+            std::cout << "Legacy fixture scale=" << app.dockSettings_.thicknessScale << " actualMaxScroll=" << maximum << '\n';
+            check(dock->RestorePresentationState(initial), "restore zero-scroll fixture presentation");
+            check(maximum == 0, "legacy geometry matrix must prove actual no-overflow capacity");
+        };
+
         for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
         for (const int effect : {0, 1, 2})
         for (const bool controls : {false, true})
@@ -1302,12 +1332,24 @@
             app.dockSettings_.showQuickSearchButton = controls;
             app.gridPages_.front().dpiX = app.gridPages_.front().dpiY =
                 fixedCount == 3 ? 144u : controls ? 120u : 96u;
+            fitLegacyScene(position, fixedCount + 2 + (controls ? 2 : 0));
             auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
             auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
+            app.lastMousePoint_ = outside;
+            requireNoOverflow(dock);
             const auto& slots = dock->GetSlots();
             const RECT lastRunning = slots[fixedCount + 1]->GetBounds();
             const POINT pointer{(lastRunning.left + lastRunning.right) / 2,
                 (lastRunning.top + lastRunning.bottom) / 2};
+            const RECT panel = dock->GetBounds();
+            std::cout << "Legacy fixed case position=" << static_cast<int>(position) << " effect=" << effect
+                << " controls=" << controls << " fixed=" << fixedCount << " dpi=" << app.gridPages_.front().dpiX
+                << " pointer=" << pointer.x << ',' << pointer.y << " running=" << lastRunning.left << ',' << lastRunning.top << ',' << lastRunning.right << ',' << lastRunning.bottom
+                << " bar=" << panel.left << ',' << panel.top << ',' << panel.right << ',' << panel.bottom << '\n';
+            check(PtInRect(&panel, pointer) != FALSE && dock->RunningItemAtPoint(pointer),
+                "legacy fixed source point must be inside the bar and a real scrollable running hit");
+            check(!dock->ScrollByWheelDelta(pointer, -WHEEL_DELTA),
+                "wheel over the confirmed running scroll area must report no overflow");
             app.mouseDownWidgetIndex_ = 0; app.mouseDown_ = true;
             app.mouseDownPoint_ = outside;
             app.widgetDragOriginalCell_ = app.widgets_.front().gridCell;
@@ -1316,6 +1358,9 @@
             auto factory = std::move(app.dwriteFactory_);
             app.OnMouseMoveAt(MK_LBUTTON, pointer);
             app.dwriteFactory_ = std::move(factory);
+            if (!app.widgetDockTarget_ || app.widgetDockTargetContainer_ != dock || app.widgetDockInsertIndex_ != fixedCount)
+                std::cerr << "Legacy fixed input target=" << app.widgetDockTarget_ << " sameContainer=" << (app.widgetDockTargetContainer_ == dock)
+                    << " actualIndex=" << app.widgetDockInsertIndex_ << " expectedIndex=" << fixedCount << '\n';
             check(app.widgetDockTarget_ && app.widgetDockTargetContainer_ == dock &&
                 app.widgetDockInsertIndex_ == fixedCount,
                 "component over running apps must target the fixed partition's final boundary");
@@ -1397,8 +1442,12 @@
             app.dockSettings_.edgeAttached = attached;
             app.dockSettings_.showWindowsButton = start; app.dockSettings_.showQuickSearchButton = search;
             app.gridPages_.front().dpiX = app.gridPages_.front().dpiY = 120;
+            fitLegacyScene(position, static_cast<size_t>(folder) + static_cast<size_t>(recycle) + static_cast<size_t>(start) +
+                static_cast<size_t>(search) + (generated ? 2 : 0));
             auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
             auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
+            app.lastMousePoint_ = outside;
+            requireNoOverflow(dock);
             const auto& slots = dock->GetSlots();
             const size_t count = app.dockEntries_.size();
             const RECT startBase = dock->GetWindowsButtonRect();
@@ -1406,12 +1455,34 @@
             const RECT hit = generated ? slots[count + 1]->GetBounds() : start ? startBase :
                 recycle ? slots[count - 1]->GetBounds() : baseBounds;
             const POINT pointer{(hit.left + hit.right) / 2, (hit.top + hit.bottom) / 2};
+            std::cout << "Legacy empty case position=" << static_cast<int>(position) << " effect=" << effect
+                << " attached=" << attached << " scene=" << static_cast<int>(scene) << " dpi=" << app.gridPages_.front().dpiX
+                << " pointer=" << pointer.x << ',' << pointer.y << " hit=" << hit.left << ',' << hit.top << ',' << hit.right << ',' << hit.bottom
+                << " bar=" << baseBounds.left << ',' << baseBounds.top << ',' << baseBounds.right << ',' << baseBounds.bottom << '\n';
+            check(PtInRect(&baseBounds, pointer) != FALSE, "legacy empty source point must be inside the reserved bar");
+            if (generated)
+            {
+                const RECT running = slots[count]->GetBounds();
+                const POINT scrollPoint{(running.left + running.right) / 2, (running.top + running.bottom) / 2};
+                check(dock->RunningItemAtPoint(scrollPoint), "empty-group wheel sample must hit a real scrollable running item");
+                check(!dock->ScrollByWheelDelta(scrollPoint, -WHEEL_DELTA), "confirmed running area must have no overflow");
+            }
+            else if (folder && !attached)
+            {
+                const RECT file = slots.front()->GetBounds();
+                const POINT scrollPoint{(file.left + file.right) / 2, (file.top + file.bottom) / 2};
+                check(dock->EntryAtPoint(scrollPoint), "floating file wheel sample must hit its real scrollable entry");
+                check(!dock->ScrollByWheelDelta(scrollPoint, -WHEEL_DELTA), "confirmed floating file area must have no overflow");
+            }
             app.mouseDownWidgetIndex_ = 0; app.mouseDown_ = true; app.mouseDownPoint_ = outside;
             app.widgetDragOriginalCell_ = app.widgets_.front().gridCell;
             app.widgetDragOriginalSpan_ = app.widgets_.front().gridSpan;
             app.widgetAction_ = DesktopApp::WidgetAction::Move;
             auto factory = std::move(app.dwriteFactory_);
             app.OnMouseMoveAt(MK_LBUTTON, pointer); app.dwriteFactory_ = std::move(factory);
+            if (!app.widgetDockTarget_ || app.widgetDockTargetContainer_ != dock || app.widgetDockInsertIndex_ != 0)
+                std::cerr << "Legacy empty input target=" << app.widgetDockTarget_ << " sameContainer=" << (app.widgetDockTargetContainer_ == dock)
+                    << " actualIndex=" << app.widgetDockInsertIndex_ << " expectedIndex=0\n";
             check(app.widgetDockTarget_ && app.widgetDockTargetContainer_ == dock && app.widgetDockInsertIndex_ == 0,
                 "files, running apps and utility-only surfaces must preserve the empty fixed partition's index zero");
             dock->AdvanceMagnificationAnimation(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 1000);
