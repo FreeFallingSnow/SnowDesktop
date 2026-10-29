@@ -370,10 +370,18 @@ void InputFamiliesAndForwarding()
         WM_POINTERUPDATE, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERENTER, WM_POINTERLEAVE,
         WM_POINTERACTIVATE, WM_POINTERCAPTURECHANGED, WM_TOUCHHITTESTING,
         WM_POINTERWHEEL, WM_POINTERHWHEEL, WM_POINTERROUTEDTO, WM_POINTERROUTEDAWAY,
-        WM_POINTERROUTEDRELEASED, WM_GESTURENOTIFY, WM_IME_CHAR, WM_IME_COMPOSITION,
-        WM_TOUCH, WM_GESTURE, WM_INPUT};
+        WM_POINTERROUTEDRELEASED, WM_GESTURENOTIFY, WM_IME_CHAR, WM_IME_COMPOSITION, WM_INPUT};
+    // User32 rejected WM_TOUCH/WM_GESTURE with null resource handles before
+    // this test's WndProc (Run a55fcc11). Test their gate directly rather than
+    // pretending those invalid resource messages reached a native receiver.
+    // This does not validate disposal of genuine OS-owned touch/gesture data.
+    for (const UINT message : {WM_TOUCH, WM_GESTURE})
+        Check(!pointer::MessageAllowed(first.window, message, 0, 0), "zero-resource touch and gesture messages remain gated");
     struct Observation { UINT message; std::size_t received; unsigned blocked; LRESULT result; };
     std::vector<Observation> observations;
+    const auto blockedBeforeFamily = first.blocked;
+    std::size_t actualReceived = 0;
+    bool eachMessageIsolated = true;
     for (const UINT message : blockedMessages)
     {
         // No system input is injected. Handle-bearing messages have no real
@@ -383,17 +391,21 @@ void InputFamiliesAndForwarding()
         const auto beforeReceived = first.receivedMessages.size();
         const auto beforeBlocked = first.blocked;
         const LRESULT result = SendMessageW(first.window, message, wp, 0);
-        observations.push_back({message, first.receivedMessages.size() - beforeReceived, first.blocked - beforeBlocked, result});
+        const auto received = first.receivedMessages.size() - beforeReceived;
+        const auto blocked = first.blocked - beforeBlocked;
+        observations.push_back({message, received, blocked, result});
+        actualReceived += received;
+        eachMessageIsolated = eachMessageIsolated && received == 1 && blocked == 1;
     }
-    if (first.blocked != 1 + std::size(blockedMessages) || first.moves != 1)
+    if (!eachMessageIsolated || first.blocked != blockedBeforeFamily + actualReceived || first.moves != 1)
     {
-        std::cerr << "Input-family totals: blocked=" << first.blocked << " expected=" << 1 + std::size(blockedMessages)
+        std::cerr << "Input-family totals: blocked=" << first.blocked << " expected=" << blockedBeforeFamily + actualReceived
             << " moves=" << first.moves << '\n';
         for (const auto& observation : observations)
             std::cerr << "  message=0x" << std::hex << observation.message << std::dec
                 << " received=" << observation.received << " blocked=" << observation.blocked << " result=" << observation.result << '\n';
     }
-    Check(first.blocked == 1 + std::size(blockedMessages) && first.moves == 1,
+    Check(eachMessageIsolated && first.blocked == blockedBeforeFamily + actualReceived && first.moves == 1,
         "complete pointer, hover, context, gesture and raw-input families remain private");
     device.End();
     Check(!first.hovered && !device.Current().enabled, "ending a resampled desktop hover clears its native visual state");
