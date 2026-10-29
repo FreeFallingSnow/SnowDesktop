@@ -1,6 +1,6 @@
 #include "control_widget_settings.h"
 #include "control_settings_values.h"
-#include "windows_compat.h"
+#include "winui/windows_compat.h"
 #include <charconv>
 #include <cmath>
 #include <limits>
@@ -102,12 +102,14 @@ void CheckResult(const WidgetSettingMutationResult& result)
         result.message.empty() ? "Component settings operation failed" : result.message);
 }
 
-std::string SnapshotRevision(const WidgetSettingsSnapshot& snapshot)
+std::string SnapshotRevision(const WidgetSettingsSnapshot& snapshot, const Value& themeState)
 {
-    return std::to_string(snapshot.generation) + ":" + std::to_string(snapshot.revision);
+    auto result = std::to_string(snapshot.generation) + ":" + std::to_string(snapshot.revision);
+    if (!themeState.IsNull()) result += ":" + Revision(themeState);
+    return result;
 }
 
-Value ReadValues(const WidgetSettingsSnapshot& snapshot, IWidgetSettingsService& service)
+Value ReadValues(const WidgetSettingsSnapshot& snapshot, IWidgetSettingsService& service, const Value& themeState)
 {
     auto ordinary = Object(), opaque = Object(), searches = Object();
     for (const auto& field : snapshot.fields)
@@ -118,15 +120,17 @@ Value ReadValues(const WidgetSettingsSnapshot& snapshot, IWidgetSettingsService&
         if (auto search = service.SearchSnapshot(snapshot.widgetId, field.schema.key))
             searches.object.emplace(field.schema.key, ToValue(*search));
     }
-    return Object({{"settings", std::move(ordinary)}, {"opaque", std::move(opaque)},
+    auto result = Object({{"settings", std::move(ordinary)}, {"opaque", std::move(opaque)},
         {"hostAppearance", ToValue(snapshot.hostAppearance)}, {"searches", std::move(searches)}});
+    if (!themeState.IsNull()) result.object.emplace("theme", themeState);
+    return result;
 }
 
 Value Response(const Target& target, const WidgetSettingsSnapshot& snapshot,
-    IWidgetSettingsService& service, std::string_view status = "current", bool persisted = false)
+    IWidgetSettingsService& service, const Value& themeState, std::string_view status = "current", bool persisted = false)
 {
-    return Object({{"target", TargetJson(target)}, {"revision", String(SnapshotRevision(snapshot))},
-        {"values", ReadValues(snapshot, service)}, {"status", String(std::string(status))},
+    return Object({{"target", TargetJson(target)}, {"revision", String(SnapshotRevision(snapshot, themeState))},
+        {"values", ReadValues(snapshot, service, themeState)}, {"status", String(std::string(status))},
         {"persistence", String(persisted ? "saved" : "unchanged")}, {"effects", Array()}});
 }
 
@@ -161,7 +165,7 @@ std::uint64_t Decimal(const Value& params, std::string_view key)
 
 Value HandleWidgetSettings(std::string_view method, const Value& params,
     const Target& target, widget_runtime::IWidgetSettingsService& service,
-    const std::function<bool(std::wstring_view)>& ensure)
+    const std::function<bool(std::wstring_view)>& ensure, const WidgetThemeControl& themes)
 {
     using namespace control;
     using namespace widget_runtime;
@@ -178,10 +182,11 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
                 loaded.message.empty() ? "Component settings could not be loaded" : loaded.message);
         snapshot = std::move(loaded.snapshot);
     }
+    auto themeState = themes.read ? themes.read(widgetId) : Value{};
     if (method == "settings.get" || method == "settings.catalog")
     {
         Fields(params, {"target"});
-        auto response = Response(target, *snapshot, service);
+        auto response = Response(target, *snapshot, service, themeState);
         if (method == "settings.catalog")
         {
             auto fields = Array(), presets = Array(), actions = Array();
@@ -219,6 +224,12 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
             addAction("search", Object({{"key", String("search-setting-key")}, {"query", String("text")}, {"maximumResults", Number(8)}}), "asynchronous-search");
             addAction("cancelSearch", keySchema, "cancel-search");
             addAction("commitSearchResult", Object({{"key", String("search-setting-key")}, {"requestId", String("decimal-search-request-id")}, {"resultId", String("owned-result-id")}}), "save-owned-search-result");
+            const auto* themeAvailable = themeState.Find("available");
+            if (themes.apply && (!themeAvailable || !themeAvailable->IsBoolean() || themeAvailable->boolean))
+            {
+                addAction("selectTheme", Object({{"themeId", String("saved-component-theme-id")}}), "save-theme-binding-and-appearance");
+                addAction("detachTheme", Object(), "detach-theme-binding-preserve-appearance");
+            }
             response.object.emplace("fields", std::move(fields));
             response.object.emplace("presets", std::move(presets));
             response.object.emplace("actions", std::move(actions));
@@ -228,7 +239,7 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
         return response;
     }
 
-    RequireRevision(params, SnapshotRevision(*snapshot));
+    RequireRevision(params, SnapshotRevision(*snapshot, themeState));
     const auto guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
     WidgetSettingMutationResult result;
     bool persistent = true;
@@ -297,6 +308,12 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
         { Fields(arguments, {"key"}); result = service.CancelSearch(guard, Text(arguments, "key")); persistent = false; }
         else if (action == "commitSearchResult")
         { Fields(arguments, {"key", "requestId", "resultId"}); result = service.CommitSearchResult(guard, Text(arguments, "key"), Decimal(arguments, "requestId"), Text(arguments, "resultId")); }
+        else if (action == "selectTheme" || action == "detachTheme")
+        {
+            if (!themes.apply) throw Error("settings_unavailable", "Saved component theme selection is unavailable");
+            if (action == "selectTheme") Fields(arguments, {"themeId"}); else Fields(arguments, {});
+            result = themes.apply(guard, action == "selectTheme" ? Text(arguments, "themeId") : std::string{}, action == "detachTheme");
+        }
         else throw Error("unknown_settings_action", "Unknown component settings action", -32602);
     }
     else throw Error("method_not_found", "Unknown settings method", -32601);
@@ -304,7 +321,8 @@ Value HandleWidgetSettings(std::string_view method, const Value& params,
     snapshot = service.Snapshot(widgetId);
     if (!snapshot) throw Error("widget_settings_unavailable", "Component disappeared after the operation");
     const bool started = result.status == WidgetSettingMutationStatus::Started;
-    auto response = Response(target, *snapshot, service, started ? "started" : "applied", persistent && !started);
+    themeState = themes.read ? themes.read(widgetId) : Value{};
+    auto response = Response(target, *snapshot, service, themeState, started ? "started" : "applied", persistent && !started);
     if (started) response.object["persistence"] = String("pending");
     return response;
 }

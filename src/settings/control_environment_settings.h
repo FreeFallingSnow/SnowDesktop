@@ -2,6 +2,7 @@
 
 #include "control_settings.h"
 #include "settings_controller.h"
+#include "winui/windows_compat.h"
 #include "winui/home_about_page_model.h"
 #include "winui/page_layout_page_presenter.h"
 

@@ -16,6 +16,11 @@ inline void Run()
             {
                 auto& app = profile.Model(false, profile.root / (L"catalog-" + std::to_wstring(scenes++)));
                 NativeDragIntegrationAccess::CheckPopupControlCatalog(app, files, type, list, negativeOrigin);
+                if (type == DesktopWidgetType::FileCategories)
+                {
+                    auto& compact = profile.Model(false, profile.root / (L"catalog-compact-" + std::to_wstring(scenes++)));
+                    NativeDragIntegrationAccess::CheckPopupControlCatalog(compact, files, type, list, negativeOrigin, true);
+                }
             }
     std::cout << scenes << " native popup catalogs preserve real membership and use current grid/list hit geometry\n";
 }

@@ -1,6 +1,7 @@
 #include "control_runtime_settings.h"
 
 #include "platform/usage_guide.h"
+#include "desktop/desktop_style_presets.h"
 
 namespace snowdesktop::control_settings
 {
@@ -107,7 +108,7 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
         {"temporaryInitializationEnabled", Optional(status.temporaryInitializationEnabled)}, {"usageGuideExpanded", Optional(status.usageGuideExpanded)},
         {"windowSupport", context.windowSupportStatus ? WindowSupport(support) : Value{}},
         {"advancedFeatures", context.advancedFeatureStatus ? Advanced(advanced) : Value{}},
-        {"generation", String(std::to_string(snapshot->generation))}});
+        {"generation", String(std::to_string(snapshot->generation))}, {"settingsRevision", String(std::to_string(snapshot->revision))}});
     const auto revision = Revision(state);
     if (method == "settings.get" || method == "settings.catalog")
     {
@@ -122,7 +123,7 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
                 {"animationDiagnosticsEnabled", Object({{"type", String("boolean")}, {"default", Boolean(false)}, {"available", Boolean(status.animationDiagnosticsEnabled.has_value())}})},
                 {"usageGuideExpanded", Object({{"type", String("boolean")}, {"default", Boolean(true)}, {"available", Boolean(status.usageGuideExpanded.has_value())}})}}));
             result.object.emplace("maximumChanges", Number(1));
-            result.object.emplace("readOnly", Names({"temporaryInitializationEnabled", "windowSupport", "advancedFeatures", "generation", "animationDiagnosticsStatus"}));
+            result.object.emplace("readOnly", Names({"temporaryInitializationEnabled", "windowSupport", "advancedFeatures", "generation", "settingsRevision", "animationDiagnosticsStatus"}));
             auto actions = Array();
             if (context.configureWindowSupport && context.windowSupportStatus) actions.array.push_back(String("configure-window-support"));
             if (context.registerAdvancedFeatures && context.advancedFeatureStatus && advanced.bridgeAvailable) actions.array.push_back(String("unlock-advanced-features"));
@@ -130,7 +131,12 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
             if (status.temporaryInitializationEnabled) actions.array.push_back(String("set-temporary-initialization"));
             actions.array.push_back(String("start-usage-guide-practice"));
             actions.array.push_back(String("trigger-crash-test"));
+            actions.array.push_back(String("apply-desktop-style"));
+            actions.array.push_back(String("apply-style-animations"));
             result.object.emplace("actions", std::move(actions));
+            result.object.emplace("desktopStylePresets", Names({"native", "taskbar-dock", "island", "merged", "side"}));
+            result.object.emplace("animationStylePresets", Names({"island", "merged", "side"}));
+            result.object.emplace("desktopStyleArguments", Names({"preset", "dockPosition", "dockAttached", "confirmed"}));
             auto practices = Array();
             for (const auto& lesson : usage_guide::kLessons) if (lesson.practice) practices.array.push_back(String(lesson.key));
             result.object.emplace("practiceTopics", std::move(practices));
@@ -176,6 +182,38 @@ Value HandleRuntimeSettings(std::string_view method, const Value& params,
     Fields(params, {"target", "ifRevision", "action", "arguments"});
     const auto action = Text(params, "action");
     const auto& arguments = Arguments(params);
+    if (action == "apply-desktop-style" || action == "apply-style-animations")
+    {
+        const bool layout = action == "apply-desktop-style";
+        if (layout) Fields(arguments, {"preset", "dockPosition", "dockAttached", "confirmed"});
+        else Fields(arguments, {"preset", "confirmed"});
+        const auto preset = Text(arguments, "preset");
+        request.value.assign(preset.begin(), preset.end());
+        request.action = layout ? Action::ApplyDesktopStylePreset : Action::ApplyDesktopStyleAnimations;
+        request.boolValue = arguments.Find("confirmed") ? BooleanField(arguments, "confirmed") : false;
+        if (const auto* position = arguments.Find("dockPosition"))
+        {
+            if (!position->IsString()) throw Error("invalid_params", "dockPosition must be a named edge", -32602);
+            if (position->string == "bottom") request.desktopStyleDockPosition = DockPosition::Bottom;
+            else if (position->string == "top") request.desktopStyleDockPosition = DockPosition::Top;
+            else if (position->string == "left") request.desktopStyleDockPosition = DockPosition::Left;
+            else if (position->string == "right") request.desktopStyleDockPosition = DockPosition::Right;
+            else throw Error("invalid_params", "Unknown Dock edge", -32602);
+        }
+        if (arguments.Find("dockAttached")) request.desktopStyleDockAttached = BooleanField(arguments, "dockAttached");
+        auto general = snapshot->values.general;
+        auto dock = snapshot->values.dock;
+        const bool valid = layout ? ApplyDesktopStylePreset(request.value, general, dock, request.desktopStyleDockPosition, request.desktopStyleDockAttached)
+            : ApplyDesktopStyleAnimations(request.value, dock);
+        if (!valid) throw Error("invalid_params", "Unknown desktop style or animation preset", -32602);
+        if (layout && snapshot->values.general.dockEnabled && !general.dockEnabled && !request.boolValue)
+            throw Error("confirmation_required", "This style disables Dock; retry with arguments.confirmed:true");
+        const auto result = context.controller.InvokeHostAction(request);
+        if (!result.Succeeded()) return HostResult(target, result);
+        const auto committed = context.controller.FlushPending();
+        if (!committed.Succeeded()) return HostResult(target, committed);
+        return Object({{"target", TargetJson(target)}, {"status", String("applied")}});
+    }
     if (action == "configure-window-support")
     {
         Fields(arguments, {"enabled", "confirmed"}); Confirm(arguments);

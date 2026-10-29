@@ -1,4 +1,5 @@
 #include "settings/control_widget_settings.h"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 
@@ -120,6 +121,55 @@ int main()
     Check(service.clears == 1 && !service.state.fields[1].opaque.configured, "opaque clearing requires an explicit separate action");
     Reject([&] { call("settings.action", Object({{"ifRevision", String(cleared.Find("revision")->string)}, {"action", String("ReadSecret")}})); },
         "unknown_settings_action", "private service method names are not exposed as actions");
+    std::string binding;
+    int themeActions = 0;
+    const WidgetThemeControl themes{
+        [&](std::wstring_view id) {
+            Check(id == L"instance", "theme catalogue is scoped to the existing instance");
+            return Object({{"selectedThemeId", String(binding)}});
+        },
+        [&](const WidgetSettingMutationGuard& guard, std::string_view id, bool detach) {
+            Check(guard.Matches(service.state), "saved theme selection uses the real current component guard");
+            ++themeActions; binding = detach ? std::string{} : std::string(id);
+            // Detach affects the library binding while preserving appearance,
+            // therefore it does not advance the widget service's revision.
+            if (detach) return WidgetSettingMutationResult{WidgetSettingMutationStatus::Unchanged, service.state.generation, service.state.revision};
+            return service.Ok();
+        }};
+    const auto themed = [&](std::string_view method, Value extra = Object()) {
+        extra.object.emplace("target", TargetJson(target));
+        return HandleWidgetSettings(method, extra, target, service, [](auto) { return true; }, themes);
+    };
+    const auto themeBefore = themed("settings.get");
+    const auto selected = themed("settings.action", Object({{"ifRevision", *themeBefore.Find("revision")},
+        {"action", String("selectTheme")}, {"arguments", Object({{"themeId", String("saved-theme")}})}}));
+    Check(binding == "saved-theme" && selected.Find("values")->Find("theme")->Find("selectedThemeId")->string == binding,
+        "saved theme selection is distinct from a declarative preset and has readable binding state");
+    const auto appearanceBeforeDetach = service.state.hostAppearance;
+    const auto detached = themed("settings.action", Object({{"ifRevision", *selected.Find("revision")}, {"action", String("detachTheme")}}));
+    Check(binding.empty() && service.state.hostAppearance == appearanceBeforeDetach, "detaching a saved theme preserves current appearance");
+    Check(detached.Find("revision")->string != selected.Find("revision")->string, "library-only detachment invalidates the target revision");
+    Reject([&] { themed("settings.action", Object({{"ifRevision", *selected.Find("revision")}, {"action", String("selectTheme")},
+        {"arguments", Object({{"themeId", String("stale-theme")}})}})); }, "stale_settings", "stale library binding cannot overwrite newer detachment");
+    Check(themeActions == 2, "rejected stale theme action never invokes the native mutation");
+    const WidgetThemeControl unavailableThemes{
+        [](std::wstring_view) { return Object({{"available", Boolean(false)}, {"error", String("theme_library_unavailable")}}); },
+        [](const WidgetSettingMutationGuard& guard, std::string_view, bool) {
+            return WidgetSettingMutationResult{WidgetSettingMutationStatus::Unavailable, guard.generation, guard.revision,
+                "theme_library_unavailable", "Theme library is unavailable"};
+        }};
+    const auto withoutThemes = [&](std::string_view method, Value extra = Object()) {
+        extra.object.emplace("target", TargetJson(target));
+        return HandleWidgetSettings(method, extra, target, service, [](auto) { return true; }, unavailableThemes);
+    };
+    const auto unavailableCatalog = withoutThemes("settings.catalog");
+    Check(std::none_of(unavailableCatalog.Find("actions")->array.begin(), unavailableCatalog.Find("actions")->array.end(), [](const auto& action) {
+        return action.Find("name")->string == "selectTheme" || action.Find("name")->string == "detachTheme";
+    }), "unavailable theme library does not advertise selectable theme actions");
+    const auto ordinaryWithoutThemes = withoutThemes("settings.update", Object({{"ifRevision", *unavailableCatalog.Find("revision")},
+        {"changes", Object({{"enabled", Boolean(false)}})}}));
+    Check(!ordinaryWithoutThemes.Find("values")->Find("settings")->Find("enabled")->boolean,
+        "unavailable independent theme library does not block ordinary component settings");
     std::cout << "Widget control settings: " << (failures ? "FAILED" : "passed") << '\n';
     return failures ? 1 : 0;
 }

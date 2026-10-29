@@ -155,7 +155,7 @@ inline Value ReadJsonFile(const std::filesystem::path& path)
 }
 inline const Value& Required(const Value& value, const char* key)
 { const auto* found = value.Find(key); Require(found != nullptr, "Required settings result field missing"); return *found; }
-inline std::string ErrorCode(const Value& response)
+inline std::string LiveErrorCode(const Value& response)
 { return Required(Required(Required(response, "error"), "data"), "code").string; }
 }
 
@@ -183,7 +183,7 @@ inline int LiveControlSettingsChecks(const char* expectedExe, const char* expect
             const auto result = client.Call("settings.get", Target(kind), true);
             if (result.Find("error"))
             {
-                const auto code = ErrorCode(result);
+                const auto code = control_live_settings::LiveErrorCode(result);
                 Require(code == "settings_unavailable" || code == "feature_unavailable" || code == "not_ready", "Advertised settings target has an unexpected routing failure");
                 std::cout << "TARGET " << kind << " unavailable=" << code << '\n';
             }
@@ -203,10 +203,10 @@ inline int LiveControlSettingsChecks(const char* expectedExe, const char* expect
         Require(Required(ReadJsonFile(data / L"SnowDesktop.personalization.json"), "scrollableTitleBarOnTop").boolean == !original, "Requested setting was not persisted");
         auto stale = Target("personalization"); stale.object.emplace("ifRevision", Required(before, "revision"));
         stale.object.emplace("changes", Object({{"scrollableTitleBarOnTop", Boolean(original)}}));
-        Require(ErrorCode(client.Call("settings.update", stale, true)) == "stale_settings", "Stale guard was not enforced by running host");
+        Require(control_live_settings::LiveErrorCode(client.Call("settings.update", stale, true)) == "stale_settings", "Stale guard was not enforced by running host");
         auto invalid = Target("personalization"); invalid.object.emplace("ifRevision", Required(changed, "revision"));
         invalid.object.emplace("changes", Object({{"widgetAlpha", Number(-1)}}));
-        Require(ErrorCode(client.Call("settings.update", invalid, true)) == "invalid_params", "Invalid alpha was not rejected by running host");
+        Require(control_live_settings::LiveErrorCode(client.Call("settings.update", invalid, true)) == "invalid_params", "Invalid alpha was not rejected by running host");
         set(get(), original); mustRestore = false;
         Require(Required(Required(get(), "values"), "scrollableTitleBarOnTop").boolean == original, "Original setting did not restore");
         Require(Required(ReadJsonFile(data / L"SnowDesktop.personalization.json"), "scrollableTitleBarOnTop").boolean == original, "Original persisted setting did not restore");

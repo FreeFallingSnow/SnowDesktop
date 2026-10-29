@@ -114,6 +114,18 @@ void Run()
     Reject("confirmation_required", [&] { action("trigger-crash-test", Object(), false); });
     action("trigger-crash-test", Object());
     Check(controller.requests.back().action == SettingsHostActions::Action::TriggerCrashTest, "crash test is only recorded by fake host, never executed");
+    controller.state->values.general.dockEnabled = true;
+    Reject("confirmation_required", [&] { action("apply-desktop-style", Object({{"preset", String("native")}}), false); });
+    Reject("invalid_params", [&] { action("apply-desktop-style", Object({{"preset", String("unknown")}})); });
+    Reject("invalid_params", [&] { action("apply-style-animations", Object({{"preset", String("native")}})); });
+    action("apply-desktop-style", Object({{"preset", String("taskbar-dock")}, {"dockPosition", String("left")}, {"dockAttached", Boolean(true)}}));
+    Check(controller.requests.back().action == SettingsHostActions::Action::ApplyDesktopStylePreset &&
+        controller.requests.back().value == L"taskbar-dock" && controller.requests.back().desktopStyleDockPosition == DockPosition::Left &&
+        controller.requests.back().desktopStyleDockAttached && controller.requests.back().boolValue,
+        "desktop style forwards native preset and companion edge with explicit Dock-disable consent");
+    action("apply-style-animations", Object({{"preset", String("island")}}), false);
+    Check(controller.requests.back().action == SettingsHostActions::Action::ApplyDesktopStyleAnimations && controller.requests.back().value == L"island",
+        "recommended animation action uses the same native controller transaction as Settings");
     auto keys = Array(); keys.array.push_back(String("animationDiagnosticsEnabled"));
     HandleRuntimeSettings("settings.reset", Object({{"target", TargetJson(target)}, {"ifRevision", get().object.at("revision")}, {"keys", keys}}), target, context);
     Check(!home.animationDiagnosticsEnabled.value_or(true), "diagnostics reset restores run default");

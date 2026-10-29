@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "categorized_popup_scope.h"
+#include "settings/control_native_widget_settings.h"
 
 // Keyboard entry/exit and activation for widget-contained items.
 
@@ -26,17 +27,12 @@ void DesktopApp::ToggleWidgetCollapsed(size_t widgetIndex)
     if (auto* searchable = dynamic_cast<ScrollingItemWidget*>(target))
         searchable->SetSearchFocused(false);
     SelectWidgetOnly(widgetIndex);
-    // Collapse changes presentation only: never resize the occupied grid,
-    // reset scrolling, or rebuild the underlying item/slot objects.
-    const bool collapse = !IsWidgetCollapsed(widget);
-    widget.titleBarCollapsed = collapse;
-    hoverExpandedWidgetIds_.erase(widget.id);
-    hoverExpansionSuppressedWidgetId_ = collapse ? widget.id : L"";
-    UpdateHostInputImePosition();
-    SaveLayoutSlots();
-    InvalidateDragStaticScene();
-    (void)QueueDesktopWidgetComposition(widget.id);
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    // Pointer and direct IPC use one configuration transaction. The UI owns
+    // selection; the transaction changes presentation without moving the grid.
+    const auto state = CaptureNativeWidgetSettings(widget.id);
+    const auto patch = snowdesktop::control_settings::ParseNativeWidgetSettingsPatch(state,
+        snowdesktop::control::Object({{"titleBarCollapsed", snowdesktop::control::Boolean(!IsWidgetCollapsed(widget))}}));
+    if (!ApplyNativeWidgetSettings(state, patch)) MessageBeep(MB_ICONWARNING);
 }
 
 void DesktopApp::EnterWidget()

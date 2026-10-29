@@ -1,6 +1,8 @@
 #include "app/app.h"
 #include "app/features/app_control_runtime.h"
+#include "settings/control_native_widget_settings.h"
 #include "ui/input/private_pointer.h"
+#include "ui/preview/preview_png_writer.h"
 #include "app/input/widget_search_context_menu.h"
 #include "widgets/widget_folder_search.h"
 #include "platform/window_support/window_support_runtime.h"
@@ -686,7 +688,7 @@ struct NativeDragIntegrationAccess
     static void SortMembers(DesktopApp& app, int mode, bool ascending)
     { app.SortWidgetContents(0, mode, ascending); }
     static void CheckPopupControlCatalog(DesktopApp& app, const std::vector<std::filesystem::path>& files,
-        DesktopWidgetType type, bool list, bool negativeOrigin)
+        DesktopWidgetType type, bool list, bool negativeOrigin, bool compact = false)
     {
         const auto check = [](bool value, const char* message) { if (!value) throw std::runtime_error(message); };
         auto& page = app.gridPages_.front();
@@ -699,6 +701,7 @@ struct NativeDragIntegrationAccess
         app.applicationControlRuntime_ = std::make_unique<snowdesktop::app_control::Runtime>();
         SeedMemberModel(app, files, type, list);
         auto& data = app.widgets_.front();
+        if (compact) data.gridSpan = {1, 1};
         data.showSearchBox = true; data.showFileCategories = type == DesktopWidgetType::FileCategories;
         data.showDetails = false; data.detailShowModified = false; data.detailShowType = false; data.detailShowSize = false;
         app.RebuildContainersAndItems();
@@ -735,10 +738,11 @@ struct NativeDragIntegrationAccess
             check(!node.visible, "message-only fixture cannot advertise visible pointer targets");
         }
         check(members == files.size(), "popup catalog retains every actual file member");
-        if (type == DesktopWidgetType::FileCategories)
-            check(std::any_of(catalog.elements.begin(), catalog.elements.end(), [](const auto& node) {
+        const bool hasSearch = std::any_of(catalog.elements.begin(), catalog.elements.end(), [](const auto& node) {
                 return node.surface == "popup" && node.nativeControlKey == "search";
-            }), "categorized popup exposes the real search hit region");
+            });
+        check(hasSearch == (compact && type == DesktopWidgetType::FileCategories),
+            "only categorized compact popups expose the real search hit region");
         const RECT restoredFrame = view->GetLayoutFrameRect();
         check(EqualRect(&originalFrame, &restoredFrame) && originalPopup == view->IsPopupHosted(),
             "catalog query restores the original native view projection");
@@ -1189,6 +1193,7 @@ struct NativeDragIntegrationAccess
 #include "../render/native_foreground_culling_access.inc"
 #include "native_drag_foreground_damage_access.inc"
 #include "../dock/native_dock_hover_access.inc"
+#include "../platform/native_widget_settings_access.inc"
 #include "../dock/native_dock_removal_access.inc"
 #include "../widget/native_widget_surface_handoff_access.inc"
 #include "../system/native_status_selection_access.inc"
@@ -1238,6 +1243,7 @@ struct NativeDragIntegrationAccess
 #include "../widget/native_widget_surface_handoff_cases.h"
 #include "../system/native_status_selection_cases.h"
 #include "../platform/native_popup_control_cases.h"
+#include "../platform/native_widget_settings_cases.h"
 
 namespace
 {
@@ -1330,6 +1336,8 @@ int main(int argc, char** argv)
             native_popup_control_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--settings-control-global")
             RunControlGlobalSettingsTests();
+        else if (argc == 2 && std::string_view(argv[1]) == "--settings-control-native-widget")
+            native_widget_settings_cases::Run();
         else if (argc == 2 && (std::string_view(argv[1]) == "--dock-removal" ||
             std::string_view(argv[1]) == "--dock-removal-no-retention"))
         {

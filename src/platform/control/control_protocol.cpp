@@ -138,7 +138,7 @@ Value Describe()
             {"settingsAutomation", Number(1)}, {"previewRender", Number(1)}, {"monitorRecording", Number(1)},
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
             {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
-            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}})}});
+            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}, {"nativeWidgetSettings", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler) noexcept

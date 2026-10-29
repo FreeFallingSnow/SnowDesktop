@@ -106,6 +106,15 @@ void CheckWidgetThemeTransaction(const std::filesystem::path& directory,
         "negative control: applying the earlier separate read would detach the newly selected theme");
 
     const auto durable = EncodeLibrary(library, error);
+    bool staleApplied = false;
+    const auto stale = detail::SelectWidgetTheme(path, target, "builtin/global/light",
+        [&](const auto&) { staleApplied = true; return detail::WidgetThemeMutation{true, true}; },
+        [] { return false; }, library, error,
+        [](const Library&, std::string& detail) { detail = "stale_settings"; return false; });
+    Library staleDisk; std::string staleReadError;
+    check(!stale.committed && !staleApplied && !stale.rollbackAttempted && error == "stale_settings" &&
+        Load(path, staleDisk, staleReadError) && EncodeLibrary(staleDisk, staleReadError) == durable,
+        "selection precondition rejects stale library contents under the writer lock before host mutation");
     bool rollbackCalled = false;
     const auto rejected = detail::SelectWidgetTheme(path, target, "builtin/global/light",
         [](const auto&) { return detail::WidgetThemeMutation{}; }, [&] { rollbackCalled = true; return true; }, library, error);

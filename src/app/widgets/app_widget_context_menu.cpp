@@ -10,6 +10,7 @@
 #include "widgets/collection_group_rules.h"
 #include "widgets/file_category_auto_collect_rules.h"
 #include "widgets/storage_title_bar_layout.h"
+#include "settings/control_native_widget_settings.h"
 
 #include <commctrl.h>
 #include <functional>
@@ -328,6 +329,17 @@ void DesktopApp::ShowWidgetContextMenu(
     const auto& widget = widgets_[widgetIndex];
     size_t effectiveSourceIndex = widgetIndex;
     const auto menuWidgetId = widget.id;
+    const auto applyNativeSettings = [&](snowdesktop::control::Value changes) {
+        try
+        {
+            const auto state = CaptureNativeWidgetSettings(menuWidgetId);
+            const auto patch = snowdesktop::control_settings::ParseNativeWidgetSettingsPatch(state, changes);
+            const bool saved = ApplyNativeWidgetSettings(state, patch);
+            if (!saved) MessageBeep(MB_ICONWARNING);
+            return saved;
+        }
+        catch (const snowdesktop::control::Error&) { MessageBeep(MB_ICONWARNING); return false; }
+    };
     const auto menuPackageId = widget.packageId;
     const auto menuWidgetType = widget.type;
     const bool dockIconMenu = ((dockRenameAnchor.has_value() && widget.gridCell.pageId == kDockPageId) ||
@@ -388,7 +400,6 @@ void DesktopApp::ShowWidgetContextMenu(
         }
     }
     const auto& contentView = *ResolveWidgetContentViewData(&widgets_[widgetIndex]);
-    const std::wstring contentViewId = contentView.id;
     const auto statusLabel = [](const wchar_t* title,
                                 const wchar_t* status) {
         std::wstring label = title;
@@ -978,12 +989,15 @@ void DesktopApp::ShowWidgetContextMenu(
     // the submenu open, refresh its check marks in place, and apply the
     // resulting collection/layout work once the menu session ends.
     bool autoCollectPending = false;
+    DesktopWidget autoCollectCandidate;
+    autoCollectCandidate.autoCollect = effectiveSource.autoCollect;
+    autoCollectCandidate.autoCollectCategoryIds = effectiveSource.autoCollectCategoryIds;
     const auto applyAutoCollectMenuCommand = [&](UINT menuCommand,
         std::vector<snowdesktop::modern_menu::Item>& items) -> bool {
         if (effectiveSourceIndex >= widgets_.size() ||
             widgets_[effectiveSourceIndex].type != DesktopWidgetType::FileCategories)
             return false;
-        auto& source = widgets_[effectiveSourceIndex];
+        auto& source = autoCollectCandidate;
         if (menuCommand == kContextWidgetAutoCollectAll)
         {
             source.autoCollect = true;
@@ -1058,12 +1072,18 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         // The submenu stays open for consecutive changes; collect and relayout
         // once after the menu session so the desktop does not rebuild under it.
-        EnforceAutoCollectFileCategorySelection(effectiveSourceIndex);
-        ApplyAutoCollectFileCategoryWidgets();
-        LayoutItems();
-        RebuildContainersAndItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        const auto sourceId = widgets_[effectiveSourceIndex].id;
+        const auto sortId = widgets_[contentSortTargetIndex].id;
+        auto categories = snowdesktop::control::Array();
+        for (const auto& category : autoCollectCandidate.autoCollectCategoryIds)
+            categories.array.push_back(snowdesktop::control::String(WideToUtf8(category)));
+        (void)applyNativeSettings(snowdesktop::control::Object({
+            {"autoCollect", snowdesktop::control::Boolean(autoCollectCandidate.autoCollect)},
+            {"autoCollectCategoryIds", std::move(categories)}}));
+        widgetIndex = FindWidgetIndexById(menuWidgetId);
+        effectiveSourceIndex = FindWidgetIndexById(sourceId);
+        contentSortTargetIndex = FindWidgetIndexById(sortId);
+        if (widgetIndex >= widgets_.size() || effectiveSourceIndex >= widgets_.size()) return;
     }
 
     if (dockIconMenu && (command == kDockBeautifyIcon || command == kDockInheritIcon))
@@ -1109,103 +1129,16 @@ void DesktopApp::ShowWidgetContextMenu(
         return;
     }
 
-    if (command >= kContextWidgetDemoCategoryFirst &&
-        command <= kContextWidgetDemoCategoryLast)
+    if (command >= kContextWidgetDemoCategoryFirst && command <= kContextWidgetDemoCategoryLast)
     {
-        if (command == kContextWidgetDemoCategoryFirst)
-        {
-            widgets_[widgetIndex].demoIconCategory.clear();
-        }
-        else
-        {
-            const size_t categoryIndex = static_cast<size_t>(
-                command - kContextWidgetDemoCategoryFirst - 1);
-            if (categoryIndex < snowdesktop::demo_collection_rules::
-                    kCategories.size())
-            {
-                widgets_[widgetIndex].demoIconCategory =
-                    snowdesktop::demo_collection_rules::
-                        kCategories[categoryIndex].id;
-            }
-        }
-        demoCollectionIdentityCache_.clear();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-        InvalidateFloatingDockWindow(false);
-        RestoreDesktopWindowLayer();
-        RestoreInteractionInputFocus();
+        std::string category;
+        const auto selected = static_cast<size_t>(command - kContextWidgetDemoCategoryFirst);
+        if (selected > 0 && selected <= snowdesktop::demo_collection_rules::kCategories.size())
+            category = WideToUtf8(std::wstring(snowdesktop::demo_collection_rules::kCategories[selected - 1].id));
+        (void)applyNativeSettings(snowdesktop::control::Object({{"demoIconCategory", snowdesktop::control::String(category)}}));
+        RestoreDesktopWindowLayer(); RestoreInteractionInputFocus();
         return;
     }
-
-    const auto refreshOpenPopupDisplay = [&]() {
-        const DesktopWidget& source =
-            widgets_[widgetIndex];
-        if (dockFolderPopupOpen_ &&
-            dockFolderPopupMappingWidgetId_ ==
-                source.id)
-        {
-            dockFolderPopupWidget_.listMode =
-                source.listMode;
-            dockFolderPopupWidget_.listColumns = source.listColumns;
-            dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
-            dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
-            dockFolderPopupWidget_.dateHeaders = source.dateHeaders;
-            dockFolderPopupWidget_.categoryTabOrder = source.categoryTabOrder;
-            dockFolderPopupWidget_.activeCategoryId = source.activeCategoryId;
-            dockFolderPopupWidget_.fanPopup = source.fanPopup;
-            dockFolderPopupWidget_.showDetails =
-                source.showDetails;
-            dockFolderPopupWidget_.detailShowModified =
-                source.detailShowModified;
-            dockFolderPopupWidget_.detailShowType =
-                source.detailShowType;
-            dockFolderPopupWidget_.detailShowSize =
-                source.detailShowSize;
-            dockFolderPopupWidget_.detailModifiedPosition =
-                source.detailModifiedPosition;
-            dockFolderPopupWidget_.detailTypePosition =
-                source.detailTypePosition;
-            dockFolderPopupWidget_.detailSizePosition =
-                source.detailSizePosition;
-            dockFolderPopupWidget_.contentSortColumn =
-                source.contentSortColumn;
-            dockFolderPopupWidget_.contentSortAscending =
-                source.contentSortAscending;
-            popupScrollOffset_ = 0;
-            if (dockFolderPopupContainer_)
-            {
-                if (!source.showSearchBox)
-                    dockFolderPopupContainer_->ClearSearchText();
-                if (!source.showFileCategories)
-                    dockFolderPopupContainer_->EndCategoryTabDrag(false);
-                dockFolderPopupContainer_->InvalidateFilterCache();
-            }
-            RefreshDockFolderPopupGeometry();
-            return;
-        }
-        if (!dockFolderPopupOpen_ &&
-            popupWidgetIndex_ == widgetIndex)
-        {
-            popupScrollOffset_ = 0;
-            InvalidateCollectionPopupContent();
-            RefreshOpenCollectionPopupGeometry();
-        }
-    };
-
-    const size_t contentViewIndex = FindWidgetIndexById(contentViewId);
-    if (contentViewIndex >= widgets_.size()) return;
-    const auto invalidateContentView = [&]() {
-        for (const auto& container : containers_)
-        {
-            auto* view = dynamic_cast<WidgetContainer*>(container.get());
-            if (!view || (view->GetWidgetData() != &widgets_[widgetIndex] &&
-                    view->GetWidgetData() != &widgets_[contentViewIndex])) continue;
-            if (auto* group = dynamic_cast<FileGroup*>(view)) group->InvalidateHostedView();
-            else if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
-            else if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
-            else view->InvalidateSlots();
-        }
-    };
     bool needsDesktopFocus = true;
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
@@ -1213,23 +1146,8 @@ void DesktopApp::ShowWidgetContextMenu(
     switch (command)
     {
     case kContextWidgetToggleSingleCellMode:
-        if (const size_t targetIndex = FindWidgetIndexById(menuWidgetId);
-            targetIndex < widgets_.size() && snowdesktop::single_cell_widget::IsSingleCell(widgets_[targetIndex]))
-        {
-            SelectWidgetOnly(targetIndex);
-            const bool previous = widgets_[targetIndex].singleCellIconMode;
-            widgets_[targetIndex].singleCellIconMode = !widgets_[targetIndex].singleCellIconMode;
-            if (!SaveLayoutSlots())
-            {
-                widgets_[targetIndex].singleCellIconMode = previous;
-                break;
-            }
-            InvalidateDragStaticScene();
-            for (const auto& container : containers_)
-                if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
-                    view && view->GetWidgetData() == &widgets_[targetIndex]) view->InvalidateSlots();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
+        SelectWidgetOnly(widgetIndex);
+        (void)applyNativeSettings(snowdesktop::control::Object({{"singleCellIconMode", snowdesktop::control::Boolean(!widgets_[widgetIndex].singleCellIconMode)}}));
         break;
     case kContextWidgetOpen:
     {
@@ -1240,188 +1158,62 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     case kContextWidgetOpenFolder:
         needsDesktopFocus = false;
-        if (effectiveSource.type ==
+        if (widgets_[effectiveSourceIndex].type ==
                 DesktopWidgetType::FolderMapping &&
-            !effectiveSource.sourceFolderPath.empty())
+            !widgets_[effectiveSourceIndex].sourceFolderPath.empty())
             shellLaunchWorker_.Enqueue(
-                hwnd_, effectiveSource.sourceFolderPath);
+                hwnd_, widgets_[effectiveSourceIndex].sourceFolderPath);
         break;
     case kContextPopupFan:
-        if (widgets_[widgetIndex].gridCell.pageId == kDockPageId &&
-            (widgets_[widgetIndex].type == DesktopWidgetType::Collection ||
-             widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping))
-        {
-            widgets_[widgetIndex].fanPopup = !widgets_[widgetIndex].fanPopup;
-            if ((!dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) ||
-                (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id))
-            {
-                ResetCollectionPopupFanScroll();
-                popupFanShowAll_ = false;
-                popupFanActionFocused_ = false;
-                ResetCollectionPopupAnimationCache();
-                popupAnimation_.ShowImmediately();
-                popupAnimation_.Configure(
-                    snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
-                    snowdesktop::animation::RuntimeDurationScale() *
-                        (widgets_[widgetIndex].fanPopup ? 2.4 : 1.0), !widgets_[widgetIndex].fanPopup);
-            }
-            SaveLayoutSlots();
-            refreshOpenPopupDisplay();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
+        (void)applyNativeSettings(snowdesktop::control::Object({{"fanPopup", snowdesktop::control::Boolean(!widgets_[widgetIndex].fanPopup)}}));
         break;
     case kContextWidgetListColumnsFirst:
     case kContextWidgetListColumnsFirst + 1:
     case kContextWidgetListColumnsFirst + 2:
     case kContextWidgetListColumnsLast:
     case kContextWidgetToggleListMode:
+    {
+        const auto state = CaptureNativeWidgetSettings(menuWidgetId);
         if (command == kContextWidgetToggleListMode)
-            widgets_[contentViewIndex].listMode = !widgets_[contentViewIndex].listMode;
-        else
-        {
-            auto& view = widgets_[contentViewIndex];
-            if (!view.listMode) break;
-            snowdesktop::list_detail_rules::SetListColumns(view,
-                static_cast<int>(command - kContextWidgetListColumnsFirst) + 1);
-            view.showDetails = snowdesktop::list_detail_rules::HasMetadataColumns(
-                view.detailShowModified, view.detailShowType, view.detailShowSize);
-            view.scrollOffset = 0;
-        }
-        widgets_[widgetIndex].scrollOffset = 0;
-        invalidateContentView();
-        SaveLayoutSlots();
-        refreshOpenPopupDisplay();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+            (void)applyNativeSettings(snowdesktop::control::Object({{"listMode", snowdesktop::control::Boolean(!state.values.listMode)}}));
+        else if (state.values.listMode)
+            (void)applyNativeSettings(snowdesktop::control::Object({{"listColumns", snowdesktop::control::Number(static_cast<int>(command - kContextWidgetListColumnsFirst) + 1)}}));
         break;
+    }
     case kContextWidgetDetailModified:
     case kContextWidgetDetailType:
     case kContextWidgetDetailSize:
     {
-        if (!widgets_[contentViewIndex].listMode) break;
-        auto& detailWidget = widgets_[contentViewIndex];
-        auto column = snowdesktop::list_detail_rules::Column::Modified;
-        bool enabling = false;
-        if (command == kContextWidgetDetailModified)
-        {
-            enabling = !detailWidget.detailShowModified;
-            detailWidget.detailShowModified = enabling;
-        }
-        else if (command == kContextWidgetDetailType)
-        {
-            column = snowdesktop::list_detail_rules::Column::Type;
-            enabling = !detailWidget.detailShowType;
-            detailWidget.detailShowType = enabling;
-        }
-        else
-        {
-            column = snowdesktop::list_detail_rules::Column::Size;
-            enabling = !detailWidget.detailShowSize;
-            detailWidget.detailShowSize = enabling;
-        }
-        if (enabling)
-        {
-            detailWidget.listColumns = 1;
-            const snowdesktop::list_detail_rules::DividerPositions positions{
-                detailWidget.detailModifiedPosition,
-                detailWidget.detailTypePosition,
-                detailWidget.detailSizePosition };
-            const float adjusted = snowdesktop::list_detail_rules::
-                ClampDraggedPosition(
-                    column,
-                    column == snowdesktop::list_detail_rules::Column::Modified
-                        ? detailWidget.detailModifiedPosition
-                        : column == snowdesktop::list_detail_rules::Column::Type
-                            ? detailWidget.detailTypePosition
-                            : detailWidget.detailSizePosition,
-                    detailWidget.detailShowModified,
-                    detailWidget.detailShowType,
-                    detailWidget.detailShowSize,
-                    positions);
-            if (column == snowdesktop::list_detail_rules::Column::Modified)
-                detailWidget.detailModifiedPosition = adjusted;
-            else if (column == snowdesktop::list_detail_rules::Column::Type)
-                detailWidget.detailTypePosition = adjusted;
-            else
-                detailWidget.detailSizePosition = adjusted;
-        }
-        detailWidget.showDetails =
-            snowdesktop::list_detail_rules::HasMetadataColumns(
-                detailWidget.detailShowModified,
-                detailWidget.detailShowType,
-                detailWidget.detailShowSize);
-        detailWidget.scrollOffset = 0;
-        widgets_[widgetIndex].scrollOffset = 0;
-        invalidateContentView();
-        SaveLayoutSlots();
-        refreshOpenPopupDisplay();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        const auto state = CaptureNativeWidgetSettings(menuWidgetId);
+        if (!state.values.listMode) break;
+        const auto* key = command == kContextWidgetDetailModified ? "detailShowModified" : command == kContextWidgetDetailType ? "detailShowType" : "detailShowSize";
+        const bool enabled = command == kContextWidgetDetailModified ? state.values.detailShowModified : command == kContextWidgetDetailType ? state.values.detailShowType : state.values.detailShowSize;
+        (void)applyNativeSettings(snowdesktop::control::Object({{key, snowdesktop::control::Boolean(!enabled)}}));
         break;
     }
     case kContextWidgetToggleDateGroup:
-        widgets_[contentViewIndex].dateHeaders = !widgets_[contentViewIndex].dateHeaders;
-        widgets_[contentViewIndex].scrollOffset = 0;
-        widgets_[widgetIndex].scrollOffset = 0;
-        invalidateContentView();
-        SaveLayoutSlots();
-        refreshOpenPopupDisplay();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+    {
+        const auto state = CaptureNativeWidgetSettings(menuWidgetId);
+        (void)applyNativeSettings(snowdesktop::control::Object({{"dateHeaders", snowdesktop::control::Boolean(!state.values.dateHeaders)}}));
         break;
+    }
     case kContextWidgetToggleFileCategories:
-        if (widgets_[contentViewIndex].type == DesktopWidgetType::FileCategories ||
-            widgets_[contentViewIndex].type == DesktopWidgetType::FolderMapping ||
-            widgets_[contentViewIndex].type == DesktopWidgetType::FileGroup)
-        {
-            auto& view = widgets_[contentViewIndex];
-            view.showFileCategories = !view.showFileCategories;
-            view.scrollOffset = view.tabScrollOffset = 0;
-            widgets_[widgetIndex].scrollOffset = 0;
-            invalidateContentView();
-            SaveLayoutSlots();
-            refreshOpenPopupDisplay();
-            InvalidateRect(hwnd_, nullptr, TRUE);
-        }
+    {
+        const auto state = CaptureNativeWidgetSettings(menuWidgetId);
+        (void)applyNativeSettings(snowdesktop::control::Object({{"showFileCategories", snowdesktop::control::Boolean(!state.values.showFileCategories)}}));
         break;
+    }
     case kContextWidgetToggleSearchBox:
-        if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories ||
-            widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
-            widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup ||
-            widgets_[widgetIndex].type == DesktopWidgetType::FileGroup)
-        {
-            widgets_[widgetIndex].showSearchBox =
-                !widgets_[widgetIndex].showSearchBox;
-            widgets_[widgetIndex].scrollOffset = 0;
-            for (auto& c : containers_)
-            {
-                auto* scrolling = dynamic_cast<ScrollingItemWidget*>(c.get());
-                if (scrolling &&
-                    scrolling->GetWidgetData() == &widgets_[widgetIndex])
-                {
-                    if (!widgets_[widgetIndex].showSearchBox)
-                        scrolling->ClearSearchText();
-                    if (auto* categories =
-                            dynamic_cast<FileCategories*>(scrolling))
-                        categories->InvalidateCategoryCache();
-                    else if (auto* mapping = dynamic_cast<FolderMapping*>(scrolling))
-                        mapping->InvalidateFilterCache();
-                    else if (auto* group = dynamic_cast<CollectionGroup*>(scrolling))
-                        group->InvalidateFilterCache();
-                    else if (auto* fileGroup =
-                                 dynamic_cast<FileGroup*>(
-                                     scrolling))
-                        fileGroup->InvalidateHostedView();
-                    break;
-                }
-            }
-            SaveLayoutSlots();
-            refreshOpenPopupDisplay();
-            InvalidateRect(hwnd_, nullptr, TRUE);
-        }
+        (void)applyNativeSettings(snowdesktop::control::Object({{"showSearchBox", snowdesktop::control::Boolean(!widgets_[widgetIndex].showSearchBox)}}));
         break;
     case kContextWidgetManualCollect:
-        if (!CollectFileCategoryWidget(
-                effectiveSourceIndex, true))
-            MessageBeep(MB_ICONINFORMATION);
+    {
+        const auto state = CaptureNativeWidgetSettings(menuWidgetId);
+        snowdesktop::control_settings::NativeWidgetSettingsPatch patch;
+        patch.values = state.values; patch.collectNow = true;
+        if (!ApplyNativeWidgetSettings(state, patch)) MessageBeep(MB_ICONWARNING);
         break;
+    }
     case kContextWidgetRename:
         needsDesktopFocus = false;
         if (CanRenameWidget(widgets_[widgetIndex]))
@@ -1581,11 +1373,15 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextWidgetShowOnHoverOn:
+        if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
+        { (void)applyNativeSettings(snowdesktop::control::Object({{"showOnHoverOnly", snowdesktop::control::Boolean(true)}})); break; }
         widgets_[widgetIndex].showOnHoverOnly = true;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetToggleExpandOnHover:
+        if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
+        { (void)applyNativeSettings(snowdesktop::control::Object({{"titleBarExpandOnHover", snowdesktop::control::Boolean(!widgets_[widgetIndex].titleBarExpandOnHover)}})); break; }
         if (snowdesktop::storage_title_bar::UsesTop(widgets_[widgetIndex],
                 CurrentPersonalization().scrollableTitleBarOnTop))
         {
@@ -1598,59 +1394,37 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextWidgetShowOnHoverOff:
+        if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
+        { (void)applyNativeSettings(snowdesktop::control::Object({{"showOnHoverOnly", snowdesktop::control::Boolean(false)}})); break; }
         widgets_[widgetIndex].showOnHoverOnly = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetKeepWhenHiddenOn:
+        if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
+        { (void)applyNativeSettings(snowdesktop::control::Object({{"keepWhenDesktopHidden", snowdesktop::control::Boolean(true)}})); break; }
         widgets_[widgetIndex].keepWhenDesktopHidden = true;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetKeepWhenHiddenOff:
+        if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
+        { (void)applyNativeSettings(snowdesktop::control::Object({{"keepWhenDesktopHidden", snowdesktop::control::Boolean(false)}})); break; }
         widgets_[widgetIndex].keepWhenDesktopHidden = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetPrivacyModeOn:
-        widgets_[widgetIndex].privacyMode = true;
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        (void)applyNativeSettings(snowdesktop::control::Object({{"privacyMode", snowdesktop::control::Boolean(true)}}));
         break;
     case kContextWidgetPrivacyModeOff:
-        widgets_[widgetIndex].privacyMode = false;
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        (void)applyNativeSettings(snowdesktop::control::Object({{"privacyMode", snowdesktop::control::Boolean(false)}}));
         break;
     case kContextWidgetToggleLargeFolderTitleless:
-        if (widgets_[widgetIndex].type ==
-            DesktopWidgetType::Collection)
-        {
-            widgets_[widgetIndex].largeFolderTitleless =
-                !widgets_[widgetIndex].largeFolderTitleless;
-            for (auto& c : containers_)
-            {
-                auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-                if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
-                { wc->InvalidateSlots(); break; }
-            }
-            SaveLayoutSlots();
-            InvalidateRect(hwnd_, nullptr, TRUE);
-        }
+        (void)applyNativeSettings(snowdesktop::control::Object({{"largeFolderTitleless", snowdesktop::control::Boolean(!widgets_[widgetIndex].largeFolderTitleless)}}));
         break;
     case kContextWidgetToggleCollectionMode:
-        widgets_[widgetIndex].scrollContainerMode =
-            !widgets_[widgetIndex].scrollContainerMode;
-        if (!widgets_[widgetIndex].scrollContainerMode)
-            widgets_[widgetIndex].scrollOffset = 0;
-        for (auto& c : containers_)
-        {
-            auto* wc = dynamic_cast<WidgetContainer*>(c.get());
-            if (wc && wc->GetWidgetData() == &widgets_[widgetIndex])
-            { wc->InvalidateSlots(); break; }
-        }
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        (void)applyNativeSettings(snowdesktop::control::Object({{"scrollContainerMode", snowdesktop::control::Boolean(!widgets_[widgetIndex].scrollContainerMode)}}));
         break;
     default:
         break;

@@ -2,6 +2,7 @@
 
 #include "control_settings.h"
 #include "settings_controller.h"
+#include "winui/windows_compat.h"
 #include "winui/calendar_page_presenter.h"
 
 namespace snowdesktop::control_settings

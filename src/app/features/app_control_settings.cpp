@@ -2,6 +2,7 @@
 #include "app_control_runtime.h"
 #include "settings/control_global_settings.h"
 #include "settings/control_widget_settings.h"
+#include "settings/control_native_widget_settings.h"
 #include "settings/control_environment_settings.h"
 #include "settings/control_icon_settings.h"
 #include "settings/control_calendar_settings.h"
@@ -12,6 +13,7 @@
 #include "data/data_paths.h"
 #include "theme/theme_library_settings.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_theme_selection.h"
 
 snowdesktop::control::Value DesktopApp::HandleControlSettings(
     std::string_view method, const snowdesktop::control::Value& params)
@@ -29,14 +31,16 @@ snowdesktop::control::Value DesktopApp::HandleControlSettings(
         Fields(params, {});
         auto targets = Array();
         for (const auto* kind : {"global", "personalization", "dock", "navigation", "general", "category", "desktop",
-                "pages", "page", "debug-environments", "debug-environment", "widget", "icon-appearance", "large-icon",
+                "pages", "page", "debug-environments", "debug-environment", "widget", "native-widget", "icon-appearance", "large-icon",
                 "icon-library", "themes", "theme", "calendar", "calendar-event", "calendar-series", "fonts", "runtime-services",
                 "packages", "package", "agent-skills"})
             targets.array.push_back(Object({{"kind", String(kind)}}));
         auto instances = Array();
         for (const auto& widget : widgets_)
-            if (widget.type == DesktopWidgetType::LuaScript)
-                instances.array.push_back(Object({{"target", TargetJson({"widget", WideToUtf8(widget.id)})}, {"name", String(WideToUtf8(widget.title))}}));
+            if (widget.type == DesktopWidgetType::LuaScript || widget.type == DesktopWidgetType::Collection ||
+                widget.type == DesktopWidgetType::CollectionGroup || widget.type == DesktopWidgetType::FileGroup ||
+                widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping)
+                instances.array.push_back(Object({{"target", TargetJson({widget.type == DesktopWidgetType::LuaScript ? "widget" : "native-widget", WideToUtf8(widget.id)})}, {"name", String(WideToUtf8(widget.title))}}));
         return Object({{"schemaVersion", Number(1)}, {"targets", std::move(targets)}, {"widgetInstances", std::move(instances)},
             {"revision", String(std::to_string(current->generation) + ":" + std::to_string(current->revision))},
             {"transport", String("same-application-control-endpoint")}});
@@ -76,8 +80,96 @@ snowdesktop::control::Value DesktopApp::HandleControlSettings(
         if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaScript)
             throw Error("invalid_target", "The target must be an existing declarative Lua component");
         if (!widgetSettingsService_) throw Error("settings_unavailable", "Component settings service is unavailable");
-        return HandleWidgetSettings(method, params, target, *widgetSettingsService_, options.ensureWidgetSettingsInstance);
+        const auto libraryIdentity = [](const themes::Library& library) {
+            std::string detail;
+            const auto encoded = themes::EncodeLibrary(library, detail);
+            if (!detail.empty()) throw Error("theme_library_unavailable", detail);
+            return Revision(String(encoded));
+        };
+        std::string expectedLibraryIdentity;
+        WidgetThemeControl themeControl;
+        themeControl.read = [&](std::wstring_view id) {
+            themes::Library library; std::string detail;
+            if (!themes::Load(themes::LibraryPath(), library, detail))
+            {
+                expectedLibraryIdentity.clear();
+                return Object({{"available", Boolean(false)}, {"error", String("theme_library_unavailable")},
+                    {"selectedThemeId", String("")}, {"choices", Array()}});
+            }
+            try { expectedLibraryIdentity = libraryIdentity(library); }
+            catch (const Error&)
+            {
+                expectedLibraryIdentity.clear();
+                return Object({{"available", Boolean(false)}, {"error", String("theme_library_unavailable")},
+                    {"selectedThemeId", String("")}, {"choices", Array()}});
+            }
+            auto choices = Array();
+            for (const auto& choice : themes::Choices(library, themes::Kind::Global, themes::Components))
+                choices.array.push_back(Object({{"id", String(choice.id)}, {"name", String(choice.name)}}));
+            const auto binding = library.references.find("widget/" + WideToUtf8(std::wstring(id)));
+            return Object({{"available", Boolean(true)}, {"selectedThemeId", String(binding == library.references.end() ? "" : binding->second.id)},
+                {"choices", std::move(choices)}, {"libraryContentIdentity", String(expectedLibraryIdentity)}});
+        };
+        themeControl.apply = [&](const widget_runtime::WidgetSettingMutationGuard& guard, std::string_view themeId, bool detach) {
+            using namespace widget_runtime;
+            if (expectedLibraryIdentity.empty())
+                return WidgetSettingMutationResult{WidgetSettingMutationStatus::Unavailable, guard.generation,
+                    guard.revision, "theme_library_unavailable", "Component themes are unavailable"};
+            const auto snapshot = widgetSettingsService_->Snapshot(guard.widgetId);
+            if (!snapshot || !guard.Matches(*snapshot))
+                return WidgetSettingMutationResult{WidgetSettingMutationStatus::StaleSnapshot, guard.generation,
+                    guard.revision, "stale_settings", "Component settings changed before theme selection"};
+            const auto bindingTarget = "widget/" + WideToUtf8(guard.widgetId);
+            const auto currentLibrary = [&](const themes::Library& library, std::string& detail) {
+                if (libraryIdentity(library) == expectedLibraryIdentity) return true;
+                detail = "stale_settings"; return false;
+            };
+            themes::Library library; std::string detail;
+            if (detach)
+            {
+                bool changed = false;
+                const auto saved = themes::Transact(themes::LibraryPath(), [&](themes::Library& value, std::string& error) {
+                    if (!currentLibrary(value, error)) return false;
+                    const auto latest = widgetSettingsService_->Snapshot(guard.widgetId);
+                    if (!latest || !guard.Matches(*latest)) { error = "stale_settings"; return false; }
+                    changed = value.references.contains(bindingTarget);
+                    themes::Detach(value, bindingTarget);
+                    return true;
+                }, library, detail);
+                return WidgetSettingMutationResult{saved ? (changed ? WidgetSettingMutationStatus::Applied : WidgetSettingMutationStatus::Unchanged)
+                    : WidgetSettingMutationStatus::PersistenceFailed, guard.generation, guard.revision, saved ? "" : detail,
+                    saved ? "" : "Component theme binding could not be saved"};
+            }
+            auto mutation = WidgetSettingMutationResult{WidgetSettingMutationStatus::Unchanged, guard.generation, guard.revision};
+            auto restored = mutation;
+            const auto selected = themes::detail::SelectWidgetTheme(themes::LibraryPath(), bindingTarget, std::string(themeId),
+                [&](const WidgetHostAppearancePatch& patch) {
+                    mutation = widgetSettingsService_->UpdateHostAppearance(guard, patch);
+                    return themes::detail::WidgetThemeMutation{mutation.Succeeded(), mutation.Changed()};
+                }, [&] {
+                    restored = widgetSettingsService_->UpdateHostAppearance(
+                        {guard.widgetId, mutation.generation, mutation.revision},
+                        themes::detail::WidgetAppearanceSnapshotPatch(snapshot->hostAppearance));
+                    return restored.Succeeded();
+                }, library, detail, currentLibrary);
+            if (selected.committed || (!selected.mutationSucceeded && detail == "widgetApplyFailed")) return mutation;
+            const bool rollbackFailed = selected.rollbackAttempted && !selected.rollbackSucceeded;
+            const auto& final = selected.rollbackAttempted ? restored : mutation;
+            return WidgetSettingMutationResult{WidgetSettingMutationStatus::PersistenceFailed, final.generation,
+                final.revision, rollbackFailed ? "themeSelectionRollbackFailed" : detail,
+                rollbackFailed ? "Component appearance rollback failed after theme-library persistence failure"
+                    : "Component theme selection could not be saved"};
+        };
+        return HandleWidgetSettings(method, params, target, *widgetSettingsService_, options.ensureWidgetSettingsInstance, themeControl);
     }
+    if (target.kind == "native-widget")
+        return HandleNativeWidgetSettings(method, params, target, {
+            [this](std::string_view id) { return CaptureNativeWidgetSettings(Utf8ToWide(std::string(id))); },
+            [this](const NativeWidgetSettingsState& expected, const NativeWidgetSettingsPatch& patch) {
+                return ApplyNativeWidgetSettings(expected, patch);
+            }, [this](std::string_view id, const std::string& query) {
+                return NativeWidgetSearchAction(Utf8ToWide(std::string(id)), Utf8ToWide(query));
+            }});
     if (IsEnvironmentSettingsTarget(target))
         return HandleEnvironmentSettings(method, params, target,
             {*settingsController_, options.pageLayoutPage, options.homeAboutStatus, options.debugVisible});

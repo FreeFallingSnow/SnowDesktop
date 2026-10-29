@@ -293,7 +293,7 @@ pointer adapter. The pipe protocol major and Lua component API remain unchanged.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
-| `settings.catalog` | `{target?,offset?,limit?}` | Without a target, target kinds and current Lua instance identities; with a target, current values, fields, constraints and available actions |
+| `settings.catalog` | `{target?,offset?,limit?}` | Without a target, target kinds and current native/Lua instance identities; with a target, current values, fields, constraints and available actions |
 | `settings.get` | `{target,offset?,limit?}` | Current target values and opaque `revision` |
 | `settings.update` | `{target,ifRevision,changes}` | Apply a named field patch through its native owner |
 | `settings.reset` | `{target,ifRevision,keys?}` | Restore supported fields to their native defaults |
@@ -313,6 +313,7 @@ or configuration-file path as a settings dispatcher.
 | `pages`, `page` | Current desktop pages, page names, grids, order and impact-aware page operations |
 | `debug-environments`, `debug-environment` | Named isolated environments, current selection, desktop binding and explicit switch/reset operations |
 | `widget` | One existing Lua instance's declared settings, host appearance, presets and opaque setting channels |
+| `native-widget` | One existing native storage component's appearance, content view, category/group preferences and native actions |
 | `packages`, `package`, `agent-skills` | Installed package enable/override and exact-scope permission preferences, Agent Skill target selection |
 | `icon-appearance`, `large-icon`, `icon-library` | Existing icon targets, native appearance editor, large-icon configuration and local icon-library operations |
 | `themes`, `theme` | Native theme library, effective appearance bindings, saved themes and local import/export |
@@ -374,6 +375,38 @@ reset restores ordinary settings only. Secret text is never included in get or
 catalog results; secret write/clear, filesystem handles, references, searches,
 appearance preview/apply, preset and preview lifecycle use their explicit
 cataloged actions. A picker still follows the normal user-owned selection flow.
+`selectTheme` takes `arguments:{themeId}` and selects an available saved/built-in
+component theme through the native theme-library transaction; `detachTheme`
+accepts empty arguments and preserves the current host appearance. The widget
+revision includes theme-library content identity. Selection checks that identity
+under the library writer lock and uses the current component service guard;
+if library persistence fails after appearance changes, rollback is guarded by
+the returned mutation revision. A rollback failure is reported explicitly.
+
+Capability `nativeWidgetSettings:1` adds the `native-widget` target for existing
+collections, file categories, folder mappings and collection/file groups. Each
+catalog distinguishes the visible owner, active content child and source target,
+and lists only applicable writable fields. Read a fresh catalog after changing
+the active group tab. `settings.reset` requires explicit applicable `keys` for
+this target. Native search is a transient action; collecting files and reordering
+group tabs use separately cataloged actions. Placement, member identities and
+folder source paths are read-only here; use the existing placement operation
+for layout changes. Native configuration applies through the shared host
+transaction and reports a persistence failure instead of successful application
+when the previous model must be restored.
+`set-search` takes `{query}`; `reorder-tabs` takes `{order:[existing-child-id,...]}`
+containing each current child exactly once; `collect-now` takes `{confirmed:true}`.
+
+The `runtime-services` actions `apply-desktop-style` and `apply-style-animations`
+use named `{preset}` arguments. Desktop styles are `native`, `taskbar-dock`,
+`island`, `merged`, and `side`; animation presets are `island`, `merged`, and
+`side`. Desktop-style arguments may include `dockPosition` (`bottom`, `top`,
+`left`, `right`) and `dockAttached`, used by the native `taskbar-dock` preset.
+Applying a layout does not implicitly apply its recommended animation preset.
+`confirmed` is optional and defaults to false; the existing controller requires
+it only when a selected desktop style would disable the currently enabled Dock.
+Animation presets do not add a confirmation step. These actions flush the
+controller's pending native commit and report failures.
 
 Page grid changes expose native impact. A change requiring confirmation fails
 with `confirmation_required`; use the explicit confirmed `set-grid` action.
@@ -483,6 +516,6 @@ Failure to acquire the endpoint is logged without disabling the desktop.
 
 The endpoint provides live discovery/operations plus isolated native render
 exports. Fixture data and virtual clocks belong to the private renderer; they
-do not replace the live user profile. Creating/removing live widgets, general
-settings mutation outside the native input path, external application control
-and package publication remain outside this endpoint's current contract.
+do not replace the live user profile. Creating/removing live widgets, external
+application control and package publication remain outside this endpoint's
+current contract.

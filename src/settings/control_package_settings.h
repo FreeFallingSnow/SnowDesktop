@@ -1,5 +1,6 @@
 #pragma once
 #include "control_settings.h"
+#include "winui/windows_compat.h"
 #include "winui/widgets_page_backend.h"
 
 namespace snowdesktop::control_settings

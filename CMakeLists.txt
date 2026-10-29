@@ -390,12 +390,15 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp
     src/app/features/app_control_settings.cpp
+    src/app/features/app_control_native_widgets.cpp
     src/settings/control_settings.h
     src/settings/control_settings_values.h
     src/settings/control_global_settings.cpp
     src/settings/control_global_settings.h
     src/settings/control_widget_settings.cpp
     src/settings/control_widget_settings.h
+    src/settings/control_native_widget_settings.cpp
+    src/settings/control_native_widget_settings.h
     src/settings/control_environment_settings.cpp
     src/settings/control_environment_settings.h
     src/settings/control_icon_settings.cpp
@@ -3369,6 +3372,11 @@ if (BUILD_TESTING)
     set_tests_properties(control_global_settings PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;settings;ipc")
+    add_test(NAME control_native_widget_settings
+        COMMAND SnowDesktopNativeDragIntegrationTests --settings-control-native-widget)
+    set_tests_properties(control_native_widget_settings PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;settings;ipc;widget;data")
     add_test(NAME native_list_title_font_isolation
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
     add_test(NAME native_popup_display_menu

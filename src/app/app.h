@@ -71,6 +71,7 @@
 namespace snowdesktop::page_mapping { struct State; struct Services; }
 namespace snowdesktop::app_control { struct Runtime; }
 namespace snowdesktop::control { struct ElementSnapshot; }
+namespace snowdesktop::control_settings { struct NativeWidgetSettingsState; struct NativeWidgetSettingsPatch; }
 namespace snowdesktop::dock_drop_model { struct Services; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
@@ -1653,6 +1654,10 @@ private:
         std::string_view method, const snowdesktop::control::Value& params);
     snowdesktop::control::Value HandleControlSettings(
         std::string_view method, const snowdesktop::control::Value& params);
+    snowdesktop::control_settings::NativeWidgetSettingsState CaptureNativeWidgetSettings(std::wstring_view id);
+    bool ApplyNativeWidgetSettings(const snowdesktop::control_settings::NativeWidgetSettingsState& expected,
+        const snowdesktop::control_settings::NativeWidgetSettingsPatch& patch);
+    bool NativeWidgetSearchAction(std::wstring_view id, const std::wstring& query);
     /** Release settings UI and services while their borrowed owners are alive. */
     void ShutdownSettingsInfrastructure() noexcept;
     /** Commit a validated layout backup on the application STA. */
@@ -2217,7 +2222,7 @@ private:
      * @param mode 排序模式
      * @param ascending 是否升序
      */
-    void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true);
+    void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true, bool persist = true);
     /** @brief 更新剪切状态高亮显示。 */
     void UpdateCutState();
 

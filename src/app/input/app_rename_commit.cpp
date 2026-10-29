@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "settings/control_native_widget_settings.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "rename_model_update.h"
 #include "drag_drop/drag_input_rules.h"
 
@@ -263,7 +265,18 @@ void DesktopApp::CommitRename(bool cancel)
 
     if (renameController_.IsWidget())
     {
-        if (!cancel && renameIndex < widgets_.size())
+        if (!cancel && renameIndex < widgets_.size() && snowdesktop::single_cell_widget::Supports(widgets_[renameIndex].type))
+        {
+            try
+            {
+                const auto state = CaptureNativeWidgetSettings(widgets_[renameIndex].id);
+                const auto patch = snowdesktop::control_settings::ParseNativeWidgetSettingsPatch(state,
+                    snowdesktop::control::Object({{"title", snowdesktop::control::String(WideToUtf8(newName))}}));
+                if (!ApplyNativeWidgetSettings(state, patch)) MessageBeep(MB_ICONWARNING);
+            }
+            catch (const snowdesktop::control::Error&) { MessageBeep(MB_ICONWARNING); }
+        }
+        else if (!cancel && renameIndex < widgets_.size())
         {
             if (!newName.empty() &&
                 newName != widgets_[renameIndex].title)
