@@ -188,14 +188,22 @@ public:
         for (auto& pixel : pixels.data) pixel |= 0xff000000U;
         return true;
     }
-    Pixels First(const std::atomic<bool>& cancelled)
+    Pixels First(const std::atomic<bool>& cancelled, std::int64_t minimumTime100ns = 0)
     {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (std::chrono::steady_clock::now() < deadline)
         {
             if (cancelled.load()) throw std::runtime_error("capture_cancelled");
             Pixels pixels;
-            if (Latest(pixels)) { Validate(); return pixels; }
+            if (Latest(pixels))
+            {
+                Validate();
+                // The pool can still contain images captured while a caller
+                // prepared its consumer. Returning them would back-date the
+                // recording clock, even though this checkout happened now.
+                // Latest counts every acquired image, including these rejects.
+                if (pixels.time100ns >= minimumTime100ns) return pixels;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
         throw std::runtime_error("capture_frame_timeout");
@@ -244,7 +252,16 @@ void RecordFrames(Reader& reader, State& state, const std::atomic<bool>& cancell
     // Initializing the encoder can take much longer than one video frame.
     // Start the recording clock only after that work, from a fresh WGC image.
     video_writer::Mp4 writer(partial, static_cast<unsigned>(monitorWidth), static_cast<unsigned>(monitorHeight), state.fps);
-    Pixels held = reader.First(cancelled);
+    const auto encoderReadyTime = QpcTime();
+    Pixels held;
+    try { held = reader.First(cancelled, encoderReadyTime); }
+    catch (...)
+    {
+        // A timeout/cancellation can occur after stale pool frames were
+        // acquired and rejected. Preserve that loss even with no video frames.
+        state.capturedFrames = state.discardedFrames = reader.CapturedFrames();
+        throw;
+    }
     state.width = held.width; state.height = held.height;
     state.capturedFrames = state.discardedFrames = reader.CapturedFrames();
     if (state.width < 2 || state.height < 2 || state.width > 3840 || state.height > 2160 || (state.width & 1) || (state.height & 1))
