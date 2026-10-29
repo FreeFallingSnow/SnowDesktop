@@ -277,6 +277,7 @@ int wmain()
         card.previewWidth = 120; card.previewHeight = 80;
         card.cacheKey = L"private-pointer-preview";
         card.applySettings.kind = ApplyKind::Collection;
+        card.applySettings.scrollContainerMode = true;
         card.options = {{OptionSetting::ListMode, L"Layout", L"Grid", L"List"}};
         bool hovered = false, listMode = false;
         unsigned applied = 0;
@@ -318,6 +319,7 @@ int wmain()
         drain();
         Expect(hovered, "real WM_MOUSEMOVE updates the production preview hover render");
         const RECT option = window.OptionBoundsForTesting(OptionSetting::ListMode, true);
+        Expect(!IsRectEmpty(&option), "scrolling collection exposes the real list option");
         const auto optionClient = POINT{(option.left + option.right) / 2, (option.top + option.bottom) / 2};
         SendMessageW(window.Handle(), WM_LBUTTONUP, 0, MAKELPARAM(optionClient.x, optionClient.y));
         Expect(!listMode, "unpermitted physical messages cannot click a private preview");

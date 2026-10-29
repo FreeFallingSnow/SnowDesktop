@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 #include "ui/input/text_input_window.h"
 #include "ui/input/text_input_state.h"
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include <algorithm>
 #include <cstring>
@@ -68,6 +69,15 @@ SHORT WINAPI KeyState(int key)
 { return key == VK_CONTROL && control ? static_cast<SHORT>(0x8000) : 0; }
 }
 
+// The production editor now reads the application's input facade. Keep the
+// controlled Ctrl boundary at that call site; clipboard and HWND behavior
+// below still compile the actual editor implementation.
+namespace snowdesktop::private_pointer
+{
+SHORT ClipboardBoundaryKeyState(int key) noexcept
+{ return clipboard_boundary::KeyState(key); }
+}
+
 #define OpenClipboard clipboard_boundary::Open
 #define CloseClipboard clipboard_boundary::Close
 #define GetClipboardData clipboard_boundary::Get
@@ -77,7 +87,7 @@ SHORT WINAPI KeyState(int key)
 #define GlobalAlloc clipboard_boundary::Allocate
 #define GlobalLock clipboard_boundary::Lock
 #define GlobalSize clipboard_boundary::Size
-#define GetKeyState clipboard_boundary::KeyState
+#define KeyState ClipboardBoundaryKeyState
 #include "../../src/ui/input/text_input_window.cpp"
 #undef OpenClipboard
 #undef CloseClipboard
@@ -88,7 +98,7 @@ SHORT WINAPI KeyState(int key)
 #undef GlobalAlloc
 #undef GlobalLock
 #undef GlobalSize
-#undef GetKeyState
+#undef KeyState
 
 namespace
 {
