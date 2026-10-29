@@ -100,15 +100,21 @@ bool WaitForCall(SteamAPICall_t call, Result& result,
     while (std::chrono::steady_clock::now() < deadline)
     {
         SteamAPI_RunCallbacks();
+        ISteamUtils* utils = SteamUtils();
+        if (!utils || !SteamAPI_IsSteamRunning())
+        {
+            error = "The Steam client connection was lost during the operation";
+            return false;
+        }
         bool failed = false;
-        if (SteamUtils()->IsAPICallCompleted(call, &failed))
+        if (utils->IsAPICallCompleted(call, &failed))
         {
             if (failed)
             {
                 error = "Steam reported an asynchronous operation failure";
                 return false;
             }
-            if (!SteamUtils()->GetAPICallResult(call, &result,
+            if (!utils->GetAPICallResult(call, &result,
                     sizeof(result), result.k_iCallback, &failed) || failed)
             {
                 error = "Steam did not return the expected callback result";
@@ -121,13 +127,6 @@ bool WaitForCall(SteamAPICall_t call, Result& result,
     }
     error = "Steam operation timed out";
     return false;
-}
-
-template<typename Result>
-bool WaitForCall(SteamAPICall_t call, Result& result,
-    std::chrono::milliseconds timeout, std::string& error)
-{
-    return WaitForCall(call, result, timeout, [] {}, error);
 }
 
 std::string QueryText(ISteamUGC& ugc, UGCQueryHandle_t query,
@@ -174,6 +173,38 @@ using UploadDirectory = WorkshopUploadDirectory;
 #endif
 }
 
+struct SteamWorkshopCore::ConnectionCallbacks
+{
+    bool sampleRequested = false;
+    bool sessionInvalid = false;
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    void OnConnected(SteamServersConnected_t*) { sampleRequested = true; }
+    void OnDisconnected(SteamServersDisconnected_t*) { sampleRequested = true; }
+    void OnConnectFailure(SteamServerConnectFailure_t*) { sampleRequested = true; }
+    void OnIpcFailure(IPCFailure_t*)
+    {
+        sessionInvalid = true;
+        sampleRequested = true;
+    }
+    void OnShutdown(SteamShutdown_t*)
+    {
+        sessionInvalid = true;
+        sampleRequested = true;
+    }
+
+    CCallback<ConnectionCallbacks, SteamServersConnected_t> connected{
+        this, &ConnectionCallbacks::OnConnected};
+    CCallback<ConnectionCallbacks, SteamServersDisconnected_t> disconnected{
+        this, &ConnectionCallbacks::OnDisconnected};
+    CCallback<ConnectionCallbacks, SteamServerConnectFailure_t> connectFailure{
+        this, &ConnectionCallbacks::OnConnectFailure};
+    CCallback<ConnectionCallbacks, IPCFailure_t> ipcFailure{
+        this, &ConnectionCallbacks::OnIpcFailure};
+    CCallback<ConnectionCallbacks, SteamShutdown_t> shutdown{
+        this, &ConnectionCallbacks::OnShutdown};
+#endif
+};
+
 SteamWorkshopCore::SteamWorkshopCore(std::filesystem::path stagingRoot)
     : stagingRoot_(stagingRoot.empty()
         ? ExecutableDirectory() / L"data" / L"SteamWorkshop" /
@@ -185,77 +216,284 @@ SteamWorkshopCore::SteamWorkshopCore(std::filesystem::path stagingRoot)
     status_.compiled = true;
 #else
     status_.diagnostic = "external Steamworks SDK was not configured";
+    status_.connectionState = ManagerConnectionState::Unavailable;
+    status_.connectionProblem = SteamConnectionProblem::SteamworksUnavailable;
 #endif
 }
 
 SteamWorkshopCore::~SteamWorkshopCore()
 {
+    ShutdownSession();
+}
+
+void SteamWorkshopCore::StoreStatus(SteamStatus status)
+{
+    std::lock_guard lock(statusMutex_);
+    const bool changed = status_.compiled != status.compiled ||
+        status_.initialized != status.initialized ||
+        status_.loggedOn != status.loggedOn ||
+        status_.expectedAppId != status.expectedAppId ||
+        status_.appId != status.appId || status_.steamId != status.steamId ||
+        status_.diagnostic != status.diagnostic ||
+        status_.connectionState != status.connectionState ||
+        status_.connectionProblem != status.connectionProblem;
+    status.connectionRevision = status_.connectionRevision + (changed ? 1u : 0u);
+    status_ = std::move(status);
+}
+
+void SteamWorkshopCore::ShutdownSession()
+{
+    // Unregister before Steam frees its callback and interface state. All API
+    // accesses, including this teardown, belong to the same serial worker.
+    connectionCallbacks_.reset();
 #if SNOWDESKTOP_HAS_STEAMWORKS
-    if (status_.initialized) SteamAPI_Shutdown();
+    if (sessionInitialized_) SteamAPI_Shutdown();
+#endif
+    sessionInitialized_ = false;
+}
+
+void SteamWorkshopCore::Shutdown()
+{
+    ShutdownSession();
+    connectionSchedule_ = {};
+    connectionError_ = {};
+    SteamStatus status = Status();
+    status.initialized = false;
+    status.loggedOn = false;
+    status.appId = 0;
+    status.steamId.clear();
+    status.connectionProblem = status.compiled ? SteamConnectionProblem::None :
+        SteamConnectionProblem::SteamworksUnavailable;
+    if (status.compiled) status.diagnostic.clear();
+    status.connectionState = ResolveManagerConnectionState(status.compiled,
+        false, false, status.connectionProblem);
+    StoreStatus(std::move(status));
+}
+
+bool SteamWorkshopCore::CaptureConnection(CoreError& error)
+{
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    SteamStatus status = Status();
+    status.compiled = true;
+    status.initialized = sessionInitialized_;
+    status.loggedOn = false;
+    status.appId = 0;
+    status.steamId.clear();
+    ISteamUtils* utils = sessionInitialized_ ? SteamUtils() : nullptr;
+    ISteamUser* user = sessionInitialized_ ? SteamUser() : nullptr;
+    if (!utils || !user || !SteamUGC())
+    {
+        status.diagnostic = "Steam interfaces are unavailable";
+        status.connectionProblem = SteamConnectionProblem::InterfaceUnavailable;
+        SetError(error, kSteamInitializationFailed,
+            "steam_interface_unavailable", status.diagnostic);
+        ShutdownSession();
+        status.initialized = false;
+    }
+    else
+    {
+        status.appId = utils->GetAppID();
+        if (!IsExpectedSteamAppId(status.appId))
+        {
+            status.diagnostic = SteamAppIdMismatchMessage(status.appId);
+            status.connectionProblem = SteamConnectionProblem::AppIdMismatch;
+            SetError(error, kSteamInitializationFailed,
+                "steam_app_id_mismatch", status.diagnostic);
+            ShutdownSession();
+            status.initialized = false;
+        }
+        else
+        {
+            status.loggedOn = user->BLoggedOn();
+            const auto id = user->GetSteamID().ConvertToUint64();
+            if (id) status.steamId = std::to_string(id);
+            status.connectionProblem = status.loggedOn ?
+                SteamConnectionProblem::None : SteamConnectionProblem::Offline;
+            status.diagnostic = status.loggedOn ? std::string{} :
+                "Steam initialized, but the current user is offline";
+        }
+    }
+    status.connectionState = ResolveManagerConnectionState(status.compiled,
+        status.initialized, status.loggedOn, status.connectionProblem);
+    const auto now = ManagerConnectionSchedule::Clock::now();
+    if (status.initialized)
+    {
+        connectionError_ = {};
+        connectionSchedule_.Initialized(now);
+    }
+    else
+    {
+        connectionError_ = error;
+        connectionSchedule_.Failed(now, status.connectionProblem);
+    }
+    const bool initialized = status.initialized;
+    StoreStatus(std::move(status));
+    return initialized;
+#else
+    (void)error;
+    return false;
 #endif
 }
 
 bool SteamWorkshopCore::Initialize(CoreError& error)
 {
-    std::lock_guard lock(statusMutex_);
+    error = {};
 #if SNOWDESKTOP_HAS_STEAMWORKS
-    if (status_.initialized)
+    if (sessionInitialized_)
     {
+        // Pump without the snapshot mutex: a callback may request a fresh
+        // sample or invalidate the session, and UI readers must never block.
         SteamAPI_RunCallbacks();
-        if (ISteamUser* user = SteamUser())
-            status_.loggedOn = user->BLoggedOn();
-        return true;
+        if (SteamAPI_IsSteamRunning() && connectionCallbacks_ &&
+            !connectionCallbacks_->sessionInvalid)
+        {
+            connectionCallbacks_->sampleRequested = false;
+            return CaptureConnection(error);
+        }
+        ShutdownSession();
     }
-    status_.compiled = true;
-    status_.appId = 0;
-    status_.loggedOn = false;
-    status_.steamId.clear();
+    SteamStatus status = Status();
+    status.compiled = true;
+    status.initialized = false;
+    status.appId = 0;
+    status.loggedOn = false;
+    status.steamId.clear();
+    status.diagnostic.clear();
+    status.connectionProblem = SteamConnectionProblem::None;
+    status.connectionState = ManagerConnectionState::Connecting;
+    StoreStatus(status);
     SteamErrMsg message{};
     const ESteamAPIInitResult result = SteamAPI_InitEx(&message);
-    status_.diagnostic = message;
     if (result != k_ESteamAPIInitResult_OK)
     {
+        status.diagnostic = message;
         SetError(error, kSteamInitializationFailed,
             "steam_initialization_failed",
-            status_.diagnostic.empty() ? "SteamAPI_InitEx failed" :
-                status_.diagnostic);
+            status.diagnostic.empty() ? "SteamAPI_InitEx failed" :
+                status.diagnostic);
         error.steamInitResult = static_cast<std::uint32_t>(result);
+        status.diagnostic = error.message;
+        status.connectionProblem = ClassifySteamConnectionProblem(
+            error.code, error.steamInitResult);
+        status.connectionState = ResolveManagerConnectionState(true,
+            false, false, status.connectionProblem);
+        connectionError_ = error;
+        connectionSchedule_.Failed(ManagerConnectionSchedule::Clock::now(),
+            status.connectionProblem);
+        StoreStatus(std::move(status));
         return false;
     }
-    status_.initialized = true;
-    ISteamUtils* utils = SteamUtils();
-    ISteamUser* user = SteamUser();
-    if (!utils || !user)
-    {
-        status_.diagnostic =
-            "Steam interfaces were unavailable after initialization";
-        SteamAPI_Shutdown();
-        status_.initialized = false;
-        SetError(error, kSteamInitializationFailed,
-            "steam_interface_unavailable", status_.diagnostic);
-        return false;
-    }
-    status_.appId = utils->GetAppID();
-    if (!IsExpectedSteamAppId(status_.appId))
-    {
-        status_.diagnostic = SteamAppIdMismatchMessage(status_.appId);
-        SteamAPI_Shutdown();
-        status_.initialized = false;
-        SetError(error, kSteamInitializationFailed,
-            "steam_app_id_mismatch", status_.diagnostic);
-        return false;
-    }
-    status_.loggedOn = user->BLoggedOn();
-    status_.steamId = std::to_string(
-        user->GetSteamID().ConvertToUint64());
-    status_.diagnostic = status_.loggedOn ? std::string{} :
-        "Steam initialized, but the current user is offline";
-    return true;
+    sessionInitialized_ = true;
+    connectionCallbacks_ = std::make_unique<ConnectionCallbacks>();
+    return CaptureConnection(error);
 #else
-    status_.diagnostic = "external Steamworks SDK was not configured";
     SetError(error, kSteamworksUnavailable, "steamworks_unavailable",
         "Configure SNOWDESKTOP_STEAMWORKS_SDK_ROOT with an external Steamworks SDK and rebuild");
+    connectionError_ = error;
+    connectionSchedule_.Failed(ManagerConnectionSchedule::Clock::now(),
+        SteamConnectionProblem::SteamworksUnavailable);
     return false;
+#endif
+}
+
+bool SteamWorkshopCore::PollConnection(CoreError& error, bool retry)
+{
+    error = {};
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    if (sessionInitialized_)
+    {
+        SteamAPI_RunCallbacks();
+        if (!SteamAPI_IsSteamRunning() || !connectionCallbacks_ ||
+            connectionCallbacks_->sessionInvalid)
+        {
+            // PollConnection is an idle-only entry point. No outstanding UGC
+            // submit is interrupted and no remote operation is retried here.
+            ShutdownSession();
+            SteamStatus status = Status();
+            status.initialized = false;
+            status.loggedOn = false;
+            status.appId = 0;
+            status.steamId.clear();
+            status.diagnostic = "The Steam client session is unavailable";
+            status.connectionProblem = SteamConnectionProblem::InterfaceUnavailable;
+            status.connectionState = ManagerConnectionState::Unavailable;
+            SetError(error, kSteamInitializationFailed,
+                "steam_interface_unavailable", status.diagnostic);
+            connectionError_ = error;
+            connectionSchedule_.Failed(ManagerConnectionSchedule::Clock::now(),
+                status.connectionProblem);
+            StoreStatus(std::move(status));
+            return retry ? Initialize(error) : false;
+        }
+        if (connectionSchedule_.ShouldSample(
+                ManagerConnectionSchedule::Clock::now(),
+                retry || connectionCallbacks_->sampleRequested))
+        {
+            connectionCallbacks_->sampleRequested = false;
+            return CaptureConnection(error);
+        }
+        return true;
+    }
+#endif
+    if (connectionSchedule_.ShouldInitialize(
+            ManagerConnectionSchedule::Clock::now(), retry))
+        return Initialize(error);
+    error = connectionError_;
+    return false;
+}
+
+void SteamWorkshopCore::SampleActiveConnection()
+{
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!sessionInitialized_) return;
+    const auto now = ManagerConnectionSchedule::Clock::now();
+    const bool invalid = !connectionCallbacks_ ||
+        connectionCallbacks_->sessionInvalid;
+    if (!connectionSchedule_.ShouldSample(now,
+            !connectionCallbacks_ || connectionCallbacks_->sampleRequested))
+        return;
+    connectionSchedule_.Sampled(now);
+    if (connectionCallbacks_) connectionCallbacks_->sampleRequested = false;
+
+    SteamStatus status = Status();
+    status.initialized = false;
+    status.loggedOn = false;
+    status.appId = 0;
+    status.steamId.clear();
+    status.connectionProblem = SteamConnectionProblem::InterfaceUnavailable;
+    status.diagnostic = "The Steam client session is unavailable";
+    // A callback may have invalidated all stored Steam state. Do not access
+    // those interfaces, or tear them down underneath the active submit.
+    if (!invalid && SteamAPI_IsSteamRunning())
+    {
+        ISteamUtils* utils = SteamUtils();
+        ISteamUser* user = SteamUser();
+        if (utils && user)
+        {
+            status.appId = utils->GetAppID();
+            if (IsExpectedSteamAppId(status.appId))
+            {
+                status.initialized = true;
+                status.loggedOn = user->BLoggedOn();
+                const auto id = user->GetSteamID().ConvertToUint64();
+                if (id) status.steamId = std::to_string(id);
+                status.connectionProblem = status.loggedOn ?
+                    SteamConnectionProblem::None : SteamConnectionProblem::Offline;
+                status.diagnostic = status.loggedOn ? std::string{} :
+                    "Steam initialized, but the current user is offline";
+            }
+            else
+            {
+                status.connectionProblem = SteamConnectionProblem::AppIdMismatch;
+                status.diagnostic = SteamAppIdMismatchMessage(status.appId);
+            }
+        }
+    }
+    if (!status.initialized && connectionCallbacks_)
+        connectionCallbacks_->sessionInvalid = true;
+    status.connectionState = ResolveManagerConnectionState(status.compiled,
+        status.initialized, status.loggedOn, status.connectionProblem);
+    StoreStatus(std::move(status));
 #endif
 }
 
@@ -305,7 +543,8 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
     SteamUGCQueryCompleted_t completed{};
     std::string message;
     if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed,
-            std::chrono::seconds(30), message))
+            std::chrono::seconds(30),
+            [this] { SampleActiveConnection(); }, message))
     {
         SetError(error, kSteamOperationTimedOut, "query_timed_out", message);
         return std::nullopt;
@@ -387,7 +626,9 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     ugc->SetReturnMetadata(guard.handle, true);
     ugc->SetReturnAdditionalPreviews(guard.handle, true);
     SteamUGCQueryCompleted_t completed{}; std::string message; SteamUGCDetails_t details{};
-    if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed, std::chrono::seconds(30), message) ||
+    if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed,
+            std::chrono::seconds(30),
+            [this] { SampleActiveConnection(); }, message) ||
         completed.m_eResult != k_EResultOK || completed.m_unNumResultsReturned != 1 ||
         !ugc->GetQueryUGCResult(guard.handle, 0, &details) || details.m_eResult != k_EResultOK || details.m_nPublishedFileId != itemId)
     { SetError(error, kSteamOperationFailed, "item_query_failed", message.empty() ? "Requested item is unavailable" : message); return std::nullopt; }
@@ -425,7 +666,8 @@ std::optional<WorkshopEulaStatus> SteamWorkshopCore::GetEulaStatus(
     WorkshopEULAStatus_t result{};
     std::string message;
     if (!WaitForCall(ugc->GetWorkshopEULAStatus(), result,
-            std::chrono::seconds(30), message))
+            std::chrono::seconds(30),
+            [this] { SampleActiveConnection(); }, message))
     {
         SetError(error, kSteamOperationTimedOut, "eula_query_failed", message);
         return std::nullopt;
@@ -502,7 +744,7 @@ bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
     SteamUGCQueryCompleted_t queryCompleted{};
     if (remaining() == std::chrono::milliseconds::zero() ||
         !WaitForCall(ugc->SendQueryUGCRequest(guard.handle), queryCompleted,
-            remaining(), message))
+            remaining(), [this] { SampleActiveConnection(); }, message))
     {
         SetError(error,
             message == "Steam operation timed out" || message.empty()
@@ -539,7 +781,7 @@ bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
         RemoteStorageSubscribePublishedFileResult_t result{};
         completed = remaining() != std::chrono::milliseconds::zero() &&
             WaitForCall(ugc->SubscribeItem(itemId), result,
-                remaining(), message);
+                remaining(), [this] { SampleActiveConnection(); }, message);
         resultCode = result.m_eResult;
         resultItemId = result.m_nPublishedFileId;
     }
@@ -548,7 +790,7 @@ bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
         RemoteStorageUnsubscribePublishedFileResult_t result{};
         completed = remaining() != std::chrono::milliseconds::zero() &&
             WaitForCall(ugc->UnsubscribeItem(itemId), result,
-                remaining(), message);
+                remaining(), [this] { SampleActiveConnection(); }, message);
         resultCode = result.m_eResult;
         resultItemId = result.m_nPublishedFileId;
     }
@@ -723,7 +965,8 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
         CreateItemResult_t created{};
         if (!WaitForCall(ugc->CreateItem(appId, k_EWorkshopFileTypeCommunity),
-                created, std::chrono::seconds(60), message))
+                created, std::chrono::seconds(60),
+                [this] { SampleActiveConnection(); }, message))
         {
             SetError(error, kSteamOperationFailed, "create_item_failed", message);
             return std::nullopt;
@@ -873,20 +1116,27 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         request.changeNote.empty() ? nullptr : request.changeNote.c_str());
     lifecycle.SubmitStarted();
     if (progress)
-        progress(PublishProgress{ PublishStage::CommittingChanges,
+        progress(PublishProgress{ PublishStage::Preparing,
             static_cast<std::uint64_t>(itemId), 0, 0, 0, true });
     const bool completed = WaitForCall(call, submitted, request.timeout, [&]
     {
+        SampleActiveConnection();
         if (!progress || std::chrono::steady_clock::now() < nextProgress) return;
         std::uint64_t processed = 0;
         std::uint64_t total = 0;
         const EItemUpdateStatus status = ugc->GetItemUpdateProgress(
             update, &processed, &total);
-        PublishStage stage = PublishStage::CommittingChanges;
-        if (status == k_EItemUpdateStatusUploadingContent)
+        PublishStage stage = PublishStage::Preparing;
+        if (status == k_EItemUpdateStatusPreparingConfig)
+            stage = PublishStage::PreparingConfig;
+        else if (status == k_EItemUpdateStatusPreparingContent)
+            stage = PublishStage::PreparingContent;
+        else if (status == k_EItemUpdateStatusUploadingContent)
             stage = PublishStage::UploadingContent;
         else if (status == k_EItemUpdateStatusUploadingPreviewFile)
             stage = PublishStage::UploadingPreview;
+        else if (status == k_EItemUpdateStatusCommittingChanges)
+            stage = PublishStage::CommittingChanges;
         progress(PublishProgress{ stage, static_cast<std::uint64_t>(itemId),
             processed, total, static_cast<int>(status), true });
         nextProgress = std::chrono::steady_clock::now() +
@@ -926,6 +1176,8 @@ std::string PublishStageName(PublishStage stage)
     switch (stage)
     {
     case PublishStage::Preparing: return "preparing";
+    case PublishStage::PreparingConfig: return "preparing";
+    case PublishStage::PreparingContent: return "preparing";
     case PublishStage::Created: return "created";
     case PublishStage::UploadingContent: return "uploading-content";
     case PublishStage::UploadingPreview: return "uploading-preview";

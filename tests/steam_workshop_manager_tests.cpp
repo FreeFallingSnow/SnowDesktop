@@ -3,6 +3,8 @@
 #include "component_workshop_publish.h"
 #include "manager_frame_scheduler.h"
 #include "manager_localization.h"
+#include "steam/manager_connection_state_tests.h"
+#include "steam/manager_publish_task_tests.h"
 #include "package_tool.h"
 #include "preview_cache.h"
 #include "publish_lifecycle.h"
@@ -2217,6 +2219,9 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
 
 int wmain(int argc, wchar_t** argv)
 {
+    TestManagerConnectionState(Check);
+    try { TestManagerPublishTask(); }
+    catch (const std::exception& error) { Check(false, error.what()); }
     try { package_source_lookup_cases::Run(); }
     catch (const std::exception& error) { Check(false, error.what()); }
     TestSteamWorkshopWatchThreadShutdown(false);
