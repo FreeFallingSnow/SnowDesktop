@@ -953,7 +953,7 @@
         // File components use a different source classification and the
         // opposite lane. Measure the real component/control plate, rather
         // than its small preview thumbnails whose inset grows with the icon.
-        const auto platePaintBounds = [&](const std::vector<std::uint32_t>& pixels, RECT anchor, size_t fromTrailing) {
+        const auto platePaintBounds = [&](const std::vector<std::uint32_t>& pixels, RECT anchor, size_t fromTrailing, bool tracePerpendicular = false) {
             std::vector<std::uint8_t> visited(pixels.size());
             std::vector<size_t> pending;
             std::vector<RECT> plates;
@@ -1004,14 +1004,22 @@
                 const LONG crossEnd = vertical ? region.right : region.bottom;
                 const LONG crossLimit = static_cast<LONG>(vertical ? width : height);
                 const auto pixelIndex = [&](LONG cross) { return vertical ? static_cast<size_t>(axisCenter) * width + cross : static_cast<size_t>(cross) * width + axisCenter; };
-                if (!white(pixelIndex(crossFirst)) || !white(pixelIndex(crossEnd - 1))) continue;
                 LONG outerFirst = crossFirst, outerEnd = crossEnd;
-                while (outerFirst > 0 && white(pixelIndex(outerFirst - 1))) --outerFirst;
-                while (outerEnd < crossLimit && white(pixelIndex(outerEnd))) ++outerEnd;
+                const auto firstRaw = pixels[pixelIndex(crossFirst)], endRaw = pixels[pixelIndex(crossEnd - 1)];
+                const bool firstWhite = white(pixelIndex(crossFirst)), endWhite = white(pixelIndex(crossEnd - 1));
+                if (firstWhite) while (outerFirst > 0 && white(pixelIndex(outerFirst - 1))) --outerFirst;
+                if (endWhite) while (outerEnd < crossLimit && white(pixelIndex(outerEnd))) ++outerEnd;
+                const bool firstUsable = firstWhite && outerFirst > 0;
+                const bool endUsable = endWhite && outerEnd < crossLimit;
                 double strokeWidth = 0.0;
                 int observedSides = 0;
-                if (outerFirst > 0) { strokeWidth += crossFirst - outerFirst; ++observedSides; }
-                if (outerEnd < crossLimit) { strokeWidth += outerEnd - crossEnd; ++observedSides; }
+                if (firstUsable) { strokeWidth += crossFirst - outerFirst; ++observedSides; }
+                if (endUsable) { strokeWidth += outerEnd - crossEnd; ++observedSides; }
+                if (tracePerpendicular)
+                    std::cout << "Footer plate perpendicular raw=0x" << std::hex << firstRaw << ",0x" << endRaw << std::dec
+                        << " core=" << crossFirst << ',' << crossEnd << " outer=" << outerFirst << ',' << outerEnd
+                        << " limit=" << crossLimit << " white=" << firstWhite << ',' << endWhite
+                        << " usable=" << firstUsable << ',' << endUsable << " adoptedSides=" << observedSides << '\n';
                 if (!observedSides) continue;
                 // Measure the local stroke perpendicular to the lane, where
                 // this card cannot touch its neighbour. Ignore clipped sides.
@@ -1191,7 +1199,7 @@
             const auto trailing = [&](RECT rect) { return vertical ? rect.bottom : rect.right; };
             app.lastMousePoint_ = outside; app.widgetAction_ = DesktopApp::WidgetAction::None;
             const auto baselinePixels = drawFilePixels(dock, false, 1);
-            const RECT baselinePaint = trash ? platePaintBounds(baselinePixels, base, 0) : iconPaintBounds(baselinePixels);
+            const RECT baselinePaint = trash ? platePaintBounds(baselinePixels, base, 0, true) : iconPaintBounds(baselinePixels);
             check(!IsRectEmpty(&baselinePaint), "hidden-Search fallback neighbour has actual painted pixels");
             const LONG padding = trash ? leading(baselinePaint) - leading(base) : trailing(base) - trailing(baselinePaint);
             POINT pointer{(base.left + base.right) / 2, (base.top + base.bottom) / 2};
@@ -1208,13 +1216,22 @@
                 "real FileCategories source targets the first empty file lane with Search hidden");
             dock->AdvanceMagnificationAnimation(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 1000);
             const auto contentPixels = drawFilePixels(dock, false, 1);
-            const RECT painted = trash ? platePaintBounds(contentPixels, base, 0) : iconPaintBounds(contentPixels);
+            const RECT painted = trash ? platePaintBounds(contentPixels, base, 0, true) : iconPaintBounds(contentPixels);
             const int halfSpacing = std::max(1, static_cast<int>(std::round(kDockSpacing * ResolveDockScale(app.dockSettings_, false)))) / 2;
             const LONG expected = !trash && attached ? trailing(panel) - halfSpacing :
                 trash ? leading(painted) - padding : trailing(painted) + padding;
             const auto markerPixels = drawFilePixels(dock, true, 1);
             const RECT marker = paintedBounds(markerPixels);
             const LONG actual = vertical ? (marker.top + marker.bottom) / 2 : (marker.left + marker.right) / 2;
+            const auto footerName = L"footer-position-" + std::to_wstring(static_cast<int>(position)) + L"-effect-" + std::to_wstring(effect) +
+                L"-attached-" + std::to_wstring(attached) + L"-trash-" + std::to_wstring(trash);
+            std::string footerError;
+            check(snowdesktop::preview_png::Save(paintEvidence / (footerName + L"-baseline.png"),
+                static_cast<int>(width), static_cast<int>(height), baselinePixels, footerError), "save footer baseline pixels: " + footerError);
+            check(snowdesktop::preview_png::Save(paintEvidence / (footerName + L"-contents.png"),
+                static_cast<int>(width), static_cast<int>(height), contentPixels, footerError), "save footer contents pixels: " + footerError);
+            check(snowdesktop::preview_png::Save(paintEvidence / (footerName + L"-marker.png"),
+                static_cast<int>(width), static_cast<int>(height), markerPixels, footerError), "save footer marker pixels: " + footerError);
             std::cout << "Empty file hidden Search position=" << static_cast<int>(position) << " effect=" << effect
                 << " attached=" << attached << " trash=" << trash << " expected=" << expected << " marker=" << actual << '\n';
             check(!IsRectEmpty(&marker) && std::abs(actual - expected) <= 1,
