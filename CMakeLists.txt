@@ -2284,6 +2284,8 @@ if (BUILD_TESTING)
         SOURCES tests/steam/steam_presence_tests.cpp src/steam/steam_presence.cpp
         INCLUDE_DIRECTORIES src steam_bridge/src
         LABELS contract integration steam)
+    target_compile_definitions(SnowDesktopSteamPresenceTests PRIVATE
+        SNOWDESKTOP_STEAM_APP_ID=${SNOWDESKTOP_STEAM_APP_ID})
 
     snowdesktop_add_test(
         SnowDesktopLauncherIconResourceTests

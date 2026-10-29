@@ -23,6 +23,24 @@ int wmain(int argc, wchar_t** argv)
     if (argc > 1 && std::wstring_view(argv[1]) == L"presence")
         return snowdesktop::steam_bridge::RunPresenceLifetime(argc, argv, [] {});
     const auto self = std::filesystem::absolute(argv[0]);
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--runtime-bridge")
+    {
+        // Explicit manual probe only: CTest never contacts the user's Steam.
+        snowdesktop::steam_presence::Service service(std::filesystem::absolute(argv[2]));
+        service.SetEnabled(true);
+        if (!AwaitProcess(service)) return 2;
+        const auto expected = service.ProcessId();
+        HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, expected);
+        bool resident = child != nullptr;
+        std::cout << "runtime_presence_started pid=" << expected << std::endl;
+        for (int second = 0; resident && second < 75; ++second)
+            resident = WaitForSingleObject(child, 1000) == WAIT_TIMEOUT && service.ProcessId() == expected;
+        service.SetEnabled(false);
+        const bool stopped = child && WaitForSingleObject(child, 2000) == WAIT_OBJECT_0 && !service.ProcessId();
+        if (child) CloseHandle(child);
+        std::cout << "runtime_presence_same_process_75s=" << resident << " stopped=" << stopped << std::endl;
+        return resident && stopped ? 0 : 1;
+    }
     if (argc == 3 && std::wstring_view(argv[1]) == L"--orphan-parent")
     {
         snowdesktop::steam_presence::Service service(self);
