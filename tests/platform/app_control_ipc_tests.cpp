@@ -62,6 +62,8 @@ void Protocol()
         "preview composition must not advertise real-runtime rendering or system-input playback");
     Check(capabilities->Find("monitorRecording") && capabilities->Find("monitorRecording")->number == 1,
         "clients can discover real composed-monitor recording");
+    Check(capabilities->Find("privateKeyboard") && capabilities->Find("privateKeyboard")->number == 1,
+        "private keyboard events support actual edit and modifier input");
     Check(ErrorCode(invoke(R"({"jsonrpc":"2.0","id":31,"method":"ui.perform"})")) == "method_not_found" &&
         ErrorCode(invoke(R"({"jsonrpc":"2.0","id":32,"method":"demo.render"})")) == "method_not_found",
         "unreleased system-input and misleading demo endpoints must not remain available");

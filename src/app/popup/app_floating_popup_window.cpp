@@ -1356,7 +1356,7 @@ POINT DesktopApp::FloatingPopupClientToDesktop(
 LRESULT DesktopApp::HandleFloatingPopupMessage(
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     struct NativeMenuPresentationScope final
     {

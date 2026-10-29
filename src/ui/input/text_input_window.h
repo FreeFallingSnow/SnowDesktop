@@ -33,6 +33,10 @@ void Draw(HWND, ID2D1RenderTarget*, D2D1_RECT_F frame, float pixelsPerUnit = 1.f
     bool drawFrame = true);
 // Mouse messages use owner client pixels; WM_CONTEXTMENU retains Win32 screen coordinates.
 bool RoutePointer(HWND, UINT message, WPARAM, POINT);
+// Only live hosts on the current UI thread qualify. Embedded hosts keep an
+// offscreen HWND; private input maps through their real visible owner/frame.
+bool IsPrivatePointerHost(HWND);
+bool MapPrivatePointerPoint(HWND, POINT screen, POINT& client);
 int DesiredHeight(HWND);
 void CopySecret(HWND, wchar_t* destination, std::size_t capacity);
 void SetAccessibleName(HWND, std::wstring_view);

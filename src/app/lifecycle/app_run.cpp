@@ -722,6 +722,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             snowdesktop::SettingsPage::General, "general.windowSupport"));
     });
     windowSupport.SetPointerCallback([this](const snowdesktop::window_support::protocol::PointerEvent& event) {
+        if (snowdesktop::private_pointer::Active()) return;
         floatingDockEdgeSwipeMouseActivity_.store(true, std::memory_order_relaxed);
         // Local events only wake the original live sampler. Replaying their
         // queued positions/buttons can turn a completed gesture into a fresh
@@ -1813,7 +1814,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     messageBatchStarted) &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
-            if (!snowdesktop::private_pointer::MessageAllowed(msg.hwnd, msg.message))
+            if (!snowdesktop::private_pointer::MessageAllowed(msg.hwnd, msg.message, msg.wParam, msg.lParam))
             { ++processedMessages; continue; }
             if (msg.message == WM_QUIT)
             {

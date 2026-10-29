@@ -82,7 +82,7 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
         hwnd == dockShellHookWindow_)

@@ -6,6 +6,7 @@
 #include "data/data_paths.h"
 #include "ui/menu/modern_menu.h"
 #include "demo/builtin_scenes.h"
+#include "desktop/desktop_source.h"
 
 namespace
 {
@@ -119,7 +120,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     using namespace snowdesktop::control;
     if (!startupInitializationComplete_ || exitRequested_)
         throw Error("not_ready", "Application is starting or shutting down");
-    if (method == "input.begin" || method == "input.pointer" || method == "input.state" || method == "input.end")
+    if (method == "input.begin" || method == "input.pointer" || method == "input.keyboard" || method == "input.state" || method == "input.end")
         return HandlePrivatePointer(method, params);
     if (method == "preview.describe") { Fields(params, {}); return snowdesktop::demo::Describe(); }
     if (method == "preview.render")
@@ -213,6 +214,11 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         const auto popupId = dockFolderPopupOpen_ && !dockFolderPopupMappingWidgetId_.empty()
             ? WideToUtf8(dockFolderPopupMappingWidgetId_) : (popup ? WideToUtf8(popup->id) : "");
         return Object({{"processId", Number(GetCurrentProcessId())},
+            {"runtimeMode", String("complete-desktop-host")},
+            {"dataDirectory", String(WideToUtf8(GetDataDirectoryPath()))},
+            {"desktopDirectory", String(WideToUtf8(snowdesktop::desktop_source::Directory()))},
+            {"debugProfile", Boolean(snowdesktop::debug_profile::Enabled())},
+            {"demoModeEnabled", Boolean(generalSettings_.demoModeEnabled)},
             {"locale", String(Locale::Instance().GetEffectiveLanguage())},
             {"desktopEnabled", Boolean(generalSettings_.softwareDesktopEnabled)},
             {"desktopVisible", Boolean(customDesktopVisible_)},

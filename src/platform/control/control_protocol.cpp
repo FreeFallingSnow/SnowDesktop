@@ -100,6 +100,7 @@ Value Describe()
     add("ui.snapshot", false, "{}");
     add("input.begin", true, "{monitorId:string,x?:integer,y?:integer,showCursor?:boolean}");
     add("input.pointer", true, "{sessionId:string,type:string,x?:integer,y?:integer,button?:string,delta?:integer}");
+    add("input.keyboard", true, "{sessionId:string,type:string,key?:integer,text?:string}");
     add("input.state", false, "{includeTrace?:boolean}");
     add("input.end", true, "{sessionId:string}");
     add("ui.dismissMenu", true, "{}");
@@ -127,7 +128,7 @@ Value Describe()
     add("dock.hide", true, "{}");
     return Object({{"protocolVersion", Number(ProtocolVersion)}, {"methods", std::move(methods)},
         {"maximumFrameBytes", Number(static_cast<double>(MaximumFrameBytes))},
-        {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)},
+        {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)}, {"privateKeyboard", Number(1)},
             {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)},
             {"settingsAutomation", Number(1)}, {"previewRender", Number(1)}, {"monitorRecording", Number(1)},
             {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)}})}});

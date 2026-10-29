@@ -396,7 +396,6 @@ set(SNOWDESKTOP_SOURCES
     src/platform/control/control_elements.h
     src/ui/input/control_pointer.cpp
     src/ui/input/control_pointer.h
-    src/ui/input/private_pointer.cpp
     src/ui/input/private_pointer.h
     src/ui/render/demo_cursor.cpp
     src/ui/render/demo_cursor.h
@@ -1363,12 +1362,25 @@ if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
         COMMENT "Embedding the permitted Steamworks runtime for the Agent Skill Workshop CLI...")
 endif()
 
+add_library(SnowDesktopPointerInput STATIC src/ui/input/private_pointer.cpp src/ui/input/private_pointer.h)
+source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "Source" FILES
+    src/ui/input/private_pointer.cpp src/ui/input/private_pointer.h)
+target_include_directories(SnowDesktopPointerInput PUBLIC src)
+target_compile_features(SnowDesktopPointerInput PUBLIC cxx_std_20)
+target_compile_definitions(SnowDesktopPointerInput PRIVATE _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(SnowDesktopPointerInput PUBLIC user32)
+if (MSVC)
+    set_property(TARGET SnowDesktopPointerInput PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopPointerInput PRIVATE /W4 /permissive- /EHsc /utf-8)
+endif()
+
 add_library(SnowDesktopTextInput STATIC src/ui/input/text_input_window.cpp src/ui/input/text_input_accessibility.cpp)
 target_include_directories(SnowDesktopTextInput PUBLIC src)
 target_compile_features(SnowDesktopTextInput PUBLIC cxx_std_20)
 target_compile_definitions(SnowDesktopTextInput PRIVATE
     _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(SnowDesktopTextInput PUBLIC d2d1 dwrite gdi32 imm32 user32 ole32 oleaut32 uuid uiautomationcore)
+target_link_libraries(SnowDesktopTextInput PUBLIC SnowDesktopPointerInput d2d1 dwrite gdi32 imm32 user32 ole32 oleaut32 uuid uiautomationcore)
 if (MSVC)
     set_property(TARGET SnowDesktopTextInput PROPERTY MSVC_RUNTIME_LIBRARY
         "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -2141,7 +2153,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopPrivatePointerTests
         private_pointer
-        SOURCES tests/ui/private_pointer_tests.cpp src/ui/input/private_pointer.cpp
+        SOURCES tests/ui/private_pointer_tests.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32
         LABELS contract integration input)
@@ -2980,8 +2992,11 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/drag_drop/native_drag_integration_tests.cpp
+            tests/winui/private_pointer_island_probe.cpp
             ${SNOWDESKTOP_NATIVE_DRAG_SOURCES}
         LABELS integration interaction slot widget)
+    source_group(TREE "${CMAKE_SOURCE_DIR}/tests" PREFIX "Tests" FILES
+        tests/winui/private_pointer_island_probe.cpp)
     foreach(PROPERTY IN ITEMS
             INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS
             PRECOMPILE_HEADERS LINK_LIBRARIES LINK_OPTIONS

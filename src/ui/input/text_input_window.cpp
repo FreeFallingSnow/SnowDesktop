@@ -1,5 +1,6 @@
 #include "text_input_window.h"
 #include "text_input_state.h"
+#include "private_pointer.h"
 #include "ui/render/app_font.h"
 #include <dwrite.h>
 #include <imm.h>
@@ -271,7 +272,7 @@ struct State
         {
             auto& document=query.document;
             document.password=password;document.readOnly=readOnly;document.enabled=interactive&&IsWindowEnabled(window);
-            document.focused=GetFocus()==window;document.offscreen=!shown||!(GetWindowLongPtrW(window,GWL_STYLE)&WS_VISIBLE)||!IsWindowVisible(GetParent(window));document.name=name.empty()?cue:name;
+            document.focused=private_pointer::FocusWindow()==window;document.offscreen=!shown||!(GetWindowLongPtrW(window,GWL_STYLE)&WS_VISIBLE)||!IsWindowVisible(GetParent(window));document.name=name.empty()?cue:name;
             const auto origin=ScreenOrigin();document.bounds={origin.x,origin.y,origin.x+width,origin.y+height};
             if(!password){document.text=text;document.cursor=cursor;document.anchor=anchor;}query.result=true;
         }
@@ -451,7 +452,7 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
     const auto drawBorder = [&]
     {
         if (!drawFrame) return;
-        const bool focused = GetFocus() == state.window;
+        const bool focused = private_pointer::FocusWindow() == state.window;
         // A two-pixel focus outline retains a solid blue core through the
         // antialiased corners instead of fading to a hairline.
         const float stroke = (focused ? 2.f : 1.f) / scale;
@@ -518,7 +519,7 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
             state.layout->GetMaxWidth(),state.layout->GetMaxHeight(),&hint);
         if(hint)target->DrawTextLayout(D2D1::Point2F(state.leftMargin,y),hint.Get(),brush.Get());
     }
-    if (GetFocus() == state.window && state.caret && state.interactive)
+    if (private_pointer::FocusWindow() == state.window && state.caret && state.interactive)
     {
         float cx = 0, cy = 0; DWRITE_HIT_TEST_METRICS hit{};
         const auto position = state.composition.empty() ? state.cursor : (std::min)(state.cursor,state.anchor)+state.compositionCursor;
@@ -610,6 +611,7 @@ void Paste(State& state)
 }
 LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
 {
+    if (!private_pointer::MessageAllowed(window, message, wp, lp)) return 0;
     if (message==WM_NCCREATE)
     {
         const auto* creation=reinterpret_cast<CREATESTRUCTW*>(lp);
@@ -686,23 +688,32 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
         {state->Dirty();state->Notify(EN_UPDATE);state->Notify(EN_CHANGE);return TRUE;}return FALSE;
     case WM_GETDLGCODE:return DLGC_WANTCHARS|DLGC_WANTARROWS|(state->multiline?DLGC_WANTALLKEYS:0);
     case WM_SETFOCUS:state->caret=true;SetTimer(window,kCaretTimer,(std::max)(100u,GetCaretBlinkTime()),nullptr);state->Dirty();state->ImePosition();RaiseEvent(*state,UIA_AutomationFocusChangedEventId);state->Notify(EN_SETFOCUS);return 0;
-    case WM_KILLFOCUS:CompleteComposition(window);if(state->window&&state->composing)SendMessageW(window,WM_IME_ENDCOMPOSITION,0,0);KillTimer(window,kCaretTimer);state->dragging=false;if(GetCapture()==window)ReleaseCapture();state->composition.clear();state->composing=false;state->Dirty();state->Notify(EN_KILLFOCUS);return 0;
+    case WM_KILLFOCUS:CompleteComposition(window);if(state->window&&state->composing)SendMessageW(window,WM_IME_ENDCOMPOSITION,0,0);KillTimer(window,kCaretTimer);state->dragging=false;if(private_pointer::Capture()==window)private_pointer::ReleasePointerCapture();state->composition.clear();state->composing=false;state->highSurrogate=0;state->Dirty();state->Notify(EN_KILLFOCUS);return 0;
     case WM_TIMER:if(wp==kCaretTimer){state->caret=!state->caret;InvalidateRect(state->embedded?GetParent(window):window,nullptr,FALSE);return 0;}break;
     case WM_ENABLE:state->Dirty();return 0;
     case WM_LBUTTONDOWN:case WM_LBUTTONDBLCLK:
     {
-        SetFocus(window);POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-        if(state->embedded&&!state->forwardedPointer){GetCursorPos(&point);ScreenToClient(GetParent(window),&point);point.x-=state->frame.left;point.y-=state->frame.top;}
+        private_pointer::SetInputFocus(window);POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
+        if(state->embedded&&!state->forwardedPointer){private_pointer::CursorPosition(&point);ScreenToClient(GetParent(window),&point);point.x-=state->frame.left;point.y-=state->frame.top;}
         const auto at=state->Hit(static_cast<float>(point.x),static_cast<float>(point.y));
         if(message==WM_LBUTTONDBLCLK){state->anchor=WordBoundary(state->Value(),at,false);state->cursor=WordBoundary(state->Value(),at,true);}
-        else{if(!(GetKeyState(VK_SHIFT)&0x8000))state->anchor=at;state->cursor=at;}
-        state->dragging=true;SetCapture(window);state->Dirty();state->ImePosition();return 0;
+        else{if(!(private_pointer::KeyState(VK_SHIFT)&0x8000))state->anchor=at;state->cursor=at;}
+        state->dragging=true;private_pointer::SetPointerCapture(window);state->Dirty();state->ImePosition();return 0;
     }
     case WM_MOUSEMOVE:
-        if(state->dragging){POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};if(state->embedded&&!state->forwardedPointer){GetCursorPos(&point);ScreenToClient(GetParent(window),&point);point.x-=state->frame.left;point.y-=state->frame.top;}
+        if(state->dragging){POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};if(state->embedded&&!state->forwardedPointer){private_pointer::CursorPosition(&point);ScreenToClient(GetParent(window),&point);point.x-=state->frame.left;point.y-=state->frame.top;}
             state->cursor=state->Hit(static_cast<float>(point.x),static_cast<float>(point.y));state->Dirty();state->ImePosition();}return 0;
-    case WM_LBUTTONUP:state->dragging=false;if(GetCapture()==window)ReleaseCapture();return 0;
-    case WM_CAPTURECHANGED:case WM_CANCELMODE:state->dragging=false;return 0;
+    case WM_LBUTTONUP:state->dragging=false;if(private_pointer::Capture()==window)private_pointer::ReleasePointerCapture();return 0;
+    case WM_CAPTURECHANGED:case WM_CANCELMODE:state->dragging=false;state->highSurrogate=0;return 0;
+    case WM_RBUTTONUP:
+        if (private_pointer::Active())
+        {
+            POINT screen{};
+            if (!private_pointer::CursorPosition(&screen)) return 0;
+            const private_pointer::ForwardScope context(window, WM_CONTEXTMENU);
+            return SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(screen.x, screen.y));
+        }
+        break;
     case WM_SETCURSOR:SetCursor(LoadCursorW(nullptr,IDC_IBEAM));return TRUE;
     case WM_CONTEXTMENU:
     {
@@ -716,9 +727,9 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
         state->editingMenu=true;
         const auto handler=menuHandler;const auto command=handler(window,point,options);
         state->editingMenu=false;if(!state->window)return 0;
-        if(GetFocus()!=window)
+        if(private_pointer::FocusWindow()!=window)
         {
-            SendMessageW(window,WM_KILLFOCUS,reinterpret_cast<WPARAM>(GetFocus()),0);
+            SendMessageW(window,WM_KILLFOCUS,reinterpret_cast<WPARAM>(private_pointer::FocusWindow()),0);
             if(state->window)SendMessageW(window,WM_ACTIVATE,WA_INACTIVE,reinterpret_cast<LPARAM>(GetForegroundWindow()));
             return 0;
         }
@@ -756,7 +767,7 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
     {
         state->duplicateResult.clear();state->highSurrogate=0;
         if(state->composing)return DefWindowProcW(window,message,wp,lp);
-        const bool ctrl=(GetKeyState(VK_CONTROL)&0x8000)!=0,shift=(GetKeyState(VK_SHIFT)&0x8000)!=0;
+        const bool ctrl=(private_pointer::KeyState(VK_CONTROL)&0x8000)!=0,shift=(private_pointer::KeyState(VK_SHIFT)&0x8000)!=0;
         if(ctrl&&wp=='A'){state->anchor=0;state->cursor=state->Value().size();state->Dirty();return 0;}
         if(ctrl&&(wp=='C'||wp=='X')){SendMessageW(window,wp=='C'?WM_COPY:WM_CUT,0,0);return 0;}
         if(ctrl&&wp=='V'){Paste(*state);return 0;}
@@ -838,7 +849,7 @@ void SetEmbeddedPose(HWND window,RECT frame,RECT clip,bool shown,bool interactiv
         state->width=(std::max)(1L,frame.right-frame.left);state->height=(std::max)(1L,frame.bottom-frame.top);
         if(place)SetWindowPos(window,nullptr,-32000,-32000,1,1,SWP_NOACTIVATE|SWP_NOZORDER|(shown?SWP_SHOWWINDOW:SWP_HIDEWINDOW));
         if((IsWindowEnabled(window)!=FALSE)!=interactive)EnableWindow(window,interactive);
-        if(changed)state->Dirty();if(GetFocus()==window)state->ImePosition();
+        if(changed)state->Dirty();if(private_pointer::FocusWindow()==window)state->ImePosition();
     }
 }
 void Draw(HWND window,ID2D1RenderTarget* target,D2D1_RECT_F frame,float scale,bool drawFrame)
@@ -846,9 +857,10 @@ void Draw(HWND window,ID2D1RenderTarget* target,D2D1_RECT_F frame,float scale,bo
 bool RoutePointer(HWND window,UINT message,WPARAM wp,POINT point)
 {
     const auto state=Get(window);if(!state||!state->embedded||!state->shown||!state->interactive)return false;
+    const private_pointer::ForwardScope forward(window, message);
     if(message==WM_CONTEXTMENU)
     {
-        if(point.x==-1&&point.y==-1){if(GetFocus()!=window)return false;SendMessageW(window,message,wp,MAKELPARAM(-1,-1));return true;}
+        if(point.x==-1&&point.y==-1){if(private_pointer::FocusWindow()!=window)return false;SendMessageW(window,message,wp,MAKELPARAM(-1,-1));return true;}
         ScreenToClient(GetParent(window),&point);
         if(!PtInRect(&state->frame,point)||!PtInRect(&state->clip,point))return false;
         ClientToScreen(GetParent(window),&point);SendMessageW(window,message,wp,MAKELPARAM(point.x,point.y));return true;
@@ -858,6 +870,25 @@ bool RoutePointer(HWND window,UINT message,WPARAM wp,POINT point)
     state->forwardedPointer=true;
     SendMessageW(window,message,wp,MAKELPARAM(point.x-state->frame.left,point.y-state->frame.top));
     state->forwardedPointer=false;return true;
+}
+bool IsPrivatePointerHost(HWND window)
+{
+    DWORD process = 0;
+    if (!window || GetWindowThreadProcessId(window, &process) != GetCurrentThreadId() ||
+        process != GetCurrentProcessId()) return false;
+    const auto state = Get(window);
+    return state && state->shown && state->interactive;
+}
+bool MapPrivatePointerPoint(HWND window, POINT screen, POINT& client)
+{
+    const auto state = Get(window);
+    if (!state) { client = screen; return ScreenToClient(window, &client) != FALSE; }
+    if (!IsPrivatePointerHost(window)) return false;
+    client = screen;
+    if (!state->embedded) return ScreenToClient(window, &client) != FALSE;
+    if (!ScreenToClient(GetParent(window), &client)) return false;
+    client.x -= state->frame.left; client.y -= state->frame.top;
+    return true;
 }
 int DesiredHeight(HWND window)
 {

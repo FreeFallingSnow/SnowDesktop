@@ -343,7 +343,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if (host.active && host.explicitDismissAvailable && !IsRectEmpty(&host.explicitDismissRect) &&
         (msg == WM_NCHITTEST || msg == WM_MOUSEACTIVATE || msg == WM_LBUTTONDOWN) &&

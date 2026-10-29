@@ -335,7 +335,7 @@ public:
                 // Private events are sent to the real popup procedure from
                 // their own queue. Messages dequeued here are physical input;
                 // they must not dismiss or operate a private menu session.
-                if (!snowdesktop::private_pointer::MessageAllowed(message.hwnd, message.message))
+                if (!snowdesktop::private_pointer::MessageAllowed(message.hwnd, message.message, message.wParam, message.lParam))
                 { ++processedMessages; continue; }
                 if (message.message == WM_QUIT)
                 {
@@ -444,7 +444,7 @@ public:
     LRESULT HandleMessage(Popup& popup, HWND hwnd,
         UINT message, WPARAM wParam, LPARAM lParam)
     {
-        if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message)) return 0;
+        if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message, wParam, lParam)) return 0;
         switch (message)
         {
         case WM_MOUSEMOVE:

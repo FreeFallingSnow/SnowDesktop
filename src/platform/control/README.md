@@ -22,6 +22,15 @@ ignore physical pointer/keyboard input; other applications receive it normally.
   `"wheel"` needs a nonzero integer `delta` in [-12000,12000]. Fields from another
   event type are rejected. Build a click with move/down/up; build a drag by moving
   while a button is held. Repeated presses use normal double-click thresholds.
+- `input.keyboard {sessionId,type,key?,text?}` queues private keyboard input for
+  the current logical focus. `type:"down"|"up"` needs a supported Windows virtual
+  key code (including Ctrl, Shift, Alt, navigation/editing keys and letters).
+  `type:"text"` needs a nonempty valid Unicode `text` string of at most 4096 UTF-8 bytes
+  without NUL. It delivers ordinary WM_CHAR messages; it does not paste via the
+  clipboard, set a search value or rename an object directly. Hold Ctrl through
+  the pointer release when demonstrating group creation, then release the key.
+  Missing or changed logical focus fails rather than typing into another host.
+  Capability `privateKeyboard:1` advertises this extension.
 - `input.state {includeTrace?:boolean}` returns coordinates/buttons, logical
   hover/capture/focus flags, sequence, pendingEvents and errors. A bounded trace
   records the actual messages delivered to real application windows. Events are
@@ -30,6 +39,18 @@ ignore physical pointer/keyboard input; other applications receive it normally.
 - `input.end {sessionId}` cancels queued input and native presses without sending
   an accidental click/drop, clears hover/capture and hides the decorative cursor.
   It does not roll back a completed action. Always end a recording session.
+
+Presentation uses an independent monotonic clock while a session is idle, so
+trails and click rings fade without inventing input samples. Embedded native
+editors retain their actual offscreen HWND and renderer; private capture maps
+screen coordinates through their visible owner/frame, and focus uses their
+ordinary native focus messages without changing the system keyboard queue.
+
+`app.getState` identifies `runtimeMode:"complete-desktop-host"`, the effective
+`dataDirectory` and `desktopDirectory`, `debugProfile` and `demoModeEnabled`.
+Record these together with the authenticated server EXE identity when validating
+real-file demonstrations. A test utility can prepare a copy of an existing demo
+desktop; it must not substitute generated preview fixtures for the article data.
 
 The private device routes coordinates through the real desktop, widget, popup,
 Quick Navigation, Dock and modern-menu window procedures. Existing native hit

@@ -277,7 +277,7 @@ LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 
 LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     if (hwnd == floatingDockInputHwnd_ && floatingDockHost_ &&
         floatingDockHost_->mergedPresentationActive &&
         !floatingDockHost_->mergedPresentation.inputEnabled &&

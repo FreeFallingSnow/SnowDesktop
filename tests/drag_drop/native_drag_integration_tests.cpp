@@ -1220,10 +1220,22 @@ void RunTargets()
 }
 }
 
+int RunWinUiPrivatePointerIslandProbe(const std::filesystem::path& output);
+
 int main(int argc, char** argv)
 {
     try
     {
+        int wideCount = 0;
+        LPWSTR* wideArguments = CommandLineToArgvW(GetCommandLineW(), &wideCount);
+        if (wideArguments && wideCount == 3 &&
+            wcscmp(wideArguments[1], L"--winui-private-pointer-probe") == 0)
+        {
+            const std::filesystem::path output(wideArguments[2]);
+            LocalFree(wideArguments);
+            return RunWinUiPrivatePointerIslandProbe(output);
+        }
+        if (wideArguments) LocalFree(wideArguments);
         if (argc == 1) {
             native_foreground_culling_cases::Run();
             native_drag_foreground_damage_cases::Run();

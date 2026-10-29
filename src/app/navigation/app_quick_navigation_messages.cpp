@@ -113,7 +113,7 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
 
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg)) return 0;
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;
