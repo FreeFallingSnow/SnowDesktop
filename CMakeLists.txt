@@ -389,6 +389,27 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_control.cpp
     src/app/features/app_control_runtime.h
     src/app/features/app_control_elements.cpp
+    src/app/features/app_control_settings.cpp
+    src/settings/control_settings.h
+    src/settings/control_settings_values.h
+    src/settings/control_global_settings.cpp
+    src/settings/control_global_settings.h
+    src/settings/control_widget_settings.cpp
+    src/settings/control_widget_settings.h
+    src/settings/control_environment_settings.cpp
+    src/settings/control_environment_settings.h
+    src/settings/control_icon_settings.cpp
+    src/settings/control_icon_settings.h
+    src/settings/control_calendar_settings.cpp
+    src/settings/control_calendar_settings.h
+    src/settings/control_font_settings.cpp
+    src/settings/control_font_settings.h
+    src/settings/control_runtime_settings.cpp
+    src/settings/control_runtime_settings.h
+    src/settings/control_package_settings.cpp
+    src/settings/control_package_settings.h
+    src/settings/control_theme_settings.cpp
+    src/settings/control_theme_settings.h
     src/app/features/app_private_pointer.cpp
     src/platform/control/control_protocol.cpp
     src/platform/control/control_server.cpp
@@ -2099,6 +2120,91 @@ if (BUILD_TESTING)
         LABELS core contract settings)
 
     snowdesktop_add_test(
+        SnowDesktopControlThemeSettingsTests
+        control_theme_settings
+        SOURCES
+            tests/settings/control_theme_settings_tests.cpp
+            src/settings/control_theme_settings.cpp
+            src/platform/control/control_protocol.cpp
+            src/theme/theme_library.cpp
+            src/theme/personalization.cpp
+            src/data/atomic_file.cpp
+            src/ui/render/app_font.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES dwrite d2d1 windowscodecs gdi32 ole32 shlwapi
+        LABELS core contract settings theme control)
+
+    snowdesktop_add_test(
+        SnowDesktopControlEnvironmentSettingsTests
+        control_environment_settings
+        SOURCES tests/settings/control_environment_settings_tests.cpp
+            src/settings/control_environment_settings.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated/winui/$<CONFIG>"
+        LINK_LIBRARIES ole32 runtimeobject windowsapp
+        LABELS core contract settings control)
+    snowdesktop_add_test(
+        SnowDesktopControlCalendarSettingsTests
+        control_calendar_settings
+        SOURCES tests/settings/control_calendar_settings_tests.cpp
+            src/settings/control_calendar_settings.cpp
+            src/platform/control/control_protocol.cpp
+            src/system/calendar/calendar_service.cpp
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated/winui/$<CONFIG>"
+        LINK_LIBRARIES ole32 runtimeobject windowsapp
+        LABELS core contract settings control)
+    # These model/action headers name WinUI types but the fixtures never
+    # create XAML. Consume the host's pinned, generated projection instead of
+    # generating a competing activation module or mixing SDK base headers.
+    add_dependencies(SnowDesktopControlEnvironmentSettingsTests SnowDesktop)
+    add_dependencies(SnowDesktopControlCalendarSettingsTests SnowDesktop)
+    snowdesktop_add_test(
+        SnowDesktopControlFontSettingsTests
+        control_font_settings
+        SOURCES tests/settings/control_font_settings_tests.cpp
+            src/settings/control_font_settings.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS core contract settings control)
+    snowdesktop_add_test(
+        SnowDesktopControlRuntimeSettingsTests
+        control_runtime_settings
+        SOURCES tests/settings/control_runtime_settings_tests.cpp
+            src/settings/control_runtime_settings.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS core contract settings control)
+    snowdesktop_add_test(
+        SnowDesktopControlWidgetSettingsTests
+        control_widget_settings
+        SOURCES tests/settings/control_widget_settings_tests.cpp
+            src/settings/control_widget_settings.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS contract integration ipc settings)
+    snowdesktop_add_test(
+        SnowDesktopControlIconSettingsTests
+        control_icon_settings
+        SOURCES tests/settings/control_icon_settings_tests.cpp
+            src/settings/control_icon_settings.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS contract integration ipc settings)
+    snowdesktop_add_test(
+        SnowDesktopControlPackageSettingsTests
+        control_package_settings
+        SOURCES tests/settings/control_package_settings_tests.cpp
+            src/settings/control_package_settings.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated/winui/$<CONFIG>"
+        LINK_LIBRARIES ole32 runtimeobject windowsapp
+        LABELS contract integration ipc settings)
+    add_dependencies(SnowDesktopControlPackageSettingsTests SnowDesktop)
+
+    snowdesktop_add_test(
         SnowDesktopStatusBarVisibilityTests
         status_bar_visibility
         NATIVE_WINDOW_COMPATIBILITY
@@ -2150,7 +2256,7 @@ if (BUILD_TESTING)
             src/ui/input/control_pointer.cpp
             src/ui/render/demo_cursor.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32 advapi32 gdi32
+        LINK_LIBRARIES user32 advapi32 gdi32 bcrypt
         LABELS contract integration ipc)
 
     snowdesktop_add_test(
@@ -3005,6 +3111,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/drag_drop/native_drag_integration_tests.cpp
             tests/winui/private_pointer_island_probe.cpp
+            tests/settings/control_global_settings_tests.cpp
             ${SNOWDESKTOP_NATIVE_DRAG_SOURCES}
         LABELS integration interaction slot widget)
     source_group(TREE "${CMAKE_SOURCE_DIR}/tests" PREFIX "Tests" FILES
@@ -3247,6 +3354,21 @@ if (BUILD_TESTING)
 
     add_test(NAME native_list_title_hover
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-hover)
+    add_test(NAME native_dock_insertion_geometry
+        COMMAND SnowDesktopNativeDragIntegrationTests --dock-hover)
+    set_tests_properties(native_dock_insertion_geometry PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;dock;rendering")
+    add_test(NAME native_popup_control_catalog
+        COMMAND SnowDesktopNativeDragIntegrationTests --popup-control-catalog)
+    set_tests_properties(native_popup_control_catalog PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;widget;control")
+    add_test(NAME control_global_settings
+        COMMAND SnowDesktopNativeDragIntegrationTests --settings-control-global)
+    set_tests_properties(control_global_settings PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;settings;ipc")
     add_test(NAME native_list_title_font_isolation
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
     add_test(NAME native_popup_display_menu

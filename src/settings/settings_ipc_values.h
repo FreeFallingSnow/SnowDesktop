@@ -15,6 +15,7 @@ namespace snowdesktop::settings_ipc
 {
 #define SD_IPC_FIELDS(Type, ...) \
     template<> struct Fields<Type> { \
+        static constexpr std::string_view Names = #__VA_ARGS__; \
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 

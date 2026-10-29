@@ -1651,6 +1651,8 @@ private:
     void PresentPrivatePointer();
     snowdesktop::control::Value HandleApplicationControl(
         std::string_view method, const snowdesktop::control::Value& params);
+    snowdesktop::control::Value HandleControlSettings(
+        std::string_view method, const snowdesktop::control::Value& params);
     /** Release settings UI and services while their borrowed owners are alive. */
     void ShutdownSettingsInfrastructure() noexcept;
     /** Commit a validated layout backup on the application STA. */

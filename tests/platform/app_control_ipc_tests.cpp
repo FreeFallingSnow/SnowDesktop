@@ -1,5 +1,6 @@
 #include "platform/control/control_protocol.h"
 #include "platform/control/control_server.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <future>
@@ -69,6 +70,15 @@ void Protocol()
         "unreleased system-input and misleading demo endpoints must not remain available");
     Check(capabilities->Find("nativeWidgetControls")->number == 1 && capabilities->Find("demoElementTargets")->number == 1,
         "clients can negotiate native control geometry and scene cursor targets");
+    Check(capabilities->Find("nativePopupControls")->number == 1 && capabilities->Find("menuControlValues")->number == 1,
+        "clients can discover storage popup hit geometry and separate menu labels and values");
+    Check(capabilities->Find("settingsPrivateInput")->number == 0,
+        "the read-only settings catalog must not advertise unsupported XAML private pointer input");
+    Check(capabilities->Find("directSettings")->number == 1 && capabilities->Find("settingsSchema")->number == 1,
+        "direct settings and named schema have distinct discovery capabilities from pointer input");
+    for (const auto* name : {"settings.catalog", "settings.get", "settings.update", "settings.reset", "settings.action"})
+        Check(std::any_of(discovery.Find("result")->Find("methods")->array.begin(), discovery.Find("result")->Find("methods")->array.end(),
+            [&](const auto& method) { return method.Find("name")->string == name; }), "direct settings operations are discoverable");
     Check(mutations == 1, "discovery is independent of UI mutations");
     const auto failure = Parse(Dispatch(R"({"jsonrpc":"2.0","id":"old","method":"widgets.place"})",
         [](std::string_view, const Value&) -> Value { throw Error("stale_layout", "refresh required"); }));
@@ -210,8 +220,15 @@ void Transport()
 }
 
 void ApplicationControlElementChecks();
-int main()
+#include "control_settings_runtime_cases.h"
+int main(int argc, char** argv)
 {
-    try { Protocol(); ApplicationControlElementChecks(); Transport(); std::cout << "Application control protocol, element, cursor and real-pipe checks passed\n"; return 0; }
+    try
+    {
+        if (argc == 4 && std::string_view(argv[1]) == "--live-settings") return LiveControlSettingsChecks(argv[2], argv[3]);
+        if (argc != 1) throw std::runtime_error("Unknown application control test mode");
+        Protocol(); ApplicationControlElementChecks(); Transport();
+        std::cout << "Application control protocol, element, cursor and real-pipe checks passed\n"; return 0;
+    }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

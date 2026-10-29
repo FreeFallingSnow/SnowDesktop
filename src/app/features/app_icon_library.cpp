@@ -82,11 +82,9 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
     for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
     if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
 
-    if (request.action == "begin" &&
-        (request.target == snowdesktop::icon_override::start || request.target == snowdesktop::icon_override::search))
+    if (request.action == "begin" && IsIconOverrideTarget(request.target))
     { state.target = request.target; ++state.session; request.action = "read"; }
-    if (request.action == "restore" &&
-        (request.target == snowdesktop::icon_override::start || request.target == snowdesktop::icon_override::search))
+    if (request.action == "restore" && IsIconOverrideTarget(request.target))
     {
         auto result = state.snapshot; result.succeeded = SetIconOverride(request.target, {});
         result.error = result.succeeded ? "" : "iconLibrary.saveFailed"; return result;

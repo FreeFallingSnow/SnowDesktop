@@ -685,6 +685,72 @@ struct NativeDragIntegrationAccess
     }
     static void SortMembers(DesktopApp& app, int mode, bool ascending)
     { app.SortWidgetContents(0, mode, ascending); }
+    static void CheckPopupControlCatalog(DesktopApp& app, const std::vector<std::filesystem::path>& files,
+        DesktopWidgetType type, bool list, bool negativeOrigin)
+    {
+        const auto check = [](bool value, const char* message) { if (!value) throw std::runtime_error(message); };
+        auto& page = app.gridPages_.front();
+        page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
+        page.columns = 12; page.rows = 8;
+        app.savedPageColumns_[page.id] = 12; app.savedPageRows_[page.id] = 8;
+        app.layoutWorkArea_ = page.workArea;
+        app.virtualWidth_ = 1200; app.virtualHeight_ = 800;
+        app.virtualLeft_ = negativeOrigin ? -1200 : 0; app.virtualTop_ = negativeOrigin ? -800 : 0;
+        app.applicationControlRuntime_ = std::make_unique<snowdesktop::app_control::Runtime>();
+        SeedMemberModel(app, files, type, list);
+        auto& data = app.widgets_.front();
+        data.showSearchBox = true; data.showFileCategories = type == DesktopWidgetType::FileCategories;
+        data.showDetails = false; data.detailShowModified = false; data.detailShowType = false; data.detailShowSize = false;
+        app.RebuildContainersAndItems();
+        auto* view = dynamic_cast<ScrollingItemWidget*>(MemberContainer(app, data.id));
+        check(view != nullptr, "popup catalog fixture must use the production native storage view");
+        const RECT originalFrame = view->GetLayoutFrameRect();
+        const bool originalPopup = view->IsPopupHosted();
+        const auto originalKeys = data.itemKeys;
+        const auto originalSelection = std::vector<bool>{app.items_[0].selected, app.items_[1].selected};
+        const auto before = app.ApplicationControlElements();
+        check(std::none_of(before.elements.begin(), before.elements.end(), [](const auto& node) { return node.surface == "popup"; }),
+            "closed storage popup has no input targets");
+        // A message-only owned HWND provides lifetime identity, without opening
+        // or operating a desktop surface. Its catalog nodes stay invisible.
+        app.floatingPopupHwnd_ = completionWindow;
+        app.popupWidgetIndex_ = 0; app.popupAnimation_.ShowImmediately();
+        app.popupHasAnchor_ = true; app.popupAnchorPoint_ = {700, 450};
+        app.popupRect_ = app.GetCollectionPopupRect(data);
+        const auto catalog = app.ApplicationControlElements();
+        const auto root = std::find_if(catalog.elements.begin(), catalog.elements.end(), [](const auto& node) {
+            return node.surface == "popup" && node.role == "pane";
+        });
+        check(root != catalog.elements.end(), "open native storage popup exports a distinct pane");
+        RECT expected = app.popupRect_; OffsetRect(&expected, app.virtualLeft_, app.virtualTop_);
+        check(EqualRect(&root->bounds, &expected), "popup pane uses the actual popup rectangle in physical screen coordinates");
+        std::size_t members = 0;
+        for (const auto& node : catalog.elements)
+        {
+            if (node.surface != "popup" || node.role != "item") continue;
+            check(node.parent == root->id, "popup members belong to the popup rather than the desktop widget");
+            RECT expectedMember = app.GetCollectionPopupItemRect(app.popupRect_, members++);
+            OffsetRect(&expectedMember, app.virtualLeft_, app.virtualTop_);
+            check(EqualRect(&node.bounds, &expectedMember), "popup member geometry follows native grid/list placement");
+            check(!node.visible, "message-only fixture cannot advertise visible pointer targets");
+        }
+        check(members == files.size(), "popup catalog retains every actual file member");
+        if (type == DesktopWidgetType::FileCategories)
+            check(std::any_of(catalog.elements.begin(), catalog.elements.end(), [](const auto& node) {
+                return node.surface == "popup" && node.nativeControlKey == "search";
+            }), "categorized popup exposes the real search hit region");
+        const RECT restoredFrame = view->GetLayoutFrameRect();
+        check(EqualRect(&originalFrame, &restoredFrame) && originalPopup == view->IsPopupHosted(),
+            "catalog query restores the original native view projection");
+        check(data.itemKeys == originalKeys && app.items_[0].selected == originalSelection[0] && app.items_[1].selected == originalSelection[1],
+            "catalog query does not change real membership or selection");
+        app.popupAnimation_.ResetHidden(); app.popupWidgetIndex_ = static_cast<std::size_t>(-1);
+        app.floatingPopupHwnd_ = nullptr;
+        const auto closed = app.ApplicationControlElements();
+        check(std::none_of(closed.elements.begin(), closed.elements.end(), [](const auto& node) { return node.surface == "popup"; }),
+            "closing retires popup geometry instead of keeping stale input targets");
+        app.applicationControlRuntime_.reset();
+    }
     static void SeedGroupedMembers(DesktopApp& app, const std::vector<std::filesystem::path>& files, bool list,
         DesktopWidgetType childType = DesktopWidgetType::Collection)
     {
@@ -1171,6 +1237,7 @@ struct NativeDragIntegrationAccess
 #include "../dock/native_dock_hover_cases.h"
 #include "../widget/native_widget_surface_handoff_cases.h"
 #include "../system/native_status_selection_cases.h"
+#include "../platform/native_popup_control_cases.h"
 
 namespace
 {
@@ -1223,6 +1290,7 @@ void RunTargets()
 }
 
 int RunWinUiPrivatePointerIslandProbe(const std::filesystem::path& output);
+void RunControlGlobalSettingsTests();
 
 int main(int argc, char** argv)
 {
@@ -1258,6 +1326,10 @@ int main(int argc, char** argv)
             native_foreground_culling_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-hover")
             native_dock_hover_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--popup-control-catalog")
+            native_popup_control_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--settings-control-global")
+            RunControlGlobalSettingsTests();
         else if (argc == 2 && (std::string_view(argv[1]) == "--dock-removal" ||
             std::string_view(argv[1]) == "--dock-removal-no-retention"))
         {

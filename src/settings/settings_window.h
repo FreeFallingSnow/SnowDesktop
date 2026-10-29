@@ -85,6 +85,8 @@ public:
     void CaptureRegisteredHotkey(UINT modifiers, UINT virtualKey);
 
     [[nodiscard]] const std::wstring& LastError() const noexcept;
+    /** Borrow the application-owned service callbacks; no XAML state is exposed. */
+    [[nodiscard]] const snowdesktop::winui::SettingsWindowHostOptions& HostOptions() const noexcept;
 
 private:
     struct Impl;

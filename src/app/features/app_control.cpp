@@ -122,6 +122,8 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
         throw Error("not_ready", "Application is starting or shutting down");
     if (method == "input.begin" || method == "input.pointer" || method == "input.keyboard" || method == "input.state" || method == "input.end")
         return HandlePrivatePointer(method, params);
+    if (method == "settings.catalog" || method == "settings.get" || method == "settings.update" || method == "settings.reset" || method == "settings.action")
+        return HandleControlSettings(method, params);
     if (method == "preview.describe") { Fields(params, {}); return snowdesktop::demo::Describe(); }
     if (method == "preview.render")
     {

@@ -1293,15 +1293,17 @@ void CheckControlSnapshots(HWND owner)
     using namespace snowdesktop::modern_menu;
     Item disabled; disabled.command = 9400; disabled.label = L"Disabled"; disabled.enabled = false;
     Item input; input.command = 9401; input.label = L"Search"; input.textInput = true; input.inputText = L"initial";
-    Item group; group.command = 9402; group.label = L"Group";
-    Item leaf; leaf.command = 9403; leaf.label = L"Leaf"; group.children.push_back(leaf);
+    Item group; group.command = 9402; group.label = L"Group\tMosaic";
+    Item leaf; leaf.command = 9403; leaf.label = L"Leaf\tValue A"; group.children.push_back(leaf);
+    Item duplicate; duplicate.command = 9403; duplicate.label = L"Other leaf"; group.children.push_back(duplicate);
+    Item labelOnly; labelOnly.label = L"Style\tGrid"; group.children.push_back(labelOnly);
     Options options; options.owner = owner; options.anchor = {120, 120}; options.appearance = Appearance::OpaqueLight;
     unsigned commands = 0, changes = 0;
     options.onCommand = [&](UINT, auto&) { ++commands; return false; };
     options.onTextChanged = [&](UINT command, const std::wstring&, auto&) {
         Expect(command == 9401, "semantic menu edit uses the original command callback"); ++changes;
     };
-    std::string rootId, inputId;
+    std::string rootId, inputId, stableLabelKey;
     gDriveMode = DriveMode::Script; gInputPosted = false; gWatchdogFired = false;
     gMenuScript = [&](HWND root) {
         auto controls = ActiveControls();
@@ -1321,6 +1323,8 @@ void CheckControlSnapshots(HWND owner)
         Expect(commands == 0 && changes == 0, "querying controls has no command or edit side effects");
         const auto groupControl = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Group"; });
         Expect(groupControl != controls.end(), "cascade has an exported hit target");
+        Expect(groupControl->value == L"Mosaic" && groupControl->nativeControlKey == "root/command/9402/0",
+            "menu labels and painted values are separate with a stable command path");
         RECT groupHit{}; IntersectRect(&groupHit, &groupControl->bounds, &groupControl->clip);
         POINT groupPoint{groupHit.left + (groupHit.right - groupHit.left) / 2, groupHit.top + (groupHit.bottom - groupHit.top) / 2};
         Expect(ScreenToClient(root, &groupPoint) != FALSE, "convert exported physical target to menu input coordinates");
@@ -1333,6 +1337,14 @@ void CheckControlSnapshots(HWND owner)
         Expect(parent != controls.end() && parent->expanded, "opening a real cascade updates expanded state");
         const auto child = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Leaf"; });
         Expect(child != controls.end() && child->parent == parent->id + "/submenu", "cascade nodes retain their real parent chain");
+        const auto other = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Other leaf"; });
+        const auto style = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Style"; });
+        Expect(child->value == L"Value A" && other != controls.end() && child->nativeControlKey != other->nativeControlKey &&
+            child->nativeControlKey == "root/command/9402/0/submenu/command/9403/0" &&
+            other->nativeControlKey == "root/command/9402/0/submenu/command/9403/1",
+            "duplicate command occurrences retain their parent definition path");
+        Expect(style != controls.end() && style->value == L"Grid", "label-only menu state is exposed separately");
+        stableLabelKey = style->nativeControlKey;
         Expect(SetControlText(inputId, L"固定查询"), "semantic text reaches the real menu editor");
         controls = ActiveControls();
         const auto edited = std::find_if(controls.begin(), controls.end(), [&](const auto& value) { return value.id == inputId; });
@@ -1354,10 +1366,23 @@ void CheckControlSnapshots(HWND owner)
     const auto result = Show({disabled, input, group}, options); KillTimer(owner, kWatchdogTimer);
     Expect(!gWatchdogFired && !result.command && commands == 0 && ActiveControls().empty(), "dismissal retires control bindings without invoking an item");
     gInputPosted = false;
-    gMenuScript = [&](HWND) {
-        const auto controls = ActiveControls();
+    group.label = L"Group\tList"; group.children.back().label = L"Style\tList";
+    gMenuScript = [&](HWND root) {
+        auto controls = ActiveControls();
         Expect(!controls.empty() && controls.front().id != rootId, "reopening creates a new menu session identity");
-        Expect(!SetControlText(inputId, L"stale"), "old text binding cannot modify a reopened menu"); DismissActive();
+        Expect(!SetControlText(inputId, L"stale"), "old text binding cannot modify a reopened menu");
+        const auto groupControl = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Group"; });
+        Expect(groupControl != controls.end() && groupControl->value == L"List", "changed current value keeps the plain menu name");
+        RECT bounds{}; IntersectRect(&bounds, &groupControl->bounds, &groupControl->clip);
+        POINT point{bounds.left + (bounds.right - bounds.left) / 2, bounds.top + (bounds.bottom - bounds.top) / 2};
+        Expect(ScreenToClient(root, &point) != FALSE, "map current menu target to owned client coordinates");
+        const auto position = MAKELPARAM(point.x, point.y);
+        SendMessageW(root, WM_MOUSEMOVE, 0, position); SendMessageW(root, WM_LBUTTONDOWN, MK_LBUTTON, position); SendMessageW(root, WM_LBUTTONUP, 0, position);
+        controls = ActiveControls();
+        const auto style = std::find_if(controls.begin(), controls.end(), [](const auto& value) { return value.name == L"Style"; });
+        Expect(style != controls.end() && style->value == L"List" && style->nativeControlKey == stableLabelKey,
+            "deterministic label keys exclude changing current values and menu session identity");
+        DismissActive();
     };
     SetTimer(owner, kDriveTimer, 10, nullptr); SetTimer(owner, kWatchdogTimer, 3000, nullptr);
     (void)Show({disabled, input, group}, options); KillTimer(owner, kWatchdogTimer);

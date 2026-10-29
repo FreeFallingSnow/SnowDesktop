@@ -106,6 +106,11 @@ Value Describe()
     add("ui.dismissMenu", true, "{}");
     add("ui.settingsRefresh", false, "{}");
     add("ui.settingsState", false, "{id:string}");
+    add("settings.catalog", false, "{target?:{kind:string,id?:string},offset?:integer,limit?:integer}");
+    add("settings.get", false, "{target:{kind:string,id?:string},offset?:integer,limit?:integer}");
+    add("settings.update", true, "{target:{kind:string,id?:string},ifRevision:string,changes:object}");
+    add("settings.reset", true, "{target:{kind:string,id?:string},ifRevision:string,keys?:string[]}");
+    add("settings.action", true, "{target:{kind:string,id?:string},ifRevision:string,action:string,arguments?:object}");
     add("preview.describe", false, "{}");
     add("preview.render", true, "{scene:object}");
     add("preview.state", false, "{id:string}");
@@ -131,7 +136,9 @@ Value Describe()
         {"capabilities", Object({{"elements", Number(1)}, {"privatePointer", Number(1)}, {"privateKeyboard", Number(1)},
             {"demoCursor", Number(1)}, {"monitorCapture", Number(1)}, {"menus", Number(1)},
             {"settingsAutomation", Number(1)}, {"previewRender", Number(1)}, {"monitorRecording", Number(1)},
-            {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)}})}});
+            {"nativeWidgetControls", Number(1)}, {"demoElementTargets", Number(1)},
+            {"nativePopupControls", Number(1)}, {"menuControlValues", Number(1)}, {"settingsPrivateInput", Number(0)},
+            {"directSettings", Number(1)}, {"settingsSchema", Number(1)}})}});
 }
 
 std::string Dispatch(std::string_view request, const Handler& handler) noexcept

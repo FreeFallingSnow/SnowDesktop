@@ -10,7 +10,7 @@ namespace snowdesktop::modern_menu
 {
 struct ControlSnapshot
 {
-    std::string id, parent;
+    std::string id, parent, nativeControlKey;
     HWND window = nullptr;
     RECT bounds{}, clip{}; // Physical screen pixels; excludes shadow/scroll bands.
     std::wstring name, value;

@@ -824,6 +824,7 @@ public:
         std::vector<ControlSnapshot> result;
         if (done_ || closing_) return result;
         std::vector<std::vector<std::string>> itemIds;
+        std::vector<std::vector<std::string>> itemKeys;
         for (const auto& holder : popups_)
         {
             const auto& popup = *holder;
@@ -835,8 +836,10 @@ public:
                 parent = itemIds[depth - 1][static_cast<std::size_t>(popup.parentItem)];
             if (depth && parent.empty()) break;
             const auto paneId = depth ? parent + "/submenu" : "menu/" + std::to_string(controlSession_) + "/root";
+            const auto paneKey = depth ? itemKeys[depth - 1][static_cast<std::size_t>(popup.parentItem)] + "/submenu" : "root";
             ControlSnapshot pane;
             pane.id = paneId; pane.parent = parent; pane.window = popup.hwnd; pane.pane = true; pane.depth = popup.depth;
+            pane.nativeControlKey = paneKey;
             pane.name = L"Menu"; pane.bounds = {popup.panelScreenOrigin.x, popup.panelScreenOrigin.y,
                 popup.panelScreenOrigin.x + popup.panelWidth, popup.panelScreenOrigin.y + popup.panelHeight};
             pane.clip = pane.bounds; result.push_back(std::move(pane));
@@ -846,16 +849,21 @@ public:
                 popup.panelScreenOrigin.x + popup.panelWidth,
                 popup.panelScreenOrigin.y + popup.panelHeight - panelPadding_ - popup.scrollBottomBand};
             std::vector<std::string> ids(popup.items->size());
+            std::vector<std::string> keys(popup.items->size());
             std::unordered_map<std::string, unsigned> occurrences;
             for (std::size_t index = 0; index < popup.items->size() && index < popup.itemRects.size(); ++index)
             {
                 const auto& item = (*popup.items)[index];
                 if (item.separator) continue;
+                const auto separator = item.label.find(L'\t');
+                const auto label = item.label.substr(0, separator);
                 std::uint64_t labelHash = 14695981039346656037ULL;
-                for (const auto character : item.label) { labelHash ^= static_cast<std::uint16_t>(character); labelHash *= 1099511628211ULL; }
+                for (const auto character : label) { labelHash ^= static_cast<std::uint16_t>(character); labelHash *= 1099511628211ULL; }
                 const auto key = item.command ? "command/" + std::to_string(item.command) : "label/" + std::to_string(labelHash);
                 ControlSnapshot control;
-                control.id = paneId + "/" + key + "/" + std::to_string(occurrences[key]++); ids[index] = control.id;
+                const auto ordinal = std::to_string(occurrences[key]++);
+                control.id = paneId + "/" + key + "/" + ordinal; ids[index] = control.id;
+                control.nativeControlKey = paneKey + "/" + key + "/" + ordinal; keys[index] = control.nativeControlKey;
                 control.parent = paneId; control.window = popup.hwnd; control.bounds = popup.itemRects[index];
                 OffsetRect(&control.bounds, originX - (item.horizontalScrollAction ? popup.horizontalScrollOffset : 0), originY);
                 control.clip = viewport;
@@ -864,7 +872,8 @@ public:
                     auto horizontal = popup.horizontalScrollRect; OffsetRect(&horizontal, originX, originY);
                     IntersectRect(&control.clip, &control.clip, &horizontal);
                 }
-                control.name = item.label; control.value = item.inputText;
+                control.name = label;
+                control.value = item.textInput ? item.inputText : separator == std::wstring::npos ? L"" : item.label.substr(separator + 1);
                 control.textInput = item.textInput; control.enabled = item.enabled; control.checked = item.checked;
                 control.hasChildren = !item.children.empty(); control.depth = popup.depth; control.index = index;
                 control.expanded = depth + 1 < popups_.size() && popups_[depth + 1]->parentItem == static_cast<int>(index);
@@ -875,6 +884,7 @@ public:
                 result.push_back(std::move(control));
             }
             itemIds.push_back(std::move(ids));
+            itemKeys.push_back(std::move(keys));
         }
         return result;
     }

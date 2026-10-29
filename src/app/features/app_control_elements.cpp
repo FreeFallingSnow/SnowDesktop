@@ -4,8 +4,10 @@
 #include "platform/control/control_elements.h"
 #include "ui/menu/menu_control_snapshot.h"
 #include "widget/view/widget_accessibility_snapshot.h"
+#include "app/popup/categorized_popup_scope.h"
 #include <cmath>
 #include <algorithm>
+#include <optional>
 #include <unordered_set>
 
 namespace
@@ -107,6 +109,100 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
                 child.selected = item->IsSelected(); child.widgetId = data->id;
             }
         }
+    }
+    // Popup content is painted with a separate projection of the native
+    // storage model. Desktop member slots retain their desktop geometry and
+    // cannot stand in for these hit targets.
+    if (const auto* popup = GetOpenPopupWidget(); popup && !dockTrayPopup_ &&
+        IsCollectionPopupInteractive() && !popupAnimation_.IsAnimating() && IsWindow(floatingPopupHwnd_) && !UsesCollectionPopupFan(*popup))
+    {
+        const auto root = "popup/" + Key(popup->id);
+        ScrollingItemWidget* view = nullptr;
+        if (dockFolderPopupOpen_) view = dockFolderPopupContainer_.get();
+        else for (const auto& container : containers_)
+            if (auto* candidate = dynamic_cast<ScrollingItemWidget*>(container.get()); candidate && candidate->GetWidgetData() == popup)
+            { view = candidate; break; }
+        // Save the current projection before the shared popup geometry helpers
+        // prepare categorized/group views. The query must not leave a desktop
+        // frame projected into the popup after it returns.
+        std::optional<CategorizedPopupScope> projection;
+        if (view) projection.emplace(view, view->GetLayoutFrameRect());
+        const RECT frame = GetCollectionPopupRect(*popup);
+        if (view) { const RECT projected = GetCategorizedPopupFrame(frame); view->SetPopupFrame(&projected); }
+        auto& parent = add(root, {}, "popup", "pane", popup->title, frame, frame,
+            floatingPopupHwnd_, {"hover", "scroll", "contextMenu", "drop"});
+        parent.widgetId = popup->id; parent.expanded = true;
+        const bool group = IsGroupWidgetType(popup->type);
+        if (view && UsesCategorizedPopupControls(*popup))
+        {
+            const RECT controls = group || popup->dateHeaders
+                ? view->GetLayoutFrameRect() : GetCollectionPopupControlsRect(frame);
+            for (const auto& control : view->GetControlRegions())
+            {
+                if (control.hit == WidgetHit::MoveHandle || control.hit == WidgetHit::ResizeHandle ||
+                    control.hit == WidgetHit::CollapseToggleBtn) continue;
+                RECT clipped{};
+                if (!IntersectRect(&clipped, &controls, &control.bounds)) continue;
+                auto& child = add(root + "/" + Key(control.key), root, "popup", control.role,
+                    control.name, control.bounds, controls, floatingPopupHwnd_,
+                    control.role == "separator" ? std::vector<std::string>{"drag", "hover"} : std::vector<std::string>{"click", "hover"});
+                child.widgetId = popup->id; child.nativeControlKey = WideToUtf8(control.key);
+                child.checked = control.checked; child.selected = control.selected;
+                if (control.hit == WidgetHit::SearchBox)
+                { child.value = WideToUtf8(view->GetSearchText()); child.focused = view->IsSearchFocused(); }
+            }
+            if (group)
+            {
+                std::unordered_map<std::string, unsigned> occurrences;
+                for (const auto& slot : view->GetSlots())
+                {
+                    auto* item = slot->GetItem(); if (!item) continue;
+                    const auto key = ItemKey(*item);
+                    auto& child = add(root + "/member/" + key + "/" + std::to_string(occurrences[key]++), root,
+                        "popup", "item", item->GetTitle(), slot->GetBounds(), view->GetContentViewportRect(),
+                        floatingPopupHwnd_, {"click", "doubleClick", "contextMenu", "hover", "drag", "drop"});
+                    child.widgetId = popup->id; child.selected = item->IsSelected();
+                }
+            }
+        }
+        if (!group)
+        {
+            const auto& keys = GetPopupItemKeysView(*popup);
+            const RECT viewport = GetCollectionPopupContentRect(frame);
+            std::unordered_map<std::string, unsigned> occurrences;
+            for (std::size_t index = 0; index < GetPopupItemCount(*popup); ++index)
+            {
+                std::wstring identity, title;
+                bool selected = false;
+                if (popup->type == DesktopWidgetType::FolderMapping)
+                {
+                    const auto entryIndex = GetPopupFolderEntryIndex(*popup, index);
+                    if (entryIndex >= popup->folderEntries.size()) continue;
+                    const auto& entry = popup->folderEntries[entryIndex];
+                    identity = entry.fullPath; title = entry.DisplayName(); selected = entry.selected;
+                }
+                else
+                {
+                    if (index >= keys.size()) continue;
+                    const auto itemIndex = FindItemIndexByKey(keys[index]);
+                    if (itemIndex >= items_.size()) continue;
+                    const auto& item = items_[itemIndex];
+                    identity = item.layoutKey; title = item.name; selected = item.selected;
+                }
+                const auto key = Key(identity);
+                auto& child = add(root + "/member/" + key + "/" + std::to_string(occurrences[key]++), root,
+                    "popup", "item", title, GetCollectionPopupItemRect(frame, index), viewport,
+                    floatingPopupHwnd_, {"click", "doubleClick", "contextMenu", "hover", "drag", "drop"});
+                child.widgetId = popup->id; child.selected = selected;
+            }
+        }
+        if (dockFolderPopupOpen_)
+        {
+            auto& sort = add(root + "/sort", root, "popup", "button", _LW("app.menu.sort_by"),
+                GetDockFolderPopupSortButtonRect(frame), frame, floatingPopupHwnd_, {"click", "hover"});
+            sort.nativeControlKey = "sort"; sort.widgetId = popup->id;
+        }
+        result.coveredSurfaces.push_back("native-storage-popup");
     }
     POINT pointer{}; snowdesktop::private_pointer::CursorPosition(&pointer); pointer.x -= virtualLeft_; pointer.y -= virtualTop_;
     for (const auto& host : persistentDockHosts_)
@@ -227,6 +323,7 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
         element.id = control.id; element.parent = control.parent; element.surface = "menu";
         element.role = control.pane ? "menu" : control.textInput ? "edit" : "menuitem";
         element.name = WideToUtf8(control.name); element.value = WideToUtf8(control.value);
+        element.nativeControlKey = control.nativeControlKey;
         element.bounds = control.bounds; element.clip = control.clip; element.window = control.window;
         element.enabled = control.enabled; element.visible = IsWindowVisible(control.window) != FALSE;
         element.focused = control.focused; element.selected = control.selected;

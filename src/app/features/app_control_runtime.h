@@ -4,6 +4,9 @@
 #include "ui/render/demo_cursor.h"
 #include "ui/preview/screen_capture.h"
 #include "settings/settings_automation.h"
+#include "settings/control_icon_settings.h"
+#include "settings/settings_ipc_channel.h"
+#include "winui/widgets_page_backend.h"
 #include "demo/export_service.h"
 #include <chrono>
 
@@ -24,10 +27,15 @@ struct Runtime
     demo_cursor::Overlay cursor;
     screen_capture::Service capture;
     settings_automation::Service settings;
+    control_settings::IconSettingsState controlIcons;
+    std::unique_ptr<settings_ipc::Channel> settingsOwnerTasks;
+    std::unique_ptr<winui::IWidgetsPageBackend> controlPackages;
     demo::ExportService demo;
     ~Runtime() { Stop(); }
     void Stop() noexcept
     {
+        if (controlPackages) controlPackages->Close();
+        controlPackages.reset(); settingsOwnerTasks.reset();
         if (privatePointerTimerHost && privatePointerTimer) KillTimer(privatePointerTimerHost, privatePointerTimer);
         privatePointerTimer = 0; privatePointerTimerHost = nullptr;
         privatePointer.SetObserver({}); privatePointer.End(); cursor.Hide(); capture.Stop(); settings.Stop(); demo.Stop();

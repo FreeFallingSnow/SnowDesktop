@@ -826,7 +826,7 @@ snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(
     using Action = snowdesktop::SettingsHostActions::Action;
     using Result = snowdesktop::SettingsActionResult;
     const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
-    if (!snapshot || !snapshot->sessionActive || exitRequested_ || reloading_ ||
+    if (!snapshot || !snapshot->initialized || exitRequested_ || reloading_ ||
         layoutReload_.Pending() || layoutRestoreCompletion_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
         dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
