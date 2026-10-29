@@ -967,19 +967,26 @@
                     std::abs(static_cast<int>((pixel >> 8) & 255) - static_cast<int>(alpha)) <= 1 &&
                     std::abs(static_cast<int>(pixel & 255) - static_cast<int>(alpha)) <= 1;
             };
+            std::array<size_t, 256> alphaCounts{};
+            for (size_t index = 0; index < pixels.size(); ++index)
+                if (white(index)) ++alphaCounts[pixels[index] >> 24];
+            const auto fillAlpha = static_cast<std::uint32_t>(std::distance(alphaCounts.begin(),
+                std::max_element(alphaCounts.begin() + 1, alphaCounts.end())));
+            const auto fill = [&](size_t index) { return white(index) && (pixels[index] >> 24) == fillAlpha; };
             for (size_t seed = 0; seed < pixels.size(); ++seed)
             {
-                if (visited[seed] || !white(seed)) continue;
+                // The alpha-uniform fill interiors remain separate when two
+                // enlarged white outlines touch. Do not join those outlines
+                // into one object and thereby mistake Start for FileGroup.
+                if (visited[seed] || !fill(seed)) continue;
                 pending.clear(); pending.push_back(seed); visited[seed] = 1;
                 RECT region{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
-                std::array<size_t, 256> alphaCounts{};
                 const auto append = [&](size_t index) {
-                    if (!visited[index] && white(index)) { visited[index] = 1; pending.push_back(index); }
+                    if (!visited[index] && fill(index)) { visited[index] = 1; pending.push_back(index); }
                 };
                 for (size_t next = 0; next < pending.size(); ++next)
                 {
                     const size_t index = pending[next];
-                    ++alphaCounts[pixels[index] >> 24];
                     const auto x = static_cast<LONG>(index % width), y = static_cast<LONG>(index / width);
                     region.left = std::min(region.left, x); region.top = std::min(region.top, y);
                     region.right = std::max(region.right, x + 1); region.bottom = std::max(region.bottom, y + 1);
@@ -988,28 +995,30 @@
                     if (y > 0) append(index - width);
                     if (y + 1 < static_cast<LONG>(height)) append(index + width);
                 }
-                const LONG minimumSide = std::max(20L, std::min(anchor.right - anchor.left, anchor.bottom - anchor.top) / 2);
+                const LONG minimumSide = std::max(20L, std::min(anchor.right - anchor.left, anchor.bottom - anchor.top) * 3 / 4);
                 if (region.right - region.left < minimumSide || region.bottom - region.top < minimumSide) continue;
-                const auto fillAlpha = static_cast<std::uint32_t>(std::distance(alphaCounts.begin(),
-                    std::max_element(alphaCounts.begin() + 1, alphaCounts.end())));
                 const LONG first = vertical ? region.top : region.left;
                 const LONG end = vertical ? region.bottom : region.right;
-                const LONG cross = vertical ? (region.left + region.right) / 2 : (region.top + region.bottom) / 2;
-                const auto pixelIndex = [&](LONG axis) { return vertical ? static_cast<size_t>(axis) * width + cross : static_cast<size_t>(cross) * width + axis; };
-                const auto fillAt = [&](LONG axis) { const auto index = pixelIndex(axis); return white(index) && (pixels[index] >> 24) == fillAlpha; };
-                LONG outerFirst = first, outerEnd = end, innerFirst = end, innerEnd = first;
-                while (outerFirst < end && !white(pixelIndex(outerFirst))) ++outerFirst;
-                while (outerEnd > first && !white(pixelIndex(outerEnd - 1))) --outerEnd;
-                for (LONG axis = outerFirst; axis + 2 < outerEnd; ++axis)
-                    if (fillAt(axis) && fillAt(axis + 1) && fillAt(axis + 2)) { innerFirst = axis; break; }
-                for (LONG axis = outerEnd - 1; axis - 2 >= outerFirst; --axis)
-                    if (fillAt(axis) && fillAt(axis - 1) && fillAt(axis - 2)) { innerEnd = axis + 1; break; }
-                if (innerFirst >= innerEnd) continue;
-                // The real outline stroke scales with the icon. Recover its
-                // path edge from both painted sides of that stroke, rather
-                // than treating an expanding outline as fixed slot padding.
-                const LONG pathFirst = static_cast<LONG>(std::lround((outerFirst + innerFirst) / 2.0));
-                const LONG pathEnd = static_cast<LONG>(std::lround((outerEnd + innerEnd) / 2.0));
+                const LONG axisCenter = (first + end) / 2;
+                const LONG crossFirst = vertical ? region.left : region.top;
+                const LONG crossEnd = vertical ? region.right : region.bottom;
+                const LONG crossLimit = static_cast<LONG>(vertical ? width : height);
+                const auto pixelIndex = [&](LONG cross) { return vertical ? static_cast<size_t>(axisCenter) * width + cross : static_cast<size_t>(cross) * width + axisCenter; };
+                if (!white(pixelIndex(crossFirst)) || !white(pixelIndex(crossEnd - 1))) continue;
+                LONG outerFirst = crossFirst, outerEnd = crossEnd;
+                while (outerFirst > 0 && white(pixelIndex(outerFirst - 1))) --outerFirst;
+                while (outerEnd < crossLimit && white(pixelIndex(outerEnd))) ++outerEnd;
+                double strokeWidth = 0.0;
+                int observedSides = 0;
+                if (outerFirst > 0) { strokeWidth += crossFirst - outerFirst; ++observedSides; }
+                if (outerEnd < crossLimit) { strokeWidth += outerEnd - crossEnd; ++observedSides; }
+                if (!observedSides) continue;
+                // Measure the local stroke perpendicular to the lane, where
+                // this card cannot touch its neighbour. Ignore clipped sides.
+                // Never scan through a connected outline into another card.
+                const double halfStroke = strokeWidth / (2.0 * observedSides);
+                const LONG pathFirst = static_cast<LONG>(std::lround(first - halfStroke));
+                const LONG pathEnd = static_cast<LONG>(std::lround(end + halfStroke));
                 if (vertical) { region.top = pathFirst; region.bottom = pathEnd; }
                 else { region.left = pathFirst; region.right = pathEnd; }
                 plates.push_back(region);
@@ -1017,6 +1026,9 @@
             std::sort(plates.begin(), plates.end(), [&](RECT left, RECT right) {
                 return vertical ? left.top + left.bottom < right.top + right.bottom : left.left + left.right < right.left + right.right;
             });
+            if (plates.size() != fromTrailing + 2)
+                std::cerr << "File fill-component observation count=" << plates.size() << " expected=" << fromTrailing + 2
+                    << " rawFillAlpha=" << fillAlpha << " anchor=" << anchor.left << ',' << anchor.top << ',' << anchor.right << ',' << anchor.bottom << '\n';
             // Actual paint order is Start, optional FileGroup, then Search or
             // Trash. A trailing wave can move the target centre farther than
             // its neighbour, so nearest-base distance is not its identity.
