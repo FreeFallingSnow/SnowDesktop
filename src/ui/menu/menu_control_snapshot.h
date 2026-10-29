@@ -22,5 +22,8 @@ struct ControlSnapshot
 // Query/update only from the thread running Show(). No cross-thread HWND/Item
 // access and no command execution are provided by this adapter.
 std::vector<ControlSnapshot> ActiveControls();
+// Exact companion supplied by the active owner-thread menu, never an HWND
+// discovered by class name or by scanning unrelated application windows.
+HWND ActiveCompanionWindow();
 bool SetControlText(std::string_view id, std::wstring_view value);
 }

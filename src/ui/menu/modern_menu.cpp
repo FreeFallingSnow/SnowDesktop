@@ -812,6 +812,13 @@ public:
         DeleteObject(bitmap);
     }
 
+    HWND CompanionWindow() const
+    {
+        if (done_ || closing_ || !options_.zOrderCompanion) return nullptr;
+        const HWND window = options_.zOrderCompanion();
+        return window && IsWindow(window) && IsWindowVisible(window) ? window : nullptr;
+    }
+
     std::vector<ControlSnapshot> Controls() const
     {
         std::vector<ControlSnapshot> result;
@@ -3077,6 +3084,10 @@ Result Show(const std::vector<Item>& items, const Options& options)
 std::vector<ControlSnapshot> ActiveControls()
 {
     return gControlController ? gControlController->Controls() : std::vector<ControlSnapshot>{};
+}
+HWND ActiveCompanionWindow()
+{
+    return gControlController ? gControlController->CompanionWindow() : nullptr;
 }
 bool SetControlText(std::string_view id, std::wstring_view value)
 {

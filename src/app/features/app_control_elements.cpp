@@ -240,6 +240,22 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
         }
         result.elements.push_back(std::move(element));
     }
+    if (const HWND companion = snowdesktop::modern_menu::ActiveCompanionWindow())
+    {
+        RECT bounds{};
+        if (GetWindowRect(companion, &bounds))
+        {
+            Element element;
+            element.id = "component-preview/active";
+            element.surface = "component-preview"; element.role = "pane";
+            element.name = "Component preview"; element.bounds = element.clip = bounds;
+            element.window = companion; element.visible = IsWindowVisible(companion) != FALSE;
+            element.actions = {"hover", "click"};
+            result.elements.push_back(std::move(element));
+            result.coveredSurfaces.push_back("product-component-preview-window");
+            result.pendingSurfaces.push_back("component-preview-button-catalog");
+        }
+    }
     const auto settings = applicationControlRuntime_->settings.Elements(settingsWindow_ ? settingsWindow_->Window() : nullptr);
     if (!settings.empty())
     {

@@ -1,4 +1,5 @@
 #include "ui/preview/component_preview.h"
+#include "ui/input/private_pointer.h"
 #include "widget/view/widget_clip_geometry.h"
 #include <wincodec.h>
 #include "widget/preview/widget_preview_scene.h"
@@ -265,6 +266,78 @@ void RunScrollContentClipTests();
 
 int wmain()
 {
+    {
+        using namespace snowdesktop::component_preview;
+        namespace pointer = snowdesktop::private_pointer;
+        Window window;
+        Model model;
+        model.title = L"Private pointer preview";
+        model.applyLabel = L"Add to desktop";
+        Card card;
+        card.previewWidth = 120; card.previewHeight = 80;
+        card.cacheKey = L"private-pointer-preview";
+        card.applySettings.kind = ApplyKind::Collection;
+        card.options = {{OptionSetting::ListMode, L"Layout", L"Grid", L"List"}};
+        bool hovered = false, listMode = false;
+        unsigned applied = 0;
+        card.render = [&](int width, int height, UINT, const StagePlacement&,
+                const ApplySettings& settings, bool over) {
+            hovered = over; listMode = settings.listMode;
+            return SolidBitmap(width, height, 0xff204080u);
+        };
+        model.cards.push_back(std::move(card));
+        Expect(window.Show(model, RECT{40, 40, 140, 80}, nullptr, 96, false,
+            [&](const ApplySettings& settings) {
+                Expect(settings.listMode, "preview applies the option selected by raw input");
+                ++applied;
+            }), "show production component preview for private input");
+        POINT physicalBefore{}; GetPhysicalCursorPos(&physicalBefore);
+        const HWND foreground = GetForegroundWindow();
+        const RECT bounds{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN)};
+        const auto point = [&](RECT rect) {
+            POINT value{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+            ClientToScreen(window.Handle(), &value); return value;
+        };
+        pointer::Device device;
+        std::string error;
+        const auto route = [&](POINT location) -> HWND {
+            RECT rect{};
+            return IsWindowVisible(window.Handle()) && GetWindowRect(window.Handle(), &rect) &&
+                PtInRect(&rect, location) ? window.Handle() : nullptr;
+        };
+        Expect(device.Begin(bounds, point(window.PreviewBoundsForTesting()), route,
+            [&](HWND target) { return target == window.Handle(); }, error),
+            "begin private device over the actual preview HWND");
+        const auto drain = [&] {
+            Expect(PumpMessagesUntil([&] { return device.Current().pendingEvents == 0; }, 1500),
+                "production preview drains normal private window messages");
+            Expect(device.Current().error.empty(), "preview input reports no dispatch error");
+        };
+        drain();
+        Expect(hovered, "real WM_MOUSEMOVE updates the production preview hover render");
+        const RECT option = window.OptionBoundsForTesting(OptionSetting::ListMode, true);
+        const auto optionClient = POINT{(option.left + option.right) / 2, (option.top + option.bottom) / 2};
+        SendMessageW(window.Handle(), WM_LBUTTONUP, 0, MAKELPARAM(optionClient.x, optionClient.y));
+        Expect(!listMode, "unpermitted physical messages cannot click a private preview");
+        Expect(device.Move(point(option), error) && device.Down(pointer::Button::Left, error) &&
+            device.Up(pointer::Button::Left, error), "queue normal preview option click");
+        drain();
+        Expect(listMode && !hovered, "private coordinates select a real option and leave the preview viewport");
+        Expect(device.Move(point(window.ApplyBoundsForTesting()), error) &&
+            device.Down(pointer::Button::Left, error) && device.Up(pointer::Button::Left, error),
+            "queue actual add-to-desktop button click");
+        drain();
+        Expect(applied == 1, "normal preview button-up calls its production apply handler once");
+        device.End();
+        Expect(!IsWindowVisible(window.Handle()) && applied == 1,
+            "private cancellation dismisses the preview without applying twice");
+        POINT physicalAfter{}; GetPhysicalCursorPos(&physicalAfter);
+        Expect(physicalBefore.x == physicalAfter.x && physicalBefore.y == physicalAfter.y &&
+            foreground == GetForegroundWindow(), "preview private input preserves OS cursor and foreground");
+        window.Close();
+    }
     {
         using namespace snowdesktop::component_preview;
         for (UINT dpi : {96u, 144u, 192u})

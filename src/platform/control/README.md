@@ -53,7 +53,8 @@ real-file demonstrations. A test utility can prepare a copy of an existing demo
 desktop; it must not substitute generated preview fixtures for the article data.
 
 The private device routes coordinates through the real desktop, widget, popup,
-Quick Navigation, Dock and modern-menu window procedures. Existing native hit
+Quick Navigation, Dock, modern menus and their product component-preview window
+procedures. Existing native hit
 testing and control handlers decide which control responds. IPC does not accept
 an element command, arbitrary HWND or external target. Hover state, button state,
 logical capture/focus and timers read the same private device. The demo cursor
@@ -61,6 +62,16 @@ only visualizes those delivered events. Moving to an unsupported region never
 falls back to operating the system mouse. Monitor geometry changes end the
 session with an explicit error. Settings-process input is a separate pending
 adapter; its read-only catalog is not proof of pointer support.
+
+The preview companion is the exact HWND supplied by the active menu on the
+owner UI thread. It receives the same raw move/down/up input and normal preview
+option/apply handlers; class-name discovery cannot add another input target.
+`ui.snapshot` reports its physical window rectangle as
+`component-preview/active` (`surface:"component-preview"`). The current catalog
+marks `component-preview-button-catalog` pending: individual preview button
+geometry is not exported yet. A replay may use the actual captured window to
+choose coordinates within that rectangle. This is the product's interactive
+preview before adding a real component, rather than an offline export renderer.
 
 ## Element discovery
 

@@ -46,6 +46,7 @@ bool DesktopApp::OwnsPrivatePointerWindow(HWND window) const
         window == floatingPopupHwnd_ || window == quickNavigationHwnd_) return true;
     for (const auto& host : persistentDockHosts_) if (host && host->hwnd == window) return true;
     for (const auto& control : snowdesktop::modern_menu::ActiveControls()) if (control.window == window) return true;
+    if (window == snowdesktop::modern_menu::ActiveCompanionWindow()) return true;
     if (snowdesktop::text_input::IsPrivatePointerHost(window))
     {
         const HWND parent = GetParent(window);
@@ -60,6 +61,8 @@ HWND DesktopApp::PrivatePointerWindowAt(POINT point) const
     // The OS cursor, external windows and the decorative cursor overlay never
     // participate in private-device routing.
     const auto menus = snowdesktop::modern_menu::ActiveControls();
+    const HWND companion = snowdesktop::modern_menu::ActiveCompanionWindow();
+    if (OwnsPrivatePointerWindow(companion) && Contains(companion, point)) return companion;
     HWND modal = nullptr, hit = nullptr;
     int modalDepth = (std::numeric_limits<int>::max)(), hitDepth = -1;
     for (const auto& control : menus)

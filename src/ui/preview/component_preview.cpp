@@ -1,4 +1,5 @@
 #include "component_preview.h"
+#include "ui/input/private_pointer.h"
 
 #include "ui/menu/menu_icon_render.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
@@ -1664,7 +1665,7 @@ void Window::ApplyCurrent()
 bool Window::PointerInsideMenuOrPreview() const
 {
     POINT point{};
-    if (!GetCursorPos(&point)) return false;
+    if (!private_pointer::CursorPosition(&point)) return false;
     RECT previewBounds{};
     return hwnd_ && GetWindowRect(hwnd_, &previewBounds) &&
         PtInRect(&previewBounds, point);
@@ -1787,6 +1788,7 @@ LRESULT CALLBACK Window::WindowProc(
     auto* self = reinterpret_cast<Window*>(
         GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (!self) return DefWindowProcW(hwnd, message, wParam, lParam);
+    if (!private_pointer::MessageAllowed(hwnd, message, wParam, lParam)) return 0;
 
     switch (message)
     {
@@ -1797,7 +1799,7 @@ LRESULT CALLBACK Window::WindowProc(
         {
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE,
                 hwnd, 0 };
-            TrackMouseEvent(&tracking);
+            private_pointer::TrackLeave(&tracking);
             self->pointerTracking_ = true;
         }
         const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -1817,7 +1819,7 @@ LRESULT CALLBACK Window::WindowProc(
             PtInRect(&self->nextButton_, point) ||
             PtInRect(&self->closeRect_, point) ||
             PtInRect(&self->applyRect_, point) || optionClickable;
-        SetCursor(LoadCursorW(nullptr, clickable ? IDC_HAND : IDC_ARROW));
+        private_pointer::Cursor(LoadCursorW(nullptr, clickable ? IDC_HAND : IDC_ARROW));
         return 0;
     }
     case WM_MOUSELEAVE:
@@ -1828,6 +1830,11 @@ LRESULT CALLBACK Window::WindowProc(
             self->RenderCurrent();
         }
         self->ScheduleHide();
+        return 0;
+    case WM_CANCELMODE:
+        self->pointerTracking_ = false;
+        self->componentHovered_ = false;
+        self->Hide();
         return 0;
     case WM_LBUTTONUP:
     {
@@ -1898,7 +1905,7 @@ LRESULT CALLBACK Window::WindowProc(
     case WM_NCHITTEST:
         return HTCLIENT;
     case WM_SETCURSOR:
-        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
         return TRUE;
     case WM_NCDESTROY:
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
