@@ -1281,17 +1281,32 @@
         // These older matrices deliberately exercise a lane that fits. Their
         // original seven 136px cells did not fit the 760px vertical reserve.
         // Derive the fixture scale from real page icon metrics and the full
-        // cell/gap budget, with one rounding pixel for each layout term.
+        // cell/gap/maximum-interaction budget. Leave the animation reserve
+        // outside the Dock area but inside the real pixel target as well.
         const auto fitLegacyScene = [&](DockPosition position, size_t cellCount) {
             app.dockSettings_.thicknessScale = 1.0f;
             const int icon = app.GetDockPageItemIconSize(app.gridPages_.front());
             const int cells = static_cast<int>(cellCount);
-            const int axis = position == DockPosition::Left || position == DockPosition::Right ? 760 : 1200;
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            const int axis = vertical ? 760 : 1200;
+            const float maximumScale = snowdesktop::dock_magnification::ResolveFocusScale(
+                app.dockSettings_.hoverEffect, app.dockSettings_.hoverScale, snowdesktop::animation::RuntimeAnimationsEnabled());
+            const auto envelope = [&](int pixels) {
+                return snowdesktop::dock_magnification::ExpandInteractionBounds(RECT{0, 0, 1, 1}, position,
+                    pixels, maximumScale, app.dockSettings_.hoverEffect == 1);
+            };
+            const RECT unscaled = envelope(icon);
+            const int animationReserve = vertical ? unscaled.bottom - unscaled.top - 1 : unscaled.right - unscaled.left - 1;
             constexpr int maximumSeparators = 3;
-            const int roundingTerms = cells + maximumSeparators + 3;
-            const double budget = cells * (icon + kDockSpacing) + maximumSeparators * kDockSeparatorGap + 3 * kDockSpacing;
+            const int roundingTerms = cells + maximumSeparators + 7;
+            const double budget = cells * (icon + kDockSpacing) + maximumSeparators * kDockSeparatorGap + 3 * kDockSpacing + animationReserve;
             app.dockSettings_.thicknessScale = ClampDockScale(std::min(1.0f,
                 static_cast<float>((axis - roundingTerms) / budget)));
+            const RECT scaled = envelope(std::max(1, static_cast<int>(std::round(icon * app.dockSettings_.thicknessScale))));
+            RECT reserve{100, 20, 1300, 780};
+            if (vertical) { reserve.top -= scaled.top; reserve.bottom -= scaled.bottom - 1; }
+            else { reserve.left -= scaled.left; reserve.right -= scaled.right - 1; }
+            return reserve;
         };
         const auto requireNoOverflow = [&](DockContainer* dock) {
             // A fresh container has not built its slots yet. Restore a large
@@ -1306,7 +1321,14 @@
             std::cout << "Legacy fixture scale=" << app.dockSettings_.thicknessScale << " actualMaxScroll=" << maximum << '\n';
             check(dock->RestorePresentationState(initial), "restore zero-scroll fixture presentation");
             check(maximum == 0, "legacy geometry matrix must prove actual no-overflow capacity");
+            const RECT envelope = dock->GetInteractiveBounds();
+            const bool vertical = app.dockSettings_.position == DockPosition::Left || app.dockSettings_.position == DockPosition::Right;
+            std::cout << "Legacy maximum interaction=" << envelope.left << ',' << envelope.top << ',' << envelope.right << ',' << envelope.bottom << '\n';
+            check(vertical ? envelope.top >= 0 && envelope.bottom <= static_cast<LONG>(height) :
+                envelope.left >= 0 && envelope.right <= static_cast<LONG>(width),
+                "legacy maximum animated axis must be observable inside the actual target");
         };
+        size_t legacyFixedFailures = 0, legacyEmptyFailures = 0;
 
         for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
         for (const int effect : {0, 1, 2})
@@ -1332,8 +1354,8 @@
             app.dockSettings_.showQuickSearchButton = controls;
             app.gridPages_.front().dpiX = app.gridPages_.front().dpiY =
                 fixedCount == 3 ? 144u : controls ? 120u : 96u;
-            fitLegacyScene(position, fixedCount + 2 + (controls ? 2 : 0));
-            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
+            const RECT reserve = fitLegacyScene(position, fixedCount + 2 + (controls ? 2 : 0));
+            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, reserve);
             auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
             app.lastMousePoint_ = outside;
             requireNoOverflow(dock);
@@ -1380,23 +1402,38 @@
                 dock->DrawInsertionPreview(referenceContext.Get(), boundary);
                 check(SUCCEEDED(referenceContext->EndDraw()), "render real first/last fixed insertion indicator");
                 referenceContext->SetTarget(nullptr);
-                const RECT pixels = paintedBounds(read(referenceContext.Get(), complete.Get()));
+                const auto markerFrame = read(referenceContext.Get(), complete.Get());
+                const RECT pixels = paintedBounds(markerFrame);
                 const LONG actualAxis = vertical ? (pixels.top + pixels.bottom) / 2 : (pixels.left + pixels.right) / 2;
-                check(!IsRectEmpty(&pixels) && std::abs(actualAxis - expectedAxis) <= 1,
-                    "fixed insertion pixels must follow the correct partition edge, including the first pin before running apps");
+                const bool matches = !IsRectEmpty(&pixels) && std::abs(actualAxis - expectedAxis) <= 1;
+                std::cout << "Legacy fixed pixels position=" << static_cast<int>(position) << " effect=" << effect
+                    << " controls=" << controls << " fixed=" << fixedCount << " boundary=" << boundary
+                    << " expected=" << expectedAxis << " marker=" << actualAxis << " bbox=" << pixels.left << ',' << pixels.top << ',' << pixels.right << ',' << pixels.bottom
+                    << " matches=" << matches << '\n';
+                bool oldAnchorRejected = true;
                 if (fixedCount == 0)
                 {
                     const RECT search = slots.back()->GetBounds();
                     const LONG oldAxis = vertical ? search.top : search.left;
-                    check(std::abs(actualAxis - oldAxis) > 10,
-                        "empty fixed insertion must not reuse the old Search/trailing-running boundary");
+                    oldAnchorRejected = std::abs(actualAxis - oldAxis) > 10;
+                }
+                if (!matches || !oldAnchorRejected)
+                {
+                    if (!oldAnchorRejected) std::cerr << "Legacy fixed old Search anchor was not rejected\n";
+                    ++legacyFixedFailures;
+                    const auto name = L"legacy-fixed-position-" + std::to_wstring(static_cast<int>(position)) + L"-effect-" + std::to_wstring(effect) +
+                        L"-controls-" + std::to_wstring(controls) + L"-fixed-" + std::to_wstring(fixedCount) + L"-boundary-" + std::to_wstring(boundary);
+                    const auto contents = drawFilePixels(dock, false, boundary);
+                    std::string error;
+                    check(snowdesktop::preview_png::Save(paintEvidence / (name + L"-contents.png"), static_cast<int>(width), static_cast<int>(height), contents, error), "save legacy fixed contents: " + error);
+                    check(snowdesktop::preview_png::Save(paintEvidence / (name + L"-marker.png"), static_cast<int>(width), static_cast<int>(height), markerFrame, error), "save legacy fixed marker: " + error);
                 }
             }
             app.widgetAction_ = DesktopApp::WidgetAction::None;
             app.mouseDown_ = false; app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             app.widgetDockTarget_ = false; app.widgetDockTargetContainer_ = nullptr;
         }
-        std::cout << "First-pin D2D boundary matrix: 4 positions x 3 hover effects x 2 control layouts x 3 pin counts; 96/120/144 DPI passed\n";
+        std::cout << "First-pin D2D boundary matrix: 72 cases; 96/120/144 DPI; pixel failures=" << legacyFixedFailures << '\n';
 
         // Model slots keep all file/Trash entries before generated slots,
         // even though their presentation is trailing. Cover that distinction
@@ -1442,9 +1479,9 @@
             app.dockSettings_.edgeAttached = attached;
             app.dockSettings_.showWindowsButton = start; app.dockSettings_.showQuickSearchButton = search;
             app.gridPages_.front().dpiX = app.gridPages_.front().dpiY = 120;
-            fitLegacyScene(position, static_cast<size_t>(folder) + static_cast<size_t>(recycle) + static_cast<size_t>(start) +
+            const RECT reserve = fitLegacyScene(position, static_cast<size_t>(folder) + static_cast<size_t>(recycle) + static_cast<size_t>(start) +
                 static_cast<size_t>(search) + (generated ? 2 : 0));
-            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
+            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, reserve);
             auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
             app.lastMousePoint_ = outside;
             requireNoOverflow(dock);
@@ -1517,18 +1554,30 @@
             dock->DrawInsertionPreview(referenceContext.Get(), 0);
             check(SUCCEEDED(referenceContext->EndDraw()), "render empty fixed partition with trailing files and utility controls");
             referenceContext->SetTarget(nullptr);
-            const RECT pixels = paintedBounds(read(referenceContext.Get(), complete.Get()));
+            const auto markerFrame = read(referenceContext.Get(), complete.Get());
+            const RECT pixels = paintedBounds(markerFrame);
             const LONG actualAxis = vertical ? (pixels.top + pixels.bottom) / 2 : (pixels.left + pixels.right) / 2;
-            if (IsRectEmpty(&pixels) || std::abs(actualAxis - expectedAxis) > 1)
-                std::cerr << "empty fixed mismatch position=" << static_cast<int>(position) << " effect=" << effect <<
-                    " attached=" << attached << " scene=" << static_cast<int>(scene) << " expected=" << expectedAxis << " actual=" << actualAxis << '\n';
-            check(!IsRectEmpty(&pixels) && std::abs(actualAxis - expectedAxis) <= 1,
-                "first-pin pixels must match their real leading neighbour or attached leading section across file/utility-only states");
+            const bool matches = !IsRectEmpty(&pixels) && std::abs(actualAxis - expectedAxis) <= 1;
+            std::cout << "Legacy empty pixels position=" << static_cast<int>(position) << " effect=" << effect << " attached=" << attached
+                << " scene=" << static_cast<int>(scene) << " expected=" << expectedAxis << " marker=" << actualAxis
+                << " bbox=" << pixels.left << ',' << pixels.top << ',' << pixels.right << ',' << pixels.bottom << " matches=" << matches << '\n';
+            if (!matches)
+            {
+                ++legacyEmptyFailures;
+                const auto name = L"legacy-empty-position-" + std::to_wstring(static_cast<int>(position)) + L"-effect-" + std::to_wstring(effect) +
+                    L"-attached-" + std::to_wstring(attached) + L"-scene-" + std::to_wstring(static_cast<int>(scene));
+                const auto contents = drawFilePixels(dock, false, 0);
+                std::string error;
+                check(snowdesktop::preview_png::Save(paintEvidence / (name + L"-contents.png"), static_cast<int>(width), static_cast<int>(height), contents, error), "save legacy empty contents: " + error);
+                check(snowdesktop::preview_png::Save(paintEvidence / (name + L"-marker.png"), static_cast<int>(width), static_cast<int>(height), markerFrame, error), "save legacy empty marker: " + error);
+            }
             app.widgetAction_ = DesktopApp::WidgetAction::None; app.mouseDown_ = false;
             app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
             app.widgetDockTarget_ = false; app.widgetDockTargetContainer_ = nullptr;
         }
-        std::cout << "Empty fixed file/utility D2D matrix: 4 positions x 3 hover effects x 2 bar modes x 7 model scenes passed\n";
+        std::cout << "Empty fixed file/utility D2D matrix: 168 cases; pixel failures=" << legacyEmptyFailures << '\n';
+        check(legacyFixedFailures + legacyEmptyFailures == 0,
+            "all 240 valid legacy scenes must match their real partition boundaries (see every mismatch frame)");
         app.shellHoverTraceActive_ = false;
         app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;
         app.persistentDockHosts_.clear(); app.containers_.clear();
