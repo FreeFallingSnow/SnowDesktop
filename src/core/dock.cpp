@@ -2164,6 +2164,58 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
         boundary = slots[end - 1]->GetBounds();
         after = true;
     }
+    else if (!folderSource && begin == end)
+    {
+        // An empty fixed group belongs before generated running/frequent
+        // entries, not at the trailing Search control. Use that leading
+        // neighbour's real animated edge, just as a nonempty group does.
+        const size_t count = entries_ ? entries_->size() : 0;
+        const size_t generated = runningItems_.size() + frequentItems_.size();
+        if (generated > 0 && count < slots.size() && slots[count])
+            boundary = slots[count]->GetBounds();
+        else if (!IsEdgeAttached())
+        {
+            if (FolderEntryCount() > 0 && begin < slots.size() && slots[begin])
+                boundary = slots[begin]->GetBounds();
+            else
+            {
+                // With only utility controls, the scrollable group has zero
+                // length. Its base viewport must not clamp away the real
+                // Search/Trash/Start animation of the adjacent boundary.
+                if (IsRectEmpty(&boundary) && count > 0 && app_->IsRecycleBinDockEntry(entries_->back()))
+                    boundary = slots[count - 1]->GetBounds();
+                if (IsRectEmpty(&boundary))
+                {
+                    const RECT start = GetWindowsButtonRect();
+                    if (!IsRectEmpty(&start)) { boundary = start; after = true; }
+                }
+                const RECT base = IsRectEmpty(&boundary) ? bounds : boundary;
+                const RECT visual = GetElementVisualRect(base, pointer);
+                const RECT edge = IsRectEmpty(&boundary) ? boundary : visual;
+                const float axis = static_cast<float>(IsVertical()
+                    ? (after ? edge.bottom : edge.top) : (after ? edge.right : edge.left));
+                DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
+                return;
+            }
+        }
+        else
+        {
+            // Edge-attached file entries remain at the opposite end. With
+            // no leading neighbour, retain the fixed section's own viewport
+            // boundary rather than borrowing those trailing controls.
+            const RECT viewport = GetVisualScrollViewport(pointer);
+            RECT base = GetWindowsButtonRect();
+            const bool hasStart = !IsRectEmpty(&base);
+            if (!hasStart) base = bounds;
+            const RECT visual = hasStart ? GetElementVisualRect(base, pointer) : GetVisualPanelBounds(pointer);
+            const LONG startShift = hasStart && GetMaxScrollOffset(bounds) <= 0
+                ? (IsVertical() ? visual.bottom - base.bottom : visual.right - base.right) : 0;
+            const float axis = static_cast<float>((IsVertical() ? viewport.top : viewport.left) + startShift);
+            DrawDockInsertionIndicator(context, base, visual,
+                axis, IsVertical(), ItemIconSize());
+            return;
+        }
+    }
     RECT base = IsRectEmpty(&boundary) ? bounds : boundary;
     RECT visual = GetElementVisualRect(base, pointer);
     if (!IsRectEmpty(&boundary)) boundary = visual;

@@ -796,6 +796,346 @@
             app.dockEntries_.size() == 3 && app.dockEntries_.front().reference == app.items_.front().layoutKey,
             "the actual button-up route must end a self drop without arming a click or changing Dock order");
         app.dockSettings_.singleClickLaunchItems = singleClick;
+
+        // The first pin has no fixed Slot to anchor its indicator. Exercise
+        // the real component input route and D2D pixels with running apps on
+        // the other side, including Start/Search and every hover orientation.
+        app.persistentDockHosts_.clear();
+        app.widgets_.clear();
+        DesktopWidget firstPinWidget;
+        firstPinWidget.id = L"first-pin-component";
+        firstPinWidget.type = DesktopWidgetType::Collection;
+        firstPinWidget.gridCell = {app.gridPages_.front().id, 5, 1};
+        firstPinWidget.gridSpan = {1, 1};
+        firstPinWidget.bounds = {1020, 80, 1100, 160};
+        app.widgets_.push_back(std::move(firstPinWidget));
+
+        // Independent paint oracle for the reported left/right asymmetry.
+        // Calibrate the icon's actual unscaled padding from its opaque DIB,
+        // then recover the animated cell edges from DrawContents pixels.
+        // Do not derive the expected line from GetElementVisualRect: that is
+        // also used by the product marker and would hide a shared mistake.
+        app.iconBeautifySettings_.enabled = false;
+        app.iconOverrides_.clear();
+        for (auto& item : app.items_) item.selected = false;
+        std::array<wchar_t, 32768> executablePath{};
+        check(GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size())) > 0,
+            "locate the native fixture's private evidence directory");
+        const auto paintEvidence = std::filesystem::path(executablePath.data()).parent_path() /
+            (L"dock-insertion-paint-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
+        check(std::filesystem::create_directory(paintEvidence), "exclusively create test-owned paint evidence directory");
+        const auto iconPaintBounds = [&](const std::vector<std::uint32_t>& pixels) {
+            RECT result{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
+            for (UINT y = 0; y < height; ++y)
+            for (UINT x = 0; x < width; ++x)
+            {
+                const auto pixel = pixels[static_cast<size_t>(y) * width + x];
+                if ((pixel >> 24) < 250 || (pixel & 0xffffffu) != 0x4070a0u) continue;
+                result.left = std::min(result.left, static_cast<LONG>(x));
+                result.top = std::min(result.top, static_cast<LONG>(y));
+                result.right = std::max(result.right, static_cast<LONG>(x + 1));
+                result.bottom = std::max(result.bottom, static_cast<LONG>(y + 1));
+            }
+            return result;
+        };
+        size_t paintChecks = 0, paintFailures = 0;
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+        for (const int effect : {1, 2})
+        for (const size_t generated : {size_t{0}, size_t{3}})
+        {
+            app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;
+            app.containers_.clear(); app.dockUnpinnedRunningApps_.clear();
+            app.dockEntries_.assign(baselineEntries.begin(), baselineEntries.begin() + 1);
+            for (size_t index = 0; index < generated; ++index)
+            {
+                DockRunningAppInfo running;
+                running.identityKey = L"paint-running-" + std::to_wstring(index);
+                running.title = L"Running application"; running.presence.SetVisible(true, 0, false);
+                app.dockUnpinnedRunningApps_.push_back(std::move(running));
+            }
+            app.dockSettings_.position = position; app.dockSettings_.hoverEffect = effect;
+            app.dockSettings_.edgeAttached = false;
+            app.dockSettings_.showWindowsButton = true; app.dockSettings_.showQuickSearchButton = true;
+            app.dockSettings_.showRunningApps = true;
+            app.gridPages_.front().dpiX = app.gridPages_.front().dpiY = 120;
+            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
+            auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
+            const RECT base = dock->GetSlots().front()->GetBounds();
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            const auto leading = [&](RECT rect) { return vertical ? rect.top : rect.left; };
+            const auto trailing = [&](RECT rect) { return vertical ? rect.bottom : rect.right; };
+            const auto drawPixels = [&](bool marker, size_t boundary) {
+                referenceContext->SetTarget(complete.Get());
+                referenceContext->SetTransform(D2D1::Matrix3x2F::Identity());
+                referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+                app.brushCache_.clear(); app.brushCacheContext_ = referenceContext.Get();
+                if (marker) dock->DrawInsertionPreview(referenceContext.Get(), boundary);
+                else dock->DrawContents(referenceContext.Get());
+                check(SUCCEEDED(referenceContext->EndDraw()), "draw actual animated Dock contents or insertion pixels");
+                referenceContext->SetTarget(nullptr);
+                app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
+                return read(referenceContext.Get(), complete.Get());
+            };
+            app.lastMousePoint_ = outside;
+            app.widgetAction_ = DesktopApp::WidgetAction::None;
+            const auto baselinePixels = drawPixels(false, 0);
+            const RECT baselinePaint = iconPaintBounds(baselinePixels);
+            check(!IsRectEmpty(&baselinePaint), "the real opaque fixture icon must be observable before hover");
+            const LONG leadingPadding = leading(baselinePaint) - leading(base);
+            const LONG trailingPadding = trailing(base) - trailing(baselinePaint);
+            check(leadingPadding >= 0 && trailingPadding >= 0,
+                "measured unscaled icon padding must lie inside its actual slot");
+            for (const int phase : {0, 1, 2})
+            for (const size_t boundary : {size_t{0}, size_t{1}})
+            {
+                auto state = dock->CapturePresentationState();
+                state.focusRect = {}; state.single = {}; state.entry = {};
+                check(dock->RestorePresentationState(state), "reset independent paint sample's real hover timeline");
+                POINT pointer{(base.left + base.right) / 2, (base.top + base.bottom) / 2};
+                const LONG sampleAxis = leading(base) + (trailing(base) - leading(base)) * (boundary == 0 ? 1 : 3) / 4;
+                if (vertical) pointer.y = sampleAxis; else pointer.x = sampleAxis;
+                app.mouseDownWidgetIndex_ = 0; app.mouseDown_ = true; app.mouseDownPoint_ = outside;
+                app.widgetDragOriginalCell_ = app.widgets_.front().gridCell;
+                app.widgetDragOriginalSpan_ = app.widgets_.front().gridSpan;
+                app.widgetAction_ = DesktopApp::WidgetAction::Move;
+                auto factory = std::move(app.dwriteFactory_);
+                app.OnMouseMoveAt(MK_LBUTTON, pointer); app.dwriteFactory_ = std::move(factory);
+                check(app.widgetDockTarget_ && app.widgetDockTargetContainer_ == dock &&
+                    app.widgetDockInsertIndex_ == boundary,
+                    "real component pointer must select each side of the same fixed item");
+                state = dock->CapturePresentationState(); state.focusRect = base; state.single = {}; state.entry = {};
+                const double start = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                if (effect == 1)
+                {
+                    state.single.SetTarget(base, start, 1.0, sampleAxis);
+                    state.single.Advance(start + phase * snowdesktop::dock_magnification::SingleFocusAnimation::kDurationMilliseconds / 2.0);
+                }
+                else
+                {
+                    state.entry.SetHovered(true, start, 1.0);
+                    state.entry.Advance(start + phase * snowdesktop::dock_magnification::HoverEntryAnimation::kDurationMilliseconds / 2.0);
+                }
+                check(dock->RestorePresentationState(state), "supply initial, intermediate and completed native hover frames");
+                const auto contentPixels = drawPixels(false, boundary);
+                const RECT icon = iconPaintBounds(contentPixels);
+                check(!IsRectEmpty(&icon), "animated target must retain actual opaque icon pixels");
+                const LONG expectedAxis = boundary == 0 ? leading(icon) - leadingPadding : trailing(icon) + trailingPadding;
+                const auto markerPixels = drawPixels(true, boundary);
+                const RECT marker = paintedBounds(markerPixels);
+                const LONG actualAxis = vertical ? (marker.top + marker.bottom) / 2 : (marker.left + marker.right) / 2;
+                const bool matches = !IsRectEmpty(&marker) && std::abs(actualAxis - expectedAxis) <= 1;
+                ++paintChecks;
+                std::cout << "Dock actual paint position=" << static_cast<int>(position) << " effect=" << effect
+                    << " running=" << generated << " phase=" << phase << " side=" << boundary
+                    << " pointer=" << pointer.x << ',' << pointer.y << " icon=" << icon.left << ',' << icon.top << ',' << icon.right << ',' << icon.bottom
+                    << " padding=" << leadingPadding << ',' << trailingPadding << " expected=" << expectedAxis << " marker=" << actualAxis
+                    << " matches=" << matches << '\n';
+                if (!matches)
+                {
+                    ++paintFailures;
+                    const auto name = L"position-" + std::to_wstring(static_cast<int>(position)) + L"-effect-" + std::to_wstring(effect) +
+                        L"-running-" + std::to_wstring(generated) + L"-phase-" + std::to_wstring(phase) + L"-side-" + std::to_wstring(boundary);
+                    std::string error;
+                    check(snowdesktop::preview_png::Save(paintEvidence / (name + L"-contents.png"),
+                        static_cast<int>(width), static_cast<int>(height), contentPixels, error), "save actual contents pixels: " + error);
+                    check(snowdesktop::preview_png::Save(paintEvidence / (name + L"-marker.png"),
+                        static_cast<int>(width), static_cast<int>(height), markerPixels, error), "save actual insertion pixels: " + error);
+                }
+                app.widgetAction_ = DesktopApp::WidgetAction::None; app.mouseDown_ = false;
+                app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+                app.widgetDockTarget_ = false; app.widgetDockTargetContainer_ = nullptr;
+            }
+        }
+        std::cout << "Independent actual Dock paint checks=" << paintChecks << " mismatches=" << paintFailures
+            << " evidence=" << paintEvidence.string() << '\n';
+        check(paintFailures == 0, "insertion line must follow independently painted item edges at every hover phase on both sides");
+
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+        for (const int effect : {0, 1, 2})
+        for (const bool controls : {false, true})
+        for (const size_t fixedCount : {size_t{0}, size_t{1}, size_t{3}})
+        {
+            app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;
+            app.containers_.clear();
+            app.dockEntries_.assign(baselineEntries.begin(), baselineEntries.begin() + fixedCount);
+            app.dockUnpinnedRunningApps_.clear();
+            for (size_t index = 0; index < 2; ++index)
+            {
+                DockRunningAppInfo running;
+                running.identityKey = L"first-pin-running-" + std::to_wstring(index);
+                running.title = L"Running application";
+                running.presence.SetVisible(true, 0, false);
+                app.dockUnpinnedRunningApps_.push_back(std::move(running));
+            }
+            app.dockSettings_.position = position; app.dockSettings_.hoverEffect = effect;
+            app.dockSettings_.edgeAttached = position == DockPosition::Top;
+            app.dockSettings_.showRunningApps = true;
+            app.dockSettings_.showWindowsButton = controls;
+            app.dockSettings_.showQuickSearchButton = controls;
+            app.gridPages_.front().dpiX = app.gridPages_.front().dpiY =
+                fixedCount == 3 ? 144u : controls ? 120u : 96u;
+            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
+            auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
+            const auto& slots = dock->GetSlots();
+            const RECT lastRunning = slots[fixedCount + 1]->GetBounds();
+            const POINT pointer{(lastRunning.left + lastRunning.right) / 2,
+                (lastRunning.top + lastRunning.bottom) / 2};
+            app.mouseDownWidgetIndex_ = 0; app.mouseDown_ = true;
+            app.mouseDownPoint_ = outside;
+            app.widgetDragOriginalCell_ = app.widgets_.front().gridCell;
+            app.widgetDragOriginalSpan_ = app.widgets_.front().gridSpan;
+            app.widgetAction_ = DesktopApp::WidgetAction::Move;
+            auto factory = std::move(app.dwriteFactory_);
+            app.OnMouseMoveAt(MK_LBUTTON, pointer);
+            app.dwriteFactory_ = std::move(factory);
+            check(app.widgetDockTarget_ && app.widgetDockTargetContainer_ == dock &&
+                app.widgetDockInsertIndex_ == fixedCount,
+                "component over running apps must target the fixed partition's final boundary");
+            dock->AdvanceMagnificationAnimation(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 1000);
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            for (const size_t boundary : fixedCount == 0 ? std::vector<size_t>{0} : std::vector<size_t>{0, fixedCount})
+            {
+                const size_t anchor = fixedCount == 0 ? 0 : boundary == 0 ? 0 : fixedCount - 1;
+                const RECT visual = dock->GetElementVisualRect(slots[anchor]->GetBounds(), pointer);
+                LONG expectedAxis = vertical
+                    ? (boundary > 0 ? visual.bottom : visual.top)
+                    : (boundary > 0 ? visual.right : visual.left);
+                // This matrix deliberately fits without scrolling. The
+                // leading edge is clipped to the real scrollable viewport
+                // when a wave expands toward Start/the panel boundary.
+                if (boundary == 0)
+                {
+                    const RECT firstBase = slots.front()->GetBounds();
+                    expectedAxis = std::max(expectedAxis, vertical ? firstBase.top : firstBase.left);
+                }
+                referenceContext->SetTarget(complete.Get());
+                referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+                dock->DrawInsertionPreview(referenceContext.Get(), boundary);
+                check(SUCCEEDED(referenceContext->EndDraw()), "render real first/last fixed insertion indicator");
+                referenceContext->SetTarget(nullptr);
+                const RECT pixels = paintedBounds(read(referenceContext.Get(), complete.Get()));
+                const LONG actualAxis = vertical ? (pixels.top + pixels.bottom) / 2 : (pixels.left + pixels.right) / 2;
+                check(!IsRectEmpty(&pixels) && std::abs(actualAxis - expectedAxis) <= 1,
+                    "fixed insertion pixels must follow the correct partition edge, including the first pin before running apps");
+                if (fixedCount == 0)
+                {
+                    const RECT search = slots.back()->GetBounds();
+                    const LONG oldAxis = vertical ? search.top : search.left;
+                    check(std::abs(actualAxis - oldAxis) > 10,
+                        "empty fixed insertion must not reuse the old Search/trailing-running boundary");
+                }
+            }
+            app.widgetAction_ = DesktopApp::WidgetAction::None;
+            app.mouseDown_ = false; app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+            app.widgetDockTarget_ = false; app.widgetDockTargetContainer_ = nullptr;
+        }
+        std::cout << "First-pin D2D boundary matrix: 4 positions x 3 hover effects x 2 control layouts x 3 pin counts; 96/120/144 DPI passed\n";
+
+        // Model slots keep all file/Trash entries before generated slots,
+        // even though their presentation is trailing. Cover that distinction
+        // and the zero-length viewport when no generated entries exist.
+        DesktopWidget files;
+        files.id = L"first-pin-files"; files.title = L"Files";
+        files.type = DesktopWidgetType::FolderMapping;
+        files.gridCell = {kDockPageId, 0, 0}; files.gridSpan = {1, 1};
+        app.widgets_.push_back(std::move(files));
+        enum class EmptyScene { FilesRunning, RunningUtilities, FilesOnly, Utilities, StartOnly, RecycleOnly, Empty };
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+        for (const int effect : {0, 1, 2})
+        for (const bool attached : {false, true})
+        for (const auto scene : {EmptyScene::FilesRunning, EmptyScene::RunningUtilities, EmptyScene::FilesOnly, EmptyScene::Utilities,
+                 EmptyScene::StartOnly, EmptyScene::RecycleOnly, EmptyScene::Empty})
+        {
+            app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;
+            app.containers_.clear(); app.dockEntries_.clear(); app.dockUnpinnedRunningApps_.clear();
+            const bool folder = scene == EmptyScene::FilesRunning || scene == EmptyScene::FilesOnly;
+            const bool generated = scene == EmptyScene::FilesRunning || scene == EmptyScene::RunningUtilities;
+            const bool start = scene != EmptyScene::RecycleOnly && scene != EmptyScene::Empty;
+            const bool search = folder || scene == EmptyScene::Utilities || scene == EmptyScene::RunningUtilities;
+            const bool recycle = folder || scene == EmptyScene::Utilities || scene == EmptyScene::RunningUtilities || scene == EmptyScene::RecycleOnly;
+            if (folder)
+            {
+                DockEntry entry; entry.type = DockEntryType::FolderMapping; entry.reference = L"first-pin-files";
+                app.dockEntries_.push_back(std::move(entry));
+            }
+            if (recycle)
+            {
+                DockEntry entry; entry.type = DockEntryType::DesktopItem; entry.reference = kDesktopIconClsidRecycleBin;
+                app.dockEntries_.push_back(std::move(entry));
+            }
+            if (generated)
+                for (size_t index = 0; index < 2; ++index)
+                {
+                    DockRunningAppInfo running;
+                    running.identityKey = L"empty-partition-running-" + std::to_wstring(index);
+                    running.title = L"Running application"; running.presence.SetVisible(true, 0, false);
+                    app.dockUnpinnedRunningApps_.push_back(std::move(running));
+                }
+            app.dockSettings_.position = position; app.dockSettings_.hoverEffect = effect;
+            app.dockSettings_.edgeAttached = attached;
+            app.dockSettings_.showWindowsButton = start; app.dockSettings_.showQuickSearchButton = search;
+            app.gridPages_.front().dpiX = app.gridPages_.front().dpiY = 120;
+            auto ownedDock = std::make_unique<DockContainer>(&app, &app.dockEntries_, RECT{100, 20, 1300, 780});
+            auto* dock = ownedDock.get(); app.containers_.push_back(std::move(ownedDock));
+            const auto& slots = dock->GetSlots();
+            const size_t count = app.dockEntries_.size();
+            const RECT startBase = dock->GetWindowsButtonRect();
+            const RECT baseBounds = dock->GetBounds();
+            const RECT hit = generated ? slots[count + 1]->GetBounds() : start ? startBase :
+                recycle ? slots[count - 1]->GetBounds() : baseBounds;
+            const POINT pointer{(hit.left + hit.right) / 2, (hit.top + hit.bottom) / 2};
+            app.mouseDownWidgetIndex_ = 0; app.mouseDown_ = true; app.mouseDownPoint_ = outside;
+            app.widgetDragOriginalCell_ = app.widgets_.front().gridCell;
+            app.widgetDragOriginalSpan_ = app.widgets_.front().gridSpan;
+            app.widgetAction_ = DesktopApp::WidgetAction::Move;
+            auto factory = std::move(app.dwriteFactory_);
+            app.OnMouseMoveAt(MK_LBUTTON, pointer); app.dwriteFactory_ = std::move(factory);
+            check(app.widgetDockTarget_ && app.widgetDockTargetContainer_ == dock && app.widgetDockInsertIndex_ == 0,
+                "files, running apps and utility-only surfaces must preserve the empty fixed partition's index zero");
+            dock->AdvanceMagnificationAnimation(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 1000);
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            const auto leading = [&](RECT rect) { return vertical ? rect.top : rect.left; };
+            const auto trailing = [&](RECT rect) { return vertical ? rect.bottom : rect.right; };
+            LONG expectedAxis = 0;
+            if (generated || (!attached && folder))
+            {
+                const RECT anchor = slots[generated ? count : 0]->GetBounds();
+                expectedAxis = std::max(leading(anchor), leading(dock->GetElementVisualRect(anchor, pointer)));
+            }
+            else if (!attached)
+            {
+                const RECT anchor = search ? slots.back()->GetBounds() : recycle ? slots[count - 1]->GetBounds() : start ? startBase : slots.back()->GetBounds();
+                const RECT visual = IsRectEmpty(&anchor) ? anchor : dock->GetElementVisualRect(anchor, pointer);
+                expectedAxis = start && !search && !recycle ? trailing(visual) : leading(visual);
+            }
+            else
+            {
+                const float scale = ResolveDockScale(app.dockSettings_, false);
+                const int spacing = std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
+                const int gap = std::max(1, static_cast<int>(std::round(kDockSeparatorGap * scale)));
+                // Fixed pins occupy the leading section of an attached bar.
+                // Trailing files/Search/Trash never move this section to the
+                // opposite end; only Start's live growth shifts its boundary.
+                expectedAxis = start ? trailing(dock->GetElementVisualRect(startBase, pointer)) +
+                    ((folder || search || recycle) ? gap : 0) : leading(baseBounds) + spacing / 2;
+            }
+            referenceContext->SetTarget(complete.Get());
+            referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+            dock->DrawInsertionPreview(referenceContext.Get(), 0);
+            check(SUCCEEDED(referenceContext->EndDraw()), "render empty fixed partition with trailing files and utility controls");
+            referenceContext->SetTarget(nullptr);
+            const RECT pixels = paintedBounds(read(referenceContext.Get(), complete.Get()));
+            const LONG actualAxis = vertical ? (pixels.top + pixels.bottom) / 2 : (pixels.left + pixels.right) / 2;
+            if (IsRectEmpty(&pixels) || std::abs(actualAxis - expectedAxis) > 1)
+                std::cerr << "empty fixed mismatch position=" << static_cast<int>(position) << " effect=" << effect <<
+                    " attached=" << attached << " scene=" << static_cast<int>(scene) << " expected=" << expectedAxis << " actual=" << actualAxis << '\n';
+            check(!IsRectEmpty(&pixels) && std::abs(actualAxis - expectedAxis) <= 1,
+                "first-pin pixels must match their real leading neighbour or attached leading section across file/utility-only states");
+            app.widgetAction_ = DesktopApp::WidgetAction::None; app.mouseDown_ = false;
+            app.mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+            app.widgetDockTarget_ = false; app.widgetDockTargetContainer_ = nullptr;
+        }
+        std::cout << "Empty fixed file/utility D2D matrix: 4 positions x 3 hover effects x 2 bar modes x 7 model scenes passed\n";
         app.shellHoverTraceActive_ = false;
         app.uiAnimationScheduler_.CancelAll(); app.dockMagnificationAnimationFrameToken_ = 0;
         app.persistentDockHosts_.clear(); app.containers_.clear();
