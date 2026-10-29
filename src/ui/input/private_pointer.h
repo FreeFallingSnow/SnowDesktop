@@ -65,10 +65,12 @@ public:
     // Key events and UTF-16 WM_CHAR data share the same ordered queue. They
     // require an exact current owned focus; text never follows a focus change.
     // Text is nonempty, at most 4096 code units, with valid surrogate pairs.
+    // A queued release is delivered only after its down reached a native host.
     bool KeyDown(unsigned virtualKey, std::string& error);
     bool KeyUp(unsigned virtualKey, std::string& error);
     bool Text(std::wstring text, std::string& error);
     void SetObserver(Observe observe);
+    // Cancel each owned capture/hover/hit/focus host without activating releases.
     void End() noexcept;
     const State& Current() const noexcept;
 private:

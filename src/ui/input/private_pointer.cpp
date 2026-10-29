@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <utility>
 #include <windowsx.h>
@@ -145,7 +146,7 @@ struct Session
     std::deque<Event> pending;
     POINT projectedPoint{};
     unsigned projectedButtons = 0, dispatchDepth = 0;
-    std::array<bool, 256> projectedKeys{};
+    std::array<bool, 256> projectedKeys{}, deliveredKeys{};
     std::uint64_t nextSequence = 0;
     bool wakePosted = false;
     double started = 0, lastClickTime = 0;
@@ -220,6 +221,7 @@ struct Session
         state.closing = false;
         state.buttons = 0;
         state.keys.fill(false);
+        deliveredKeys.fill(false);
         state.captured = state.hovered = state.focused = state.foreground = nullptr;
         state.cursor = nullptr;
         if (current == this) { current = nullptr; permit = {}; }
@@ -233,16 +235,23 @@ struct Session
         const HWND currentHit = Hit(state.point, true);
         pending.clear(); state.pendingEvents = 0;
         projectedButtons = state.buttons = 0;
-        const auto heldKeys = state.keys;
-        state.keys.fill(false); projectedKeys.fill(false);
-        const HWND captured = state.captured, hovered = state.hovered;
+        const auto heldKeys = deliveredKeys;
+        state.keys.fill(false); projectedKeys.fill(false); deliveredKeys.fill(false);
+        const HWND captured = state.captured, hovered = state.hovered, focused = state.focused;
         state.captured = state.hovered = nullptr;
         // A cancellation is never a button-up: an unfinished press must not
         // accidentally launch a file or commit a drag while the session ends.
-        Deliver(captured, WM_CANCELMODE);
+        // A companion preview may be hovered while its menu still owns the
+        // logical focus. Cancel every participating host exactly once.
+        const HWND cancelTargets[]{captured, hovered, currentHit, focused};
+        for (std::size_t index = 0; index < std::size(cancelTargets); ++index)
+        {
+            bool duplicate = false;
+            for (std::size_t previous = 0; previous < index; ++previous)
+                if (cancelTargets[previous] == cancelTargets[index]) duplicate = true;
+            if (!duplicate) Deliver(cancelTargets[index], WM_CANCELMODE);
+        }
         Deliver(captured, WM_CAPTURECHANGED);
-        if (hovered != captured) Deliver(hovered, WM_CANCELMODE);
-        if (currentHit != captured && currentHit != hovered) Deliver(currentHit, WM_CANCELMODE);
         Deliver(hovered, WM_MOUSELEAVE);
         const HWND keyboardTarget = Owned(state.focused) ? state.focused : nullptr;
         for (unsigned key = 0; key < heldKeys.size(); ++key)
@@ -320,20 +329,34 @@ struct Session
         }
         const bool released = event.kind == Kind::KeyUp;
         const bool alt = Held(state, VK_MENU);
-        if (released) state.keys[event.key] = false;
+        if (released)
+        {
+            state.keys[event.key] = false;
+            // Queue admission only describes the requested order. A preceding
+            // down may have failed, so it cannot authorize an activating up at
+            // a window that acquires focus later.
+            if (!deliveredKeys[event.key])
+            { state.error = "private_keyboard_key_not_down"; Record(nullptr, 0, "rejected", event.key); return; }
+            deliveredKeys[event.key] = false;
+        }
         if (!destination)
         { state.error = "private_keyboard_focus_unavailable"; Record(nullptr, 0, "rejected", event.key); return; }
         if (!released) state.keys[event.key] = true;
         const UINT message = released ? WM_KEYUP : WM_KEYDOWN;
         Record(destination, message, released ? "key-up" : "key-down", event.key);
         if (!Notify() || !state.enabled || state.closing || current != this) return;
-        if (state.sequence != event.sequence) { state.error = "private_keyboard_interrupted"; return; }
+        if (state.sequence != event.sequence)
+        {
+            if (!released && !deliveredKeys[event.key]) state.keys[event.key] = false;
+            state.error = "private_keyboard_interrupted"; return;
+        }
         if (state.focused != destination || !Owned(destination))
         {
             if (!released) state.keys[event.key] = false;
             state.error = "private_keyboard_focus_changed";
             return;
         }
+        if (!released) deliveredKeys[event.key] = true;
         Deliver(destination, message, event.key, KeyParameter(event.key, released, alt || Held(state, VK_MENU)));
     }
     void Process(const Event& event)
@@ -467,7 +490,8 @@ bool Device::Begin(RECT bounds, POINT initial, Route route, Owns owns, std::stri
     }
     session.state = {}; session.state.enabled = true; session.state.bounds = bounds; session.state.point = initial;
     session.route = std::move(route); session.owns = std::move(owns); session.map = std::move(map); session.thread = thread;
-    session.projectedPoint = initial; session.projectedButtons = 0; session.projectedKeys.fill(false);
+    session.projectedPoint = initial; session.projectedButtons = 0;
+    session.projectedKeys.fill(false); session.deliveredKeys.fill(false);
     session.pending.clear(); session.nextSequence = 0; session.lastClickEligible = false;
     session.started = ClockMilliseconds(); current = &session;
     if (!session.Queue({Kind::Move, initial}, error)) { session.End(); return false; }

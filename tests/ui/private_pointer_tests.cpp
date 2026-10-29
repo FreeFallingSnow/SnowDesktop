@@ -506,6 +506,82 @@ void PrivateKeyboardAndControlDrag()
     real.Unchanged();
 }
 
+void RejectedKeyboardPairing()
+{
+    NativeControl first(-4500, -4500), later(-3500, -4500);
+    pointer::Device device; std::string error;
+    const RECT bounds{-30000, -30000, 30000, 30000};
+    const auto route = [&](POINT) { return first.window; };
+    const auto owns = [&](HWND window) { return window == first.window || window == later.window; };
+    const RealInput real;
+    Check(device.Begin(bounds, first.Point(), route, owns, error), "begin rejected keyboard pairing"); Drain(device);
+    Check(device.KeyDown(VK_RETURN, error) && device.KeyDown(VK_SPACE, error), "queue activation keys without focus"); Drain(device);
+    Check(device.Current().error == "private_keyboard_focus_unavailable" && !first.keyDowns && !later.keyDowns,
+        "unfocused activation downs are rejected before native delivery");
+    pointer::SetInputFocus(later.window);
+    Check(device.KeyUp(VK_RETURN, error) && device.KeyUp(VK_SPACE, error), "queue projected releases after acquiring new focus"); Drain(device);
+    Check(device.Current().error == "private_keyboard_key_not_down" && !later.keyUps &&
+        !device.Current().keys[VK_RETURN] && !device.Current().keys[VK_SPACE],
+        "a newly focused window never receives activation releases for rejected downs");
+
+    pointer::SetInputFocus(first.window);
+    bool redirected = false;
+    device.SetObserver([&](const pointer::State& state) {
+        if (!redirected && !state.trace.empty() && state.trace.back().message == WM_KEYDOWN)
+        { redirected = true; pointer::SetInputFocus(later.window); }
+    });
+    Check(device.KeyDown(VK_CONTROL, error), "queue modifier interrupted before delivery"); Drain(device);
+    Check(redirected && device.Current().error == "private_keyboard_focus_changed" && !device.Current().keys[VK_CONTROL],
+        "observer focus changes reject the undelivered modifier");
+    Check(device.KeyUp(VK_CONTROL, error), "clear projected modifier after focus interruption"); Drain(device);
+    Check(device.Current().error == "private_keyboard_key_not_down" && !first.keyDowns && !later.keyDowns && !later.keyUps,
+        "observer-rejected key down cannot authorize a later key up");
+    device.SetObserver({}); device.End();
+
+    Check(device.Begin(bounds, first.Point(), route, owns, error), "restart pre-delivery cancellation fixture"); Drain(device);
+    pointer::SetInputFocus(first.window);
+    device.SetObserver([&](const pointer::State& state) { if (state.keys[VK_CONTROL]) device.End(); });
+    Check(device.KeyDown(VK_CONTROL, error), "queue modifier cancelled by observer"); Drain(device);
+    Check(!device.Current().enabled && !first.keyDowns && !first.keyUps && !later.keyUps,
+        "end emits no phantom modifier release before its down was delivered");
+    real.Unchanged();
+}
+
+void EndFocusedModalBesidePreview()
+{
+    NativeControl launcher(-3000, -3000), menu(-2000, -3000), preview(-1000, -3000);
+    pointer::Device device; std::string error;
+    bool popupShown = false, modalExited = false, queued = false;
+    launcher.modal = true; launcher.modalExit = menu.modalExit = &modalExited;
+    menu.cancelExitsModal = true;
+    const RECT bounds{-30000, -30000, 30000, 30000};
+    const RealInput real;
+    launcher.onModal = [&] {
+        popupShown = true;
+        pointer::SetInputFocus(menu.window);
+        pointer::SetPointerCapture(preview.window);
+        queued = device.KeyDown(VK_CONTROL, error) && device.KeyDown(VK_RETURN, error) && device.KeyDown(VK_SPACE, error) &&
+            device.Move(preview.Point(), error);
+    };
+    device.SetObserver([&](const pointer::State& state) {
+        if (preview.hovered && state.keys[VK_CONTROL] && state.keys[VK_RETURN] && state.keys[VK_SPACE]) device.End();
+    });
+    Check(device.Begin(bounds, launcher.Point(), [&](POINT point) {
+        if (!popupShown) return launcher.window;
+        RECT rectangle{}; GetWindowRect(preview.window, &rectangle);
+        return PtInRect(&rectangle, point) ? preview.window : menu.window;
+    }, [&](HWND window) { return window == launcher.window || window == menu.window || window == preview.window; }, error),
+        "begin focused modal beside preview fixture");
+    Check(device.Down(pointer::Button::Right, error) && device.Up(pointer::Button::Right, error), "open nested modal before preview hover"); Drain(device);
+    Check(queued && modalExited && menu.cancelled == 1 && preview.cancelled == 1 && !launcher.cancelled,
+        "end cancels focused modal and deduplicates captured, hovered and hit preview");
+    Check(menu.keyDowns == 3 && menu.keyUps == 1 && !preview.keyUps && menu.focusLosses == 1,
+        "modal cancellation releases only its delivered modifier and kills logical focus");
+    Check(!device.Current().enabled && !device.Current().closing && !preview.hovered && !launcher.badInputState && !menu.badInputState,
+        "preview hover cancellation unwinds nested native modal without activating Enter or Space");
+    real.Unchanged();
+}
+
 std::wstring EditorText(HWND window)
 {
     const int length = GetWindowTextLengthW(window);
@@ -568,7 +644,7 @@ int main()
         Check(SUCCEEDED(apartment), "initialize text-input test STA");
         struct Apartment { ~Apartment() { CoUninitialize(); } } apartmentGuard;
         NativeMessages(); ModalQueueAndRejections(); BoundedQueueAndObserverCancellation(); InputFamiliesAndForwarding(); ExplicitEmbeddedCoordinates(); EndNewModalWithoutMovement(); ReentrantLogicalFocus();
-        PrivateKeyboardAndControlDrag(); ProductionTextInputKeyboard();
+        PrivateKeyboardAndControlDrag(); RejectedKeyboardPairing(); EndFocusedModalBesidePreview(); ProductionTextInputKeyboard();
         std::cout << "Private pointer native-message checks passed\n";
         return 0;
     }
