@@ -2164,6 +2164,47 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
         boundary = slots[end - 1]->GetBounds();
         after = true;
     }
+    else if (folderSource && begin == end)
+    {
+        // Files occupy the trailing lane. Its first component belongs before
+        // Search/Trash, whose real paint is outside the scrolling clip.
+        const size_t count = entries_ ? entries_->size() : 0;
+        if (IsRectEmpty(&boundary) && count > 0 && app_->IsRecycleBinDockEntry(entries_->back()))
+            boundary = slots[count - 1]->GetBounds();
+        if (!IsRectEmpty(&boundary))
+        {
+            const RECT visual = GetElementVisualRect(boundary, pointer);
+            DrawDockInsertionIndicator(context, boundary, visual,
+                static_cast<float>(IsVertical() ? visual.top : visual.left), IsVertical(), ItemIconSize());
+            return;
+        }
+        if (IsEdgeAttached())
+        {
+            // An empty attached file lane remains at the opposite end even
+            // when every trailing control is hidden. Do not borrow the last
+            // main/running item, which may be on the far side of the screen.
+            const float axis = static_cast<float>((IsVertical() ? bounds.bottom : bounds.right) - ScaledSpacing() / 2);
+            DrawDockInsertionIndicator(context, bounds, bounds, axis, IsVertical(), ItemIconSize());
+            return;
+        }
+        const size_t generated = runningItems_.size() + frequentItems_.size();
+        if (generated > 0 && count + generated <= slots.size())
+            boundary = slots[count + generated - 1]->GetBounds();
+        else if (begin > 0 && begin <= slots.size())
+            boundary = slots[begin - 1]->GetBounds();
+        else
+        {
+            const RECT start = GetWindowsButtonRect();
+            const RECT base = IsRectEmpty(&start) ? bounds : start;
+            const RECT visual = IsRectEmpty(&start) ? base : GetElementVisualRect(start, pointer);
+            const float axis = static_cast<float>(IsRectEmpty(&start)
+                ? (IsVertical() ? bounds.bottom : bounds.right) - ScaledSpacing() / 2
+                : (IsVertical() ? visual.bottom : visual.right));
+            DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
+            return;
+        }
+        after = true;
+    }
     else if (!folderSource && begin == end)
     {
         // An empty fixed group belongs before generated running/frequent
@@ -2222,7 +2263,10 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
     float axis = static_cast<float>(IsVertical()
         ? (after ? boundary.bottom : boundary.top)
         : (after ? boundary.right : boundary.left));
-    if (!folderSource || !IsEdgeAttached())
+    // Match DrawContents: animated cells may extend beyond their base lane
+    // while it fits. Only an actually scrolling lane owns a viewport clip;
+    // attached file items are fixed outside that clip in either case.
+    if (GetMaxScrollOffset(bounds) > 0 && (!folderSource || !IsEdgeAttached()))
     {
         const RECT viewport = GetVisualScrollViewport(pointer);
         axis = IsVertical()
