@@ -256,6 +256,30 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
             result.pendingSurfaces.push_back("component-preview-button-catalog");
         }
     }
+    if (renameInputWindow_ && IsWindowVisible(renameInputWindow_))
+    {
+        RECT bounds{};
+        if (GetWindowRect(renameInputWindow_, &bounds) && !IsRectEmpty(&bounds))
+        {
+            Element element;
+            element.id = "rename/editor"; element.surface = "rename"; element.role = "edit";
+            element.name = WideToUtf8(_LW("app.menu.rename"));
+            element.nativeControlKey = "rename";
+            element.window = renameInputWindow_; element.bounds = element.clip = bounds;
+            element.visible = true; element.enabled = IsWindowEnabled(renameInputWindow_) != FALSE;
+            element.focused = snowdesktop::private_pointer::FocusWindow() == renameInputWindow_;
+            element.actions = {"hover", "click"};
+            const int length = GetWindowTextLengthW(renameInputWindow_);
+            constexpr int limit = 4096;
+            std::wstring text(static_cast<std::size_t>((std::min)(length, limit)) + 1, L'\0');
+            const int copied = GetWindowTextW(renameInputWindow_, text.data(), static_cast<int>(text.size()));
+            text.resize(static_cast<std::size_t>((std::max)(0, copied)));
+            element.value = WideToUtf8(text);
+            result.elements.push_back(std::move(element));
+            result.coveredSurfaces.push_back("native-rename-editor");
+            if (length > limit) result.pendingSurfaces.push_back("rename-editor-value-truncated");
+        }
+    }
     const auto settings = applicationControlRuntime_->settings.Elements(settingsWindow_ ? settingsWindow_->Window() : nullptr);
     if (!settings.empty())
     {

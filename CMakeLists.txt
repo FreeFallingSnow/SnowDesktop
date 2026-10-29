@@ -3241,6 +3241,12 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopNativeDragIntegrationTests --popup-display-menu)
     add_test(NAME native_input_safety
         COMMAND SnowDesktopNativeDragIntegrationTests --input-safety)
+    add_test(NAME native_private_rename
+        COMMAND SnowDesktopNativeDragIntegrationTests --private-rename)
+    set_tests_properties(native_private_rename PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 30 RESOURCE_LOCK snowdesktop_desktop
+        LABELS "integration;interaction;input;ui")
     add_test(NAME native_file_preview
         COMMAND SnowDesktopNativeDragIntegrationTests --file-preview)
     set_tests_properties(native_file_preview PROPERTIES
