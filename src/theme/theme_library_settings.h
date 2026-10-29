@@ -365,26 +365,73 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
     else { error = "invalidSelection"; return false; }
     return true;
 }
+// Change only a currently followed child and its last-successful graph. This
+// graph is separate from the authored package and can select a different source.
+inline bool ApplyFollowedGlobalBinding(Reference& reference, const Theme& nextTheme,
+    std::string_view previous, SettingsValues& values, bool& changed, std::string& error)
+{
+    changed = false;
+    if (reference.id.empty() || (nextTheme.kind != Kind::QuickPanel && nextTheme.kind != Kind::Popup)) return true;
+    const bool quick = nextTheme.kind == Kind::QuickPanel;
+    const auto parent = Resolve(reference.snapshot, reference.id);
+    const auto saved = Resolve(reference.snapshot, previous);
+    const auto current = CaptureTarget(quick ? "quickPanel" : "popup", values);
+    const auto& surface = quick ? values.general.quickNavigationAppearance : values.general.collectionPopupAppearance;
+    if (!parent || parent->kind != Kind::Global || !FullScope(parent->scopes) ||
+        (quick ? parent->quickPanel : parent->popup) != previous ||
+        !saved || saved->kind != nextTheme.kind || surface.mode != -1 ||
+        !AppliedAppearanceMatches(parent->appearance, CaptureTarget("global", values).appearance) ||
+        !AppliedAppearanceMatches(saved->appearance, current.appearance) ||
+        (quick && (saved->layout != current.layout || saved->colors != current.colors))) return true;
+    Library snapshotLibrary;
+    snapshotLibrary.themes = reference.snapshot;
+    auto& snapshotParent = snapshotLibrary.themes.at(reference.id);
+    (quick ? snapshotParent.quickPanel : snapshotParent.popup) = nextTheme.id;
+    snapshotLibrary.themes[nextTheme.id] = nextTheme;
+    Package snapshot;
+    if (!Export(snapshotLibrary, reference.id, snapshot, error)) return false;
+    auto& binding = quick ? values.general.globalQuickNavigationAppearance : values.general.globalCollectionPopupAppearance;
+    binding = {4, true, Capture(nextTheme.kind, nextTheme.appearance).appearance};
+    if (quick) ApplyQuickPanel(values.navigation, nextTheme);
+    reference.snapshot = std::move(snapshot);
+    changed = true;
+    return true;
+}
 inline std::vector<std::string> ApplySavedUpdate(const Library& library, std::string_view changedId,
-    SettingsValues& values, std::string& error)
+    SettingsValues& values, std::string& error,
+    std::map<std::string, Reference>* appliedReferences = nullptr)
 {
     std::vector<std::string> targets;
     for (const auto target : AppearanceTargets)
     {
         const auto reference = library.references.find(std::string(target));
         if (reference == library.references.end() || reference->second.id.empty()) continue;
+        if ((target == "quickPanel" && values.general.quickNavigationAppearance.mode != 4) ||
+            (target == "popup" && values.general.collectionPopupAppearance.mode != 4)) continue;
         const auto theme = Resolve(library.themes, reference->second.id);
         if (!theme) continue;
-        const bool bindingChanged = std::string_view(target) == "global" && FullScope(theme->scopes) &&
-            (theme->quickPanel == changedId || theme->popup == changedId);
-        if ((theme->id == changedId || bindingChanged) && ApplyTarget(library, target, theme->id, values, error))
+        if (theme->id == changedId && ApplyTarget(library, target, theme->id, values, error))
             targets.emplace_back(target);
+        else if (target == "global")
+        {
+            const auto child = Resolve(library.themes, changedId);
+            auto applied = reference->second;
+            if (appliedReferences)
+                if (const auto staged = appliedReferences->find("global"); staged != appliedReferences->end()) applied = staged->second;
+            bool changed = false;
+            if (child && ApplyFollowedGlobalBinding(applied, *child, changedId, values, changed, error) && changed)
+            {
+                targets.emplace_back(target);
+                // The controller may still fail to persist. Keep the library's
+                // successful snapshot untouched until its commit is confirmed.
+                if (appliedReferences) (*appliedReferences)["global"] = std::move(applied);
+            }
+        }
     }
     return targets;
 }
-// A management-card source selection only replaces surfaces still displaying
-// that source's saved snapshot. Detached snapshots can survive unsubscribe;
-// compare actual appearance before following them back to a local version.
+// A saved snapshot preserves appearance after detach, not an active selection.
+// Source switches require a live reference and matching current values.
 inline bool SwitchAppliedVersion(Library& library, std::string_view previous,
     std::string_view replacement, SettingsValues& values,
     std::vector<std::string>& targets, std::string& error)
@@ -397,8 +444,11 @@ inline bool SwitchAppliedVersion(Library& library, std::string_view previous,
     for (const auto target : AppearanceTargets)
     {
         const auto found = library.references.find(std::string(target));
-        if (found == library.references.end() ||
-            (!found->second.id.empty() && found->second.id != previous)) continue;
+        if (found == library.references.end() || found->second.id != previous || previous.empty()) continue;
+        // Following surfaces belong to the global binding below, even if an
+        // old independent reference still happens to have identical values.
+        if ((target == "quickPanel" && values.general.quickNavigationAppearance.mode != 4) ||
+            (target == "popup" && values.general.collectionPopupAppearance.mode != 4)) continue;
         const auto saved = Resolve(found->second.snapshot, previous);
         if (!saved || saved->kind != TargetKind(target) || nextTheme->kind != saved->kind) continue;
         if (nextTheme->kind == Kind::Global &&
@@ -413,6 +463,12 @@ inline bool SwitchAppliedVersion(Library& library, std::string_view previous,
             !Select(nextLibrary, std::string(target), replacement, TargetKind(target),
                 target == "global" ? nextTheme->scopes : TargetScope(target), error)) return false;
         changed.emplace_back(target);
+    }
+    if (const auto global = nextLibrary.references.find("global"); global != nextLibrary.references.end())
+    {
+        bool applied = false;
+        if (!ApplyFollowedGlobalBinding(global->second, *nextTheme, previous, nextValues, applied, error)) return false;
+        if (applied) changed.emplace_back(nextTheme->kind == Kind::QuickPanel ? "global/quickPanel" : "global/popup");
     }
     library = std::move(nextLibrary);
     values = std::move(nextValues);

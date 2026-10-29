@@ -682,6 +682,9 @@ int RunThemeLibraryTests()
             paired.themes.emplace(theme.id,theme);
             paired.workshop["456"].ids.insert(theme.id); paired.workshop["456"].sourceIds.emplace(theme.id,id);
         }
+        paired.workshop["456"].owner = "123";
+        paired.workshop["456"].sha256 = std::string(64, 'a');
+        paired.workshop["456"].accounts.insert("123");
         const auto grouped = ManagementEntries(paired,{}, {},FilterTab::All);
         check(paired.themes.size() == 6 && grouped.size() == 3 &&
             std::all_of(grouped.begin(),grouped.end(),[&](const auto& theme){return authored.contains(theme.id);}),
@@ -734,12 +737,107 @@ int RunThemeLibraryTests()
                 generalBytes(values.general) == generalBytes(dockBefore.general),
                 "a card version change cannot expand a Dock-only selection into the whole global theme");
             Detach(switching, "dock");
+            const auto detached = EncodeLibrary(switching, error);
+            const auto detachedDock = values.dock;
             check(SwitchAppliedVersion(switching, remoteIds.at(global.id), global.id, values, targets, error) &&
-                targets == std::vector<std::string>{"dock"},
-                "an unchanged detached snapshot can follow its corresponding version without changing unrelated scopes");
+                targets.empty() && !detached.empty() && EncodeLibrary(switching, error) == detached && values.dock == detachedDock,
+                "choosing custom or an identical builtin detaches the source and cannot be undone by browsing an old card version");
+            check(Select(switching, "dock", remoteIds.at(global.id), Kind::Global, Dock, error),
+                "restore a live reference before testing independently edited appearance");
             values.dock.customAppearance.widgetAlpha = .123f;
-            check(SwitchAppliedVersion(switching, global.id, remoteIds.at(global.id), values, targets, error) && targets.empty(),
+            check(SwitchAppliedVersion(switching, remoteIds.at(global.id), global.id, values, targets, error) && targets.empty(),
                 "a stale reference cannot overwrite an independently edited current appearance");
+        }
+        {
+            auto bound = paired; bound.references.clear();
+            bound.themes.at(quick.id).appearance.widgetAlpha = .27f;
+            bound.themes.at(quick.id).layout.fontSize = 25;
+            bound.themes.at(quick.id).colors["searchText"] = "#AABBCC";
+            bound.themes.at(popup.id).appearance.widgetAlpha = .37f;
+            SettingsValues values;
+            values.general.quickNavigationAppearance.mode = -1;
+            values.general.collectionPopupAppearance.mode = -1;
+            const auto parentId = remoteIds.at(global.id);
+            check(ApplyTarget(bound, "global", parentId, values, error) &&
+                Select(bound, "global", parentId, Kind::Global, All, error),
+                "prepare an applied global parent with subscribed child bindings");
+            const auto originalPackage = EncodePackage(bound.themes, error);
+            const auto originalValues = values;
+            std::vector<std::string> targets;
+            check(SwitchAppliedVersion(bound, remoteIds.at(quick.id), quick.id, values, targets, error) &&
+                targets == std::vector<std::string>{"global/quickPanel"} &&
+                values.general.quickNavigationAppearance.mode == -1 &&
+                values.general.globalQuickNavigationAppearance.appearance.widgetAlpha == .27f &&
+                values.navigation.layout.fontSize == 25 && values.navigation.colors.at("searchText") == "#AABBCC" &&
+                values.general.globalCollectionPopupAppearance == originalValues.general.globalCollectionPopupAppearance &&
+                values.personalization == originalValues.personalization && values.dock == originalValues.dock,
+                "a currently followed quick binding switches source without becoming independent or changing other surfaces");
+            EditSource applied; applied.Begin(bound, "global");
+            const auto activeQuick = ManagementEntries(bound, {}, {}, FilterTab::QuickPanel);
+            check(applied.theme && applied.theme->id == parentId && applied.Bound(Kind::QuickPanel).theme &&
+                applied.Bound(Kind::QuickPanel).theme->id == quick.id &&
+                activeQuick.size() == 1 && activeQuick.front().id == quick.id &&
+                !originalPackage.empty() && EncodePackage(bound.themes, error) == originalPackage,
+                "the applied snapshot records the new child identity while the authored parent and packages remain untouched");
+            check(SwitchAppliedVersion(bound, quick.id, remoteIds.at(quick.id), values, targets, error) &&
+                targets == std::vector<std::string>{"global/quickPanel"} && values.navigation == originalValues.navigation,
+                "the applied binding can switch back using its current snapshot rather than the authored parent's old edge");
+            const auto beforePopup = values;
+            check(SwitchAppliedVersion(bound, remoteIds.at(popup.id), popup.id, values, targets, error) &&
+                targets == std::vector<std::string>{"global/popup"} && values.general.collectionPopupAppearance.mode == -1 &&
+                values.general.globalCollectionPopupAppearance.appearance.widgetAlpha == .37f &&
+                values.general.globalQuickNavigationAppearance == beforePopup.general.globalQuickNavigationAppearance &&
+                values.navigation == beforePopup.navigation && EncodePackage(bound.themes, error) == originalPackage,
+                "a followed popup switches only its binding and preserves the quick panel and authored resources");
+            Library restored;
+            const auto encoded = EncodeLibrary(bound, error);
+            check(!encoded.empty() && DecodeLibrary(encoded, restored, error),
+                "the changed applied dependency graph survives the existing library codec without a format change");
+            EditSource reloaded; reloaded.Begin(restored, "global");
+            check(reloaded.Bound(Kind::Popup).theme && reloaded.Bound(Kind::Popup).theme->id == popup.id &&
+                FollowQuickBinding(restored, values.navigation),
+                "reloaded settings resolve the applied child version from the preserved snapshot");
+            auto updatedLibrary = bound;
+            updatedLibrary.themes.at(popup.id).appearance.widgetAlpha = .47f;
+            auto updatedValues = values;
+            auto appliedReferences = updatedLibrary.references;
+            const auto updateTargets = ApplySavedUpdate(updatedLibrary, popup.id, updatedValues, error, &appliedReferences);
+            check(updateTargets == std::vector<std::string>{"global"} &&
+                updatedValues.general.globalCollectionPopupAppearance.appearance.widgetAlpha == .47f &&
+                updatedValues.general.collectionPopupAppearance.mode == -1 &&
+                updatedValues.navigation == values.navigation &&
+                updatedLibrary.references.at("global").snapshot.at(popup.id).appearance.widgetAlpha == .37f &&
+                appliedReferences.at("global").snapshot.at(popup.id).appearance.widgetAlpha == .47f,
+                "saving the selected child version follows its applied edge and stages its snapshot until settings commit");
+            updatedLibrary.references = appliedReferences;
+            check(SwitchAppliedVersion(updatedLibrary, popup.id, remoteIds.at(popup.id), updatedValues, targets, error) &&
+                targets == std::vector<std::string>{"global/popup"},
+                "a successfully saved child snapshot can switch versions again without reverting to the authored parent edge");
+            auto independent = originalValues;
+            independent.general.collectionPopupAppearance.mode = 4;
+            independent.general.collectionPopupAppearance.appearance = originalValues.general.globalCollectionPopupAppearance.appearance;
+            auto independentLibrary = paired; independentLibrary.references.clear();
+            check(Select(independentLibrary, "global", parentId, Kind::Global, All, error), "prepare independent surface control");
+            check(SwitchAppliedVersion(independentLibrary, remoteIds.at(popup.id), popup.id, independent, targets, error) && targets.empty(),
+                "an independent popup stays independent even when its material equals the old global binding");
+            auto staleIndependent = originalValues;
+            auto staleLibrary = independentLibrary;
+            check(Select(staleLibrary, "popup", remoteIds.at(popup.id), Kind::Popup, Components, error) &&
+                SwitchAppliedVersion(staleLibrary, remoteIds.at(popup.id), popup.id, staleIndependent, targets, error) &&
+                targets == std::vector<std::string>{"global/popup"} && staleIndependent.general.collectionPopupAppearance.mode == -1,
+                "a historical independent reference cannot turn a currently followed popup into independent mode");
+            auto edited = originalValues;
+            edited.navigation.layout.fontSize += 1;
+            check(SwitchAppliedVersion(independentLibrary, remoteIds.at(quick.id), quick.id, edited, targets, error) && targets.empty(),
+                "an edited followed quick layout is not overwritten by a card source change");
+            edited = originalValues;
+            edited.general.globalCollectionPopupAppearance.appearance.widgetAlpha = .61f;
+            check(SwitchAppliedVersion(independentLibrary, remoteIds.at(popup.id), popup.id, edited, targets, error) && targets.empty(),
+                "an edited followed popup material is not overwritten by a card source change");
+            Detach(independentLibrary, "global");
+            auto detached = originalValues;
+            check(SwitchAppliedVersion(independentLibrary, remoteIds.at(quick.id), quick.id, detached, targets, error) && targets.empty(),
+                "a detached parent snapshot cannot reactivate a historical binding");
         }
         auto& updatedRemote = paired.themes.at(remoteIds.at(global.id)); updatedRemote.scopes = Dock;
         updatedRemote.quickPanel.clear(); updatedRemote.popup.clear();

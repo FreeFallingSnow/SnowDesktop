@@ -250,6 +250,16 @@ public:
         if (found != boundSources_.end()) return found->second;
         if (const auto selected = Selected())
         {
+            // A source switch can update a current global binding without
+            // rewriting the authored parent's package. Show that exact applied
+            // snapshot, including its selected child identities.
+            if (!editing_ && current_)
+            {
+                EditSource applied; applied.Begin(library_, target_);
+                if (applied.theme && applied.theme->id == selected->id &&
+                    themes::AppliedAppearanceMatches(applied.theme->appearance, current_->appearance))
+                    return applied.Bound(kind);
+            }
             EditSource parent; parent.theme = *selected; std::string error;
             if (themes::Export(library_, selected->id, parent.snapshot, error)) return parent.Bound(kind);
         }
