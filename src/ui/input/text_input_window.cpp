@@ -94,6 +94,7 @@ struct State
     SecureBuffer secret;
     History history;
     std::optional<std::pair<std::size_t, std::size_t>> deferredSelection;
+    ComPtr<ID2D1Factory> dcFactory;
     ComPtr<ID2D1DCRenderTarget> dcTarget;
     ComPtr<IDWriteFactory> factory;
     ComPtr<IDWriteTextLayout> layout;
@@ -544,17 +545,15 @@ void Paint(State& state, HDC dc)
         {state.colors.foreground=GetTextColor(dc);state.colors.background=GetBkColor(dc);}
         if(!state.window)return;
     }
-    // A factory retains its rendering backend. Recreating it for every paint
-    // repeatedly initializes D3D/the driver, including for WM_PRINTCLIENT.
-    // HWND dispatch owns the thread; targets belong to the individual control
-    // and disappear with its State instead of keeping destroyed inputs alive.
-    static thread_local ComPtr<ID2D1Factory> factory;
-    if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf()))) return;
+    // Reuse the factory across this control's paints, including WM_PRINTCLIENT.
+    // Its rendering backend must be released on window destruction, while the
+    // owner thread is active, rather than under the thread-exit loader lock.
+    if (!state.dcFactory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, state.dcFactory.GetAddressOf()))) return;
     if (!state.dcTarget)
     {
         const auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_IGNORE),96,96);
-        if (FAILED(factory->CreateDCRenderTarget(&properties,&state.dcTarget))) return;
+        if (FAILED(state.dcFactory->CreateDCRenderTarget(&properties,&state.dcTarget))) return;
     }
     const auto target = state.dcTarget;
     // Each print can use a different HDC and size. Always rebind the current
@@ -634,6 +633,9 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
         {ComPtr<IRawElementProviderSimple> provider;provider.Attach(new SimpleProvider(window,state));return UiaReturnRawElementProvider(window,wp,lp,provider.Get());}break;
     case WM_NCDESTROY:
         state->window=nullptr;state->secret.Clear();KillTimer(window,kCaretTimer);
+        // Accessibility dispatch can temporarily retain State beyond this
+        // message. Retire owner-thread graphics here in dependency order.
+        state->layout.Reset();state->dcTarget.Reset();state->dcFactory.Reset();state->factory.Reset();
         delete reinterpret_cast<std::shared_ptr<State>*>(GetWindowLongPtrW(window,GWLP_USERDATA));
         SetWindowLongPtrW(window,GWLP_USERDATA,0);return DefWindowProcW(window,message,wp,lp);
     case WM_CREATE: if(state->password)ImmAssociateContext(window,nullptr);return 0;
