@@ -79,7 +79,8 @@ void DesktopApp::BeginFolderEntryRenameEditor(
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(listMode, !listMode);
-    renameInputWindow_ = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+    renameInputWindow_ = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
+        (snowdesktop::private_pointer::Active() ? WS_EX_NOACTIVATE : 0),
         snowdesktop::text_input::WindowClass(), entry.DisplayName().c_str(), style,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
@@ -108,7 +109,8 @@ void DesktopApp::BeginFolderEntryRenameEditor(
         static_cast<float>(renameMargin), 4.0f * renameScale);
     renameEditLayout_.Begin(renameInputWindow_);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+            (snowdesktop::private_pointer::Active() ? SWP_NOACTIVATE : 0));
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
             entry.DisplayName(),
@@ -170,7 +172,8 @@ bool DesktopApp::BeginDockAnchoredRename(
                 gap, monitorMargin);
 
     renameInputWindow_ = CreateWindowExW(
-         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+         WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
+            (snowdesktop::private_pointer::Active() ? WS_EX_NOACTIVATE : 0),
         snowdesktop::text_input::WindowClass(), text.c_str(),
         snowdesktop::rename_edit_layout::EditStyle(),
         screenRect.left, screenRect.top,
@@ -213,7 +216,8 @@ bool DesktopApp::BeginDockAnchoredRename(
     snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
     renameEditLayout_.Begin(renameInputWindow_, heightAnchor);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+            (snowdesktop::private_pointer::Active() ? SWP_NOACTIVATE : 0));
     SendMessageW(renameInputWindow_, EM_SETSEL,
         0, selectionEnd);
     snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
@@ -293,7 +297,8 @@ BeginRenameDockFolderPopupEntry(
         !UsesCollectionPopupList(dockFolderPopupWidget_));
     renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
-            WS_EX_TOPMOST,
+            WS_EX_TOPMOST |
+            (snowdesktop::private_pointer::Active() ? WS_EX_NOACTIVATE : 0),
         snowdesktop::text_input::WindowClass(), entry.DisplayName().c_str(),
         style,
         screenRect.left,
@@ -352,7 +357,8 @@ BeginRenameDockFolderPopupEntry(
         static_cast<float>(renameMargin), 4.0f * renameScale);
     renameEditLayout_.Begin(renameInputWindow_);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+            (snowdesktop::private_pointer::Active() ? SWP_NOACTIVATE : 0));
     SendMessageW(
         renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
@@ -369,8 +375,13 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
     UINT_PTR subclassId, DWORD_PTR refData)
 {
     (void)subclassId;
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message, wParam, lParam)) return 0;
+    const auto forwardToEditor = [&]() {
+        const snowdesktop::private_pointer::ForwardScope forward(hwnd, message);
+        return DefSubclassProc(hwnd, message, wParam, lParam);
+    };
     auto* app = reinterpret_cast<DesktopApp*>(refData);
-    if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
+    if (!app) return forwardToEditor();
 
     switch (message)
     {
@@ -426,7 +437,7 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
         }
         return 0;
     }
-    return DefSubclassProc(hwnd, message, wParam, lParam);
+    return forwardToEditor();
 }
 
 /** @brief 将 Lua 内联编辑框当前内容实时写回小部件存储。 */

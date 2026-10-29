@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/input/private_pointer.h"
 #include "app/input/widget_search_context_menu.h"
 #include "widgets/widget_folder_search.h"
 #include "platform/window_support/window_support_runtime.h"

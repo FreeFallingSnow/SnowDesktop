@@ -5,6 +5,9 @@ namespace native_input_safety_cases
 {
 inline void Run()
 {
+    POINT cursorBefore{};
+    if (!GetCursorPos(&cursorBefore)) throw std::runtime_error("snapshot input desktop cursor before native safety fixtures");
+    const HWND foregroundBefore = GetForegroundWindow(), focusBefore = GetFocus();
     const auto name = L"SnowDesktopInputSafety-" + std::to_wstring(GetCurrentProcessId());
     HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
     if (!desktop) throw std::runtime_error("create inactive input-safety desktop");
@@ -25,6 +28,10 @@ inline void Run()
     });
     worker.join();
     CloseDesktop(desktop);
+    POINT cursorAfter{};
+    if (!GetCursorPos(&cursorAfter) || cursorBefore.x != cursorAfter.x || cursorBefore.y != cursorAfter.y ||
+        foregroundBefore != GetForegroundWindow() || focusBefore != GetFocus())
+        throw std::runtime_error("inactive native safety fixtures changed input desktop cursor, foreground or focus");
     if (failure) std::rethrow_exception(failure);
 }
 }
