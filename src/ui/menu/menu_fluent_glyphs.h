@@ -18,6 +18,7 @@ inline constexpr wchar_t kCategoryBar[] = L"\uEC7E";      // tag_multiple
 inline constexpr wchar_t kDateHeader[] = L"\uF22A";
 inline constexpr wchar_t kNewItem[] = L"\uF10C";
 inline constexpr wchar_t kMoreOptions[] = L"\uF582";
+inline constexpr wchar_t kIconPersonalization[] = L"\uE5B2"; // edit_28_regular
 inline constexpr wchar_t kChevronRight[] = L"\uF2AF"; // chevron_right_16_regular
 inline constexpr wchar_t kCopy[] = L"\uF32B";       // copy_20
 inline constexpr wchar_t kSelectAll[] = L"\uEA86";  // select_all_on_20

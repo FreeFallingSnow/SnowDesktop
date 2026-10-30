@@ -574,7 +574,7 @@ void DesktopApp::ShowItemContextMenu(
             snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
     SetMenuItemIcon(iconPersonalization ? iconPersonalization : menu,
         kContextLargeIconCreate, L"\uF0B2");
-    if(iconPersonalization)SetMenuItemIcon(menu,reinterpret_cast<UINT_PTR>(iconPersonalization),L"\uE5B2",MenuIconFont::FluentRegular);
+    if(iconPersonalization)SetMenuItemIcon(menu,reinterpret_cast<UINT_PTR>(iconPersonalization),snowdesktop::menu_fluent_glyphs::kIconPersonalization,MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
         snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);

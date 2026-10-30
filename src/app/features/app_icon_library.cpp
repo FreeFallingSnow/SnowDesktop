@@ -8,6 +8,7 @@
 #include "icons/icon_control_source.h"
 #include "icons/large_icon_edit_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 
 struct IconLibraryHostState
 {
@@ -488,7 +489,7 @@ HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identit
     if(menu)
     {
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(personal), _LW("iconLibrary.personalization"));
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), L"\uF489", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), snowdesktop::menu_fluent_glyphs::kIconPersonalization, MenuIconFont::FluentRegular);
     }
     if (!recycle) add(personal, change, Target(key));
     else for (int state = 0; state < 2; ++state)

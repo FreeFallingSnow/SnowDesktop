@@ -958,7 +958,7 @@ void DesktopApp::ShowWidgetContextMenu(
         const auto iconMenu = CreatePopupMenu();
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("iconLibrary.personalization"));
-        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF592");
+        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), snowdesktop::menu_fluent_glyphs::kIconPersonalization);
         AppendMenuW(iconMenu, MF_STRING, kDockChooseIcon, _LW("iconLibrary.change"));
         setFluentIcon(iconMenu, kDockChooseIcon, L"\uF489"); // image_24_regular
         if (!widget.dockIconAssetId.empty())
