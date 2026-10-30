@@ -898,7 +898,8 @@ struct Host
             CLSID clsid{};
             if (FAILED(CLSIDFromString(Wide(registration.verbs.front()).c_str(), &clsid))) continue;
             ComPtr<IExplorerCommand> command;
-            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) continue;
+            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&command))))
+            { MenuTrace("packaged_commands", "activation_failed"); continue; }
             auto source = std::make_unique<Native>();
             source->explorer = command;
             source->explorerClass = Wide(registration.verbs.front());
@@ -914,7 +915,7 @@ struct Host
                 if (hr == E_PENDING) hr = current->GetState(selection.Get(), TRUE, &state);
                 if (FAILED(hr) || (state & ECS_HIDDEN)) return {};
                 ++count;
-                Entry entry; entry.enabled = !(state & ECS_DISABLED);
+                Entry entry; entry.enabled = !(state & ECS_DISABLED); entry.checked = (state & ECS_CHECKED) != 0;
                 EXPCMDFLAGS flags = ECF_DEFAULT; current->GetFlags(&flags);
                 if (flags & ECF_ISSEPARATOR) { entry.separator = true; return entry; }
                 PWSTR title = nullptr;
@@ -922,7 +923,7 @@ struct Host
                 const auto decoded = DecodeMenuLabel(title); CoTaskMemFree(title);
                 entry.label = decoded.text; entry.accessKey = decoded.accessKey;
                 GUID canonical{};
-                if (SUCCEEDED(current->GetCanonicalName(&canonical)))
+                if (SUCCEEDED(current->GetCanonicalName(&canonical)) && !IsEqualGUID(canonical, GUID_NULL))
                 { wchar_t text[40]{}; StringFromGUID2(canonical, text, 40); entry.key = Utf8(text); }
                 PWSTR icon = nullptr;
                 if (SUCCEEDED(current->GetIcon(selection.Get(), &icon)) && icon)
@@ -1437,6 +1438,7 @@ struct Host
             if (FAILED(checked) || (state & (ECS_HIDDEN | ECS_DISABLED))) return E_ACCESSDENIED;
             const HWND owner = invocationOwner.Resolve();
             source.site.SetInvocationOwner(owner ? owner : window);
+            CoAllowSetForegroundWindow(command.explorer.Get(), nullptr);
             return command.explorer->Invoke(command.selection.Get(), nullptr);
         }
         if (source.nvidiaApplication)
