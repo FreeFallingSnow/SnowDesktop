@@ -894,7 +894,7 @@ struct Host
             if (!registration.systemEnabled || registration.verbs.empty() || !Applies(registration, request)) continue;
             const auto provider = "verb:" + registration.verbs.front();
             if (request.visibleMenuProviders && std::none_of(request.visibleMenuProviders->begin(), request.visibleMenuProviders->end(),
-                    [&](const auto& id) { return id == provider || id == registration.id; })) continue;
+                    [&](const auto& id) { return id == "*" || id == provider || id == registration.id; })) continue;
             CLSID clsid{};
             if (FAILED(CLSIDFromString(Wide(registration.verbs.front()).c_str(), &clsid))) continue;
             ComPtr<IExplorerCommand> command;
