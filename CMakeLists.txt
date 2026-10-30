@@ -3350,6 +3350,11 @@ if (BUILD_TESTING)
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
     endforeach()
 
+    # Both modes collect preview sources from fixture processes using this
+    # executable identity. Keep their active-desktop enumerations disjoint.
+    set_tests_properties(native_drag_target_integration native_dock_preview_order
+        PROPERTIES RESOURCE_LOCK snowdesktop_preview_sources)
+
     add_test(NAME native_icon_customization
         COMMAND SnowDesktopNativeDragIntegrationTests --icon-customization)
     set_tests_properties(native_icon_customization PROPERTIES

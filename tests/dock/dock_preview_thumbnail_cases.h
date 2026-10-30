@@ -230,7 +230,7 @@ void Run(Check check)
                                      : std::vector<DockWindowPreviewItem>{{first.window, L"landscape"}, {second.window, L"portrait"}, {first.window, L"duplicate"}},
                     anchor, DockPosition::Bottom, false);
             };
-            const auto checkLinks = [&](const std::vector<HWND>& sources) {
+            const auto checkLinks = [&](const std::vector<HWND>& sources, unsigned expectedQueries = 2) {
                 check(boundary.live.size() == sources.size(), "only current source/card relationships remain registered");
                 for (size_t i = 0; i < std::min(sources.size(), preview.GetWindows().size()); ++i)
                 {
@@ -243,7 +243,7 @@ void Run(Check check)
                     const auto& props = link.properties;
                     RECT client{};
                     GetClientRect(link.destination, &client);
-                    check(link.queries == 2 && props.dwFlags == (DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE |
+                    check(link.queries == expectedQueries && props.dwFlags == (DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE |
                             DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY) &&
                             props.fVisible && props.opacity == 255 && !props.fSourceClientAreaOnly &&
                             props.rcDestination.left >= 0 && props.rcDestination.top >= MulDiv(34, static_cast<int>(boundary.dpi), 96) &&
@@ -349,13 +349,20 @@ void Run(Check check)
             check(closed == second.window && boundary.live.size() == 2 && preview.IsVisible(),
                 "production close routing retains the group while its close request is handled");
             boundary.ResetCounts();
+            const auto survivor = std::find_if(boundary.live.begin(), boundary.live.end(), [&](const auto& entry) {
+                return entry.second.source == replacement.window;
+            });
+            const HTHUMBNAIL survivingThumbnail = survivor != boundary.live.end() ? survivor->first : nullptr;
             preview.RemoveWindow(second.window);
             check(!preview.IsShowingWindow(second.window) && preview.IsVisible(),
                 "accepted close removes only its source and retains the surviving preview");
-            checkLinks({replacement.window});
-            check(boundary.registrations == 1 && boundary.queries == 2 && boundary.updates == 1 &&
-                    boundary.retirements == 2,
-                "close relayout measures and refreshes the one surviving source without leaving stale relationships");
+            // The surviving pair retains its first measurement/display pair,
+            // then observes both source sizes again during close reflow.
+            checkLinks({replacement.window}, 4);
+            check(survivingThumbnail && boundary.live.contains(survivingThumbnail) &&
+                    boundary.registrations == 0 && boundary.queries == 2 && boundary.updates == 1 &&
+                    boundary.retirements == 1,
+                "close reflow retains the healthy surviving relationship, reads fresh sizes and retires only the closed source");
             for (int sample = 0; sample < 4; ++sample) SendMessageW(preview.GetWindow(), WM_TIMER, 1, 0);
             check(preview.IsVisible(), "two-to-one reflow must not manufacture a leave while the close pointer stays stationary");
             preview.UpdateItems({{replacement.window, L"title refreshed after close"}});
