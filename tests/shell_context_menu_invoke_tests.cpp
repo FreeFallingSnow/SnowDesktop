@@ -5712,21 +5712,34 @@ void ProbeNativeMenuPreparation()
         ext::Request selected; selected.paths = {selectedPath};
         cases.clear(); cases.emplace_back("selected-item", std::move(selected));
     }
-    wchar_t backgroundMode[2]{}, probeMode[16]{};
+    wchar_t backgroundMode[2]{}, probeMode[16]{}, extendedMode[2]{};
     GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_PROBE_BACKGROUND", backgroundMode, 2);
     GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_PROBE_MODE", probeMode, 16);
+    GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_PROBE_EXTENDED", extendedMode, 2);
+    const bool extended = extendedMode[0] != L'0';
+    std::optional<ext::Preferences> probePreferences;
+    wchar_t preferencesPath[32768]{};
+    if (const auto length = GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_BENCHMARK_PREFERENCES", preferencesPath, 32768))
+    {
+        Expect(length < 32768, "probe preferences path fits the environment limit");
+        std::ifstream input(std::filesystem::path(preferencesPath), std::ios::binary);
+        const std::string content((std::istreambuf_iterator<char>(input)), {});
+        JsonValue json;
+        Expect(ParseJson(content, json), "read the explicitly selected display preferences");
+        probePreferences = ext::ReadPreferences(json.Find("shellExtensions"));
+    }
     if (backgroundMode[0] == L'1')
         for (auto& [name, request] : cases) { request.background = true; request.context = ext::Context::FolderBackground; }
     for (auto& [name, request] : cases)
     {
         if (std::wstring_view(probeMode) == L"extensions")
         {
-            request.extended = true;
+            request.extended = extended;
             const auto start = std::chrono::steady_clock::now();
             ext::Session session(request, 8000, true);
             std::optional<ext::Reply> reply;
             PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "read the actual extension selection without invoking commands");
-            std::cout << "extension_process kind=" << name << " background=" << request.background << " worker=" << session.ProcessId()
+            std::cout << "extension_process kind=" << name << " background=" << request.background << " extended=" << request.extended << " worker=" << session.ProcessId()
                 << " ready_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-start).count()
                 << " ok=" << reply->ok << " error=" << reply->error << std::endl;
             const auto utf8 = [](std::wstring_view value) {
@@ -5742,10 +5755,14 @@ void ProbeNativeMenuPreparation()
                 for (const auto& child : entry.children)
                     std::cout << "extension_child parent=" << utf8(entry.label) << " key=" << child.key << " label=" << utf8(child.label) << std::endl;
             }
+            if (probePreferences)
+                for (const auto& entry : ext::VisibleSnapshot(*probePreferences, *reply, ext::ContextBit(ext::ResolveContext(request))))
+                    std::cout << "extension_visible provider=" << entry.provider << " label=" << utf8(entry.label)
+                        << " native=" << entry.native << " children=" << entry.children.size() << std::endl;
             Expect(reply->ok, "real extension inspection succeeds");
             continue;
         }
-        request.extended = request.catalogueOnly = true;
+        request.extended = extended; request.catalogueOnly = true;
         const auto start = std::chrono::steady_clock::now();
         ext::NativeMenuSession session(request, {-1900, 17}, nullptr);
         const auto launched = std::chrono::steady_clock::now();
