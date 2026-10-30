@@ -1544,18 +1544,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     // children. Keep the original Shell handler alive through invocation.
     const std::wstring newItemDirectory = snowdesktop::desktop_source::Directory();
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
-    bool newMenuPrepared = false;
-    HMENU newMenuPlaceholder = CreatePopupMenu();
-    if (newMenuPlaceholder)
-    {
-        AppendMenuW(newMenuPlaceholder, MF_STRING | MF_GRAYED, 0, _LW("settings.contextMenu.loading"));
-        AppendMenuW(menu, MF_POPUP | (newItemDirectory.empty() ? MF_GRAYED : 0),
-            reinterpret_cast<UINT_PTR>(newMenuPlaceholder), _LW("app.menu.new"));
-        MENUITEMINFOW newMenuId{sizeof(newMenuId)};
-        newMenuId.fMask = MIIM_ID;
-        newMenuId.wID = kContextNewMenu;
-        SetMenuItemInfoW(menu, GetMenuItemCount(menu) - 1, TRUE, &newMenuId);
-    }
+    AppendShellNewSubmenu(menu, newItemDirectory);
 
     HMENU sortMenu = snowdesktop::sort_menu::Create(
         [](const char* key) { return _LW(key); });
@@ -2153,25 +2142,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)
         {
-            if (newMenuPrepared) return;
-            newMenuPrepared = true;
-            shellNewMenu = std::make_unique<snowdesktop::ShellNewMenu>();
-            if (FAILED(shellNewMenu->Initialize(newItemDirectory)))
-            {
-                children = {snowdesktop::modern_menu::Item{}};
-                children.front().label = _LW("settings.contextMenu.failed");
-                children.front().enabled = false;
-            }
-            else if (shellNewMenu->CanDraw())
-                children = BuildShellNewMenuItems(shellNewMenu->Menu(), shellNewMenu->Context());
-            else
-            {
-                // Unsupported third-party drawing retains the native handoff.
-                children = {snowdesktop::modern_menu::Item{}};
-                children.front().command = kContextNewMenu;
-                children.front().label = _LW("app.menu.more_options");
-                children.front().glyph = snowdesktop::menu_fluent_glyphs::kMoreOptions;
-            }
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
             return;
         }
         if (!widgetMenu || luaWidgetCatalogueLoaded ||

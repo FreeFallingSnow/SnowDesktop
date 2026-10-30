@@ -158,10 +158,26 @@ void DesktopApp::InvokeNewMenuCommand(IContextMenu* context, UINT command,
     InvokeShellMenuCommand(context, invoke);
 }
 
-void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
-    bool folderOnly, std::wstring desktopFilesWidgetId)
+void DesktopApp::AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir,
+    bool enabled)
 {
-    snowdesktop::ShellNewMenu newMenu;
+    HMENU placeholder = CreatePopupMenu();
+    if (!placeholder) return;
+    AppendMenuW(placeholder, MF_STRING | MF_GRAYED, 0,
+        _LW("settings.contextMenu.loading"));
+    MENUITEMINFOW item{sizeof(item)};
+    item.fMask = MIIM_ID | MIIM_SUBMENU | MIIM_STRING | MIIM_STATE;
+    item.wID = kContextNewMenu;
+    item.hSubMenu = placeholder;
+    item.dwTypeData = const_cast<wchar_t*>(_LW("app.menu.new"));
+    item.fState = enabled && !targetDir.empty() ? MFS_ENABLED : MFS_DISABLED;
+    if (!InsertMenuItemW(menu, GetMenuItemCount(menu), TRUE, &item))
+        DestroyMenu(placeholder);
+}
+
+HRESULT DesktopApp::InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
+    const std::wstring& targetDir, std::wstring desktopFilesWidgetId)
+{
     const auto attachCapture = [&](IContextMenu* context) -> HRESULT
     {
         if (desktopFilesWidgetId.empty()) return S_OK;
@@ -181,7 +197,42 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
         pendingNewItemCaptures_.push_back(std::move(capture));
         return S_OK;
     };
-    if (FAILED(newMenu.Initialize(targetDir, attachCapture))) return;
+    return menu.Initialize(targetDir, attachCapture);
+}
+
+void DesktopApp::PrepareShellNewSubmenu(
+    std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
+    const std::wstring& targetDir,
+    std::vector<snowdesktop::modern_menu::Item>& children,
+    std::wstring desktopFilesWidgetId)
+{
+    if (menu) return;
+    menu = std::make_unique<snowdesktop::ShellNewMenu>();
+    if (FAILED(InitializeShellNewMenu(*menu, targetDir,
+            std::move(desktopFilesWidgetId))))
+    {
+        children = {snowdesktop::modern_menu::Item{}};
+        children.front().label = _LW("settings.contextMenu.failed");
+        children.front().enabled = false;
+    }
+    else if (menu->CanDraw())
+        children = BuildShellNewMenuItems(menu->Menu(), menu->Context());
+    else
+    {
+        // Owner-drawn third-party entries retain the native menu handoff.
+        children = {snowdesktop::modern_menu::Item{}};
+        children.front().command = kContextNewMenu;
+        children.front().label = _LW("app.menu.more_options");
+        children.front().glyph = snowdesktop::menu_fluent_glyphs::kMoreOptions;
+    }
+}
+
+void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
+    bool folderOnly, std::wstring desktopFilesWidgetId)
+{
+    snowdesktop::ShellNewMenu newMenu;
+    if (FAILED(InitializeShellNewMenu(newMenu, targetDir,
+            std::move(desktopFilesWidgetId)))) return;
 
     UINT cmd = 0;
     if (folderOnly)

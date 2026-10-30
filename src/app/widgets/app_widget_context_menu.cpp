@@ -11,6 +11,7 @@
 #include "widgets/file_category_auto_collect_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "settings/control_native_widget_settings.h"
+#include "shell/shell_new_menu.h"
 
 #include <commctrl.h>
 #include <functional>
@@ -384,6 +385,16 @@ void DesktopApp::ShowWidgetContextMenu(
     }
     const DesktopWidget& effectiveSource =
         widgets_[effectiveSourceIndex];
+    std::wstring newItemDirectory;
+    std::wstring newItemWidgetId;
+    if (effectiveSource.type == DesktopWidgetType::FolderMapping)
+        newItemDirectory = effectiveSource.sourceFolderPath;
+    else if (effectiveSource.type == DesktopWidgetType::FileCategories)
+    {
+        newItemDirectory = snowdesktop::desktop_source::Directory();
+        newItemWidgetId = effectiveSource.id;
+    }
+    std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
     size_t contentSortTargetIndex = effectiveSourceIndex;
     if (widget.type == DesktopWidgetType::FileGroup)
     {
@@ -610,8 +621,7 @@ void DesktopApp::ShowWidgetContextMenu(
                 HasPasteableFileClipboardData()
                     ? MF_STRING : MF_STRING | MF_GRAYED,
                 kContextPasteCommand, _LW("app.menu.paste"));
-            AppendMenuW(menu, MF_STRING,
-                kContextNewMenu, _LW("app.menu.new"));
+            AppendShellNewSubmenu(menu, newItemDirectory);
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetManualCollect,
@@ -645,8 +655,7 @@ void DesktopApp::ShowWidgetContextMenu(
         if (effectiveSource.type ==
             DesktopWidgetType::FolderMapping)
         {
-            AppendMenuW(menu, MF_STRING,
-                kContextNewMenu, _LW("app.menu.new"));
+            AppendShellNewSubmenu(menu, newItemDirectory);
             AppendMenuW(menu, MF_STRING,
                 kContextMoreCommand,
                 _LW("app.menu.more_options"));
@@ -658,8 +667,7 @@ void DesktopApp::ShowWidgetContextMenu(
             HasPasteableFileClipboardData()
                 ? MF_STRING : MF_STRING | MF_GRAYED,
             kContextPasteCommand, _LW("app.menu.paste"));
-        AppendMenuW(menu, MF_STRING,
-            kContextNewMenu, _LW("app.menu.new"));
+        AppendShellNewSubmenu(menu, newItemDirectory);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
         appendAutoCollectMenu();
@@ -694,7 +702,7 @@ void DesktopApp::ShowWidgetContextMenu(
             searchVisibilityLabel.c_str());
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleDateGroup,
             dateVisibilityLabel.c_str());
-        AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
+        AppendShellNewSubmenu(menu, newItemDirectory);
         AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     }
     else if (widget.type == DesktopWidgetType::LuaScript)
@@ -913,7 +921,6 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextWidgetRename, L"\U000F0A39");
     setFluentIcon(menu, kContextWidgetDelete, L"\uF34C");
     SetMenuItemQuickAction(menu, kContextWidgetEdit);
-    SetMenuItemQuickAction(menu, kContextNewMenu);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextWidgetRename);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
@@ -1061,9 +1068,16 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         return true;
     };
+    const auto prepareNewSubmenu = [&](UINT submenuCommand,
+        std::vector<snowdesktop::modern_menu::Item>& children) {
+        if (submenuCommand == kContextNewMenu)
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children,
+                newItemWidgetId);
+    };
     UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr,
-        applyAutoCollectMenuCommand, {}, {}, &shellRequest);
+        applyAutoCollectMenuCommand, {}, {}, &shellRequest, {}, false, 0, 0,
+        prepareNewSubmenu);
     DestroyMenu(menu);
     ClearMenuIcons();
 
@@ -1140,6 +1154,14 @@ void DesktopApp::ShowWidgetContextMenu(
         return;
     }
     bool needsDesktopFocus = true;
+    if (shellNewMenu && shellNewMenu->Contains(command))
+    {
+        InvokeNewMenuCommand(shellNewMenu->Context(), command, newItemDirectory);
+        RequestShellRefresh();
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
 
@@ -1334,29 +1356,11 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         break;
     case kContextNewMenu:
-        if (effectiveSourceIndex < widgets_.size() &&
-            widgets_[effectiveSourceIndex].type ==
-                DesktopWidgetType::FolderMapping &&
-            !widgets_[effectiveSourceIndex].
-                sourceFolderPath.empty())
+        if (!newItemDirectory.empty())
         {
-            ShowNewMenuAndInvoke(screenPoint,
-                widgets_[effectiveSourceIndex].
-                    sourceFolderPath);
+            ShowNewMenuAndInvoke(screenPoint, newItemDirectory, false,
+                newItemWidgetId);
             RequestShellRefresh();
-        }
-        else if (effectiveSourceIndex < widgets_.size() &&
-                 widgets_[effectiveSourceIndex].type ==
-                     DesktopWidgetType::FileCategories)
-        {
-            wchar_t desktopPath[MAX_PATH]{};
-            if (snowdesktop::desktop_source::CopyDirectory(desktopPath))
-            {
-                ShowNewMenuAndInvoke(
-                    screenPoint, desktopPath, false,
-                    widgets_[effectiveSourceIndex].id);
-                RequestShellRefresh();
-            }
         }
         break;
     case kContextMoreCommand:

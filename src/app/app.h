@@ -234,6 +234,7 @@ class WidgetSettingsService;
 namespace snowdesktop
 {
 class ShellContextMenuSite;
+class ShellNewMenu;
 class ShellNewItemCapture;
 struct AutoStartQueryResult
 {
@@ -2311,6 +2312,14 @@ private:
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
         bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
+    void AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir,
+        bool enabled = true);
+    HRESULT InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
+        const std::wstring& targetDir, std::wstring desktopFilesWidgetId = {});
+    void PrepareShellNewSubmenu(std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
+        const std::wstring& targetDir,
+        std::vector<snowdesktop::modern_menu::Item>& children,
+        std::wstring desktopFilesWidgetId = {});
     std::vector<snowdesktop::modern_menu::Item> BuildShellNewMenuItems(
         HMENU menu, IContextMenu* context);
     void InvokeNewMenuCommand(IContextMenu* context, UINT command,
