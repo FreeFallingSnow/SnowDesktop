@@ -851,7 +851,10 @@ int RunDesktopBackdropCompositorTests()
     };
     snowdesktop::test::window_pair_resources::Run(check);
     snowdesktop::test::CheckDockDesktopLayerRestoration(check);
-    snowdesktop::test::dock_pair_transition::Run(check);
+    // The guarded fallback deliberately hides glass while moving it. Observe
+    // real visible windows on the private desktop, so hidden staging order is
+    // not mistaken for a frame exposing glass above its content.
+    snowdesktop::test::dock_pair_transition::Run(check, true);
 
     // Like the host, retain the apartment until process exit: the production
     // compositor/DispatcherQueue context is thread-local and outlives fixtures.
