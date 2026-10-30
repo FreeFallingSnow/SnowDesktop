@@ -14,6 +14,182 @@ namespace
 
 using Microsoft::WRL::ComPtr;
 
+class SelectionEnumerator final : public Microsoft::WRL::RuntimeClass<
+    Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IEnumIDList>
+{
+public:
+    SelectionEnumerator(IFolderView* view, UINT count, UINT position = 0)
+        : view_(view), count_(count), position_(position) {}
+    IFACEMETHODIMP Next(ULONG count, PITEMID_CHILD* children, ULONG* fetched) override
+    {
+        if (fetched) *fetched = 0;
+        if (!children || (!fetched && count != 1)) return E_POINTER;
+        ULONG copied = 0;
+        while (copied < count && position_ < count_)
+        {
+            const HRESULT hr = view_->Item(static_cast<int>(position_), &children[copied]);
+            if (FAILED(hr)) { if (fetched) *fetched = copied; return hr; }
+            ++copied; ++position_;
+        }
+        if (fetched) *fetched = copied;
+        return copied == count ? S_OK : S_FALSE;
+    }
+    IFACEMETHODIMP Skip(ULONG count) override
+    {
+        const UINT remaining = count_ - position_;
+        position_ += count < remaining ? count : remaining;
+        return count <= remaining ? S_OK : S_FALSE;
+    }
+    IFACEMETHODIMP Reset() override { position_ = 0; return S_OK; }
+    IFACEMETHODIMP Clone(IEnumIDList** enumerator) override
+        { return Microsoft::WRL::Make<SelectionEnumerator>(view_.Get(), count_, position_).CopyTo(enumerator); }
+private:
+    ComPtr<IFolderView> view_;
+    UINT count_, position_;
+};
+
+// Menu providers need the selected items, not an asynchronously enumerated
+// duplicate folder window. Keep this immutable snapshot alive with the menu.
+class SelectionView final : public Microsoft::WRL::RuntimeClass<
+    Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
+    IShellView, Microsoft::WRL::ChainInterfaces<IFolderView2, IFolderView>>
+{
+public:
+    SelectionView(IShellFolder* folder, HWND owner) : folder_(folder), owner_(owner) {}
+    ~SelectionView() { for (auto child : children_) ILFree(child); }
+    HRESULT Initialize(UINT count, PCUITEMID_CHILD_ARRAY children)
+    {
+        for (UINT i = 0; i < count; ++i)
+        {
+            if (!children[i]) return E_INVALIDARG;
+            auto copy = ILCloneFull(children[i]);
+            if (!copy) return E_OUTOFMEMORY;
+            children_.push_back(copy);
+        }
+        return SHCreateShellItemArray(nullptr, folder_.Get(), count, children, &selection_);
+    }
+    IFACEMETHODIMP GetWindow(HWND* window) override
+        { if (!window) return E_POINTER; *window = owner_; return S_OK; }
+    IFACEMETHODIMP ContextSensitiveHelp(BOOL) override { return E_NOTIMPL; }
+    IFACEMETHODIMP TranslateAccelerator(MSG*) override { return S_FALSE; }
+    IFACEMETHODIMP EnableModeless(BOOL) override { return S_OK; }
+    IFACEMETHODIMP UIActivate(UINT) override { return S_OK; }
+    IFACEMETHODIMP Refresh() override { return E_NOTIMPL; }
+    IFACEMETHODIMP CreateViewWindow(IShellView*, LPCFOLDERSETTINGS, IShellBrowser*, RECT*, HWND*) override
+        { return E_NOTIMPL; }
+    IFACEMETHODIMP DestroyViewWindow() override { return S_OK; }
+    IFACEMETHODIMP GetCurrentInfo(LPFOLDERSETTINGS settings) override
+    {
+        if (!settings) return E_POINTER;
+        *settings = {FVM_LIST, FWF_NOICONS}; return S_OK;
+    }
+    IFACEMETHODIMP AddPropertySheetPages(DWORD, LPFNSVADDPROPSHEETPAGE, LPARAM) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SaveViewState() override { return S_OK; }
+    IFACEMETHODIMP SelectItem(PCUITEMID_CHILD, SVSIF) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetItemObject(UINT flags, REFIID iid, void** object) override
+        { return Items(flags, iid, object); }
+    IFACEMETHODIMP GetCurrentViewMode(UINT* mode) override
+        { if (!mode) return E_POINTER; *mode = FVM_LIST; return S_OK; }
+    IFACEMETHODIMP SetCurrentViewMode(UINT) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetFolder(REFIID iid, void** object) override
+        { return folder_->QueryInterface(iid, object); }
+    IFACEMETHODIMP Item(int index, PITEMID_CHILD* child) override
+    {
+        if (!child) return E_POINTER;
+        *child = nullptr;
+        if (index < 0 || static_cast<size_t>(index) >= children_.size()) return E_INVALIDARG;
+        *child = ILCloneFull(children_[index]); return *child ? S_OK : E_OUTOFMEMORY;
+    }
+    IFACEMETHODIMP ItemCount(UINT flags, int* count) override
+    {
+        if (!count) return E_POINTER;
+        *count = 0;
+        if ((flags & SVGIO_TYPE_MASK) != SVGIO_SELECTION && (flags & SVGIO_TYPE_MASK) != SVGIO_ALLVIEW)
+            return E_INVALIDARG;
+        *count = static_cast<int>(children_.size()); return S_OK;
+    }
+    IFACEMETHODIMP Items(UINT flags, REFIID iid, void** object) override
+    {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if ((flags & SVGIO_TYPE_MASK) != SVGIO_SELECTION && (flags & SVGIO_TYPE_MASK) != SVGIO_ALLVIEW)
+            return E_INVALIDARG;
+        if (IsEqualIID(iid, IID_IDataObject))
+            return folder_->GetUIObjectOf(owner_, static_cast<UINT>(children_.size()),
+                const_cast<PCUITEMID_CHILD_ARRAY>(children_.data()), iid, nullptr, object);
+        if (IsEqualIID(iid, IID_IEnumIDList))
+            return Microsoft::WRL::Make<SelectionEnumerator>(static_cast<IFolderView*>(this),
+                static_cast<UINT>(children_.size())).CopyTo(iid, object);
+        return selection_->QueryInterface(iid, object);
+    }
+    IFACEMETHODIMP GetSelectionMarkedItem(int* index) override { return GetFocusedItem(index); }
+    IFACEMETHODIMP GetFocusedItem(int* index) override
+        { if (!index) return E_POINTER; *index = 0; return S_OK; }
+    IFACEMETHODIMP GetItemPosition(PCUITEMID_CHILD, POINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetSpacing(POINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetDefaultSpacing(POINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetAutoArrange() override { return S_FALSE; }
+    IFACEMETHODIMP SelectItem(int, DWORD) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SelectAndPositionItems(UINT, PCUITEMID_CHILD_ARRAY, POINT*, DWORD) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetGroupBy(REFPROPERTYKEY, BOOL) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetGroupBy(PROPERTYKEY*, BOOL*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetViewProperty(PCUITEMID_CHILD, REFPROPERTYKEY, REFPROPVARIANT) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetViewProperty(PCUITEMID_CHILD, REFPROPERTYKEY, PROPVARIANT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetTileViewProperties(PCUITEMID_CHILD, LPCWSTR) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetExtendedTileViewProperties(PCUITEMID_CHILD, LPCWSTR) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetText(FVTEXTTYPE, LPCWSTR) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetCurrentFolderFlags(DWORD, DWORD) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetCurrentFolderFlags(DWORD* flags) override
+        { if (!flags) return E_POINTER; *flags = FWF_NOICONS; return S_OK; }
+    IFACEMETHODIMP GetSortColumnCount(int* count) override
+        { if (!count) return E_POINTER; *count = 0; return S_OK; }
+    IFACEMETHODIMP SetSortColumns(const SORTCOLUMN*, int) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetSortColumns(SORTCOLUMN*, int) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetItem(int index, REFIID iid, void** object) override
+    {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (index < 0) return E_INVALIDARG;
+        ComPtr<IShellItem> item;
+        const HRESULT hr = selection_->GetItemAt(static_cast<DWORD>(index), &item);
+        return SUCCEEDED(hr) ? item->QueryInterface(iid, object) : hr;
+    }
+    IFACEMETHODIMP GetVisibleItem(int, BOOL, int*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetSelectedItem(int start, int* index) override
+    {
+        if (!index) return E_POINTER;
+        *index = -1;
+        if (start < 0) return E_INVALIDARG;
+        if (start >= static_cast<int>(children_.size())) return S_FALSE;
+        *index = start; return S_OK;
+    }
+    IFACEMETHODIMP GetSelection(BOOL, IShellItemArray** items) override { return selection_.CopyTo(items); }
+    IFACEMETHODIMP GetSelectionState(PCUITEMID_CHILD child, DWORD* flags) override
+    {
+        if (!flags) return E_POINTER;
+        *flags = 0;
+        if (!child) return E_INVALIDARG;
+        for (size_t i = 0; i < children_.size(); ++i)
+            if (ILIsEqual(child, children_[i]))
+                { *flags = SVSI_SELECT | (i == 0 ? SVSI_FOCUSED : 0); return S_OK; }
+        return S_FALSE;
+    }
+    IFACEMETHODIMP InvokeVerbOnSelection(LPCSTR) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetViewModeAndIconSize(FOLDERVIEWMODE, int) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetViewModeAndIconSize(FOLDERVIEWMODE* mode, int* size) override
+        { if (!mode || !size) return E_POINTER; *mode = FVM_LIST; *size = 16; return S_OK; }
+    IFACEMETHODIMP SetGroupSubsetCount(UINT) override { return E_NOTIMPL; }
+    IFACEMETHODIMP GetGroupSubsetCount(UINT*) override { return E_NOTIMPL; }
+    IFACEMETHODIMP SetRedraw(BOOL) override { return S_OK; }
+    IFACEMETHODIMP IsMoveInSameFolder() override { return E_NOTIMPL; }
+    IFACEMETHODIMP DoRename() override { return E_NOTIMPL; }
+private:
+    ComPtr<IShellFolder> folder_;
+    HWND owner_ = nullptr;
+    std::vector<PITEMID_CHILD> children_;
+    ComPtr<IShellItemArray> selection_;
+};
+
 class BrowserSite final : public Microsoft::WRL::RuntimeClass<
     Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
     IShellBrowser, IServiceProvider>
@@ -363,6 +539,40 @@ HRESULT ShellContextMenuSite::BuildNamespaceMenu(HWND owner, HMENU menu,
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
     if (FAILED(hr)) return hr;
     actual.CopyTo(contextMenu);
+    return hr;
+}
+
+HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
+    UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
+    UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu)
+{
+    shell_extensions::MenuTiming total("native_selection.total");
+    if (!contextMenu) return E_POINTER;
+    *contextMenu = nullptr;
+    impl_->Reset();
+    if (!folder || !IsWindow(owner) || !menu || !bind || !count || !children || firstCommand > lastCommand)
+        return E_INVALIDARG;
+    auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
+    if (!view) return E_OUTOFMEMORY;
+    HRESULT hr = view->Initialize(count, children);
+    if (FAILED(hr)) return hr;
+    impl_->view = view;
+    impl_->viewWindow = owner; // SelectionView never owns/destroys this window.
+    impl_->browser = Microsoft::WRL::Make<BrowserSite>(owner);
+    if (!impl_->browser) return E_OUTOFMEMORY;
+    impl_->browser->SetView(impl_->view.Get());
+    ComPtr<IContextMenu> actual;
+    shell_extensions::MenuTiming binding("native_selection.bind");
+    hr = bind(owner, actual.GetAddressOf());
+    binding.Record(SUCCEEDED(hr) ? "complete" : "failed");
+    if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
+    Attach(actual.Get());
+    shell_extensions::MenuTiming query("native_selection.query");
+    hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
+    query.Record(SUCCEEDED(hr) ? "complete" : "failed");
+    if (FAILED(hr)) return hr;
+    actual.CopyTo(contextMenu);
+    total.Record("complete", count);
     return hr;
 }
 

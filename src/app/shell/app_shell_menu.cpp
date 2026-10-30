@@ -701,13 +701,17 @@ ShowShellItemContextMenuForPaths(
     if (!menu) return;
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    if (FAILED(
-            menuSite.BuildMenu(boundParent.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-                CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | extendedFlags,
-                [&](HWND bindOwner, IContextMenu** target) {
-                    return boundParent->GetUIObjectOf(bindOwner, static_cast<UINT>(children.size()), children.data(), IID_IContextMenu,
-                        nullptr, reinterpret_cast<void**>(target));
-                }, contextMenu.GetAddressOf(), snowdesktop::ShellSelectionNeedsFileMenuPrimer(itemPaths))))
+    const auto bindMenu = [&](HWND bindOwner, IContextMenu** target) {
+        return boundParent->GetUIObjectOf(bindOwner, static_cast<UINT>(children.size()), children.data(), IID_IContextMenu,
+            nullptr, reinterpret_cast<void**>(target));
+    };
+    const UINT menuFlags = CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | extendedFlags;
+    const HRESULT menuResult = snowdesktop::ShellSelectionNeedsFileMenuPrimer(itemPaths)
+        ? menuSite.BuildMenu(boundParent.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+            menuFlags, bindMenu, contextMenu.GetAddressOf())
+        : menuSite.BuildSelectionMenu(boundParent.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+            menuFlags, bindMenu, static_cast<UINT>(children.size()), children.data(), contextMenu.GetAddressOf());
+    if (FAILED(menuResult))
     {
         DestroyMenu(menu);
         return;

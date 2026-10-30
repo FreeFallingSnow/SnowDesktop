@@ -40,7 +40,7 @@ void BindProbeSelection(PCIDLIST_ABSOLUTE pidl, const std::filesystem::path& exp
 // BuildMenu, HWND creation, file bootstrap, lifetime and rebind all run.
 struct State
 {
-    bool loaded = false, viewExists = false, namespaceOnly = false;
+    bool loaded = false, viewExists = false, namespaceOnly = false, selectionOnly = false;
     unsigned bindings = 0, coldLoads = 0, viewCreates = 0, warmAlive = 0, invocations = 0;
     UINT expectedFlags = 0, first = 7, last = 103;
     int failure = 0;
@@ -133,6 +133,24 @@ public:
             return InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, first + 11, L"Namespace command") ?
                 MAKE_HRESULT(SEVERITY_SUCCESS, 0, 12) : E_FAIL;
         }
+        if (state_->selectionOnly)
+        {
+            ComPtr<IServiceProvider> services;
+            ComPtr<IFolderView2> view;
+            ComPtr<IShellItemArray> selection;
+            DWORD count = 0;
+            if (binding_ != 1 || state_->viewExists || !site_ ||
+                flags != state_->expectedFlags || first != state_->first || last != state_->last ||
+                FAILED(site_.As(&services)) ||
+                FAILED(services->QueryService(SID_SFolderView, IID_PPV_ARGS(&view))) ||
+                FAILED(view->GetSelection(FALSE, &selection)) ||
+                FAILED(selection->GetCount(&count)) || count != 1) return E_UNEXPECTED;
+            ComPtr<IDataObject> data;
+            if (FAILED(view->Items(SVGIO_SELECTION, IID_PPV_ARGS(&data)))) return E_UNEXPECTED;
+            if (state_->failure == 2) return E_ACCESSDENIED;
+            return InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, first + 11, L"Selected file command") ?
+                MAKE_HRESULT(SEVERITY_SUCCESS, 0, 12) : E_FAIL;
+        }
         if (binding_ == 1) state_->initialPopup = menu;
         if (first != state_->first || last != state_->last || index != 0) return E_INVALIDARG;
         if (!state_->loaded)
@@ -167,7 +185,7 @@ public:
     }
     IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO info) override
     {
-        if (binding_ != (state_->namespaceOnly ? 1u : 2u) ||
+        if (binding_ != (state_->namespaceOnly || state_->selectionOnly ? 1u : 2u) ||
             reinterpret_cast<ULONG_PTR>(info->lpVerb) != 11) return E_UNEXPECTED;
         ++state_->invocations; return S_OK;
     }
@@ -264,6 +282,69 @@ void RunCase(UINT flags, int failure, bool filePrimer = true)
         "all bootstrap providers, unpublished menus and hidden views retire with the site");
     DestroyMenu(popup); DestroyWindow(state->owner);
 }
+
+void RunSelectionCase(IShellFolder* folder, PCUITEMID_CHILD child, const std::wstring& sample, int failure)
+{
+    auto state = std::make_shared<State>();
+    state->selectionOnly = true; state->failure = failure;
+    state->expectedFlags = CMF_CANRENAME | CMF_EXTENDEDVERBS;
+    state->owner = CreateWindowExW(0, L"STATIC", L"Private selection owner", WS_POPUP,
+        0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    const HMENU popup = CreatePopupMenu();
+    Require(state->owner && popup, "selection owner and menu");
+    {
+        snowdesktop::ShellContextMenuSite site;
+        ComPtr<IContextMenu> actual;
+        const auto bind = [&](HWND owner, IContextMenu** target) -> HRESULT {
+            ++state->bindings;
+            if (owner != state->owner || state->bindings != 1) return E_UNEXPECTED;
+            if (failure == 1) return E_ACCESSDENIED;
+            return Microsoft::WRL::Make<Menu>(state, state->bindings).CopyTo(target);
+        };
+        PCUITEMID_CHILD ownedChild = ILCloneFull(child);
+        const HRESULT hr = site.BuildSelectionMenu(folder, state->owner, popup, state->first, state->last,
+            state->expectedFlags, bind, 1, &ownedChild, actual.GetAddressOf());
+        ILFree(const_cast<PITEMID_CHILD>(ownedChild));
+        Require(state->bindings == 1 && state->viewCreates == 0 && !site.HostWindow(),
+            "ordinary selection binds once without creating a Windows Shell view");
+        if (failure)
+            Require(hr == E_ACCESSDENIED && !actual, "failed selection queries expose no aggregate");
+        else
+        {
+            Require(SUCCEEDED(hr) && actual && GetMenuItemID(popup, 0) == state->first + 11,
+                "the single displayed aggregate retains actual command IDs");
+            ComPtr<IObjectWithSite> attached; actual.As(&attached);
+            ComPtr<IServiceProvider> services;
+            Require(SUCCEEDED(attached->GetSite(IID_PPV_ARGS(&services))), "selection retains its site");
+            ComPtr<IFolderView2> view;
+            Require(SUCCEEDED(services->QueryService(SID_SFolderView, IID_PPV_ARGS(&view))), "selection view available after caller PIDL retirement");
+            int selectedIndex = -1;
+            Require(view->GetSelectedItem(0, &selectedIndex) == S_OK && selectedIndex == 0,
+                "selected-item search includes its start index");
+            Require(view->GetSelectedItem(1, &selectedIndex) == S_FALSE && selectedIndex == -1,
+                "selected-item search stops after the final selected item");
+            ComPtr<IShellItem> item;
+            Require(SUCCEEDED(view->GetItem(0, IID_PPV_ARGS(&item))), "retained selected file");
+            PWSTR name = nullptr;
+            Require(SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &name)), "retained file identity");
+            const bool same = std::filesystem::equivalent(sample, name);
+            CoTaskMemFree(name);
+            Require(same, "retained selection refers to the exact file");
+            ComPtr<IEnumIDList> enumeration;
+            Require(SUCCEEDED(view->Items(SVGIO_SELECTION, IID_PPV_ARGS(&enumeration))), "selection PIDL enumerator");
+            PITEMID_CHILD enumerated = nullptr;
+            Require(enumeration->Next(1, &enumerated, nullptr) == S_OK && ILIsEqual(enumerated, child),
+                "selection enumerator returns an owned copy of the exact relative PIDL");
+            ILFree(enumerated);
+            Require(enumeration->Next(1, &enumerated, nullptr) == S_FALSE, "selection enumerator stops at the snapshot boundary");
+            CMINVOKECOMMANDINFO info{sizeof(info)}; info.lpVerb = MAKEINTRESOURCEA(11);
+            Require(SUCCEEDED(actual->InvokeCommand(&info)) && state->invocations == 1,
+                "the single queried provider executes its original command offset once");
+        }
+    }
+    Require(IsWindow(state->owner) && state->warmAlive == 0, "selection site retires without destroying its caller window");
+    DestroyMenu(popup); DestroyWindow(state->owner);
+}
 } // namespace
 
 void TestShellContextMenuBootstrap()
@@ -295,6 +376,7 @@ void TestShellContextMenuBootstrap()
         ComPtr<IShellFolder> parent; PCUITEMID_CHILD child = nullptr;
         Require(!SingleChildPidl(reinterpret_cast<PCUITEMID_CHILD>(raw)), "negative control rejects the absolute multilevel PIDL used by the prior probe");
         BindProbeSelection(raw, sample, parent, child);
+        for (int failure = 0; failure <= 2; ++failure) RunSelectionCase(parent.Get(), child, sample, failure);
         CoTaskMemFree(raw);
         Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({}), "unknown selections retain file association protection");
         Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({std::filesystem::path(sample).parent_path().wstring()}),
@@ -318,7 +400,7 @@ void BenchmarkNativeMenuPreparation()
     GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_EXTENSION", extensionText, 16);
     const std::wstring mode = *modeText ? modeText : L"optimized";
     const std::wstring extension = *extensionText ? extensionText : L".txt";
-    Require(mode == L"baseline" || mode == L"no-primer" || mode == L"no-sync" || mode == L"optimized", "known native benchmark mode");
+    Require(mode == L"baseline" || mode == L"no-primer" || mode == L"no-sync" || mode == L"optimized" || mode == L"selection", "known native benchmark mode");
     const auto bytes = snowdesktop::shell_extensions::DiscoverySample(extension);
     Require(!bytes.empty(), "native benchmark uses a valid supported private file");
     GUID guid{}; Require(SUCCEEDED(CoCreateGuid(&guid)), "native benchmark identity");
@@ -356,7 +438,9 @@ void BenchmarkNativeMenuPreparation()
     Require(popup.value != nullptr, "native benchmark popup");
     snowdesktop::ShellContextMenuSite site;
     ComPtr<IContextMenu> context;
-    const HRESULT result = site.BuildMenu(folder.Get(), owner.value, popup.value, 1, 0x7fff, flags, bind, context.GetAddressOf(), filePrimer);
+    const HRESULT result = mode == L"selection"
+        ? site.BuildSelectionMenu(folder.Get(), owner.value, popup.value, 1, 0x7fff, flags, bind, 1, &child, context.GetAddressOf())
+        : site.BuildMenu(folder.Get(), owner.value, popup.value, 1, 0x7fff, flags, bind, context.GetAddressOf(), filePrimer);
     Require(SUCCEEDED(result) && context && GetMenuItemCount(popup.value) > 0, "native benchmark builds the actual menu");
     const auto prepared = std::chrono::steady_clock::now();
     ComPtr<IContextMenu3> messages3;
@@ -378,8 +462,21 @@ void BenchmarkNativeMenuPreparation()
         MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_SUBMENU;
         item.dwTypeData = label; item.cch = 2048;
         if (GetMenuItemInfoW(popup.value, index, TRUE, &item))
+        {
             std::cout << "native_root iteration=" << iteration << " index=" << index << " separator=" << ((item.fType & MFT_SEPARATOR) != 0)
                 << " submenu=" << bool(item.hSubMenu) << " label=" << utf8(label) << std::endl;
+            if (item.hSubMenu)
+            {
+                if (messages3) messages3->HandleMenuMsg2(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(item.hSubMenu), MAKELPARAM(index, FALSE), &messageResult);
+                else if (messages2) messages2->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(item.hSubMenu), MAKELPARAM(index, FALSE));
+                std::cout << "native_children iteration=" << iteration << " parent=" << utf8(label) << " count=" << GetMenuItemCount(item.hSubMenu) << std::endl;
+                for (int j = 0; j < GetMenuItemCount(item.hSubMenu); ++j)
+                {
+                    wchar_t text[2048]{}; GetMenuStringW(item.hSubMenu, static_cast<UINT>(j), text, 2048, MF_BYPOSITION);
+                    std::cout << "native_child iteration=" << iteration << " parent=" << utf8(label) << " index=" << j << " label=" << utf8(text) << std::endl;
+                }
+            }
+        }
     }
     }
 }
