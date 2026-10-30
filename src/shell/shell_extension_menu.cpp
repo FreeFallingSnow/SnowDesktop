@@ -242,6 +242,34 @@ struct Pidl
         CoTaskMemFree(value);
     }
 };
+HRESULT BindSelectionMenu(IShellFolder* folder, HWND owner,
+    std::vector<PCUITEMID_CHILD>& children, IContextMenu** context)
+{
+    // SFUIObject binds the actual selected Shell items without creating a
+    // folder view. Preserve complex namespace-relative children at their
+    // original parent boundary (including merged Desktop selections).
+    if (!std::all_of(children.begin(), children.end(), [](auto child) {
+            return child && child->mkid.cb && ILNext(child)->mkid.cb == 0;
+        }))
+    {
+        return folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
+            IID_IContextMenu, nullptr, reinterpret_cast<void**>(context));
+    }
+    Pidl parent;
+    HRESULT hr = SHGetIDListFromObject(folder, &parent.value);
+    if (FAILED(hr)) return hr;
+    std::vector<std::unique_ptr<Pidl>> owned;
+    std::vector<PCIDLIST_ABSOLUTE> absolute;
+    for (const auto child : children)
+    {
+        auto id = std::make_unique<Pidl>(); id->value = ILCombine(parent.value, child);
+        if (!id->value) return E_OUTOFMEMORY;
+        absolute.push_back(id->value); owned.push_back(std::move(id));
+    }
+    ComPtr<IShellItemArray> selection;
+    hr = SHCreateShellItemArrayFromIDLists(static_cast<UINT>(absolute.size()), absolute.data(), &selection);
+    return FAILED(hr) ? hr : selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(context));
+}
 std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr)
 {
     wchar_t value[32768]{};
@@ -963,9 +991,7 @@ struct Host
                 std::vector<PCUITEMID_CHILD> children;
                 for (auto id : raw)
                     children.push_back(ILFindLastID(id));
-                if (FAILED(folder->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
-                                                 IID_IContextMenu, nullptr,
-                                                 reinterpret_cast<void **>(native->context.GetAddressOf()))))
+                if (FAILED(BindSelectionMenu(folder.Get(), window, children, native->context.GetAddressOf())))
                     return {};
             }
             else
@@ -985,7 +1011,7 @@ struct Host
         }
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        const UINT flags = CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
+        const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? 0 : CMF_ITEMMENU) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
         if (!request.startPinOnly)
         {
@@ -1125,10 +1151,9 @@ struct Host
         const auto bind = [&](HWND owner, IContextMenu** menu) {
             return request.background
                 ? target->folder->CreateViewObject(owner, IID_IContextMenu, reinterpret_cast<void**>(menu))
-                : target->folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
-                    IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
+                : BindSelectionMenu(target->folder.Get(), owner, children, menu);
         };
-        const UINT flags = CMF_NORMAL | (request.background ? CMF_EXPLORE : (CMF_ITEMMENU | CMF_CANRENAME)) |
+        const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? CMF_EXPLORE : (CMF_ITEMMENU | CMF_CANRENAME)) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
         // Every target uses this same supervised single-query builder.
         // A partial/failed first result never selects a primer or UI fallback.

@@ -2810,7 +2810,8 @@ void TestStartQueryScheduling()
         std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Inspect"; }) == 1,
         "one aggregate publishes both Start and ordinary actions with the footer and without duplicates");
     const auto previousOrdinary = ordinaryQueries.load();
-    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, false); service.Configure(prefs);
+    auto onlyStartPrefs = prefs;
+    ext::SetCommon(onlyStartPrefs, "verb:inspect", ext::Category::Objects, false);
     // Stall both ordinary slots again. Start-only demand must still complete
     // through the reserved lane, including a target without a cache identity.
     hold = true;
@@ -2818,18 +2819,19 @@ void TestStartQueryScheduling()
     PumpUntil([&] { return ordinaryQueries == previousOrdinary + 2; }, "occupy both ordinary slots before Start-only demand");
     const auto stalledOrdinary = ordinaryQueries.load();
     auto start = target; start.startPinOnly = true;
-    ext::Presentation onlyStart(target, prefs, L"", L"", service);
+    ext::Presentation onlyStart(target, onlyStartPrefs, L"", L"", service);
     std::vector<menu::Item> fresh{more}; menu::Options freshOptions; onlyStart.Attach(fresh, freshOptions, 7);
     PumpUntil([&] { return !service.View(start).pending && startQueries == 1; }, "the reserved Start-only query bypasses both stalled extensions");
     const auto state = freshOptions.pollItems(fresh, true);
     Expect(state && freshOptions.pollItemsFinished() && ordinaryQueries == stalledOrdinary &&
         std::count_if(state->begin(), state->end(), [](const auto& i) { return i.label == L"Pin"; }) == 1,
         "enabling only Start pinning never triggers an aggregate query on reopening");
+    hold = false;
+    service.Configure(onlyStartPrefs);
     service.Prewarm(first);
     auto prewarmed = first; prewarmed.startPinOnly = true;
     PumpUntil([&] { return service.View(prewarmed).snapshot.has_value(); }, "Start-only prewarming uses its dedicated request");
     Expect(ordinaryQueries == stalledOrdinary, "Start-only selection prewarming does not enumerate unrelated extensions");
-    hold = false;
 }
 
 // Real Classes notifications and live private registration scans reproduce the

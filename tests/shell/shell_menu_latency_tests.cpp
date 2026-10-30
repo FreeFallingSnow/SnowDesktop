@@ -222,7 +222,7 @@ void BenchmarkDesktopMenus()
         const auto* name = value.Find("name"); const auto* path = value.Find("path");
         Require(name && name->IsString() && path && path->IsString(), "sample has a name and path");
         Sample sample; sample.name = name->string;
-        sample.request.paths = {std::filesystem::u8path(path->string).wstring()};
+        sample.request.paths = {std::filesystem::path(std::u8string(path->string.begin(), path->string.end())).wstring()};
         Require(GetFileAttributesW(sample.request.paths.front().c_str()) != INVALID_FILE_ATTRIBUTES, "actual sample exists");
         if (const auto* background = value.Find("background")) sample.request.background = background->boolean;
         if (const auto* desktop = value.Find("desktop"); desktop && desktop->boolean) sample.request.context = ext::Context::Desktop;
@@ -242,7 +242,7 @@ void BenchmarkDesktopMenus()
             {
                 const auto label = utf8(entry.label);
                 const auto key = parent + "/" + label;
-                identity.insert(key); labels.insert(label);
+                identity.insert(key); labels.insert(label); labels.insert(entry.provider);
                 if (encoded.size() > 1) encoded += ',';
                 encoded += "{\"path\":" + quote(key) + ",\"provider\":" + quote(entry.provider) +
                     ",\"registration\":" + quote(entry.registration) + ",\"key\":" + quote(entry.key) +
@@ -284,7 +284,7 @@ void BenchmarkDesktopMenus()
             ext::NativeMenuSession session(request, {17, 17}, nullptr);
             std::optional<ext::NativeMenuResult> result;
             while (!result && GetTickCount64() < deadline) { result = session.Poll(); if (!result) Pump(); }
-            ext::Entry roots; roots.label = result ? std::filesystem::u8path(result->verb).wstring() : L"timeout";
+            ext::Entry roots; roots.label = result ? std::wstring(result->verb.begin(), result->verb.end()) : L"timeout";
             record(sample, "native", phase, iteration, elapsed(), result && result->ok, 0,
                 result ? result->error : "benchmark timeout", {roots});
         }
