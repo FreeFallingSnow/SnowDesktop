@@ -18,6 +18,7 @@
 #include "system/panel/system_panel_backdrop_placement.h"
 #include "dock/dock_desktop_layer_cases.h"
 #include "dock/dock_pair_transition_cases.h"
+#include "dock/window_pair_resource_cases.h"
 #include "navigation/quick_navigation_attraction_render_cases.h"
 #include "ui/render/desktop_backdrop_panel_properties_cases.h"
 #include "ui/render/desktop_backdrop_region_cache_cases.h"
@@ -848,6 +849,7 @@ int RunDesktopBackdropCompositorTests()
         }
         return condition;
     };
+    snowdesktop::test::window_pair_resources::Run(check);
     snowdesktop::test::CheckDockDesktopLayerRestoration(check);
     snowdesktop::test::dock_pair_transition::Run(check);
 

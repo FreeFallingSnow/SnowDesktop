@@ -65,7 +65,8 @@ inline bool PreserveOwnedMenuZOrder(
  * 同时再用另一个正在跨边界的窗口作为 hWndInsertAfter。跨带时按视觉
  * 安全顺序归一化：降级先移动 backdrop；提升在同一事务内分别指定
  * TOPMOST（backdrop 在先、内容窗在后），不从边界窗口推断所属带。
- * 两窗已在同一带时仍使用延迟事务完成普通重排。
+ * 同线程窗口在固定带内使用延迟事务；具体窗口锚点使用隐藏背景层的
+ * 单独定位，避免外部锚点在检查后失效时遗留 HDWP。
  */
 inline bool Apply(
     HWND contentWindow,
@@ -175,16 +176,33 @@ inline bool Apply(
                 backdropFlags) &&
             SetWindowPos(contentWindow, bandInsertAfter, 0, 0, 0, 0, contentFlags) &&
             (contentInsertAfter == bandInsertAfter ||
-                SetWindowPos(contentWindow, contentInsertAfter, 0, 0, 0, 0, contentFlags)) &&
+                SetWindowPos(contentWindow, contentInsertAfter, 0, 0, 0, 0, contentFlags));
+        // A rejected/disappearing anchor must not strand a previously visible
+        // helper hidden. Repair the pair independently, then restore visibility
+        // only after the helper is safely below its live content. Keep failure
+        // in the return value so the caller can resolve a fresh desktop anchor.
+        const bool paired = IsWindow(contentWindow) && IsWindow(backdropWindow) &&
             SetWindowPos(backdropWindow, contentWindow,
                 backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
                 backdropFlags) &&
             IsTopmost(contentWindow) == topmost &&
             IsTopmost(backdropWindow) == topmost && IsPaired(contentWindow, backdropWindow);
-        if (!positioned) return false;
-        return !restoreVisible || SetWindowPos(backdropWindow, nullptr, 0, 0, 0, 0,
+        if (!paired) return false;
+        const bool visibilityRestored = !restoreVisible || SetWindowPos(backdropWindow, nullptr, 0, 0, 0, 0,
             contentFlags | SWP_NOZORDER | SWP_SHOWWINDOW) != FALSE;
+        return positioned && visibilityRestored;
     };
+
+    // IsWindow cannot retain an external anchor's lifetime. User32 can leave
+    // the original HDWP alive when DeferWindowPos rejects an expired HWND;
+    // its failure contract also forbids ending that rejected transaction.
+    // Batch only this thread's pair against fixed band sentinels. Individual
+    // positioning already provides the guarded fallback for all other cases.
+    const DWORD thread = GetCurrentThreadId();
+    if ((contentInsertAfter != bandInsertAfter && contentInsertAfter != HWND_BOTTOM) ||
+        GetWindowThreadProcessId(contentWindow, nullptr) != thread ||
+        GetWindowThreadProcessId(backdropWindow, nullptr) != thread)
+        return placeSeparately();
 
     const bool changesZOrderBand =
         IsTopmost(contentWindow) != topmost ||
@@ -224,6 +242,10 @@ inline bool Apply(
             return placeSeparately();
     }
 
+    // The preceding SetWindowPos/EndDeferWindowPos calls dispatch synchronous
+    // callbacks. Revalidate owned targets before allocating another batch.
+    if (!IsWindow(contentWindow) || !IsWindow(backdropWindow))
+        return placeSeparately();
     HDWP deferred = BeginDeferWindowPos(2);
     if (deferred)
     {
