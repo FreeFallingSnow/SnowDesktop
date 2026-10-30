@@ -17,6 +17,24 @@ void Require(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
 }
+bool SingleChildPidl(PCUITEMID_CHILD child)
+{
+    return child && child->mkid.cb && ILNext(child)->mkid.cb == 0;
+}
+void BindProbeSelection(PCIDLIST_ABSOLUTE pidl, const std::filesystem::path& expected,
+                        ComPtr<IShellFolder>& parent, PCUITEMID_CHILD& child)
+{
+    Require(SUCCEEDED(SHBindToParent(pidl, IID_PPV_ARGS(&parent), &child)) && SingleChildPidl(child),
+        "GetUIObjectOf receives exactly one child relative to its actual parent");
+    ComPtr<IShellItem> selected;
+    Require(SUCCEEDED(SHCreateItemWithParent(nullptr, parent.Get(), child, IID_PPV_ARGS(&selected))), "recreate the bound sample item");
+    PWSTR path = nullptr;
+    Require(SUCCEEDED(selected->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path, "bound sample has a filesystem identity");
+    std::error_code error;
+    const bool same = std::filesystem::equivalent(expected, std::filesystem::path(path), error);
+    CoTaskMemFree(path);
+    Require(!error && same, "the bound menu selection is the exact sample, not an ancestor folder or drive");
+}
 
 // Substitute only the third-party COM provider and Shell view. The production
 // BuildMenu, HWND creation, file bootstrap, lifetime and rebind all run.
@@ -272,6 +290,12 @@ void TestShellContextMenuBootstrap()
         Require(file.handle != INVALID_HANDLE_VALUE, "private association bootstrap sample is created");
         sample = file.path;
         Require(!snowdesktop::ShellSelectionNeedsFileMenuPrimer({sample}), "ordinary local files initialize their actual selection directly");
+        PIDLIST_ABSOLUTE raw = nullptr;
+        Require(SUCCEEDED(SHParseDisplayName(sample.c_str(), nullptr, &raw, 0, nullptr)), "sample classification PIDL");
+        ComPtr<IShellFolder> parent; PCUITEMID_CHILD child = nullptr;
+        Require(!SingleChildPidl(reinterpret_cast<PCUITEMID_CHILD>(raw)), "negative control rejects the absolute multilevel PIDL used by the prior probe");
+        BindProbeSelection(raw, sample, parent, child);
+        CoTaskMemFree(raw);
         Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({}), "unknown selections retain file association protection");
         Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({std::filesystem::path(sample).parent_path().wstring()}),
             "folder selections retain the file association primer");
@@ -310,8 +334,8 @@ void BenchmarkNativeMenuPreparation()
     struct Owner { HWND value; ~Owner() { if (value) DestroyWindow(value); } } owner{
         CreateWindowExW(0, L"STATIC", L"Private native timing owner", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr)};
     Require(owner.value != nullptr, "native benchmark hidden owner");
-    ComPtr<IShellFolder> folder; Require(SUCCEEDED(SHGetDesktopFolder(&folder)), "native benchmark desktop binding");
-    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(raw);
+    ComPtr<IShellFolder> folder; PCUITEMID_CHILD child = nullptr;
+    BindProbeSelection(raw, file, folder, child);
     const auto bind = [&](HWND window, IContextMenu** menu) {
         return folder->GetUIObjectOf(window, 1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
     };
@@ -389,8 +413,8 @@ void ProbeNativeShellMenuBootstrap(bool legacy)
         0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     probe.menu = CreatePopupMenu(); Require(probe.owner && probe.menu, "native probe owner and menu");
     ComPtr<IShellFolder> desktop;
-    Require(SUCCEEDED(SHGetDesktopFolder(&desktop)), "native probe desktop binding");
-    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(probe.pidl);
+    PCUITEMID_CHILD child = nullptr;
+    BindProbeSelection(probe.pidl, probe.directory, desktop, child);
     const auto bind = [&](HWND owner, IContextMenu** target) {
         return desktop->GetUIObjectOf(owner, 1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(target));
     };
