@@ -400,6 +400,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.backup", L"Backup & data"},
     LocalizedFallback{"settings.nav.about", L"About"},
     LocalizedFallback{"settings.nav.developer", L"Developer tools"},
+    LocalizedFallback{"settings.agentOperations.title", L"Agent Operations"},
     LocalizedFallback{"settings.nav.debug", L"Debug"},
     LocalizedFallback{"settings.page.home.description", L"Learn the basics and explore more ways to use SnowDesktop."},
     LocalizedFallback{"settings.page.general.description", L"Startup, language, navigation, hotkeys and everyday behavior."},
@@ -554,7 +555,7 @@ std::wstring FormatSingleValue(
 bool IsWidgetsBackendPage(SettingsPage page) noexcept
 {
     return page == SettingsPage::Widgets ||
-        page == SettingsPage::DeveloperTools;
+        page == SettingsPage::DeveloperTools || page == SettingsPage::AgentOperations;
 }
 
 muxc::InfoBarSeverity ToInfoBarSeverity(SettingsShellInfoSeverity severity)
@@ -795,6 +796,7 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         ensureWidgets();
         break;
     case SettingsPage::DeveloperTools:
+    case SettingsPage::AgentOperations:
         ensureWidgets();
         break;
     case SettingsPage::WidgetSettings:
@@ -1062,6 +1064,7 @@ void SettingsShell::RefreshLocalizedText()
     setNavigationLabel(BackupItem(), Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::BackupAndData)));
     setNavigationLabel(AdvancedSettingsItem(), Localize("modules.advanced"));
     setNavigationLabel(RuntimeModulesItem(), Localize("modules.title"));
+    setNavigationLabel(AgentOperationsItem(), Localize("settings.agentOperations.title"));
     setNavigationLabel(AboutItem(), Localize("app.settings.about"));
     setNavigationLabel(DeveloperItem(), Localize("app.settings.widgets_developer_tools"));
     RenderAgentSkillUpdateBadge();
@@ -1544,6 +1547,8 @@ bool SettingsShell::ApplyWidgetsPageSnapshot(
                     UpdateAvailable;
         });
     SetAgentSkillUpdateAvailable(updateAvailable);
+    SetControlSkillUpdateAvailable(std::any_of(snapshot.controlAgentSkills.begin(), snapshot.controlAgentSkills.end(),
+        [](const auto& skill) { return skill.state == snowdesktop::winui::WidgetAgentSkillInstallState::UpdateAvailable; }));
     // The first package publication can arrive after route/layout focus.
     if (navigation_.Route().page == SettingsPage::Widgets &&
         navigation_.Route().focusId == "widgets.permissions" && !navigation_.Route().itemKey.empty())
@@ -1816,6 +1821,13 @@ void SettingsShell::SetConditionalPagesVisible(
         if (routeRequested_)
             routeRequested_(*replacement);
     }
+}
+
+void SettingsShell::SetControlSkillUpdateAvailable(bool available)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId() || controlSkillUpdateAvailable_ == available) return;
+    controlSkillUpdateAvailable_ = available;
+    RenderAgentSkillUpdateBadge();
 }
 
 void SettingsShell::SetAgentSkillUpdateAvailable(bool available)
@@ -2182,7 +2194,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::DesktopStyle, SettingsPage::QuickNavigation, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
                      SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About, SettingsPage::RuntimeModules,
-                     SettingsPage::DeveloperTools, SettingsPage::Debug})
+                     SettingsPage::DeveloperTools, SettingsPage::AgentOperations, SettingsPage::Debug})
             {
                 if (NavigationItemForPage(page) == item)
                 {
@@ -2378,7 +2390,7 @@ void SettingsShell::RenderNavigationSelection(bool revealCurrent)
     const auto selected = NavigationItemForPage(selectedPage);
     if (revealCurrent)
     {
-        if (selectedPage == SettingsPage::RuntimeModules) AdvancedSettingsItem().IsExpanded(true);
+        if (selectedPage == SettingsPage::RuntimeModules || selectedPage == SettingsPage::AgentOperations) AdvancedSettingsItem().IsExpanded(true);
         switch (snowdesktop::SettingsPageCategory(selectedPage))
         {
         case snowdesktop::SettingsCategory::DesktopOrganization: DesktopOrganizationItem().IsExpanded(true); break;
@@ -2462,6 +2474,7 @@ void SettingsShell::ApplyNavigationIcons()
         IconDescriptor{BackupItem(),
             L"ms-appx:///Assets/Settings/Icons/backup.svg", L"\xE74E"},
         IconDescriptor{AdvancedSettingsItem(), L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
+        IconDescriptor{AgentOperationsItem(), L"ms-appx:///Assets/Settings/Icons/agent-operations.svg", L"\xE99A"},
         IconDescriptor{RuntimeModulesItem(), L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
         IconDescriptor{AboutItem(),
             L"ms-appx:///Assets/Settings/Icons/about.svg", L"\xE946"},
@@ -3232,6 +3245,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             homeAboutPage_->Activate(SettingsPage::About);
         }
         break;
+    case SettingsPage::AgentOperations:
+        if (widgetsPage_)
+        {
+            PageCards().Children().Append(widgetsPage_->AgentOperationsContent());
+            widgetsPage_->Activate(navigation_.Generation());
+            RegisterFocusTarget("agentOperations.skill", widgetsPage_->AgentOperationsFocusTarget());
+        }
+        break;
     case SettingsPage::DeveloperTools:
         if (widgetsPage_)
         {
@@ -3399,6 +3420,11 @@ void SettingsShell::RenderConditionalPages()
 
 void SettingsShell::RenderAgentSkillUpdateBadge()
 {
+    ControlSkillUpdateBadge().Visibility(controlSkillUpdateAvailable_
+        ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    auto controlName = Localize("settings.agentOperations.title");
+    if (controlSkillUpdateAvailable_) controlName += L", " + Localize("app.settings.widgets_skill_update_available");
+    muxa::AutomationProperties::SetName(AgentOperationsItem(), controlName);
     DeveloperSkillUpdateBadge().Visibility(agentSkillUpdateAvailable_
         ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     std::wstring automationName =
@@ -3772,6 +3798,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::WidgetSettings: return WidgetsItem();
     case SettingsPage::BackupAndData: return BackupItem();
     case SettingsPage::RuntimeModules: return RuntimeModulesItem();
+    case SettingsPage::AgentOperations: return AgentOperationsItem();
     case SettingsPage::About: return AboutItem();
     case SettingsPage::DeveloperTools: return DeveloperItem();
     case SettingsPage::Debug: return DebugItem();

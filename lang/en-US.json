@@ -2752,5 +2752,8 @@
   "settings.debug.profile.create": "Create environment",
   "settings.debug.profile.rename": "Rename environment",
   "settings.debug.profile.name": "Environment name",
-  "settings.debug.profile.nameHint": "Enter a unique name of 1–60 characters. New environments start with empty settings and layouts."
+  "settings.debug.profile.nameHint": "Enter a unique name of 1–60 characters. New environments start with empty settings and layouts.",
+  "settings.agentOperations.title": "Agent Operations",
+  "settings.agentOperations.skill": "SnowDesktop Control Skill",
+  "settings.agentOperations.description": "Let your AI assistant operate SnowDesktop through its local control interface."
 }

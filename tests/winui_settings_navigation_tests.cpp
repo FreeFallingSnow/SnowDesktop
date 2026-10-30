@@ -377,10 +377,11 @@ int main()
         Check(noWindow.page == SettingsPage::StatusBar && noWindow.focusId == "statusBar.noWindow",
             "the no-window scene has an independent focus destination");
     }
+    for (const auto page : {SettingsPage::RuntimeModules, SettingsPage::AgentOperations})
     {
         SettingsShellNavigationState modules;
-        const auto route = SettingsRoute::ForPage(SettingsPage::RuntimeModules);
-        Check(route.IsValid() && SettingsPageKey(route.page) == "runtime-modules", "module route is stable and appended");
+        const auto route = SettingsRoute::ForPage(page);
+        Check(route.IsValid() && SettingsPageKey(route.page) == (page == SettingsPage::RuntimeModules ? "runtime-modules" : "agent-operations"), "module route is stable and appended");
         Check(!modules.IsRouteAvailable(route) && modules.Navigate(route) &&
             modules.Route() == SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"),
             "direct hidden module route resolves to the About visibility control");

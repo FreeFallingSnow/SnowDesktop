@@ -267,7 +267,7 @@ bool IsUsableControllerSnapshot(
 bool IsWidgetsBackendPage(SettingsPage page) noexcept
 {
     return page == SettingsPage::Widgets ||
-        page == SettingsPage::DeveloperTools;
+        page == SettingsPage::DeveloperTools || page == SettingsPage::AgentOperations;
 }
 
 std::optional<std::filesystem::path> DialogResultPath(
@@ -1367,6 +1367,20 @@ struct SettingsWindowHost::Impl
             updateAvailable = false;
         }
         shell->SetAgentSkillUpdateAvailable(updateAvailable);
+        bool controlUpdateAvailable = false;
+        try
+        {
+            const auto source = WidgetEngine::GetWidgetPackagePaths().builtin / L"snowdesktop-control";
+            for (auto target : snowdesktop::steam_bridge::DefaultAgentSkillTargets())
+            {
+                std::string error;
+                const auto status = snowdesktop::steam_bridge::InspectAgentSkill(source, {}, std::move(target), error,
+                    snowdesktop::steam_bridge::AgentSkillPackage::Control);
+                controlUpdateAvailable |= status.state == snowdesktop::steam_bridge::SkillInstallState::UpdateAvailable;
+            }
+        }
+        catch (...) { controlUpdateAvailable = false; }
+        shell->SetControlSkillUpdateAvailable(controlUpdateAvailable);
     }
 
     bool SetWidgetDeveloperToolsEnabled(std::uint64_t generation, bool enabled)

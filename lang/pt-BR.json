@@ -2752,5 +2752,8 @@
   "settings.debug.profile.create": "Criar ambiente",
   "settings.debug.profile.rename": "Renomear ambiente",
   "settings.debug.profile.name": "Nome do ambiente",
-  "settings.debug.profile.nameHint": "Digite um nome exclusivo de 1 a 60 caracteres. Novos ambientes começam com configurações e layouts vazios."
+  "settings.debug.profile.nameHint": "Digite um nome exclusivo de 1 a 60 caracteres. Novos ambientes começam com configurações e layouts vazios.",
+  "settings.agentOperations.title": "Operações do agente",
+  "settings.agentOperations.skill": "Skill de controle do SnowDesktop",
+  "settings.agentOperations.description": "Permita que seu assistente de IA controle o SnowDesktop pela interface de controle local."
 }

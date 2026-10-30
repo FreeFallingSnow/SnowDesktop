@@ -17,6 +17,8 @@ enum class SkillInstallState
     Current,
 };
 
+enum class AgentSkillPackage { LuaWidget, Control };
+
 enum class AgentSkillTargetKind
 {
     Shared,
@@ -36,6 +38,7 @@ struct AgentSkillTarget
 
 struct SkillInstallStatus
 {
+    AgentSkillPackage package = AgentSkillPackage::LuaWidget;
     SkillInstallState state = SkillInstallState::Unavailable;
     AgentSkillTarget agent;
     std::filesystem::path source;
@@ -50,7 +53,8 @@ SkillInstallStatus InspectAgentSkill(
     const std::filesystem::path& bundledSkill,
     const std::filesystem::path& bundledCli,
     AgentSkillTarget target,
-    std::string& error);
+    std::string& error,
+    AgentSkillPackage package = AgentSkillPackage::LuaWidget);
 bool InstallOrUpdateAgentSkill(const SkillInstallStatus& status,
     std::string& error);
 bool UninstallAgentSkill(const SkillInstallStatus& status,

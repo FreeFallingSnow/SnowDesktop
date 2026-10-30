@@ -631,6 +631,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::BackupAndData, "backup.clearData",
         "settings.backup.clearData", "settings.backup.clearData.description"},
     {SettingsPage::About, "about.showAdvancedSettings", "modules.showAdvanced", "modules.showAdvancedDescription"},
+    {SettingsPage::AgentOperations, "agentOperations.skill", "settings.agentOperations.skill", "settings.agentOperations.description"},
     {SettingsPage::RuntimeModules, "runtimeModules.taskbar", "modules.taskbar.name", "modules.taskbar.purpose"},
     {SettingsPage::RuntimeModules, "runtimeModules.tray", "modules.tray.name", "modules.tray.purpose"},
     {SettingsPage::RuntimeModules, "runtimeModules.windowMinimize", "modules.windowMinimize.name", "modules.windowMinimize.purpose"},

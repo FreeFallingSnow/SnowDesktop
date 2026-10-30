@@ -2752,5 +2752,8 @@
   "settings.debug.profile.create": "環境を作成",
   "settings.debug.profile.rename": "環境名を変更",
   "settings.debug.profile.name": "環境名",
-  "settings.debug.profile.nameHint": "重複しない名前を1～60文字で入力してください。新しい環境は空の設定とレイアウトで開始します。"
+  "settings.debug.profile.nameHint": "重複しない名前を1～60文字で入力してください。新しい環境は空の設定とレイアウトで開始します。",
+  "settings.agentOperations.title": "Agent 操作",
+  "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
+  "settings.agentOperations.description": "AI アシスタントがローカル制御インターフェイスを通じて SnowDesktop を操作できます。"
 }

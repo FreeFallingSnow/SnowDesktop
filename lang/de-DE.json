@@ -2752,5 +2752,8 @@
   "settings.debug.profile.create": "Umgebung erstellen",
   "settings.debug.profile.rename": "Umgebung umbenennen",
   "settings.debug.profile.name": "Name der Umgebung",
-  "settings.debug.profile.nameHint": "Geben Sie einen eindeutigen Namen mit 1–60 Zeichen ein. Neue Umgebungen beginnen mit leeren Einstellungen und Layouts."
+  "settings.debug.profile.nameHint": "Geben Sie einen eindeutigen Namen mit 1–60 Zeichen ein. Neue Umgebungen beginnen mit leeren Einstellungen und Layouts.",
+  "settings.agentOperations.title": "Agent-Steuerung",
+  "settings.agentOperations.skill": "Skill zur SnowDesktop-Steuerung",
+  "settings.agentOperations.description": "Lassen Sie Ihren KI-Assistenten SnowDesktop über die lokale Steuerschnittstelle bedienen."
 }

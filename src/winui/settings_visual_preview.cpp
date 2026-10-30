@@ -939,7 +939,7 @@ constexpr SettingsPage pages[] = {
     SettingsPage::DesktopPages, SettingsPage::WidgetBehavior, SettingsPage::DesktopCategories,
     SettingsPage::DesktopStyle, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
     SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
-    SettingsPage::IconLibrary, SettingsPage::RuntimeModules,
+    SettingsPage::IconLibrary, SettingsPage::RuntimeModules, SettingsPage::AgentOperations,
     SettingsPage::AnimationPerformance, SettingsPage::ContextMenu, SettingsPage::ThemeManager,
     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::BackupAndData, SettingsPage::About,
     SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon,
@@ -1455,7 +1455,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         rendered = true;
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
-        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules;
+        snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules || page == SettingsPage::AgentOperations;
         snapshot.values.general.runtimeModules.allowed.fill(!disabled);
         *modulePreviewPolicy = snapshot.values.general.runtimeModules;
         snapshot.values.general.dockEnabled = !disabled;
@@ -1521,7 +1521,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         status.debugEnvironmentId = L"env-preview";
         status.debugEnvironmentName = L"Screenshot Demo";
         (void)shell->ApplyHomeAboutStatusPatch(status);
-        if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
+        if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools || page == SettingsPage::AgentOperations)
         {
             WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
             if (searching) packages.task.kind = WidgetsPageTaskKind::Searching;
@@ -1533,7 +1533,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             skill.targetPath = L"C:\\Preview\\Skills";
             skill.state = WidgetAgentSkillInstallState::Current;
             skill.installed = skill.selected = true; skill.installedRevision = skill.bundledRevision = 1;
-            packages.agentSkills.push_back(std::move(skill));
+            packages.agentSkills.push_back(skill);
+            for (int index = 0; index < 6; ++index)
+            {
+                auto control = skill;
+                control.kind = static_cast<WidgetAgentSkillTargetKind>(index);
+                control.id = "control-agent-" + std::to_string(index);
+                control.targetPath = L"C:\\Preview\\Assistant-" + std::to_wstring(index) + L"\\skills\\snowdesktop-control";
+                control.state = index == 1 ? WidgetAgentSkillInstallState::UpdateAvailable : WidgetAgentSkillInstallState::Current;
+                control.bundledRevision = 2;
+                packages.controlAgentSkills.push_back(std::move(control));
+            }
+            packages.controlAgentSkillTargetMask = 63;
             for (int index = 0; index < 3; ++index)
             {
                 InstalledWidgetPackageSnapshot package;

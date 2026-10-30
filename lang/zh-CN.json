@@ -2752,5 +2752,8 @@
   "settings.debug.profile.create": "新建环境",
   "settings.debug.profile.rename": "重命名环境",
   "settings.debug.profile.name": "环境名称",
-  "settings.debug.profile.nameHint": "请输入不重复的名称，长度为1至60个字符。新环境使用空白设置和布局。"
+  "settings.debug.profile.nameHint": "请输入不重复的名称，长度为1至60个字符。新环境使用空白设置和布局。",
+  "settings.agentOperations.title": "Agent 操作",
+  "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
+  "settings.agentOperations.description": "让 AI 助手通过本地控制接口操作 SnowDesktop。"
 }

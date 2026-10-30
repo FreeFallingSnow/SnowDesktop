@@ -423,6 +423,10 @@ struct WidgetsPageSnapshot
     int agentSkillTargetMask = 0;
     std::wstring agentSkillStatusError;
     std::wstring developerActionStatus;
+    std::vector<WidgetAgentSkillTargetSnapshot> controlAgentSkills;
+    int controlAgentSkillTargetMask = 0;
+    std::wstring controlAgentSkillStatusError;
+    std::wstring controlAgentSkillActionStatus;
     std::wstring developmentWorkspace;
     std::wstring componentCliPath;
     /** Host capability; historical Workshop metadata is not sufficient. */
@@ -463,6 +467,9 @@ enum class WidgetsPageCommand : std::uint8_t
     PublishDevelopmentWorkspace,
     ClearWidgetErrors,
     ExportDevelopmentPackage,
+    RefreshControlAgentSkills,
+    ApplyControlAgentSkillSelection,
+    SetControlAgentSkillTargetSelection,
 };
 
 /** Strongly typed payload emitted for all package/source operations. */
@@ -559,6 +566,10 @@ public:
         Content() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DeveloperToolsContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        AgentOperationsContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        AgentOperationsFocusTarget() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DebugContent() const noexcept;
 

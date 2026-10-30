@@ -68,6 +68,8 @@ void TestConditionalPagesAndNoLeaks()
             "general.secret-internal", L"Hidden internal setting"),
         StaticSetting(static_cast<SettingsPage>(0xff),
             "unknown.route", L"Unknown route setting"),
+        StaticSetting(SettingsPage::AgentOperations,
+            "agentOperations.skill", L"SnowDesktop Control Skill"),
     };
     input.staticSettings[2].visible = false;
 
@@ -98,6 +100,15 @@ void TestConditionalPagesAndNoLeaks()
     index.Rebuild(input);
     Check(index.EntryCount() == 2,
         "both conditional pages enter the index only when both gates open");
+    Check(index.Search(L"SnowDesktop Control").empty(), "operation Skill search remains hidden while advanced settings are off");
+    input.advancedSettingsVisible = true;
+    index.Rebuild(input);
+    const auto operations = index.Search(L"SnowDesktop Control");
+    Check(operations.size() == 1 && operations[0].route.page == SettingsPage::AgentOperations &&
+        operations[0].focusId == "agentOperations.skill", "advanced settings exposes the operation Skill with its own focus target");
+    input.advancedSettingsVisible = false;
+    index.Rebuild(input);
+    Check(index.Search(L"SnowDesktop Control").empty(), "hiding advanced settings removes operation Skill search entries");
 }
 
 void TestWidgetFields()

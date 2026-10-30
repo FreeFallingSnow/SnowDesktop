@@ -2752,5 +2752,8 @@
   "settings.debug.profile.create": "환경 만들기",
   "settings.debug.profile.rename": "환경 이름 변경",
   "settings.debug.profile.name": "환경 이름",
-  "settings.debug.profile.nameHint": "중복되지 않는 이름을 1~60자로 입력하세요. 새 환경은 빈 설정과 레이아웃으로 시작합니다."
+  "settings.debug.profile.nameHint": "중복되지 않는 이름을 1~60자로 입력하세요. 새 환경은 빈 설정과 레이아웃으로 시작합니다.",
+  "settings.agentOperations.title": "Agent 작업",
+  "settings.agentOperations.skill": "SnowDesktop 제어 Skill",
+  "settings.agentOperations.description": "AI 도우미가 로컬 제어 인터페이스를 통해 SnowDesktop을 조작할 수 있습니다."
 }

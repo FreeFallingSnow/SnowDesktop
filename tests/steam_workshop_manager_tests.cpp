@@ -2106,6 +2106,11 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
     const auto bundled = repositoryRoot / L"widgets" /
         L"snowdesktop-lua-widget";
     const auto expectedRevision = BundledAuthoringRevision(repositoryRoot);
+    const auto control = temporary.path / L"runtime" / L"widgets" / L"snowdesktop-control";
+    std::filesystem::create_directories(control.parent_path());
+    std::filesystem::copy(repositoryRoot / L"widgets" / L"snowdesktop-control", control,
+        std::filesystem::copy_options::recursive);
+    std::ofstream(control.parent_path().parent_path() / L"SnowDesktop.exe") << "fixture executable binding";
     const std::array kinds = {
         AgentSkillTargetKind::Shared,
         AgentSkillTargetKind::Codex,
@@ -2142,6 +2147,47 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         Check(status.state == SkillInstallState::NotInstalled &&
             !std::filesystem::exists(status.target),
             "an uninstalled Agent Skill target returns to not-installed");
+
+        Check(InstallOrUpdateAgentSkill(status, error), "authoring skill can be reinstalled for isolation coverage");
+        std::ofstream(control / L"skill.json") << R"({"schemaVersion":1,"id":"snowdesktop-control","revision":1})";
+        auto operation = InspectAgentSkill(control, {}, target, error, AgentSkillPackage::Control);
+        Check(operation.state == SkillInstallState::NotInstalled && operation.target != status.target,
+            "control and authoring packages have independent identities in every assistant root");
+        Check(InstallOrUpdateAgentSkill(operation, error), "control skill installs without the component CLI");
+        operation = InspectAgentSkill(control, {}, target, error, AgentSkillPackage::Control);
+        Check(operation.state == SkillInstallState::Current && operation.installedRevision == 1 &&
+            std::filesystem::is_regular_file(operation.target / L"scripts" / L"snowdesktop-control.ps1") &&
+            !std::filesystem::exists(operation.target / L"bin" / L"snowwidget.exe"),
+            "control installation contains its IPC client and excludes the authoring CLI");
+        {
+            std::ifstream input(operation.target / L"connection.json", std::ios::binary);
+            const std::string json{std::istreambuf_iterator<char>(input), {}};
+            snowdesktop::steam_bridge::JsonValue binding;
+            const auto expected = (control.parent_path().parent_path() / L"SnowDesktop.exe").u8string();
+            Check(ParseJson(json, binding, error) && JsonString(binding, "executablePath") ==
+                std::string(expected.begin(), expected.end()), "control installation binds the exact source executable path");
+        }
+        std::ofstream(control / L"skill.json") << R"({"schemaVersion":1,"id":"snowdesktop-control","revision":2})";
+        std::ofstream(operation.target / L"obsolete.txt") << "old package file";
+        operation = InspectAgentSkill(control, {}, target, error, AgentSkillPackage::Control);
+        Check(operation.state == SkillInstallState::UpdateAvailable && InstallOrUpdateAgentSkill(operation, error),
+            "new bundled control revisions are detected and replaced transactionally");
+        Check(InspectAgentSkill(control, {}, target, error, AgentSkillPackage::Control).installedRevision == 2 &&
+            !std::filesystem::exists(operation.target / L"obsolete.txt") &&
+            InspectAgentSkill(bundled, snowwidget, target, error).state == SkillInstallState::Current,
+            "control update removes obsolete package files while preserving the authoring package");
+        std::ofstream(operation.target / L"connection.json") << R"({"executablePath":"C:/old/SnowDesktop.exe"})";
+        operation = InspectAgentSkill(control, {}, target, error, AgentSkillPackage::Control);
+        Check(operation.state == SkillInstallState::UpdateAvailable && InstallOrUpdateAgentSkill(operation, error) &&
+            InspectAgentSkill(control, {}, target, error, AgentSkillPackage::Control).state == SkillInstallState::Current,
+            "a moved installation can repair its binding without increasing the bundled Skill revision");
+        Check(UninstallAgentSkill(operation, error) && std::filesystem::exists(status.target / L"SKILL.md"),
+            "control removal preserves the adjacent authoring package");
+        auto wrongTarget = operation;
+        wrongTarget.target = status.target;
+        Check(!UninstallAgentSkill(wrongTarget, error) && !InstallOrUpdateAgentSkill(wrongTarget, error) &&
+            std::filesystem::exists(status.target / L"SKILL.md"), "cross-package targets are rejected before mutation");
+        Check(UninstallAgentSkill(status, error), "isolated authoring fixture is removed at the end");
     }
 }
 

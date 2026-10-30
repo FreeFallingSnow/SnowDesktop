@@ -322,6 +322,20 @@ struct WidgetsPagePresenter::Impl
     mux::DataTemplate fontAwesomeGlyphTemplate{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::InfoBar feedbackBar{nullptr};
+    muxc::StackPanel controlRoot{nullptr};
+    SettingsCard controlSkillCard;
+    presenter_controls::SettingRow controlSkillActionsRow;
+    muxc::Button controlSkillApplyButton{nullptr};
+    muxc::Button controlSkillRefreshButton{nullptr};
+    muxc::StackPanel controlSkillRows{nullptr};
+    std::vector<WidgetAgentSkillTargetSnapshot> controlAgentSkills;
+    int controlAgentSkillTargetMask = 0;
+    std::wstring controlAgentSkillStatusError;
+    std::wstring controlAgentSkillActionStatus;
+    mux::FrameworkElement firstControlSkillTarget{nullptr};
+    std::vector<std::function<void()>> controlSkillRevokers;
+    winrt::event_token controlSkillApplyToken{};
+    winrt::event_token controlSkillRefreshToken{};
     muxc::StackPanel developerRoot{nullptr};
     muxc::InfoBar developerFeedbackBar{nullptr};
     muxc::StackPanel debugRoot{nullptr};
@@ -810,6 +824,29 @@ struct WidgetsPagePresenter::Impl
         installedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         installedSection.Children().Append(installedRows);
 
+        controlRoot = muxc::StackPanel{};
+        controlRoot.Spacing(24.0);
+        controlRoot.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        InitializeCard(controlSkillCard, cardStyle, controlRoot);
+        controlSkillApplyButton = muxc::Button{};
+        controlSkillApplyButton.UseSystemFocusVisuals(true);
+        ApplyAccentButtonStyle(controlSkillApplyButton);
+        controlSkillRefreshButton = muxc::Button{};
+        controlSkillRefreshButton.UseSystemFocusVisuals(true);
+        muxc::StackPanel controlActions;
+        controlActions.Orientation(muxc::Orientation::Horizontal);
+        controlActions.Spacing(8.0);
+        controlActions.Children().Append(controlSkillApplyButton);
+        controlActions.Children().Append(controlSkillRefreshButton);
+        controlSkillActionsRow.Initialize(controlActions);
+        controlSkillActionsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        controlSkillCard.content.Children().Append(controlSkillActionsRow.root);
+        controlSkillRows = muxc::StackPanel{};
+        controlSkillRows.Spacing(8.0);
+        controlSkillRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        controlSkillCard.content.Children().Append(controlSkillRows);
+        presenter_controls::UpdateSettingsSubrows(controlSkillCard.content);
+
         developerRoot = muxc::StackPanel{};
         developerRoot.Spacing(24.0);
         developerRoot.HorizontalAlignment(
@@ -1112,6 +1149,18 @@ struct WidgetsPagePresenter::Impl
                 const mux::RoutedEventArgs&) {
                 WidgetsPageRequest request;
                 request.command = WidgetsPageCommand::RefreshAgentSkills;
+                Emit(std::move(request));
+            });
+        controlSkillApplyToken = controlSkillApplyButton.Click(
+            [this](const auto&, const auto&) {
+                WidgetsPageRequest request;
+                request.command = WidgetsPageCommand::ApplyControlAgentSkillSelection;
+                Emit(std::move(request));
+            });
+        controlSkillRefreshToken = controlSkillRefreshButton.Click(
+            [this](const auto&, const auto&) {
+                WidgetsPageRequest request;
+                request.command = WidgetsPageCommand::RefreshControlAgentSkills;
                 Emit(std::move(request));
             });
         openDevelopmentFolderToken = openDevelopmentFolderButton.Click(
@@ -1933,24 +1982,27 @@ struct WidgetsPagePresenter::Impl
         rows.Children().Append(disclosure);
     }
 
-    void RenderDeveloperRows()
+    void RenderAgentSkillRows(bool control)
     {
-        Revoke(developerRevokers);
-        agentSkillRows.Children().Clear();
-        cliRows.Children().Clear();
-        developerErrorRows.Children().Clear();
-        developerOverrideRows.Children().Clear();
-        developerDiagnosticRows.Children().Clear();
-        firstDeveloperOverrideTarget = nullptr;
-        firstDeveloperDiagnosticTarget = nullptr;
-
+        auto& skills = control ? controlAgentSkills : agentSkills;
+        auto& applyButton = control ? controlSkillApplyButton : agentSkillApplyButton;
+        auto& refreshButton = control ? controlSkillRefreshButton : agentSkillRefreshButton;
+        auto& actionsRow = control ? controlSkillActionsRow : agentSkillActionsRow;
+        auto& rows = control ? controlSkillRows : agentSkillRows;
+        auto& firstTarget = control ? firstControlSkillTarget : firstDeveloperOverrideTarget;
+        auto& statusError = control ? controlAgentSkillStatusError : agentSkillStatusError;
+        auto& actionStatus = control ? controlAgentSkillActionStatus : developerActionStatus;
+        auto& revokers = control ? controlSkillRevokers : developerRevokers;
+        if (control) Revoke(revokers);
+        rows.Children().Clear();
+        firstTarget = nullptr;
         int pendingTargets = 0;
         int updateTargets = 0;
         std::wstring targetsToRemove;
         bool skillScopeChanged = false;
         bool selectedTargetUnavailable = false;
         unsigned int latestRevision = 0;
-        for (const auto& skill : agentSkills)
+        for (const auto& skill : skills)
         {
             latestRevision = std::max(
                 latestRevision, skill.bundledRevision);
@@ -1981,7 +2033,7 @@ struct WidgetsPagePresenter::Impl
                 selectedTargetUnavailable = true;
             }
         }
-        const bool selectionApplied = !agentSkills.empty() &&
+        const bool selectionApplied = !skills.empty() &&
             pendingTargets == 0 && !selectedTargetUnavailable;
         const bool updateOnly = updateTargets > 0 &&
             !skillScopeChanged && !selectedTargetUnavailable;
@@ -1995,23 +2047,23 @@ struct WidgetsPagePresenter::Impl
                     L"Selection Applied")
                 : L("app.settings.widgets_skill_unavailable",
                     L"Unavailable");
-        agentSkillApplyButton.Content(winrt::box_value(applyLabel));
-        agentSkillApplyButton.IsEnabled(pendingTargets != 0 &&
+        applyButton.Content(winrt::box_value(applyLabel));
+        applyButton.IsEnabled(pendingTargets != 0 && !selectedTargetUnavailable &&
             static_cast<bool>(actions.invoke));
-        agentSkillRefreshButton.IsEnabled(static_cast<bool>(actions.invoke));
+        refreshButton.IsEnabled(static_cast<bool>(actions.invoke));
         const std::wstring latestVersion = latestRevision == 0
             ? L"—" : std::to_wstring(latestRevision);
-        agentSkillActionsRow.SetText(L(
+        actionsRow.SetText(L(
             "app.settings.widgets_skill_all_agents",
             L"All compatible assistants"), !targetsToRemove.empty()
                 ? L("app.settings.widgets_uninstall", L"Uninstall") + L" · " + targetsToRemove
                 : FormatValues(L(
                 "app.settings.widgets_skill_latest_version",
                 L"Latest version %s"), {latestVersion}));
-        SetAutomation(agentSkillApplyButton, applyLabel,
-            agentSkillActionsRow.help.Text());
+        SetAutomation(applyButton, applyLabel,
+            actionsRow.help.Text());
 
-        for (const auto& skill : agentSkills)
+        for (const auto& skill : skills)
         {
             muxc::CheckBox selected;
             selected.IsChecked(skill.selected);
@@ -2030,12 +2082,12 @@ struct WidgetsPagePresenter::Impl
                  skill.targetPath});
             SetAutomation(selected, label, stateAndPath);
             HookClick(selected,
-                [this, selected, bit = AgentSkillTargetBit(skill.kind)](
+                [this, control, selected, bit = AgentSkillTargetBit(skill.kind)](
                     const winrt::Windows::Foundation::IInspectable&,
                     const mux::RoutedEventArgs&) {
                     if (updatingControls || closed || !active)
                         return;
-                    int mask = agentSkillTargetMask;
+                    int mask = control ? controlAgentSkillTargetMask : agentSkillTargetMask;
                     const auto checked = selected.IsChecked();
                     if (checked && checked.Value())
                         mask |= bit;
@@ -2043,28 +2095,56 @@ struct WidgetsPagePresenter::Impl
                         mask &= ~bit;
                     WidgetsPageRequest request;
                     request.command =
-                        WidgetsPageCommand::SetAgentSkillTargetSelection;
+                        control ? WidgetsPageCommand::SetControlAgentSkillTargetSelection
+                            : WidgetsPageCommand::SetAgentSkillTargetSelection;
                     request.agentSkillTargetMask = mask;
                     Emit(std::move(request));
                 },
-                developerRevokers);
-            muxc::StackPanel row;
-            row.Spacing(2);
-            row.Children().Append(selected);
-            auto details = MakeSecondaryText(stateAndPath);
-            details.Margin({28, 0, 0, 0});
-            details.IsTextSelectionEnabled(true);
-            row.Children().Append(details);
-            agentSkillRows.Children().Append(row);
-            if (!firstDeveloperOverrideTarget)
-                firstDeveloperOverrideTarget = selected;
+                revokers);
+            if (control)
+            {
+                presenter_controls::SettingRow row;
+                row.Initialize(selected);
+                selected.Content(nullptr);
+                row.SetText(label, stateAndPath);
+                rows.Children().Append(row.root);
+            }
+            else
+            {
+                muxc::StackPanel row;
+                row.Spacing(2);
+                row.Children().Append(selected);
+                auto details = MakeSecondaryText(stateAndPath);
+                details.Margin({28, 0, 0, 0});
+                details.IsTextSelectionEnabled(true);
+                row.Children().Append(details);
+                rows.Children().Append(row);
+            }
+            if (!firstTarget)
+                firstTarget = selected;
         }
-        if (!agentSkillStatusError.empty())
-            agentSkillRows.Children().Append(
-                MakeSecondaryText(agentSkillStatusError));
-        if (!developerActionStatus.empty())
-            agentSkillRows.Children().Append(
-                MakeSecondaryText(developerActionStatus));
+        if (!statusError.empty())
+            rows.Children().Append(
+                MakeSecondaryText(statusError));
+        if (!actionStatus.empty())
+            rows.Children().Append(
+                MakeSecondaryText(actionStatus));
+
+        if (control) presenter_controls::UpdateSettingsSubrows(rows);
+    }
+
+    void RenderDeveloperRows()
+    {
+        Revoke(developerRevokers);
+        agentSkillRows.Children().Clear();
+        cliRows.Children().Clear();
+        developerErrorRows.Children().Clear();
+        developerOverrideRows.Children().Clear();
+        developerDiagnosticRows.Children().Clear();
+        firstDeveloperOverrideTarget = nullptr;
+        firstDeveloperDiagnosticTarget = nullptr;
+
+        RenderAgentSkillRows(false);
 
         developmentWorkspacePath.Text(developmentWorkspace);
         openDevelopmentFolderButton.IsEnabled(
@@ -3264,11 +3344,20 @@ struct WidgetsPagePresenter::Impl
             developerPublisherAvailable !=
                 snapshot.developerPublisherAvailable ||
             errors != snapshot.errors || diagnostics != snapshot.diagnostics;
+        const bool controlPresentationChanged = firstPublication ||
+            controlAgentSkills != snapshot.controlAgentSkills ||
+            controlAgentSkillTargetMask != snapshot.controlAgentSkillTargetMask ||
+            controlAgentSkillStatusError != snapshot.controlAgentSkillStatusError ||
+            controlAgentSkillActionStatus != snapshot.controlAgentSkillActionStatus;
         const bool debugPresentationChanged =
             firstPublication || diagnostics != snapshot.diagnostics;
         updatingControls = true;
         revision = snapshot.revision;
         hasRevision = true;
+        controlAgentSkills = snapshot.controlAgentSkills;
+        controlAgentSkillTargetMask = snapshot.controlAgentSkillTargetMask;
+        controlAgentSkillStatusError = snapshot.controlAgentSkillStatusError;
+        controlAgentSkillActionStatus = snapshot.controlAgentSkillActionStatus;
         packages = snapshot.installed;
         agentSkills = snapshot.agentSkills;
         agentSkillTargetMask = snapshot.agentSkillTargetMask;
@@ -3315,6 +3404,8 @@ struct WidgetsPagePresenter::Impl
         }
         if (developerPresentationChanged)
             RenderDeveloperRows();
+        if (controlPresentationChanged)
+            RenderAgentSkillRows(true);
         if (debugPresentationChanged)
             RenderDebugRows();
         if (installedPresentationChanged || sourcePresentationChanged)
@@ -3330,6 +3421,13 @@ struct WidgetsPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
+        controlSkillCard.title.Text(L("settings.agentOperations.skill", L"SnowDesktop Control Skill"));
+        controlSkillCard.description.Text(L("settings.agentOperations.description",
+            L"Let your AI assistant operate SnowDesktop through its local control interface."));
+        controlSkillApplyButton.Content(winrt::box_value(L("app.settings.widgets_skill_sync_all", L"Apply Selection")));
+        controlSkillRefreshButton.Content(winrt::box_value(L("app.settings.widgets_skill_check_updates", L"Check for Updates")));
+        SetAutomation(controlSkillRefreshButton, L("app.settings.widgets_skill_check_updates", L"Check for Updates"));
+        SetAutomation(controlSkillCard.root, controlSkillCard.title.Text(), controlSkillCard.description.Text());
         filterCard.title.Text(L("app.settings.widgets_my_components",
             L"My Components"));
         filterCard.description.Text(L"");
@@ -3493,6 +3591,7 @@ struct WidgetsPagePresenter::Impl
             debugRuntimeCard.description.Text());
 
         RenderInstalledRows();
+        RenderAgentSkillRows(true);
         RenderDeveloperRows();
         RenderDebugRows();
         RenderTask();
@@ -3618,6 +3717,7 @@ struct WidgetsPagePresenter::Impl
 
         RevokePackageRowEvents();
         Revoke(developerRevokers);
+        Revoke(controlSkillRevokers);
         Revoke(debugRevokers);
         try
         {
@@ -3632,6 +3732,8 @@ struct WidgetsPagePresenter::Impl
             selfDevelopButton.Click(selfDevelopToken);
             cancelTaskButton.Click(cancelTaskToken);
             developerRefreshButton.Click(developerRefreshToken);
+            controlSkillApplyButton.Click(controlSkillApplyToken);
+            controlSkillRefreshButton.Click(controlSkillRefreshToken);
             agentSkillApplyButton.Click(agentSkillApplyToken);
             agentSkillRefreshButton.Click(agentSkillRefreshToken);
             openDevelopmentFolderButton.Click(openDevelopmentFolderToken);
@@ -3699,6 +3801,17 @@ mux::UIElement WidgetsPagePresenter::Content() const noexcept
 mux::UIElement WidgetsPagePresenter::DeveloperToolsContent() const noexcept
 {
     return impl_ ? impl_->developerRoot : nullptr;
+}
+
+mux::UIElement WidgetsPagePresenter::AgentOperationsContent() const noexcept
+{
+    return impl_ ? impl_->controlRoot : nullptr;
+}
+
+mux::FrameworkElement WidgetsPagePresenter::AgentOperationsFocusTarget() const noexcept
+{
+    if (!impl_) return nullptr;
+    return impl_->firstControlSkillTarget ? impl_->firstControlSkillTarget : impl_->controlSkillApplyButton;
 }
 
 mux::UIElement WidgetsPagePresenter::DebugContent() const noexcept

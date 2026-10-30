@@ -1653,16 +1653,17 @@ int main()
     failures += RunSettingsIpcTests();
     TestRoutes();
     TestReadOnlySearchNavigationAndPackageScope();
+    for (const auto page : {SettingsPage::RuntimeModules, SettingsPage::AgentOperations})
     {
         auto store = std::make_shared<FakeStore>();
         SettingsController controller(store);
-        Check(controller.Open(SettingsRoute::ForPage(SettingsPage::RuntimeModules)).Succeeded() &&
+        Check(controller.Open(SettingsRoute::ForPage(page)).Succeeded() &&
             controller.Snapshot()->route == SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings"),
             "direct hidden module route falls back to the About visibility control");
         auto settings = controller.Snapshot()->values.general;
         settings.showAdvancedSettings = true;
         controller.UpdateGeneral(settings, SettingsUpdateMode::PreviewAndCommit);
-        Check(controller.Open(SettingsRoute::ForPage(SettingsPage::RuntimeModules)).Succeeded() && controller.Snapshot()->route.page == SettingsPage::RuntimeModules,
+        Check(controller.Open(SettingsRoute::ForPage(page)).Succeeded() && controller.Snapshot()->route.page == page,
             "host and settings shell agree on visible module navigation");
         settings.showAdvancedSettings = false; settings.runtimeModules.allowed[0] = false;
         controller.UpdateGeneral(settings, SettingsUpdateMode::PreviewAndCommit);

@@ -45,6 +45,7 @@ enum class SettingsPage : std::uint8_t
     ThemeManager,
     IconLibrary,
     RuntimeModules,
+    AgentOperations,
 };
 
 /**

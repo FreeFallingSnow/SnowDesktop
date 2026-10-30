@@ -39,6 +39,7 @@ SnowDesktop's embedded Regular font:
 | `widget-behavior.svg` | Cursor Hover 24 Regular + Filled |
 | `backup.svg` | Cloud Arrow Up 24 Regular + Filled |
 | `about.svg` | Info 24 Regular + Filled |
+| `agent-operations.svg` | Bot 24 Regular + Filled |
 | `developer.svg` | Window Dev Tools 24 Regular + Filled |
 | `debug.svg` | Bug 24 Regular + Filled |
 

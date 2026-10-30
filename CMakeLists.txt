@@ -2187,6 +2187,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32
         LABELS contract integration ipc settings)
+
+    snowdesktop_add_test(
+        SnowDesktopAgentOperationsPreviewTests
+        winui_agent_operations_preview
+        SOURCES tests/winui/agent_operations_preview_tests.cpp
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
+        LABELS integration settings ui winui)
+    add_dependencies(SnowDesktopAgentOperationsPreviewTests SnowDesktop)
+    set_tests_properties(winui_agent_operations_preview PROPERTIES
+        TIMEOUT 120 RESOURCE_LOCK snowdesktop_desktop)
     snowdesktop_add_test(
         SnowDesktopControlIconSettingsTests
         control_icon_settings
@@ -2261,6 +2271,15 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32 advapi32 gdi32 bcrypt
         LABELS contract integration ipc)
+
+    snowdesktop_add_test(
+        SnowDesktopControlSkillClientTests
+        control_skill_client
+        SOURCES tests/platform/control_skill_client_tests.cpp
+            src/platform/control/control_protocol.cpp
+        INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}/widgets/snowdesktop-control/scripts/snowdesktop-control.ps1"
+        LABELS contract integration ipc settings)
 
     snowdesktop_add_test(
         SnowDesktopPrivatePointerTests

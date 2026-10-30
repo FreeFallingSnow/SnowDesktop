@@ -207,6 +207,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         bool debugVisible);
     /** Shows an accessible attention dot when a selected Agent Skill is stale. */
     void SetAgentSkillUpdateAvailable(bool available);
+    void SetControlSkillUpdateAvailable(bool available);
 
     /**
      * Replaces AutoSuggestBox results for the current query.  A result from a
@@ -407,6 +408,7 @@ private:
     bool desktopStyleDockEnabled_ = false;
     bool closed_ = false;
     bool agentSkillUpdateAvailable_ = false;
+    bool controlSkillUpdateAvailable_ = false;
     std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};

@@ -845,7 +845,8 @@
   生成 512×512 封面，目检后再写入清单和打包；若源美术更新，应先从上述源文件同步替换这份标准
   副本，再重生成所有官方社区组件封面。
 - `widgets/` 同时包含内置 Lua 组件与面向用户提供的
-  `snowdesktop-lua-widget` Agent Skill；后者是产品的组件开发功能，必须继续随软件分发，
+  `snowdesktop-lua-widget` 与 `snowdesktop-control` Agent Skill；前者提供组件开发工具，后者通过
+  对外应用控制 IPC 操作正在运行的软件。两者均属于产品功能，必须继续随软件分发，
   不得当作临时 Agent 文件删除。
 - `snowdesktop-lua-widget` Agent Skill 是提供给 SnowDesktop 用户开发、调试和打包 Lua
   组件的产品能力，不是本仓库常规开发工作的默认操作指南。排查或修改宿主原生代码、Dock、

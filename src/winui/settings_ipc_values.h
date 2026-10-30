@@ -95,7 +95,9 @@ SD_IPC_FIELDS(winui::WidgetsPageSnapshot,
     v.installed, v.agentSkills, v.agentSkillTargetMask, v.agentSkillStatusError,
     v.developerActionStatus, v.developmentWorkspace, v.componentCliPath, v.workshopAvailable,
     v.developerPublisherAvailable, v.errors, v.diagnostics, v.sources,
-    v.task, v.feedback, v.developerOverridesVisible);
+    v.task, v.feedback, v.developerOverridesVisible,
+    v.controlAgentSkills, v.controlAgentSkillTargetMask,
+    v.controlAgentSkillStatusError, v.controlAgentSkillActionStatus);
 SD_IPC_FIELDS(winui::WidgetsPageRequest,
     v.command, v.taskId, v.searchRevision, v.query,
     v.packageId, v.sourceId, v.externalItemId, v.version,

@@ -169,7 +169,7 @@ int MatchField(const std::u32string& field,
 bool PageMayBeIndexed(SettingsPage page,
     const SettingsSearchIndexInput& input) noexcept
 {
-    if (page == SettingsPage::RuntimeModules) return input.advancedSettingsVisible;
+    if (page == SettingsPage::RuntimeModules || page == SettingsPage::AgentOperations) return input.advancedSettingsVisible;
     if (page == SettingsPage::DeveloperTools)
         return input.developerToolsVisible;
     if (page == SettingsPage::Debug)
