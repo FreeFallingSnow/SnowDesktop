@@ -1,6 +1,6 @@
 # SnowDesktop DSH 协作插件
 
-此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。运行接口按本机 DSH `0.2.1-rc.2` 随包的插件、工具、文件写入与 Typert API 编写；其他版本须重新核对接口。
+此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.23` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，插件、工具、文件写入与 Typert API 通过该版本随包的真实 SDK 集成测试核对；其他版本须重新核对接口。
 
 插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
 
@@ -15,7 +15,7 @@
 - 消息：全部协作事件、搜索、待确认紧急消息筛选、适配器和智能体确认计数。
 - 历史：批次搜索、结果筛选、打开历史记录查看其他标签页的完整明细，再返回当前批次。
 
-原有无参 `snowCollaboration.snapshot` 不变。新增 `snowCollaboration.read(route)` 仅允许 `/api/status`、固定 32 位小写十六进制批次详情，以及网页已有的两种看板测试第 2/3 次重试日志。Host 在 HTTP 请求前拒绝任意 URL、查询串、路径跳转和其他文件；每次读取仍检查本仓库服务身份，不新增写权限。界面展示范围沿用网页服务的有界记录和日志尾部，不声称加载了服务未提供的历史或完整日志。DSH 兼容版本仍为本机 `0.2.1-rc.2`；需要正常更新插件以加载新增 Host Remote。
+原有无参 `snowCollaboration.snapshot` 不变。新增 `snowCollaboration.read(route)` 仅允许 `/api/status`、固定 32 位小写十六进制批次详情，以及网页已有的两种看板测试第 2/3 次重试日志。Host 在 HTTP 请求前拒绝任意 URL、查询串、路径跳转和其他文件；每次读取仍检查本仓库服务身份，不新增写权限。界面展示范围沿用网页服务的有界记录和日志尾部，不声称加载了服务未提供的历史或完整日志。DSH 兼容版本为本机 `0.2.1-rc.5`；需要正常更新插件以加载新增 Host Remote。
 
 ## 安装
 
