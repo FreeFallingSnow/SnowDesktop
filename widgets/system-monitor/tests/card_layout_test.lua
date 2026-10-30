@@ -162,4 +162,68 @@ return {
     ["an empty grid uses the viewport height"] = function()
         assert(cardLayout.contentHeight(0, 2, 104, 4, 4, 240) == 240)
     end,
+
+    ["a fitted fractional viewport does not keep a one-pixel scroll range"] = function()
+        local viewport = 100.4
+        local height = cardLayout.cardHeight(1, 1, 80, viewport, 4, 4)
+        assert(cardLayout.hostExtent(viewport) == 100)
+        assert(cardLayout.contentHeight(1, 1, height, 4, 4, viewport) == 100)
+        assert(cardLayout.scrollExtent(101, viewport) == 100)
+        assert(cardLayout.scrollExtent(140, viewport) == 140)
+        local overflow = cardLayout.cardHeight(2, 1, 40, viewport, 4, 4)
+        assert(cardLayout.contentHeight(2, 1, overflow, 4, 4, viewport) > 101)
+    end,
+
+    ["horizontal flow fills the fixed rows before opening another column"] = function()
+        local cards = { { id = "a" }, { id = "b" }, { id = "c" },
+            { id = "d" }, { id = "e" } }
+        local cells, packed = cardLayout.pack(cards, 2, function() return "1x1" end, true)
+        cells, packed = cardLayout.transpose(cells)
+        assert(packed == 3)
+        assert(cells[1].column == 0 and cells[1].row == 0)
+        assert(cells[2].column == 0 and cells[2].row == 1)
+        assert(cells[3].column == 1 and cells[3].row == 0)
+        assert(cells[5].column == 2 and cells[5].row == 0)
+        assert(cardLayout.swapSize("2x1") == "1x2")
+        assert(cardLayout.swapSize("1x2") == "2x1")
+        local sized = cardLayout.pack({ { id = "wide" }, { id = "tall" } }, 2,
+            function(id) return cardLayout.swapSize(id == "wide" and "2x1" or "1x2") end,
+            true)
+        sized = cardLayout.transpose(sized)
+        assert(sized[1].columns == 2 and sized[1].rows == 1)
+        assert(sized[2].columns == 1 and sized[2].rows == 2)
+    end,
+
+    ["drop targets follow midpoints and exclude the dragged card"] = function()
+        local frames = {
+            { id = "a", x = 4, y = 4, w = 40, h = 80 },
+            { id = "b", x = 48, y = 4, w = 40, h = 80 },
+            { id = "c", x = 92, y = 4, w = 40, h = 80 },
+        }
+        assert(cardLayout.dropTarget(frames, "a", 100, 20, true) == 2)
+        local endIndex, _, axis, at = cardLayout.dropTarget(frames, "a", 140, 20, true)
+        assert(endIndex == 3 and axis == "x" and at == 132)
+        assert(cardLayout.dropTarget(frames, "c", 10, 20, true) == 1)
+        assert(cardLayout.dropTarget(frames, "b", 70, 20, true) == 2)
+        assert(cardLayout.dropTarget(frames, "missing", 10, 20, true) == nil)
+        local stacked = {
+            { id = "a", x = 4, y = 4, w = 80, h = 40 },
+            { id = "b", x = 4, y = 48, w = 80, h = 40 },
+        }
+        assert(cardLayout.dropTarget(stacked, "a", 20, 80, false) == 1)
+        local below, marker, belowAxis, at = cardLayout.dropTarget(
+            stacked, "a", 20, 100, false)
+        assert(below == 2 and belowAxis == "y" and marker.id == "b" and at == 88)
+        assert(cardLayout.dropTarget(stacked, "b", 20, 10, false) == 1)
+        local grid = {
+            { id = "a", x = 4, y = 4, w = 40, h = 40 },
+            { id = "b", x = 4, y = 48, w = 40, h = 40 },
+            { id = "c", x = 48, y = 4, w = 40, h = 40 },
+        }
+        assert(cardLayout.dropTarget(grid, "a", 20, 50, true) == 1)
+        assert(cardLayout.dropTarget(grid, "a", 20, 80, true) == 2)
+        assert(cardLayout.dropTarget(grid, "c", 20, 80, true) == 3)
+        local afterColumn = cardLayout.dropTarget(grid, "a", 100, 20, true)
+        assert(afterColumn == 3)
+    end,
 }
