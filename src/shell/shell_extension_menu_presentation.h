@@ -106,12 +106,11 @@ class Presentation
     static constexpr UINT FirstCommand = 0x71000000;
     Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring,
                  MenuService &service = SharedMenuService(), std::function<void(bool)> completed = {})
-        : prefs_(std::move(prefs)), source_(source), normalSource_(source), service_(service), completed_(std::move(completed))
+        : prefs_(std::move(prefs)), source_(source), normalSource_(source), originalSource_(source), service_(service), completed_(std::move(completed))
     {
         if (source.paths.empty() || !service_.MenuEnabled(source_, prefs_)) return;
         auto view = service_.MenuDisplay(source_, prefs_);
         initialRevision_ = view.revision;
-        normalStarted_ = GetTickCount64();
         cached_ = std::move(view.snapshot);
         contexts_ = view.contexts;
         bool startShown = false, normalNeeded = false;
@@ -124,18 +123,8 @@ class Presentation
                 if (pair && pair->id == "state:start-pin") startShown = true;
                 else { normalNeeded = true; refreshState_ |= pair != nullptr; }
             }
-        startLane_ = startShown && !source.background && source.context != Context::Desktop && source.paths.size() == 1;
+        startLane_ = startShown && !normalNeeded && !source.background && source.context != Context::Desktop && source.paths.size() == 1;
         if (startShown && !startLane_) { normalNeeded = true; refreshState_ = true; }
-        if (normalNeeded && CanQueryOriginalShortcutObjects(source_))
-        {
-            originalSource_ = source_; originalSource_.originalShortcutOnly = true;
-            if (!cached_)
-            {
-                auto original = service_.MenuDisplay(originalSource_, prefs_);
-                cached_ = std::move(original.snapshot);
-                cachedOriginal_ = cached_.has_value();
-            }
-        }
         if (cached_)
         {
             // Pin state is external to the shortcut's timestamp. Display the
@@ -153,7 +142,7 @@ class Presentation
         if (normalNeeded)
         {
             if (refreshState_) service_.Invalidate(source_);
-            service_.Query(source_, QueryPriority::Menu, refreshState_ || cachedOriginal_);
+            service_.Query(source_, QueryPriority::Menu, refreshState_ || !view.error.empty());
         }
         startDone_ = !startLane_;
         if (startLane_)
@@ -183,21 +172,14 @@ class Presentation
         }
         if ((!normalDone_ || !startDone_ || !SourcesDone()) && !source_.paths.empty())
         {
-            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && originalDone_ && SourcesDone(); };
+            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && SourcesDone(); };
             options.pollItemsStablePrefix = true;
             options.pollPrefetchedSubmenus = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply)
                 {
-                    // A held button, open child or scroll position defers UI
-                    // changes, but must not stop supervised query recovery.
-                    if (!normalDone_)
-                    {
-                        auto view = service_.MenuDisplay(normalSource_, prefs_, true);
-                        MaybeStartOriginalQuery(view);
-                        if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
-                            RetryNormalQuery();
-                    }
+                    // The existing query continues while UI changes are held.
+                    // Missing/failed/slow results never start another query.
                     return {};
                 }
                 auto updated = current;
@@ -211,17 +193,7 @@ class Presentation
                 {
                     auto view = service_.MenuDisplay(normalSource_, prefs_, true);
                     if (view.pending) progressed |= ShowRoots(updated, view, moreCommand);
-                    MaybeStartOriginalQuery(view);
-                    if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
-                    {
-                        // A failed prewarm may still be in backoff, or the helper
-                        // may have exited during this opening. Recover once with
-                        // a fresh query while this popup remains subscribed.
-                        // Shortcut recovery isolates original file handlers from
-                        // the delegated target aggregate that just failed.
-                        RetryNormalQuery();
-                    }
-                    else if (!view.pending)
+                    if (!view.pending)
                     {
                         progressed |= RemoveRoots(updated);
                         if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
@@ -248,29 +220,6 @@ class Presentation
                         rootImages_.clear();
                         rootRows_.clear();
                         progressed |= normalDone_;
-                    }
-                }
-                if (!originalDone_)
-                {
-                    auto view = service_.MenuDisplay(originalSource_, prefs_, true);
-                    if (!view.pending)
-                    {
-                        if (view.snapshot && view.revision > originalRevision_ && view.error.empty())
-                        {
-                            auto additions = std::move(view.snapshot->entries);
-                            std::erase_if(additions, [this](const auto &entry) {
-                                const auto *pair = StatePairForVerb(entry.key);
-                                return startLane_ && pair && pair->id == "state:start-pin";
-                            });
-                            additions = NewNormalEntries(std::move(additions));
-                            if (!additions.empty())
-                            {
-                                Insert(updated, Convert(additions, {}, true), moreCommand);
-                                progressed = true;
-                            }
-                        }
-                        originalDone_ = !view.attributionPending;
-                        progressed |= originalDone_;
                     }
                 }
                 if (!startDone_)
@@ -376,7 +325,7 @@ class Presentation
     }
     bool PollSources(std::vector<modern_menu::Item> &items, UINT moreCommand)
     {
-        bool progressed = false, fallback = false;
+        bool progressed = false;
         for (auto &source : sources_) if (!source.done)
         {
             if (!service_.MenuEnabled(source.request, prefs_))
@@ -395,15 +344,8 @@ class Presentation
                 std::erase_if(additions, [](const auto &entry) { return StatePairForVerb(entry.key) != nullptr; });
                 Insert(items, Convert(NewNormalEntries(std::move(additions))), moreCommand);
             }
-            else fallback = true;
             source.done = true;
             progressed = true;
-        }
-        if (fallback && !sourcesRetried_)
-        {
-            sourcesRetried_ = true;
-            normalDone_ = false;
-            service_.QueryFullMenu(source_);
         }
         return progressed;
     }
@@ -444,29 +386,6 @@ class Presentation
             divider = false;
         }
         return changed;
-    }
-    void MaybeStartOriginalQuery(const MenuView &view)
-    {
-        if (originalQueued_ || cached_ || !originalSource_.originalShortcutOnly ||
-            normalSource_.originalShortcutOnly || !view.pending || GetTickCount64() - normalStarted_ < 3000)
-            return;
-        // Preserve complete discovery while an isolated original-file query
-        // can expose useful rows ahead of a slow shortcut target aggregate.
-        originalQueued_ = true; originalDone_ = false;
-        originalRevision_ = service_.View(originalSource_).revision;
-        service_.Query(originalSource_, QueryPriority::Menu, true);
-    }
-    void RetryNormalQuery()
-    {
-        normalRetried_ = true;
-        if (originalQueued_) { normalDone_ = true; return; }
-        if (originalSource_.originalShortcutOnly)
-        {
-            normalSource_ = originalSource_;
-            initialRevision_ = service_.View(normalSource_).revision;
-        }
-        if (sourcesRetried_ && !normalSource_.originalShortcutOnly) service_.QueryFullMenu(normalSource_);
-        else service_.Query(normalSource_, QueryPriority::Menu, true);
     }
     static bool IsOurCommand(UINT command)
     {
@@ -575,14 +494,9 @@ class Presentation
     std::set<UINT> originalCommands_;
     std::vector<CommandReference> displayedNormal_;
     std::vector<SourceLane> sources_;
-    bool sourcesRetried_ = false;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
-    bool normalRetried_ = false;
     bool cachedOriginal_ = false;
-    bool originalQueued_ = false, originalDone_ = true;
-    ULONGLONG normalStarted_ = 0;
-    std::uint64_t originalRevision_ = 0;
     bool startLane_ = false, normalDone_ = true, startDone_ = true;
     std::uint64_t initialRevision_ = 0;
     std::uint64_t startRevision_ = 0;

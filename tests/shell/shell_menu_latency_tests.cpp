@@ -97,8 +97,9 @@ void TestShellMenuPreparedService()
     service.Query(selected);
     Until([&] { const auto view = service.View(selected); return view.snapshot && !view.pending; },
           "the production service queries the exact selected file");
-    Require(service.View(selected).snapshot->entries.front().key == "prepared",
-            "the service consumes its ready worker instead of starting a cold helper");
+    Require(service.View(selected).snapshot->entries.front().key == "cold" &&
+            trace.Count("phase=helper_start reason=reused") > 0,
+            "the service reuses its ready process without a TXT or target menu prequery");
     Until([&] { return trace.Count("phase=preparation reason=ready") == 2; },
           "one completed real query allows one replacement standby worker", 10000);
     const auto released = trace.Count("phase=preparation reason=released");

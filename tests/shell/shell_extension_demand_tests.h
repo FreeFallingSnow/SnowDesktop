@@ -159,13 +159,17 @@ inline void Streams(int mode)
     }
     releaseSecond = true;
     if (mode == 2)
-        PumpUntil([&] { poll(); return full == 1; }, "a failed source triggers one real aggregate compatibility query");
+    {
+        PumpUntil([&] { poll(); return options.pollItemsFinished(); }, "a failed source finishes without an automatic aggregate query");
+        Expect(full == 0 && actions() == 2 && items.front().command == firstCommand,
+            "source failure preserves the successful command and cannot silently broaden the query to hidden handlers");
+    }
     else
     {
         PumpUntil([&] { poll(); return actions() == 3; }, "second provider appears without waiting for compatibility");
         Expect(items.front().command == firstCommand, "later publication preserves existing command identities");
     }
-    if (mode)
+    if (mode == 1)
     {
         releaseFull = true;
         PumpUntil([&] { poll(); return options.pollItemsFinished(); }, "compatibility stream completes");
@@ -195,6 +199,41 @@ inline void Streams(int mode)
     PumpUntil([&] { return completed.load(); }, "disabled command callback completes");
     Expect(!succeeded && invoked == 0, "disabling a published command prevents its invocation");
     service.Shutdown();
+}
+inline void WarmWorkerLifetime()
+{
+    ext::Session::ReleaseIdleWorker();
+    DWORD firstProcess = 0;
+    for (unsigned query = 0; query < 9; ++query)
+    {
+        ext::Request request; request.paths = {query == 0 ? L"synthetic-first" : L"synthetic-second"};
+        ext::Session session(request, 8000, true);
+        const auto process = session.ProcessId();
+        if (!query) firstProcess = process;
+        else if (query < 8) Expect(process == firstProcess, "healthy opted-in queries retain the owning STA and loaded providers");
+        else Expect(process != firstProcess, "a warm worker retires after its bounded query lifetime");
+        std::optional<ext::Reply> reply;
+        PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "warm worker completes the current selection");
+        Expect(reply->ok && !reply->entries.empty() && reply->entries.front().key == (query ? "second" : "first"),
+            "worker reuse returns a fresh result for the current target instead of the previous menu");
+    }
+    DWORD failedProcess = 0;
+    {
+        ext::Request request; request.paths = {L"synthetic-hang"};
+        ext::Session session(request, 100, true); failedProcess = session.ProcessId();
+        std::optional<ext::Reply> reply;
+        PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "a stalled warm worker retains its query deadline");
+        Expect(!reply->ok, "a timed-out warm worker cannot return a successful cached result");
+    }
+    {
+        ext::Request request; request.paths = {L"synthetic-second"};
+        ext::Session session(request, 8000, true);
+        Expect(session.ProcessId() != failedProcess, "a failed or timed-out worker is never reused");
+        std::optional<ext::Reply> reply;
+        PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "a healthy worker replaces the timed-out worker");
+        Expect(reply->ok, "a prior worker failure does not poison the next selection");
+    }
+    ext::Session::ReleaseIdleWorker();
 }
 inline void CancelQueued()
 {
@@ -678,6 +717,7 @@ inline void Run()
     Plan();
     LiveSourceRegistration();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
+    WarmWorkerLifetime();
     CancelQueued();
     OrdinaryMenusDoNotProbe(false);
     OrdinaryMenusDoNotProbe(true);

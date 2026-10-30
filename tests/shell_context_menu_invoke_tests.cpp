@@ -3,7 +3,6 @@
 #include "shell/shell_extension_menu.h"
 #include "shell/shell_extension_discovery.h"
 #include "shell/shell_menu_read_projection.h"
-#include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_service_catalogue_fixture.h"
 #include "shell/shell_extension_attribution.h"
@@ -52,103 +51,6 @@ void Expect(bool condition, const char* message)
     {
         throw std::runtime_error(message);
     }
-}
-
-void TestAggregateCataloguePriming()
-{
-    namespace ext = snowdesktop::shell_extensions;
-    ext::Request request; request.context = ext::Context::File; request.paths = {L"C:\\Private\\sample.txt"};
-    bool backgroundReady = false, filesReady = false;
-    unsigned calls = 0, materializations = 0;
-    auto bind = [&](const ext::Request &target, bool priming) {
-        if (!priming) ++materializations;
-        auto expected = request;
-        if (priming && expected.background && expected.context == ext::Context::Desktop)
-            expected.context = ext::Context::FolderBackground;
-        Expect(target == expected, "priming preserves the selection and flags while final binding retains the original scope");
-        ext::Entry item;
-        item.key = ++calls == 1 ? "partial" : "ModernArchive";
-        item.label = calls == 1 ? L"Unprimed placeholder" : L"Modern archive";
-        item.token = calls == 1 ? 31u : 43u;
-        return ext::Reply{true, {item}, {}};
-    };
-    auto reply = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
-    Expect(materializations == 1, "cold priming does not duplicate submenu or icon work");
-    Expect(calls == 2 && filesReady && !backgroundReady && reply.ok && reply.entries.size() == 1 &&
-        reply.entries.front().key == "ModernArchive" && reply.entries.front().token == 43,
-        "COLD_FILE_MUST_REBIND: a successful cold partial aggregate is never published with its first tokens");
-    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
-    Expect(materializations == 2, "a warm query still materializes its final menu");
-    Expect(calls == 3, "a primed file catalogue is not rebound again");
-    request.background = true; request.context = ext::Context::Desktop;
-    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
-    Expect(calls == 5 && backgroundReady, "file priming cannot suppress independent background priming");
-    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
-    Expect(calls == 6, "a primed background still queries once");
-
-    // The real desktop-only command fixture is absent from a filesystem
-    // background. Model only that COM boundary: publishing the first menu or
-    // forgetting the original scope must lose this independent command.
-    for (bool extended : {false, true})
-    {
-        ext::Request desktop; desktop.background = true; desktop.context = ext::Context::Desktop;
-        desktop.paths = {L"C:\\Private\\Desktop"}; desktop.extended = extended;
-        bool bg = false, file = false; unsigned bindings = 0;
-        auto complete = ext::QueryWithCataloguePriming(desktop, bg, file,
-            [&](const ext::Request &target, bool priming) {
-                ++bindings;
-                Expect(target.paths == desktop.paths && target.background && target.extended == extended,
-                    "desktop initialization retains the original directory and Shift flag");
-                ext::Entry item; item.token = priming ? 31u : 73u;
-                if (target.context == ext::Context::Desktop)
-                {
-                    item.key = "DesktopOnlyCommand"; item.label = L"Desktop-only command";
-                }
-                else
-                {
-                    item.key = "DirectoryBackground"; item.label = L"Unpublished background command";
-                }
-                return ext::Reply{true, {item}, {}};
-            });
-        Expect(complete.ok && bg && bindings == 2 && complete.entries.size() == 1 &&
-            complete.entries.front().key == "DesktopOnlyCommand" && complete.entries.front().token == 73u,
-            "DESKTOP_ONLY_COMMAND_MUST_SURVIVE: the final desktop scope and its executable tokens must be published");
-    }
-
-    request.background = false; request.context = ext::Context::File; request.extended = true;
-    filesReady = false;
-    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
-    Expect(calls == 8 && filesReady, "Shift is preserved through both file bindings");
-    for (int mode = 0; mode < 7; ++mode)
-    {
-        auto special = request;
-        if (mode == 0) special.startPinOnly = true;
-        if (mode == 1) special.originalShortcutOnly = true;
-        if (mode == 2) special.sourceClsid = L"{12345678-1234-1234-1234-123456789ABC}";
-        if (mode == 3) special.paths = {L"C:\\Private\\original.LNK"};
-        if (mode == 4) special.context = ext::Context::Folder;
-        if (mode == 5) special.paths.push_back(L"C:\\Private\\original.lnk");
-        if (mode == 6) special.context = ext::Context::FolderBackground;
-        bool bg = false, file = false; unsigned count = 0;
-        auto result = ext::QueryWithCataloguePriming(special, bg, file, [&](const ext::Request &target, bool priming) {
-            Expect(!priming, "special queries are complete rather than priming passes");
-            Expect(target == special, "special query identity is preserved"); ++count; return ext::Reply{true, {}, {}};
-        });
-        Expect(result.ok && count == 1 && !file, "metadata, Start, shortcut and folder paths keep their existing warmup rules");
-    }
-    unsigned failures = 0; filesReady = false;
-    auto failed = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &, bool) {
-        ++failures; return ext::Reply{false, {}, "first binding failed"};
-    });
-    Expect(!failed.ok && failures == 1 && !filesReady && failed.error == "first binding failed",
-        "a failed first binding is not retried or disguised as priming success");
-    unsigned finalCalls = 0;
-    auto finalFailure = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &, bool) {
-        if (++finalCalls == 2) return ext::Reply{false, {}, "final binding failed"};
-        ext::Entry item; item.token = 31; return ext::Reply{true, {item}, {}};
-    });
-    Expect(!finalFailure.ok && finalFailure.entries.empty() && finalCalls == 2 && !filesReady &&
-        finalFailure.error == "final binding failed", "failed rebind cannot publish the previous menu or mark the catalogue ready");
 }
 
 void TestStartPinRouting()
@@ -1019,10 +921,15 @@ void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = f
                 DispatchMessageW(&message);
             }
         }
-        auto published = request; published.originalShortcutOnly = shortcut && failFirst;
-        const auto view = service.View(published);
+        const auto view = service.View(request);
         std::cout << "Actual policy popup: disabled=" << disabled << ", fault=" << failFirst
                   << ", attempts=" << attempts << ", rows=" << items.size() << ", error=" << view.error << std::endl;
+        if (failFirst)
+        {
+            Expect(options.pollItemsFinished() && forcedFailure && attempts == 1 && items.empty() && !invoked,
+                "the failed native helper is accepted without an automatic policy-popup retry");
+            return;
+        }
         Expect(options.pollItemsFinished() && view.snapshot && view.error.empty() && !invoked,
                "system policy is observed through a successful actual popup query without invoking a command");
         Expect(!failFirst || (forcedFailure && attempts == 2),
@@ -2160,8 +2067,8 @@ void TestExtensionSessions()
         Expect(state != ext::Session::PreparationState::Pending, "preparation completion or retirement is bounded");
         return state;
     };
+    ext::Session::ReleaseIdleWorker();
     auto preparedRequest = request; preparedRequest.paths = {L"synthetic-prepared"};
-    std::wstring preparationPath;
     ObservedHelper preparedHelper;
     {
         Expect(prepare() == ext::Session::PreparationState::Ready, "private bootstrap becomes ready");
@@ -2176,22 +2083,20 @@ void TestExtensionSessions()
             "Start keeps its separate slot without consuming the prepared ordinary worker");
         ext::Session selected(preparedRequest, 2500, true); const auto reply = wait(selected);
         preparedHelper.process = OpenProcess(SYNCHRONIZE, FALSE, selected.ProcessId());
-        preparationPath = reply.entries.front().label;
-        Expect(reply.ok && reply.entries.front().key == "prepared" && selected.ProcessId() != fresh.ProcessId() &&
+        Expect(reply.ok && reply.entries.front().key == "cold" && reply.entries.front().token == 1 && selected.ProcessId() != fresh.ProcessId() &&
             selected.ProcessId() != startWorker.ProcessId() &&
-            ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent &&
-            GetFileAttributesW(preparationPath.c_str()) != INVALID_FILE_ATTRIBUTES,
-            "the first selection transfers one reserved slot and retains its independent bootstrap objects");
+            ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
+            "the prepared process transfers its slot without querying a bootstrap file before the actual selection");
     }
-    // Closing the kill-on-close job requests termination asynchronously. Check
-    // the kernel's process-exit signal before judging delete-on-close cleanup.
+    Expect(preparedHelper.process && WaitForSingleObject(preparedHelper.process, 0) == WAIT_TIMEOUT,
+        "an opted-in healthy prepared worker remains available after its real query");
+    ext::Session::ReleaseIdleWorker();
+    // Explicit retirement closes the private job asynchronously.
     Expect(preparedHelper.process && WaitForSingleObject(preparedHelper.process, 2500) == WAIT_OBJECT_0,
         "retiring the prepared query stops its helper within the lifetime bound");
-    Expect(GetFileAttributesW(preparationPath.c_str()) == INVALID_FILE_ATTRIBUTES,
-        "retiring the first real menu also removes its delete-on-close bootstrap sample");
     {
         ext::Session next(preparedRequest, 2500, true); const auto reply = wait(next);
-        Expect(reply.ok && reply.entries.front().key == "cold", "ordinary helpers are not recycled after a prepared real query");
+        Expect(reply.ok && reply.entries.front().key == "cold", "explicit retirement makes the next opted-in request fresh");
         ext::Session second(request, 2500); Expect(wait(second).ok, "prepared slot ownership is released exactly once");
         Expect(!ext::Session::PrepareFirstMenuWorker(), "preparation cannot create a third ordinary process");
     }
@@ -2201,6 +2106,7 @@ void TestExtensionSessions()
         Expect(reply.ok && reply.entries.front().key == "cold", "an immediate popup replaces pending preparation without waiting for it");
     }
     {
+        ext::Session::ReleaseIdleWorker();
         Expect(prepare() == ext::Session::PreparationState::Ready, "background fallback setup");
         auto background = preparedRequest; background.background = true; background.context = ext::Context::FolderBackground;
         ext::Session unchanged(background, 2500, true); const auto reply = wait(unchanged);
@@ -2212,20 +2118,7 @@ void TestExtensionSessions()
         Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
             "standby preparation yields capacity instead of failing a second real query");
     }
-    {
-        struct PreparationFailureMode
-        {
-            ~PreparationFailureMode() { SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", nullptr); }
-        } mode;
-        for (const auto fault : {L"fail", L"hang"})
-        {
-            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", fault);
-            Expect(prepare(std::wstring_view(fault) == L"hang" ? 150 : 2500) == ext::Session::PreparationState::Absent,
-                "failed or timed-out preparation stops its helper and returns its ordinary slot");
-            ext::Session recovered(preparedRequest, 2500, true); const auto reply = wait(recovered);
-            Expect(reply.ok && reply.entries.front().key == "cold", "preparation failure preserves the normal first-query path");
-        }
-    }
+    ext::Session::ReleaseIdleWorker();
     Expect(prepare() == ext::Session::PreparationState::Ready, "generation invalidation setup");
     ext::InvalidateMenuCache();
     Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
@@ -4419,9 +4312,6 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
         after.snapshot->entries.front().label == L"18",
            "a changed registration re-queries once and publishes the current management action");
 }
-// Only the helper boundary fails. The real popup, backoff and scheduler must
-// recover once, and a persistent failure must finish without a retry loop.
-
 // Real registry metadata and notifications drive production publication. Only
 // helper replies and completion order are controlled; no fixture is invoked.
 void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Folder)
@@ -4879,8 +4769,8 @@ void TestWarmFailureRecovery(bool permanent)
         "popup finishes its stale-cache failure recovery");
     std::wcout << L"Warm-cache failure recovery: queries=" << queries << L" items=" << items.size() << L" label="
                << (items.empty() ? L"" : items.front().label) << std::endl;
-    Expect(queries == 3 && (permanent ? items.empty() : items.size() == 1 && items.front().label == L"Recovered"),
-           "new popup must recover once rather than treating a failed stale-cache refresh as successful publication");
+    Expect(queries == 2 && items.empty(),
+           "a failed refresh stops this opening without issuing an automatic second query");
     Expect(fullReads == 0, "ordinary transient and permanent refresh failures never request complete inventory");
 }
 void TestPopupQueryFailureRecovery(bool background, bool permanent)
@@ -4947,190 +4837,84 @@ void TestPopupQueryFailureRecovery(bool background, bool permanent)
             return options.pollItemsFinished();
         },
         "popup finishes after transient child failure");
-    Expect(queries == 2 && (permanent ? items.empty() : items.size() == 1 && items[0].label == L"Recovered action"),
-           "a transient helper failure must not leave the popup permanently empty or suppressed by prewarm backoff");
+    Expect(queries == (background ? 2u : 1u) &&
+           (background && !permanent ? items.size() == 1 && items[0].label == L"Recovered action" : items.empty()),
+           "each explicit opening queries once; a failed opening never retries in place");
 }
-// A failed delegated target query must not trap both display and fresh invocation.
-// Only the native process boundary is controlled; projection, caching, scheduling,
-// command resolution and popup subscription are the production implementation.
+// A failed or slow shortcut aggregate is never supplemented by another
+// original-object request. A new explicit opening may make one new attempt.
 void TestShortcutQueryRecovery(bool permanent = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
-    ext::Request request;
-    request.paths = {(temp.path / L"original.lnk").wstring()};
+    ext::Request request; request.paths = {(temp.path / L"single.lnk").wstring()};
     std::ofstream(request.paths.front()) << "private selection";
-    auto original = request; original.originalShortcutOnly = true;
-    std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
-    std::atomic<bool> releaseFull = false, firstPopupComplete = false;
-    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
-        if (target.paths != request.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
-        const auto n = target.originalShortcutOnly ? ++originalQueries : ++fullQueries;
-        const bool recovery = target.originalShortcutOnly;
-        return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
-            ext::Reply reply;
-            if ((!recovery && (n == 1 || !firstPopupComplete)) || (recovery && permanent))
-            { reply.error = "controlled query failure"; return reply; }
-            if (!recovery && n == 2 && !releaseFull) return {};
-            reply.ok = true;
-            ext::Entry group; group.provider = "verb:inspect"; group.key = "inspect"; group.label = L"Original file";
-            ext::Entry child; child.provider = group.provider; child.key = "details"; child.label = L"Details";
-            child.token = recovery && n > 1 ? 101 : 12;
-            group.children = {child}; reply.entries = {group};
-            if (!recovery) {
-                ext::Entry modern; modern.provider = "verb:modern"; modern.key = "modern"; modern.label = L"Modern provider";
-                modern.token = n > 2 ? 203 : 13; reply.entries.push_back(modern);
-            }
-            return reply;
-        }, [&, recovery](UINT token, POINT) {
-            Expect((recovery && token == 101) || (!recovery && token == 203),
-                "popup invocation resolves a fresh token in the displayed command's query lane");
-            ++invoked;
-        }};
+    std::atomic<unsigned> queries = 0, originalQueries = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request& target) {
+        const auto n = ++queries;
+        if (target.originalShortcutOnly) ++originalQueries;
+        return ext::QueryWork{[n, permanent]() -> std::optional<ext::Reply> {
+            if (n == 1 || permanent) return ext::Reply{false, {}, "controlled first-query failure"};
+            ext::Entry item; item.provider = "verb:inspect"; item.key = "inspect"; item.label = L"Single result";
+            return ext::Reply{true, {item}, {}};
+        }, {}};
     }, [] { ext::Catalogue c; c.revision = 17; return c; });
-    ext::Preferences prefs;
-    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
-    ext::SetCommon(prefs, "verb:modern", ext::Category::Objects, true);
+    ext::Preferences prefs; ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
     service.Configure(prefs);
-    ext::Presentation first(request, prefs, L"", L"", service);
-    std::vector<menu::Item> items; menu::Options options; first.Attach(items, options, 0);
-    PumpUntil([&] { auto v = service.View(request); return !v.pending && !v.error.empty(); }, "controlled full query fails before blocked-display polling");
-    Expect(!options.pollItems(items, false) && items.empty(), "blocked display must not return visible row mutations");
-    ext::Request barrier; barrier.paths = {(temp.path / L"barrier.txt").wstring()};
-    std::ofstream(barrier.paths.front()) << "private scheduler observation";
-    service.Query(barrier, ext::QueryPriority::Inspect, true);
-    PumpUntil([&] { return service.View(barrier).snapshot.has_value(); }, "lower-priority barrier observes any recovery started by blocked-display polling");
-    Expect(originalQueries == 1, "query recovery must start while root display updates are deferred");
-    PumpUntil([&] {
-        if (auto next = options.pollItems(items, true)) items = std::move(*next);
-        return options.pollItemsFinished();
-    }, "shortcut recovery publishes after the delegated query fails");
-    if (permanent)
+    for (unsigned opening = 1; opening <= 2; ++opening)
     {
-        Expect(fullQueries == 1 && originalQueries == 1 && items.empty() && !service.View(original).error.empty(),
-            "a failed original shortcut recovery finishes without an unbounded retry loop");
-        return;
+        ext::Presentation popup(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+        PumpUntil([&] {
+            if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next);
+            return !options.pollItemsFinished || options.pollItemsFinished();
+        }, "the single shortcut query completes without original-object recovery");
+        Expect(queries == opening && originalQueries == 0, "each explicit opening has one query and no recovery request");
+        Expect(opening == 1 || permanent ? items.empty() : items.size() == 1 && items.front().label == L"Single result",
+            "first failure is accepted; a later explicit opening can publish its own result");
     }
-    firstPopupComplete = true;
-    Expect(fullQueries == 1 && originalQueries == 1 && items.size() == 1 && items[0].label == L"Original file",
-        "a popup recovers original shortcut commands without repeating the failed target query");
-    Expect(!service.View(request).snapshot && service.View(original).snapshot,
-        "a partial shortcut recovery does not masquerade as a complete query");
-    ext::MenuSnapshotCache disk(temp.path / L"disk");
-    ext::Reply partial; partial.ok = true;
-    Expect(!disk.Store(disk.Capture(original), partial) && !disk.Find(disk.Capture(request)),
-        "partial original shortcut snapshots cannot replace complete disk snapshots");
-    Expect(disk.Store(disk.Capture(request), partial) && !disk.Find(disk.Capture(original)),
-        "recovery requests cannot borrow complete snapshots with a different query identity");
-    ext::Presentation second(request, prefs, L"", L"", service);
-    std::vector<menu::Item> warm; menu::Options warmOptions; second.Attach(warm, warmOptions, 0);
-    Expect(warm.size() == 1 && warm[0].children.size() == 1 && warmOptions.pollItems && !warmOptions.pollItemsFinished(),
-        "the next opening displays recovered rows immediately while remaining subscribed to the complete query");
-    PumpUntil([&] { return fullQueries == 2; }, "complete query refresh starts behind recovered rows");
-    Expect(second.Invoke(warm[0].children[0].command, {}), "recovered child command remains executable");
-    PumpUntil([&] { return invoked == 1; }, "recovered invocation avoids the blocked delegated target");
-    Expect(originalQueries == 2 && !releaseFull, "recovery invocation refreshes independently of a pending complete query");
-    releaseFull = true;
-    PumpUntil([&] {
-        if (auto next = warmOptions.pollItems(warm, true)) warm = std::move(*next);
-        return warmOptions.pollItemsFinished();
-    }, "a healthy complete result supplements recovered original rows");
-    const auto modern = std::find_if(warm.begin(), warm.end(), [](const auto &item) { return item.label == L"Modern provider"; });
-    Expect(std::count_if(warm.begin(), warm.end(), [](const auto &item) { return !item.separator; }) == 2 &&
-        warm[0].label == L"Original file" && modern != warm.end(),
-        "complete discovery retains additional providers without duplicating recovered roots");
-    Expect(second.Invoke(modern->command, {}), "additional complete-query provider remains executable");
-    PumpUntil([&] { return invoked == 2; }, "additional provider invokes through a fresh complete query");
-    Expect(fullQueries == 3 && originalQueries == 2, "recovered and complete commands keep independent execution identities");
-    ext::Presentation third(request, prefs, L"", L"", service);
-    std::vector<menu::Item> complete; menu::Options completeOptions; third.Attach(complete, completeOptions, 0);
-    Expect(complete.size() == 2 && !completeOptions.pollItems, "a healthy complete cache supersedes partial recovery on later openings");
 }
 void TestSlowShortcutQueryRecovery(bool fullFailure = false, bool originalFailure = false)
 {
-    // Real production presentation and scheduling; only helper completion is
-    // controlled. A slow delegated target must not withhold original rows,
-    // drop late providers, or start duplicate recovery queries after failure.
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory temp;
     ext::Request request; request.paths = {(temp.path / L"slow.lnk").wstring()};
     std::ofstream(request.paths.front()) << "private selection";
-    auto original = request; original.originalShortcutOnly = true;
-    std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
-    std::atomic<bool> releaseFull = false;
-    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
-        const bool recovery = target.originalShortcutOnly;
-        const auto n = recovery ? ++originalQueries : ++fullQueries;
-        return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
-            if (!recovery && n == 1 && !releaseFull) return {};
-            ext::Reply reply;
-            if (n == 1 && (recovery ? originalFailure : fullFailure))
-            { reply.error = "controlled query failure"; return reply; }
-            reply.ok = true;
-            ext::Entry group; group.provider = "verb:inspect"; group.key = "inspect"; group.label = L"Original file";
-            ext::Entry child; child.provider = group.provider; child.key = "details"; child.label = L"Details";
-            child.token = recovery && n > 1 ? 101 : 12;
-            group.children = {child}; reply.entries = {group};
-            if (!recovery) {
-                ext::Entry extra = child; extra.key = "expanded"; extra.label = L"Late child"; extra.token = n > 1 ? 202 : 14;
-                reply.entries[0].children.push_back(extra);
-                ext::Entry modern; modern.provider = "verb:modern"; modern.key = "modern"; modern.label = L"Modern provider";
-                modern.token = n > 1 ? 203 : 13; reply.entries.push_back(modern);
-            }
-            return reply;
-        }, [&, recovery](UINT token, POINT) {
-            Expect((recovery && token == 101) || (!recovery && (token == 202 || token == 203)),
-                "early rows and late providers invoke fresh tokens through their own query identities");
-            ++invoked;
-        }};
+    std::atomic<unsigned> queries = 0, originalQueries = 0;
+    std::atomic<bool> release = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request& target) {
+        ++queries;
+        const bool original = target.originalShortcutOnly;
+        if (original) ++originalQueries;
+        return ext::QueryWork{[&, original]() -> std::optional<ext::Reply> {
+            if (!release && !original) return {};
+            if (original ? originalFailure : fullFailure) return ext::Reply{false, {}, "controlled query failure"};
+            ext::Entry item; item.provider = "verb:inspect"; item.key = "inspect"; item.label = L"Single late result";
+            return ext::Reply{true, {item}, {}};
+        }, {}};
     }, [] { ext::Catalogue c; c.revision = 17; return c; });
-    ext::Preferences prefs;
-    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
-    ext::SetCommon(prefs, "verb:modern", ext::Category::Objects, true);
+    ext::Preferences prefs; ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
     service.Configure(prefs);
     ext::Presentation popup(request, prefs, L"", L"", service);
     std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+    PumpUntil([&] { return queries == 1; }, "one shortcut query is pending");
+    const auto started = GetTickCount64();
     PumpUntil([&] {
-        Expect(!options.pollItems(items, false) && items.empty(), "deferred display cannot publish early shortcut rows");
-        const auto view = service.View(original);
-        return originalQueries == 1 && !view.pending && (view.snapshot || !view.error.empty());
-    }, "a pending delegated target starts isolated original discovery while display updates are deferred");
-    Expect(fullQueries == 1 && !releaseFull && !options.pollItemsFinished(),
-        "original discovery preserves the in-flight complete query and its subscription");
-    if (auto next = options.pollItems(items, true)) items = std::move(*next);
-    Expect(originalFailure ? items.empty() : items.size() == 1 && items[0].label == L"Original file",
-        "only a successful isolated result is displayed ahead of the blocked complete query");
-    if (!originalFailure) {
-        Expect(popup.Invoke(items[0].children[0].command, {}), "early original child is executable before target completion");
-        PumpUntil([&] { return invoked == 1; }, "early original invocation uses an independent fresh query");
-        Expect(originalQueries == 2 && !releaseFull, "executing an early child does not wait for the delegated aggregate");
-    }
-    releaseFull = true;
+        if (options.pollItems) Expect(!options.pollItems(items, false), "held UI does not publish pending rows");
+        Expect(queries == 1 && originalQueries == 0, "a slow query never starts a parallel original-object query");
+        return GetTickCount64() - started >= 3200;
+    }, "pass the former three-second recovery threshold without another query");
+    release = true;
     PumpUntil([&] {
-        if (auto next = options.pollItems(items, true)) items = std::move(*next);
-        return options.pollItemsFinished();
-    }, "both success and failure finish the subscribed shortcut streams");
-    Expect(fullQueries == 1 && originalQueries == (originalFailure ? 1u : 2u),
-        "a delegated failure after early recovery does not start duplicate or unbounded queries");
-    const auto modern = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"Modern provider"; });
-    const auto expected = fullFailure ? (originalFailure ? 0 : 1) : 2;
-    Expect(std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }) == expected &&
-        (fullFailure ? modern == items.end() : modern != items.end()),
-        "late complete discovery retains extra providers without duplicating early roots");
-    if (!fullFailure) {
-        const auto group = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"Original file"; });
-        Expect(group != items.end() && group->children.size() == 2 && group->children[0].label == L"Details" && group->children[1].label == L"Late child",
-            "late complete discovery supplements children inside an already displayed original group");
-        Expect(popup.Invoke(group->children[1].command, {}), "a late child inside an early group is executable");
-        PumpUntil([&] { return invoked == (originalFailure ? 1u : 2u); }, "late child uses the complete-query identity");
-        Expect(popup.Invoke(modern->command, {}), "a late complete provider remains executable");
-        PumpUntil([&] { return invoked == (originalFailure ? 2u : 3u); }, "late provider execution refreshes the complete query");
-        Expect(fullQueries == 3, "late provider execution uses the complete request rather than original-only discovery");
-    }
+        if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next);
+        return !options.pollItemsFinished || options.pollItemsFinished();
+    }, "the same pending query completes or fails without a retry");
+    Expect(queries == 1 && originalQueries == 0 &&
+        (fullFailure ? items.empty() : items.size() == 1 && items.front().label == L"Single late result"),
+        "late results belong to the only queried shortcut aggregate");
 }
-
 void TestMenuPromotesQueuedPrewarm()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -5976,15 +5760,10 @@ int wmain(int argc, wchar_t **argv)
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
-        static std::wstring preparedSample;
+        static unsigned queries = 0;
+        ++queries;
         if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"SnowDesktop-MenuInit-"))
-        {
-            wchar_t fault[16]{};
-            GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", fault, static_cast<DWORD>(std::size(fault)));
-            if (std::wstring_view(fault) == L"hang") Sleep(INFINITE);
-            if (std::wstring_view(fault) == L"fail") return snowdesktop::shell_extensions::Reply{false, {}, "preparation fault"};
-            preparedSample = request.paths.front();
-        }
+            throw std::runtime_error("temporary TXT menu queries are forbidden");
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
         if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"menu-slot-held.txt")
         {
@@ -6018,7 +5797,7 @@ int wmain(int argc, wchar_t **argv)
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
         if (request.paths.front() == L"synthetic-prepared" ||
             std::filesystem::path(request.paths.front()).filename() == L"prepared-retention.txt")
-        { entry.key = preparedSample.empty() ? "cold" : "prepared"; entry.label = preparedSample; entry.enabled = true; }
+        { entry.key = "cold"; entry.token = queries; entry.enabled = true; }
         if (request.paths.front() == L"synthetic-stdio")
         {
             DWORD written = 0;
@@ -6173,10 +5952,8 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-network-selection-scheduling")
             TestNetworkSelectionScheduling();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-native-catalogue-prime")
-            TestAggregateCataloguePriming();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
-            TestAggregateCataloguePriming();
             for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
@@ -6230,7 +6007,6 @@ int wmain(int argc, wchar_t **argv)
             demand_tests::Run();
             // Refresh controls, registry inventory and shortcut recovery have
             // separate CTest entries with the same resource lock and deadline.
-            TestAggregateCataloguePriming();
             for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();

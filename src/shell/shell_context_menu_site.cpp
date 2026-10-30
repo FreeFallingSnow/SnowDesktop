@@ -60,6 +60,7 @@ public:
     ~SelectionView() { for (auto child : children_) ILFree(child); }
     HRESULT Initialize(UINT count, PCUITEMID_CHILD_ARRAY children)
     {
+        if (!count) return S_OK;
         for (UINT i = 0; i < count; ++i)
         {
             if (!children[i]) return E_INVALIDARG;
@@ -133,6 +134,7 @@ public:
         *object = nullptr;
         if ((flags & SVGIO_TYPE_MASK) != SVGIO_SELECTION && (flags & SVGIO_TYPE_MASK) != SVGIO_ALLVIEW)
             return E_INVALIDARG;
+        if (children_.empty()) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
         if (IsEqualIID(iid, IID_IDataObject))
             return folder_->GetUIObjectOf(owner_, static_cast<UINT>(children_.size()),
                 const_cast<PCUITEMID_CHILD_ARRAY>(children_.data()), iid, nullptr, object);
@@ -143,7 +145,7 @@ public:
     }
     IFACEMETHODIMP GetSelectionMarkedItem(int* index) override { return GetFocusedItem(index); }
     IFACEMETHODIMP GetFocusedItem(int* index) override
-        { if (!index) return E_POINTER; *index = 0; return S_OK; }
+        { if (!index) return E_POINTER; *index = children_.empty() ? -1 : 0; return children_.empty() ? S_FALSE : S_OK; }
     IFACEMETHODIMP GetItemPosition(PCUITEMID_CHILD, POINT*) override { return E_NOTIMPL; }
     IFACEMETHODIMP GetSpacing(POINT*) override { return E_NOTIMPL; }
     IFACEMETHODIMP GetDefaultSpacing(POINT*) override { return E_NOTIMPL; }
@@ -168,7 +170,7 @@ public:
     {
         if (!object) return E_POINTER;
         *object = nullptr;
-        if (index < 0) return E_INVALIDARG;
+        if (index < 0 || !selection_) return E_INVALIDARG;
         ComPtr<IShellItem> item;
         const HRESULT hr = selection_->GetItemAt(static_cast<DWORD>(index), &item);
         return SUCCEEDED(hr) ? item->QueryInterface(iid, object) : hr;
@@ -182,7 +184,13 @@ public:
         if (start >= static_cast<int>(children_.size())) return S_FALSE;
         *index = start; return S_OK;
     }
-    IFACEMETHODIMP GetSelection(BOOL, IShellItemArray** items) override { return selection_.CopyTo(items); }
+    IFACEMETHODIMP GetSelection(BOOL noneImpliesFolder, IShellItemArray** items) override
+    {
+        if (!items) return E_POINTER;
+        *items = nullptr;
+        if (selection_) return selection_.CopyTo(items);
+        return noneImpliesFolder ? GetFolder(IID_PPV_ARGS(items)) : HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    }
     IFACEMETHODIMP GetSelectionState(PCUITEMID_CHILD child, DWORD* flags) override
     {
         if (!flags) return E_POINTER;
@@ -303,24 +311,6 @@ private:
 
 } // namespace
 
-bool ShellSelectionNeedsFileMenuPrimer(const std::vector<std::wstring>& paths)
-{
-    if (paths.empty()) return true;
-    for (const auto& path : paths)
-    {
-        if (path.size() < 3 || path[1] != L':' || (path[2] != L'\\' && path[2] != L'/')) return true;
-        const wchar_t root[] = {path[0], L':', L'\\', 0};
-        if (GetDriveTypeW(root) == DRIVE_REMOTE) return true;
-        const auto attributes = GetFileAttributesW(path.c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES ||
-            (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE))) return true;
-        const auto extension = PathFindExtensionW(path.c_str());
-        for (const auto special : {L".lnk", L".url", L".library-ms", L".search-ms", L".searchconnector-ms"})
-            if (lstrcmpiW(extension, special) == 0) return true;
-    }
-    return false;
-}
-
 ShellMenuInitializationFile::ShellMenuInitializationFile()
 {
     GUID id{};
@@ -339,30 +329,6 @@ ShellMenuInitializationFile::ShellMenuInitializationFile()
 ShellMenuInitializationFile::~ShellMenuInitializationFile()
 {
     if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-}
-
-struct ShellFileMenuPrimer::Impl
-{
-    ShellMenuInitializationFile file;
-    ComPtr<IContextMenu> context;
-    HMENU menu = CreatePopupMenu();
-    ~Impl()
-    {
-        context.Reset();
-        if (menu) DestroyMenu(menu);
-    }
-};
-
-ShellFileMenuPrimer::ShellFileMenuPrimer() : impl_(std::make_unique<Impl>()) {}
-ShellFileMenuPrimer::~ShellFileMenuPrimer() = default;
-
-bool ShellFileMenuPrimer::Initialize()
-{
-    if (impl_->file.handle == INVALID_HANDLE_VALUE || !impl_->menu) return false;
-    ComPtr<IShellItem> item;
-    if (FAILED(SHCreateItemFromParsingName(impl_->file.path.c_str(), nullptr, IID_PPV_ARGS(&item))) || !item ||
-        FAILED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&impl_->context))) || !impl_->context) return false;
-    return SUCCEEDED(impl_->context->QueryContextMenu(impl_->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
 }
 
 struct ShellContextMenuSite::Impl
@@ -386,10 +352,6 @@ struct ShellContextMenuSite::Impl
         if (hostWindow)
             DestroyWindow(hostWindow);
         hostWindow = nullptr;
-        initialMenu.Reset();
-        if (initialPopup) DestroyMenu(initialPopup);
-        initialPopup = nullptr;
-        filePrimer.reset();
     }
 
     HWND hostWindow = nullptr;
@@ -397,9 +359,6 @@ struct ShellContextMenuSite::Impl
     ComPtr<IShellView> view;
     ComPtr<BrowserSite> browser;
     ComPtr<IObjectWithSite> attachedMenu;
-    ComPtr<IContextMenu> initialMenu;
-    HMENU initialPopup = nullptr;
-    std::unique_ptr<ShellFileMenuPrimer> filePrimer;
 };
 
 ShellContextMenuSite::ShellContextMenuSite()
@@ -485,64 +444,12 @@ bool ShellContextMenuSite::Attach(IContextMenu* contextMenu)
 
 HRESULT ShellContextMenuSite::BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
     UINT firstCommand, UINT lastCommand, UINT flags,
-    const MenuFactory& bind, IContextMenu** contextMenu, bool initializeFileAssociations)
+    const MenuFactory& bind, IContextMenu** contextMenu)
 {
-    shell_extensions::MenuTiming total("native_menu.total");
-    if (!contextMenu) return E_POINTER;
-    *contextMenu = nullptr;
-    impl_->Reset();
-    if (!folder || !IsWindow(owner) || !menu || !bind || firstCommand > lastCommand)
-        return E_INVALIDARG;
-
-    // Match the ordinary helper's folder/ShellLink bootstrap: initialize file
-    // associations before folder-only providers create windows from DllMain.
-    std::unique_ptr<ShellFileMenuPrimer> filePrimer;
-    {
-        shell_extensions::MenuTiming timing("native_menu.file_primer");
-        if (initializeFileAssociations)
-        {
-            filePrimer = std::make_unique<ShellFileMenuPrimer>();
-            filePrimer->Initialize();
-        }
-        timing.Record(initializeFileAssociations ? "queried" : "ordinary_file_skipped");
-    }
-    ComPtr<IContextMenu> initial;
-    shell_extensions::MenuTiming initialBind("native_menu.initial_bind");
-    HRESULT hr = bind(owner, initial.GetAddressOf());
-    initialBind.Record(SUCCEEDED(hr) ? "complete" : "failed");
-    if (FAILED(hr) || !initial) return FAILED(hr) ? hr : E_FAIL;
-    const HMENU scratch = CreatePopupMenu();
-    if (!scratch) return E_OUTOFMEMORY;
-    // No Shell view and no synchronous cascade expansion during initial loads.
-    shell_extensions::MenuTiming initialQuery("native_menu.initial_query");
-    hr = initial->QueryContextMenu(scratch, 0, firstCommand, lastCommand,
-        flags & ~CMF_SYNCCASCADEMENU);
-    initialQuery.Record(SUCCEEDED(hr) ? "complete" : "failed");
-    if (FAILED(hr)) { initial.Reset(); DestroyMenu(scratch); return hr; }
-
-    shell_extensions::MenuTiming viewTiming("native_menu.view");
-    Initialize(folder, owner);
-    viewTiming.Record(HostWindow() ? "complete" : "unavailable");
-    impl_->initialMenu = std::move(initial);
-    // Provider windows/timers can still refer to the unpublished HMENU during
-    // view initialization and final binding. Retain it with its COM aggregate.
-    impl_->initialPopup = scratch;
-    impl_->filePrimer = std::move(filePrimer);
-    ComPtr<IContextMenu> actual;
-    shell_extensions::MenuTiming finalBind("native_menu.final_bind");
-    hr = bind(HostWindow() ? HostWindow() : owner, actual.GetAddressOf());
-    finalBind.Record(SUCCEEDED(hr) ? "complete" : "failed");
-    if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
-    Attach(actual.Get());
-    // The unpublished aggregate's offsets/state must never be reused by a
-    // real command. The fresh aggregate receives the original site and flags.
-    shell_extensions::MenuTiming finalQuery("native_menu.final_query");
-    hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
-    finalQuery.Record(SUCCEEDED(hr) ? "complete" : "failed");
-    if (FAILED(hr)) return hr;
-    actual.CopyTo(contextMenu);
-    total.Record("complete");
-    return hr;
+    // Backgrounds use the same lightweight site as selected items. Avoid
+    // creating an enumerating Shell view or querying a disposable TXT menu.
+    return BuildSelectionMenu(folder, owner, menu, firstCommand, lastCommand,
+        flags, bind, 0, nullptr, contextMenu);
 }
 
 HRESULT ShellContextMenuSite::BuildNamespaceMenu(HWND owner, HMENU menu,
@@ -565,47 +472,14 @@ HRESULT ShellContextMenuSite::BuildNamespaceMenu(HWND owner, HMENU menu,
 
 HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
     UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
-    UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu,
-    bool primeProviders, bool initializeFileAssociations)
+    UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu)
 {
     shell_extensions::MenuTiming total("native_selection.total");
     if (!contextMenu) return E_POINTER;
     *contextMenu = nullptr;
     impl_->Reset();
-    if (!folder || !IsWindow(owner) || !menu || !bind || !count || !children || firstCommand > lastCommand)
+    if (!folder || !IsWindow(owner) || !menu || !bind || (count && !children) || firstCommand > lastCommand)
         return E_INVALIDARG;
-    std::unique_ptr<ShellFileMenuPrimer> filePrimer;
-    struct InitialPopup { HMENU value = nullptr; ~InitialPopup() { if (value) DestroyMenu(value); } } initialPopup;
-    ComPtr<IContextMenu> initial;
-    if (primeProviders)
-    {
-        if (initializeFileAssociations)
-        {
-            filePrimer = std::make_unique<ShellFileMenuPrimer>();
-            filePrimer->Initialize();
-        }
-        HRESULT hr = bind(owner, initial.GetAddressOf());
-        if (FAILED(hr) || !initial) return FAILED(hr) ? hr : E_FAIL;
-        initialPopup.value = CreatePopupMenu();
-        if (!initialPopup.value) return E_OUTOFMEMORY;
-        hr = initial->QueryContextMenu(initialPopup.value, 0, firstCommand, lastCommand, flags & ~CMF_SYNCCASCADEMENU);
-        if (FAILED(hr)) return hr;
-        ComPtr<IContextMenu3> messages3;
-        ComPtr<IContextMenu2> messages2;
-        LRESULT ignored = 0;
-        if (SUCCEEDED(initial.As(&messages3)))
-            messages3->HandleMenuMsg2(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(initialPopup.value), 0, &ignored);
-        else if (SUCCEEDED(initial.As(&messages2)))
-            messages2->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(initialPopup.value), 0);
-        // Let already-queued packaged-provider initialization complete without
-        // creating/enumerating an unrelated Windows folder view.
-        MSG message{};
-        for (unsigned i = 0; i < 16 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++i)
-        {
-            if (message.message == WM_QUIT) { PostQuitMessage(static_cast<int>(message.wParam)); return E_ABORT; }
-            TranslateMessage(&message); DispatchMessageW(&message);
-        }
-    }
     auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
     if (!view) return E_OUTOFMEMORY;
     HRESULT hr = view->Initialize(count, children);
@@ -625,9 +499,6 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
     query.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) return hr;
-    impl_->initialMenu = std::move(initial);
-    impl_->initialPopup = std::exchange(initialPopup.value, nullptr);
-    impl_->filePrimer = std::move(filePrimer);
     actual.CopyTo(contextMenu);
     total.Record("complete", count);
     return hr;

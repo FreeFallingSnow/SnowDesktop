@@ -1,5 +1,4 @@
 #include "shell_extension_menu.h"
-#include "shell_extension_menu_query.h"
 #include "shell_menu_read_projection.h"
 #include "shell_extension_source.h"
 #include "shell_extension_diagnostics.h"
@@ -37,6 +36,7 @@ constexpr std::uint64_t kMenuSignatureSeed = 14695981039346656037ull;
 std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
+constexpr unsigned kMaximumWarmQueries = 8;
 using RegistryWatch = detail::MenuRegistryMonitor;
 struct RegistryNotifications
 {
@@ -234,7 +234,6 @@ struct Pidl
         CoTaskMemFree(value);
     }
 };
-using TemporaryMenuFile = ShellMenuInitializationFile;
 std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr)
 {
     wchar_t value[32768]{};
@@ -281,6 +280,8 @@ struct Host
 {
     HWND window = nullptr;
     std::vector<std::unique_ptr<Native>> menus;
+    std::vector<std::unique_ptr<Native>> retiredMenus;
+    unsigned ordinaryQueries = 0;
     std::map<UINT, Command> commands;
     UINT next = 1;
     Native *tracking = nullptr;
@@ -288,7 +289,6 @@ struct Host
     bool nativeLightTheme = true;
     bool invoked = false;
     size_t count = 0;
-    bool fileAssociationsReady = false;
     StartPinExecutor startPin;
     struct RegisteredIcon { std::wstring name, friendlyName, module; };
     std::map<Context, std::vector<RegisteredIcon>> registeredIcons;
@@ -342,6 +342,7 @@ struct Host
     ~Host()
     {
         menus.clear();
+        retiredMenus.clear();
         if (window)
             DestroyWindow(window);
     }
@@ -731,7 +732,6 @@ struct Host
         count = 0;
         invoked = false;
     }
-    bool catalogueInitialized = false, fileCatalogueInitialized = false;
     void NvidiaCompatibility(const Request &request, Reply &reply)
     {
         if (request.omitNvidiaCompatibility || !request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
@@ -753,11 +753,8 @@ struct Host
             source->directory = std::filesystem::path(filePath).parent_path().wstring();
             CoTaskMemFree(filePath);
         }
-        progress("query NVIDIA compatibility default menu");
-        if (!source->menu || FAILED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source->context))) ||
-            FAILED(source->context->QueryContextMenu(source->menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
-        const auto command = DefaultApplicationOpen(source->context.Get(), source->menu);
-        if (!command) return;
+        // Display metadata does not need an application context-menu query.
+        // A click resolves and validates its default open command separately.
         progress("read NVIDIA compatibility name");
         PWSTR name = nullptr;
         if (FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &name)) || !name) return;
@@ -775,16 +772,11 @@ struct Host
             DeleteObject(bitmap);
         }
         entry.token = next++;
-        commands[entry.token] = {source.get(), *command, false};
+        commands[entry.token] = {source.get(), 0, false};
         reply.entries.push_back(std::move(entry));
         ++count;
         menus.push_back(std::move(source));
         MenuTrace("nvidia_compatibility", "installed_application");
-    }
-    Reply Query(const Request &request)
-    {
-        return QueryWithCataloguePriming(request, catalogueInitialized, fileCatalogueInitialized,
-            [&](const Request &target, bool priming) { return QueryOnce(target, priming); });
     }
     Reply QueryShortcutObjects(const Request &request, Native &delegated,
         IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,
@@ -828,64 +820,23 @@ struct Host
         IdentifyEntries(reply.entries);
         menus.push_back(std::move(actual));
 
-        if (request.originalShortcutOnly)
-        {
-            for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
-            if (count >= kMaximumEntries) return {};
-            IdentifyEntries(reply.entries); reply.ok = true;
-            return reply;
-        }
-
-        // Packaged/modern providers may be present only in the delegated
-        // aggregate. Rebind a provider only when that fresh aggregate actually
-        // returned its canonical COM identity. Metadata probes and registry
-        // discovery still cannot introduce executable menu entries.
-        ComPtr<IDataObject> data;
-        if (FAILED(selectionFolder->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
-            IID_IDataObject, nullptr, reinterpret_cast<void **>(data.GetAddressOf())))) return {};
-        std::set<std::wstring> rebound;
-        for (int i = 0; i < GetMenuItemCount(delegated.menu); ++i)
-        {
-            MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_ID;
-            if (!GetMenuItemInfoW(delegated.menu, i, TRUE, &item)) continue;
-            const auto identity = Verb(delegated, item.wID);
-            CLSID clsid{};
-            if (identity.empty() || FAILED(CLSIDFromString(identity.c_str(), &clsid)) ||
-                !HandlerEnabled(identity) || !rebound.insert(Lower(identity)).second ||
-                std::any_of(reply.entries.begin(), reply.entries.end(), [&](const auto &entry) {
-                    return Lower(Wide(entry.key)) == Lower(identity);
-                })) continue;
-            if (!ReadMenuRootDetails(request, "verb:" + Utf8(Lower(identity)), "")) continue;
-            auto provider = std::make_unique<Native>();
-            provider->directory = delegated.directory; provider->paths = request.paths;
-            provider->folder = selectionFolder; provider->shortcutObjects = true;
-            ComPtr<IShellExtInit> initialize;
-            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&provider->context))) ||
-                FAILED(provider->context.As(&initialize)) || FAILED(initialize->Initialize(nullptr, data.Get(), nullptr)) ||
-                FAILED(provider->context->QueryContextMenu(provider->menu, 0, 1, 0x7fff,
-                    CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) continue;
-            // The delegated aggregate already proved and selected this exact
-            // class. Its adapter's local verb can differ from the canonical
-            // identity assigned below, so read this selected provider intact.
-            auto entries = Read(*provider, provider->menu, "");
-            std::erase_if(entries, [](const auto &entry) { return entry.separator; });
-            if (entries.size() == 1)
-            {
-                auto &entry = entries.front();
-                entry.key = Utf8(identity); entry.provider = "verb:" + Utf8(Lower(identity));
-                reply.entries.push_back(std::move(entry));
-                menus.push_back(std::move(provider));
-            }
-            else
-                std::erase_if(commands, [&](const auto &command) { return command.second.source == provider.get(); });
-        }
-        for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+        for (auto& entry : reply.entries) RegisteredBitmap(entry, request);
         if (count >= kMaximumEntries) return {};
         IdentifyEntries(reply.entries); reply.ok = true;
         return reply;
     }
-    Reply QueryOnce(const Request &request, bool priming = false)
+    Reply Query(const Request &request)
     {
+        if (!request.startPinOnly)
+        {
+            if (++ordinaryQueries > kMaximumWarmQueries)
+                return Reply{false, {}, "menu worker reached its query lifetime"};
+            // Vendor timers/window hooks may still refer to earlier COM menus.
+            // Keep their objects/HMENUs alive until this bounded worker exits;
+            // ReleaseMenu below removes their executable command mappings.
+            for (auto &menu : menus) retiredMenus.push_back(std::move(menu));
+            menus.clear();
+        }
         ReleaseMenu();
         progress("validate paths");
         if (request.paths.empty() || request.paths.size() > 256)
@@ -928,24 +879,6 @@ struct Host
         auto native = std::make_unique<Native>();
         native->directory = directory;
         native->paths = request.paths;
-        const bool shortcutSelection = !request.background &&
-            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
-                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-            });
-        std::unique_ptr<ShellFileMenuPrimer> filePrimer;
-        if (!request.startPinOnly && request.sourceClsid.empty() && !fileAssociationsReady &&
-            (ResolveContext(request) == Context::Folder || shortcutSelection))
-        {
-            // File-menu initialization primes Shell association handlers before
-            // folder-only extensions create windows from their DLL entry point.
-            // A folder shortcut reaches those handlers through ShellLink even
-            // though the selected .lnk is itself classified as a file.
-            // The sample is private, never invoked, and deleted by the kernel
-            // even if this supervised process is terminated on timeout.
-            progress("initialize file associations");
-            filePrimer = std::make_unique<ShellFileMenuPrimer>();
-            fileAssociationsReady = filePrimer->Initialize();
-        }
         if (request.originalShortcutOnly)
         {
             progress("query original shortcut objects");
@@ -1051,19 +984,7 @@ struct Host
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
             CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) | (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
-        if (priming)
-        {
-            // Retain loaded association providers until the final rebind, but
-            // do not initialize cascades, read icons or resolve optional apps
-            // for the first catalogue that will never be published.
-            menus.push_back(std::move(native));
-            return Reply{true, {}, {}};
-        }
-        if (shortcutSelection && !request.startPinOnly && request.sourceClsid.empty())
-            return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         Reply reply;
-        if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
-            fileAssociationsReady = true;
         reply.entries = Read(*native, native->menu, "", 0, L"root", &request);
         if (request.startPinOnly)
             std::erase_if(reply.entries, [](const auto &entry) {
@@ -1072,9 +993,7 @@ struct Host
             });
         if (!request.startPinOnly)
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
-        progress("resolve NVIDIA compatibility application");
         NvidiaCompatibility(request, reply);
-        progress("NVIDIA compatibility finished");
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
@@ -1179,19 +1098,18 @@ struct Host
                 : target->folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
                     IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
         };
-        const UINT flags = CMF_NORMAL | (request.background ? CMF_EXPLORE : CMF_CANRENAME) |
+        const UINT flags = CMF_NORMAL | (request.background ? CMF_EXPLORE : (CMF_ITEMMENU | CMF_CANRENAME)) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
-        // Every target uses this same supervised builder. Bootstrap policy is
-        // applied inside the worker and never selects a UI-thread fallback.
-        const bool primer = ShellSelectionNeedsFileMenuPrimer(request.paths);
+        // Every target uses this same supervised single-query builder.
+        // A partial/failed first result never selects a primer or UI fallback.
         ComPtr<IShellFolder> viewFolder = source->folder;
         if (request.background && request.context == Context::Desktop &&
             FAILED(SHBindToObject(nullptr, source->selection.front()->value, nullptr, IID_PPV_ARGS(&viewFolder)))) return false;
         const HRESULT built = request.background
             ? source->site.BuildMenu(viewFolder.Get(), window, source->menu, 1, 0x7fff,
-                flags, bind, source->context.GetAddressOf(), primer)
+                flags, bind, source->context.GetAddressOf())
             : source->site.BuildSelectionMenu(source->folder.Get(), window, source->menu, 1, 0x7fff,
-                flags, bind, static_cast<UINT>(children.size()), children.data(), source->context.GetAddressOf(), true, primer);
+                flags, bind, static_cast<UINT>(children.size()), children.data(), source->context.GetAddressOf());
         if (FAILED(built)) return false;
         menus.push_back(std::move(source));
         return true;
@@ -1384,7 +1302,7 @@ void InvalidateMenuCache()
 
 struct Session::Impl
 {
-    // One prepared ordinary worker and one system Start worker per owning STA.
+    // Bounded ordinary workers and a separate system Start worker per STA.
     static thread_local std::vector<std::unique_ptr<Impl>> idle;
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
@@ -1399,6 +1317,8 @@ struct Session::Impl
     std::uint64_t generation = 0;
     DWORD timeout = 8000;
     bool delivered = false, detached = false, succeeded = false, startPinOnly = false;
+    bool reusableQuery = false;
+    unsigned queryUses = 0;
     bool ownsSessionSlot = false, preparationOnly = false, preparationReady = false, preparationFailed = false;
     void RemoveRetiredSamples()
     {
@@ -1483,10 +1403,17 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         PollPreparedMenuWorker();
         const auto generation = MenuCacheGeneration();
         auto &idle = Impl::idle;
-        std::erase_if(idle, [=](const auto &worker) { return worker->generation != generation || !worker->process->Running() || GetTickCount64() - worker->born >= kWorkerLifetimeMs; });
+        std::erase_if(idle, [=](const auto &worker) {
+            return worker->generation != generation || !worker->process->Running() ||
+                GetTickCount64() - worker->born >= kWorkerLifetimeMs ||
+                (!worker->startPinOnly && worker->queryUses >= kMaximumWarmQueries) ||
+                (!request.startPinOnly && !usePreparedWorker && !worker->startPinOnly);
+        });
         const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
-            return request.startPinOnly ? worker->startPinOnly : usePreparedWorker && worker->preparationOnly &&
-                !request.background && request.context != Context::Desktop && !request.catalogueOnly &&
+            if (request.startPinOnly) return worker->startPinOnly;
+            if (!usePreparedWorker || worker->startPinOnly) return false;
+            if (!worker->preparationOnly) return worker->reusableQuery;
+            return !request.background && request.context != Context::Desktop && !request.catalogueOnly &&
                 request.sourceClsid.empty() && request.sourceKey.empty() && !request.originalShortcutOnly;
         });
         bool reused = available != idle.end();
@@ -1510,11 +1437,13 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         }
         if (!impl_) impl_ = std::make_unique<Impl>();
         impl_->startPinOnly = request.startPinOnly;
+        impl_->reusableQuery = usePreparedWorker && !request.startPinOnly;
+        ++impl_->queryUses;
         impl_->ownsSessionSlot = true; acquiredSlot = false;
         if (impl_->preparationOnly)
         {
             // The immediate popup never waits for preparation. Backgrounds keep
-            // their original host: priming another context can alter their rows.
+            // their original host so the exact selection/scope stays unchanged.
             if (!impl_->preparationReady || impl_->preparationFailed || request.background ||
                 request.context == Context::Desktop || request.catalogueOnly ||
                 !request.sourceClsid.empty() || !request.sourceKey.empty())
@@ -1561,11 +1490,12 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
 Session::~Session()
 {
     const bool startPinOnly = impl_->startPinOnly;
-    // Arbitrary extensions can keep timers/windows alive after releasing their
-    // COM menu. Retire the query process with the session so those callbacks
-    // cannot run between menus. Invoked helpers retain their detached lifetime.
-    // Only the dedicated system Start-pin handler is eligible for reuse.
-    if (startPinOnly && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
+    // Reuse only a successful, non-invoked worker explicitly opted into by the
+    // service. Its owning STA and loaded handlers stay warm, while each new
+    // query gets a fresh menu/selection. Host retains old callback targets.
+    if ((startPinOnly || (impl_->reusableQuery && impl_->queryUses < kMaximumWarmQueries &&
+            GetTickCount64() - impl_->born < kWorkerLifetimeMs)) &&
+        impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
         impl_->generation == Caches().generation)
     {
         try
@@ -1576,18 +1506,23 @@ Session::~Session()
                 impl_->retiredSamples.push_back(std::move(impl_->sampleDirectory));
                 impl_->sampleDirectory.clear();
             }
-            // Keep the system handler loaded, not its menu/COM selection.
-            // The ordered release acknowledgement retires only prior samples,
-            // even if the next query has already acquired this worker.
-            impl_->channel.Notify("menu.release");
-            impl_->born = GetTickCount64();
+            if (startPinOnly)
+            {
+                // Start's dedicated system handler has the existing explicit
+                // release protocol. Ordinary vendor callbacks retain targets.
+                impl_->channel.Notify("menu.release");
+                impl_->born = GetTickCount64();
+            }
             const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
                 return worker->startPinOnly == startPinOnly;
             });
-            if (pooled < 1)
+            if (pooled < (startPinOnly ? 1 : 2))
             {
-                impl_->ownsSessionSlot = false;
-                startPinSessions.fetch_sub(1);
+                if (startPinOnly)
+                {
+                    impl_->ownsSessionSlot = false;
+                    startPinSessions.fetch_sub(1);
+                }
                 Impl::idle.push_back(std::move(impl_));
             }
         }
@@ -1744,10 +1679,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         Host host(std::move(startPin));
         host.progress = [&](const auto &stage) { MenuTrace("helper.stage", stage); channel.Notify("menu.progress", stage); };
         host.rootPreview = [&](Reply roots) { channel.Notify("menu.roots", std::move(roots)); };
-        // Retain bootstrap objects until process retirement: extensions can keep
-        // window/timer callbacks referring to their menu even after QCM returns.
-        std::unique_ptr<TemporaryMenuFile> preparationSample;
-        std::unique_ptr<Host> filePreparation;
+        bool preparationReceived = false;
         bool actualQueryReceived = false;
         bool invocationQueued = false;
         ULONGLONG lastQuery = GetTickCount64();
@@ -1823,26 +1755,11 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             });
         });
         channel.Bind<void>("menu.prepare", [&] {
-            if (actualQueryReceived || invocationQueued || preparationSample) return;
-            preparationSample = std::make_unique<TemporaryMenuFile>();
-            bool prepared = preparationSample->handle != INVALID_HANDLE_VALUE;
-            if (prepared)
-            {
-                Request file; file.paths = {preparationSample->path};
-                if (query) prepared = query(file).ok;
-                else
-                {
-                    filePreparation = std::make_unique<Host>(StartPinExecutor{});
-                    filePreparation->progress = host.progress;
-                    prepared = filePreparation->QueryOnce(file, true).ok;
-                }
-            }
-            // Successful retained aggregates initialize file providers before
-            // the real selection arrives. Its fresh aggregate owns all published
-            // tokens; it need not repeat the unpublished file priming pass.
-            if (prepared)
-                host.fileAssociationsReady = host.fileCatalogueInitialized = true;
-            channel.Notify("menu.prepared", prepared);
+            if (actualQueryReceived || invocationQueued || preparationReceived) return;
+            preparationReceived = true;
+            // Prepare only the supervised STA, channel and owner HWND. No
+            // temporary TXT or target menu is queried before a real request.
+            channel.Notify("menu.prepared", true);
         });
         channel.Bind<void, Request>("menu.query", [&](Request request) {
             if (invocationQueued) return;

@@ -10,10 +10,6 @@
 
 namespace snowdesktop
 {
-// Only ordinary local data files can bootstrap their own associations. Folders,
-// shortcuts, reparse/offline items and unknown selections keep the private primer.
-bool ShellSelectionNeedsFileMenuPrimer(const std::vector<std::wstring>& paths);
-
 // Private, never invoked. The kernel removes the sample even when a supervised
 // menu process is terminated while an extension is loading.
 struct ShellMenuInitializationFile
@@ -26,19 +22,8 @@ struct ShellMenuInitializationFile
     std::wstring path;
 };
 
-class ShellFileMenuPrimer
-{
-public:
-    ShellFileMenuPrimer();
-    ~ShellFileMenuPrimer();
-    bool Initialize();
-private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
-
 /**
- * Hosts a minimal hidden Shell view while a classic context menu is open.
+ * Supplies folder and selection services while a classic context menu is open.
  *
  * Cascading verbs backed by IExplorerCommand query their site for
  * IServiceProvider/IFolderView/IShellBrowser. Without that site they can
@@ -55,18 +40,17 @@ public:
 
     bool Initialize(IShellFolder* folder, HWND owner);
     bool Attach(IContextMenu* contextMenu);
-    // Load providers before creating a Shell view. Rebind the actual menu only
-    // after attaching that view, keeping the caller's flags and final tokens.
+    // Backgrounds and selections share one immutable site and one query.
+    // Cold missing entries never trigger a primer, retry or aggregate rebuild.
     using MenuFactory = std::function<HRESULT(HWND, IContextMenu**)>;
     HRESULT BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags,
-        const MenuFactory& bind, IContextMenu** contextMenu, bool initializeFileAssociations = true);
+        const MenuFactory& bind, IContextMenu** contextMenu);
     // A selection-only site supplies folder/selection services without creating
     // a second Windows folder view or querying an unpublished aggregate.
     HRESULT BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
-        UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu,
-        bool primeProviders = false, bool initializeFileAssociations = true);
+        UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu);
     // Read built-in namespace verbs for a custom popup. These commands do not
     // need filesystem providers or a folder view; bind their aggregate once.
     HRESULT BuildNamespaceMenu(HWND owner, HMENU menu,
