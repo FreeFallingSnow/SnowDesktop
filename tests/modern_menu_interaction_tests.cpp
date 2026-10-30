@@ -1,6 +1,7 @@
 #include "ui/menu/modern_menu.h"
 #include "ui/menu/menu_control_snapshot.h"
 #include "app/menus/sort_menu.h"
+#include "app/menus/background_menu_order.h"
 #include "app/menus/tray_context_menu_placement.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "shell/shell_extension_menu_presentation.h"
@@ -780,6 +781,167 @@ void CheckDockRunningMenuTransition(HWND owner)
     UnregisterClassW(dockClass, definition.hInstance);
 }
 
+void CheckBackgroundMenuModel(bool negativeControl)
+{
+    using namespace snowdesktop;
+    using modern_menu::Item;
+    const auto row = [](UINT command, const wchar_t* label) {
+        Item item; item.command = command; item.label = label; return item;
+    };
+    auto create = row(kContextNewMenu, L"New");
+    create.builtinIcon = menu_icon::BuiltinIcon::NewItem;
+    create.children = {row(65537, L"Folder"), row(65538, L"Text document")};
+    auto columns = row(60001, L"Columns");
+    columns.children = {row(kContextWidgetListColumnsFirst, L"1")};
+    columns.enabled = false;
+    auto details = row(60002, L"Details");
+    details.children = {row(kContextWidgetDetailName, L"Name")};
+    auto sort = row(60003, L"Sort");
+    sort.children = {row(sort_menu::kRows.front().labelCommand, L"Name")};
+    auto visibility = row(kContextWidgetToggleFileCategories, L"Categories");
+    visibility.checked = true;
+    visibility.glyph = menu_fluent_glyphs::kCategoryBar;
+    visibility.accessKey = L'C';
+    auto paste = row(kContextPasteCommand, L"Paste");
+    paste.quickAction = true;
+    auto rename = row(kContextWidgetRename, L"Rename");
+    rename.quickAction = true;
+    Item divider; divider.separator = true;
+    const std::vector<Item> source{
+        divider, row(kContextWidgetOpenFolder, L"Open folder"),
+        row(kContextPopupFan, L"Fan"), row(kContextWidgetToggleListMode, L"Layout"),
+        columns, details, visibility, row(kContextWidgetToggleSearchBox, L"Search"),
+        row(kContextWidgetToggleDateGroup, L"Date"), create, sort, divider,
+        row(kContextWidgetPrivacyModeOn, L"Privacy"), row(kContextWidgetKeepWhenHiddenOff, L"Keep"),
+        row(kContextWidgetToggleExpandOnHover, L"Expand"), row(kContextWidgetShowOnHoverOn, L"Hover"),
+        rename, paste, row(kContextMoreCommand, L"More"), divider,
+    };
+    HMENU root = CreatePopupMenu();
+    Expect(root != nullptr, "background-menu fixture owns a real menu root");
+    auto items = source;
+    background_menu_order::Apply(root, items);
+    Expect(items == source, "item menus and author-defined element menus are never regrouped");
+    Expect(background_menu_order::Mark(root), "host background menus explicitly opt into grouping");
+    if (!negativeControl) background_menu_order::Apply(root, items);
+    const auto firstBody = std::find_if(items.begin(), items.end(), [](const auto& item) {
+        return !item.separator && !item.quickAction;
+    });
+    Expect(firstBody != items.end() && firstBody->command == kContextNewMenu,
+        "New is the first body action below the quick-action strip in widget and folder backgrounds");
+    std::vector<UINT> commands;
+    for (const auto& item : items) if (!item.separator && !item.quickAction) commands.push_back(item.command);
+    const std::vector<UINT> expected{
+        kContextNewMenu, kContextWidgetOpenFolder, kContextPopupFan, kContextWidgetToggleListMode,
+        60003, 60001, 60002, kContextWidgetToggleFileCategories, kContextWidgetToggleSearchBox,
+        kContextWidgetToggleDateGroup, kContextWidgetShowOnHoverOn, kContextWidgetToggleExpandOnHover,
+        kContextWidgetKeepWhenHiddenOff, kContextWidgetPrivacyModeOn, kContextMoreCommand,
+    };
+    Expect(commands == expected, "content, visibility and behavior follow the same user-facing groups across native backgrounds");
+    Expect(!items.front().separator && !items.back().separator &&
+        std::adjacent_find(items.begin(), items.end(), [](const auto& a, const auto& b) {
+            return a.separator && b.separator;
+        }) == items.end(), "regrouping never leaves empty sections or duplicate separators");
+    for (const auto& original : source)
+        if (!original.separator)
+            Expect(std::find(items.begin(), items.end(), original) != items.end(),
+                "reordering retains original icons, enabled/check states, command IDs and complete child menus");
+    auto expanded = source;
+    for (auto& item : expanded) item.quickAction = false;
+    background_menu_order::Apply(root, expanded);
+    Expect(expanded.front().command == kContextNewMenu,
+        "New remains first when quick actions are expanded into ordinary rows");
+    for (const auto appearance : {modern_menu::Appearance::Win10Light, modern_menu::Appearance::Win10Dark})
+    {
+        auto classic = source;
+        background_menu_order::Apply(root, classic, appearance);
+        Expect(classic.front().command == kContextNewMenu,
+            "Win10 menus without a quick strip still place New before clipboard and rename rows");
+    }
+    const auto normalized = items;
+    background_menu_order::Apply(root, items);
+    Expect(items == normalized, "applying background grouping again preserves the resulting menu");
+
+    auto actionA = row(kContextLuaWidgetMenuFirst, L"Author action A");
+    auto actionB = row(kContextLuaWidgetMenuFirst + 1, L"Author action B");
+    items = {row(kContextWidgetDelete, L"Delete widget"), actionA, divider, actionB,
+        row(kContextWidgetEdit, L"Settings")};
+    background_menu_order::Apply(root, items);
+    Expect(items[0] == actionA && items[1].separator && items[2] == actionB,
+        "Lua component actions preserve author order and internal section boundaries");
+    auto widgets = row(60004, L"Add widget"); widgets.builtinIcon = menu_icon::BuiltinIcon::Widgets;
+    auto display = row(60005, L"Display"); display.builtinIcon = menu_icon::BuiltinIcon::Display;
+    auto jump = row(60006, L"Go to page"); jump.children = {row(kContextPageJumpFirst + 1, L"Page 2")};
+    auto pages = row(60007, L"Pages"); pages.children = {row(kContextPageAdd, L"Add page")};
+    items = {row(kContextMoreCommand, L"More"), pages, jump, row(kContextPageNext, L"Next page"),
+        display, sort, widgets, create, row(kContextSettingsCommand, L"Settings")};
+    background_menu_order::Apply(root, items);
+    commands.clear();
+    for (const auto& item : items) if (!item.separator) commands.push_back(item.command);
+    Expect(commands == std::vector<UINT>{kContextNewMenu, 60004, 60005, 60003,
+            kContextPageNext, 60006, 60007, kContextSettingsCommand, kContextMoreCommand},
+        "desktop background shares creation/display groups and keeps page navigation and global settings together");
+    // Native parent IDs are opaque and can have the same numeric value as a
+    // host leaf command. Contents, not that incidental value, identify them.
+    auto collisionColumns = columns; collisionColumns.command = kContextWidgetDelete;
+    auto collisionSort = sort; collisionSort.command = kContextWidgetToggleDateGroup;
+    auto authorGroup = row(kContextNewMenu, L"Author group"); authorGroup.children = {actionA};
+    authorGroup.glyph = menu_fluent_glyphs::kIconPersonalization;
+    authorGroup.iconFont = IconFont::FluentRegular;
+    items = {authorGroup, collisionColumns, collisionSort, create,
+        row(kContextWidgetToggleListMode, L"Layout")};
+    background_menu_order::Apply(root, items);
+    std::vector<std::wstring> labels;
+    for (const auto& item : items) if (!item.separator) labels.push_back(item.label);
+    Expect(labels == std::vector<std::wstring>{L"New", L"Author group", L"Layout", L"Sort", L"Columns"},
+        "opaque parent IDs cannot impersonate New, date visibility or destructive widget actions");
+    DestroyMenu(root);
+}
+
+void CheckBackgroundNewPlacement(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    for (const auto appearance : {Appearance::FollowSystem, Appearance::Win10Light, Appearance::Win10Dark})
+    for (const bool compact : {false, true})
+    {
+        const bool strip = compact && !appearance_rules::IsWin10Style(appearance);
+        Item create{kContextNewMenu, L"New", L"", true, false, false,
+            {{65537, L"Folder", L"", true}}};
+        create.builtinIcon = snowdesktop::menu_icon::BuiltinIcon::NewItem;
+        Item paste{kContextPasteCommand, L"Paste", L"", true}; paste.quickAction = compact;
+        Item layout{kContextWidgetToggleListMode, L"Layout", L"", true};
+        std::vector<Item> items{layout, paste, create};
+        HMENU model = CreatePopupMenu();
+        Expect(model && snowdesktop::background_menu_order::Mark(model), "mark the production background model");
+        snowdesktop::background_menu_order::Apply(model, items, appearance);
+        DestroyMenu(model);
+        Options options; options.owner = owner; options.anchor = {80, 80}; options.appearance = appearance;
+        gDriveMode = DriveMode::Script; gInputPosted = false; gWatchdogFired = false;
+        gMenuScript = [strip](HWND root) {
+            const auto controls = ActiveControls();
+            const auto createControl = std::find_if(controls.begin(), controls.end(), [](const auto& c) { return c.name == L"New"; });
+            const auto layoutControl = std::find_if(controls.begin(), controls.end(), [](const auto& c) { return c.name == L"Layout"; });
+            const auto pasteControl = std::find_if(controls.begin(), controls.end(), [](const auto& c) { return c.name == L"Paste"; });
+            Expect(createControl != controls.end() && layoutControl != controls.end() && pasteControl != controls.end(),
+                "background menu exposes New, content layout and paste actions");
+            Expect(createControl->bounds.top < layoutControl->bounds.top &&
+                (strip ? pasteControl->bounds.top < createControl->bounds.top : createControl->bounds.top < pasteControl->bounds.top),
+                "New is visually first below a compact toolbar and above expanded clipboard actions");
+            if (strip) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            else
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr); SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(items, options);
+        KillTimer(owner, kWatchdogTimer); gMenuScript = {};
+        Expect(!gWatchdogFired && gInputPosted && result.command == (strip ? 0U : 65537U),
+            "reordered New remains selectable and toolbar cancellation executes no creation");
+    }
+}
+
 void CheckLazySubmenuPreparation(HWND owner)
 {
     using namespace snowdesktop::modern_menu;
@@ -1395,6 +1557,7 @@ void RunNativeTrayMenuLayerTests();
 
 int wmain(int argc, wchar_t** argv)
 {
+    CheckBackgroundMenuModel(argc == 2 && std::wstring_view(argv[1]) == L"--background-order-negative-control");
     // Regression: asynchronous Shell entries belong immediately above More,
     // in a final group after all ordinary host actions.
     {
@@ -1508,6 +1671,7 @@ int wmain(int argc, wchar_t** argv)
     CheckPreviewCompanionClicks(owner);
     CheckDockRunningMenuTransition(owner);
     CheckLazySubmenuPreparation(owner);
+    CheckBackgroundNewPlacement(owner);
     gDriveMode = DriveMode::Cascade;
     gInputPosted = false;
 

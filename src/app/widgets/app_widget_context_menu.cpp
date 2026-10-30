@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "app/menus/sort_menu.h"
+#include "app/menus/background_menu_order.h"
 #include "platform/demo_collection_rules.h"
 #include "layout/collection_titleless_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -911,8 +912,9 @@ void DesktopApp::ShowWidgetContextMenu(
         snowdesktop::menu_fluent_glyphs::kCategoryBar);
     setFluentIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F");
     SetMenuItemIcon(menu, kContextPasteCommand, L"");
-    setFluentIcon(menu, kContextNewMenu,
-        snowdesktop::menu_fluent_glyphs::kNewItem);
+    SetMenuItemIcon(menu, kContextNewMenu,
+        snowdesktop::menu_fluent_glyphs::kNewItem,
+        MenuIconFont::FluentRegular, snowdesktop::menu_icon::BuiltinIcon::NewItem);
     setFluentIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions);
     setFluentIcon(menu, kContextWidgetEdit, L"\uF6A9");
@@ -1074,6 +1076,7 @@ void DesktopApp::ShowWidgetContextMenu(
             PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children,
                 newItemWidgetId);
     };
+    if (!luaElementMenu) snowdesktop::background_menu_order::Mark(menu);
     UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr,
         applyAutoCollectMenuCommand, {}, {}, &shellRequest, {}, false, 0, 0,

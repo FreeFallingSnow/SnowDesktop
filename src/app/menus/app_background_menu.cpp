@@ -3,6 +3,7 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
 #include "sort_menu.h"
+#include "background_menu_order.h"
 #include "ui/render/font_weight_rules.h"
 #include "shell/shell_new_menu.h"
 #include "navigation/search_match.h"
@@ -2157,6 +2158,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             luaPage, luaSearch, luaFilter, workshopAvailable);
         luaWidgetCatalogueLoaded = true;
     };
+    snowdesktop::background_menu_order::Mark(menu);
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets, &shellRequest,

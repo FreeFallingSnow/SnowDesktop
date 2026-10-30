@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/menus/sort_menu.h"
+#include "app/menus/background_menu_order.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
 #include "shell/shell_new_menu.h"
@@ -1170,6 +1171,7 @@ ShowDockFolderPopupContextMenu(
         if (submenuCommand == kContextNewMenu)
             PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
     };
+    if (!itemMenu) snowdesktop::background_menu_order::Mark(menu);
     const UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_, false, false, nullptr, {}, {}, {}, &shellRequest,
         {}, false, 0, 0, prepareNewSubmenu);
