@@ -235,6 +235,44 @@ inline void WarmWorkerLifetime()
     }
     ext::Session::ReleaseIdleWorker();
 }
+inline void QueuedWorkAfterStalledWarmWorker()
+{
+    TemporaryDirectory temp;
+    const auto poisoned = temp.path / L"pool-idle-poison.txt";
+    const auto blocked = temp.path / L"pool-next.txt";
+    const auto following = temp.path / L"pool-following.txt";
+    for (const auto& path : {poisoned, blocked, following}) std::ofstream(path) << "private";
+    std::atomic<DWORD> firstProcess = 0, blockedProcess = 0, followingProcess = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request& request) {
+        const bool next = request.paths.front() == blocked.wstring();
+        auto session = std::make_shared<ext::Session>(request, next ? 100 : 2500, true);
+        if (request.paths.front() == poisoned.wstring()) firstProcess = session->ProcessId();
+        else if (next) blockedProcess = session->ProcessId();
+        else followingProcess = session->ProcessId();
+        return ext::QueryWork{[session] { return session->Poll(); }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs; ext::SetCommon(prefs, "verb:first", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Request first; first.paths = {poisoned.wstring()}; service.Query(first);
+    PumpUntil([&] { return service.View(first).snapshot.has_value(); }, "a worker succeeds before its vendor callback stalls");
+    const auto callbackDeadline = GetTickCount64() + 100;
+    while (GetTickCount64() < callbackDeadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        MsgWaitForMultipleObjectsEx(0, nullptr, 5, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+    ext::Request second; second.paths = {blocked.wstring()}; service.Query(second);
+    PumpUntil([&] { const auto view = service.View(second); return !view.pending && !view.error.empty(); },
+        "the next query retires an already pooled worker whose idle callback is stuck");
+    Expect(firstProcess && blockedProcess == firstProcess, "the controlled stall affects a reused worker");
+    ext::Request third; third.paths = {following.wstring()}; service.Query(third);
+    PumpUntil([&] { return service.View(third).snapshot.has_value(); },
+        "queued new selections continue after the stalled warm worker is discarded");
+    Expect(followingProcess && followingProcess != blockedProcess,
+        "discarding one stalled warm worker restores the real scheduler with a new process");
+    service.Shutdown();
+}
 inline void CancelQueued()
 {
     TemporaryDirectory temp;
@@ -718,6 +756,7 @@ inline void Run()
     LiveSourceRegistration();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
     WarmWorkerLifetime();
+    QueuedWorkAfterStalledWarmWorker();
     CancelQueued();
     OrdinaryMenusDoNotProbe(false);
     OrdinaryMenusDoNotProbe(true);

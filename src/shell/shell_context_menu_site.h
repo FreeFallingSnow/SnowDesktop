@@ -2,26 +2,12 @@
 
 #include <memory>
 #include <functional>
-#include <string>
-#include <vector>
 
 #include <windows.h>
 #include <shlobj.h>
 
 namespace snowdesktop
 {
-// Private, never invoked. The kernel removes the sample even when a supervised
-// menu process is terminated while an extension is loading.
-struct ShellMenuInitializationFile
-{
-    ShellMenuInitializationFile();
-    ~ShellMenuInitializationFile();
-    ShellMenuInitializationFile(const ShellMenuInitializationFile&) = delete;
-    ShellMenuInitializationFile& operator=(const ShellMenuInitializationFile&) = delete;
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    std::wstring path;
-};
-
 /**
  * Supplies folder and selection services while a classic context menu is open.
  *
@@ -46,8 +32,9 @@ public:
     HRESULT BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags,
         const MenuFactory& bind, IContextMenu** contextMenu);
-    // A selection-only site supplies folder/selection services without creating
-    // a second Windows folder view or querying an unpublished aggregate.
+    // Item sites attach after cold QCM; background sites attach before QCM so
+    // commands can resolve the current directory. Both use one query and no
+    // enumerating Windows folder view or unpublished aggregate.
     HRESULT BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
         UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu);

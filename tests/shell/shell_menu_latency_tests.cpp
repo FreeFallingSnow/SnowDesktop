@@ -100,8 +100,8 @@ void TestShellMenuPreparedService()
     Require(service.View(selected).snapshot->entries.front().key == "cold" &&
             trace.Count("phase=helper_start reason=reused") > 0,
             "the service reuses its ready process without a TXT or target menu prequery");
-    Until([&] { return trace.Count("phase=preparation reason=ready") == 2; },
-          "one completed real query allows one replacement standby worker", 10000);
+    Require(trace.Count("phase=preparation reason=ready") == 1,
+            "a reusable healthy worker does not create a replacement standby for each query");
     const auto released = trace.Count("phase=preparation reason=released");
     service.Configure({}); service.Prewarm(disabled);
     Until([&] { return trace.Count("phase=preparation reason=released") > released; },
@@ -175,19 +175,13 @@ void BenchmarkShellMenuFirstScreen()
     open(cold, "same-file", 0);
     open(workspace.File(L"new-same-type"), "new-file-immediate", 0);
     unsigned index = 0;
-    auto prepared = trace.Count("phase=preparation reason=ready");
     constexpr std::pair<const wchar_t *, const char *> samples[] = {
-        {L".txt", "prepared-txt"}, {L".png", "prepared-png"},
-        {L".zip", "prepared-zip"}, {L".pdf", "prepared-pdf"}};
+        {L".txt", "pooled-txt"}, {L".png", "pooled-png"},
+        {L".zip", "pooled-zip"}, {L".pdf", "pooled-pdf"}};
     for (const auto &[type, scenario] : samples)
     {
         const auto request = workspace.File(L"selected-" + std::to_wstring(index++), type);
-        const auto started = Clock::now();
-        Until([&] { return trace.Count("phase=preparation reason=ready") > prepared; },
-              "real single-use standby preparation finishes", 20000);
-        prepared = trace.Count("phase=preparation reason=ready");
-        const double preparationMs = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-        open(request, scenario, preparationMs);
+        open(request, scenario, 0);
         open(request, "same-file-repeat", 0);
     }
 }

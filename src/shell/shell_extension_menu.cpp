@@ -37,6 +37,14 @@ std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 constexpr unsigned kMaximumWarmQueries = 8;
+Request ShellMenuRequest(const Request& source)
+{
+    auto request = source;
+    // Win32 file APIs accept '/', but Shell parsing names require Windows
+    // separators. Preserve the original objects and shortcut targets.
+    for (auto& path : request.paths) std::replace(path.begin(), path.end(), L'/', L'\\');
+    return request;
+}
 using RegistryWatch = detail::MenuRegistryMonitor;
 struct RegistryNotifications
 {
@@ -975,15 +983,37 @@ struct Host
                 folder = std::move(desktop);
             }
         }
-        // View-dependent invocation and deferred cascades need a Shell view.
-        // Ordinary aggregate enumeration does not. Attach only after loading
-        // handlers: an earlier view can make Shell window hooks re-enter item
-        // binding from a handler's DllMain.
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
-            CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) | (request.extended ? CMF_EXTENDEDVERBS : 0))))
-            return {};
+        const UINT flags = CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
+            (request.extended ? CMF_EXTENDEDVERBS : 0);
+        if (!request.startPinOnly)
+        {
+            // Background ExplorerCommands have no selected items: Terminal
+            // resolves its location from the site during GetState, and New+
+            // retains that site for its first submenu enumeration. Item menus
+            // use the same builder, which attaches their site after cold QCM.
+            auto bound = std::move(native->context);
+            const auto bind = [&](HWND, IContextMenu** context) { return bound.CopyTo(context); };
+            HRESULT built;
+            if (request.background)
+                built = native->site.BuildMenu(native->folder.Get(), window, native->menu,
+                    1, 0x7fff, flags, bind, native->context.GetAddressOf());
+            else
+            {
+                const bool sameFolder = std::all_of(request.paths.begin(), request.paths.end(), [&](const auto& path) {
+                    return Lower(std::filesystem::path(path).parent_path().wstring()) == Lower(directory);
+                });
+                ComPtr<IShellFolder> siteFolder = native->folder;
+                if (!sameFolder && FAILED(SHGetDesktopFolder(&siteFolder))) return {};
+                std::vector<PCUITEMID_CHILD> children;
+                for (const auto id : raw) children.push_back(sameFolder ? ILFindLastID(id) : reinterpret_cast<PCUITEMID_CHILD>(id));
+                built = native->site.BuildSelectionMenu(siteFolder.Get(), window, native->menu,
+                    1, 0x7fff, flags, bind, static_cast<UINT>(children.size()), children.data(), native->context.GetAddressOf());
+            }
+            if (FAILED(built)) return {};
+        }
+        else if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff, flags))) return {};
         Reply reply;
         reply.entries = Read(*native, native->menu, "", 0, L"root", &request);
         if (request.startPinOnly)
@@ -1407,7 +1437,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
             return worker->generation != generation || !worker->process->Running() ||
                 GetTickCount64() - worker->born >= kWorkerLifetimeMs ||
                 (!worker->startPinOnly && worker->queryUses >= kMaximumWarmQueries) ||
-                (!request.startPinOnly && !usePreparedWorker && !worker->startPinOnly);
+                (!request.startPinOnly && !usePreparedWorker && !worker->startPinOnly && !worker->preparationOnly);
         });
         const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
             if (request.startPinOnly) return worker->startPinOnly;
@@ -1474,7 +1504,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         });
         impl_->channel.Bind<void, Reply>("menu.roots", [p = impl_.get()](Reply result) { p->roots = std::move(result); });
         impl_->channel.Bind<void>("menu.released", [p = impl_.get()] { p->RemoveRetiredSamples(); });
-        auto query = request;
+        auto query = ShellMenuRequest(request);
         PrepareSample(query, impl_->sampleDirectory);
         if (!impl_->process->Running()) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
         impl_->channel.Notify("menu.query", query);
@@ -1642,7 +1672,7 @@ NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND o
     impl_->process->Start(impl_->channel, L"--shell-menu-helper");
     AllowSetForegroundWindow(impl_->process->ProcessId());
     const auto origin = ShellInvocationOwner::Capture(owner);
-    impl_->channel.Notify("menu.native", request, selection, point.x, point.y, origin.window, origin.process, origin.thread,
+    impl_->channel.Notify("menu.native", ShellMenuRequest(request), selection, point.x, point.y, origin.window, origin.process, origin.thread,
         reinterpret_cast<std::uint64_t>(GetForegroundWindow()));
     launch.Record("scheduled");
 }

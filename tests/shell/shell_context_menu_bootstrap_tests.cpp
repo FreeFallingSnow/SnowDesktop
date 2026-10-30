@@ -58,7 +58,7 @@ public:
         if (++state_->queries != 1 || first != state_->first || last != state_->last ||
             flags != state_->flags || index != 0) return E_UNEXPECTED;
         if (state_->failure == 2) return E_ACCESSDENIED;
-        if (!state_->namespaceOnly)
+        if (state_->background && !state_->namespaceOnly)
         {
             ComPtr<IServiceProvider> services;
             ComPtr<IFolderView2> view;
@@ -66,19 +66,9 @@ public:
             DWORD count = 0;
             if (!site_ || FAILED(site_.As(&services)) ||
                 FAILED(services->QueryService(SID_SFolderView, IID_PPV_ARGS(&view)))) return E_UNEXPECTED;
-            if (state_->background)
-            {
-                if (view->GetSelection(FALSE, &selection) != HRESULT_FROM_WIN32(ERROR_NOT_FOUND) || selection ||
-                    FAILED(view->GetSelection(TRUE, &selection)) || FAILED(selection->GetCount(&count)) || count != 1)
-                    return E_UNEXPECTED;
-            }
-            else
-            {
-                if (FAILED(view->GetSelection(FALSE, &selection)) || FAILED(selection->GetCount(&count)) || count != 1)
-                    return E_UNEXPECTED;
-                ComPtr<IDataObject> data;
-                if (FAILED(view->Items(SVGIO_SELECTION, IID_PPV_ARGS(&data)))) return E_UNEXPECTED;
-            }
+            if (view->GetSelection(FALSE, &selection) != HRESULT_FROM_WIN32(ERROR_NOT_FOUND) || selection ||
+                FAILED(view->GetSelection(TRUE, &selection)) || FAILED(selection->GetCount(&count)) || count != 1)
+                return E_UNEXPECTED;
             ComPtr<IShellItemArray> parent;
             if (FAILED(view->GetFolder(IID_PPV_ARGS(&parent))) || FAILED(parent->GetCount(&count)) || count != 1)
                 return E_UNEXPECTED;
@@ -89,7 +79,8 @@ public:
     }
     IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO info) override
     {
-        if (state_->queries != 1 || reinterpret_cast<ULONG_PTR>(info->lpVerb) != 11) return E_UNEXPECTED;
+        if (state_->queries != 1 || reinterpret_cast<ULONG_PTR>(info->lpVerb) != 11 ||
+            (!state_->namespaceOnly && !site_)) return E_UNEXPECTED;
         ++state_->invocations; return S_OK;
     }
     IFACEMETHODIMP GetCommandString(UINT_PTR, UINT, UINT*, LPSTR, UINT) override { return E_NOTIMPL; }
@@ -144,6 +135,13 @@ void RunSingleQueryCase(IShellFolder* folder, PCUITEMID_CHILD child, const std::
                 Require(SUCCEEDED(attached->GetSite(IID_PPV_ARGS(&services))), "menu retains its site");
                 ComPtr<IFolderView2> view;
                 Require(SUCCEEDED(services->QueryService(SID_SFolderView, IID_PPV_ARGS(&view))), "retained selection view");
+                ComPtr<IShellItemArray> selection;
+                DWORD selectedCount = 0;
+                Require(SUCCEEDED(view->GetSelection(FALSE, &selection)) &&
+                    SUCCEEDED(selection->GetCount(&selectedCount)) && selectedCount == 1,
+                    "the item site is attached after its single cold query");
+                ComPtr<IDataObject> data;
+                Require(SUCCEEDED(view->Items(SVGIO_SELECTION, IID_PPV_ARGS(&data))), "retained selection data object");
                 ComPtr<IShellItem> item;
                 Require(SUCCEEDED(view->GetItem(0, IID_PPV_ARGS(&item))), "selection outlives caller PIDLs");
                 PWSTR name = nullptr;
@@ -170,7 +168,22 @@ void RunSingleQueryCase(IShellFolder* folder, PCUITEMID_CHILD child, const std::
 
 void TestShellContextMenuBootstrap()
 {
-    snowdesktop::ShellMenuInitializationFile file;
+    struct SampleFile
+    {
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        std::wstring path;
+        SampleFile()
+        {
+            GUID id{}; Require(SUCCEEDED(CoCreateGuid(&id)), "private selection identity");
+            wchar_t guid[40]{}; StringFromGUID2(id, guid, 40);
+            path = (std::filesystem::temp_directory_path() /
+                (std::wstring(L"SnowDesktop-SingleQueryFixture-") + guid + L".txt")).wstring();
+            handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
+                FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+        }
+        ~SampleFile() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+    } file;
     Require(file.handle != INVALID_HANDLE_VALUE, "private selection sample");
     PIDLIST_ABSOLUTE raw = nullptr;
     Require(SUCCEEDED(SHParseDisplayName(file.path.c_str(), nullptr, &raw, 0, nullptr)), "sample PIDL");

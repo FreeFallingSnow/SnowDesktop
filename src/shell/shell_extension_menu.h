@@ -84,8 +84,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// One fresh COM/menu session in a supervised child. Ordinary workers retire
-// with their first real selection; only the system Start handler is pooled.
+// One fresh COM/menu selection in a supervised child. Explicitly opted-in,
+// healthy ordinary workers have a bounded pool; Start uses a separate pool.
 // Tokens expire when this object closes; they are never cached.
 class Session
 {

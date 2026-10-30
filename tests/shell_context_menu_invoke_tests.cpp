@@ -2693,7 +2693,6 @@ void TestPairedCommandRefresh()
     ext::Request request; request.paths = {target.wstring()};
     std::atomic<bool> pinned = false, hold = false, completed = false, success = false;
     std::atomic<int> queries = 0, ordinaryQueries = 0, invokes = 0;
-    auto startRequest = request; startRequest.startPinOnly = true;
     ext::MenuService service(directory.path / L"cache", [&](const auto &source) {
         ++queries;
         if (!source.startPinOnly) ++ordinaryQueries;
@@ -2723,10 +2722,11 @@ void TestPairedCommandRefresh()
     Expect(items.size() == 2 && items.front().label == L"Inspect" && options.pollItems &&
         std::none_of(items.begin(), items.end(), [](const auto &item) { return item.label == L"Pin"; }),
         "warm ordinary commands appear immediately, but cached external pin state is never displayed");
-    PumpUntil([&] { return queries >= 2; }, "opening a warm paired menu forces a native state query");
+    PumpUntil([&] { return queries == 2; }, "opening a mixed paired menu starts one fresh aggregate");
+    Expect(ordinaryQueries == 2, "mixed ordinary/Start rows use the same aggregate query");
     Expect(!options.pollItems(items, true), "a held state query cannot reinsert the stale cached action");
     hold = false;
-    PumpUntil([&] { return !service.View(startRequest).pending && service.View(startRequest).snapshot.has_value(); }, "fresh external state query completes");
+    PumpUntil([&] { const auto view = service.View(request); return !view.pending && view.snapshot.has_value(); }, "fresh external state query completes");
     const auto additions = options.pollItems(items, true);
     Expect(additions && std::count_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; }) == 1 &&
         std::none_of(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Pin"; }),
@@ -2735,9 +2735,9 @@ void TestPairedCommandRefresh()
     Expect(presentation.Invoke(selected->command, {0, 0}), "dispatch the freshly displayed state command");
     PumpUntil([&] { return completed.load(); }, "state invocation completion is observed by the real service");
     const auto ordinaryView = service.View(request);
-    Expect(success && invokes == 1 && !pinned && ordinaryQueries == 1 && ordinaryView.snapshot &&
+    Expect(success && invokes == 1 && !pinned && ordinaryQueries == 3 && queries == 3 && ordinaryView.snapshot &&
         ordinaryView.snapshot->entries.size() == 1 && ordinaryView.snapshot->entries.front().label == L"Inspect",
-        "a Start state change retires the old pin while preserving ordinary rows without an aggregate query");
+        "the click resolves through one fresh aggregate and retires the old pin while preserving ordinary rows");
     ext::MenuSnapshotCache disk(directory.path / L"cache");
     auto projectedRequest = request;
     projectedRequest.visibleMenuProviders = ext::MenuReadPolicy(prefs, ext::Category::Objects);
@@ -2747,11 +2747,15 @@ void TestPairedCommandRefresh()
     Expect(!disk.Find(disk.Capture(request)),
         "the projected ordinary snapshot cannot be restored as a complete menu query");
     hold = false;
-    PumpUntil([&] { const auto view = service.View(startRequest); return !view.pending && view.snapshot.has_value(); },
-        "the post-action native query publishes the new Pin state");
-    const auto after = service.MenuDisplay(startRequest, prefs);
-    Expect(after.snapshot && after.snapshot->entries.back().label == L"Pin" && invokes == 1 && ordinaryQueries == 1,
-        "one Unpin action produces one fresh Pin state without repeating aggregate enumeration or invocation");
+    ext::Presentation reopened(request, prefs, L"", L"", service);
+    std::vector<menu::Item> nextItems{more}; menu::Options nextOptions;
+    reopened.Attach(nextItems, nextOptions, 7);
+    PumpUntil([&] { const auto view = service.View(request); return !view.pending && view.snapshot.has_value(); },
+        "the next explicit opening obtains the new Pin state");
+    const auto after = nextOptions.pollItems(nextItems, true);
+    Expect(after && std::count_if(after->begin(), after->end(), [](const auto& item) { return item.label == L"Pin"; }) == 1 &&
+        invokes == 1 && ordinaryQueries == 4 && queries == 4,
+        "each explicit mixed opening obtains current state once without an automatic secondary query");
 }
 
 void TestStartQueryScheduling()
@@ -5576,7 +5580,7 @@ void BenchmarkMenus()
             const auto ticket=disk.Capture(request);
             const auto snapshot=disk.Find(ticket);
             const auto diskMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-diskStart).count();
-            ext::Session session(request);
+            ext::Session session(request, 8000, iteration >= 5);
             const auto launched = GetTickCount64();
             std::optional<ext::Reply> reply;
             while (!reply && GetTickCount64() - start < 10000)
@@ -5589,7 +5593,7 @@ void BenchmarkMenus()
             }
             const auto elapsed = GetTickCount64() - start;
             std::cout << "menu_benchmark scope=" << (folder ? "folder" : "file")
-                      << " mode=" << (iteration < 5 ? "cold" : "warm")
+                      << " mode=" << (iteration < 5 ? "fresh" : "pooled")
                       << " iteration=" << iteration << " snapshot=" << bool(snapshot) << " disk_ms=" << diskMs
                       << " start_ms=" << launched - start
                       << " ready_ms=" << elapsed << " ok=" << (reply && reply->ok)
@@ -5708,8 +5712,39 @@ void ProbeNativeMenuPreparation()
         ext::Request selected; selected.paths = {selectedPath};
         cases.clear(); cases.emplace_back("selected-item", std::move(selected));
     }
+    wchar_t backgroundMode[2]{}, probeMode[16]{};
+    GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_PROBE_BACKGROUND", backgroundMode, 2);
+    GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_PROBE_MODE", probeMode, 16);
+    if (backgroundMode[0] == L'1')
+        for (auto& [name, request] : cases) { request.background = true; request.context = ext::Context::FolderBackground; }
     for (auto& [name, request] : cases)
     {
+        if (std::wstring_view(probeMode) == L"extensions")
+        {
+            request.extended = true;
+            const auto start = std::chrono::steady_clock::now();
+            ext::Session session(request, 8000, true);
+            std::optional<ext::Reply> reply;
+            PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "read the actual extension selection without invoking commands");
+            std::cout << "extension_process kind=" << name << " background=" << request.background << " worker=" << session.ProcessId()
+                << " ready_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-start).count()
+                << " ok=" << reply->ok << " error=" << reply->error << std::endl;
+            const auto utf8 = [](std::wstring_view value) {
+                const auto size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+                std::string text(size, 0);
+                if (size) WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), text.data(), size, nullptr, nullptr);
+                return text;
+            };
+            for (const auto& entry : reply->entries)
+            {
+                std::cout << "extension_root provider=" << entry.provider << " key=" << entry.key << " label=" << utf8(entry.label)
+                    << " native=" << entry.native << " children=" << entry.children.size() << std::endl;
+                for (const auto& child : entry.children)
+                    std::cout << "extension_child parent=" << utf8(entry.label) << " key=" << child.key << " label=" << utf8(child.label) << std::endl;
+            }
+            Expect(reply->ok, "real extension inspection succeeds");
+            continue;
+        }
         request.extended = request.catalogueOnly = true;
         const auto start = std::chrono::steady_clock::now();
         ext::NativeMenuSession session(request, {-1900, 17}, nullptr);
@@ -5743,6 +5778,8 @@ void TestNativeMenuIsolation()
     if (*suffix) std::ofstream(file) << "private native selection";
     else std::filesystem::create_directory(file);
     ext::Request request; request.paths = {file.wstring()}; request.extended = true;
+    if (std::wstring_view(suffix) == L".lnk")
+        std::replace(request.paths.front().begin(), request.paths.front().end(), L'\\', L'/');
     request.sourceKey = std::to_wstring(reinterpret_cast<UINT_PTR>(surface.window));
     const auto started = std::chrono::steady_clock::now();
     std::optional<ext::NativeMenuResult> result;
@@ -5781,6 +5818,13 @@ int wmain(int argc, wchar_t **argv)
         if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"SnowDesktop-MenuInit-"))
             throw std::runtime_error("temporary TXT menu queries are forbidden");
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
+        if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"pool-idle-poison.txt")
+        {
+            if (!SetTimer(nullptr, 0, 25, [](HWND, UINT, UINT_PTR timer, DWORD) {
+                KillTimer(nullptr, timer);
+                Sleep(INFINITE); // A vendor callback stalls after a successful reply.
+            })) throw std::runtime_error("cannot schedule the private stalled-worker callback");
+        }
         if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"menu-slot-held.txt")
         {
             const auto parent = std::filesystem::path(request.paths.front()).parent_path();
@@ -5891,7 +5935,7 @@ int wmain(int argc, wchar_t **argv)
                     GetWindow(window, GW_OWNER) == owned.expected) owned.retained = true;
                 return TRUE;
             }, reinterpret_cast<LPARAM>(&ownership));
-            const bool exact = request.extended && request.paths.size() == 1 &&
+            const bool exact = request.extended && request.paths.size() == 1 && request.paths.front().find(L'/') == std::wstring::npos &&
                 std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"native-selection") &&
                 point.x == -1900 && point.y == 17 &&
                 ownership.retained &&

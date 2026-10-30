@@ -2,8 +2,7 @@
 #include "shell_extension_diagnostics.h"
 
 #include <shlguid.h>
-#include <filesystem>
-#include <utility>
+#include <vector>
 #include <shlwapi.h>
 #include <wrl/client.h>
 #include <wrl/implements.h>
@@ -311,26 +310,6 @@ private:
 
 } // namespace
 
-ShellMenuInitializationFile::ShellMenuInitializationFile()
-{
-    GUID id{};
-    if (FAILED(CoCreateGuid(&id))) return;
-    wchar_t guid[40]{};
-    StringFromGUID2(id, guid, 40);
-    std::error_code error;
-    const auto directory = std::filesystem::temp_directory_path(error);
-    if (error) return;
-    path = (directory / (std::wstring(L"SnowDesktop-MenuInit-") + guid + L".txt")).wstring();
-    handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
-        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-}
-
-ShellMenuInitializationFile::~ShellMenuInitializationFile()
-{
-    if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-}
-
 struct ShellContextMenuSite::Impl
 {
     ~Impl() { Reset(); }
@@ -494,11 +473,16 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     hr = bind(owner, actual.GetAddressOf());
     binding.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
-    Attach(actual.Get());
+    // Background commands resolve their location from the site during QCM.
+    // Item commands already receive their selection. Attaching their view
+    // before cold handler loading can re-enter Shell window initialization
+    // from a vendor's DllMain while the loader lock is held.
+    if (!count) Attach(actual.Get());
     shell_extensions::MenuTiming query("native_selection.query");
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
     query.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) return hr;
+    if (count) Attach(actual.Get());
     actual.CopyTo(contextMenu);
     total.Record("complete", count);
     return hr;
