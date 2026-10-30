@@ -5689,9 +5689,25 @@ void ProbeNativeMenuPreparation()
     ext::Request shortcut; shortcut.paths = {linkPath.wstring()}; cases.emplace_back("shortcut", shortcut);
     const auto folder = temp.path / L"Folder"; std::filesystem::create_directory(folder);
     ext::Request directory; directory.paths = {folder.wstring()}; cases.emplace_back("folder", directory);
+    const auto folderLinkPath = temp.path / L"Folder.lnk";
+    Expect(SUCCEEDED(link->SetPath(folder.c_str())) && SUCCEEDED(persistence->Save(folderLinkPath.c_str(), TRUE)),
+        "create a valid original-folder shortcut probe");
+    ext::Request folderShortcut; folderShortcut.paths = {folderLinkPath.wstring()};
+    cases.emplace_back("folder-shortcut", std::move(folderShortcut));
+    const auto workspace = temp.path / L"Sample.code-workspace";
+    { std::ofstream out(workspace); out << R"({"folders":[{"path":"Folder"}]})"; }
+    ext::Request project; project.paths = {workspace.wstring()}; cases.emplace_back("code-workspace", std::move(project));
     auto multiple = cases.front().second; multiple.paths.push_back(cases[1].second.paths.front()); cases.emplace_back("multiple", multiple);
     auto background = directory; background.background = true; background.context = ext::Context::FolderBackground;
     cases.emplace_back("background", background);
+    wchar_t selectedPath[32768]{};
+    if (const auto length = GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_PROBE_PATH", selectedPath, 32768))
+    {
+        Expect(length < 32768 && GetFileAttributesW(selectedPath) != INVALID_FILE_ATTRIBUTES,
+            "the explicitly selected native probe item exists");
+        ext::Request selected; selected.paths = {selectedPath};
+        cases.clear(); cases.emplace_back("selected-item", std::move(selected));
+    }
     for (auto& [name, request] : cases)
     {
         request.extended = request.catalogueOnly = true;
@@ -5951,7 +5967,6 @@ int wmain(int argc, wchar_t **argv)
             TestPackageManifestRefresh();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-network-selection-scheduling")
             TestNetworkSelectionScheduling();
-        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-native-catalogue-prime")
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
