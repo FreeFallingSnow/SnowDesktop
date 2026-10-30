@@ -12,6 +12,8 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    if (nativeMenuPollToken_) uiAnimationScheduler_.Cancel(std::exchange(nativeMenuPollToken_, 0));
+    nativeMenuSession_.reset();
     typeToSelectSession_.Reset();
     // Outside presses dismiss the shared menu before dispatch, but its drop
     // context stays alive until the menu loop returns. Do not replace it.

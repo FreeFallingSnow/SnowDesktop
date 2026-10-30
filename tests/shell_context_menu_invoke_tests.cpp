@@ -5878,6 +5878,34 @@ void BenchmarkMenus()
 #include "shell/shell_menu_refresh_cases.h"
 #include "shell/shell_visible_menu_read_cases.h"
 
+void TestNativeMenuIsolation()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"native-selection.txt";
+    std::ofstream(file) << "private native selection";
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", L"delayed-rename");
+    ext::Request request; request.paths = {file.wstring()}; request.extended = true;
+    const auto started = std::chrono::steady_clock::now();
+    std::optional<ext::NativeMenuResult> result;
+    unsigned turns = 0;
+    {
+        ext::NativeMenuSession session(request, {11, 17}, nullptr);
+        PumpUntil([&] {
+            const auto before = std::chrono::steady_clock::now();
+            result = session.Poll();
+            Expect(std::chrono::steady_clock::now() - before < std::chrono::milliseconds(100),
+                "native menu polling cannot wait for the child query/menu loop");
+            ++turns; return result.has_value();
+        }, "isolated native menu reports its selected command");
+    }
+    Expect(result->ok && !result->invoked && result->verb == "rename" && turns > 20,
+        "delayed native rename is returned to the host while its event loop keeps running");
+    Expect(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(600),
+        "the controlled child really delayed its menu completion");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", nullptr);
+}
+
 int wmain(int argc, wchar_t **argv)
 {
     const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
@@ -5995,8 +6023,18 @@ int wmain(int argc, wchar_t **argv)
             std::filesystem::rename(temporary, output);
             return E_ACCESSDENIED; // Deliberate final failure must still be handled.
         };
+    snowdesktop::shell_extensions::NativePopupExecutor nativePopup;
+    wchar_t nativeMode[32]{};
+    if (GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", nativeMode, 32))
+        nativePopup = [](const auto& request, POINT point) {
+            Sleep(700); // Isolated stand-in for a blocked provider/native loop.
+            const bool exact = request.extended && request.paths.size() == 1 &&
+                std::filesystem::path(request.paths.front()).filename() == L"native-selection.txt" &&
+                point.x == 11 && point.y == 17;
+            return snowdesktop::shell_extensions::NativeMenuResult{exact, false, exact ? "rename" : "", {}};
+        };
     if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(
-            std::move(query), std::move(invoke), std::move(startPin))) return *helper;
+            std::move(query), std::move(invoke), std::move(startPin), std::move(nativePopup))) return *helper;
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;
@@ -6025,7 +6063,8 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh")
         { menu_refresh_tests::Run(); visible_read_tests::Run(); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-visible-menu-read") visible_read_tests::Run();
-        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap") TestShellContextMenuBootstrap();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap")
+        { TestShellContextMenuBootstrap(); TestNativeMenuIsolation(); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")

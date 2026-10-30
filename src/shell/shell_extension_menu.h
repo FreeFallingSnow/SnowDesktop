@@ -53,6 +53,26 @@ struct Reply
     std::string error;
 };
 
+struct NativeMenuResult
+{
+    bool ok = false, invoked = false;
+    std::string verb, error;
+};
+// Query, native menu loop and arbitrary verbs all stay in the supervised STA.
+// Poll never waits for an extension or a popup to finish.
+class NativeMenuSession
+{
+public:
+    NativeMenuSession(const Request&, POINT, HWND owner, DWORD timeoutMs = 8000);
+    ~NativeMenuSession();
+    NativeMenuSession(const NativeMenuSession&) = delete;
+    NativeMenuSession& operator=(const NativeMenuSession&) = delete;
+    std::optional<NativeMenuResult> Poll();
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 // One fresh COM/menu session in a supervised child. Ordinary workers retire
 // with their first real selection; only the system Start handler is pooled.
 // Tokens expire when this object closes; they are never cached.
@@ -97,7 +117,9 @@ using InvokeExecutor = std::function<void(UINT, POINT)>;
 // Private composition boundary: the host supplies its deployment-staged
 // Explorer transport; tests can substitute only that final execution boundary.
 using StartPinExecutor = std::function<HRESULT(shell_start_pin::Action, const std::wstring &, HWND, POINT)>;
-std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {}, StartPinExecutor startPin = {});
+using NativePopupExecutor = std::function<NativeMenuResult(const Request&, POINT)>;
+std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {}, StartPinExecutor startPin = {},
+    NativePopupExecutor nativePopup = {});
 bool CanQueryOriginalShortcutObjects(const Request &);
 Context ResolveContext(const Request &);
 std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> &, const Request &);
@@ -105,6 +127,10 @@ std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> 
 
 namespace snowdesktop::settings_ipc
 {
+template <> struct Fields<shell_extensions::NativeMenuResult>
+{
+    template <class T> static auto Tie(T &v) { return std::tie(v.ok, v.invoked, v.verb, v.error); }
+};
 template <> struct Fields<shell_extensions::Request>
 {
     template <class T> static auto Tie(T &v)

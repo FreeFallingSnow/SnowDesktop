@@ -2303,6 +2303,10 @@ private:
         std::optional<RECT> dockRenameAnchor = std::nullopt,
         std::optional<size_t> dockMappingEntryIndex =
             std::nullopt);
+    bool TryShowIsolatedShellItemMenu(const std::vector<std::wstring>& paths, POINT point,
+        const std::wstring& renameKey = {}, bool keepQuickNavigationOpen = false,
+        std::optional<RECT> renameAnchor = std::nullopt,
+        std::optional<size_t> dockMappingEntryIndex = std::nullopt);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
         bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
@@ -5116,5 +5120,7 @@ private:
     ComPtr<IContextMenu2> newMenuContextMenu_;
     ComPtr<IContextMenu2> activeContextMenu2_;
     ComPtr<IContextMenu3> activeContextMenu3_;
+    std::shared_ptr<snowdesktop::shell_extensions::NativeMenuSession> nativeMenuSession_;
+    snowdesktop::UiScheduleToken nativeMenuPollToken_ = 0;
     /** @} */
 };

@@ -282,6 +282,7 @@ struct Host
     std::map<UINT, Command> commands;
     UINT next = 1;
     Native *tracking = nullptr;
+    bool nativePopup = false;
     bool invoked = false;
     size_t count = 0;
     bool fileAssociationsReady = false;
@@ -311,14 +312,14 @@ struct Host
             LRESULT result = 0;
             if (SUCCEEDED(self->tracking->context.As(&c3)) && SUCCEEDED(c3->HandleMenuMsg2(msg, wp, lp, &result)))
             {
-                if (msg == WM_INITMENUPOPUP)
+                if (msg == WM_INITMENUPOPUP && !self->nativePopup)
                     self->DisableOwned(*self->tracking, reinterpret_cast<HMENU>(wp));
                 return result;
             }
             ComPtr<IContextMenu2> c2;
             if (SUCCEEDED(self->tracking->context.As(&c2)) && SUCCEEDED(c2->HandleMenuMsg(msg, wp, lp)))
             {
-                if (msg == WM_INITMENUPOPUP)
+                if (msg == WM_INITMENUPOPUP && !self->nativePopup)
                     self->DisableOwned(*self->tracking, reinterpret_cast<HMENU>(wp));
                 return 0;
             }
@@ -577,7 +578,7 @@ struct Host
                 auto *previous = tracking;
                 tracking = &source;
                 TryMaterializePopup(child, window, index, [&] {
-                    if (source.shortcutObjects || source.site.HostWindow()) return false;
+                    if (source.shortcutObjects || source.site.HasView()) return false;
                     progress("prepare deferred popup view: " + Utf8(entry.label));
                     if (!source.site.Initialize(source.folder.Get(), window)) return false;
                     source.site.Attach(source.context.Get());
@@ -1046,9 +1047,22 @@ struct Host
         // binding from a handler's DllMain.
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
-                                                     CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
-                                                         (request.extended ? CMF_EXTENDEDVERBS : 0))))
+        const UINT queryFlags = CMF_NORMAL | (nativePopup ? CMF_CANRENAME : (request.background ? 0 : CMF_ITEMMENU)) |
+            (request.extended ? CMF_EXTENDEDVERBS : 0);
+        HRESULT queryResult;
+        if (nativePopup && !request.background && !ShellSelectionNeedsFileMenuPrimer(request.paths))
+        {
+            // The public entry currently admits same-parent ordinary files.
+            std::vector<PCUITEMID_CHILD> children;
+            for (auto id : raw) children.push_back(ILFindLastID(id));
+            ComPtr<IContextMenu> actual;
+            queryResult = native->site.BuildSelectionMenu(folder.Get(), window, native->menu, 1, 0x7fff,
+                queryFlags, [&](HWND, IContextMenu** target) { return native->context.CopyTo(target); },
+                static_cast<UINT>(children.size()), children.data(), actual.GetAddressOf());
+            if (SUCCEEDED(queryResult)) native->context = std::move(actual);
+        }
+        else queryResult = native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff, queryFlags);
+        if (FAILED(queryResult))
             return {};
         if (priming)
         {
@@ -1060,6 +1074,11 @@ struct Host
         }
         if (shortcutSelection && !request.startPinOnly && request.sourceClsid.empty())
             return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
+        if (nativePopup)
+        {
+            menus.push_back(std::move(native));
+            return Reply{true, {}, {}};
+        }
         Reply reply;
         if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
             fileAssociationsReady = true;
@@ -1083,6 +1102,31 @@ struct Host
         reply.ok = true;
         menus.push_back(std::move(native));
         return reply;
+    }
+    NativeMenuResult ShowNative(POINT point, UINT& invokeToken)
+    {
+        if (menus.empty()) return {false, false, {}, "native menu query failed"};
+        auto& source = *menus.back();
+        tracking = &source;
+        SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        SetForegroundWindow(window);
+        const UINT chosen = TrackPopupMenuEx(source.menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            point.x, point.y, window, nullptr);
+        tracking = nullptr;
+        if (!chosen) return {true, false, {}, {}};
+        auto verb = Lower(Verb(source, chosen));
+        if (IsRootMenuCommand(source.menu, chosen))
+        {
+            wchar_t label[256]{};
+            GetMenuStringW(source.menu, chosen, label, 256, MF_BYCOMMAND);
+            if (verb == L"rename" || StrStrIW(label, L"重命名") || StrStrIW(label, L"Rename"))
+                return {true, false, "rename", {}};
+            if (verb == L"delete" || StrStrIW(label, L"删除") || StrStrIW(label, L"Delete"))
+                return {true, false, "delete", {}};
+        }
+        invokeToken = next++;
+        commands[invokeToken] = {&source, chosen - 1, false, nullptr};
+        return {true, true, Utf8(verb), {}};
     }
     void DisableOwned(Native &source, HMENU menu, int depth = 0)
     {
@@ -1136,7 +1180,7 @@ struct Host
         {
             // Deferred children already belong to this live view/menu session.
             // Do not detach their site and recreate it between read and click.
-            if (!source.site.HostWindow())
+            if (!source.site.HasView())
                 source.site.Initialize(source.folder.Get(), window);
             source.site.Attach(source.context.Get());
         }
@@ -1155,7 +1199,7 @@ struct Host
         }
         // Keep application-owned file operations out of the native fallback.
         // Their desktop/Dock semantics are handled by the existing host menu.
-        if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)) &&
+        if (!nativePopup && !source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)) &&
             IsRootMenuCommand(source.menu, command.offset + 1))
             return E_ACCESSDENIED;
         std::function<bool(HMENU, int)> enabled = [&](HMENU menu, int depth) {
@@ -1510,7 +1554,53 @@ void Session::Invoke(UINT token, POINT position, HWND owner)
         process->Stop();
     }).detach();
 }
-std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, StartPinExecutor startPin)
+struct NativeMenuSession::Impl
+{
+    settings_ipc::Channel channel;
+    std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
+    std::optional<NativeMenuResult> result;
+    ULONGLONG started = GetTickCount64();
+    DWORD timeout = 8000;
+    bool showing = false, invoked = false;
+    ~Impl()
+    {
+        channel.Close();
+        if (!invoked) process->Stop();
+        else std::thread([child = process] {
+            for (unsigned i = 0; i < 1200 && child->Running(); ++i) Sleep(100);
+            child->Stop();
+        }).detach();
+    }
+};
+NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND owner, DWORD timeoutMs)
+    : impl_(std::make_unique<Impl>())
+{
+    MenuTiming launch("native_session.launch");
+    impl_->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
+    impl_->channel.Bind<void>("menu.native-showing", [p = impl_.get()] {
+        p->showing = true;
+        MenuTrace("native_session.showing", "ready", double(GetTickCount64() - p->started));
+    });
+    impl_->channel.Bind<void, NativeMenuResult>("menu.native-result", [p = impl_.get()](NativeMenuResult result) {
+        p->invoked = result.invoked; p->result = std::move(result);
+    });
+    impl_->process->Start(impl_->channel, L"--shell-menu-helper");
+    AllowSetForegroundWindow(impl_->process->ProcessId());
+    const auto origin = ShellInvocationOwner::Capture(owner);
+    impl_->channel.Notify("menu.native", request, point.x, point.y, origin.window, origin.process, origin.thread);
+    launch.Record("scheduled");
+}
+NativeMenuSession::~NativeMenuSession() = default;
+std::optional<NativeMenuResult> NativeMenuSession::Poll()
+{
+    if (!impl_->result && (!impl_->process->Running() ||
+        (!impl_->showing && GetTickCount64() - impl_->started >= impl_->timeout)))
+        impl_->result = NativeMenuResult{false, false, {}, "native menu helper stopped or timed out"};
+    return std::exchange(impl_->result, {});
+}
+
+std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, StartPinExecutor startPin,
+    NativePopupExecutor nativePopup)
 {
     if (!settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper"))
         return {};
@@ -1535,6 +1625,36 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         channel.SetDisconnected([&] {
             if (!invocationQueued)
                 PostQuitMessage(0);
+        });
+        channel.Bind<void, Request, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.native",
+            [&](Request request, LONG x, LONG y, std::uint64_t owner, DWORD ownerProcess, DWORD ownerThread) {
+            if (actualQueryReceived || invocationQueued) return;
+            actualQueryReceived = invocationQueued = true;
+            dispatchedAt = GetTickCount64();
+            channel.Post([&, request = std::move(request), x, y, owner, ownerProcess, ownerThread] {
+                UINT token = 0;
+                NativeMenuResult result;
+                if (nativePopup)
+                    result = nativePopup(request, {x, y});
+                else
+                {
+                    // Notify only after the expensive query, so preparation
+                    // retains its deadline while a user's open menu does not.
+                    host.progress = [&](const auto& stage) { MenuTrace("native_helper.stage", stage); };
+                    host.rootPreview = {};
+                    host.nativePopup = true;
+                    const auto reply = host.Query(request);
+                    if (!reply.ok) result = {false, false, {}, "native menu query failed"};
+                    else
+                    {
+                        channel.Notify("menu.native-showing");
+                        result = host.ShowNative({x, y}, token);
+                    }
+                }
+                channel.Notify("menu.native-result", result);
+                if (token) host.Invoke(token, {x, y}, {owner, ownerProcess, ownerThread});
+                invokedAt = GetTickCount64();
+            });
         });
         channel.Bind<void>("menu.prepare", [&] {
             if (actualQueryReceived || invocationQueued || preparationSample) return;

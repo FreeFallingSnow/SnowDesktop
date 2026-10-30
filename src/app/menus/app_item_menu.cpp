@@ -1200,6 +1200,74 @@ void DesktopApp::ShowItemContextMenu(
  * @param screenPoint 菜单弹出的屏幕坐标。
  * @param itemIndex   当前右键点击的项索引（用于确定 PIDL 列表的锚点）。
  */
+bool DesktopApp::TryShowIsolatedShellItemMenu(const std::vector<std::wstring>& paths, POINT point,
+    const std::wstring& renameKey, bool keepQuickNavigationOpen, std::optional<RECT> renameAnchor,
+    std::optional<size_t> dockMappingEntryIndex)
+{
+    if (snowdesktop::ShellSelectionNeedsFileMenuPrimer(paths)) return false;
+    const auto parent = std::filesystem::path(paths.front()).parent_path();
+    if (std::any_of(paths.begin(), paths.end(), [&](const auto& path) {
+        return lstrcmpiW(std::filesystem::path(path).parent_path().c_str(), parent.c_str()) != 0;
+    })) return false;
+    if (nativeMenuPollToken_) uiAnimationScheduler_.Cancel(std::exchange(nativeMenuPollToken_, 0));
+    nativeMenuSession_.reset();
+    try
+    {
+        snowdesktop::shell_extensions::Request request;
+        request.paths = paths;
+        request.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
+        auto session = std::make_shared<snowdesktop::shell_extensions::NativeMenuSession>(request, point, ShellDialogOwnerHwnd());
+        nativeMenuSession_ = session;
+        nativeMenuPollToken_ = uiAnimationScheduler_.ScheduleInterval(16,
+            [this, session, paths, renameKey, keepQuickNavigationOpen, renameAnchor, dockMappingEntryIndex](snowdesktop::UiScheduleToken token) {
+            const auto result = session->Poll();
+            if (!result) return;
+            uiAnimationScheduler_.Cancel(token);
+            nativeMenuPollToken_ = 0;
+            nativeMenuSession_.reset();
+            if (!result->ok)
+            {
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Isolated native menu failed or timed out", DiagnosticLogLevel::Warning);
+                return;
+            }
+            if (result->verb == "rename" && paths.size() == 1)
+            {
+                // The helper's native loop has ended. Resolve the original
+                // object again instead of trusting a selection cleared by focus.
+                const size_t index = FindItemIndexByKey(renameKey);
+                if (!renameKey.empty() && index < items_.size())
+                {
+                    SelectOnly(static_cast<int>(index));
+                    if (keepQuickNavigationOpen) BeginQuickNavigationDesktopItemRename(index);
+                    else BeginRenameSelected(renameAnchor);
+                    return;
+                }
+                for (size_t i = 0; i < dockFolderPopupWidget_.folderEntries.size(); ++i)
+                    if (dockFolderPopupOpen_ && lstrcmpiW(dockFolderPopupWidget_.folderEntries[i].fullPath.c_str(), paths.front().c_str()) == 0)
+                        { BeginRenameDockFolderPopupEntry(i); return; }
+                for (size_t w = 0; w < widgets_.size(); ++w)
+                    for (size_t i = 0; i < widgets_[w].folderEntries.size(); ++i)
+                        if (lstrcmpiW(widgets_[w].folderEntries[i].fullPath.c_str(), paths.front().c_str()) == 0)
+                            { BeginRenameFolderEntry(w, i); return; }
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Native rename target no longer exists in its original surface", DiagnosticLogLevel::Warning);
+            }
+            else if (result->verb == "delete")
+            {
+                if (dockMappingEntryIndex && *dockMappingEntryIndex < dockEntries_.size() &&
+                    snowdesktop::desktop_item_reference_migration::KeysEqual(dockEntries_[*dockMappingEntryIndex].reference, renameKey) &&
+                    RemoveDockMappingAt(*dockMappingEntryIndex)) return;
+                std::vector<snowdesktop::ShellFileOperationStep> steps;
+                steps.push_back({FO_DELETE, paths, {}, static_cast<FILEOP_FLAGS>(FOF_ALLOWUNDO | FOF_NOCONFIRMATION)});
+                QueueShellFileOperation(std::move(steps), [this](bool succeeded) { if (succeeded) RequestShellRefresh(); });
+            }
+            else if (result->invoked) RequestShellRefresh();
+        });
+        if (!nativeMenuPollToken_) nativeMenuSession_.reset();
+    }
+    catch (...) { WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Cannot start isolated native menu", DiagnosticLogLevel::Warning); }
+    return true;
+}
+
 void DesktopApp::ShowShellContextMenu(
     POINT screenPoint, int itemIndex,
     bool keepQuickNavigationOpen,
@@ -1233,6 +1301,9 @@ void DesktopApp::ShowShellContextMenu(
         }
     }
     if (pidls.empty()) return;
+    if (TryShowIsolatedShellItemMenu(invocationPaths, screenPoint,
+        itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() ? items_[itemIndex].layoutKey : std::wstring{},
+        keepQuickNavigationOpen, dockRenameAnchor, dockMappingEntryIndex)) return;
     // Shell activation/view creation can dispatch STA messages. Both bindings
     // must retain the same folder and PIDLs even if a refresh replaces items_.
     const ComPtr<IShellFolder> menuFolder = desktopFolder_;

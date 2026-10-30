@@ -581,6 +581,8 @@ HWND ShellContextMenuSite::HostWindow() const
     return impl_->hostWindow;
 }
 
+bool ShellContextMenuSite::HasView() const { return impl_->browser && impl_->view; }
+
 void ShellContextMenuSite::SetInvocationOwner(HWND owner)
 {
     if (impl_->browser && owner && IsWindow(owner))

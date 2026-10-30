@@ -72,6 +72,7 @@ public:
         UINT firstCommand, UINT lastCommand, UINT flags,
         const MenuFactory& bind, IContextMenu** contextMenu);
     HWND HostWindow() const;
+    bool HasView() const;
     // Verb dialogs must use the same persistent, activatable owner as the
     // invocation structure, rather than the hidden view used to build menus.
     void SetInvocationOwner(HWND owner);

@@ -666,6 +666,7 @@ ShowShellItemContextMenuForPaths(
     POINT screenPoint)
 {
     if (itemPaths.empty()) return;
+    if (TryShowIsolatedShellItemMenu(itemPaths, screenPoint)) return;
     const UINT extendedFlags = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
