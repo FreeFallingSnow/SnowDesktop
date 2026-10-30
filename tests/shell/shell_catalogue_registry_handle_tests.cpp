@@ -568,6 +568,13 @@ void TestCatalogueRegistryHandles()
             Check(handles == after, "rebuilding never closes handles used by sibling waiters");
             Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"after-rearm");
             Check(monitor.Changed(), "newly created classes remain covered after background rearm");
+            for (unsigned i = 0; i < 32; ++i)
+            {
+                untilReady();
+                Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr,
+                    L"handover-" + std::to_wstring(i));
+                Check(monitor.Changed(), "rapid handovers retain every newly issued registration edge");
+            }
         }
         fixture.Cleanup();
     }

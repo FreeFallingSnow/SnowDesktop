@@ -3,6 +3,7 @@
 #include "shell_extension_diagnostics.h"
 #include <windows.h>
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <string>
 #include <utility>
@@ -44,6 +45,7 @@ public:
         // changed. A failed wait/rearm remains conservative.
         return wait != WAIT_OBJECT_0 || !armed || hadTarget || target_;
     }
+    void Rearm() { Arm(); }
 
 private:
     HKEY root_ = nullptr, key_ = nullptr;
@@ -162,23 +164,45 @@ public:
             worker_ = std::thread([this, hive, path = std::move(path), id] {
                 try
                 {
+                    auto baselineRevision = BeginBuild();
                     MenuRegistryWatch precise(hive, path, id, true, filteredEvent_);
                     for (;;)
                     {
                         // Changes before all precise branches were armed are
                         // still retained by the baseline. Publish that edge
                         // before allowing consumers to ignore browse noise.
-                        if (WaitForSingleObject(baseline_.event, 0) == WAIT_OBJECT_0) Publish();
-                        ready_.store(precise.armed);
+                        bool interrupted = false;
+                        {
+                            std::lock_guard lock(stateMutex_);
+                            ObserveBaseline();
+                            interrupted = baselineRevision != baselineRevision_;
+                            ready_.store(precise.armed && !interrupted);
+                        }
+                        if (interrupted)
+                        {
+                            // Registering another key can reset the shared
+                            // notification event. A change during construction
+                            // may therefore have completed an early branch's
+                            // one-shot wait. Rebuild before trusting the split.
+                            if (WaitForSingleObject(stop_, 50) == WAIT_OBJECT_0) break;
+                            baselineRevision = BeginBuild();
+                            precise.Rearm();
+                            continue;
+                        }
                         HANDLE handles[] = {stop_, filteredEvent_};
                         const auto wait = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
                         if (wait == WAIT_OBJECT_0) break;
-                        ready_.store(false);
-                        Publish(); // Invalidate before the expensive rearm.
+                        {
+                            std::lock_guard lock(stateMutex_);
+                            ready_.store(false);
+                            Publish(); // Invalidate before the expensive rearm.
+                        }
+                        baselineRevision = BeginBuild();
                         if (wait != WAIT_OBJECT_0 + 1 || !precise.Changed()) break;
                     }
                 }
                 catch (...) { MenuTrace("registry.watch", "background_failed", 0, id); }
+                std::lock_guard lock(stateMutex_);
                 ready_.store(false);
             });
         }
@@ -194,11 +218,14 @@ public:
     }
     bool Changed()
     {
-        // Read readiness first: the worker publishes any handover edge before
-        // setting it, and never clears the consumer's independent dirty bit.
+        // Serialize only the handover, never precise enumeration. Otherwise a
+        // stale ready=true read could discard a baseline edge from the gap
+        // while the worker was resetting the previous precise event.
+        std::lock_guard lock(stateMutex_);
         const bool preciseReady = ready_.load();
         if (changed_) ResetEvent(changed_);
         const bool broadChange = baseline_.Changed();
+        if (broadChange) ++baselineRevision_;
         const bool changed = dirty_.exchange(false);
         const bool preciseChange = preciseReady && WaitForSingleObject(filteredEvent_, 0) == WAIT_OBJECT_0;
         return (broadChange && !preciseReady) || changed || preciseChange;
@@ -213,6 +240,7 @@ public:
     }
     bool FilteredReady() const
     {
+        std::lock_guard lock(stateMutex_);
         return ready_.load() && WaitForSingleObject(filteredEvent_, 0) == WAIT_TIMEOUT;
     }
 
@@ -220,11 +248,24 @@ private:
     MenuRegistryWatch baseline_;
     HANDLE filteredEvent_ = nullptr, changed_ = nullptr, stop_ = nullptr;
     std::atomic_bool ready_ = false, dirty_ = false;
+    mutable std::mutex stateMutex_;
+    std::uint64_t baselineRevision_ = 0;
     std::thread worker_;
     void Publish()
     {
         dirty_.store(true);
         SetEvent(changed_);
+    }
+    void ObserveBaseline()
+    {
+        if (baseline_.Changed()) { ++baselineRevision_; Publish(); }
+    }
+    std::uint64_t BeginBuild()
+    {
+        std::lock_guard lock(stateMutex_);
+        ready_.store(false);
+        ObserveBaseline();
+        return baselineRevision_;
     }
 };
 }
