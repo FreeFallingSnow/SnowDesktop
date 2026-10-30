@@ -1328,6 +1328,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
             if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
             {
                 counter.fetch_sub(1);
+                if (!usePreparedWorker) throw settings_ipc::ProtocolError("too many Shell menus");
                 // Preparation is optional. Yield its reserved slot to real
                 // source/background work before refusing an interactive query.
                 if (!request.startPinOnly) ReleasePreparedMenuWorker();

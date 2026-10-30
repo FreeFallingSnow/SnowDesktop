@@ -2204,7 +2204,7 @@ void TestExtensionSessions()
         Expect(reply.ok && reply.entries.front().key == "cold", "background menus always retain their original unprepared host");
         Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Ready,
             "a background query preserves the standby file worker when capacity is available");
-        ext::Session concurrent(request, 2500); Expect(wait(concurrent).ok,
+        ext::Session concurrent(background, 2500, true); Expect(wait(concurrent).ok,
             "interactive work can reclaim the standby slot while another ordinary query is alive");
         Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
             "standby preparation yields capacity instead of failing a second real query");

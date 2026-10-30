@@ -134,7 +134,15 @@ void BenchmarkShellMenuFirstScreen()
         ext::SetCommon(prefs, "menu:winrar:14695981039346656037", ext::Category::Objects, true);
     }
     Require(ext::HasOptIns(prefs, ext::Context::File), "the latency benchmark needs enabled file extensions");
-    ext::MenuService service(workspace.path / L"cache"); service.Configure(prefs);
+    const auto cache = workspace.path / L"cache";
+    wchar_t metadataPath[32768]{};
+    if (GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_BENCHMARK_METADATA", metadataPath, 32768))
+    {
+        std::filesystem::create_directories(cache);
+        for (const auto name : {L"catalogue.bin", L"observed.dat"})
+            std::filesystem::copy_file(std::filesystem::path(metadataPath) / name, cache / name);
+    }
+    ext::MenuService service(cache); service.Configure(prefs);
     auto open = [&](const ext::Request &request, const char *scenario, double preparationMs) {
         const auto started = Clock::now();
         ext::Presentation popup(request, prefs, L"", L"", service);
@@ -142,10 +150,15 @@ void BenchmarkShellMenuFirstScreen()
         popup.Attach(items, options, 0);
         const auto elapsed = [&] { return std::chrono::duration<double, std::milli>(Clock::now() - started).count(); };
         double firstMs = items.empty() ? -1 : elapsed();
+        auto nextPoll = Clock::now();
         const auto deadline = GetTickCount64() + 20000;
         while (options.pollItems && (!options.pollItemsFinished || !options.pollItemsFinished()) && GetTickCount64() < deadline)
         {
-            if (auto update = options.pollItems(items, true)) items = std::move(*update);
+            if (Clock::now() >= nextPoll)
+            {
+                if (auto update = options.pollItems(items, true)) items = std::move(*update);
+                nextPoll = Clock::now() + std::chrono::milliseconds(50);
+            }
             if (firstMs < 0 && !items.empty()) firstMs = elapsed();
             Pump();
         }
