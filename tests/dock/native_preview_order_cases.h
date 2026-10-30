@@ -164,6 +164,7 @@ struct Fixture
 };
 
 #include "native_running_refresh_cases.h"
+#include "native_preview_close_refresh_cases.h"
 
 inline void CheckClosePreview(int legacyRoute)
 {
@@ -344,6 +345,7 @@ inline void Run(int onlyVariant = -1)
     {
         RunRunningRefresh();
         RunClosePreview();
+        RunCloseRefresh();
         RunLivePreviewRefresh();
     }
 }

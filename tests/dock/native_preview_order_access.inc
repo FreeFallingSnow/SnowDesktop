@@ -50,4 +50,18 @@
     {
         app.dockWindowPreviewIdentity_ = app.ReadDockAppIdentity(executable);
     }
+    static void EnableCloseRefresh(DesktopApp& app)
+    {
+        // Unlike the opening-order fixture, do not mask discovery with an
+        // active-input guard when checking the actual close callback.
+        app.mouseDown_ = false;
+    }
+    static void ReconcileCloseRefresh(DesktopApp& app)
+    {
+        app.RefreshDockRunningWindows();
+    }
+    static bool CloseRefreshReconciled(DesktopApp& app)
+    {
+        return app.dockRunningWindowsStateTick_ == DesktopApp::dockWindowListChangedTick_.load();
+    }
 #include "native_running_refresh_access.inc"

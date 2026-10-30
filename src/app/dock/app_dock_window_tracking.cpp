@@ -515,6 +515,10 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    // Read before any collector prunes destroyed HWNDs from the pending set.
+    // The accepted close already retired this card; its hide/destroy burst
+    // must not repeat global discovery before the remaining cards get input.
+    const bool closePending = dockPendingCloseWindows_.contains(window);
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
@@ -533,8 +537,9 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
         previewOrder.Forget(window);
     else
         previewOrder.Observe(window);
-    if (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_DESTROY ||
-        event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE)
+    if (!closePending &&
+        (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_DESTROY ||
+         event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE))
         RefreshDockWindowPreviewItems();
     if (dockWindowTransition_)
     {
@@ -545,6 +550,12 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     }
     if (event == EVENT_OBJECT_DESTROY && dockWindowAttention_.Remove(window))
         InvalidateDockRects();
+    if (closePending)
+    {
+        dockWindowAppIds_.Invalidate(window);
+        dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     const auto tracks = [window](const auto& state) {
         return state.window == window ||
             std::find(state.trackedWindows.begin(), state.trackedWindows.end(), window) !=

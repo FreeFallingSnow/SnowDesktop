@@ -263,7 +263,10 @@ void DesktopApp::CloseDockWindowFromPreview(
         dockWindowPreview_->RemoveWindow(window);
     if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible())
         DismissDockWindowPreviewUntilLeave();
-    RefreshDockRunningWindows();
+    // The card has already been removed locally. Let maintenance reconcile
+    // running membership once, after the asynchronous close notifications.
+    // A full process/window scan here delays the next card's pointer messages.
+    dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void DesktopApp::CloseDockApplicationWindows(

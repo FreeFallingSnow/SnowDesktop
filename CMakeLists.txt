@@ -3336,6 +3336,7 @@ if (BUILD_TESTING)
         "native_dock_partition_storage|--dock-partitions"
         "native_dock_removal_animation|--dock-removal"
         "native_dock_running_pin_storage|--dock-running-pin-storage"
+        "native_dock_preview_order|--dock-preview-order"
         "native_shortcut_final_targets|--shortcut-targets"
         "native_folder_shortcut_handoff|--folder-shortcut-handoff"
         "native_large_icon_storage_return|--large-icon-storage-return"

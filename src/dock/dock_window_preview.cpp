@@ -888,7 +888,7 @@ void DockWindowPreview::UpdateItems(const std::vector<DockWindowPreviewItem>& it
     Show(current, anchorScreen_, dockPosition_, lightTheme_, owner);
 }
 
-void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
+void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbnails)
 {
     snowdesktop::performance::Scope trace("dock.preview", "layout");
     const int workWidth = std::max(1L,
@@ -904,16 +904,24 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
     // Keep the displayed generation alive throughout measurement and popup
     // preparation, retiring it at the same display boundary as before.
     ReleaseThumbnails(measuredThumbnails_);
+    // Removing a card preserves every surviving source/destination pair.
+    // Transfer those live relationships instead of registering them again.
+    if (reuseThumbnails) measuredThumbnails_.swap(thumbnails_);
     measuredThumbnails_.resize(items_.size(), nullptr);
     for (size_t index = 0; index < items_.size(); ++index)
     {
         const auto& item = items_[index];
         SIZE size{};
-        HTHUMBNAIL thumbnail = nullptr;
+        HTHUMBNAIL thumbnail = measuredThumbnails_[index];
+        if (thumbnail && FAILED(DwmQueryThumbnailSourceSize(thumbnail, &size)))
+        {
+            ReleaseThumbnail(measuredThumbnails_[index]);
+            thumbnail = nullptr;
+        }
         // Registration alone does not render anything. Measure through the
         // final card's relationship and retain it until properties are ready.
         const HWND destination = windows_[index] ? windows_[index] : hwnd_;
-        if (SUCCEEDED(DwmRegisterThumbnail(destination, item.window, &thumbnail)))
+        if (!thumbnail && SUCCEEDED(DwmRegisterThumbnail(destination, item.window, &thumbnail)))
         {
             DwmQueryThumbnailSourceSize(thumbnail, &size);
             if (windows_[index]) measuredThumbnails_[index] = thumbnail;
@@ -1103,7 +1111,7 @@ void DockWindowPreview::RemoveWindow(HWND window)
         (anchorScreen_.top + anchorScreen_.bottom) / 2};
     const auto context = ResolveDockWindowPreviewMonitorContext(anchorCenter);
     dpi_ = context.dpi;
-    Layout(context.workArea, dpi_);
+    Layout(context.workArea, dpi_, true);
     RegisterThumbnails();
     // Reuse the surviving native cards and their Dock owner. Moving in the
     // current Z band must not renegotiate or lower the owner's promotion.

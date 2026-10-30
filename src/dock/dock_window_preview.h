@@ -165,7 +165,7 @@ private:
 
     bool EnsureWindow();
     bool EnsureWindows(size_t count);
-    void Layout(RECT monitorWorkArea, UINT dpi);
+    void Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbnails = false);
     void RegisterThumbnails();
     void UnregisterThumbnails();
     void Paint(HWND window);
