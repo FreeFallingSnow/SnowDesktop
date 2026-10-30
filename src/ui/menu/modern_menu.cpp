@@ -626,7 +626,7 @@ public:
                 static_cast<size_t>(index) < popup.items->size() &&
                 (*popup.items)[index].textInput;
             snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr,
-                overTextInput ? IDC_IBEAM : IDC_ARROW));
+                overTextInput ? IDC_IBEAM : options_.pollItems ? IDC_APPSTARTING : IDC_ARROW));
             return TRUE;
         }
         case WM_NCHITTEST:

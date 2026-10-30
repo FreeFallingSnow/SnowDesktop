@@ -1,4 +1,5 @@
 #include "shell/shell_extension_menu_presentation.h"
+#include "shell/shell_menu_read_projection.h"
 #include "ui/menu/modern_menu_dynamic_items_rules.h"
 #include <atomic>
 #include <filesystem>
@@ -36,12 +37,20 @@ struct Workspace
 };
 }
 
-void TestShellMenuRootPrefetch()
+static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, bool multiple = false)
 {
     Workspace workspace;
-    const auto file = workspace.path / L"selected.txt";
-    std::ofstream(file) << "private prefetch fixture";
-    ext::Request request; request.paths = {file.wstring()}; request.context = ext::Context::File;
+    const auto file = workspace.path / (std::wstring(L"selected") + extension);
+    if (folder) std::filesystem::create_directory(file);
+    else std::ofstream(file) << "private prefetch fixture";
+    ext::Request request; request.paths = {file.wstring()};
+    request.context = folder ? ext::Context::Folder : ext::Context::File;
+    if (multiple)
+    {
+        const auto second = workspace.path / L"second.txt";
+        std::ofstream(second) << "second private selection";
+        request.paths.push_back(second.wstring());
+    }
     ext::Preferences prefs; ext::SetCommon(prefs, "verb:prefetch-test", ext::Category::Objects, true);
     ext::SetCommon(prefs, "verb:prefetch-leaf", ext::Category::Objects, true);
     std::atomic_bool finish = false;
@@ -73,7 +82,7 @@ void TestShellMenuRootPrefetch()
             return ext::Reply{true, {headers, separator, leafHeader}, {}};
         };
         work.invoke = [&](UINT token, POINT) { Check(token == 77, "invoke the final fresh child token"); ++invocations; };
-        work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
+        work.selectionContexts = [folder] { return ext::ContextBit(folder ? ext::Context::Folder : ext::Context::File); };
         return work;
     }, [] { return ext::Catalogue{}; });
     service.Configure(prefs);
@@ -126,5 +135,40 @@ void TestShellMenuRootPrefetch()
     Check(!menu::ApplyPrefetchedChildren(open, items, true, begin, end), "already loaded menus are not replaced again");
     Check(popup.Invoke(items.front().children.front().command, {}), "final child uses the normal command route");
     Until([&] { return invocations == 1; }, "execution resolves a fresh complete token, not a header token");
+    const auto next = workspace.path / (std::wstring(L"next-selected") + extension);
+    if (folder) std::filesystem::create_directory(next);
+    else std::ofstream(next) << "stable next selection";
+    auto prewarm = request; prewarm.paths.front() = next.wstring();
+    service.Prewarm(prewarm);
+    Until([&] {
+        const auto view = service.View(prewarm);
+        return view.snapshot && !view.pending && !view.snapshot->entries.empty() &&
+            !view.snapshot->entries.front().children.empty() && view.snapshot->entries.front().children.front().label == L"Ready action";
+    }, "stable selection prewarming finishes all children before any popup is opened for every local object kind");
     service.Shutdown();
+}
+
+void TestShellMenuRootPrefetch()
+{
+    ext::Request policy; policy.visibleMenuProviders = std::vector<std::string>{"*"};
+    for (const auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
+        for (const auto path : {L"C:\\Private\\file.txt", L"C:\\Private\\program.lnk", L"C:\\Private\\folder", L"::{645FF040-5081-101B-9F08-00AA002F954E}"})
+        {
+            policy.context = context; policy.background = context == ext::Context::FolderBackground || context == ext::Context::Desktop;
+            policy.paths = {path};
+            Check(ext::CanPreviewPopupRoots(policy, 0), "root preview policy covers file, shortcut, folder, namespace and background contexts");
+        }
+    policy.originalShortcutOnly = true;
+    Check(ext::CanPreviewPopupRoots(policy, 0), "original-shortcut recovery uses the same root preview policy");
+    Check(!ext::CanPreviewPopupRoots(policy, 1), "only roots publish early headers");
+    policy.catalogueOnly = true;
+    Check(!ext::CanPreviewPopupRoots(policy, 0), "management metadata does not publish popup headers");
+    policy.catalogueOnly = false; policy.startPinOnly = true;
+    Check(!ext::CanPreviewPopupRoots(policy, 0), "Start state metadata keeps its independent lane");
+    policy.startPinOnly = false; policy.sourceClsid = L"private source";
+    Check(!ext::CanPreviewPopupRoots(policy, 0), "source attribution metadata cannot introduce provisional menu entries");
+    for (const auto extension : {L".txt", L".png", L".zip", L".pdf", L".lnk", L".url"})
+        RunRootPrefetchCase(extension);
+    RunRootPrefetchCase(L"", true);
+    RunRootPrefetchCase(L".txt", false, true);
 }

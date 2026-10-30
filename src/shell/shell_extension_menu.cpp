@@ -8,6 +8,7 @@
 #include "shell_extension_menu_cache.h"
 #include "shell_extension_nvidia_compat.h"
 #include "ui/menu/menu_label.h"
+#include "ui/menu/native_menu_theme.h"
 #include "settings/settings_process.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_context_menu_site.h"
@@ -253,6 +254,7 @@ std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullp
 }
 struct Native
 {
+    std::vector<std::unique_ptr<Pidl>> selection;
     ComPtr<IContextMenu> context;
     ComPtr<IShellFolder> folder;
     ShellContextMenuSite site;
@@ -283,6 +285,7 @@ struct Host
     UINT next = 1;
     Native *tracking = nullptr;
     bool nativePopup = false;
+    bool nativeLightTheme = true;
     bool invoked = false;
     size_t count = 0;
     bool fileAssociationsReady = false;
@@ -568,9 +571,7 @@ struct Host
         std::vector<bool> omitted;
         struct Cascade { size_t entry; HMENU menu; UINT index; std::wstring verb; };
         std::vector<Cascade> cascades;
-        const bool previewRoots = rootPreview && depth == 0 && request && request->visibleMenuProviders &&
-            !request->background && !request->catalogueOnly && !request->startPinOnly &&
-            !request->originalShortcutOnly && NeedsFileCataloguePriming(*request);
+        const bool previewRoots = rootPreview && request && CanPreviewPopupRoots(*request, depth);
         const auto readCascade = [&](Entry &entry, HMENU child, UINT index, const std::wstring &verb) {
             if (depth < 8 && InspectPopup(child) == PopupContents::Deferred)
             {
@@ -1047,22 +1048,8 @@ struct Host
         // binding from a handler's DllMain.
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        const UINT queryFlags = CMF_NORMAL | (nativePopup ? CMF_CANRENAME : (request.background ? 0 : CMF_ITEMMENU)) |
-            (request.extended ? CMF_EXTENDEDVERBS : 0);
-        HRESULT queryResult;
-        if (nativePopup && !request.background && !ShellSelectionNeedsFileMenuPrimer(request.paths))
-        {
-            // The public entry currently admits same-parent ordinary files.
-            std::vector<PCUITEMID_CHILD> children;
-            for (auto id : raw) children.push_back(ILFindLastID(id));
-            ComPtr<IContextMenu> actual;
-            queryResult = native->site.BuildSelectionMenu(folder.Get(), window, native->menu, 1, 0x7fff,
-                queryFlags, [&](HWND, IContextMenu** target) { return native->context.CopyTo(target); },
-                static_cast<UINT>(children.size()), children.data(), actual.GetAddressOf());
-            if (SUCCEEDED(queryResult)) native->context = std::move(actual);
-        }
-        else queryResult = native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff, queryFlags);
-        if (FAILED(queryResult))
+        if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
+            CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) | (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
         if (priming)
         {
@@ -1074,11 +1061,6 @@ struct Host
         }
         if (shortcutSelection && !request.startPinOnly && request.sourceClsid.empty())
             return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
-        if (nativePopup)
-        {
-            menus.push_back(std::move(native));
-            return Reply{true, {}, {}};
-        }
         Reply reply;
         if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
             fileAssociationsReady = true;
@@ -1103,25 +1085,133 @@ struct Host
         menus.push_back(std::move(native));
         return reply;
     }
+    bool PrepareNative(const Request& request, const NativeMenuSelection& snapshot, POINT point)
+    {
+        ReleaseMenu();
+        nativePopup = true;
+        nativeLightTheme = snapshot.lightTheme;
+        // Providers and Windows menu metrics obtain DPI from this HWND.
+        // Move it before binding/querying, rather than scaling a primary-screen
+        // menu bitmap or virtualizing coordinates after the menu was built.
+        SetWindowPos(window, nullptr, point.x, point.y, 1, 1, SWP_NOZORDER | SWP_NOACTIVATE);
+        MenuTrace("native_session.dpi", "owner_on_target_monitor", 0, GetDpiForWindow(window));
+        auto source = std::make_unique<Native>();
+        source->paths = request.paths;
+        source->directory = request.paths.empty() ? std::wstring{} :
+            ShellInvocationDirectoryForItem(request.paths.front());
+        std::vector<PCUITEMID_CHILD> children;
+        const auto decode = [](const std::vector<unsigned char>& bytes) -> std::unique_ptr<Pidl> {
+            if (bytes.size() < sizeof(USHORT) || bytes.size() > 65536) return {};
+            size_t position = 0;
+            while (position + sizeof(USHORT) <= bytes.size())
+            {
+                USHORT length = 0; memcpy(&length, bytes.data() + position, sizeof(length));
+                if (!length)
+                {
+                    if (position + sizeof(USHORT) != bytes.size()) return {};
+                    auto id = std::make_unique<Pidl>();
+                    id->value = static_cast<PIDLIST_ABSOLUTE>(CoTaskMemAlloc(bytes.size()));
+                    if (!id->value) return {};
+                    memcpy(id->value, bytes.data(), bytes.size()); return id;
+                }
+                if (length < sizeof(USHORT) || length > bytes.size() - position) return {};
+                position += length;
+            }
+            return {};
+        };
+        if (!snapshot.children.empty())
+        {
+            if (request.background || snapshot.children.size() > 256) return false;
+            auto parent = decode(snapshot.parent);
+            if (!parent) return false;
+            HRESULT bound = ILIsEmpty(parent->value) ? SHGetDesktopFolder(&source->folder) :
+                SHBindToObject(nullptr, parent->value, nullptr, IID_PPV_ARGS(&source->folder));
+            if (FAILED(bound)) return false;
+            source->selection.push_back(std::move(parent));
+            for (const auto& bytes : snapshot.children)
+            {
+                auto child = decode(bytes);
+                if (!child || ILIsEmpty(child->value)) return false;
+                children.push_back(child->value);
+                source->selection.push_back(std::move(child));
+            }
+        }
+        else
+        {
+            if (request.paths.empty() || request.paths.size() > 256 || (request.background && request.paths.size() != 1)) return false;
+            std::unique_ptr<Pidl> firstParent;
+            for (const auto& path : request.paths)
+            {
+                auto id = std::make_unique<Pidl>();
+                if (path.empty() || FAILED(SHParseDisplayName(path.c_str(), nullptr, &id->value, 0, nullptr))) return false;
+                if (request.background)
+                {
+                    if (request.context == Context::Desktop)
+                    { if (FAILED(SHGetDesktopFolder(&source->folder))) return false; }
+                    else if (FAILED(SHBindToObject(nullptr, id->value, nullptr, IID_PPV_ARGS(&source->folder)))) return false;
+                }
+                else
+                {
+                    auto parent = std::make_unique<Pidl>(); parent->value = ILCloneFull(id->value);
+                    if (!parent->value || !ILRemoveLastID(parent->value)) return false;
+                    if (!firstParent)
+                    {
+                        PCUITEMID_CHILD child = nullptr;
+                        if (FAILED(SHBindToParent(id->value, IID_PPV_ARGS(&source->folder), &child))) return false;
+                        firstParent = std::move(parent);
+                    }
+                    else if (!ILIsEqual(firstParent->value, parent->value)) return false;
+                    children.push_back(ILFindLastID(id->value));
+                }
+                source->selection.push_back(std::move(id));
+            }
+        }
+        auto* target = source.get();
+        const auto bind = [&](HWND owner, IContextMenu** menu) {
+            return request.background
+                ? target->folder->CreateViewObject(owner, IID_IContextMenu, reinterpret_cast<void**>(menu))
+                : target->folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
+                    IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
+        };
+        const UINT flags = CMF_NORMAL | (request.background ? CMF_EXPLORE : CMF_CANRENAME) |
+            (request.extended ? CMF_EXTENDEDVERBS : 0);
+        // Every target uses this same supervised builder. Bootstrap policy is
+        // applied inside the worker and never selects a UI-thread fallback.
+        const bool primer = ShellSelectionNeedsFileMenuPrimer(request.paths);
+        ComPtr<IShellFolder> viewFolder = source->folder;
+        if (request.background && request.context == Context::Desktop &&
+            FAILED(SHBindToObject(nullptr, source->selection.front()->value, nullptr, IID_PPV_ARGS(&viewFolder)))) return false;
+        const HRESULT built = request.background
+            ? source->site.BuildMenu(viewFolder.Get(), window, source->menu, 1, 0x7fff,
+                flags, bind, source->context.GetAddressOf(), primer)
+            : source->site.BuildSelectionMenu(source->folder.Get(), window, source->menu, 1, 0x7fff,
+                flags, bind, static_cast<UINT>(children.size()), children.data(), source->context.GetAddressOf(), true, primer);
+        if (FAILED(built)) return false;
+        menus.push_back(std::move(source));
+        return true;
+    }
     NativeMenuResult ShowNative(POINT point, UINT& invokeToken)
     {
         if (menus.empty()) return {false, false, {}, "native menu query failed"};
         auto& source = *menus.back();
         tracking = &source;
-        SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        native_menu_theme::ScopedTheme theme(nativeLightTheme);
+        theme.ApplyToWindow(window);
+        SetWindowLongPtrW(window, GWL_EXSTYLE, GetWindowLongPtrW(window, GWL_EXSTYLE) | WS_EX_LAYERED);
+        SetLayeredWindowAttributes(window, 0, 0, LWA_ALPHA);
+        SetWindowPos(window, HWND_TOPMOST, point.x, point.y, 1, 1, SWP_NOACTIVATE);
+        ShowWindow(window, SW_SHOWNOACTIVATE);
         SetForegroundWindow(window);
         const UINT chosen = TrackPopupMenuEx(source.menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
             point.x, point.y, window, nullptr);
         tracking = nullptr;
-        if (!chosen) return {true, false, {}, {}};
+        if (!chosen) { ShowWindow(window, SW_HIDE); return {true, false, {}, {}}; }
         auto verb = Lower(Verb(source, chosen));
         if (IsRootMenuCommand(source.menu, chosen))
         {
-            wchar_t label[256]{};
-            GetMenuStringW(source.menu, chosen, label, 256, MF_BYCOMMAND);
-            if (verb == L"rename" || StrStrIW(label, L"重命名") || StrStrIW(label, L"Rename"))
+            if (verb == L"rename")
                 return {true, false, "rename", {}};
-            if (verb == L"delete" || StrStrIW(label, L"删除") || StrStrIW(label, L"Delete"))
+            if (verb == L"delete")
                 return {true, false, "delete", {}};
         }
         invokeToken = next++;
@@ -1572,7 +1662,27 @@ struct NativeMenuSession::Impl
         }).detach();
     }
 };
-NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND owner, DWORD timeoutMs)
+NativeMenuSelection NativeMenuSelection::Capture(IShellFolder* folder, UINT count, PCUITEMID_CHILD_ARRAY children)
+{
+    if (!folder || !children || !count || count > 256) throw settings_ipc::ProtocolError("invalid native selection");
+    Pidl parent;
+    if (FAILED(SHGetIDListFromObject(folder, &parent.value)) || !parent.value)
+        throw settings_ipc::ProtocolError("cannot retain native selection parent");
+    size_t total = 0;
+    const auto copy = [&](PCUIDLIST_RELATIVE id) {
+        const auto length = id ? ILGetSize(id) : 0;
+        if (length < sizeof(USHORT) || length > 65536 || (total += length) > 2 * 1024 * 1024)
+            throw settings_ipc::ProtocolError("invalid native selection size");
+        const auto* bytes = reinterpret_cast<const unsigned char*>(id);
+        return std::vector<unsigned char>(bytes, bytes + length);
+    };
+    NativeMenuSelection snapshot;
+    snapshot.parent = copy(parent.value);
+    for (UINT i = 0; i < count; ++i) snapshot.children.push_back(copy(children[i]));
+    return snapshot;
+}
+NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND owner,
+    NativeMenuSelection selection, DWORD timeoutMs)
     : impl_(std::make_unique<Impl>())
 {
     MenuTiming launch("native_session.launch");
@@ -1587,10 +1697,12 @@ NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND o
     impl_->process->Start(impl_->channel, L"--shell-menu-helper");
     AllowSetForegroundWindow(impl_->process->ProcessId());
     const auto origin = ShellInvocationOwner::Capture(owner);
-    impl_->channel.Notify("menu.native", request, point.x, point.y, origin.window, origin.process, origin.thread);
+    impl_->channel.Notify("menu.native", request, selection, point.x, point.y, origin.window, origin.process, origin.thread,
+        reinterpret_cast<std::uint64_t>(GetForegroundWindow()));
     launch.Record("scheduled");
 }
 NativeMenuSession::~NativeMenuSession() = default;
+bool NativeMenuSession::Preparing() const { return !impl_->showing && !impl_->result; }
 std::optional<NativeMenuResult> NativeMenuSession::Poll()
 {
     if (!impl_->result && (!impl_->process->Running() ||
@@ -1604,6 +1716,14 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
 {
     if (!settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper"))
         return {};
+    // The host supplies physical screen coordinates. Helpers bypass the
+    // desktop's later DPI initialization and must establish the same context
+    // before creating any menu owner or Shell view window.
+    struct DpiScope
+    {
+        DPI_AWARENESS_CONTEXT previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        ~DpiScope() { if (previous) SetThreadDpiAwarenessContext(previous); }
+    } dpiScope;
     if (FAILED(OleInitialize(nullptr)))
         return ERROR_DLL_INIT_FAILED;
     int result = 0;
@@ -1626,12 +1746,12 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             if (!invocationQueued)
                 PostQuitMessage(0);
         });
-        channel.Bind<void, Request, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.native",
-            [&](Request request, LONG x, LONG y, std::uint64_t owner, DWORD ownerProcess, DWORD ownerThread) {
+        channel.Bind<void, Request, NativeMenuSelection, LONG, LONG, std::uint64_t, DWORD, DWORD, std::uint64_t>("menu.native",
+            [&](Request request, NativeMenuSelection selection, LONG x, LONG y, std::uint64_t owner, DWORD ownerProcess, DWORD ownerThread, std::uint64_t foreground) {
             if (actualQueryReceived || invocationQueued) return;
             actualQueryReceived = invocationQueued = true;
             dispatchedAt = GetTickCount64();
-            channel.Post([&, request = std::move(request), x, y, owner, ownerProcess, ownerThread] {
+            channel.Post([&, request = std::move(request), selection = std::move(selection), x, y, owner, ownerProcess, ownerThread, foreground] {
                 UINT token = 0;
                 NativeMenuResult result;
                 if (nativePopup)
@@ -1643,16 +1763,39 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                     host.progress = [&](const auto& stage) { MenuTrace("native_helper.stage", stage); };
                     host.rootPreview = {};
                     host.nativePopup = true;
-                    const auto reply = host.Query(request);
-                    if (!reply.ok) result = {false, false, {}, "native menu query failed"};
+                    if (!host.PrepareNative(request, selection, {x, y})) result = {false, false, {}, "native menu query failed"};
+                    else if (request.catalogueOnly)
+                    {
+                        auto& source = *host.menus.back();
+                        host.MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(source.menu), 0);
+                        result = {true, false, "prepared:" + std::to_string(GetMenuItemCount(source.menu)), {}};
+                    }
                     else
                     {
-                        channel.Notify("menu.native-showing");
-                        result = host.ShowNative({x, y}, token);
+                        const HWND active = GetForegroundWindow();
+                        DWORD activeProcess = 0; GetWindowThreadProcessId(active, &activeProcess);
+                        if (active && reinterpret_cast<std::uint64_t>(active) != foreground &&
+                            reinterpret_cast<std::uint64_t>(active) != owner && activeProcess != GetCurrentProcessId())
+                            result = {true, false, {}, {}};
+                        else
+                        {
+                            channel.Notify("menu.native-showing");
+                            result = host.ShowNative({x, y}, token);
+                        }
+                    }
+                }
+                if (result.ok && (result.verb == "rename" || result.verb == "delete"))
+                {
+                    const ShellInvocationOwner origin{owner, ownerProcess, ownerThread};
+                    if (const HWND target = origin.Resolve())
+                    {
+                        AllowSetForegroundWindow(ownerProcess);
+                        SetForegroundWindow(target);
                     }
                 }
                 channel.Notify("menu.native-result", result);
                 if (token) host.Invoke(token, {x, y}, {owner, ownerProcess, ownerThread});
+                ShowWindow(host.window, SW_HIDE);
                 invokedAt = GetTickCount64();
             });
         });

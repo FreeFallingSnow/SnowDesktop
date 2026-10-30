@@ -1,4 +1,5 @@
 #include "shell/shell_context_menu_site.h"
+#include "shell/shell_extension_menu.h"
 #include "shell/shell_extension_discovery.h"
 #include <shlguid.h>
 #include <wrl/client.h>
@@ -40,7 +41,7 @@ void BindProbeSelection(PCIDLIST_ABSOLUTE pidl, const std::filesystem::path& exp
 // BuildMenu, HWND creation, file bootstrap, lifetime and rebind all run.
 struct State
 {
-    bool loaded = false, viewExists = false, namespaceOnly = false, selectionOnly = false;
+    bool loaded = false, viewExists = false, namespaceOnly = false, selectionOnly = false, primedSelection = false;
     unsigned bindings = 0, coldLoads = 0, viewCreates = 0, warmAlive = 0, invocations = 0;
     UINT expectedFlags = 0, first = 7, last = 103;
     int failure = 0;
@@ -135,11 +136,19 @@ public:
         }
         if (state_->selectionOnly)
         {
+            if (state_->primedSelection && binding_ == 1)
+            {
+                if (state_->viewExists || site_ || flags != state_->expectedFlags) return E_UNEXPECTED;
+                state_->initialPopup = menu;
+                if (state_->failure == 2) return E_ACCESSDENIED;
+                return InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, first + 3, L"Unpublished selection") ?
+                    MAKE_HRESULT(SEVERITY_SUCCESS, 0, 4) : E_FAIL;
+            }
             ComPtr<IServiceProvider> services;
             ComPtr<IFolderView2> view;
             ComPtr<IShellItemArray> selection;
             DWORD count = 0;
-            if (binding_ != 1 || state_->viewExists || !site_ ||
+            if (binding_ != (state_->primedSelection ? 2u : 1u) || state_->viewExists || !site_ ||
                 flags != state_->expectedFlags || first != state_->first || last != state_->last ||
                 FAILED(site_.As(&services)) ||
                 FAILED(services->QueryService(SID_SFolderView, IID_PPV_ARGS(&view))) ||
@@ -185,7 +194,7 @@ public:
     }
     IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO info) override
     {
-        if (binding_ != (state_->namespaceOnly || state_->selectionOnly ? 1u : 2u) ||
+        if (binding_ != (state_->namespaceOnly || (state_->selectionOnly && !state_->primedSelection) ? 1u : 2u) ||
             reinterpret_cast<ULONG_PTR>(info->lpVerb) != 11) return E_UNEXPECTED;
         ++state_->invocations; return S_OK;
     }
@@ -283,10 +292,11 @@ void RunCase(UINT flags, int failure, bool filePrimer = true)
     DestroyMenu(popup); DestroyWindow(state->owner);
 }
 
-void RunSelectionCase(IShellFolder* folder, PCUITEMID_CHILD child, const std::wstring& sample, int failure)
+void RunSelectionCase(IShellFolder* folder, PCUITEMID_CHILD child, const std::wstring& sample, int failure, bool prime = false)
 {
     auto state = std::make_shared<State>();
     state->selectionOnly = true; state->failure = failure;
+    state->primedSelection = prime;
     state->expectedFlags = CMF_CANRENAME | CMF_EXTENDEDVERBS;
     state->owner = CreateWindowExW(0, L"STATIC", L"Private selection owner", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -297,22 +307,24 @@ void RunSelectionCase(IShellFolder* folder, PCUITEMID_CHILD child, const std::ws
         ComPtr<IContextMenu> actual;
         const auto bind = [&](HWND owner, IContextMenu** target) -> HRESULT {
             ++state->bindings;
-            if (owner != state->owner || state->bindings != 1) return E_UNEXPECTED;
+            if (owner != state->owner || state->bindings > (prime ? 2u : 1u)) return E_UNEXPECTED;
             if (failure == 1) return E_ACCESSDENIED;
             return Microsoft::WRL::Make<Menu>(state, state->bindings).CopyTo(target);
         };
         PCUITEMID_CHILD ownedChild = ILCloneFull(child);
         const HRESULT hr = site.BuildSelectionMenu(folder, state->owner, popup, state->first, state->last,
-            state->expectedFlags, bind, 1, &ownedChild, actual.GetAddressOf());
+            state->expectedFlags, bind, 1, &ownedChild, actual.GetAddressOf(), prime, false);
         ILFree(const_cast<PITEMID_CHILD>(ownedChild));
-        Require(state->bindings == 1 && state->viewCreates == 0 && !site.HostWindow(),
-            "ordinary selection binds once without creating a Windows Shell view");
+        Require(state->bindings == (prime && !failure ? 2u : 1u) && state->viewCreates == 0 && !site.HostWindow(),
+            "all selected objects share the snapshot site without creating a Windows Shell view");
         if (failure)
             Require(hr == E_ACCESSDENIED && !actual, "failed selection queries expose no aggregate");
         else
         {
             Require(SUCCEEDED(hr) && actual && GetMenuItemID(popup, 0) == state->first + 11,
                 "the single displayed aggregate retains actual command IDs");
+            if (prime) Require(IsMenu(state->initialPopup) && state->warmAlive == 1,
+                "cold selection providers and unpublished menu remain alive until actual invocation");
             ComPtr<IObjectWithSite> attached; actual.As(&attached);
             ComPtr<IServiceProvider> services;
             Require(SUCCEEDED(attached->GetSite(IID_PPV_ARGS(&services))), "selection retains its site");
@@ -376,7 +388,32 @@ void TestShellContextMenuBootstrap()
         ComPtr<IShellFolder> parent; PCUITEMID_CHILD child = nullptr;
         Require(!SingleChildPidl(reinterpret_cast<PCUITEMID_CHILD>(raw)), "negative control rejects the absolute multilevel PIDL used by the prior probe");
         BindProbeSelection(raw, sample, parent, child);
-        for (int failure = 0; failure <= 2; ++failure) RunSelectionCase(parent.Get(), child, sample, failure);
+        for (int failure = 0; failure <= 2; ++failure)
+        {
+            RunSelectionCase(parent.Get(), child, sample, failure);
+            RunSelectionCase(parent.Get(), child, sample, failure, true);
+        }
+        const auto snapshot = snowdesktop::shell_extensions::NativeMenuSelection::Capture(parent.Get(), 1, &child);
+        const auto roundtrip = snowdesktop::settings_ipc::Unpack<snowdesktop::shell_extensions::NativeMenuSelection>(
+            snowdesktop::settings_ipc::Pack(snapshot));
+        Require(snapshot.parent == roundtrip.parent && snapshot.children == roundtrip.children,
+            "the real parent and relative children survive the native process boundary exactly");
+        const auto linkPath = std::filesystem::path(sample + L".lnk");
+        struct LinkCleanup { std::filesystem::path path; ~LinkCleanup() { std::error_code error; std::filesystem::remove(path, error); } } linkCleanup{linkPath};
+        ComPtr<IShellLinkW> link;
+        ComPtr<IPersistFile> persisted;
+        Require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+            SUCCEEDED(link->SetPath(sample.c_str())) && SUCCEEDED(link.As(&persisted)) &&
+            SUCCEEDED(persisted->Save(linkPath.c_str(), TRUE)), "create a valid private shortcut to the original sample");
+        for (const auto& target : {linkPath, std::filesystem::path(sample).parent_path()})
+        {
+            PIDLIST_ABSOLUTE selected = nullptr;
+            Require(SUCCEEDED(SHParseDisplayName(target.c_str(), nullptr, &selected, 0, nullptr)), "parse alternate selection kind");
+            ComPtr<IShellFolder> selectedParent; PCUITEMID_CHILD selectedChild = nullptr;
+            BindProbeSelection(selected, target, selectedParent, selectedChild);
+            RunSelectionCase(selectedParent.Get(), selectedChild, target.wstring(), 0, true);
+            CoTaskMemFree(selected);
+        }
         CoTaskMemFree(raw);
         Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({}), "unknown selections retain file association protection");
         Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({std::filesystem::path(sample).parent_path().wstring()}),

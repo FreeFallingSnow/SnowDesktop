@@ -4,6 +4,14 @@
 
 namespace snowdesktop::shell_extensions
 {
+// Popup projection is independent of selected object type. Metadata and
+// management queries never publish provisional user-menu headers.
+inline bool CanPreviewPopupRoots(const Request& request, int depth)
+{
+    return depth == 0 && request.visibleMenuProviders && !request.visibleMenuProviders->empty() &&
+        !request.catalogueOnly && !request.startPinOnly && request.sourceClsid.empty() && request.sourceKey.empty();
+}
+
 // Build only from persisted command IDs and registration evidence. Unknown
 // registration ownership retains the complete read rather than guessing by app.
 inline std::vector<std::string> MenuReadPolicy(const Preferences &prefs, Category category)

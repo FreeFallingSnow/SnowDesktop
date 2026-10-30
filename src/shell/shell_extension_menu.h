@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <windows.h>
+#include <shlobj.h>
 
 namespace snowdesktop::shell_extensions
 {
@@ -58,16 +59,26 @@ struct NativeMenuResult
     bool ok = false, invoked = false;
     std::string verb, error;
 };
+struct NativeMenuSelection
+{
+    std::vector<unsigned char> parent;
+    std::vector<std::vector<unsigned char>> children;
+    bool lightTheme = true;
+    // Retain the caller's actual Shell namespace, including merged Desktop
+    // selections whose physical files belong to different directories.
+    static NativeMenuSelection Capture(IShellFolder*, UINT, PCUITEMID_CHILD_ARRAY);
+};
 // Query, native menu loop and arbitrary verbs all stay in the supervised STA.
 // Poll never waits for an extension or a popup to finish.
 class NativeMenuSession
 {
 public:
-    NativeMenuSession(const Request&, POINT, HWND owner, DWORD timeoutMs = 8000);
+    NativeMenuSession(const Request&, POINT, HWND owner, NativeMenuSelection selection = {}, DWORD timeoutMs = 8000);
     ~NativeMenuSession();
     NativeMenuSession(const NativeMenuSession&) = delete;
     NativeMenuSession& operator=(const NativeMenuSession&) = delete;
     std::optional<NativeMenuResult> Poll();
+    bool Preparing() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -130,6 +141,10 @@ namespace snowdesktop::settings_ipc
 template <> struct Fields<shell_extensions::NativeMenuResult>
 {
     template <class T> static auto Tie(T &v) { return std::tie(v.ok, v.invoked, v.verb, v.error); }
+};
+template <> struct Fields<shell_extensions::NativeMenuSelection>
+{
+    template <class T> static auto Tie(T &v) { return std::tie(v.parent, v.children, v.lightTheme); }
 };
 template <> struct Fields<shell_extensions::Request>
 {

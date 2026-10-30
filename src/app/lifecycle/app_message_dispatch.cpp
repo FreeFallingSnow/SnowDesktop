@@ -208,6 +208,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return MA_NOACTIVATE;
     case WM_SETCURSOR:
     {
+        if (nativeMenuSession_ && nativeMenuSession_->Preparing() && LOWORD(lp) == HTCLIENT)
+        {
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_APPSTARTING));
+            return TRUE;
+        }
         if (largeIconGesture_ && LOWORD(lp) == HTCLIENT)
         {
             snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, largeIconGesture_->valid ? IDC_SIZENWSE : IDC_NO));

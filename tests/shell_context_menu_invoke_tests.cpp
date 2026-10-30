@@ -1,6 +1,7 @@
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_start_pin.h"
 #include "shell/shell_extension_menu.h"
+#include "shell/shell_extension_discovery_samples.h"
 #include "shell/shell_menu_read_projection.h"
 #include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
@@ -5878,22 +5879,71 @@ void BenchmarkMenus()
 #include "shell/shell_menu_refresh_cases.h"
 #include "shell/shell_visible_menu_read_cases.h"
 
+void ProbeNativeMenuPreparation()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", nullptr);
+    std::vector<std::pair<std::string, ext::Request>> cases;
+    for (const auto extension : {L".txt", L".png", L".zip", L".pdf"})
+    {
+        const auto bytes = ext::DiscoverySample(extension);
+        const auto file = temp.path / (std::wstring(L"Sample") + extension);
+        { std::ofstream out(file, std::ios::binary); out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); }
+        ext::Request request; request.paths = {file.wstring()};
+        std::string name;
+        for (const wchar_t* c = extension + 1; *c; ++c) name.push_back(static_cast<char>(*c));
+        cases.emplace_back(std::move(name), std::move(request));
+    }
+    const auto linkPath = temp.path / L"Sample.lnk";
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> persistence;
+    Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link->SetPath(cases.front().second.paths.front().c_str())) && SUCCEEDED(link.As(&persistence)) &&
+        SUCCEEDED(persistence->Save(linkPath.c_str(), TRUE)), "create a valid original-file shortcut probe");
+    ext::Request shortcut; shortcut.paths = {linkPath.wstring()}; cases.emplace_back("shortcut", shortcut);
+    const auto folder = temp.path / L"Folder"; std::filesystem::create_directory(folder);
+    ext::Request directory; directory.paths = {folder.wstring()}; cases.emplace_back("folder", directory);
+    auto multiple = cases.front().second; multiple.paths.push_back(cases[1].second.paths.front()); cases.emplace_back("multiple", multiple);
+    auto background = directory; background.background = true; background.context = ext::Context::FolderBackground;
+    cases.emplace_back("background", background);
+    for (auto& [name, request] : cases)
+    {
+        request.extended = request.catalogueOnly = true;
+        const auto start = std::chrono::steady_clock::now();
+        ext::NativeMenuSession session(request, {-1900, 17}, nullptr);
+        const auto launched = std::chrono::steady_clock::now();
+        std::optional<ext::NativeMenuResult> result;
+        PumpUntil([&] { if (!result) result = session.Poll(); return result.has_value(); }, "inspect the production native helper without showing or invoking a menu");
+        std::cout << "native_process kind=" << name << " launch_ms="
+            << std::chrono::duration<double, std::milli>(launched-start).count() << " ready_ms="
+            << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-start).count()
+            << " ok=" << result->ok << " result=" << result->verb << " error=" << result->error << std::endl;
+        Expect(result->ok && !result->invoked && result->verb.starts_with("prepared:"), "real native preparation preserves a complete live menu without invoking commands");
+    }
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
+}
+
 void TestNativeMenuIsolation()
 {
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
-    const auto file = temp.path / L"native-selection.txt";
-    std::ofstream(file) << "private native selection";
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", L"delayed-rename");
+    for (const auto suffix : {L".txt", L".png", L".zip", L".pdf", L".lnk", L".url", L""})
+    {
+    const auto file = temp.path / (std::wstring(L"native-selection") + suffix);
+    if (*suffix) std::ofstream(file) << "private native selection";
+    else std::filesystem::create_directory(file);
     ext::Request request; request.paths = {file.wstring()}; request.extended = true;
     const auto started = std::chrono::steady_clock::now();
     std::optional<ext::NativeMenuResult> result;
     unsigned turns = 0;
     {
-        ext::NativeMenuSession session(request, {11, 17}, nullptr);
+        ext::NativeMenuSession session(request, {-1900, 17}, nullptr);
         PumpUntil([&] {
             const auto before = std::chrono::steady_clock::now();
-            result = session.Poll();
+            if (!result) result = session.Poll();
             Expect(std::chrono::steady_clock::now() - before < std::chrono::milliseconds(100),
                 "native menu polling cannot wait for the child query/menu loop");
             ++turns; return result.has_value();
@@ -5903,6 +5953,7 @@ void TestNativeMenuIsolation()
         "delayed native rename is returned to the host while its event loop keeps running");
     Expect(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(600),
         "the controlled child really delayed its menu completion");
+    }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", nullptr);
 }
 
@@ -6029,8 +6080,9 @@ int wmain(int argc, wchar_t **argv)
         nativePopup = [](const auto& request, POINT point) {
             Sleep(700); // Isolated stand-in for a blocked provider/native loop.
             const bool exact = request.extended && request.paths.size() == 1 &&
-                std::filesystem::path(request.paths.front()).filename() == L"native-selection.txt" &&
-                point.x == 11 && point.y == 17;
+                std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"native-selection") &&
+                point.x == -1900 && point.y == 17 &&
+                AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             return snowdesktop::shell_extensions::NativeMenuResult{exact, false, exact ? "rename" : "", {}};
         };
     if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(
@@ -6065,6 +6117,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-visible-menu-read") visible_read_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap")
         { TestShellContextMenuBootstrap(); TestNativeMenuIsolation(); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-preparation") ProbeNativeMenuPreparation();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")

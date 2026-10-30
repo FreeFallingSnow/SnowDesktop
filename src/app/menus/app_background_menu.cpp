@@ -1521,6 +1521,11 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
  */
 void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 {
+    if (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000)
+    {
+        ShowDesktopBackgroundContextMenu(screenPoint);
+        return;
+    }
     lastContextMenuScreenPoint_ = screenPoint;
     PrepareMenuIconsForPoint(screenPoint);
 

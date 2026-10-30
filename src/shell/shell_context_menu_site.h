@@ -65,7 +65,8 @@ public:
     // a second Windows folder view or querying an unpublished aggregate.
     HRESULT BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
-        UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu);
+        UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu,
+        bool primeProviders = false, bool initializeFileAssociations = true);
     // Read built-in namespace verbs for a custom popup. These commands do not
     // need filesystem providers or a folder view; bind their aggregate once.
     HRESULT BuildNamespaceMenu(HWND owner, HMENU menu,

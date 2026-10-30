@@ -3,6 +3,7 @@
 
 #include <shlguid.h>
 #include <filesystem>
+#include <utility>
 #include <shlwapi.h>
 #include <wrl/client.h>
 #include <wrl/implements.h>
@@ -92,7 +93,25 @@ public:
         { if (!mode) return E_POINTER; *mode = FVM_LIST; return S_OK; }
     IFACEMETHODIMP SetCurrentViewMode(UINT) override { return E_NOTIMPL; }
     IFACEMETHODIMP GetFolder(REFIID iid, void** object) override
-        { return folder_->QueryInterface(iid, object); }
+    {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (IsEqualIID(iid, IID_IShellItemArray) || IsEqualIID(iid, IID_IShellItem))
+        {
+            PIDLIST_ABSOLUTE parent = nullptr;
+            HRESULT hr = SHGetIDListFromObject(folder_.Get(), &parent);
+            if (FAILED(hr) || !parent) return FAILED(hr) ? hr : E_FAIL;
+            if (IsEqualIID(iid, IID_IShellItemArray))
+            {
+                PCIDLIST_ABSOLUTE ids[] = {parent};
+                hr = SHCreateShellItemArrayFromIDLists(1, ids, reinterpret_cast<IShellItemArray**>(object));
+            }
+            else hr = SHCreateItemFromIDList(parent, iid, object);
+            CoTaskMemFree(parent);
+            return hr;
+        }
+        return folder_->QueryInterface(iid, object);
+    }
     IFACEMETHODIMP Item(int index, PITEMID_CHILD* child) override
     {
         if (!child) return E_POINTER;
@@ -396,10 +415,12 @@ bool ShellContextMenuSite::Initialize(IShellFolder* folder, HWND owner)
     if (!folder || !owner || !IsWindow(owner))
         return false;
 
+    RECT ownerBounds{};
+    GetWindowRect(owner, &ownerBounds);
     impl_->hostWindow = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         L"STATIC", L"SnowDesktop Shell Menu Site",
-        WS_POPUP, 0, 0, 1, 1, owner, nullptr,
+        WS_POPUP, ownerBounds.left, ownerBounds.top, 1, 1, owner, nullptr,
         GetModuleHandleW(nullptr), nullptr);
     if (!impl_->hostWindow)
         return false;
@@ -544,7 +565,8 @@ HRESULT ShellContextMenuSite::BuildNamespaceMenu(HWND owner, HMENU menu,
 
 HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
     UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
-    UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu)
+    UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu,
+    bool primeProviders, bool initializeFileAssociations)
 {
     shell_extensions::MenuTiming total("native_selection.total");
     if (!contextMenu) return E_POINTER;
@@ -552,6 +574,38 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     impl_->Reset();
     if (!folder || !IsWindow(owner) || !menu || !bind || !count || !children || firstCommand > lastCommand)
         return E_INVALIDARG;
+    std::unique_ptr<ShellFileMenuPrimer> filePrimer;
+    struct InitialPopup { HMENU value = nullptr; ~InitialPopup() { if (value) DestroyMenu(value); } } initialPopup;
+    ComPtr<IContextMenu> initial;
+    if (primeProviders)
+    {
+        if (initializeFileAssociations)
+        {
+            filePrimer = std::make_unique<ShellFileMenuPrimer>();
+            filePrimer->Initialize();
+        }
+        HRESULT hr = bind(owner, initial.GetAddressOf());
+        if (FAILED(hr) || !initial) return FAILED(hr) ? hr : E_FAIL;
+        initialPopup.value = CreatePopupMenu();
+        if (!initialPopup.value) return E_OUTOFMEMORY;
+        hr = initial->QueryContextMenu(initialPopup.value, 0, firstCommand, lastCommand, flags & ~CMF_SYNCCASCADEMENU);
+        if (FAILED(hr)) return hr;
+        ComPtr<IContextMenu3> messages3;
+        ComPtr<IContextMenu2> messages2;
+        LRESULT ignored = 0;
+        if (SUCCEEDED(initial.As(&messages3)))
+            messages3->HandleMenuMsg2(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(initialPopup.value), 0, &ignored);
+        else if (SUCCEEDED(initial.As(&messages2)))
+            messages2->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(initialPopup.value), 0);
+        // Let already-queued packaged-provider initialization complete without
+        // creating/enumerating an unrelated Windows folder view.
+        MSG message{};
+        for (unsigned i = 0; i < 16 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++i)
+        {
+            if (message.message == WM_QUIT) { PostQuitMessage(static_cast<int>(message.wParam)); return E_ABORT; }
+            TranslateMessage(&message); DispatchMessageW(&message);
+        }
+    }
     auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
     if (!view) return E_OUTOFMEMORY;
     HRESULT hr = view->Initialize(count, children);
@@ -571,6 +625,9 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
     query.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) return hr;
+    impl_->initialMenu = std::move(initial);
+    impl_->initialPopup = std::exchange(initialPopup.value, nullptr);
+    impl_->filePrimer = std::move(filePrimer);
     actual.CopyTo(contextMenu);
     total.Record("complete", count);
     return hr;
