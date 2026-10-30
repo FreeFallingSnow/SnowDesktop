@@ -64,6 +64,9 @@ class Session
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
     std::optional<Reply> Poll();
+    // Transient root headers from the same query; the helper immediately
+    // continues reading every cascade. Never executable or cacheable.
+    std::optional<Reply> PollRoots();
     DWORD ProcessId() const noexcept;
     // Metadata resolved inside the supervised helper, never on the scheduler.
     unsigned SelectionContexts() const noexcept;

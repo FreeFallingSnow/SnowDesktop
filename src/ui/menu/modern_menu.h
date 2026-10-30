@@ -82,6 +82,8 @@ struct Item
     menu_icon::BuiltinIcon builtinIcon = menu_icon::BuiltinIcon::None;
     /** 紧凑行内按钮按内容与绘制留白收窄，其余空间留给主操作。 */
     bool fitInlineActionToContent = false;
+    // Internal transient loading subtree, replaced only by prefetched results.
+    bool childrenPending = false;
     friend bool operator==(const Item&, const Item&) = default;
 };
 
@@ -168,6 +170,9 @@ struct Options
     /** Allow appended rows while hovering an unchanged, stationary prefix.
      * The controller still validates layout and protects presses/cascades. */
     bool pollItemsStablePrefix = false;
+    // Permit completed background subtrees to replace loading placeholders
+    // while a cascade is open. Root layout/press protection still applies.
+    bool pollPrefetchedSubmenus = false;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
     /** Applies only to the popup containing this command: Enter submits,

@@ -17,6 +17,8 @@ struct MenuView
     // Independent display queries, never serialized as a complete snapshot.
     std::vector<Request> sources;
     bool sourcesOnly = false;
+    // Host-only interim headers. Excluded from IPC, durable snapshots and proof.
+    std::optional<Reply> roots;
 };
 struct CatalogueView
 {
@@ -33,6 +35,7 @@ struct QueryWork
     std::function<void(UINT, POINT)> invoke;
     std::function<void(UINT, POINT, HWND)> invokeWithOwner;
     std::function<unsigned()> selectionContexts;
+    std::function<std::optional<Reply>()> pollRoots;
 };
 class MenuService
 {

@@ -176,13 +176,16 @@ class Presentation
         if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries), {}, cachedOriginal_), moreCommand);
         if (!normalDone_)
         {
-            SyncSources(service_.MenuDisplay(normalSource_, prefs_, true));
+            const auto view = service_.MenuDisplay(normalSource_, prefs_, true);
+            ShowRoots(items, view, moreCommand);
+            SyncSources(view);
             PollSources(items, moreCommand);
         }
         if ((!normalDone_ || !startDone_ || !SourcesDone()) && !source_.paths.empty())
         {
             options.pollItemsFinished = [this] { return normalDone_ && startDone_ && originalDone_ && SourcesDone(); };
             options.pollItemsStablePrefix = true;
+            options.pollPrefetchedSubmenus = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply)
                 {
@@ -207,6 +210,7 @@ class Presentation
                 if (!normalDone_)
                 {
                     auto view = service_.MenuDisplay(normalSource_, prefs_, true);
+                    if (view.pending) progressed |= ShowRoots(updated, view, moreCommand);
                     MaybeStartOriginalQuery(view);
                     if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
                     {
@@ -219,6 +223,7 @@ class Presentation
                     }
                     else if (!view.pending)
                     {
+                        progressed |= RemoveRoots(updated);
                         if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
                         {
                             auto additions = std::move(view.snapshot->entries);
@@ -233,11 +238,15 @@ class Presentation
                             additions = NewNormalEntries(std::move(additions));
                             if (!additions.empty())
                             {
-                                Insert(updated, Convert(additions, {}, normalSource_.originalShortcutOnly), moreCommand);
+                                auto converted = Convert(additions, {}, normalSource_.originalShortcutOnly);
+                                ReuseRootRows(converted);
+                                Insert(updated, converted, moreCommand);
                                 progressed = true;
                             }
                         }
                         normalDone_ = !view.attributionPending;
+                        rootImages_.clear();
+                        rootRows_.clear();
                         progressed |= normalDone_;
                     }
                 }
@@ -294,6 +303,61 @@ class Presentation
     }
 
   private:
+    bool ShowRoots(std::vector<modern_menu::Item> &items, const MenuView &view, UINT moreCommand)
+    {
+        if (cached_ || rootsShown_ || !view.roots || view.roots->entries.empty()) return false;
+        auto entries = NewNormalEntries(view.roots->entries);
+        auto converted = Convert(entries);
+        for (size_t i = 0; i < converted.size(); ++i)
+        {
+            auto &item = converted[i];
+            if (!item.separator)
+            {
+                item.childrenPending = !entries[i].children.empty();
+                rootCommands_.insert(item.command);
+                rootReferences_.push_back(AppendReference({}, entries[i]));
+                rootImages_[item.command] = item.image;
+                rootRows_.push_back({item.command, item.label});
+            }
+        }
+        Insert(items, converted, moreCommand);
+        rootsShown_ = true;
+        return !converted.empty();
+    }
+    void ReuseRootRows(std::vector<modern_menu::Item> &items)
+    {
+        std::set<UINT> used;
+        for (const auto &item : items)
+            if (rootImages_.contains(item.command)) used.insert(item.command);
+        for (auto &item : items) if (!item.separator)
+        {
+            if (!rootImages_.contains(item.command))
+            {
+                // Provisional headers carry no executable identity. Descendant
+                // normalization/native fallback may refine the final reference;
+                // keep the same labelled header while binding its NEW reference.
+                const auto old = std::find_if(rootRows_.begin(), rootRows_.end(), [&](const auto &row) {
+                    return row.second == item.label && !used.contains(row.first);
+                });
+                if (old != rootRows_.end())
+                {
+                    commands_[old->first] = commands_.at(item.command);
+                    item.command = old->first; used.insert(item.command);
+                }
+            }
+            if (const auto image = rootImages_.find(item.command); image != rootImages_.end()) item.image = image->second;
+        }
+    }
+    bool RemoveRoots(std::vector<modern_menu::Item> &items)
+    {
+        if (rootCommands_.empty()) return false;
+        std::erase_if(items, [&](const auto &item) { return rootCommands_.contains(item.command); });
+        for (const auto &reference : rootReferences_)
+            if (const auto old = std::find(displayedNormal_.begin(), displayedNormal_.end(), reference); old != displayedNormal_.end())
+                displayedNormal_.erase(old);
+        rootReferences_.clear(); rootCommands_.clear();
+        return true;
+    }
     struct SourceLane { Request request; bool done = false; };
     bool SourcesDone() const
     {
@@ -518,5 +582,10 @@ class Presentation
     std::uint64_t initialRevision_ = 0;
     std::uint64_t startRevision_ = 0;
     std::vector<HBITMAP> images_;
+    bool rootsShown_ = false;
+    std::set<UINT> rootCommands_;
+    std::vector<CommandReference> rootReferences_;
+    std::map<UINT, HBITMAP> rootImages_;
+    std::vector<std::pair<UINT, std::wstring>> rootRows_;
 };
 } // namespace snowdesktop::shell_extensions

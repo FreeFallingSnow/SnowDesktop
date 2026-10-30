@@ -290,7 +290,7 @@ struct MenuService::Impl
                 prepareFileDemand = true;
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
-                [session] { return session->SelectionContexts(); }};
+                  [session] { return session->SelectionContexts(); }, [session] { return session->PollRoots(); }};
         }; }
         if (!readCatalogue)
         {
@@ -809,6 +809,7 @@ struct MenuService::Impl
             return key;
         }
         row.priority = priority; row.force = force; row.due = now + delay; row.queued = true;
+        row.view.roots.reset();
         row.view.pending = true; ++row.sequence;
         SetEvent(wake);
         return key;
@@ -1144,6 +1145,7 @@ struct MenuService::Impl
             }
             if (current)
             {
+                row.view.roots.reset();
                 row.view.pending = row.queued = false;
                 row.inspection = false;
                 row.view.error = reply.error;
@@ -1676,6 +1678,29 @@ struct MenuService::Impl
                 auto &job = running[i];
                 if (!job.reply)
                 {
+                    if (job.work.pollRoots && !job.managementOnly)
+                    {
+                        std::optional<Reply> roots;
+                        try { roots = job.work.pollRoots(); } catch (...) {}
+                        if (roots && roots->ok && settings_ipc::Pack(*roots).size() <= 2 * 1024 * 1024)
+                        {
+                            std::lock_guard lock(mutex);
+                            const auto row = rows.find(job.key);
+                            if (row != rows.end() && row->second.sequence == job.sequence &&
+                                row->second.dependency == job.dependency && row->second.priority == QueryPriority::Menu &&
+                                Enabled(row->second.request, job.contexts))
+                            {
+                                std::function<void(std::vector<Entry>&)> stripTokens = [&](auto &entries) {
+                                    for (auto &entry : entries) { entry.token = 0; stripTokens(entry.children); }
+                                };
+                                stripTokens(roots->entries);
+                                row->second.view.roots = std::move(roots);
+                                row->second.view.contexts = job.contexts;
+                                ++row->second.view.revision;
+                                MenuTrace("query", "roots_ready", double(GetTickCount64() - job.started));
+                            }
+                        }
+                    }
                     try { job.reply = job.work.poll(); } catch (...) { job.reply = Reply{false, {}, "query exception"}; }
                     if (job.reply && job.reply->ok && !job.contexts)
                     {
@@ -2095,6 +2120,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
+    if (!view.pending || !view.error.empty()) view.roots.reset();
     view.attributionPending = impl_->AttributionPending(request, fallback);
     const bool verifiedBackground = impl_->VerifiedBackgroundSnapshot(row);
     if (row.expires <= MenuSnapshotCache::Now() ||
@@ -2127,6 +2153,8 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         }
         view.snapshot->entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, *view.snapshot, view.contexts);
     }
+    if (view.roots)
+        view.roots->entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, *view.roots, view.contexts);
     timing.Record(view.snapshot ? "memory_hit" : "memory_miss");
     return view;
 }
@@ -2314,6 +2342,7 @@ void MenuService::Invalidate(const Request &request)
         {
             row.invalid = true; ++row.dependency;
             row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
+            row.view.roots.reset();
         }
     auto target = impl_->PopupRequest(request);
     auto &row = impl_->rows[SelectionKey(target)]; row.request = target;

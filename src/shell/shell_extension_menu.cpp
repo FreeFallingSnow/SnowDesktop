@@ -295,6 +295,7 @@ struct Host
     };
     std::map<std::wstring, ResourceIcon> resourceIcons;
     std::function<void(const std::string &)> progress = [](const auto &) {};
+    std::function<void(Reply)> rootPreview;
     static LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         auto *self = reinterpret_cast<Host *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -564,6 +565,37 @@ struct Host
     {
         std::vector<Entry> entries;
         std::vector<bool> omitted;
+        struct Cascade { size_t entry; HMENU menu; UINT index; std::wstring verb; };
+        std::vector<Cascade> cascades;
+        const bool previewRoots = rootPreview && depth == 0 && request && request->visibleMenuProviders &&
+            !request->background && !request->catalogueOnly && !request->startPinOnly &&
+            !request->originalShortcutOnly && NeedsFileCataloguePriming(*request);
+        const auto readCascade = [&](Entry &entry, HMENU child, UINT index, const std::wstring &verb) {
+            if (depth < 8 && InspectPopup(child) == PopupContents::Deferred)
+            {
+                progress("initialize deferred popup: " + Utf8(entry.label));
+                auto *previous = tracking;
+                tracking = &source;
+                TryMaterializePopup(child, window, index, [&] {
+                    if (source.shortcutObjects || source.site.HostWindow()) return false;
+                    progress("prepare deferred popup view: " + Utf8(entry.label));
+                    if (!source.site.Initialize(source.folder.Get(), window)) return false;
+                    source.site.Attach(source.context.Get());
+                    return true;
+                }, PopupNeedsInitialView(verb));
+                tracking = previous;
+            }
+            if (!RequiresNativePopup(child)) entry.children = Read(source, child, provider, depth + 1, entry.label);
+            const bool placeholder = entry.children.empty() ||
+                std::all_of(entry.children.begin(), entry.children.end(), [](const auto &e) {
+                    return e.separator || (!e.token && e.children.empty());
+                });
+            if (placeholder)
+            {
+                entry.children.clear(); entry.native = true; entry.token = next++;
+                commands[entry.token] = {&source, 0, true, child};
+            }
+        };
         if (depth > 8)
             return entries;
         if (depth == 0)
@@ -623,36 +655,8 @@ struct Host
             }
             else if (item.hSubMenu)
             {
-                if (depth < 8 && InspectPopup(item.hSubMenu) == PopupContents::Deferred)
-                {
-                    // Keep the original placeholder root's identity so an
-                    // existing opt-in still applies after adding its children.
-                    // IdentifyEntries still prefers a unique canonical verb.
-                    progress("initialize deferred popup: " + Utf8(entry.label));
-                    auto *previous = tracking;
-                    tracking = &source;
-                    TryMaterializePopup(item.hSubMenu, window, static_cast<UINT>(i), [&] {
-                        if (source.shortcutObjects || source.site.HostWindow()) return false;
-                        progress("prepare deferred popup view: " + Utf8(entry.label));
-                        if (!source.site.Initialize(source.folder.Get(), window)) return false;
-                        source.site.Attach(source.context.Get());
-                        return true;
-                    }, PopupNeedsInitialView(verb));
-                    tracking = previous;
-                }
-                if (!RequiresNativePopup(item.hSubMenu))
-                    entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
-                const bool placeholder = entry.children.empty() ||
-                    std::all_of(entry.children.begin(), entry.children.end(), [](const auto &child) {
-                        return child.separator || (!child.token && child.children.empty());
-                    });
-                if (placeholder)
-                {
-                    entry.children.clear();
-                    entry.native = true;
-                    entry.token = next++;
-                    commands[entry.token] = {&source, 0, true, item.hSubMenu};
-                }
+                if (previewRoots) cascades.push_back({entries.size(), item.hSubMenu, static_cast<UINT>(i), verb});
+                else readCascade(entry, item.hSubMenu, static_cast<UINT>(i), verb);
             }
             else if (item.wID >= 1 && item.wID <= 0x7fff)
             {
@@ -665,6 +669,26 @@ struct Host
             if (entry.pixels.empty() && !(item.fType & MFT_OWNERDRAW))
                 CallbackBitmap(entry, source, menu, item);
             omitted.push_back(false); entries.push_back(std::move(entry));
+        }
+        if (!cascades.empty())
+        {
+            auto roots = entries;
+            for (auto &entry : roots) { entry.token = 0; if (!entry.separator) entry.enabled = false; }
+            for (const auto &cascade : cascades)
+            {
+                auto &entry = roots[cascade.entry];
+                entry.enabled = entries[cascade.entry].enabled;
+                Entry loading; loading.label = L"…"; loading.enabled = false;
+                entry.children = {std::move(loading)};
+            }
+            IdentifyEntries(roots);
+            for (size_t i = roots.size(); i-- > 0;) if (omitted[i]) roots.erase(roots.begin() + static_cast<std::ptrdiff_t>(i));
+            progress("root headers ready; prefetch all cascades");
+            rootPreview(Reply{true, std::move(roots), {}});
+            // Continue immediately on this same STA/session. Hovering never
+            // starts Shell work and cannot be required for completion.
+            for (const auto &cascade : cascades)
+                readCascade(entries[cascade.entry], cascade.menu, cascade.index, cascade.verb);
         }
         // Duplicate or absent verbs cannot be persisted as individual commands.
         std::map<std::string, int> keys;
@@ -1221,6 +1245,7 @@ struct Session::Impl
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
+    std::optional<Reply> roots;
     unsigned selectionContexts = 0;
     std::set<UINT> statefulTokens;
     std::string stage;
@@ -1360,6 +1385,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         impl_->delivered = impl_->succeeded = false;
         impl_->statefulTokens.clear();
         impl_->reply.reset();
+        impl_->roots.reset();
         impl_->selectionContexts = 0;
         impl_->stage = "start helper";
         impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
@@ -1373,6 +1399,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
             if (!result.ok && result.error.empty()) result.error = "query failed at " + p->stage;
             p->reply = std::move(result);
         });
+        impl_->channel.Bind<void, Reply>("menu.roots", [p = impl_.get()](Reply result) { p->roots = std::move(result); });
         impl_->channel.Bind<void>("menu.released", [p = impl_.get()] { p->RemoveRetiredSamples(); });
         auto query = request;
         PrepareSample(query, impl_->sampleDirectory);
@@ -1426,6 +1453,7 @@ Session::~Session()
 void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
 unsigned Session::SelectionContexts() const noexcept { return impl_->selectionContexts; }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
+std::optional<Reply> Session::PollRoots() { return std::exchange(impl_->roots, {}); }
 std::optional<Reply> Session::Poll()
 {
     if (impl_->delivered)
@@ -1495,6 +1523,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
         Host host(std::move(startPin));
         host.progress = [&](const auto &stage) { MenuTrace("helper.stage", stage); channel.Notify("menu.progress", stage); };
+        host.rootPreview = [&](Reply roots) { channel.Notify("menu.roots", std::move(roots)); };
         // Retain bootstrap objects until process retirement: extensions can keep
         // window/timer callbacks referring to their menu even after QCM returns.
         std::unique_ptr<TemporaryMenuFile> preparationSample;

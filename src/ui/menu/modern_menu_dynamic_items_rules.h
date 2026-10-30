@@ -5,6 +5,31 @@
 
 namespace snowdesktop::modern_menu
 {
+template<class Before, class After>
+inline bool ApplyPrefetchedChildren(std::vector<Item> &current, const std::vector<Item> &updated,
+                                    bool safe, Before before, After after)
+{
+    if (!safe) return false;
+    bool changed = false;
+    for (auto &item : current)
+    {
+        const auto next = std::find_if(updated.begin(), updated.end(), [&](const auto &candidate) {
+            return item.command && candidate.command == item.command && candidate.label == item.label;
+        });
+        if (next == updated.end()) continue;
+        if (item.childrenPending && !next->childrenPending)
+        {
+            before(item.children);
+            item.children = next->children;
+            item.childrenPending = false;
+            after(item.children);
+            changed = true;
+        }
+        else if (!item.childrenPending)
+            changed |= ApplyPrefetchedChildren(item.children, next->children, true, before, after);
+    }
+    return changed;
+}
 inline bool SameRootRow(const Item &left, const Item &right)
 {
     // Closed cascades do not affect the parent's hit geometry. Keep the

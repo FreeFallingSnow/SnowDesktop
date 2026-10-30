@@ -269,18 +269,40 @@ public:
         {
             if (options_.pollItems)
             {
+                const bool pointerSafe = !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
+                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) &&
+                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000);
                 const bool canApply = popups_.size() == 1 &&
                                       (popups_.front()->hoveredItem < 0 ||
                                        (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
-                                      !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
-                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) &&
-                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000);
+                                      pointerSafe;
                 if (!pendingItems)
-                    pendingItems = options_.pollItems(rootItems_, canApply);
+                    pendingItems = options_.pollItems(rootItems_, canApply || (options_.pollPrefetchedSubmenus && pointerSafe));
                 else
                     // A layout-changing candidate may wait for pointer leave;
                     // continue deadline/recovery observation in the meantime.
                     options_.pollItems(rootItems_, false);
+                if (pendingItems && options_.pollPrefetchedSubmenus && pointerSafe)
+                {
+                    int parentDepth = -1, parentItem = -1; bool keyboard = false;
+                    ApplyPrefetchedChildren(rootItems_, *pendingItems, true,
+                        [&](auto &children) {
+                            parentDepth = parentItem = -1;
+                            for (const auto &popup : popups_) if (popup->items == &children)
+                            {
+                                parentDepth = popup->depth - 1; parentItem = popup->parentItem;
+                                keyboard = activeDepth_ == popup->depth;
+                                break;
+                            }
+                            // Destroy the loading popup before changing its backing
+                            // items. Root items and their hit geometry stay intact.
+                            if (parentDepth >= 0) CloseFromDepth(parentDepth + 1);
+                        },
+                        [&](auto &) {
+                            if (parentDepth >= 0 && static_cast<size_t>(parentDepth) < popups_.size())
+                                OpenSubmenu(*popups_[parentDepth], parentItem, keyboard);
+                        });
+                }
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
                 if (pendingItems && hovered >= 0)
