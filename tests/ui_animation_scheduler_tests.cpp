@@ -3,6 +3,7 @@
 #include "ui/render/ui_presentation_scope.h"
 #include "settings/animation_settings.h"
 #include "layout/popup_animation_rules.h"
+#include "dock/dock_magnification.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
 #include "system/status_bar/status_bar_task_view_input.h"
 #include "system/status_bar/status_bar_shell_shortcut_relay.h"
@@ -1678,6 +1679,40 @@ int main()
         Check(frames == 2, "independent frame callbacks also finish inside the Shell loop");
         Check(presented > 0,
             "whichever nested invocation delivers work also flushes its presentation");
+    }
+
+    {
+        // A live pointer can still receive messages in a foreign modal loop,
+        // yet magnification stays at its initial 1x without scheduler delivery.
+        // This is the Dock's actual entry state, not a synthetic frame counter.
+        const auto runHoverLoop = [](bool bridge) {
+            UiAnimationScheduler modalScheduler;
+            snowdesktop::dock_magnification::HoverEntryAnimation hover;
+            const double began = UiAnimationScheduler::MonotonicMilliseconds();
+            hover.SetHovered(true, began, 1.0);
+            int flushes = 0;
+            modalScheduler.StartAnimation(UiAnimationSurface::FloatingDock,
+                [&](double now) { hover.Advance(now); return hover.IsAnimating(); });
+            const auto nestedLoop = [&] {
+                PumpMessagesUntil([&] {
+                    // Repeated pointer samples must not restart the timeline.
+                    hover.SetHovered(true, UiAnimationScheduler::MonotonicMilliseconds(), 1.0);
+                    return UiAnimationScheduler::MonotonicMilliseconds() - began >= 220.0;
+                });
+            };
+            if (bridge)
+            {
+                UiAnimationScheduler::MessagePumpScope pump(modalScheduler, [&] { ++flushes; });
+                Check(pump.IsAvailable(), "modal hover bridge initializes");
+                nestedLoop();
+            }
+            else nestedLoop();
+            Check(bridge ? hover.FocusScale(1.28f) > 1.27f && flushes > 0
+                         : hover.FocusScale(1.28f) == 1.0f && flushes == 0,
+                "a modal hover needs timeline delivery even when pointer samples continue");
+        };
+        runHoverLoop(false);
+        runHoverLoop(true);
     }
 
     {

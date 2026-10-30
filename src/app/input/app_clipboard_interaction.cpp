@@ -335,6 +335,13 @@ bool DesktopApp::PasteClipboardToFolderPath(
             FILE_ATTRIBUTE_DIRECTORY) == 0)
         return false;
 
+    // Clipboard providers may enter their own COM/Shell loop while rendering
+    // data. Keep native hover animation live until negotiation has returned.
+    snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+        uiAnimationScheduler_, [this] {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
     ComPtr<IDataObject> clipObj;
     if (FAILED(OleGetClipboard(&clipObj)) || !clipObj)
         return false;
@@ -457,6 +464,13 @@ bool DesktopApp::PasteClipboardToDesktop()
         info.hwnd = ShellDialogOwnerHwnd();
         info.lpVerb = "paste";
         info.nShow = SW_SHOWNORMAL;
+        // Namespace/clipboard fallbacks can keep a copy progress dialog in
+        // this STA until the Shell verb returns, just like a native menu verb.
+        snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+            uiAnimationScheduler_, [this] {
+                FlushPendingCompositionCommit();
+                FlushPendingQuickNavigationCompositionCommit();
+            });
         SafeInvokeCommand(bgMenu.Get(), &info);
         RequestShellRefresh();
     }

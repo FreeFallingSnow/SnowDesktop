@@ -1244,6 +1244,7 @@ struct NativeDragIntegrationAccess
 #include "../system/native_status_selection_cases.h"
 #include "../platform/native_popup_control_cases.h"
 #include "../platform/native_widget_settings_cases.h"
+#include "../platform/modal_feedback_cases.h"
 
 namespace
 {
@@ -1313,6 +1314,7 @@ int main(int argc, char** argv)
         }
         if (wideArguments) LocalFree(wideArguments);
         if (argc == 1) {
+            modal_feedback_cases::Run();
             native_foreground_culling_cases::Run();
             native_drag_foreground_damage_cases::Run();
             native_dock_hover_cases::Run();
@@ -1320,6 +1322,8 @@ int main(int argc, char** argv)
             RunTargets();
             native_preview_order_cases::Run();
         }
+        else if (argc == 2 && std::string_view(argv[1]) == "--modal-feedback")
+            modal_feedback_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--file-preview")
         {
             native_drag_commit_cases::Profile profile;

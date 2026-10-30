@@ -8,6 +8,8 @@
 #include <string>
 #include <utility>
 
+namespace snowdesktop { class UiAnimationScheduler; }
+
 namespace snowdesktop::operation_feedback
 {
 // Internal operation results. Workers report values; only the host UI displays
@@ -65,7 +67,10 @@ void Show(const Failure& failure);
 class Session
 {
 public:
-    Session();
+    // Bind dialog presentation to the host UI thread. A default session still
+    // supports startup/standalone callers without an animation scheduler.
+    explicit Session(UiAnimationScheduler* animations = nullptr,
+        std::function<void()> flushPresentation = {});
     ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;

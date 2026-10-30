@@ -407,7 +407,11 @@ void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
-    snowdesktop::operation_feedback::Session operationFeedback;
+    snowdesktop::operation_feedback::Session operationFeedback(
+        &uiAnimationScheduler_, [this] {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
     snowdesktop::text_input::SetMenuHandler([this](HWND window,POINT point,const snowdesktop::text_input::MenuState& state){
         namespace menu=snowdesktop::modern_menu;
         using Command=snowdesktop::text_input::MenuCommand;
