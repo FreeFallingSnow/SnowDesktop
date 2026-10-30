@@ -32,6 +32,7 @@
 #include <utility>
 #include <wrl/client.h>
 #include <wrl/implements.h>
+#include <VersionHelpers.h>
 
 void TestCatalogueRegistryHandles();
 int RunCatalogueFullscreenFixture();
@@ -5677,6 +5678,7 @@ void BenchmarkMenus()
 
 void ProbeNativeMenuPreparation()
 {
+    Expect(IsWindows10OrGreater(), "real menu probes use the host's Windows compatibility context");
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");

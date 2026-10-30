@@ -19,6 +19,7 @@
 #include <shellapi.h>
 #include <winver.h>
 #include <msxml6.h>
+#include <appmodel.h>
 #include <wrl/client.h>
 
 namespace snowdesktop::shell_extensions
@@ -655,7 +656,20 @@ struct Scanner
         for (const auto &package : Children(classes, root, control))
         {
             if (control) control->WaitUntilAllowed();
-            const auto directory = Read(classes, root + L"\\" + package, L"PackageRootFolder");
+            auto directory = Read(classes, root + L"\\" + package, L"PackageRootFolder");
+            if (classes == HKEY_CLASSES_ROOT)
+            {
+                // For sparse packages the compatibility registry value names
+                // external program content, not the installed manifest folder.
+                UINT32 length = 0;
+                if (GetPackagePathByFullName(package.c_str(), &length, nullptr) == ERROR_INSUFFICIENT_BUFFER &&
+                    length > 1 && length <= 32768)
+                {
+                    std::wstring installed(length, L'\0');
+                    if (GetPackagePathByFullName(package.c_str(), &length, installed.data()) == ERROR_SUCCESS)
+                        directory = installed.c_str();
+                }
+            }
             if (directory.empty()) continue;
             for (const auto &verb : ReadManifestVerbs(directory + L"\\AppxManifest.xml"))
             {

@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <map>
 #include <set>
+#include <VersionHelpers.h>
 
 namespace
 {
@@ -194,6 +195,7 @@ void BenchmarkShellMenuFirstScreen()
 // invoked and all cache output belongs to this private workspace.
 void BenchmarkDesktopMenus()
 {
+    Require(IsWindows10OrGreater(), "real menu benchmarks use the host's Windows compatibility context");
     Workspace workspace;
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     struct RealMode { ~RealMode() { SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr); } } realMode;

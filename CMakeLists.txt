@@ -3529,6 +3529,7 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version dwmapi
         LABELS integration contract shell)
+    snowdesktop_enable_native_window_compatibility(SnowDesktopShellContextMenuInvokeTests)
 
     # Keep slow inventory boundaries and real helper lifetimes independent of
     # the ordinary menu cases; every entry retains the shell resource lock below.
