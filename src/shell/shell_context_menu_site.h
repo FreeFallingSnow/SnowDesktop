@@ -3,12 +3,16 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 #include <shlobj.h>
 
 namespace snowdesktop
 {
+// Only ordinary local data files can bootstrap their own associations. Folders,
+// shortcuts, reparse/offline items and unknown selections keep the private primer.
+bool ShellSelectionNeedsFileMenuPrimer(const std::vector<std::wstring>& paths);
 
 // Private, never invoked. The kernel removes the sample even when a supervised
 // menu process is terminated while an extension is loading.
@@ -52,11 +56,11 @@ public:
     bool Initialize(IShellFolder* folder, HWND owner);
     bool Attach(IContextMenu* contextMenu);
     // Load providers before creating a Shell view. Rebind the actual menu only
-    // after attaching that view, keeping synchronous cascades and final tokens.
+    // after attaching that view, keeping the caller's flags and final tokens.
     using MenuFactory = std::function<HRESULT(HWND, IContextMenu**)>;
     HRESULT BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags,
-        const MenuFactory& bind, IContextMenu** contextMenu);
+        const MenuFactory& bind, IContextMenu** contextMenu, bool initializeFileAssociations = true);
     // Read built-in namespace verbs for a custom popup. These commands do not
     // need filesystem providers or a folder view; bind their aggregate once.
     HRESULT BuildNamespaceMenu(HWND owner, HMENU menu,

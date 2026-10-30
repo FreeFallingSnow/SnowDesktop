@@ -248,7 +248,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     const HRESULT hr = menuSite.BuildMenu(backgroundFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-        CMF_NORMAL | CMF_SYNCCASCADEMENU | extendedFlags,
+        CMF_NORMAL | extendedFlags,
         [&](HWND bindOwner, IContextMenu** target) {
             return backgroundFolder->CreateViewObject(bindOwner, IID_IContextMenu, reinterpret_cast<void**>(target));
         }, contextMenu.GetAddressOf());
@@ -614,7 +614,7 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     if (FAILED(menuSite.BuildMenu(folder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
+            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | extendedFlags,
             [&](HWND bindOwner, IContextMenu** target) {
                 return folder->CreateViewObject(bindOwner, IID_IContextMenu, reinterpret_cast<void**>(target));
             }, contextMenu.GetAddressOf())))
@@ -703,11 +703,11 @@ ShowShellItemContextMenuForPaths(
     constexpr UINT kLastCmd = 0x7FFF;
     if (FAILED(
             menuSite.BuildMenu(boundParent.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-                CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
+                CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | extendedFlags,
                 [&](HWND bindOwner, IContextMenu** target) {
                     return boundParent->GetUIObjectOf(bindOwner, static_cast<UINT>(children.size()), children.data(), IID_IContextMenu,
                         nullptr, reinterpret_cast<void**>(target));
-                }, contextMenu.GetAddressOf())))
+                }, contextMenu.GetAddressOf(), snowdesktop::ShellSelectionNeedsFileMenuPrimer(itemPaths))))
     {
         DestroyMenu(menu);
         return;

@@ -1257,11 +1257,11 @@ void DesktopApp::ShowShellContextMenu(
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     if (FAILED(menuSite.BuildMenu(menuFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
+            CMF_NORMAL | CMF_CANRENAME | extendedFlags,
             [&](HWND bindOwner, IContextMenu** target) {
                 return menuFolder->GetUIObjectOf(bindOwner, static_cast<UINT>(pidls.size()), pidls.data(),
                     IID_IContextMenu, nullptr, reinterpret_cast<void**>(target));
-            }, ctxMenu.GetAddressOf())))
+            }, ctxMenu.GetAddressOf(), snowdesktop::ShellSelectionNeedsFileMenuPrimer(invocationPaths))))
         { DestroyMenu(menu); return; }
 
     ctxMenu.As(&activeContextMenu2_);

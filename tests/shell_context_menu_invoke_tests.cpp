@@ -40,6 +40,7 @@ void ProbeNativeShellMenuBootstrap(bool legacy);
 void TestShellMenuPreparedService();
 void BenchmarkShellMenuFirstScreen();
 void TestShellMenuRootPrefetch();
+void BenchmarkNativeMenuPreparation();
 
 namespace
 {
@@ -6016,6 +6017,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-first-screen") BenchmarkShellMenuFirstScreen();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-native-menu-preparation") BenchmarkNativeMenuPreparation();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-prepared-worker") TestShellMenuPreparedService();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-root-prefetch") TestShellMenuRootPrefetch();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();

@@ -1,4 +1,5 @@
 #include "shell/shell_context_menu_site.h"
+#include "shell/shell_extension_discovery.h"
 #include <shlguid.h>
 #include <wrl/client.h>
 #include <wrl/implements.h>
@@ -6,6 +7,8 @@
 #include <stdexcept>
 #include <filesystem>
 #include <iostream>
+#include <fstream>
+#include <chrono>
 
 namespace
 {
@@ -198,7 +201,7 @@ void RunNamespaceCase(int failure)
     DestroyMenu(popup); DestroyWindow(state->owner);
 }
 
-void RunCase(UINT flags, int failure)
+void RunCase(UINT flags, int failure, bool filePrimer = true)
 {
     auto state = std::make_shared<State>(); state->expectedFlags = flags; state->failure = failure;
     state->owner = CreateWindowExW(0, L"STATIC", L"Private bootstrap owner", WS_POPUP,
@@ -219,7 +222,7 @@ void RunCase(UINT flags, int failure)
             return menu.CopyTo(target);
         };
         const HRESULT hr = site.BuildMenu(folder.Get(), state->owner, popup, state->first, state->last,
-            flags, factory, actual.GetAddressOf());
+            flags, factory, actual.GetAddressOf(), filePrimer);
         if (failure >= 1 && failure <= 4)
         {
             Require(hr == E_ACCESSDENIED && !actual, "failed initialization never exposes a partial aggregate");
@@ -260,15 +263,90 @@ void TestShellContextMenuBootstrap()
              UINT(CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU),
              UINT(CMF_NORMAL | CMF_SYNCCASCADEMENU)})
         for (int failure = 0; failure <= 5; ++failure) RunCase(flags, failure);
+    for (const UINT flags : {UINT(CMF_NORMAL | CMF_CANRENAME), UINT(CMF_NORMAL | CMF_CANRENAME | CMF_EXTENDEDVERBS)})
+        for (int failure = 0; failure <= 5; ++failure) RunCase(flags, failure, false);
 
     std::wstring sample;
     {
         snowdesktop::ShellMenuInitializationFile file;
         Require(file.handle != INVALID_HANDLE_VALUE, "private association bootstrap sample is created");
         sample = file.path;
+        Require(!snowdesktop::ShellSelectionNeedsFileMenuPrimer({sample}), "ordinary local files initialize their actual selection directly");
+        Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({}), "unknown selections retain file association protection");
+        Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({std::filesystem::path(sample).parent_path().wstring()}),
+            "folder selections retain the file association primer");
+        Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({sample + L".missing"}), "unavailable targets retain conservative initialization");
+        const auto shortcut = sample + L".lnk";
+        { std::ofstream output(shortcut); output << "private classification fixture"; }
+        Require(snowdesktop::ShellSelectionNeedsFileMenuPrimer({sample, shortcut}), "mixed shortcut selections retain initialization protection");
+        Require(DeleteFileW(shortcut.c_str()) != FALSE, "remove owned classification fixture");
         Require(GetFileAttributesW(sample.c_str()) != INVALID_FILE_ATTRIBUTES, "bootstrap sample remains while in use");
     }
     Require(GetFileAttributesW(sample.c_str()) == INVALID_FILE_ATTRIBUTES, "bootstrap sample is deleted on retirement");
+}
+
+// Read-only A/B of the same production BuildMenu with old and new caller
+// policies. No desktop host, TrackPopupMenu or command invocation is involved.
+void BenchmarkNativeMenuPreparation()
+{
+    wchar_t modeText[32]{}, extensionText[16]{};
+    GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_MODE", modeText, 32);
+    GetEnvironmentVariableW(L"SNOWDESKTOP_NATIVE_MENU_EXTENSION", extensionText, 16);
+    const std::wstring mode = *modeText ? modeText : L"optimized";
+    const std::wstring extension = *extensionText ? extensionText : L".txt";
+    Require(mode == L"baseline" || mode == L"no-primer" || mode == L"no-sync" || mode == L"optimized", "known native benchmark mode");
+    const auto bytes = snowdesktop::shell_extensions::DiscoverySample(extension);
+    Require(!bytes.empty(), "native benchmark uses a valid supported private file");
+    GUID guid{}; Require(SUCCEEDED(CoCreateGuid(&guid)), "native benchmark identity");
+    wchar_t identifier[40]{}; StringFromGUID2(guid, identifier, 40);
+    const auto directory = std::filesystem::temp_directory_path() / (std::wstring(L"SnowDesktop-NativeTiming-") + identifier);
+    Require(std::filesystem::create_directory(directory), "own native benchmark directory");
+    struct Workspace { std::filesystem::path path; ~Workspace() { std::error_code error; std::filesystem::remove_all(path, error); } } cleanup{directory};
+    const auto file = directory / (L"Sample" + extension);
+    { std::ofstream output(file, std::ios::binary); output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); }
+    PIDLIST_ABSOLUTE raw = nullptr;
+    Require(SUCCEEDED(SHParseDisplayName(file.c_str(), nullptr, &raw, 0, nullptr)), "native benchmark selection PIDL");
+    struct Pidl { PIDLIST_ABSOLUTE value; ~Pidl() { CoTaskMemFree(value); } } pidl{raw};
+    struct Owner { HWND value; ~Owner() { if (value) DestroyWindow(value); } } owner{
+        CreateWindowExW(0, L"STATIC", L"Private native timing owner", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr)};
+    Require(owner.value != nullptr, "native benchmark hidden owner");
+    ComPtr<IShellFolder> folder; Require(SUCCEEDED(SHGetDesktopFolder(&folder)), "native benchmark desktop binding");
+    PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(raw);
+    const auto bind = [&](HWND window, IContextMenu** menu) {
+        return folder->GetUIObjectOf(window, 1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
+    };
+    const bool filePrimer = mode == L"baseline" || mode == L"no-sync" ? true :
+        snowdesktop::ShellSelectionNeedsFileMenuPrimer({file.wstring()});
+    const bool synchronous = mode == L"baseline" || mode == L"no-primer";
+    const UINT flags = CMF_NORMAL | CMF_CANRENAME | CMF_EXTENDEDVERBS | (synchronous ? CMF_SYNCCASCADEMENU : 0);
+    const auto utf8 = [](std::wstring_view value) {
+        const auto size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+        std::string result(size, 0);
+        if (size) WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), result.data(), size, nullptr, nullptr);
+        return result;
+    };
+    for (unsigned iteration = 0; iteration < 2; ++iteration)
+    {
+    struct Popup { HMENU value = CreatePopupMenu(); ~Popup() { if (value) DestroyMenu(value); } } popup;
+    Require(popup.value != nullptr, "native benchmark popup");
+    snowdesktop::ShellContextMenuSite site;
+    ComPtr<IContextMenu> context;
+    const auto started = std::chrono::steady_clock::now();
+    const HRESULT result = site.BuildMenu(folder.Get(), owner.value, popup.value, 1, 0x7fff, flags, bind, context.GetAddressOf(), filePrimer);
+    const auto milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    Require(SUCCEEDED(result) && context && GetMenuItemCount(popup.value) > 0, "native benchmark builds the actual menu");
+    std::cout << "native_menu mode=" << utf8(mode) << " extension=" << utf8(extension) << " iteration=" << iteration << " ready_ms=" << milliseconds
+        << " roots=" << GetMenuItemCount(popup.value) << " file_primer=" << filePrimer << " sync_cascades=" << synchronous << std::endl;
+    for (int index = 0; index < GetMenuItemCount(popup.value); ++index)
+    {
+        wchar_t label[2048]{};
+        MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_SUBMENU;
+        item.dwTypeData = label; item.cch = 2048;
+        if (GetMenuItemInfoW(popup.value, index, TRUE, &item))
+            std::cout << "native_root iteration=" << iteration << " index=" << index << " separator=" << ((item.fType & MFT_SEPARATOR) != 0)
+                << " submenu=" << bool(item.hSubMenu) << " label=" << utf8(label) << std::endl;
+    }
+    }
 }
 
 // Explicit read-only diagnostic modes, never part of the automatic test suite.

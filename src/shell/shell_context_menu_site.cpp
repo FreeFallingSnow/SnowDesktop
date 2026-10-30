@@ -1,7 +1,9 @@
 #include "shell_context_menu_site.h"
+#include "shell_extension_diagnostics.h"
 
 #include <shlguid.h>
 #include <filesystem>
+#include <shlwapi.h>
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
@@ -105,6 +107,24 @@ private:
 };
 
 } // namespace
+
+bool ShellSelectionNeedsFileMenuPrimer(const std::vector<std::wstring>& paths)
+{
+    if (paths.empty()) return true;
+    for (const auto& path : paths)
+    {
+        if (path.size() < 3 || path[1] != L':' || (path[2] != L'\\' && path[2] != L'/')) return true;
+        const wchar_t root[] = {path[0], L':', L'\\', 0};
+        if (GetDriveTypeW(root) == DRIVE_REMOTE) return true;
+        const auto attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE))) return true;
+        const auto extension = PathFindExtensionW(path.c_str());
+        for (const auto special : {L".lnk", L".url", L".library-ms", L".search-ms", L".searchconnector-ms"})
+            if (lstrcmpiW(extension, special) == 0) return true;
+    }
+    return false;
+}
 
 ShellMenuInitializationFile::ShellMenuInitializationFile()
 {
@@ -268,8 +288,9 @@ bool ShellContextMenuSite::Attach(IContextMenu* contextMenu)
 
 HRESULT ShellContextMenuSite::BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
     UINT firstCommand, UINT lastCommand, UINT flags,
-    const MenuFactory& bind, IContextMenu** contextMenu)
+    const MenuFactory& bind, IContextMenu** contextMenu, bool initializeFileAssociations)
 {
+    shell_extensions::MenuTiming total("native_menu.total");
     if (!contextMenu) return E_POINTER;
     *contextMenu = nullptr;
     impl_->Reset();
@@ -278,33 +299,52 @@ HRESULT ShellContextMenuSite::BuildMenu(IShellFolder* folder, HWND owner, HMENU 
 
     // Match the ordinary helper's folder/ShellLink bootstrap: initialize file
     // associations before folder-only providers create windows from DllMain.
-    auto filePrimer = std::make_unique<ShellFileMenuPrimer>();
-    filePrimer->Initialize();
+    std::unique_ptr<ShellFileMenuPrimer> filePrimer;
+    {
+        shell_extensions::MenuTiming timing("native_menu.file_primer");
+        if (initializeFileAssociations)
+        {
+            filePrimer = std::make_unique<ShellFileMenuPrimer>();
+            filePrimer->Initialize();
+        }
+        timing.Record(initializeFileAssociations ? "queried" : "ordinary_file_skipped");
+    }
     ComPtr<IContextMenu> initial;
+    shell_extensions::MenuTiming initialBind("native_menu.initial_bind");
     HRESULT hr = bind(owner, initial.GetAddressOf());
+    initialBind.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr) || !initial) return FAILED(hr) ? hr : E_FAIL;
     const HMENU scratch = CreatePopupMenu();
     if (!scratch) return E_OUTOFMEMORY;
     // No Shell view and no synchronous cascade expansion during initial loads.
+    shell_extensions::MenuTiming initialQuery("native_menu.initial_query");
     hr = initial->QueryContextMenu(scratch, 0, firstCommand, lastCommand,
         flags & ~CMF_SYNCCASCADEMENU);
+    initialQuery.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) { initial.Reset(); DestroyMenu(scratch); return hr; }
 
+    shell_extensions::MenuTiming viewTiming("native_menu.view");
     Initialize(folder, owner);
+    viewTiming.Record(HostWindow() ? "complete" : "unavailable");
     impl_->initialMenu = std::move(initial);
     // Provider windows/timers can still refer to the unpublished HMENU during
     // view initialization and final binding. Retain it with its COM aggregate.
     impl_->initialPopup = scratch;
     impl_->filePrimer = std::move(filePrimer);
     ComPtr<IContextMenu> actual;
+    shell_extensions::MenuTiming finalBind("native_menu.final_bind");
     hr = bind(HostWindow() ? HostWindow() : owner, actual.GetAddressOf());
+    finalBind.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
     Attach(actual.Get());
     // The unpublished aggregate's offsets/state must never be reused by a
     // real command. The fresh aggregate receives the original site and flags.
+    shell_extensions::MenuTiming finalQuery("native_menu.final_query");
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
+    finalQuery.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) return hr;
     actual.CopyTo(contextMenu);
+    total.Record("complete");
     return hr;
 }
 
