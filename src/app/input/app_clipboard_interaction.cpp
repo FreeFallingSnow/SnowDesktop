@@ -337,6 +337,8 @@ bool DesktopApp::PasteClipboardToFolderPath(
 
     // Clipboard providers may enter their own COM/Shell loop while rendering
     // data. Keep native hover animation live until negotiation has returned.
+    // The caller may pass a widget-owned path; callbacks can rebuild widgets.
+    const std::wstring destinationPath = targetFolderPath;
     snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
         uiAnimationScheduler_, [this] {
             FlushPendingCompositionCommit();
@@ -409,7 +411,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
         const bool link = action == DropAction::Link;
         const DWORD effect = move ? DROPEFFECT_MOVE :
             link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
-        return QueueAsyncShellDrop(clipObj.Get(), targetFolderPath,
+        return QueueAsyncShellDrop(clipObj.Get(), destinationPath,
             snowdesktop::ClipboardShellDropKeyState(effect), {}, effect,
             std::move(operationCompletion), {}, true);
     }
@@ -417,7 +419,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
     if (paths.empty()) return false;
     if (action == DropAction::Move)
     {
-        snowdesktop::RemoveClipboardMoveNoOps(paths, targetFolderPath);
+        snowdesktop::RemoveClipboardMoveNoOps(paths, destinationPath);
         if (paths.empty())
         {
             operationCompletion(true);
@@ -439,7 +441,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
     }
 
     return MaterializeFilesToFolder(
-        sourceList, targetFolderPath,
+        sourceList, destinationPath,
         action, std::move(operationCompletion));
 }
 
