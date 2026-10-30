@@ -90,9 +90,10 @@ void TestShellMenuRootPrefetch()
     Check(partial.pending && !partial.snapshot && partial.roots.has_value(), "headers are not a complete snapshot");
     ext::MenuSnapshotCache cache(cachePath);
     Check(!cache.Find(cache.Capture(request)), "root headers never become a durable cache hit");
-    for (const auto &entry : std::filesystem::directory_iterator(cachePath))
-        Check(entry.path().extension() != L".bin" || entry.path().filename().wstring().size() != 68,
-            "no projected or full snapshot file can be written for provisional roots");
+    if (std::filesystem::exists(cachePath))
+        for (const auto &entry : std::filesystem::directory_iterator(cachePath))
+            Check(entry.path().extension() != L".bin" || entry.path().filename().wstring().size() != 68,
+                "no projected or full snapshot file can be written for provisional roots");
     Check(items.back().childrenPending && !items.back().enabled && !items.back().image,
         "a provisional standalone root remains non-executable and may lack an icon");
     const auto parentCommand = items.front().command;
