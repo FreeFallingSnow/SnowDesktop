@@ -64,4 +64,8 @@
     {
         return app.dockRunningWindowsStateTick_ == DesktopApp::dockWindowListChangedTick_.load();
     }
+    static void PruneCloseRefresh(DesktopApp& app)
+    {
+        app.PruneDockPendingCloseWindows();
+    }
 #include "native_running_refresh_access.inc"

@@ -515,10 +515,14 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    // A create notification begins a new HWND lifetime, including a recycled
+    // handle whose previous window had an accepted close request.
+    if (event == EVENT_OBJECT_CREATE) dockPendingCloseWindows_.erase(window);
     // Read before any collector prunes destroyed HWNDs from the pending set.
     // The accepted close already retired this card; its hide/destroy burst
     // must not repeat global discovery before the remaining cards get input.
     const bool closePending = dockPendingCloseWindows_.contains(window);
+    const bool windowRemoved = event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY;
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
@@ -538,6 +542,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     else
         previewOrder.Observe(window);
     if (!closePending &&
+        (!windowRemoved || (dockWindowPreview_ && dockWindowPreview_->IsShowingWindow(window))) &&
         (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_DESTROY ||
          event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE))
         RefreshDockWindowPreviewItems();
@@ -590,7 +595,10 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     }
     dockWindowAppIds_.Invalidate(window);
     dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
-    RefreshDockRunningWindows();
+    // Foreground feedback may already have pruned the accepted-close entry.
+    // A hide/destroy still only dirties membership; maintenance coalesces the
+    // burst even in that order. A displayed source was reconciled above.
+    if (!windowRemoved) RefreshDockRunningWindows();
 }
 
 void DesktopApp::RefreshDockRunningWindows(

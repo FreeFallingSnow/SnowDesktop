@@ -8,6 +8,10 @@ inline unsigned enumerations = 0, registrations = 0;
 inline std::uintptr_t nextThumbnail = 0;
 inline std::unordered_map<HTHUMBNAIL, HWND> thumbnails;
 inline HWND staleSource = nullptr;
+inline POINT pointer{};
+inline HWND pointerWindow = nullptr;
+inline BOOL WINAPI Cursor(LPPOINT result) { *result = pointer; return TRUE; }
+inline HWND WINAPI WindowAt(POINT) { return pointerWindow; }
 inline decltype(&EnumWindows) originalEnum = nullptr;
 inline BOOL WINAPI Enumerate(WNDENUMPROC callback, LPARAM parameter)
 {
@@ -98,10 +102,28 @@ inline void Check(bool legacyRefresh, const wchar_t* desktopName)
         const ULONGLONG deadline = GetTickCount64() + 3000;
         while (IsWindow(middle) && GetTickCount64() < deadline) Sleep(1);
         Require(!IsWindow(middle), "asynchronous close destroys the owned source window");
+        // Foreground feedback can prune the destroyed HWND before its queued
+        // hide/destroy notifications arrive. Do not rely on its pending entry.
+        Access::PruneCloseRefresh(app);
         Access::NotifyPreviewWindow(app, middle, EVENT_OBJECT_HIDE);
         Access::NotifyPreviewWindow(app, middle, EVENT_OBJECT_DESTROY);
         Require(enumerations == 0 && registrations == 0 && preview.GetWindows().size() == 2,
             "accepted close notification burst must not rescan or rebuild remaining cards");
+        {
+            // Supply pointer observations on the private desktop, retaining
+            // real WM_MOUSEMOVE routing, coordinate conversion and hit tests.
+            RECT client{};
+            GetClientRect(cards[2], &client);
+            pointer = {(client.left + client.right) / 2, (client.top + client.bottom) / 2};
+            Require(ClientToScreen(cards[2], &pointer) != FALSE, "resolve remaining card's live pointer position");
+            pointerWindow = cards[2];
+            Access::InputSafetyImport cursor("GetCursorPos", reinterpret_cast<ULONG_PTR>(&Cursor));
+            Access::InputSafetyImport hit("WindowFromPoint", reinterpret_cast<ULONG_PTR>(&WindowAt));
+            Require(preview.IsAwaitingPointerEntry(), "reflow starts a fresh card entry generation");
+            SendMessageW(cards[2], WM_MOUSEMOVE, 0, 0);
+            Require(!preview.IsAwaitingPointerEntry() && enumerations == 0 && registrations == 0,
+                "first live move after close must enter the remaining card without a global refresh");
+        }
         staleSource = last;
         SendMessageW(cards[0], WM_MBUTTONUP, 0, MAKELPARAM(10, 10));
         Require(enumerations == 0 && registrations == 1 && thumbnails.size() == 1 &&
