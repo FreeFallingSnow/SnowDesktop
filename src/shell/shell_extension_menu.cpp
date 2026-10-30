@@ -1209,7 +1209,10 @@ struct Host
         }
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        const UINT flags = CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
+        // One query must finish populating cascades before we snapshot them.
+        // A partly populated Send To popup can already contain a third-party
+        // item, so placeholder detection alone cannot recognize its async work.
+        const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? 0 : CMF_ITEMMENU) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
         if (!request.startPinOnly)
         {
