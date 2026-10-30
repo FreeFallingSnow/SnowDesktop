@@ -1215,14 +1215,20 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
     std::optional<size_t> dockMappingEntryIndex, snowdesktop::shell_extensions::NativeMenuSelection selection)
 {
     const auto paths = request.paths;
-    if (nativeMenuPollToken_) uiAnimationScheduler_.Cancel(std::exchange(nativeMenuPollToken_, 0));
-    nativeMenuSession_.reset();
+    // Path-only adapters can also originate in Quick Navigation. Preserve the
+    // actual source surface, including its edit/popup deactivation ownership.
+    const POINT navigationPoint{point.x - virtualLeft_, point.y - virtualTop_};
+    keepQuickNavigationOpen = keepQuickNavigationOpen ||
+        (quickNavigationOpen_ && PtInRect(&quickNavigationRect_, navigationPoint));
+    const HWND menuOwner = keepQuickNavigationOpen && quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_ : ShellDialogOwnerHwnd();
+    DismissActiveContextMenuForPopupTransition();
     try
     {
         selection.lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
             static_cast<snowdesktop::modern_menu::Appearance>(std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
         request.extended = request.extended || (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
-        auto session = std::make_shared<snowdesktop::shell_extensions::NativeMenuSession>(request, point, ShellDialogOwnerHwnd(), std::move(selection));
+        auto session = std::make_shared<snowdesktop::shell_extensions::NativeMenuSession>(request, point, menuOwner, std::move(selection));
         nativeMenuSession_ = session;
         snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_APPSTARTING));
         nativeMenuPollToken_ = uiAnimationScheduler_.ScheduleInterval(16,
@@ -1285,6 +1291,7 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
     }
     catch (...)
     {
+        DismissActiveContextMenuForPopupTransition();
         snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Cannot start isolated native menu", DiagnosticLogLevel::Warning);
         if (controlHwnd_) PostMessageW(controlHwnd_, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);

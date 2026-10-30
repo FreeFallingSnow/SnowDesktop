@@ -1764,6 +1764,20 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             channel.Post([&, request = std::move(request), selection = std::move(selection), x, y, owner, ownerProcess, ownerThread, foreground] {
                 UINT token = 0;
                 NativeMenuResult result;
+                const ShellInvocationOwner origin{owner, ownerProcess, ownerThread};
+                if (const HWND sourceOwner = origin.Resolve())
+                {
+                    // Ownership survives the process boundary: source panels
+                    // and their edit controls recognize this activation as an
+                    // internal menu, while unrelated windows still deactivate.
+                    SetWindowLongPtrW(host.window, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(sourceOwner));
+                    if (GetWindow(host.window, GW_OWNER) != sourceOwner)
+                    {
+                        channel.Notify("menu.native-result", NativeMenuResult{false, false, {}, "cannot attach native menu owner"});
+                        invokedAt = GetTickCount64();
+                        return;
+                    }
+                }
                 if (nativePopup)
                     result = nativePopup(request, {x, y});
                 else
@@ -1796,7 +1810,6 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                 }
                 if (result.ok && (result.verb == "rename" || result.verb == "delete"))
                 {
-                    const ShellInvocationOwner origin{owner, ownerProcess, ownerThread};
                     if (const HWND target = origin.Resolve())
                     {
                         AllowSetForegroundWindow(ownerProcess);

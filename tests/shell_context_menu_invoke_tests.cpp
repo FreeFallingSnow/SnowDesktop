@@ -5930,17 +5930,25 @@ void TestNativeMenuIsolation()
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", L"delayed-rename");
+    struct SourceSurface
+    {
+        HWND window = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Private native menu source", WS_POPUP,
+            0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        ~SourceSurface() { if (window) DestroyWindow(window); }
+    } surface;
+    Expect(surface.window != nullptr, "create a private source surface for native menu ownership");
     for (const auto suffix : {L".txt", L".png", L".zip", L".pdf", L".lnk", L".url", L""})
     {
     const auto file = temp.path / (std::wstring(L"native-selection") + suffix);
     if (*suffix) std::ofstream(file) << "private native selection";
     else std::filesystem::create_directory(file);
     ext::Request request; request.paths = {file.wstring()}; request.extended = true;
+    request.sourceKey = std::to_wstring(reinterpret_cast<UINT_PTR>(surface.window));
     const auto started = std::chrono::steady_clock::now();
     std::optional<ext::NativeMenuResult> result;
     unsigned turns = 0;
     {
-        ext::NativeMenuSession session(request, {-1900, 17}, nullptr);
+        ext::NativeMenuSession session(request, {-1900, 17}, surface.window);
         PumpUntil([&] {
             const auto before = std::chrono::steady_clock::now();
             if (!result) result = session.Poll();
@@ -6079,9 +6087,19 @@ int wmain(int argc, wchar_t **argv)
     if (GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_NATIVE_POPUP", nativeMode, 32))
         nativePopup = [](const auto& request, POINT point) {
             Sleep(700); // Isolated stand-in for a blocked provider/native loop.
+            struct Ownership { HWND expected; bool retained = false; } ownership{
+                reinterpret_cast<HWND>(static_cast<UINT_PTR>(std::stoull(request.sourceKey)))};
+            EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM data) -> BOOL {
+                auto& owned = *reinterpret_cast<Ownership*>(data);
+                wchar_t type[64]{}; GetClassNameW(window, type, static_cast<int>(std::size(type)));
+                if (lstrcmpW(type, L"SnowDesktopShellExtensionOwner") == 0 &&
+                    GetWindow(window, GW_OWNER) == owned.expected) owned.retained = true;
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&ownership));
             const bool exact = request.extended && request.paths.size() == 1 &&
                 std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"native-selection") &&
                 point.x == -1900 && point.y == 17 &&
+                ownership.retained &&
                 AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             return snowdesktop::shell_extensions::NativeMenuResult{exact, false, exact ? "rename" : "", {}};
         };
