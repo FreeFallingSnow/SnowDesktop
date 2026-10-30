@@ -25,7 +25,7 @@ inline bool Mark(HMENU menu)
     return SetMenuInfo(menu, &info) != FALSE;
 }
 
-enum class Group { Create, Actions, Custom, Content, Visibility, Behavior, Appearance, Pages, Manage, Shell };
+enum class Group { Actions, Custom, Content, Visibility, Behavior, Appearance, Pages, Manage, Shell };
 struct Position
 {
     Group group = Group::Custom;
@@ -56,12 +56,12 @@ inline Position Resolve(const modern_menu::Item& item)
         (item.command == kContextNewMenu && item.builtinIcon == menu_icon::BuiltinIcon::NewItem);
     switch (hostCommand ? item.command : 0)
     {
-    case kContextNewMenu: return {Group::Create, 0};
-    case kContextPasteCommand: return {Group::Actions, 0};
-    case kContextWidgetOpenFolder: return {Group::Actions, 10};
-    case kContextWidgetOpen: return {Group::Actions, 20};
-    case kContextWidgetManualCollect: return {Group::Actions, 30};
-    case kContextRefreshCommand: return {Group::Actions, 50};
+    case kContextWidgetOpenFolder: return {Group::Actions, 0};
+    case kContextWidgetOpen: return {Group::Actions, 10};
+    case kContextNewMenu: return {Group::Actions, 20};
+    case kContextPasteCommand: return {Group::Actions, 30};
+    case kContextWidgetManualCollect: return {Group::Actions, 40};
+    case kContextRefreshCommand: return {Group::Actions, 60};
     case kContextWidgetToggleSingleCellMode: return {Group::Content, 0};
     case kContextWidgetToggleCollectionMode: return {Group::Content, 10};
     case kContextPopupFan: return {Group::Content, 20};
@@ -89,8 +89,8 @@ inline Position Resolve(const modern_menu::Item& item)
     default: break;
     }
     if (HasChild(item, kContextAddCollectionWidget) ||
-        item.builtinIcon == menu_icon::BuiltinIcon::Widgets) return {Group::Create, 10};
-    if (HasChild(item, kContextWidgetAutoCollectAll)) return {Group::Actions, 40};
+        item.builtinIcon == menu_icon::BuiltinIcon::Widgets) return {Group::Actions, 25};
+    if (HasChild(item, kContextWidgetAutoCollectAll)) return {Group::Actions, 50};
     if (HasChild(item, sort_menu::kRows.front().labelCommand) ||
         HasChild(item, kContextWidgetSortByName)) return {Group::Content, 40};
     if (HasChild(item, kContextWidgetListColumnsFirst)) return {Group::Content, 50};

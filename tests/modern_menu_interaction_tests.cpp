@@ -823,15 +823,16 @@ void CheckBackgroundMenuModel(bool negativeControl)
     Expect(items == source, "item menus and author-defined element menus are never regrouped");
     Expect(background_menu_order::Mark(root), "host background menus explicitly opt into grouping");
     if (!negativeControl) background_menu_order::Apply(root, items);
-    const auto firstBody = std::find_if(items.begin(), items.end(), [](const auto& item) {
-        return !item.separator && !item.quickAction;
-    });
-    Expect(firstBody != items.end() && firstBody->command == kContextNewMenu,
-        "New is the first body action below the quick-action strip in widget and folder backgrounds");
+    const auto position = [](const auto& rows, UINT command) {
+        return std::find_if(rows.begin(), rows.end(), [command](const auto& item) { return item.command == command; });
+    };
+    Expect(position(items, kContextWidgetOpenFolder) < position(items, kContextNewMenu) &&
+        position(items, kContextNewMenu) < position(items, kContextWidgetToggleListMode),
+        "opening and creating content belong together before display settings");
     std::vector<UINT> commands;
     for (const auto& item : items) if (!item.separator && !item.quickAction) commands.push_back(item.command);
     const std::vector<UINT> expected{
-        kContextNewMenu, kContextWidgetOpenFolder, kContextPopupFan, kContextWidgetToggleListMode,
+        kContextWidgetOpenFolder, kContextNewMenu, kContextPopupFan, kContextWidgetToggleListMode,
         60003, 60001, 60002, kContextWidgetToggleFileCategories, kContextWidgetToggleSearchBox,
         kContextWidgetToggleDateGroup, kContextWidgetShowOnHoverOn, kContextWidgetToggleExpandOnHover,
         kContextWidgetKeepWhenHiddenOff, kContextWidgetPrivacyModeOn, kContextMoreCommand,
@@ -848,14 +849,16 @@ void CheckBackgroundMenuModel(bool negativeControl)
     auto expanded = source;
     for (auto& item : expanded) item.quickAction = false;
     background_menu_order::Apply(root, expanded);
-    Expect(expanded.front().command == kContextNewMenu,
-        "New remains first when quick actions are expanded into ordinary rows");
+    Expect(position(expanded, kContextNewMenu) < position(expanded, kContextWidgetToggleListMode) &&
+        position(expanded, kContextPasteCommand) < position(expanded, kContextWidgetToggleListMode),
+        "expanded clipboard and creation rows stay with content operations before display settings");
     for (const auto appearance : {modern_menu::Appearance::Win10Light, modern_menu::Appearance::Win10Dark})
     {
         auto classic = source;
         background_menu_order::Apply(root, classic, appearance);
-        Expect(classic.front().command == kContextNewMenu,
-            "Win10 menus without a quick strip still place New before clipboard and rename rows");
+        Expect(position(classic, kContextNewMenu) < position(classic, kContextWidgetToggleListMode) &&
+            position(classic, kContextPasteCommand) < position(classic, kContextWidgetToggleListMode),
+            "Win10 menus without a quick strip preserve content-operation groups");
     }
     const auto normalized = items;
     background_menu_order::Apply(root, items);
@@ -886,7 +889,7 @@ void CheckBackgroundMenuModel(bool negativeControl)
     auto collisionSort = sort; collisionSort.command = kContextWidgetToggleDateGroup;
     auto authorGroup = row(kContextNewMenu, L"Author group"); authorGroup.children = {actionA};
     authorGroup.glyph = menu_fluent_glyphs::kIconPersonalization;
-    authorGroup.iconFont = IconFont::FluentRegular;
+    authorGroup.iconFont = modern_menu::IconFont::FluentRegular;
     items = {authorGroup, collisionColumns, collisionSort, create,
         row(kContextWidgetToggleListMode, L"Layout")};
     background_menu_order::Apply(root, items);
@@ -897,7 +900,7 @@ void CheckBackgroundMenuModel(bool negativeControl)
     DestroyMenu(root);
 }
 
-void CheckBackgroundNewPlacement(HWND owner)
+void CheckBackgroundActionPlacement(HWND owner)
 {
     using namespace snowdesktop::modern_menu;
     for (const auto appearance : {Appearance::FollowSystem, Appearance::Win10Light, Appearance::Win10Dark})
@@ -924,8 +927,9 @@ void CheckBackgroundNewPlacement(HWND owner)
             Expect(createControl != controls.end() && layoutControl != controls.end() && pasteControl != controls.end(),
                 "background menu exposes New, content layout and paste actions");
             Expect(createControl->bounds.top < layoutControl->bounds.top &&
-                (strip ? pasteControl->bounds.top < createControl->bounds.top : createControl->bounds.top < pasteControl->bounds.top),
-                "New is visually first below a compact toolbar and above expanded clipboard actions");
+                pasteControl->bounds.top < layoutControl->bounds.top &&
+                (!strip || pasteControl->bounds.top < createControl->bounds.top),
+                "content operations appear before display settings and compact actions keep their toolbar");
             if (strip) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
             else
             {
@@ -1671,7 +1675,7 @@ int wmain(int argc, wchar_t** argv)
     CheckPreviewCompanionClicks(owner);
     CheckDockRunningMenuTransition(owner);
     CheckLazySubmenuPreparation(owner);
-    CheckBackgroundNewPlacement(owner);
+    CheckBackgroundActionPlacement(owner);
     gDriveMode = DriveMode::Cascade;
     gInputPosted = false;
 
