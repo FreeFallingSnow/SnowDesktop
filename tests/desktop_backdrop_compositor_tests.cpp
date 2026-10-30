@@ -16,6 +16,7 @@
 #include "ui/render/native_tooltip_preferences.h"
 #include "ui/render/native_tooltip_content.h"
 #include "system/panel/system_panel_backdrop_placement.h"
+#include "app/popup/popup_window_pair_z_order.h"
 #include "dock/dock_desktop_layer_cases.h"
 #include "dock/dock_pair_transition_cases.h"
 #include "dock/window_pair_resource_cases.h"
@@ -615,6 +616,48 @@ int CheckHiddenPopupKeyboardFocus()
         glass.HidePopupWindowPair(content.handle);
         glass.SetPopupTopmost(false);
         ShowWindow(outside.handle,SW_HIDE);
+
+        // The live Awake failure is a denied foreign hWndInsertAfter. The
+        // production panel placement must lower only its own HWND pair for a
+        // topmost menu. Use real User32/DComp placement on this private desktop;
+        // no elevation or interaction with a real tray application is needed.
+        DesktopBackdropCompositor opaque;
+        for (const bool withGlass : {false, true})
+        {
+            auto& panel = withGlass ? glass : opaque;
+            for (const bool menuTopmost : {false, true})
+            {
+                panel.SetPopupWindowPairZOrder(content.handle, HWND_TOPMOST, true);
+                panel.ShowPopupWindowPair(content.handle);
+                SetWindowPos(outside.handle, menuTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                    80, 80, 320, 240, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                SetActiveWindow(content.handle);
+                SetFocus(content.handle);
+                const HWND active = GetActiveWindow(), focus = GetFocus();
+                for (int refresh = 0; refresh < 3; ++refresh)
+                {
+                    check(snowdesktop::PlaceSystemPanelBelowTrayMenu(panel, content.handle, outside.handle),
+                        "confirmed tray menu placement succeeds without changing the menu");
+                    check((GetWindowLongPtrW(content.handle, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0 &&
+                            snowdesktop::popup_window_pair_z_order::IsAbove(outside.handle, content.handle),
+                        "tray panel remains in the ordinary band below the menu on repeated refreshes");
+                    check(((GetWindowLongPtrW(outside.handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) == menuTopmost,
+                        "lowering the tray panel preserves the foreign menu's requested band");
+                    if (withGlass)
+                        check((GetWindowLongPtrW(helper, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0 &&
+                                GetWindow(helper, GW_HWNDPREV) == content.handle && IsWindowVisible(helper),
+                            "tray panel glass follows its ordinary content immediately below the menu");
+                    check(GetActiveWindow() == active && GetFocus() == focus,
+                        "tray layer placement does not change activation or keyboard focus");
+                }
+                check(panel.SetPopupWindowPairZOrder(content.handle, HWND_TOPMOST, true) &&
+                        (GetWindowLongPtrW(content.handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
+                    "a later panel interaction restores its ordinary topmost presentation");
+                panel.HidePopupWindowPair(content.handle);
+                panel.SetPopupTopmost(false);
+                ShowWindow(outside.handle, SW_HIDE);
+            }
+        }
 
         enum class Case { Content, Child, DestroyedChild, Outside };
         for (const auto scenario : {Case::Content, Case::Child,
