@@ -58,6 +58,7 @@ void TestShellMenuRootPrefetch()
     leaf.width = leaf.height = 1; leaf.pixels = {20, 30, 40, 255};
     auto leafHeader = leaf; leafHeader.enabled = false; leafHeader.token = 0;
     leafHeader.width = leafHeader.height = 0; leafHeader.pixels.clear();
+    ext::Entry separator; separator.separator = true;
     const auto cachePath = workspace.path / L"cache";
     ext::MenuService service(cachePath, [&](const ext::Request &) {
         ++queries;
@@ -65,11 +66,11 @@ void TestShellMenuRootPrefetch()
         ext::QueryWork work;
         work.poll = [&]() -> std::optional<ext::Reply> {
             if (!finish) return {};
-            return ext::Reply{true, {root, leaf}, {}};
+            return ext::Reply{true, {root, separator, leaf}, {}};
         };
         if (!suppressRoots) work.pollRoots = [&, rootsSent]() -> std::optional<ext::Reply> {
             if (rootsSent->exchange(true)) return {};
-            return ext::Reply{true, {headers, leafHeader}, {}};
+            return ext::Reply{true, {headers, separator, leafHeader}, {}};
         };
         work.invoke = [&](UINT token, POINT) { Check(token == 77, "invoke the final fresh child token"); ++invocations; };
         work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
@@ -81,7 +82,7 @@ void TestShellMenuRootPrefetch()
     popup.Attach(items, options, 0);
     auto poll = [&] { if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next); };
     Until([&] { poll(); return !items.empty(); }, "root becomes visible while the full query is deliberately blocked");
-    Check(items.size() == 2 && items.front().label == L"Provider" && items.front().childrenPending,
+    Check(items.size() == 3 && items.front().label == L"Provider" && items.front().childrenPending,
         "root carries a transient pending subtree");
     Check(items.front().children.size() == 1 && !items.front().children.front().enabled,
         "unfinished children expose no enabled command");
@@ -105,6 +106,8 @@ void TestShellMenuRootPrefetch()
     // sufficient for every child to finish and publish automatically.
     finish = true;
     Until([&] { poll(); return options.pollItemsFinished(); }, "children finish without an enter-submenu request");
+    Check(items.size() == 3 && !items.front().separator && items[1].separator && !items.back().separator,
+        "final publication replaces provisional dividers without leading or duplicate separators");
     Check(queries == 1 && items.front().command == parentCommand && items.front().image == image,
         "one query retains root command identity and image while completing children");
     Check(!items.front().childrenPending && items.front().children.front().label == L"Ready action",

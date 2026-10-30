@@ -311,12 +311,14 @@ class Presentation
         for (size_t i = 0; i < converted.size(); ++i)
         {
             auto &item = converted[i];
+            // Separators belong to this provisional batch too; retaining one
+            // would leave a duplicate/leading divider after final publication.
+            rootCommands_.insert(item.command);
             if (!item.separator)
             {
                 // Leaf headers are provisional too. Enable them in place when
                 // the same query finishes, even while the pointer stays here.
                 item.childrenPending = true;
-                rootCommands_.insert(item.command);
                 rootReferences_.push_back(AppendReference({}, entries[i]));
                 rootImages_[item.command] = item.image;
                 rootRows_.push_back({item.command, item.label});
