@@ -154,9 +154,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
     if (key == VK_ESCAPE && nativeMenuSession_)
     {
-        if (nativeMenuPollToken_) uiAnimationScheduler_.Cancel(std::exchange(nativeMenuPollToken_, 0));
-        nativeMenuSession_.reset();
-        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+        DismissActiveContextMenuForPopupTransition();
         return true;
     }
     if (TryHandleFilePreviewKey(key, repeated)) return true;

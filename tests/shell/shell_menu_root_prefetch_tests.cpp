@@ -135,16 +135,6 @@ static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, b
     Check(!menu::ApplyPrefetchedChildren(open, items, true, begin, end), "already loaded menus are not replaced again");
     Check(popup.Invoke(items.front().children.front().command, {}), "final child uses the normal command route");
     Until([&] { return invocations == 1; }, "execution resolves a fresh complete token, not a header token");
-    const auto next = workspace.path / (std::wstring(L"next-selected") + extension);
-    if (folder) std::filesystem::create_directory(next);
-    else std::ofstream(next) << "stable next selection";
-    auto prewarm = request; prewarm.paths.front() = next.wstring();
-    service.Prewarm(prewarm);
-    Until([&] {
-        const auto view = service.View(prewarm);
-        return view.snapshot && !view.pending && !view.snapshot->entries.empty() &&
-            !view.snapshot->entries.front().children.empty() && view.snapshot->entries.front().children.front().label == L"Ready action";
-    }, "stable selection prewarming finishes all children before any popup is opened for every local object kind");
     service.Shutdown();
 }
 

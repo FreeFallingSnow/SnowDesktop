@@ -13,11 +13,7 @@
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     if (nativeMenuSession_)
-    {
-        if (nativeMenuPollToken_) uiAnimationScheduler_.Cancel(std::exchange(nativeMenuPollToken_, 0));
-        nativeMenuSession_.reset();
-        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
-    }
+        DismissActiveContextMenuForPopupTransition();
     typeToSelectSession_.Reset();
     // Outside presses dismiss the shared menu before dispatch, but its drop
     // context stays alive until the menu loop returns. Do not replace it.

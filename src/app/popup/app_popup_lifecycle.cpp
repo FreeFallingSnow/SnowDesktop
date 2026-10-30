@@ -7,6 +7,7 @@
 bool DesktopApp::HasActiveContextMenuSession() const
 {
     return snowdesktop::modern_menu::IsActive() ||
+        nativeMenuSession_ != nullptr ||
         shellPopupMenuLayerDepth_ > 0 ||
         newMenuContextMenu_.Get() != nullptr ||
         activeContextMenu2_.Get() != nullptr ||
@@ -17,6 +18,16 @@ void DesktopApp::
 DismissActiveContextMenuForPopupTransition()
 {
     snowdesktop::modern_menu::DismissActive();
+    if (nativeMenuSession_)
+    {
+        // Keep the source surface in its menu-open state while the independent
+        // STA prepares/tracks the popup. An outside action retires that state
+        // before its own hit testing, without waiting for the native loop.
+        if (nativeMenuPollToken_)
+            uiAnimationScheduler_.Cancel(std::exchange(nativeMenuPollToken_, 0));
+        nativeMenuSession_.reset();
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+    }
     if (shellPopupMenuLayerDepth_ > 0 ||
         newMenuContextMenu_.Get() != nullptr ||
         activeContextMenu2_.Get() != nullptr ||

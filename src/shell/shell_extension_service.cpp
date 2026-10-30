@@ -1884,10 +1884,10 @@ struct MenuService::Impl
                         row.view.sourcesOnly = !plan.full;
                         row.view.contexts = contexts;
                         for (const auto &source : plan.sources) Queue(source, priority, row.force || verifying);
-                        if (priority == QueryPriority::Prewarm && plan.full && !Local(request))
+                        if (priority == QueryPriority::Prewarm && plan.full)
                         {
-                            // Remote/virtual selections retain demand-only
-                            // discovery; local stable selections prefetch all details.
+                            // Unknown roots need actual menu demand. Known
+                            // enabled sources above still prefetch their children.
                             row.view.pending = false; row.view.sourcesOnly = true;
                             row.force = row.fullMenuRequested = false;
                             MenuTrace("schedule", "prewarm_sources_only", 0, static_cast<unsigned>(plan.sources.size()));
@@ -1914,7 +1914,7 @@ struct MenuService::Impl
                     }
                     else row.view.sourcesOnly = false;
                 }
-                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly && !Local(request))
+                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly)
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key]; row.view.pending = false; row.fullMenuRequested = false;
