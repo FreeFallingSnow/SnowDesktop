@@ -233,11 +233,14 @@ void BenchmarkDesktopMenus()
             for (const auto& label : required->array) sample.required.insert(label.string);
         samples.push_back(std::move(sample));
     }
-    std::map<std::pair<std::string, std::string>, std::set<std::string>> baseline;
+    std::map<std::pair<std::string, std::string>, std::multiset<std::string>> baseline;
     unsigned failures = 0;
     const auto record = [&](const Sample& sample, const std::string& mode, const char* phase, unsigned iteration,
         double ms, bool ok, DWORD worker, const std::string& error, const std::vector<ext::Entry>& entries) {
-        std::set<std::string> identity, labels;
+        // Preserve multiplicity: identical labels from aggregate and direct
+        // providers must not silently disappear from stability comparisons.
+        std::multiset<std::string> identity;
+        std::set<std::string> labels;
         std::string encoded = "[";
         std::function<void(const std::vector<ext::Entry>&, std::string)> collect = [&](const auto& items, std::string parent) {
             for (const auto& entry : items) if (!entry.separator)

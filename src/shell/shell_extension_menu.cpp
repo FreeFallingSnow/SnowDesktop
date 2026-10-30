@@ -951,6 +951,11 @@ struct Host
             if (auto entry = read(command.Get(), 0))
             {
                 // A legacy aggregate may occasionally expose this modern verb.
+                // Some roots return GUID_NULL as their canonical name while
+                // the aggregate exposes their activation class. The manifest
+                // class still identifies that root, without assigning the same
+                // identity to its unnamed child commands.
+                if (entry->key.empty()) entry->key = registration.verbs.front();
                 // Use its direct current state once, independent of that race.
                 const auto key = Lower(Wide(entry->key));
                 std::erase_if(reply.entries, [&](const auto& item) { return !key.empty() && Lower(Wide(item.key)) == key; });
