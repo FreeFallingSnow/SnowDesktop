@@ -315,8 +315,6 @@ void BenchmarkNativeMenuPreparation()
     const auto bind = [&](HWND window, IContextMenu** menu) {
         return folder->GetUIObjectOf(window, 1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
     };
-    const bool filePrimer = mode == L"baseline" || mode == L"no-sync" ? true :
-        snowdesktop::ShellSelectionNeedsFileMenuPrimer({file.wstring()});
     const bool synchronous = mode == L"baseline" || mode == L"no-primer";
     const UINT flags = CMF_NORMAL | CMF_CANRENAME | CMF_EXTENDEDVERBS | (synchronous ? CMF_SYNCCASCADEMENU : 0);
     const auto utf8 = [](std::wstring_view value) {
@@ -327,15 +325,28 @@ void BenchmarkNativeMenuPreparation()
     };
     for (unsigned iteration = 0; iteration < 2; ++iteration)
     {
+    const auto started = std::chrono::steady_clock::now();
+    const bool filePrimer = mode == L"baseline" || mode == L"no-sync" ? true :
+        snowdesktop::ShellSelectionNeedsFileMenuPrimer({file.wstring()});
     struct Popup { HMENU value = CreatePopupMenu(); ~Popup() { if (value) DestroyMenu(value); } } popup;
     Require(popup.value != nullptr, "native benchmark popup");
     snowdesktop::ShellContextMenuSite site;
     ComPtr<IContextMenu> context;
-    const auto started = std::chrono::steady_clock::now();
     const HRESULT result = site.BuildMenu(folder.Get(), owner.value, popup.value, 1, 0x7fff, flags, bind, context.GetAddressOf(), filePrimer);
-    const auto milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     Require(SUCCEEDED(result) && context && GetMenuItemCount(popup.value) > 0, "native benchmark builds the actual menu");
+    const auto prepared = std::chrono::steady_clock::now();
+    ComPtr<IContextMenu3> messages3;
+    ComPtr<IContextMenu2> messages2;
+    LRESULT messageResult = 0;
+    if (SUCCEEDED(context.As(&messages3)))
+        messages3->HandleMenuMsg2(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(popup.value), 0, &messageResult);
+    else if (SUCCEEDED(context.As(&messages2)))
+        messages2->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(popup.value), 0);
+    const auto ready = std::chrono::steady_clock::now();
+    const auto milliseconds = std::chrono::duration<double, std::milli>(ready - started).count();
     std::cout << "native_menu mode=" << utf8(mode) << " extension=" << utf8(extension) << " iteration=" << iteration << " ready_ms=" << milliseconds
+        << " prepare_ms=" << std::chrono::duration<double, std::milli>(prepared - started).count()
+        << " root_init_ms=" << std::chrono::duration<double, std::milli>(ready - prepared).count()
         << " roots=" << GetMenuItemCount(popup.value) << " file_primer=" << filePrimer << " sync_cascades=" << synchronous << std::endl;
     for (int index = 0; index < GetMenuItemCount(popup.value); ++index)
     {
