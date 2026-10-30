@@ -70,6 +70,12 @@ UiAnimationScheduler::MessagePumpScope::MessagePumpScope(
         DestroyWindow(window_);
         window_ = nullptr;
     }
+    // The outer MsgWait can consume the auto-reset signal before dispatching
+    // the message that opens this modal loop. Re-arm the existing deadline so
+    // the bridge can take over without waiting for that outer loop to return.
+    // An active callback still owns its snapshot and will re-arm on exit.
+    if (window_ && !scheduler_.dispatching_)
+        scheduler_.ArmNextWakeup();
 }
 
 UiAnimationScheduler::MessagePumpScope::~MessagePumpScope()

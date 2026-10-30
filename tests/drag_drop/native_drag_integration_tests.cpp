@@ -1313,7 +1313,9 @@ int main(int argc, char** argv)
             return RunWinUiPrivatePointerIslandProbe(output);
         }
         if (wideArguments) LocalFree(wideArguments);
-        if (argc == 1) {
+        if (argc == 2 && std::string_view(argv[1]) == "--modal-feedback-child")
+            modal_feedback_cases::RunChild();
+        else if (argc == 1) {
             modal_feedback_cases::Run();
             native_foreground_culling_cases::Run();
             native_drag_foreground_damage_cases::Run();

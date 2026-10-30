@@ -1717,6 +1717,23 @@ int main()
 
     {
         UiAnimationScheduler modalScheduler;
+        int calls = 0, presented = 0;
+        modalScheduler.ScheduleOnce(0, [&](auto) { ++calls; });
+        Check(WaitForSingleObject(modalScheduler.WaitHandle(), 1000) == WAIT_OBJECT_0,
+            "outer message loop consumes the auto-reset wake before opening a dialog");
+        {
+            UiAnimationScheduler::MessagePumpScope pump(modalScheduler, [&] { ++presented; });
+            Check(pump.IsAvailable(), "consumed-wake modal bridge initializes");
+            Check(PumpMessagesUntil([&] { return calls == 1; }),
+                "modal entry re-arms a wake already consumed by the outer loop");
+        }
+        modalScheduler.DispatchDue();
+        Check(calls == 1 && presented > 0,
+            "returning to the outer loop cannot replay the bridged deadline");
+    }
+
+    {
+        UiAnimationScheduler modalScheduler;
         int laterCalls = 0;
         bool insideCallback = false;
         bool reentered = false;

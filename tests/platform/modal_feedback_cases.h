@@ -46,28 +46,90 @@ inline void CheckDialog(bool bridge)
     scheduler.CancelAll();
 }
 
+inline void RunChild()
+{
+    native_drag_commit_cases::Profile profile;
+    CheckDialog(false);
+    CheckDialog(true);
+}
+
 inline void Run()
 {
-    // Never show or automate the user's desktop host. Native dialogs and all
-    // message-only windows live on a test-owned desktop that is never switched.
-    const std::wstring name = L"SnowDesktopModalFeedback-" +
+    // TaskDialog can create process-lifetime helper windows/threads. A child
+    // on a never-switched desktop owns them all, so process exit releases the
+    // complete native UI before the parent checks desktop cleanup.
+    using native_drag_commit_cases::Require;
+    native_drag_commit_cases::Profile profile;
+    std::wstring name = L"SnowDesktopModalFeedback-" +
         std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
-    HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
-    native_drag_commit_cases::Require(desktop != nullptr, "create private modal-feedback desktop");
-    std::exception_ptr failure;
+    HDESK desktop = nullptr;
+    DWORD createError = ERROR_SUCCESS, restoreError = ERROR_SUCCESS;
     std::thread([&] {
-        try
-        {
-            native_drag_commit_cases::Require(SetThreadDesktop(desktop) != FALSE,
-                "bind native error-dialog thread to the private desktop");
-            native_drag_commit_cases::Profile profile;
-            CheckDialog(false); // Old production presentation has no bridge.
-            CheckDialog(true);
-        }
-        catch (...) { failure = std::current_exception(); }
+        const HDESK original = GetThreadDesktop(GetCurrentThreadId());
+        desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+        if (!desktop) createError = GetLastError();
+        // CreateDesktop assigns its creator's thread. Restore explicitly;
+        // CloseDesktop rejects a handle still assigned to one of our threads.
+        if (!original) restoreError = ERROR_INVALID_HANDLE;
+        else if (!SetThreadDesktop(original)) restoreError = GetLastError();
     }).join();
-    const bool closed = CloseDesktop(desktop) != FALSE;
-    if (failure) std::rethrow_exception(failure);
-    native_drag_commit_cases::Require(closed, "release the private modal-feedback desktop");
+    Require(desktop != nullptr, "create private modal-feedback desktop: " + std::to_string(createError));
+    struct NativeOwners
+    {
+        HDESK desktop;
+        HANDLE output = INVALID_HANDLE_VALUE;
+        PROCESS_INFORMATION child{};
+        ~NativeOwners()
+        {
+            if (child.hProcess)
+            {
+                if (WaitForSingleObject(child.hProcess, 0) == WAIT_TIMEOUT)
+                {
+                    TerminateProcess(child.hProcess, 99); // Only this test's child.
+                    WaitForSingleObject(child.hProcess, 5000);
+                }
+                CloseHandle(child.hThread);
+                CloseHandle(child.hProcess);
+            }
+            if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
+            if (desktop) CloseDesktop(desktop);
+        }
+    } owners{desktop};
+    Require(restoreError == ERROR_SUCCESS, "restore desktop creator before native dialog child: " +
+        std::to_string(restoreError));
+    const auto log = profile.root / L"modal-feedback-child.log";
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+    owners.output = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+        &security, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(owners.output != INVALID_HANDLE_VALUE, "open isolated native dialog evidence");
+    wchar_t executable[MAX_PATH]{};
+    const DWORD executableLength = GetModuleFileNameW(nullptr, executable, MAX_PATH);
+    Require(executableLength > 0 && executableLength < MAX_PATH,
+        "resolve native dialog regression executable");
+    std::wstring command = L"\"" + std::wstring(executable) + L"\" --modal-feedback-child";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.lpDesktop = name.data();
+    startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_HIDE;
+    startup.hStdOutput = startup.hStdError = owners.output;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    const BOOL created = CreateProcessW(executable, command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &owners.child);
+    const DWORD processError = created ? ERROR_SUCCESS : GetLastError();
+    Require(created != FALSE, "start the native dialog child on its private desktop: " +
+        std::to_string(processError));
+    const DWORD waited = WaitForSingleObject(owners.child.hProcess, 15000);
+    Require(waited == WAIT_OBJECT_0, "native dialog regression finishes within its bound");
+    DWORD code = 99;
+    Require(GetExitCodeProcess(owners.child.hProcess, &code) != FALSE,
+        "read native dialog child result");
+    CloseHandle(owners.child.hThread); owners.child.hThread = nullptr;
+    CloseHandle(owners.child.hProcess); owners.child.hProcess = nullptr;
+    CloseHandle(owners.output); owners.output = INVALID_HANDLE_VALUE;
+    std::cout << native_drag_commit_cases::Read(log);
+    Require(code == 0, "real error-dialog hover regression must pass in its child");
+    Require(CloseDesktop(owners.desktop) != FALSE, "release the private modal-feedback desktop");
+    owners.desktop = nullptr;
 }
 }
