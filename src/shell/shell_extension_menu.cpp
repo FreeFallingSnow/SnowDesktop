@@ -1122,6 +1122,12 @@ struct Host
         if (!snapshot.children.empty())
         {
             if (request.background || snapshot.children.size() > 256) return false;
+            size_t selectionSize = snapshot.parent.size();
+            for (const auto& bytes : snapshot.children)
+            {
+                if (bytes.size() > 65536 || selectionSize > 2 * 1024 * 1024 - bytes.size()) return false;
+                selectionSize += bytes.size();
+            }
             auto parent = decode(snapshot.parent);
             if (!parent) return false;
             HRESULT bound = ILIsEmpty(parent->value) ? SHGetDesktopFolder(&source->folder) :
@@ -1271,8 +1277,12 @@ struct Host
             // Deferred children already belong to this live view/menu session.
             // Do not detach their site and recreate it between read and click.
             if (!source.site.HasView())
+            {
                 source.site.Initialize(source.folder.Get(), window);
-            source.site.Attach(source.context.Get());
+                source.site.Attach(source.context.Get());
+            }
+            else if (!nativePopup)
+                source.site.Attach(source.context.Get());
         }
         if (command.native)
         {
@@ -1903,6 +1913,20 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                     reinterpret_cast<LPARAM>(&visible));
                 if (!visible)
                     break;
+            }
+        }
+        if (host.nativePopup)
+        {
+            // A native copy/cut provider can publish a delayed OLE IDataObject.
+            // Materialize our own clipboard data before retiring its STA; never
+            // flush a clipboard subsequently owned by another application.
+            DWORD clipboardProcess = 0;
+            const HWND clipboardOwner = GetClipboardOwner();
+            if (clipboardOwner && GetWindowThreadProcessId(clipboardOwner, &clipboardProcess) &&
+                clipboardProcess == GetCurrentProcessId())
+            {
+                const HRESULT flushed = OleFlushClipboard();
+                MenuTrace("native_session.clipboard", SUCCEEDED(flushed) ? "retained" : "flush_failed");
             }
         }
     }

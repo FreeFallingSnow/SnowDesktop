@@ -1,7 +1,7 @@
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_start_pin.h"
 #include "shell/shell_extension_menu.h"
-#include "shell/shell_extension_discovery_samples.h"
+#include "shell/shell_extension_discovery.h"
 #include "shell/shell_menu_read_projection.h"
 #include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
