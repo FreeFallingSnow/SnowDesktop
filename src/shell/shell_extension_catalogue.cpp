@@ -888,6 +888,14 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
 {
     return ReadCatalogueImpl(classes, packages, nullptr);
 }
+std::vector<Registration> ReadPackagedMenuCommands(HKEY classes)
+{
+    Scanner scanner{classes};
+    scanner.Packages();
+    scanner.FinishRows();
+    return std::move(scanner.result.rows);
+}
+void LoadMenuCommandIcon(Entry& entry, const std::wstring& location) { LoadIcon(entry, location); }
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
                                             CatalogueForegroundDemand &foreground)
 {

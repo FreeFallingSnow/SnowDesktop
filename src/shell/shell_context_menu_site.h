@@ -25,7 +25,9 @@ public:
     ShellContextMenuSite& operator=(const ShellContextMenuSite&) = delete;
 
     bool Initialize(IShellFolder* folder, HWND owner);
-    bool Attach(IContextMenu* contextMenu);
+    bool Attach(IUnknown* contextMenu);
+    HRESULT InitializeSelection(IShellFolder* folder, HWND owner,
+        UINT count = 0, PCUITEMID_CHILD_ARRAY children = nullptr);
     // Backgrounds and selections share one immutable site and one query.
     // Cold missing entries never trigger a primer, retry or aggregate rebuild.
     using MenuFactory = std::function<HRESULT(HWND, IContextMenu**)>;

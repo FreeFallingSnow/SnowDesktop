@@ -307,13 +307,25 @@ void BenchmarkDesktopMenus()
             }
             const bool done = !options.pollItems || (options.pollItemsFinished && options.pollItemsFinished());
             const auto state = service->MenuDisplay(sample.request, prefs, true);
-            std::function<std::vector<ext::Entry>(const std::vector<menu::Item>&)> convert = [&](const auto& list) {
+            std::function<std::vector<ext::Entry>(const std::vector<menu::Item>&, const std::vector<ext::Entry>&)> convert = [&](const auto& list, const auto& identities) {
                 std::vector<ext::Entry> output;
-                for (const auto& item : list) { ext::Entry entry; entry.label = item.label; entry.separator = item.separator;
-                    entry.children = convert(item.children); output.push_back(std::move(entry)); }
+                std::map<std::wstring, unsigned> observed;
+                for (const auto& item : list)
+                {
+                    ext::Entry entry; entry.label = item.label; entry.separator = item.separator;
+                    unsigned remaining = ++observed[item.label];
+                    const auto match = std::find_if(identities.begin(), identities.end(), [&](const auto& identity) {
+                        return identity.label == item.label && --remaining == 0;
+                    });
+                    if (match != identities.end())
+                    { entry.provider = match->provider; entry.registration = match->registration; entry.key = match->key; }
+                    entry.children = convert(item.children, match == identities.end() ? std::vector<ext::Entry>{} : match->children);
+                    output.push_back(std::move(entry));
+                }
                 return output;
             };
-            record(sample, "production", phase, iteration, elapsed(), done && state.error.empty(), 0, state.error, convert(items));
+            record(sample, "production", phase, iteration, elapsed(), done && state.error.empty(), 0, state.error,
+                convert(items, state.snapshot ? state.snapshot->entries : std::vector<ext::Entry>{}));
             if (state.snapshot) record(sample, "attributed", phase, iteration, elapsed(), state.snapshot->ok,
                 0, state.error, state.snapshot->entries);
         }

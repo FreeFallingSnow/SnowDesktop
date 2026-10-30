@@ -48,6 +48,9 @@ struct Catalogue
 constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsigned>(context); }
 // Read-only, intended for the metadata worker. No Shell extension is activated.
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Current package manifest commands only; no file-class scan or COM activation.
+std::vector<Registration> ReadPackagedMenuCommands(HKEY classes = HKEY_CLASSES_ROOT);
+void LoadMenuCommandIcon(Entry& entry, const std::wstring& location);
 // Background refresh uses fewer workers and expands to the normal limit when
 // a foreground query raises demand. The ordinary reader keeps its full budget.
 class CatalogueForegroundDemand;

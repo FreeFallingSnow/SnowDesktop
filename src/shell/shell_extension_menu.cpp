@@ -242,40 +242,12 @@ struct Pidl
         CoTaskMemFree(value);
     }
 };
-HRESULT BindSelectionMenu(IShellFolder* folder, HWND owner,
-    std::vector<PCUITEMID_CHILD>& children, IContextMenu** context)
-{
-    // SFUIObject binds the actual selected Shell items without creating a
-    // folder view. Preserve complex namespace-relative children at their
-    // original parent boundary (including merged Desktop selections).
-    if (!std::all_of(children.begin(), children.end(), [](auto child) {
-            return child && child->mkid.cb && ILNext(child)->mkid.cb == 0;
-        }))
-    {
-        return folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
-            IID_IContextMenu, nullptr, reinterpret_cast<void**>(context));
-    }
-    Pidl parent;
-    HRESULT hr = SHGetIDListFromObject(folder, &parent.value);
-    if (FAILED(hr)) return hr;
-    std::vector<std::unique_ptr<Pidl>> owned;
-    std::vector<PCIDLIST_ABSOLUTE> absolute;
-    for (const auto child : children)
-    {
-        auto id = std::make_unique<Pidl>(); id->value = ILCombine(parent.value, child);
-        if (!id->value) return E_OUTOFMEMORY;
-        absolute.push_back(id->value); owned.push_back(std::move(id));
-    }
-    ComPtr<IShellItemArray> selection;
-    hr = SHCreateShellItemArrayFromIDLists(static_cast<UINT>(absolute.size()), absolute.data(), &selection);
-    return FAILED(hr) ? hr : selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(context));
-}
-std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr)
+std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr, HKEY root = HKEY_CLASSES_ROOT)
 {
     wchar_t value[32768]{};
     DWORD bytes = sizeof(value);
     DWORD type = 0;
-    if (RegGetValueW(HKEY_CLASSES_ROOT, key.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+    if (RegGetValueW(root, key.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
                      &type, value, &bytes) != ERROR_SUCCESS)
         return {};
     if (type == REG_EXPAND_SZ)
@@ -287,6 +259,135 @@ std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullp
     }
     return value;
 }
+std::set<std::wstring> MenuProviderClasses(const Request& request)
+{
+    if (request.startPinOnly) return {};
+    if (!request.sourceClsid.empty())
+        return HandlerEnabled(request.sourceClsid) && (request.sourceKey.empty() || SourceRegistered(request.sourceClsid, request.sourceKey))
+            ? std::set<std::wstring>{request.sourceClsid} : std::set<std::wstring>{};
+    std::set<std::wstring> roots, classes;
+    if (request.background || request.context == Context::Desktop)
+    {
+        roots.insert(L"Directory\\Background");
+        if (request.context == Context::Desktop) roots.insert(L"DesktopBackground");
+    }
+    else for (const auto& path : request.paths)
+    {
+        roots.insert(L"*"); roots.insert(L"AllFilesystemObjects");
+        const auto attributes = GetFileAttributesW(path.c_str());
+        const std::wstring extension = Lower(PathFindExtensionW(path.c_str()));
+        // Shell delegates folder shortcuts to their target's folder handlers.
+        if ((attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY)) || extension == L".lnk")
+        { roots.insert(L"Directory"); roots.insert(L"Folder"); }
+        if (extension.empty()) continue;
+        roots.insert(extension); roots.insert(L"SystemFileAssociations\\" + extension);
+        const auto addType = [&](const std::wstring& type) {
+            if (type.empty()) return;
+            roots.insert(type);
+            if (const auto current = RegistryString(type + L"\\CurVer"); !current.empty()) roots.insert(current);
+        };
+        addType(RegistryString(extension));
+        addType(RegistryString(L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" +
+            extension + L"\\UserChoice", L"ProgId", HKEY_CURRENT_USER));
+        if (const auto perceived = RegistryString(extension, L"PerceivedType"); !perceived.empty())
+            roots.insert(L"SystemFileAssociations\\" + perceived);
+    }
+    for (const auto& root : roots)
+    {
+        const auto keyPath = root + L"\\shellex\\ContextMenuHandlers";
+        HKEY key = nullptr;
+        if (RegOpenKeyExW(HKEY_CLASSES_ROOT, keyPath.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) continue;
+        for (DWORD index = 0; index < 512; ++index)
+        {
+            wchar_t name[256]{}; DWORD length = static_cast<DWORD>(std::size(name));
+            if (RegEnumKeyExW(key, index, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+            auto clsid = RegistryString(keyPath + L"\\" + name);
+            if (clsid.empty()) clsid = name;
+            CLSID parsed{};
+            if (SUCCEEDED(CLSIDFromString(clsid.c_str(), &parsed)) && HandlerEnabled(clsid)) classes.insert(Lower(clsid));
+        }
+        RegCloseKey(key);
+    }
+    return classes;
+}
+// Load class factories without the query STA's Shell window hooks. Some vendor
+// DllMain implementations create windows; first loading them inside QCM can
+// re-enter Shell under loader lock. This never queries a menu or a dummy item.
+// Retain factories on their own apartment until the bounded helper exits.
+class MenuProviderLoader
+{
+    HANDLE work_ = nullptr, finished_ = nullptr;
+    std::thread thread_;
+    std::mutex mutex_;
+    std::set<std::wstring> requested_;
+    bool stopping_ = false;
+    void Run()
+    {
+        const HRESULT initialized = OleInitialize(nullptr);
+        {
+            std::map<std::wstring, ComPtr<IClassFactory>> factories;
+            for (;;)
+            {
+                const auto ready = MsgWaitForMultipleObjectsEx(1, &work_, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                if (ready == WAIT_OBJECT_0)
+                {
+                    std::set<std::wstring> requested;
+                    { std::lock_guard lock(mutex_); if (stopping_) break; requested.swap(requested_); }
+                    for (const auto& name : requested) if (!factories.contains(name))
+                    {
+                        ComPtr<IClassFactory> factory;
+                        CLSID clsid{};
+                        HRESULT result = FAILED(initialized) ? initialized : CLSIDFromString(name.c_str(), &clsid);
+                        if (SUCCEEDED(result)) result = CoGetClassObject(clsid, CLSCTX_INPROC_SERVER, nullptr, IID_PPV_ARGS(&factory));
+                        factories.emplace(name, std::move(factory));
+                        MenuTrace("provider_load", SUCCEEDED(result) ? "loaded" : "unavailable");
+                    }
+                    SetEvent(finished_);
+                }
+                else if (ready == WAIT_OBJECT_0 + 1)
+                {
+                    MSG message{};
+                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    { TranslateMessage(&message); DispatchMessageW(&message); }
+                }
+                else break;
+            }
+        }
+        if (SUCCEEDED(initialized)) OleUninitialize();
+    }
+public:
+    ~MenuProviderLoader()
+    {
+        { std::lock_guard lock(mutex_); stopping_ = true; }
+        if (work_) SetEvent(work_);
+        if (thread_.joinable()) thread_.join();
+        if (work_) CloseHandle(work_);
+        if (finished_) CloseHandle(finished_);
+    }
+    void Load(const Request& request, const std::vector<Registration>& packages = {})
+    {
+        auto classes = MenuProviderClasses(request);
+        for (const auto& registration : packages)
+            if (registration.systemEnabled && !registration.verbs.empty() && Applies(registration, request))
+                classes.insert(Wide(registration.verbs.front()));
+        if (classes.empty()) return;
+        MenuTiming timing("provider_load.wait");
+        if (!thread_.joinable())
+        {
+            work_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            finished_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            if (!work_ || !finished_) throw settings_ipc::ProtocolError("provider loader unavailable");
+            thread_ = std::thread([this] { Run(); });
+        }
+        ResetEvent(finished_);
+        { std::lock_guard lock(mutex_); requested_ = std::move(classes); }
+        SetEvent(work_);
+        // All waits remain inside the supervised child query deadline.
+        if (WaitForSingleObject(finished_, INFINITE) != WAIT_OBJECT_0)
+            throw settings_ipc::ProtocolError("provider loader stopped");
+        timing.Record("complete");
+    }
+};
 struct Native
 {
     std::vector<std::unique_ptr<Pidl>> selection;
@@ -299,6 +400,8 @@ struct Native
     bool metadataOnly = false;
     bool shortcutObjects = false;
     ComPtr<IShellItem> nvidiaApplication;
+    ComPtr<IExplorerCommand> explorer;
+    std::wstring explorerClass;
     ~Native()
     {
         if (menu)
@@ -311,10 +414,13 @@ struct Command
     UINT offset = 0;
     bool native = false;
     HMENU nativeMenu = nullptr;
+    ComPtr<IExplorerCommand> explorer;
+    ComPtr<IShellItemArray> selection;
 };
 struct Host
 {
     HWND window = nullptr;
+    MenuProviderLoader providers;
     std::vector<std::unique_ptr<Native>> menus;
     std::vector<std::unique_ptr<Native>> retiredMenus;
     unsigned ordinaryQueries = 0;
@@ -768,6 +874,92 @@ struct Host
         count = 0;
         invoked = false;
     }
+    void AppendPackagedCommands(const Request& request, IShellFolder* folder,
+        std::vector<PCIDLIST_ABSOLUTE>& ids, const std::vector<Registration>& packages, Reply& reply)
+    {
+        if (request.startPinOnly || request.originalShortcutOnly || !request.sourceClsid.empty()) return;
+        MenuTiming timing("packaged_commands");
+        ComPtr<IShellItemArray> selection;
+        if (!request.background && FAILED(SHCreateShellItemArrayFromIDLists(
+                static_cast<UINT>(ids.size()), ids.data(), &selection))) return;
+        std::vector<PCUITEMID_CHILD> children;
+        const bool sameFolder = std::all_of(request.paths.begin(), request.paths.end(), [&](const auto& path) {
+            return Lower(std::filesystem::path(path).parent_path().wstring()) ==
+                Lower(std::filesystem::path(request.paths.front()).parent_path().wstring());
+        });
+        if (!request.background) for (const auto id : ids)
+            children.push_back(sameFolder ? ILFindLastID(id) : reinterpret_cast<PCUITEMID_CHILD>(id));
+        for (const auto& registration : packages)
+        {
+            if (!registration.systemEnabled || registration.verbs.empty() || !Applies(registration, request)) continue;
+            const auto provider = "verb:" + registration.verbs.front();
+            if (request.visibleMenuProviders && std::none_of(request.visibleMenuProviders->begin(), request.visibleMenuProviders->end(),
+                    [&](const auto& id) { return id == provider || id == registration.id; })) continue;
+            CLSID clsid{};
+            if (FAILED(CLSIDFromString(Wide(registration.verbs.front()).c_str(), &clsid))) continue;
+            ComPtr<IExplorerCommand> command;
+            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) continue;
+            auto source = std::make_unique<Native>();
+            source->explorer = command;
+            source->explorerClass = Wide(registration.verbs.front());
+            source->paths = request.paths; source->folder = folder;
+            source->directory = request.background ? request.paths.front() :
+                std::filesystem::path(request.paths.front()).parent_path().wstring();
+            if (FAILED(source->site.InitializeSelection(folder, window, static_cast<UINT>(children.size()), children.data()))) continue;
+            std::function<std::optional<Entry>(IExplorerCommand*, int)> read = [&](IExplorerCommand* current, int depth) -> std::optional<Entry> {
+                if (depth > 8 || count >= kMaximumEntries) return {};
+                source->site.Attach(current);
+                EXPCMDSTATE state = ECS_HIDDEN;
+                HRESULT hr = current->GetState(selection.Get(), FALSE, &state);
+                if (hr == E_PENDING) hr = current->GetState(selection.Get(), TRUE, &state);
+                if (FAILED(hr) || (state & ECS_HIDDEN)) return {};
+                ++count;
+                Entry entry; entry.enabled = !(state & ECS_DISABLED);
+                EXPCMDFLAGS flags = ECF_DEFAULT; current->GetFlags(&flags);
+                if (flags & ECF_ISSEPARATOR) { entry.separator = true; return entry; }
+                PWSTR title = nullptr;
+                if (FAILED(current->GetTitle(selection.Get(), &title)) || !title) return {};
+                const auto decoded = DecodeMenuLabel(title); CoTaskMemFree(title);
+                entry.label = decoded.text; entry.accessKey = decoded.accessKey;
+                GUID canonical{};
+                if (SUCCEEDED(current->GetCanonicalName(&canonical)))
+                { wchar_t text[40]{}; StringFromGUID2(canonical, text, 40); entry.key = Utf8(text); }
+                PWSTR icon = nullptr;
+                if (SUCCEEDED(current->GetIcon(selection.Get(), &icon)) && icon)
+                { LoadMenuCommandIcon(entry, icon); CoTaskMemFree(icon); }
+                if (flags & ECF_HASSUBCOMMANDS)
+                {
+                    ComPtr<IEnumExplorerCommand> enumeration;
+                    if (SUCCEEDED(current->EnumSubCommands(&enumeration)) && enumeration)
+                        for (unsigned index = 0; index < kMaximumEntries && count < kMaximumEntries; ++index)
+                        {
+                            ComPtr<IExplorerCommand> child; ULONG fetched = 0;
+                            if (enumeration->Next(1, &child, &fetched) != S_OK || fetched != 1 || !child) break;
+                            if (auto value = read(child.Get(), depth + 1)) entry.children.push_back(std::move(*value));
+                        }
+                    if (entry.children.empty()) entry.enabled = false;
+                }
+                else
+                {
+                    entry.token = next++;
+                    Command action; action.source = source.get(); action.explorer = current; action.selection = selection;
+                    commands.emplace(entry.token, std::move(action));
+                }
+                return entry;
+            };
+            if (auto entry = read(command.Get(), 0))
+            {
+                // A legacy aggregate may occasionally expose this modern verb.
+                // Use its direct current state once, independent of that race.
+                const auto key = Lower(Wide(entry->key));
+                std::erase_if(reply.entries, [&](const auto& item) { return !key.empty() && Lower(Wide(item.key)) == key; });
+                entry->registration = registration.id;
+                reply.entries.push_back(std::move(*entry));
+                menus.push_back(std::move(source));
+            }
+        }
+        timing.Record("complete");
+    }
     void NvidiaCompatibility(const Request &request, Reply &reply)
     {
         if (request.omitNvidiaCompatibility || !request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
@@ -886,6 +1078,10 @@ struct Host
         if (request.startPinOnly && (request.background || request.catalogueOnly || request.paths.size() != 1 ||
             !request.sourceClsid.empty() || !request.sourceKey.empty())) return {};
         if (request.originalShortcutOnly && !CanQueryOriginalShortcutObjects(request)) return {};
+        progress("load registered menu providers");
+        const auto packages = !request.startPinOnly && !request.originalShortcutOnly && request.sourceClsid.empty()
+            ? ReadPackagedMenuCommands() : std::vector<Registration>{};
+        providers.Load(request, packages);
         std::vector<std::unique_ptr<Pidl>> pidls;
         std::vector<PCIDLIST_ABSOLUTE> raw;
         for (const auto &path : request.paths)
@@ -991,7 +1187,8 @@ struct Host
                 std::vector<PCUITEMID_CHILD> children;
                 for (auto id : raw)
                     children.push_back(ILFindLastID(id));
-                if (FAILED(BindSelectionMenu(folder.Get(), window, children, native->context.GetAddressOf())))
+                if (FAILED(folder->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
+                        IID_IContextMenu, nullptr, reinterpret_cast<void**>(native->context.GetAddressOf()))))
                     return {};
             }
             else
@@ -1011,7 +1208,7 @@ struct Host
         }
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? 0 : CMF_ITEMMENU) |
+        const UINT flags = CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
         if (!request.startPinOnly)
         {
@@ -1050,6 +1247,7 @@ struct Host
         if (!request.startPinOnly)
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
         NvidiaCompatibility(request, reply);
+        AppendPackagedCommands(request, native->folder.Get(), raw, packages, reply);
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
@@ -1063,6 +1261,7 @@ struct Host
     bool PrepareNative(const Request& request, const NativeMenuSelection& snapshot, POINT point)
     {
         ReleaseMenu();
+        providers.Load(request, ReadPackagedMenuCommands());
         nativePopup = true;
         nativeLightTheme = snapshot.lightTheme;
         // Providers and Windows menu metrics obtain DPI from this HWND.
@@ -1151,7 +1350,8 @@ struct Host
         const auto bind = [&](HWND owner, IContextMenu** menu) {
             return request.background
                 ? target->folder->CreateViewObject(owner, IID_IContextMenu, reinterpret_cast<void**>(menu))
-                : BindSelectionMenu(target->folder.Get(), owner, children, menu);
+                : target->folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
+                    IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
         };
         const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? CMF_EXPLORE : (CMF_ITEMMENU | CMF_CANRENAME)) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
@@ -1217,6 +1417,7 @@ struct Host
     {
         const auto found = commands.find(token);
         return found != commands.end() && !found->second.native &&
+            !found->second.explorer &&
             StatePairForVerb(Utf8(Verb(*found->second.source, found->second.offset + 1)));
     }
     HRESULT Invoke(UINT token, POINT point, ShellInvocationOwner invocationOwner = {})
@@ -1228,6 +1429,16 @@ struct Host
         auto command = found->second;
         auto &source = *command.source;
         if (source.metadataOnly) return E_ACCESSDENIED;
+        if (command.explorer)
+        {
+            if (!HandlerEnabled(source.explorerClass)) return E_ACCESSDENIED;
+            EXPCMDSTATE state = ECS_HIDDEN;
+            const HRESULT checked = command.explorer->GetState(command.selection.Get(), TRUE, &state);
+            if (FAILED(checked) || (state & (ECS_HIDDEN | ECS_DISABLED))) return E_ACCESSDENIED;
+            const HWND owner = invocationOwner.Resolve();
+            source.site.SetInvocationOwner(owner ? owner : window);
+            return command.explorer->Invoke(command.selection.Get(), nullptr);
+        }
         if (source.nvidiaApplication)
         {
             // Recheck registration/security and the installed target at click.

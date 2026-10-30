@@ -400,7 +400,7 @@ bool ShellContextMenuSite::Initialize(IShellFolder* folder, HWND owner)
     return true;
 }
 
-bool ShellContextMenuSite::Attach(IContextMenu* contextMenu)
+bool ShellContextMenuSite::Attach(IUnknown* contextMenu)
 {
     if (!contextMenu || !impl_->browser || !impl_->viewWindow)
         return false;
@@ -460,15 +460,8 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     if (!folder || !IsWindow(owner) || !menu || !bind || (count && !children) || firstCommand > lastCommand)
         return E_INVALIDARG;
     const auto attach = [&](IContextMenu* actual) -> HRESULT {
-        auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
-        if (!view) return E_OUTOFMEMORY;
-        const HRESULT initialized = view->Initialize(count, children);
+        const HRESULT initialized = InitializeSelection(folder, owner, count, children);
         if (FAILED(initialized)) return initialized;
-        impl_->view = view;
-        impl_->viewWindow = owner; // SelectionView never owns/destroys this window.
-        impl_->browser = Microsoft::WRL::Make<BrowserSite>(owner);
-        if (!impl_->browser) return E_OUTOFMEMORY;
-        impl_->browser->SetView(impl_->view.Get());
         Attach(actual);
         return S_OK;
     };
@@ -478,19 +471,39 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     binding.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
     // Background commands resolve their location from the site during QCM.
-    // Item commands already receive their selection. Even constructing their
-    // Shell item array before cold handler loading installs Shell window hooks;
-    // a vendor's DllMain can then re-enter Shell initialization under loader lock.
-    // Defer the entire item site, rather than only SetSite, until QCM returns.
+    // Item commands already receive their selection; retain their immutable
+    // view after the aggregate query. Provider DLL initialization is handled
+    // separately on the supervised helper's provider-loading apartment.
     if (!count && FAILED(hr = attach(actual.Get()))) return hr;
     shell_extensions::MenuTiming query("native_selection.query");
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
     query.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) return hr;
-    if (count && FAILED(hr = attach(actual.Get()))) return hr;
+    if (count)
+    {
+        const HRESULT attached = attach(actual.Get());
+        if (FAILED(attached)) return attached;
+    }
     actual.CopyTo(contextMenu);
     total.Record("complete", count);
     return hr;
+}
+
+HRESULT ShellContextMenuSite::InitializeSelection(IShellFolder* folder, HWND owner,
+    UINT count, PCUITEMID_CHILD_ARRAY children)
+{
+    impl_->Reset();
+    if (!folder || !IsWindow(owner) || (count && !children)) return E_INVALIDARG;
+    auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
+    if (!view) return E_OUTOFMEMORY;
+    const HRESULT initialized = view->Initialize(count, children);
+    if (FAILED(initialized)) return initialized;
+    impl_->view = view;
+    impl_->viewWindow = owner;
+    impl_->browser = Microsoft::WRL::Make<BrowserSite>(owner);
+    if (!impl_->browser) return E_OUTOFMEMORY;
+    impl_->browser->SetView(impl_->view.Get());
+    return S_OK;
 }
 
 HWND ShellContextMenuSite::HostWindow() const
