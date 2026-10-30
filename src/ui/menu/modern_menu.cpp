@@ -285,7 +285,7 @@ public:
                 if (pendingItems && options_.pollPrefetchedSubmenus && pointerSafe)
                 {
                     int parentDepth = -1, parentItem = -1; bool keyboard = false;
-                    ApplyPrefetchedChildren(rootItems_, *pendingItems, true,
+                    const bool prefetched = ApplyPrefetchedChildren(rootItems_, *pendingItems, true,
                         [&](auto &children) {
                             parentDepth = parentItem = -1;
                             for (const auto &popup : popups_) if (popup->items == &children)
@@ -302,6 +302,7 @@ public:
                             if (parentDepth >= 0 && static_cast<size_t>(parentDepth) < popups_.size())
                                 OpenSubmenu(*popups_[parentDepth], parentItem, keyboard);
                         });
+                    if (prefetched && !popups_.empty()) Render(*popups_.front());
                 }
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;

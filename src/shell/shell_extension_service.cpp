@@ -2133,11 +2133,10 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         // supervising the fresh query, and execution always resolves new tokens.
         view.pending = false; view.error.clear();
     }
-    if (view.snapshot)
-    {
+    const auto project = [&](Reply &reply) {
         // Snapshots created before attribution still use provider IDs. Apply
         // only a unique, proven association when consulting current rules.
-        for (auto &entry : view.snapshot->entries) if (entry.registration.empty())
+        for (auto &entry : reply.entries) if (entry.registration.empty())
         {
             std::string registration;
             bool ambiguous = false;
@@ -2151,10 +2150,10 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
                 }
             if (!ambiguous && associatedContexts == view.contexts) entry.registration = std::move(registration);
         }
-        view.snapshot->entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, *view.snapshot, view.contexts);
-    }
-    if (view.roots)
-        view.roots->entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, *view.roots, view.contexts);
+        reply.entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, reply, view.contexts);
+    };
+    if (view.snapshot) project(*view.snapshot);
+    if (view.roots) project(*view.roots);
     timing.Record(view.snapshot ? "memory_hit" : "memory_miss");
     return view;
 }

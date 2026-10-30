@@ -22,6 +22,9 @@ inline bool ApplyPrefetchedChildren(std::vector<Item> &current, const std::vecto
             before(item.children);
             item.children = next->children;
             item.childrenPending = false;
+            item.enabled = next->enabled;
+            item.checked = next->checked;
+            if (!item.image) item.image = next->image;
             after(item.children);
             changed = true;
         }

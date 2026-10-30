@@ -313,7 +313,9 @@ class Presentation
             auto &item = converted[i];
             if (!item.separator)
             {
-                item.childrenPending = !entries[i].children.empty();
+                // Leaf headers are provisional too. Enable them in place when
+                // the same query finishes, even while the pointer stays here.
+                item.childrenPending = true;
                 rootCommands_.insert(item.command);
                 rootReferences_.push_back(AppendReference({}, entries[i]));
                 rootImages_[item.command] = item.image;
@@ -345,7 +347,8 @@ class Presentation
                     item.command = old->first; used.insert(item.command);
                 }
             }
-            if (const auto image = rootImages_.find(item.command); image != rootImages_.end()) item.image = image->second;
+            if (const auto image = rootImages_.find(item.command); image != rootImages_.end() && image->second)
+                item.image = image->second;
         }
     }
     bool RemoveRoots(std::vector<modern_menu::Item> &items)
