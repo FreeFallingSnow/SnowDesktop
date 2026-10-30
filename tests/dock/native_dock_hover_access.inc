@@ -152,6 +152,112 @@
             check(SUCCEEDED(cpu->Unmap()), "unmap pixel reference");
             return result;
         };
+        // Issue #33: compare actual Dock pixels with the material rim enabled
+        // and disabled. Opaque icon interiors must be invariant, while the
+        // exposed rim remains visible. Replaying the old late rim must break
+        // that same invariant, rather than merely comparing two new paths.
+        if (!legacy)
+        {
+            const auto savedAppearance = app.personalizationSettings_;
+            const auto savedFloatingAppearance = app.floatingDockPersonalization_;
+            const auto savedDock = app.dockSettings_;
+            const auto savedIconStyle = app.iconBeautifySettings_;
+            const bool savedFloating = app.renderingFloatingDock_;
+            app.iconBeautifySettings_.enabled = false;
+            size_t materialChecks = 0;
+            for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+            for (const int effect : {1, 2})
+            for (const bool floating : {false, true})
+            {
+                app.containers_.clear();
+                app.dockSettings_.position = position;
+                app.dockSettings_.hoverEffect = effect;
+                app.dockSettings_.edgeAttached = false;
+                app.renderingFloatingDock_ = floating;
+                auto owned = std::make_unique<DockContainer>(&app, &app.dockEntries_, areas.front());
+                auto* dock = owned.get(); app.containers_.push_back(std::move(owned));
+                const RECT base = dock->GetSlots().front()->GetBounds();
+                app.lastMousePoint_ = {(base.left + base.right) / 2, (base.top + base.bottom) / 2};
+                auto state = dock->CapturePresentationState();
+                state.focusRect = base;
+                const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                if (effect == 1)
+                {
+                    state.single.SetTarget(base, now - 1000, 1.0,
+                        position == DockPosition::Left || position == DockPosition::Right
+                            ? app.lastMousePoint_.y : app.lastMousePoint_.x);
+                    state.single.Advance(now);
+                }
+                else
+                {
+                    state.entry.SetHovered(true, now - 1000, 1.0);
+                    state.entry.Advance(now);
+                }
+                check(dock->RestorePresentationState(state), "restore a fully magnified material-order scene");
+                const auto render = [&](bool highlight, bool oldOrder) {
+                    auto appearance = savedAppearance;
+                    appearance.widgetEdgeHighlightEnabled = highlight && !oldOrder;
+                    appearance.widgetEdgeHighlightStrength = 1.f;
+                    appearance.widgetEdgeHighlightWidth = 4.f;
+                    app.personalizationSettings_ = app.floatingDockPersonalization_ = appearance;
+                    referenceContext->SetTarget(complete.Get());
+                    referenceContext->SetTransform(D2D1::Matrix3x2F::Identity());
+                    referenceContext->BeginDraw(); referenceContext->Clear(D2D1::ColorF(0, 0.f));
+                    app.brushCache_.clear(); app.brushCacheContext_ = referenceContext.Get();
+                    dock->DrawChrome(referenceContext.Get(), app.lastMousePoint_);
+                    dock->DrawContents(referenceContext.Get());
+                    if (oldOrder)
+                    {
+                        appearance.widgetEdgeHighlightEnabled = true;
+                        check(app.DrawWidgetPanelEdgeHighlight(referenceContext.Get(),
+                            dock->GetVisualPanelBounds(app.lastMousePoint_), appearance.cornerRadius,
+                            D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG,
+                                appearance.widgetBgB, appearance.widgetAlpha), &appearance),
+                            "replay the original late material reflection");
+                    }
+                    check(SUCCEEDED(referenceContext->EndDraw()), "render actual Dock material and icon pixels");
+                    referenceContext->SetTarget(nullptr);
+                    app.brushCache_.clear(); app.brushCacheContext_ = nullptr;
+                    return read(referenceContext.Get(), complete.Get());
+                };
+                const auto baseline = render(false, false);
+                const auto candidate = render(true, false);
+                const auto original = render(true, true);
+                size_t opaquePixels = 0, contaminated = 0, exposedRim = 0;
+                for (UINT y = 1; y + 1 < height; ++y)
+                for (UINT x = 1; x + 1 < width; ++x)
+                {
+                    const size_t index = static_cast<size_t>(y) * width + x;
+                    const auto pixel = baseline[index];
+                    const bool icon = pixel == 0xff4070a0u || pixel == 0xff5090b0u || pixel == 0xff60b0c0u;
+                    if (icon && baseline[index - 1] == pixel && baseline[index + 1] == pixel &&
+                        baseline[index - width] == pixel && baseline[index + width] == pixel)
+                    {
+                        ++opaquePixels;
+                        check(candidate[index] == pixel, "panel reflection must not paint across opaque magnified icon pixels");
+                        if (original[index] != pixel) ++contaminated;
+                    }
+                    else if (candidate[index] != pixel) ++exposedRim;
+                }
+                std::cout << "Dock material order position=" << static_cast<int>(position)
+                    << " effect=" << effect << " floating=" << floating << " opaque=" << opaquePixels
+                    << " old-order-contaminated=" << contaminated << " exposed-rim=" << exposedRim << '\n';
+                check(opaquePixels > 0, "the scene must contain observable opaque icon interiors");
+                if (effect == 2)
+                    check(contaminated > 0,
+                        "the original material order must visibly cut through this same wave-magnified icon scene");
+                check(exposedRim > 0, "the candidate must retain the exposed panel reflection");
+                ++materialChecks;
+            }
+            check(materialChecks == 16, "cover four Dock edges, both magnification effects and both appearance owners");
+            app.containers_.clear();
+            app.personalizationSettings_ = savedAppearance;
+            app.floatingDockPersonalization_ = savedFloatingAppearance;
+            app.dockSettings_ = savedDock;
+            app.iconBeautifySettings_ = savedIconStyle;
+            app.renderingFloatingDock_ = savedFloating;
+            app.lastMousePoint_ = outside;
+        }
         const auto paintedBounds = [&](const std::vector<std::uint32_t>& pixels, bool greenOnly = false) {
             RECT bounds{static_cast<LONG>(width), static_cast<LONG>(height), 0, 0};
             for (UINT y = 0; y < height; ++y)

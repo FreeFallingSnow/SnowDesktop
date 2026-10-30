@@ -2366,6 +2366,12 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             }
         }
     }
+    // The reflection belongs to the panel material. Paint it before contents
+    // so magnified icons can cross the panel boundary without a rim over them.
+    // Edge-attached Docks retain only their flat single boundary.
+    if (app_ && !IsEdgeAttached())
+        (void)app_->DrawWidgetPanelEdgeHighlight(
+            context, bounds, panelRadius, fill, &p);
 }
 
 void DockContainer::ClearTitleTooltipBackdrop()
@@ -2804,32 +2810,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (searchHovered && !IsMagnificationSuppressed())
         {
             hoveredTitle = _LW("app.dock.quick_search");
-        }
-    }
-
-    // Keep the floating-panel reflection above icons and Dock controls. The
-    // edge-attached Dock intentionally retains only its flat single boundary.
-    if (!IsEdgeAttached())
-    {
-        PersonalizationSettings p = PersonalizationSettings::DarkPreset();
-        if (app_->renderingFloatingDock_)
-            p = app_->floatingDockPersonalization_;
-        else
-            p = app_->CurrentDockAppearance();
-        if (p.widgetEdgeHighlightEnabled &&
-            p.widgetEdgeHighlightStrength > 0.0005f)
-        {
-            const RECT panelBounds =
-                GetVisualPanelBounds(app_->lastMousePoint_);
-            const float edgeWidth = std::clamp(
-                p.widgetEdgeHighlightWidth,
-                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-            const D2D1_COLOR_F fill = D2D1::ColorF(
-                p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
-            (void)app_->DrawEdgeHighlight(
-                context, panelBounds, p.cornerRadius, fill, edgeWidth,
-                p.widgetEdgeHighlightStrength,
-                p.edgeLight);
         }
     }
 
