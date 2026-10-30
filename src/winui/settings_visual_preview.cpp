@@ -1542,6 +1542,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 control.targetPath = L"C:\\Preview\\Assistant-" + std::to_wstring(index) + L"\\skills\\snowdesktop-control";
                 control.state = index == 1 ? WidgetAgentSkillInstallState::UpdateAvailable : WidgetAgentSkillInstallState::Current;
                 control.bundledRevision = 2;
+                control.installedRevision = index == 1 ? 1u : 2u;
                 packages.controlAgentSkills.push_back(std::move(control));
             }
             packages.controlAgentSkillTargetMask = 63;

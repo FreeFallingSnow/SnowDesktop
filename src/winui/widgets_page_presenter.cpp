@@ -836,9 +836,10 @@ struct WidgetsPagePresenter::Impl
         muxc::StackPanel controlActions;
         controlActions.Orientation(muxc::Orientation::Horizontal);
         controlActions.Spacing(8.0);
+        controlActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         controlActions.Children().Append(controlSkillApplyButton);
         controlActions.Children().Append(controlSkillRefreshButton);
-        controlSkillActionsRow.Initialize(controlActions);
+        controlSkillActionsRow.Initialize(controlActions, 0.0);
         controlSkillActionsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         controlSkillCard.content.Children().Append(controlSkillActionsRow.root);
         controlSkillRows = muxc::StackPanel{};
