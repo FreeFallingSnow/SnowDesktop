@@ -845,7 +845,6 @@ struct WidgetsPagePresenter::Impl
         controlSkillRows.Spacing(8.0);
         controlSkillRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         controlSkillCard.content.Children().Append(controlSkillRows);
-        presenter_controls::UpdateSettingsSubrows(controlSkillCard.content);
 
         developerRoot = muxc::StackPanel{};
         developerRoot.Spacing(24.0);
@@ -2101,25 +2100,14 @@ struct WidgetsPagePresenter::Impl
                     Emit(std::move(request));
                 },
                 revokers);
-            if (control)
-            {
-                presenter_controls::SettingRow row;
-                row.Initialize(selected);
-                selected.Content(nullptr);
-                row.SetText(label, stateAndPath);
-                rows.Children().Append(row.root);
-            }
-            else
-            {
-                muxc::StackPanel row;
-                row.Spacing(2);
-                row.Children().Append(selected);
-                auto details = MakeSecondaryText(stateAndPath);
-                details.Margin({28, 0, 0, 0});
-                details.IsTextSelectionEnabled(true);
-                row.Children().Append(details);
-                rows.Children().Append(row);
-            }
+            muxc::StackPanel row;
+            row.Spacing(2);
+            row.Children().Append(selected);
+            auto details = MakeSecondaryText(stateAndPath);
+            details.Margin({28, 0, 0, 0});
+            details.IsTextSelectionEnabled(true);
+            row.Children().Append(details);
+            rows.Children().Append(row);
             if (!firstTarget)
                 firstTarget = selected;
         }
@@ -2130,7 +2118,6 @@ struct WidgetsPagePresenter::Impl
             rows.Children().Append(
                 MakeSecondaryText(actionStatus));
 
-        if (control) presenter_controls::UpdateSettingsSubrows(rows);
     }
 
     void RenderDeveloperRows()
@@ -3421,9 +3408,9 @@ struct WidgetsPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
-        controlSkillCard.title.Text(L("settings.agentOperations.skill", L"SnowDesktop Control Skill"));
-        controlSkillCard.description.Text(L("settings.agentOperations.description",
-            L"Let your AI assistant operate SnowDesktop through its local control interface."));
+        controlSkillCard.title.Text(L("app.settings.widgets_agent_skill", L"Agent Skill"));
+        controlSkillCard.description.Text(L"");
+        controlSkillCard.description.Visibility(mux::Visibility::Collapsed);
         controlSkillApplyButton.Content(winrt::box_value(L("app.settings.widgets_skill_sync_all", L"Apply Selection")));
         controlSkillRefreshButton.Content(winrt::box_value(L("app.settings.widgets_skill_check_updates", L"Check for Updates")));
         SetAutomation(controlSkillRefreshButton, L("app.settings.widgets_skill_check_updates", L"Check for Updates"));

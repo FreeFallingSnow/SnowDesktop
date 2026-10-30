@@ -41,6 +41,7 @@ try {
         Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 namespace SnowDesktopControl {
@@ -52,6 +53,17 @@ namespace SnowDesktopControl {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder path, ref uint length);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern uint GetFinalPathNameByHandle(IntPtr file, StringBuilder path, uint capacity, uint flags);
+        public static string CanonicalPath(string fileName) {
+            using (var file = new FileStream(fileName, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete)) {
+                var path = new StringBuilder(32768);
+                uint length = GetFinalPathNameByHandle(file.SafeFileHandle.DangerousGetHandle(), path, (uint)path.Capacity, 0);
+                if (length == 0 || length >= path.Capacity) throw new Win32Exception();
+                return path.ToString();
+            }
+        }
         public static string ServerPath(IntPtr pipe) {
             uint processId;
             if (!GetNamedPipeServerProcessId(pipe, out processId)) throw new Win32Exception();
@@ -79,7 +91,9 @@ namespace SnowDesktopControl {
         [Security.Principal.TokenImpersonationLevel]::Identification)
     $pipe.Connect($TimeoutMs)
     $serverPath = [SnowDesktopControl.Native]::ServerPath($pipe.SafePipeHandle.DangerousGetHandle())
-    if (-not [StringComparer]::OrdinalIgnoreCase.Equals([IO.Path]::GetFullPath($serverPath), $expectedExecutable)) {
+    if (-not [StringComparer]::OrdinalIgnoreCase.Equals(
+        [SnowDesktopControl.Native]::CanonicalPath($serverPath),
+        [SnowDesktopControl.Native]::CanonicalPath($expectedExecutable))) {
         throw "Unexpected IPC server: $serverPath. Expected: $expectedExecutable. No request was sent."
     }
     function Write-FrameBytes([byte[]]$Bytes) {
