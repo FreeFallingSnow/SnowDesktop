@@ -3543,10 +3543,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-registry-catalogue)
     add_test(NAME shell_shortcut_query_recovery
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-shortcut-query-recovery)
-    add_test(NAME shell_menu_selection_prewarm
-        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-selection-prewarm)
+    add_test(NAME shell_menu_prepared_worker
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-prepared-worker)
     set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap
-        shell_menu_refresh_control shell_registry_catalogue shell_shortcut_query_recovery shell_menu_selection_prewarm PROPERTIES
+        shell_menu_refresh_control shell_registry_catalogue shell_shortcut_query_recovery shell_menu_prepared_worker PROPERTIES
         TIMEOUT 60
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
         LABELS "integration;contract;shell")

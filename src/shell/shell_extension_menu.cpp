@@ -1301,7 +1301,9 @@ bool Session::PrepareFirstMenuWorker(DWORD timeoutMs)
 }
 void Session::ReleasePreparedMenuWorker()
 {
+    const auto count = std::count_if(Impl::idle.begin(), Impl::idle.end(), [](const auto &worker) { return worker->preparationOnly; });
     std::erase_if(Impl::idle, [](const auto &worker) { return worker->preparationOnly; });
+    if (count) MenuTrace("preparation", "released", 0, static_cast<unsigned>(count));
 }
 Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedWorker)
 {
@@ -1315,7 +1317,9 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         auto &idle = Impl::idle;
         std::erase_if(idle, [=](const auto &worker) { return worker->generation != generation || !worker->process->Running() || GetTickCount64() - worker->born >= kWorkerLifetimeMs; });
         const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
-            return request.startPinOnly ? worker->startPinOnly : usePreparedWorker && worker->preparationOnly;
+            return request.startPinOnly ? worker->startPinOnly : usePreparedWorker && worker->preparationOnly &&
+                !request.background && request.context != Context::Desktop && !request.catalogueOnly &&
+                request.sourceClsid.empty() && request.sourceKey.empty() && !request.originalShortcutOnly;
         });
         bool reused = available != idle.end();
         if (reused) { impl_ = std::move(*available); idle.erase(available); }
@@ -1324,7 +1328,14 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
             if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
             {
                 counter.fetch_sub(1);
-                throw settings_ipc::ProtocolError("too many Shell menus");
+                // Preparation is optional. Yield its reserved slot to real
+                // source/background work before refusing an interactive query.
+                if (!request.startPinOnly) ReleasePreparedMenuWorker();
+                if (request.startPinOnly || counter.fetch_add(1) >= 2u)
+                {
+                    if (!request.startPinOnly) counter.fetch_sub(1);
+                    throw settings_ipc::ProtocolError("too many Shell menus");
+                }
             }
             acquiredSlot = true;
         }

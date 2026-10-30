@@ -37,7 +37,7 @@ void TestCatalogueRegistryHandles();
 int RunCatalogueFullscreenFixture();
 void TestShellContextMenuBootstrap();
 void ProbeNativeShellMenuBootstrap(bool legacy);
-void TestShellMenuSelectionLatency();
+void TestShellMenuPreparedService();
 void BenchmarkShellMenuFirstScreen();
 
 namespace
@@ -2202,6 +2202,12 @@ void TestExtensionSessions()
         auto background = preparedRequest; background.background = true; background.context = ext::Context::FolderBackground;
         ext::Session unchanged(background, 2500, true); const auto reply = wait(unchanged);
         Expect(reply.ok && reply.entries.front().key == "cold", "background menus always retain their original unprepared host");
+        Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Ready,
+            "a background query preserves the standby file worker when capacity is available");
+        ext::Session concurrent(request, 2500); Expect(wait(concurrent).ok,
+            "interactive work can reclaim the standby slot while another ordinary query is alive");
+        Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
+            "standby preparation yields capacity instead of failing a second real query");
     }
     {
         struct PreparationFailureMode
@@ -6009,7 +6015,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-first-screen") BenchmarkShellMenuFirstScreen();
-        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-selection-prewarm") TestShellMenuSelectionLatency();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-prepared-worker") TestShellMenuPreparedService();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh")

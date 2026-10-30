@@ -273,6 +273,7 @@ struct MenuService::Impl
     QueryFactory factory;
     bool nativeFactory = false;
     ULONGLONG nextPreparation = 0;
+    bool prepareFileDemand = false;
     CatalogueReader readCatalogue;
     FolderVerifier verifyFolder;
     BackgroundVerifier verifyBackground;
@@ -284,6 +285,9 @@ struct MenuService::Impl
         if (!factory) { nativeFactory = true; factory = [this](const Request &request) {
             auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, true);
             nextPreparation = GetTickCount64() + 1000;
+            if (request.visibleMenuProviders && !request.background && request.sourceClsid.empty() &&
+                !request.startPinOnly && !request.originalShortcutOnly && !ShortcutSelection(request) && Local(request))
+                prepareFileDemand = true;
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
                 [session] { return session->SelectionContexts(); }};
@@ -612,6 +616,7 @@ struct MenuService::Impl
             }
             if (!allowed)
             {
+                prepareFileDemand = false;
                 scanRequested = foregroundScanRequested = startupWarm = false;
                 for (auto &[key, row] : rows)
                     if (row.clicks.empty())
@@ -1612,6 +1617,9 @@ struct MenuService::Impl
             }
             if (TakeMenuRegistryChanges())
             {
+                // A standby holds already loaded COM providers. A fresh bind
+                // cannot make those DLLs current after registration changes.
+                Session::ReleasePreparedMenuWorker();
                 std::lock_guard lock(mutex);
                 // Classes notifications also include unrelated Shell caches.
                 // Mark cached views stale, but retain published payloads for an open
@@ -1851,13 +1859,10 @@ struct MenuService::Impl
                         row.view.sourcesOnly = !plan.full;
                         row.view.contexts = contexts;
                         for (const auto &source : plan.sources) Queue(source, priority, row.force || verifying);
-                        const bool selectedFile = contexts == ContextBit(Context::File) &&
-                            !request.background && !ShortcutSelection(request) && Local(request);
-                        if (priority == QueryPriority::Prewarm && plan.full && !selectedFile)
+                        if (priority == QueryPriority::Prewarm && plan.full)
                         {
-                            // Remote/shortcut/background targets retain source-only
-                            // warming. A stable local file selection can prepare
-                            // its exact full snapshot before the user right-clicks.
+                            // Selection work warms proven sources only. Unknown
+                            // commands still need an explicit foreground request.
                             row.view.pending = false; row.view.sourcesOnly = true;
                             row.force = row.fullMenuRequested = false;
                             MenuTrace("schedule", "prewarm_sources_only", 0, static_cast<unsigned>(plan.sources.size()));
@@ -1884,8 +1889,7 @@ struct MenuService::Impl
                     }
                     else row.view.sourcesOnly = false;
                 }
-                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly &&
-                    (request.background || contexts != ContextBit(Context::File) || ShortcutSelection(request) || !Local(request)))
+                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly)
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key]; row.view.pending = false; row.fullMenuRequested = false;
@@ -1987,7 +1991,7 @@ struct MenuService::Impl
                 bool prepare = false;
                 {
                     std::lock_guard lock(mutex);
-                    prepare = !stop && !managementActive && configured &&
+                    prepare = prepareFileDemand && !stop && !managementActive && configured &&
                         std::any_of(shown[0].begin(), shown[0].end(), [](const auto &id) {
                             return StateVisibilityId(id) != "state:start-pin";
                         });

@@ -1,15 +1,12 @@
 #include "shell/shell_extension_service.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "shell/shell_extension_discovery.h"
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <objbase.h>
 #include <stdexcept>
-#include <thread>
 
 namespace
 {
@@ -56,55 +53,69 @@ template<class Predicate> void Until(Predicate ready, const char *failure, DWORD
     while (!ready() && GetTickCount64() < deadline) Pump();
     Require(ready(), failure);
 }
-ext::Reply Result()
+struct TraceCapture
 {
-    ext::Entry entry; entry.provider = "verb:latency-test"; entry.key = "latency-test";
-    entry.label = L"Exact selected file action"; entry.token = 17;
-    return {true, {entry}, {}};
-}
-ext::Preferences TestPreferences()
-{
-    ext::Preferences prefs;
-    ext::SetCommon(prefs, "verb:latency-test", ext::Category::Objects, true);
-    return prefs;
-}
+    std::wstring previous;
+    std::filesystem::path file;
+    explicit TraceCapture(const std::filesystem::path &prefix, bool keepExisting = false)
+    {
+        wchar_t buffer[32768]{};
+        const auto length = GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", buffer, 32768);
+        Require(length < 32768, "diagnostic path fits the environment limit");
+        previous.assign(buffer, length);
+        const auto selected = keepExisting && !previous.empty() ? previous : prefix.wstring();
+        Require(SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", selected.c_str()) != FALSE, "enable private menu trace");
+        file = selected + L"." + std::to_wstring(GetCurrentProcessId()) + L".log";
+    }
+    ~TraceCapture() { SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str()); }
+    unsigned Count(std::string_view event) const
+    {
+        std::ifstream input(file, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(input)), {});
+        unsigned count = 0;
+        for (size_t at = 0; (at = text.find(event, at)) != std::string::npos; at += event.size()) ++count;
+        return count;
+    }
+};
 }
 
-void TestShellMenuSelectionLatency()
+void TestShellMenuPreparedService()
 {
     Workspace workspace;
-    const auto selected = workspace.File(L"selected");
+    TraceCapture trace(workspace.path / L"trace");
+    const auto selected = workspace.File(L"prepared-retention");
+    const auto initial = workspace.File(L"initial");
     const auto disabled = workspace.File(L"disabled");
-    std::atomic<unsigned> queries = 0;
-    ext::MenuService service(workspace.path / L"cache", [&](const ext::Request &) {
-        ++queries;
-        const auto readyAt = Clock::now() + std::chrono::milliseconds(40);
-        return ext::QueryWork{[readyAt]() -> std::optional<ext::Reply> {
-            return Clock::now() >= readyAt ? std::optional(Result()) : std::nullopt;
-        }, {}};
-    }, [] { return ext::Catalogue{}; });
-    const auto prefs = TestPreferences(); service.Configure(prefs);
-    service.Prewarm(selected);
-    Until([&] { const auto view = service.MenuDisplay(selected, prefs); return view.snapshot && !view.pending; },
-          "a stable local file must produce its exact selection snapshot before a popup opens");
-    Require(queries == 1, "selection prewarm queries the selected file once");
-    ext::Presentation popup(selected, prefs, L"", L"", service);
-    std::vector<menu::Item> items; menu::Options options;
-    popup.Attach(items, options, 0);
-    Require(items.size() == 1 && items.front().label == Result().entries.front().label && !options.pollItems,
-            "the popup immediately consumes the prewarmed exact selection without another helper");
-    Require(queries == 1, "opening an already prepared selection does not restart its query");
+    ext::MenuService service(workspace.path / L"cache");
+    ext::Preferences prefs; ext::SetCommon(prefs, "verb:latency-test", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(initial);
+    Until([&] { const auto view = service.View(initial); return view.snapshot && !view.pending; },
+          "an explicit initial file popup supplies the preparation demand");
+    Until([&] { return trace.Count("phase=preparation reason=ready") == 1; },
+          "after explicit file demand the service prepares its next worker while idle", 10000);
+    service.Query(selected);
+    Until([&] { const auto view = service.View(selected); return view.snapshot && !view.pending; },
+          "the production service queries the exact selected file");
+    Require(service.View(selected).snapshot->entries.front().key == "prepared",
+            "the service consumes its ready worker instead of starting a cold helper");
+    Until([&] { return trace.Count("phase=preparation reason=ready") == 2; },
+          "one completed real query allows one replacement standby worker", 10000);
+    const auto released = trace.Count("phase=preparation reason=released");
     service.Configure({}); service.Prewarm(disabled);
+    Until([&] { return trace.Count("phase=preparation reason=released") > released; },
+          "turning file extensions off releases the unused standby process");
     auto barrier = disabled; barrier.paths = {workspace.path.wstring()};
     service.Query(barrier, ext::QueryPriority::Inspect, true);
     Until([&] { return service.View(barrier).snapshot.has_value(); }, "disabled selection prewarm barrier completes");
-    Require(queries == 2 && !service.View(disabled).snapshot,
+    Require(!service.View(disabled).snapshot,
             "turning extensions off suppresses new file prewarm while explicit inspection remains available");
 }
 
 void BenchmarkShellMenuFirstScreen()
 {
     Workspace workspace;
+    TraceCapture trace(workspace.path / L"trace", true);
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     struct RealMode { ~RealMode() { SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr); } } realMode;
     ext::Preferences prefs;
@@ -150,14 +161,19 @@ void BenchmarkShellMenuFirstScreen()
     open(cold, "same-file", 0);
     open(workspace.File(L"new-same-type"), "new-file-immediate", 0);
     unsigned index = 0;
-    for (const auto type : {L".txt", L".png", L".zip", L".pdf"})
+    auto prepared = trace.Count("phase=preparation reason=ready");
+    constexpr std::pair<const wchar_t *, const char *> samples[] = {
+        {L".txt", "prepared-txt"}, {L".png", "prepared-png"},
+        {L".zip", "prepared-zip"}, {L".pdf", "prepared-pdf"}};
+    for (const auto &[type, scenario] : samples)
     {
         const auto request = workspace.File(L"selected-" + std::to_wstring(index++), type);
-        const auto started = Clock::now(); service.Prewarm(request);
-        Until([&] { const auto view = service.MenuDisplay(request, prefs); return view.snapshot && !view.pending; },
-              "real stable selection finishes its exact prewarm", 20000);
+        const auto started = Clock::now();
+        Until([&] { return trace.Count("phase=preparation reason=ready") > prepared; },
+              "real single-use standby preparation finishes", 20000);
+        prepared = trace.Count("phase=preparation reason=ready");
         const double preparationMs = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-        open(request, "selected-file", preparationMs);
-        open(request, "selected-repeat", 0);
+        open(request, scenario, preparationMs);
+        open(request, "same-file-repeat", 0);
     }
 }
