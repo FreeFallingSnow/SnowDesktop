@@ -241,7 +241,7 @@ void WriteManifest(State& state)
     if (!stream || !(stream << Serialize(value) << '\n') || !stream.flush()) throw std::runtime_error("capture_manifest_failed");
     state.manifestPath = path;
 }
-void RecordFrames(Reader& reader, State& state, const std::atomic<bool>& cancelled, const std::function<void()>& publish)
+void RecordFrames(State& state, const std::atomic<bool>& cancelled, const std::function<void()>& publish)
 {
     const auto expected = RecordingFrameCount(state.durationMs, state.fps);
     const int monitorWidth = state.monitor.bounds.right - state.monitor.bounds.left;
@@ -250,9 +250,12 @@ void RecordFrames(Reader& reader, State& state, const std::atomic<bool>& cancell
         throw std::runtime_error("unsupported_recording_geometry");
     const auto partial = state.directory / L"capture.partial.mp4";
     // Initializing the encoder can take much longer than one video frame.
-    // Start the recording clock only after that work, from a fresh WGC image.
+    // Do not start WGC until that work finishes: a static source may produce
+    // only its initial image, which must not age out while the encoder starts.
     video_writer::Mp4 writer(partial, static_cast<unsigned>(monitorWidth), static_cast<unsigned>(monitorHeight), state.fps);
     const auto encoderReadyTime = QpcTime();
+    if (cancelled.load()) throw std::runtime_error("capture_cancelled");
+    Reader reader(state.monitor, state.systemCursor);
     Pixels held;
     try { held = reader.First(cancelled, encoderReadyTime); }
     catch (...)
@@ -408,10 +411,10 @@ bool Service::Impl::Start(std::wstring monitorId, std::filesystem::path root, bo
                 if (ec || !std::filesystem::create_directory(directory, ec) || ec)
                     throw std::runtime_error("capture_directory_failed");
                 task.directory = directory;
-                Reader reader(task.monitor, task.systemCursor);
-                if (task.kind == "recording") RecordFrames(reader, task, cancelled, publish);
+                if (task.kind == "recording") RecordFrames(task, cancelled, publish);
                 else
                 {
+                    Reader reader(task.monitor, task.systemCursor);
                     const auto pixels = reader.First(cancelled);
                     if (cancelled.load()) throw std::runtime_error("capture_cancelled");
                     std::string pngError;
