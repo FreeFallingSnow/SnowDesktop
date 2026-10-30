@@ -3515,6 +3515,7 @@ if (BUILD_TESTING)
         SnowDesktopShellContextMenuInvokeTests
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
+            tests/shell/shell_menu_latency_tests.cpp
             tests/shell/shell_catalogue_registry_handle_tests.cpp
             tests/shell/shell_context_menu_bootstrap_tests.cpp
             src/shell/shell_extension_menu.cpp
@@ -3542,8 +3543,10 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-registry-catalogue)
     add_test(NAME shell_shortcut_query_recovery
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-shortcut-query-recovery)
+    add_test(NAME shell_menu_selection_prewarm
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-selection-prewarm)
     set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap
-        shell_menu_refresh_control shell_registry_catalogue shell_shortcut_query_recovery PROPERTIES
+        shell_menu_refresh_control shell_registry_catalogue shell_shortcut_query_recovery shell_menu_selection_prewarm PROPERTIES
         TIMEOUT 60
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
         LABELS "integration;contract;shell")

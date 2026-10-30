@@ -37,6 +37,8 @@ void TestCatalogueRegistryHandles();
 int RunCatalogueFullscreenFixture();
 void TestShellContextMenuBootstrap();
 void ProbeNativeShellMenuBootstrap(bool legacy);
+void TestShellMenuSelectionLatency();
+void BenchmarkShellMenuFirstScreen();
 
 namespace
 {
@@ -6006,6 +6008,8 @@ int wmain(int argc, wchar_t **argv)
         else if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-first-screen") BenchmarkShellMenuFirstScreen();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-selection-prewarm") TestShellMenuSelectionLatency();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh")

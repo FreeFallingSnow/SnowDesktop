@@ -272,6 +272,7 @@ struct MenuService::Impl
     std::filesystem::path directory;
     QueryFactory factory;
     bool nativeFactory = false;
+    ULONGLONG nextPreparation = 0;
     CatalogueReader readCatalogue;
     FolderVerifier verifyFolder;
     BackgroundVerifier verifyBackground;
@@ -281,7 +282,8 @@ struct MenuService::Impl
         : readSources(std::move(sr)), directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v)), verifyBackground(std::move(b))
     {
         if (!factory) { nativeFactory = true; factory = [this](const Request &request) {
-            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, false);
+            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, true);
+            nextPreparation = GetTickCount64() + 1000;
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
                 [session] { return session->SelectionContexts(); }};
@@ -1849,10 +1851,13 @@ struct MenuService::Impl
                         row.view.sourcesOnly = !plan.full;
                         row.view.contexts = contexts;
                         for (const auto &source : plan.sources) Queue(source, priority, row.force || verifying);
-                        if (priority == QueryPriority::Prewarm && plan.full)
+                        const bool selectedFile = contexts == ContextBit(Context::File) &&
+                            !request.background && !ShortcutSelection(request) && Local(request);
+                        if (priority == QueryPriority::Prewarm && plan.full && !selectedFile)
                         {
-                            // Background selection work can warm proven sources,
-                            // but never create a full root for unseen commands.
+                            // Remote/shortcut/background targets retain source-only
+                            // warming. A stable local file selection can prepare
+                            // its exact full snapshot before the user right-clicks.
                             row.view.pending = false; row.view.sourcesOnly = true;
                             row.force = row.fullMenuRequested = false;
                             MenuTrace("schedule", "prewarm_sources_only", 0, static_cast<unsigned>(plan.sources.size()));
@@ -1879,7 +1884,8 @@ struct MenuService::Impl
                     }
                     else row.view.sourcesOnly = false;
                 }
-                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly)
+                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly &&
+                    (request.background || contexts != ContextBit(Context::File) || ShortcutSelection(request) || !Local(request)))
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key]; row.view.pending = false; row.fullMenuRequested = false;
@@ -1970,10 +1976,48 @@ struct MenuService::Impl
                 if (verifyRevision) StartScopeVerification(verifyContexts, verifyRevision);
             }
             SaveObserved(cache);
+            // The owning worker also owns the thread-local prepared process.
+            // It is consumed by one real selection, never recycled after loading
+            // a user's menu. Do not occupy the interactive reserve while queued
+            // work, management or a fullscreen workload needs the resources.
+            auto preparation = Session::PreparationState::Absent;
+            bool preparationWanted = false;
+            if (nativeFactory)
+            {
+                bool prepare = false;
+                {
+                    std::lock_guard lock(mutex);
+                    prepare = !stop && !managementActive && configured &&
+                        std::any_of(shown[0].begin(), shown[0].end(), [](const auto &id) {
+                            return StateVisibilityId(id) != "state:start-pin";
+                        });
+                }
+                preparationWanted = prepare;
+                if (!prepare) Session::ReleasePreparedMenuWorker();
+                else
+                {
+                    preparation = Session::PollPreparedMenuWorker();
+                    const bool idle = running.empty() && !sourceJob;
+                    bool queued = false;
+                    { std::lock_guard lock(mutex);
+                      queued = std::any_of(rows.begin(), rows.end(), [](const auto &row) { return row.second.queued; }); }
+                    if (preparation == Session::PreparationState::Absent && idle && !queued &&
+                        GetTickCount64() >= nextPreparation && !BackgroundCatalogueFullscreen())
+                    {
+                        // One attempt per actual query. A broken extension must
+                        // not create an idle failure/relaunch loop.
+                        nextPreparation = UINT64_MAX;
+                        if (Session::PrepareFirstMenuWorker()) preparation = Session::PreparationState::Pending;
+                    }
+                }
+            }
             bool watchesComplete = false;
             auto handles = MenuRegistryWaitHandles(watchesComplete);
             handles.insert(handles.begin(), wake);
             DWORD wait = watchesComplete ? INFINITE : 1000;
+            if (preparationWanted && preparation == Session::PreparationState::Absent && nextPreparation != UINT64_MAX)
+                wait = std::min(wait, DWORD(1000));
+            if (preparation == Session::PreparationState::Pending) wait = std::min(wait, DWORD(20));
             if (!running.empty() || sourceJob || scan.valid() || sourceScan.valid() ||
                 std::any_of(scopedVerification.begin(), scopedVerification.end(), [](const auto &scope) { return scope.scan.valid(); })) wait = 20;
             {

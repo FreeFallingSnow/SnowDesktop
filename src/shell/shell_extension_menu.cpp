@@ -1487,7 +1487,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         // Retain bootstrap objects until process retirement: extensions can keep
         // window/timer callbacks referring to their menu even after QCM returns.
         std::unique_ptr<TemporaryMenuFile> preparationSample;
-        std::unique_ptr<Host> filePreparation, backgroundPreparation;
+        std::unique_ptr<Host> filePreparation;
         bool actualQueryReceived = false;
         bool invocationQueued = false;
         ULONGLONG lastQuery = GetTickCount64();
@@ -1503,16 +1503,12 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             if (prepared)
             {
                 Request file; file.paths = {preparationSample->path};
-                Request background; background.paths = {std::filesystem::path(preparationSample->path).parent_path().wstring()};
-                background.background = true; background.context = Context::FolderBackground;
-                if (query) prepared = query(file).ok && query(background).ok;
+                if (query) prepared = query(file).ok;
                 else
                 {
                     filePreparation = std::make_unique<Host>(StartPinExecutor{});
-                    backgroundPreparation = std::make_unique<Host>(StartPinExecutor{});
-                    filePreparation->progress = backgroundPreparation->progress = host.progress;
-                    prepared = filePreparation->QueryOnce(file, true).ok &&
-                        backgroundPreparation->QueryOnce(background, true).ok;
+                    filePreparation->progress = host.progress;
+                    prepared = filePreparation->QueryOnce(file, true).ok;
                 }
             }
             // Successful retained aggregates initialize file providers before
