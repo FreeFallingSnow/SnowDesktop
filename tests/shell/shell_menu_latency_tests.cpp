@@ -1,12 +1,15 @@
 #include "shell/shell_extension_service.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "shell/shell_extension_discovery.h"
+#include "common/json_string.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <objbase.h>
 #include <stdexcept>
+#include <map>
+#include <set>
 
 namespace
 {
@@ -184,4 +187,145 @@ void BenchmarkShellMenuFirstScreen()
         open(request, scenario, 0);
         open(request, "same-file-repeat", 0);
     }
+}
+
+// Explicit, read-only diagnostic over a caller-supplied sample manifest. The
+// production Session, scheduler and popup projection stay real; no command is
+// invoked and all cache output belongs to this private workspace.
+void BenchmarkDesktopMenus()
+{
+    Workspace workspace;
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    struct RealMode { ~RealMode() { SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr); } } realMode;
+    const auto read = [](const wchar_t* variable) {
+        wchar_t path[32768]{};
+        Require(GetEnvironmentVariableW(variable, path, 32768) > 0, "diagnostic input path is required");
+        std::ifstream input(path, std::ios::binary);
+        const std::string content((std::istreambuf_iterator<char>(input)), {});
+        JsonValue value; Require(ParseJson(content, value), "read diagnostic JSON input"); return value;
+    };
+    const auto utf8 = [](std::wstring_view value) {
+        const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+        std::string text(size, 0);
+        if (size) WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), text.data(), size, nullptr, nullptr);
+        return text;
+    };
+    const auto quote = [](std::string_view text) { return "\"" + snowdesktop::json::EscapeString(text) + "\""; };
+    const auto manifest = read(L"SNOWDESKTOP_MENU_BENCHMARK_MANIFEST");
+    Require(manifest.IsArray() && !manifest.array.empty(), "sample manifest is a nonempty array");
+    const auto settings = read(L"SNOWDESKTOP_MENU_BENCHMARK_PREFERENCES");
+    const auto prefs = ext::ReadPreferences(settings.Find("shellExtensions"));
+    struct Sample { std::string name; ext::Request request; std::set<std::string> required; };
+    std::vector<Sample> samples;
+    for (const auto& value : manifest.array)
+    {
+        const auto* name = value.Find("name"); const auto* path = value.Find("path");
+        Require(name && name->IsString() && path && path->IsString(), "sample has a name and path");
+        Sample sample; sample.name = name->string;
+        sample.request.paths = {std::filesystem::u8path(path->string).wstring()};
+        Require(GetFileAttributesW(sample.request.paths.front().c_str()) != INVALID_FILE_ATTRIBUTES, "actual sample exists");
+        if (const auto* background = value.Find("background")) sample.request.background = background->boolean;
+        if (const auto* desktop = value.Find("desktop"); desktop && desktop->boolean) sample.request.context = ext::Context::Desktop;
+        else if (sample.request.background) sample.request.context = ext::Context::FolderBackground;
+        if (const auto* required = value.Find("required"))
+            for (const auto& label : required->array) sample.required.insert(label.string);
+        samples.push_back(std::move(sample));
+    }
+    std::map<std::pair<std::string, std::string>, std::set<std::string>> baseline;
+    unsigned failures = 0;
+    const auto record = [&](const Sample& sample, const std::string& mode, const char* phase, unsigned iteration,
+        double ms, bool ok, DWORD worker, const std::string& error, const std::vector<ext::Entry>& entries) {
+        std::set<std::string> identity, labels;
+        std::string encoded = "[";
+        std::function<void(const std::vector<ext::Entry>&, std::string)> collect = [&](const auto& items, std::string parent) {
+            for (const auto& entry : items) if (!entry.separator)
+            {
+                const auto label = utf8(entry.label);
+                const auto key = parent + "/" + label;
+                identity.insert(key); labels.insert(label);
+                if (encoded.size() > 1) encoded += ',';
+                encoded += "{\"path\":" + quote(key) + ",\"provider\":" + quote(entry.provider) +
+                    ",\"registration\":" + quote(entry.registration) + ",\"key\":" + quote(entry.key) +
+                    ",\"native\":" + (entry.native ? "true" : "false") + "}";
+                collect(entry.children, key);
+            }
+        };
+        collect(entries, ""); encoded += ']';
+        const auto id = std::make_pair(sample.name, mode);
+        const auto previous = baseline.find(id);
+        const bool stable = previous == baseline.end() || previous->second == identity;
+        if (ok && previous == baseline.end()) baseline.emplace(id, identity);
+        bool complete = ok;
+        if (mode != "native") for (const auto& label : sample.required) complete &= labels.contains(label);
+        failures += !complete || !stable;
+        std::cout << "{\"sample\":" << quote(sample.name) << ",\"mode\":" << quote(mode)
+            << ",\"phase\":" << quote(phase) << ",\"iteration\":" << iteration << ",\"ms\":" << ms
+            << ",\"ok\":" << (ok ? "true" : "false") << ",\"complete\":" << (complete ? "true" : "false")
+            << ",\"stable\":" << (stable ? "true" : "false") << ",\"worker\":" << worker
+            << ",\"error\":" << quote(error) << ",\"entries\":" << encoded << "}" << std::endl;
+    };
+    wchar_t modeText[32]{};
+    GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_BENCHMARK_MODE", modeText, 32);
+    const std::wstring mode = *modeText ? modeText : L"raw";
+    Require(mode == L"raw" || mode == L"production" || mode == L"native", "select a supported benchmark mode");
+    std::unique_ptr<ext::MenuService> service;
+    if (mode == L"production")
+    {
+        service = std::make_unique<ext::MenuService>(workspace.path / L"cache");
+        service->Configure(prefs);
+    }
+    const auto run = [&](const Sample& sample, const char* phase, unsigned iteration) {
+        const auto started = Clock::now();
+        const auto elapsed = [&] { return std::chrono::duration<double, std::milli>(Clock::now() - started).count(); };
+        const auto deadline = GetTickCount64() + 20000;
+        if (mode == L"native")
+        {
+            auto request = sample.request; request.catalogueOnly = true;
+            ext::NativeMenuSession session(request, {17, 17}, nullptr);
+            std::optional<ext::NativeMenuResult> result;
+            while (!result && GetTickCount64() < deadline) { result = session.Poll(); if (!result) Pump(); }
+            ext::Entry roots; roots.label = result ? std::filesystem::u8path(result->verb).wstring() : L"timeout";
+            record(sample, "native", phase, iteration, elapsed(), result && result->ok, 0,
+                result ? result->error : "benchmark timeout", {roots});
+        }
+        else if (mode == L"raw")
+        {
+            ext::Session session(sample.request, 8000, true);
+            const DWORD pid = session.ProcessId(); std::optional<ext::Reply> result;
+            while (!result && GetTickCount64() < deadline) { result = session.Poll(); if (!result) Pump(); }
+            record(sample, "raw", phase, iteration, elapsed(), result && result->ok, pid,
+                result ? result->error : "benchmark timeout", result ? result->entries : std::vector<ext::Entry>{});
+        }
+        else
+        {
+            ext::Presentation popup(sample.request, prefs, L"", L"", *service);
+            std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+            while (options.pollItems && (!options.pollItemsFinished || !options.pollItemsFinished()) && GetTickCount64() < deadline)
+            {
+                if (auto update = options.pollItems(items, true)) items = std::move(*update);
+                Pump();
+            }
+            const bool done = !options.pollItems || (options.pollItemsFinished && options.pollItemsFinished());
+            const auto state = service->MenuDisplay(sample.request, prefs, true);
+            std::function<std::vector<ext::Entry>(const std::vector<menu::Item>&)> convert = [&](const auto& list) {
+                std::vector<ext::Entry> output;
+                for (const auto& item : list) { ext::Entry entry; entry.label = item.label; entry.separator = item.separator;
+                    entry.children = convert(item.children); output.push_back(std::move(entry)); }
+                return output;
+            };
+            record(sample, "production", phase, iteration, elapsed(), done && state.error.empty(), 0, state.error, convert(items));
+            if (state.snapshot) record(sample, "attributed", phase, iteration, elapsed(), state.snapshot->ok,
+                0, state.error, state.snapshot->entries);
+        }
+    };
+    // Grouped repeats expose cold-to-warm changes; rotation exercises reuse of
+    // one worker across distinct object types and all mapping directories.
+    for (const auto& sample : samples)
+        for (unsigned i = 0; i < 3; ++i) run(sample, i ? "repeat" : "first", i);
+    for (unsigned i = 0; i < 3; ++i)
+        for (const auto& sample : samples) run(sample, "alternating", i);
+    if (service) service->Shutdown();
+    ext::Session::ReleaseIdleWorker(); ext::Session::ReleasePreparedMenuWorker();
+    std::cout << "desktop_menu_benchmark failures=" << failures << std::endl;
+    Require(!failures, "all actual menu reads must complete with required commands and stable item sets");
 }

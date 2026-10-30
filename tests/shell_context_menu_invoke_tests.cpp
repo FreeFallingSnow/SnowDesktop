@@ -39,6 +39,7 @@ void TestShellContextMenuBootstrap();
 void ProbeNativeShellMenuBootstrap(bool legacy);
 void TestShellMenuPreparedService();
 void BenchmarkShellMenuFirstScreen();
+void BenchmarkDesktopMenus();
 void TestShellMenuRootPrefetch();
 void BenchmarkNativeMenuPreparation();
 
@@ -2775,12 +2776,13 @@ void TestStartQueryScheduling()
     ext::MenuService service(directory.path / L"cache", [&](const auto &request) {
         const bool direct = request.startPinOnly;
         if (direct) ++startQueries; else ++ordinaryQueries;
-        ext::Entry entry; entry.token = direct ? 1 : 2;
-        entry.key = direct ? "PinToStartScreen" : "inspect";
-        entry.provider = direct ? "verb:pintostartscreen" : "verb:inspect";
-        entry.label = direct ? L"Pin" : L"Inspect";
-        return ext::QueryWork{[&, direct, entry]() -> std::optional<ext::Reply> {
-            if (!direct && hold) return {}; return ext::Reply{true, {entry}, {}};
+        ext::Entry pin; pin.token = 1; pin.key = "PinToStartScreen";
+        pin.provider = "verb:pintostartscreen"; pin.label = L"Pin";
+        ext::Entry inspect; inspect.token = 2; inspect.key = "inspect";
+        inspect.provider = "verb:inspect"; inspect.label = L"Inspect";
+        return ext::QueryWork{[&, direct, pin, inspect]() -> std::optional<ext::Reply> {
+            if (!direct && hold) return {};
+            return ext::Reply{true, direct ? std::vector<ext::Entry>{pin} : std::vector<ext::Entry>{pin, inspect}, {}};
         }, {}};
     }, [] { return ext::Catalogue{}; });
     ext::Preferences prefs;
@@ -2798,32 +2800,36 @@ void TestStartQueryScheduling()
     menu::Item more; more.command = 7; more.label = L"More";
     std::vector<menu::Item> items{builtin, more}; menu::Options options;
     presentation.Attach(items, options, 7);
-    auto start = target; start.startPinOnly = true;
-    PumpUntil([&] { return service.View(start).snapshot.has_value(); }, "the reserved Start query bypasses both stalled extensions");
-    const auto early = options.pollItems(items, true);
-    Expect(ordinaryQueries == 2 && startQueries == 1 && early && early->size() == 4 &&
-        std::count_if(early->begin(), early->end(), [](const auto &i) { return i.label == L"Pin"; }) == 1 &&
-        !options.pollItemsFinished(), "Start appears before the cold aggregate without ending its independent publication");
-    items = *early;
+    Expect(startQueries == 0 && !options.pollItemsFinished(),
+        "mixed Start and ordinary preferences wait for one aggregate rather than duplicating its Shell query");
     hold = false;
     PumpUntil([&] { return service.View(target).snapshot.has_value(); }, "the cold aggregate can finish afterwards");
     const auto late = options.pollItems(items, true);
     Expect(late && options.pollItemsFinished() && late->back().command == 7 &&
         std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Pin"; }) == 1 &&
         std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Inspect"; }) == 1,
-        "later ordinary publication preserves the Start action and the footer without duplicates");
+        "one aggregate publishes both Start and ordinary actions with the footer and without duplicates");
     const auto previousOrdinary = ordinaryQueries.load();
     ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, false); service.Configure(prefs);
+    // Stall both ordinary slots again. Start-only demand must still complete
+    // through the reserved lane, including a target without a cache identity.
+    hold = true;
+    service.Query(first, ext::QueryPriority::Menu, true); service.Query(second, ext::QueryPriority::Menu, true);
+    PumpUntil([&] { return ordinaryQueries == previousOrdinary + 2; }, "occupy both ordinary slots before Start-only demand");
+    const auto stalledOrdinary = ordinaryQueries.load();
+    auto start = target; start.startPinOnly = true;
     ext::Presentation onlyStart(target, prefs, L"", L"", service);
     std::vector<menu::Item> fresh{more}; menu::Options freshOptions; onlyStart.Attach(fresh, freshOptions, 7);
-    PumpUntil([&] { return !service.View(start).pending && startQueries >= 2; }, "a new Start-only opening queries current state");
+    PumpUntil([&] { return !service.View(start).pending && startQueries == 1; }, "the reserved Start-only query bypasses both stalled extensions");
     const auto state = freshOptions.pollItems(fresh, true);
-    Expect(state && freshOptions.pollItemsFinished() && ordinaryQueries == previousOrdinary,
+    Expect(state && freshOptions.pollItemsFinished() && ordinaryQueries == stalledOrdinary &&
+        std::count_if(state->begin(), state->end(), [](const auto& i) { return i.label == L"Pin"; }) == 1,
         "enabling only Start pinning never triggers an aggregate query on reopening");
     service.Prewarm(first);
     auto prewarmed = first; prewarmed.startPinOnly = true;
     PumpUntil([&] { return service.View(prewarmed).snapshot.has_value(); }, "Start-only prewarming uses its dedicated request");
-    Expect(ordinaryQueries == previousOrdinary, "Start-only selection prewarming does not enumerate unrelated extensions");
+    Expect(ordinaryQueries == stalledOrdinary, "Start-only selection prewarming does not enumerate unrelated extensions");
+    hold = false;
 }
 
 // Real Classes notifications and live private registration scans reproduce the
@@ -5981,6 +5987,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-first-screen") BenchmarkShellMenuFirstScreen();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-desktop-menus") BenchmarkDesktopMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-native-menu-preparation") BenchmarkNativeMenuPreparation();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-prepared-worker") TestShellMenuPreparedService();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-root-prefetch") TestShellMenuRootPrefetch();

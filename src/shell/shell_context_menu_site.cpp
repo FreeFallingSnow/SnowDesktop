@@ -459,30 +459,35 @@ HRESULT ShellContextMenuSite::BuildSelectionMenu(IShellFolder* folder, HWND owne
     impl_->Reset();
     if (!folder || !IsWindow(owner) || !menu || !bind || (count && !children) || firstCommand > lastCommand)
         return E_INVALIDARG;
-    auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
-    if (!view) return E_OUTOFMEMORY;
-    HRESULT hr = view->Initialize(count, children);
-    if (FAILED(hr)) return hr;
-    impl_->view = view;
-    impl_->viewWindow = owner; // SelectionView never owns/destroys this window.
-    impl_->browser = Microsoft::WRL::Make<BrowserSite>(owner);
-    if (!impl_->browser) return E_OUTOFMEMORY;
-    impl_->browser->SetView(impl_->view.Get());
+    const auto attach = [&](IContextMenu* actual) -> HRESULT {
+        auto view = Microsoft::WRL::Make<SelectionView>(folder, owner);
+        if (!view) return E_OUTOFMEMORY;
+        const HRESULT initialized = view->Initialize(count, children);
+        if (FAILED(initialized)) return initialized;
+        impl_->view = view;
+        impl_->viewWindow = owner; // SelectionView never owns/destroys this window.
+        impl_->browser = Microsoft::WRL::Make<BrowserSite>(owner);
+        if (!impl_->browser) return E_OUTOFMEMORY;
+        impl_->browser->SetView(impl_->view.Get());
+        Attach(actual);
+        return S_OK;
+    };
     ComPtr<IContextMenu> actual;
     shell_extensions::MenuTiming binding("native_selection.bind");
-    hr = bind(owner, actual.GetAddressOf());
+    HRESULT hr = bind(owner, actual.GetAddressOf());
     binding.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
     // Background commands resolve their location from the site during QCM.
-    // Item commands already receive their selection. Attaching their view
-    // before cold handler loading can re-enter Shell window initialization
-    // from a vendor's DllMain while the loader lock is held.
-    if (!count) Attach(actual.Get());
+    // Item commands already receive their selection. Even constructing their
+    // Shell item array before cold handler loading installs Shell window hooks;
+    // a vendor's DllMain can then re-enter Shell initialization under loader lock.
+    // Defer the entire item site, rather than only SetSite, until QCM returns.
+    if (!count && FAILED(hr = attach(actual.Get()))) return hr;
     shell_extensions::MenuTiming query("native_selection.query");
     hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
     query.Record(SUCCEEDED(hr) ? "complete" : "failed");
     if (FAILED(hr)) return hr;
-    if (count) Attach(actual.Get());
+    if (count && FAILED(hr = attach(actual.Get()))) return hr;
     actual.CopyTo(contextMenu);
     total.Record("complete", count);
     return hr;
