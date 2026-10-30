@@ -539,6 +539,35 @@ void TestCatalogueRegistryHandles()
             Check(watch.Changed(), "a newly subscribed root retains nested value coverage");
             Check(RegDeleteTreeW(fixture.value, L"Classes\\New.Type") == ERROR_SUCCESS, "remove owned type");
             Check(watch.Changed(), "class root removal remains observable");
+
+            ext::detail::MenuRegistryMonitor monitor(fixture.value, L"Classes", 1, true);
+            const auto untilReady = [&] {
+                const auto deadline = GetTickCount64() + 5000;
+                while (!monitor.FilteredReady() && GetTickCount64() < deadline)
+                {
+                    monitor.Changed();
+                    Sleep(1);
+                }
+                Check(monitor.FilteredReady(), "background Classes subscriptions finish");
+                monitor.Changed(); // Consume the handover edge before testing browse noise.
+            };
+            Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr, L"during-startup.exe");
+            Check(monitor.Changed(), "startup coverage retains a registration changed before handover");
+            untilReady();
+            std::vector<HANDLE> handles; bool complete = true;
+            monitor.AppendWaitHandles(handles, complete);
+            Check(complete && handles.size() == 2, "monitor exposes stable baseline and consumer wake handles");
+            Put(fixture.value, L"Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU", L"state", L"three");
+            Check(!monitor.Changed(), "ready background subscriptions continue to exclude browse state");
+            Put(fixture.value, L"Classes\\Type\\shell\\open\\command", nullptr, L"after-startup.exe");
+            Check(monitor.Changed(), "ready subscriptions invalidate without waiting for rearm");
+            Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"during-rearm");
+            Check(monitor.Changed(), "baseline retains a second change during precise rearm");
+            untilReady();
+            std::vector<HANDLE> after; monitor.AppendWaitHandles(after, complete);
+            Check(handles == after, "rebuilding never closes handles used by sibling waiters");
+            Put(fixture.value, L"Classes\\New.Type\\shell\\open", L"MUIVerb", L"after-rearm");
+            Check(monitor.Changed(), "newly created classes remain covered after background rearm");
         }
         fixture.Cleanup();
     }

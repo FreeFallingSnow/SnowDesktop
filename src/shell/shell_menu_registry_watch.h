@@ -2,6 +2,8 @@
 
 #include "shell_extension_diagnostics.h"
 #include <windows.h>
+#include <atomic>
+#include <thread>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,17 +15,20 @@ namespace snowdesktop::shell_extensions::detail
 class MenuRegistryWatch
 {
 public:
-    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE event = nullptr;
     bool armed = false;
 
-    MenuRegistryWatch(HKEY hive, std::wstring subkey, unsigned id, bool filterClasses = false)
-        : root_(hive), path_(std::move(subkey)), traceId_(id), filterClasses_(filterClasses) { Arm(); }
+    MenuRegistryWatch(HKEY hive, std::wstring subkey, unsigned id, bool filterClasses = false,
+                      HANDLE notification = nullptr)
+        : event(notification ? notification : CreateEventW(nullptr, TRUE, FALSE, nullptr)),
+          root_(hive), path_(std::move(subkey)), traceId_(id), filterClasses_(filterClasses),
+          ownsEvent_(!notification) { Arm(); }
     MenuRegistryWatch(const MenuRegistryWatch&) = delete;
     MenuRegistryWatch& operator=(const MenuRegistryWatch&) = delete;
     ~MenuRegistryWatch()
     {
         CloseKeys();
-        if (event) CloseHandle(event);
+        if (event && ownsEvent_) CloseHandle(event);
     }
 
     bool Changed()
@@ -46,6 +51,7 @@ private:
     unsigned traceId_ = 0;
     bool target_ = false;
     bool filterClasses_ = false;
+    bool ownsEvent_ = true;
     std::vector<HKEY> branches_;
 
     void CloseKeys()
@@ -136,6 +142,89 @@ private:
             (target_ ? REG_NOTIFY_CHANGE_LAST_SET : 0);
         armed = RegNotifyChangeKeyValue(key_, target_, filter, event, TRUE) == ERROR_SUCCESS;
         MenuTrace("registry.watch", !armed ? "failed" : target_ ? "target" : "ancestor", 0, traceId_);
+    }
+};
+
+// Precise Classes subscriptions can involve thousands of keys. Keep a cheap
+// recursive subscription live while a private thread builds/rebuilds them;
+// menu consumers only poll events and never wait for that enumeration.
+class MenuRegistryMonitor
+{
+public:
+    MenuRegistryMonitor(HKEY hive, std::wstring path, unsigned id, bool filterClasses = false)
+        : baseline_(hive, path, id), filteredEvent_(filterClasses ? CreateEventW(nullptr, TRUE, FALSE, nullptr) : nullptr),
+          changed_(filterClasses ? CreateEventW(nullptr, TRUE, FALSE, nullptr) : nullptr),
+          stop_(filterClasses ? CreateEventW(nullptr, TRUE, FALSE, nullptr) : nullptr)
+    {
+        if (!filteredEvent_ || !changed_ || !stop_) return; // Broad coverage remains conservative.
+        try
+        {
+            worker_ = std::thread([this, hive, path = std::move(path), id] {
+                try
+                {
+                    MenuRegistryWatch precise(hive, path, id, true, filteredEvent_);
+                    for (;;)
+                    {
+                        // Changes before all precise branches were armed are
+                        // still retained by the baseline. Publish that edge
+                        // before allowing consumers to ignore browse noise.
+                        if (WaitForSingleObject(baseline_.event, 0) == WAIT_OBJECT_0) Publish();
+                        ready_.store(precise.armed);
+                        HANDLE handles[] = {stop_, filteredEvent_};
+                        const auto wait = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+                        if (wait == WAIT_OBJECT_0) break;
+                        ready_.store(false);
+                        Publish(); // Invalidate before the expensive rearm.
+                        if (wait != WAIT_OBJECT_0 + 1 || !precise.Changed()) break;
+                    }
+                }
+                catch (...) { MenuTrace("registry.watch", "background_failed", 0, id); }
+                ready_.store(false);
+            });
+        }
+        catch (...) { MenuTrace("registry.watch", "thread_unavailable", 0, id); }
+    }
+    MenuRegistryMonitor(const MenuRegistryMonitor&) = delete;
+    MenuRegistryMonitor& operator=(const MenuRegistryMonitor&) = delete;
+    ~MenuRegistryMonitor()
+    {
+        if (stop_) SetEvent(stop_);
+        if (worker_.joinable()) worker_.join();
+        for (auto handle : {filteredEvent_, changed_, stop_}) if (handle) CloseHandle(handle);
+    }
+    bool Changed()
+    {
+        // Read readiness first: the worker publishes any handover edge before
+        // setting it, and never clears the consumer's independent dirty bit.
+        const bool preciseReady = ready_.load();
+        if (changed_) ResetEvent(changed_);
+        const bool broadChange = baseline_.Changed();
+        const bool changed = dirty_.exchange(false);
+        const bool preciseChange = preciseReady && WaitForSingleObject(filteredEvent_, 0) == WAIT_OBJECT_0;
+        return (broadChange && !preciseReady) || changed || preciseChange;
+    }
+    void AppendWaitHandles(std::vector<HANDLE> &handles, bool &complete) const
+    {
+        if (baseline_.armed && baseline_.event) handles.push_back(baseline_.event);
+        else complete = false;
+        // All handles remain alive until the process-wide monitor is retired;
+        // sibling consumers may still be waiting across a precise rebuild.
+        if (changed_) handles.push_back(changed_);
+    }
+    bool FilteredReady() const
+    {
+        return ready_.load() && WaitForSingleObject(filteredEvent_, 0) == WAIT_TIMEOUT;
+    }
+
+private:
+    MenuRegistryWatch baseline_;
+    HANDLE filteredEvent_ = nullptr, changed_ = nullptr, stop_ = nullptr;
+    std::atomic_bool ready_ = false, dirty_ = false;
+    std::thread worker_;
+    void Publish()
+    {
+        dirty_.store(true);
+        SetEvent(changed_);
     }
 };
 }

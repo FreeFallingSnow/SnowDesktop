@@ -36,7 +36,7 @@ constexpr std::uint64_t kMenuSignatureSeed = 14695981039346656037ull;
 std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
-using RegistryWatch = detail::MenuRegistryWatch;
+using RegistryWatch = detail::MenuRegistryMonitor;
 struct RegistryNotifications
 {
     std::mutex mutex;
@@ -1203,8 +1203,7 @@ std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete)
     complete = cache.changed != nullptr;
     if (cache.changed) handles.push_back(cache.changed);
     for (const auto &watch : cache.notifications->watches)
-        if (watch->armed && watch->event) handles.push_back(watch->event);
-        else complete = false;
+        watch->AppendWaitHandles(handles, complete);
     return handles;
 }
 void InvalidateMenuCache()
