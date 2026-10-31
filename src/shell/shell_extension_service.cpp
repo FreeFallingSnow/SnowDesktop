@@ -993,10 +993,11 @@ struct MenuService::Impl
                 continue;
             }
             if (row.invalid) continue; // A requested live verification still owns the snapshot.
+            if (row.request.rootMetadataOnly) { finish(); continue; }
             const auto managementProof = SnapshotDependency(row.request, row.view.contexts, true);
             if (!managementProof) { finish(); continue; }
             const auto needsSource = [&](const auto &entry) {
-                return !entry.separator && !entry.provider.empty() && entry.registration.empty() &&
+                return !entry.separator && entry.enabled && !entry.provider.empty() && entry.registration.empty() && observed.contains(entry.provider) &&
                     !StatePairForVerb(entry.key) && (!entry.key.empty() || !entry.pixels.empty()) &&
                     (sourceSelections.contains(key) || !DemandSource(catalogue, available, entry.provider, row.view.contexts));
             };
@@ -1004,7 +1005,8 @@ struct MenuService::Impl
             // static/packaged root must not retry every unrelated COM handler.
             std::vector<const Entry *> unresolved;
             for (const auto &entry : row.view.snapshot->entries)
-                if (needsSource(entry)) unresolved.push_back(&entry);
+                if (needsSource(entry))
+                    unresolved.push_back(&entry);
             if (unresolved.empty()) { finish(); continue; }
             sourceSelections.insert(key);
             for (const auto &source : catalogue.rows)
@@ -1024,7 +1026,7 @@ struct MenuService::Impl
                 std::wstring typeKey;
                 for (const auto &path : source.sources)
                     if (const auto at = path.find(L"\\shellex\\ContextMenuHandlers\\"); at != std::wstring::npos) { typeKey = path.substr(0, at); break; }
-                if (typeKey.empty() && source.kind != RegistrationKind::Packaged) continue;
+                if (typeKey.empty()) continue;
                 sourceAttempts.insert(attempts.begin(), attempts.end());
                 auto job = std::make_unique<SourceJob>();
                 job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
@@ -1612,7 +1614,7 @@ struct MenuService::Impl
                     {
                         std::lock_guard lock(mutex);
                         if (inspectDesktop && managementActive && iterationManagementGeneration == managementGeneration)
-                        { management = request; Queue(request, QueryPriority::Inspect, true); }
+                        { request.rootMetadataOnly = true; management = request; Queue(request, QueryPriority::Inspect, true); }
                         if (warmDesktop) Queue(request, QueryPriority::Prewarm, false);
                     }
                 }
@@ -2221,7 +2223,7 @@ void MenuService::Manage(const Request &request)
 CatalogueView MenuService::Inspect(const Request &source, bool refresh)
 {
     auto request = source;
-    request.rootMetadataOnly = false;
+    request.rootMetadataOnly = true;
     std::lock_guard lock(impl_->mutex);
     const bool reopening = !impl_->managementActive;
     impl_->managementActive = true;
@@ -2252,6 +2254,7 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
     auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
         ? request : request.paths.empty() ? impl_->management : request;
     selection.omitNvidiaCompatibility = false;
+    selection.rootMetadataOnly = true;
     const auto selectionKey = SelectionKey(selection);
     const auto previous = impl_->rows.find(selectionKey);
     const bool invalidated = previous != impl_->rows.end() && previous->second.invalid;

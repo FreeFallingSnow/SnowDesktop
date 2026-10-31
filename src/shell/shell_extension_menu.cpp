@@ -37,6 +37,13 @@ std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 constexpr unsigned kMaximumWarmQueries = 8;
+// Management keeps lighter root metadata, while retained vendor callbacks are
+// still bounded by both this query count and the same five-minute lifetime.
+constexpr unsigned kMaximumMetadataQueries = 32;
+unsigned MaximumWorkerQueries(const Request& request)
+{
+    return request.rootMetadataOnly ? kMaximumMetadataQueries : kMaximumWarmQueries;
+}
 Request ShellMenuRequest(const Request& source)
 {
     auto request = source;
@@ -708,7 +715,7 @@ struct Host
         return entries;
     }
     std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
-                            const std::wstring &title = L"root", const Request *request = nullptr, bool identityOnly = false)
+                            const std::wstring &title = L"root", const Request *request = nullptr)
     {
         std::vector<Entry> entries;
         std::vector<bool> omitted;
@@ -730,13 +737,11 @@ struct Host
                 }, PopupNeedsInitialView(verb));
                 tracking = previous;
             }
-            if (!RequiresNativePopup(child))
-                entry.children = Read(source, child, provider, depth + 1, entry.label, request,
-                    identityOnly || (request && request->rootMetadataOnly && !entry.key.empty()));
-            const bool placeholder = entry.children.empty() || (!identityOnly && !(request && request->rootMetadataOnly && !entry.key.empty()) &&
+            if (!RequiresNativePopup(child)) entry.children = Read(source, child, provider, depth + 1, entry.label);
+            const bool placeholder = entry.children.empty() ||
                 std::all_of(entry.children.begin(), entry.children.end(), [](const auto &e) {
                     return e.separator || (!e.token && e.children.empty());
-                }));
+                });
             if (placeholder)
             {
                 entry.children.clear(); entry.native = true; entry.token = next++;
@@ -745,7 +750,7 @@ struct Host
         };
         if (depth > 8)
             return entries;
-        if (depth == 0)
+        if (depth == 0 && !(request && request->rootMetadataOnly))
         {
             progress("initialize root menu");
             MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(menu), 0);
@@ -759,8 +764,7 @@ struct Host
             ++count;
             wchar_t label[2048]{};
             MENUITEMINFOW item{sizeof(item)};
-            item.fMask = identityOnly ? MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU :
-                MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS | MIIM_DATA;
+            item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS | MIIM_DATA;
             item.dwTypeData = label;
             item.cch = std::size(label);
             if (!GetMenuItemInfoW(menu, i, TRUE, &item))
@@ -777,15 +781,6 @@ struct Host
             entry.key = Utf8(verb);
             if (OwnedVerb(verb) && IsRootMenuCommand(source.menu, item.wID))
                 continue;
-            if (identityOnly)
-            {
-                // Canonical roots need descendant verbs for the same duplicate
-                // normalization as a complete read, but no descendant captions,
-                // bitmap callbacks, resources or executable command tokens.
-                if (item.hSubMenu) readCascade(entry, item.hSubMenu, static_cast<UINT>(i), verb);
-                omitted.push_back(false); entries.push_back(std::move(entry));
-                continue;
-            }
             const bool deferred = item.hSubMenu && InspectPopup(item.hSubMenu) == PopupContents::Deferred;
             if (depth == 0 && deferred)
                 entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
@@ -812,7 +807,15 @@ struct Host
             }
             else if (item.hSubMenu)
             {
-                if (previewRoots) cascades.push_back({entries.size(), item.hSubMenu, static_cast<UINT>(i), verb});
+                if (request && request->rootMetadataOnly && depth == 0)
+                {
+                    // Never initialize a cascade for a management switch.
+                    // Already supplied verb IDs can preserve legacy identity;
+                    // this passive walk never asks an extension to expand it.
+                    entry.children = ReadUnexpandedIdentity(source, item.hSubMenu, depth + 1);
+                    MenuTrace("management.metadata", "cascade_header");
+                }
+                else if (previewRoots) cascades.push_back({entries.size(), item.hSubMenu, static_cast<UINT>(i), verb});
                 else readCascade(entry, item.hSubMenu, static_cast<UINT>(i), verb);
             }
             else if (item.wID >= 1 && item.wID <= 0x7fff)
@@ -919,7 +922,7 @@ struct Host
             source->directory = request.background ? request.paths.front() :
                 std::filesystem::path(request.paths.front()).parent_path().wstring();
             if (FAILED(source->site.InitializeSelection(folder, window, static_cast<UINT>(children.size()), children.data()))) continue;
-            std::function<std::optional<Entry>(IExplorerCommand*, int, bool)> read = [&](IExplorerCommand* current, int depth, bool headerOnly) -> std::optional<Entry> {
+            std::function<std::optional<Entry>(IExplorerCommand*, int)> read = [&](IExplorerCommand* current, int depth) -> std::optional<Entry> {
                 if (depth > 8 || count >= kMaximumEntries) return {};
                 source->site.Attach(current);
                 EXPCMDSTATE state = ECS_HIDDEN;
@@ -937,13 +940,10 @@ struct Host
                 GUID canonical{};
                 if (SUCCEEDED(current->GetCanonicalName(&canonical)) && !IsEqualGUID(canonical, GUID_NULL))
                 { wchar_t text[40]{}; StringFromGUID2(canonical, text, 40); entry.key = Utf8(text); }
-                if (!headerOnly)
-                {
-                    PWSTR icon = nullptr;
-                    if (SUCCEEDED(current->GetIcon(selection.Get(), &icon)) && icon)
-                    { LoadMenuCommandIcon(entry, icon); CoTaskMemFree(icon); }
-                }
-                if ((flags & ECF_HASSUBCOMMANDS) && !headerOnly)
+                PWSTR icon = nullptr;
+                if (SUCCEEDED(current->GetIcon(selection.Get(), &icon)) && icon)
+                { LoadMenuCommandIcon(entry, icon); CoTaskMemFree(icon); }
+                if ((flags & ECF_HASSUBCOMMANDS) && !request.rootMetadataOnly)
                 {
                     ComPtr<IEnumExplorerCommand> enumeration;
                     if (SUCCEEDED(current->EnumSubCommands(&enumeration)) && enumeration)
@@ -951,18 +951,14 @@ struct Host
                         {
                             ComPtr<IExplorerCommand> child; ULONG fetched = 0;
                             if (enumeration->Next(1, &child, &fetched) != S_OK || fetched != 1 || !child) break;
-                            if (auto value = read(child.Get(), depth + 1, request.rootMetadataOnly))
+                            if (auto value = read(child.Get(), depth + 1))
                             {
                                 entry.children.push_back(std::move(*value));
-                                // Management only needs proof that this root
-                                // has an actual visible child. The explicit
-                                // selection query still reads every template.
-                                if (request.rootMetadataOnly) break;
                             }
                         }
                     if (entry.children.empty()) entry.enabled = false;
                 }
-                else if (!headerOnly && !request.rootMetadataOnly)
+                else if (!request.rootMetadataOnly)
                 {
                     entry.token = next++;
                     Command action; action.source = source.get(); action.explorer = current; action.selection = selection;
@@ -970,7 +966,7 @@ struct Host
                 }
                 return entry;
             };
-            if (auto entry = read(command.Get(), 0, false))
+            if (auto entry = read(command.Get(), 0))
             {
                 // A legacy aggregate may occasionally expose this modern verb.
                 // Some roots return GUID_NULL as their canonical name while
@@ -1085,7 +1081,7 @@ struct Host
     {
         if (!request.startPinOnly)
         {
-            if (++ordinaryQueries > kMaximumWarmQueries)
+            if (++ordinaryQueries > MaximumWorkerQueries(request))
                 return Reply{false, {}, "menu worker reached its query lifetime"};
             // Vendor timers/window hooks may still refer to earlier COM menus.
             // Keep their objects/HMENUs alive until this bounded worker exits;
@@ -1236,10 +1232,11 @@ struct Host
         }
         native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
-        // One query must finish populating cascades before we snapshot them.
+        // Complete menus must finish populating cascades before we snapshot them.
         // A partly populated Send To popup can already contain a third-party
         // item, so placeholder detection alone cannot recognize its async work.
-        const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? 0 : CMF_ITEMMENU) |
+        // Automatic management metadata owns no executable/complete child tree.
+        const UINT flags = CMF_NORMAL | (request.rootMetadataOnly ? 0u : CMF_SYNCCASCADEMENU) | (request.background ? 0 : CMF_ITEMMENU) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
         if (!request.startPinOnly)
         {
@@ -1284,10 +1281,7 @@ struct Host
         IdentifyEntries(reply.entries);
         if (request.rootMetadataOnly)
         {
-            std::function<void(std::vector<Entry>&)> removeTokens = [&](auto& entries) {
-                for (auto& entry : entries) { entry.token = 0; removeTokens(entry.children); }
-            };
-            removeTokens(reply.entries);
+            for (auto& entry : reply.entries) { entry.token = 0; entry.children.clear(); }
             commands.clear();
             MenuTrace("management.metadata", "roots", 0, static_cast<unsigned>(reply.entries.size()));
         }
@@ -1626,6 +1620,7 @@ struct Session::Impl
     bool delivered = false, detached = false, succeeded = false, startPinOnly = false;
     bool reusableQuery = false;
     unsigned queryUses = 0;
+    unsigned maximumQueryUses = kMaximumWarmQueries;
     bool ownsSessionSlot = false, preparationOnly = false, preparationReady = false, preparationFailed = false;
     void RemoveRetiredSamples()
     {
@@ -1713,7 +1708,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         std::erase_if(idle, [=](const auto &worker) {
             return worker->generation != generation || !worker->process->Running() ||
                 GetTickCount64() - worker->born >= kWorkerLifetimeMs ||
-                (!worker->startPinOnly && worker->queryUses >= kMaximumWarmQueries) ||
+                (!worker->startPinOnly && worker->queryUses >= MaximumWorkerQueries(request)) ||
                 (!request.startPinOnly && !usePreparedWorker && !worker->startPinOnly && !worker->preparationOnly);
         });
         const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
@@ -1745,6 +1740,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         if (!impl_) impl_ = std::make_unique<Impl>();
         impl_->startPinOnly = request.startPinOnly;
         impl_->reusableQuery = usePreparedWorker && !request.startPinOnly;
+        impl_->maximumQueryUses = MaximumWorkerQueries(request);
         ++impl_->queryUses;
         impl_->ownsSessionSlot = true; acquiredSlot = false;
         if (impl_->preparationOnly)
@@ -1800,7 +1796,7 @@ Session::~Session()
     // Reuse only a successful, non-invoked worker explicitly opted into by the
     // service. Its owning STA and loaded handlers stay warm, while each new
     // query gets a fresh menu/selection. Host retains old callback targets.
-    if ((startPinOnly || (impl_->reusableQuery && impl_->queryUses < kMaximumWarmQueries &&
+    if ((startPinOnly || (impl_->reusableQuery && impl_->queryUses < impl_->maximumQueryUses &&
             GetTickCount64() - impl_->born < kWorkerLifetimeMs)) &&
         impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
         impl_->generation == Caches().generation)

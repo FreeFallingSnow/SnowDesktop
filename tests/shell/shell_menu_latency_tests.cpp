@@ -478,14 +478,17 @@ void BenchmarkMenuBackgroundAndManagement()
         for (const auto& row : catalogue.rows) result.insert(row.id);
         return result;
     };
-    const auto required = [&](const ext::MenuView& view) {
+    const auto required = [&](const ext::MenuView& view, bool rootsOnly) {
         if (!view.snapshot || !view.snapshot->ok) return false;
         std::set<std::string> available;
         std::function<void(const std::vector<ext::Entry>&)> collect = [&](const auto& list) {
             for (const auto& entry : list) { available.insert(entry.provider); available.insert(utf8(entry.label)); collect(entry.children); }
         };
         collect(view.snapshot->entries);
-        return std::all_of(selection.required.begin(), selection.required.end(), [&](const auto& id) { return available.contains(id); });
+        return std::all_of(selection.required.begin(), selection.required.end(), [&](const auto& id) {
+            return (rootsOnly && !id.starts_with("verb:") && !id.starts_with("package:") && !id.starts_with("reg:")) || available.contains(id);
+        }) && (!rootsOnly || std::all_of(view.snapshot->entries.begin(), view.snapshot->entries.end(),
+            [](const auto& entry) { return entry.children.empty() && !entry.token; }));
     };
     const auto background = [&](ext::MenuService& service, std::string_view prefix) {
         for (const auto& sample : samples)
@@ -520,18 +523,19 @@ void BenchmarkMenuBackgroundAndManagement()
     ext::MenuService service(workspace.path / L"cache"); service.Configure(prefs);
     background(service, "background-empty-inventory");
     const auto inspect = [&](std::string_view scenario, bool force) {
+        auto metadata = selection.request; metadata.rootMetadataOnly = true;
         auto observation = begin();
         auto view = call(observation, [&] { return service.Inspect(selection.request, force); });
         bool selectedSeen = false, selectedCorrect = false;
         const auto observeSelection = [&] {
             if (selectedSeen) return;
-            const auto target = service.View(selection.request);
+            const auto target = service.View(metadata);
             if (target.pending || (!target.snapshot && target.error.empty())) return;
             selectedSeen = true;
-            selectedCorrect = required(target);
+            selectedCorrect = required(target, true);
             report(std::string(scenario) + ":selected-result", observation, true, view.catalogue.rows.size(),
                 target.snapshot ? target.snapshot->entries.size() : 0, 0, false, selectedCorrect,
-                target.error, "result", target.snapshot.has_value());
+                target.error, "result", false);
         };
         observeSelection();
         auto nextProgress = GetTickCount64() + 5000;
@@ -548,14 +552,14 @@ void BenchmarkMenuBackgroundAndManagement()
             }
         }
         const bool complete = !view.scanning && !view.menu.pending;
-        const auto target = service.View(selection.request);
+        const auto target = service.View(metadata);
         // Full discovery can exceed the 64-entry selection cache. Settings
         // retains observed root metadata after LRU eviction; verify this exact
         // selection at its first completed reply rather than pinning its row
         // or requiring that transient snapshot to survive every type sample.
         const bool correct = complete && selectedSeen && selectedCorrect;
         report(scenario, observation, complete, view.catalogue.rows.size(), target.snapshot ? target.snapshot->entries.size() : 0,
-            0, false, correct, view.menu.error, "result", target.snapshot.has_value());
+            0, false, correct, view.menu.error, "result", false);
         std::cout << "{\"scenario\":" << quote(scenario) << ",\"stage\":\"identities\",\"ids\":[";
         bool first = true;
         for (const auto& id : ids(view.catalogue)) { if (!first) std::cout << ','; first = false; std::cout << quote(id); }
@@ -585,6 +589,17 @@ void BenchmarkMenuBackgroundAndManagement()
         std::cout << "{\"scenario\":\"settings-refresh-and-reopen\",\"stage\":\"skipped\",\"reason\":\"cold discovery exceeded the 180s observation budget; the original 30s failure remains recorded\"}" << std::endl;
     service.EndInspection(); pumpFor(500);
     background(service, "background-known-inventory");
+    {
+        auto observation = begin(); service.QueryFullMenu(selection.request);
+        ext::MenuView target;
+        const auto deadline = GetTickCount64() + 20000;
+        do { target = service.View(selection.request); if (!target.pending && target.snapshot) break; pumpFor(20); }
+        while (GetTickCount64() < deadline);
+        const bool correct = target.snapshot && !target.pending && required(target, false);
+        report("actual-menu-full", observation, !target.pending, 0, target.snapshot ? target.snapshot->entries.size() : 0,
+            0, false, correct, target.error, "result", correct);
+        failures += !correct;
+    }
     // Start a fresh explicit request, then close settings while work is pending.
     auto cancellation = begin(); service.Inspect(selection.request, true); pumpFor(250);
     service.Configure({});

@@ -3174,8 +3174,8 @@ void TestFileSnapshotNotificationReuse()
     saveLink(text);
     // A newly introduced, unselected target command belongs to the complete
     // management view. Its discovery is explicitly requested here.
-    service.Inspect(linked, true);
-    PumpUntil([&] { return !service.Inspect(linked).scanning && service.View(linked).snapshot.has_value(); },
+    service.Inspect({}, true); service.Query(linked, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return !service.Inspect().scanning && service.View(linked).snapshot.has_value(); },
         "establish a complete management view for shortcut target registrations");
     const auto shortcutQueries = queries.load();
     const auto shortcutSelectionQueries = selectionQueries(linked);
@@ -3208,8 +3208,8 @@ void TestFileSnapshotNotificationReuse()
     Expect(!service.View(linked).snapshot && queries == shortcutQueries &&
         selectionQueries(linked) == shortcutSelectionQueries,
         "target registration invalidates the old shortcut without background aggregate queries for retained selections");
-    service.Inspect(linked);
-    PumpUntil([&] { auto view = service.View(linked); return !service.Inspect(linked).scanning && view.snapshot && !view.pending; },
+    service.Query(linked, ext::QueryPriority::Inspect);
+    PumpUntil([&] { auto view = service.View(linked); return !service.Inspect().scanning && view.snapshot && !view.pending; },
         "resolve registrations affecting the shortcut target");
     std::cout << "Shortcut target registration: aggregate=" << shortcutQueries << "->" << queries.load()
         << " selected=" << shortcutSelectionQueries << "->" << selectionQueries(linked)
@@ -3568,7 +3568,7 @@ void TestSourceScheduler(bool recovery = false)
     const auto cache = directory.path / L"cache";
     {
         ext::MenuService service(cache, factory, [catalogue] { return catalogue; });
-        service.Inspect(request);
+        service.Query(request, ext::QueryPriority::Inspect);
         PumpUntil([&] { return probes > 0; }, "unattributed actual item schedules a separate provider query");
         Expect(!wrongSourceMode, "metadata attribution must not inherit original shortcut executable mode");
         const auto first = service.View(request);
@@ -3582,6 +3582,7 @@ void TestSourceScheduler(bool recovery = false)
         release = true;
         PumpUntil([&] { return !service.Inspect(request).scanning; }, "source discovery finishes without polling restarting the query");
         service.Inspect(request, true);
+        service.Query(request, ext::QueryPriority::Inspect, true);
         PumpUntil([&] {
             const auto view = service.Inspect(request);
             return !view.scanning && std::any_of(view.catalogue.rows.begin(), view.catalogue.rows.end(), [&](const auto &item) {
@@ -3631,6 +3632,7 @@ void TestSourceDeduplication()
     auto inspect = [&](const wchar_t *name, bool refresh = false) {
         const auto file = directory.path / name; std::ofstream(file) << "private";
         ext::Request request; request.paths = {file.wstring()}; service.Inspect(request, refresh);
+        service.Query(request, ext::QueryPriority::Inspect, refresh);
         PumpUntil([&] { const auto view = service.Inspect(request); return service.View(request).snapshot.has_value() && !view.scanning && !view.menu.pending; },
             "source discovery finishes for the actual requested file");
     };
@@ -5296,7 +5298,11 @@ void TestCatalogueDependencies()
     PumpUntil([&] { return scanNumber >= 3 && !service.Inspect().scanning; }, "relevant registration scan completes");
     Expect(!service.View(request).snapshot, "a relevant registration change invalidates its dependent snapshot");
     Expect(service.Inspect(request).menu.pending, "a relevant dependency invalidation still refreshes the inspected selection");
-    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "the invalidated current selection publishes a fresh snapshot");
+    auto metadata = request; metadata.rootMetadataOnly = true;
+    PumpUntil([&] { return service.View(metadata).snapshot.has_value(); }, "the invalidated settings selection publishes fresh root metadata");
+    Expect(!service.View(request).snapshot, "settings metadata does not rebuild the invalidated complete popup tree");
+    service.Query(request);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "an actual popup rebuilds its invalidated complete tree");
 }
 
 void TestUsefulManagementItems()
