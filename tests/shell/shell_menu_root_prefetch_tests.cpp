@@ -3,6 +3,7 @@
 #include "ui/menu/modern_menu_dynamic_items_rules.h"
 #include "shell_service_catalogue_fixture.h"
 #include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,6 +38,24 @@ struct Workspace
     }
     ~Workspace() { std::error_code error; std::filesystem::remove_all(path, error); }
 };
+void SetImage(ext::Entry& entry, int size, unsigned char color)
+{
+    entry.width = entry.height = size;
+    entry.pixels.resize(static_cast<size_t>(size) * size * 4);
+    for (size_t i = 0; i < entry.pixels.size(); i += 4)
+    {
+        entry.pixels[i] = entry.pixels[i + 1] = entry.pixels[i + 2] = color;
+        entry.pixels[i + 3] = 255;
+    }
+}
+bool ImageMatches(HBITMAP image, const ext::Entry& entry)
+{
+    if (entry.pixels.empty()) return image == nullptr;
+    BITMAP bitmap{};
+    return image && GetObjectW(image, sizeof(bitmap), &bitmap) && bitmap.bmBits &&
+        bitmap.bmWidth == entry.width && bitmap.bmHeight == entry.height &&
+        std::memcmp(bitmap.bmBits, entry.pixels.data(), entry.pixels.size()) == 0;
+}
 }
 
 // Manual observation of installed providers. No popup is shown and no command
@@ -70,6 +89,7 @@ void ProbeShellMenuIconStages()
     for (const bool source : {false, true})
     {
         ext::Request request; request.paths = {selected.wstring()}; request.context = ext::Context::File;
+        request.visibleMenuProviders = std::vector<std::string>{"*"};
         if (source) { request.sourceClsid = L"{23170f69-40c1-278a-1000-000100020000}"; request.sourceKey = L"*"; }
         ext::Session session(request, 8000, false);
         std::optional<ext::Reply> complete;
@@ -82,6 +102,7 @@ void ProbeShellMenuIconStages()
             complete = session.Poll();
             if (!complete) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
+        if (auto roots = session.PollRoots()) report("preview", *roots);
         Check(complete && complete->ok, "real installed-provider icon observation completes");
         report(source ? "source" : "aggregate", *complete);
     }
@@ -188,7 +209,8 @@ static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, b
     service.Shutdown();
 }
 
-static void RunStableSourceCompletion(bool footer, bool previewImage = false)
+static void RunStableSourceCompletion(bool footer, bool previewImage = false,
+                                     int finalSize = 64, bool finalImage = true)
 {
     Workspace workspace;
     const auto selected = workspace.path / L"selected.txt", cache = workspace.path / L"cache";
@@ -211,10 +233,11 @@ static void RunStableSourceCompletion(bool footer, bool previewImage = false)
     ext::Entry child; child.key = "archive-action"; child.label = L"Archive action"; child.token = 91;
     seven.children = {child};
     auto sourceSeven = seven;
-    sourceSeven.width = sourceSeven.height = 32;
-    sourceSeven.pixels.resize(32 * 32 * 4, 255);
+    SetImage(sourceSeven, 32, 80);
+    SetImage(sourceSeven.children.front(), 24, 90);
     auto finalSeven = sourceSeven;
-    finalSeven.width = finalSeven.height = 64; finalSeven.pixels.resize(64 * 64 * 4, 255);
+    SetImage(finalSeven, finalImage ? finalSize : 0, 160);
+    SetImage(finalSeven.children.front(), finalImage ? finalSize : 0, 170);
     auto otherSeven = seven;
     otherSeven.provider = "verb:other-seven"; otherSeven.key = "other-seven";
     otherSeven.children.front().label = L"Other archive action";
@@ -222,7 +245,7 @@ static void RunStableSourceCompletion(bool footer, bool previewImage = false)
     auto preview = seven;
     if (previewImage)
     {
-        preview.width = preview.height = 16; preview.pixels.resize(16 * 16 * 4, 255);
+        SetImage(preview, 16, 40);
     }
     ext::Entry loading; loading.label = L"…"; loading.enabled = false; preview.children = {loading};
     ext::Entry divider; divider.separator = true;
@@ -297,12 +320,16 @@ static void RunStableSourceCompletion(bool footer, bool previewImage = false)
         items[static_cast<size_t>(position)].command == command && items[static_cast<size_t>(position)].image &&
         !items[static_cast<size_t>(position)].childrenPending,
         "LATE_SOURCE_NO_DUPLICATE: ownership and icon arrival complete the same preview row in place");
-    if (firstImage) Check(items[static_cast<size_t>(position)].image == firstImage,
-        "an already displayed preview bitmap is not replaced by a larger source bitmap");
+    Check(ImageMatches(items[static_cast<size_t>(position)].image, sourceSeven) &&
+        ImageMatches(items[static_cast<size_t>(position)].children.front().image, sourceSeven.children.front()),
+        "INTERIM_ICON_RECOVERS: complete source pixels replace the provisional image without resampling");
+    if (firstImage) Check(items[static_cast<size_t>(position)].image != firstImage,
+        "a small or otherwise incorrect first bitmap is not locked for the whole popup");
     Check(std::count_if(items.begin(), items.end(), [](const auto &item) { return item.separator; }) == 1,
         "ONE_EXTENSION_BOUNDARY: independent batches do not introduce per-provider dividers");
     const auto childCommand = items[static_cast<size_t>(position)].children.front().command;
     const auto sourceImage = items[static_cast<size_t>(position)].image;
+    auto hovered = items;
     releaseAggregate = true;
     Until([&] { poll(); return options.pollItemsFinished(); }, "aggregate finalizes without reordering visible source rows");
     const auto completedCommands = rowCommands();
@@ -314,9 +341,25 @@ static void RunStableSourceCompletion(bool footer, bool previewImage = false)
         "STABLE_ROOT_ORDER: fixed ordering retains existing relative order and distinct same-caption commands");
     const auto completedArchive = std::find_if(items.begin(), items.end(),
         [=](const auto &item) { return item.command == command; });
-    Check(completedArchive != items.end() && completedArchive->children.front().command == childCommand &&
-        completedArchive->image == sourceImage,
+    Check(completedArchive != items.end() && completedArchive->children.front().command == childCommand,
         "root and child command IDs survive aggregate ownership reconciliation");
+    const auto& expectedImage = finalImage ? finalSeven : sourceSeven;
+    Check(ImageMatches(completedArchive->image, expectedImage) &&
+        ImageMatches(completedArchive->children.front().image, expectedImage.children.front()),
+        "FINAL_ICON_AUTHORITATIVE: final root/child pixels correct interim content; missing images retain valid source pixels");
+    const auto hoveredArchive = [&]() -> const menu::Item& {
+        return *std::find_if(hovered.begin(), hovered.end(), [=](const auto& row) { return row.command == command; });
+    };
+    unsigned replacedChildren = 0;
+    const auto before = [&](auto&) { ++replacedChildren; };
+    const auto after = [](auto&) {};
+    Check(!menu::ApplyPrefetchedChildren(hovered, items, false, before, after) && hoveredArchive().image == sourceImage,
+        "pointer press defers icon updates as well as subtree completion");
+    const bool imagesChanged = menu::ApplyPrefetchedChildren(hovered, items, true, before, after);
+    Check(imagesChanged == finalImage && replacedChildren == 0 &&
+        ImageMatches(hoveredArchive().image, expectedImage) &&
+        ImageMatches(hoveredArchive().children.front().image, expectedImage.children.front()),
+        "HOVERED_ICON_RECOVERS: valid images update loaded roots/children without replacing their backing arrays");
     Check(std::count_if(items.begin(), items.end(), [](const auto &item) { return item.separator; }) == 1 &&
         !items.front().separator && !items.back().separator,
         "completed extension section has exactly one host boundary with or without the footer");
@@ -331,6 +374,15 @@ static void RunStableSourceCompletion(bool footer, bool previewImage = false)
     menu::Options warmOptions; warm.Attach(warmItems, warmOptions, footer ? 7 : 0);
     Check(renderOrder(items) == renderOrder(warmItems),
         "COLD_WARM_SAME_ORDER: native aggregate order and cache hits use the same deterministic root ordering");
+    if (finalImage)
+    {
+        const auto warmArchive = std::find_if(warmItems.begin(), warmItems.end(), [](const auto& row) {
+            return row.label == L"7-Zip" && !row.children.empty() && row.children.front().label == L"Archive action";
+        });
+        Check(warmArchive != warmItems.end() && ImageMatches(warmArchive->image, finalSeven) &&
+            ImageMatches(warmArchive->children.front().image, finalSeven.children.front()),
+            "COLD_WARM_SAME_ICON: both openings use the authoritative complete image pixels");
+    }
     Check(popup.Invoke(childCommand, {}), "the retained child command remains invokable");
     Until([&] { return invoked == 1; }, "retained command resolves against a fresh aggregate exactly once");
     service.Shutdown();
@@ -356,6 +408,9 @@ void TestShellMenuRootPrefetch()
     RunStableSourceCompletion(true);
     RunStableSourceCompletion(false, true);
     RunStableSourceCompletion(true, true);
+    RunStableSourceCompletion(false, true, 32); // Same size, corrected pixels.
+    RunStableSourceCompletion(true, true, 13); // A valid final image may be smaller.
+    RunStableSourceCompletion(false, true, 64, false); // No final image must not erase a valid one.
     ext::Request policy; policy.visibleMenuProviders = std::vector<std::string>{"*"};
     for (const auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
         for (const auto path : {L"C:\\Private\\file.txt", L"C:\\Private\\program.lnk", L"C:\\Private\\folder", L"::{645FF040-5081-101B-9F08-00AA002F954E}"})

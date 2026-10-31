@@ -17,6 +17,13 @@ inline bool ApplyPrefetchedChildren(std::vector<Item> &current, const std::vecto
             return item.command && candidate.command == item.command && candidate.label == item.label;
         });
         if (next == updated.end()) continue;
+        // Image content does not move the row or change its command target.
+        // Correct interim artwork even while its loaded cascade stays open.
+        if (next->image && item.image != next->image)
+        {
+            item.image = next->image;
+            changed = true;
+        }
         if (item.childrenPending && !next->childrenPending)
         {
             before(item.children);
@@ -24,7 +31,6 @@ inline bool ApplyPrefetchedChildren(std::vector<Item> &current, const std::vecto
             item.childrenPending = false;
             item.enabled = next->enabled;
             item.checked = next->checked;
-            if (!item.image) item.image = next->image;
             after(item.children);
             changed = true;
         }

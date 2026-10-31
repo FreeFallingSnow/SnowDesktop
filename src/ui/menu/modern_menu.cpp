@@ -302,7 +302,8 @@ public:
                             if (parentDepth >= 0 && static_cast<size_t>(parentDepth) < popups_.size())
                                 OpenSubmenu(*popups_[parentDepth], parentItem, keyboard);
                         });
-                    if (prefetched && !popups_.empty()) Render(*popups_.front());
+                    if (prefetched)
+                        for (const auto &popup : popups_) Render(*popup);
                 }
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;

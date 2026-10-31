@@ -301,7 +301,8 @@ class Presentation
     }
     // Rebind visible IDs to the fresh exact reference, including descendants
     // whose parent acquired registration metadata. Never relax execution lookup.
-    void RebindRow(modern_menu::Item &next, const modern_menu::Item &previous)
+    void RebindRow(modern_menu::Item &next, const modern_menu::Item &previous,
+                   const Entry &nextEntry, const Entry &previousEntry)
     {
         const auto reference = commands_.at(next.command);
         const bool original = originalCommands_.contains(next.command);
@@ -309,12 +310,17 @@ class Presentation
         if (original) originalCommands_.insert(previous.command);
         else originalCommands_.erase(previous.command);
         next.command = previous.command;
-        // A higher-resolution or differently padded late bitmap must not resize
-        // artwork which is already visible during this popup session.
-        if (previous.image) next.image = previous.image;
+        // Reuse identical artwork, not the first available image. A complete
+        // result must be able to correct an interim icon, in either size direction.
+        if (previous.image && (!next.image ||
+            std::tie(nextEntry.width, nextEntry.height, nextEntry.pixels) ==
+            std::tie(previousEntry.width, previousEntry.height, previousEntry.pixels)))
+            next.image = previous.image;
         std::set<UINT> used;
-        for (auto &child : next.children) if (!child.separator)
+        for (size_t index = 0; index < next.children.size(); ++index)
         {
+            auto &child = next.children[index];
+            if (child.separator) continue;
             const auto &childReference = commands_.at(child.command);
             const auto old = std::find_if(previous.children.begin(), previous.children.end(), [&](const auto &candidate) {
                 const auto found = commands_.find(candidate.command);
@@ -324,7 +330,8 @@ class Presentation
             if (old != previous.children.end())
             {
                 used.insert(old->command);
-                RebindRow(child, *old);
+                RebindRow(child, *old, nextEntry.children[index],
+                    previousEntry.children[static_cast<size_t>(std::distance(previous.children.begin(), old))]);
             }
         }
     }
@@ -395,7 +402,7 @@ class Presentation
                 auto merged = presentation_detail::MergeEntry(previous, entry, rootCommands_.contains(command));
                 if (!rootCommands_.contains(command) && presentation_detail::SameEntry(previous, merged)) continue;
                 auto converted = Convert({merged}, {}, original).front();
-                RebindRow(converted, *found);
+                RebindRow(converted, *found, merged, previous);
                 *found = std::move(converted);
                 rowEntries_[command] = std::move(merged);
                 rootCommands_.erase(command);
