@@ -8,6 +8,7 @@ struct ManagementMember
 {
     std::string id;
     unsigned contexts = 0;
+    std::string group;
     friend bool operator==(const ManagementMember &, const ManagementMember &) = default;
 };
 struct ManagementRow
@@ -57,7 +58,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
         else if (row.display.pixels.empty() && !entry.display.pixels.empty()) row.display = entry.display;
         const auto memberId = pair ? id : entry.id;
         const auto member = std::find_if(row.members.begin(), row.members.end(), [&](const auto &m) { return m.id == memberId; });
-        if (member == row.members.end()) row.members.push_back({memberId, entry.contexts});
+        if (member == row.members.end()) row.members.push_back({memberId, entry.contexts, entry.display.registration});
         else member->contexts |= entry.contexts;
         if (pair && !entry.display.label.empty()) pairLabels[id].insert(entry.display.label);
         row.contexts |= entry.contexts;
@@ -90,6 +91,43 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
     });
     return result;
 }
+
+// Installed sources and observed commands have different completeness. This
+// view lists registered extensions without claiming they produced a live menu.
+inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& registrations, const Catalogue& observed,
+                                                         Category category, std::wstring filter = {})
+{
+    auto sources = registrations;
+    for (auto& source : sources.rows)
+    {
+        if (source.kind == RegistrationKind::Handler && std::any_of(source.verbs.begin(), source.verbs.end(), [](const auto& verb) {
+            return StateCommandLower(verb) == "{470c0ebd-5d73-4d58-9ced-e91e22e23282}";
+        })) source.id = "state:start-pin"; // Keep Start on its existing dedicated lane.
+        source.linked = true;
+        source.display.provider = source.id;
+        source.display.registration.clear();
+        source.display.token = 0; source.display.children.clear();
+    }
+    for (const auto& command : observed.rows)
+        if (std::none_of(sources.rows.begin(), sources.rows.end(), [&](const auto& source) {
+            return source.id == command.id || (!command.display.registration.empty() && source.id == command.display.registration);
+        }))
+            sources.rows.push_back(command);
+    auto result = ManagementRows(sources, category, std::move(filter));
+    for (auto& row : result)
+    {
+        // Group actions include current command exceptions as well as source
+        // rules, so the same switch also governs future roots from that source.
+        std::vector<ManagementMember> commands;
+        for (const auto& command : observed.rows)
+            if (!command.display.registration.empty() &&
+                std::any_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.display.registration; }))
+                commands.push_back({command.display.provider, command.contexts, command.display.registration});
+        for (const auto& command : commands)
+            if (std::none_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.id; })) row.members.push_back(command);
+    }
+    return result;
+}
 inline bool SameManagementRow(const ManagementRow &a, const ManagementRow &b)
 {
     return a.id == b.id && a.contexts == b.contexts && a.types == b.types && a.members == b.members && a.applications == b.applications &&
@@ -118,7 +156,11 @@ inline std::optional<bool> ManagementCommon(const Preferences &prefs, const Mana
     std::optional<bool> result;
     for (const auto &member : row.members)
     {
-        const bool shown = CommonShown(prefs, member.id, category);
+        auto id = member.id;
+        const auto context = category == Category::Objects ? Context::File : Context::FolderBackground;
+        if (!member.group.empty()) { auto entry = row.display; entry.provider = id; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
+        else if (id == row.display.provider) id = EntryVisibilityId(prefs, row.display, context);
+        const bool shown = CommonShown(prefs, id, category);
         if (result && *result != shown) return {};
         result = shown;
     }
@@ -129,15 +171,29 @@ inline std::optional<Visibility> ManagementOverride(const Preferences &prefs, co
     std::optional<Visibility> result;
     for (const auto &member : row.members) if (member.contexts & ContextBit(context))
     {
-        const auto visibility = OverrideOf(prefs, member.id, context);
+        auto id = member.id;
+        if (!member.group.empty()) { auto entry = row.display; entry.provider = id; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
+        else if (id == row.display.provider) id = EntryVisibilityId(prefs, row.display, context);
+        const auto visibility = OverrideOf(prefs, id, context);
         if (result && *result != visibility) return {};
         result = visibility;
     }
     return result;
 }
+inline void ClearManagementAliases(Preferences& prefs, const ManagementRow& row, Category category)
+{
+    if (row.display.registration.empty() || row.display.provider.empty() ||
+        std::any_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == row.display.provider; })) return;
+    // A known static command previously stored under its canonical alias is
+    // the same control. Retire that alias so it cannot defeat this explicit edit.
+    std::erase_if(prefs.rules, [&](const auto& rule) { return rule.id == row.display.provider && rule.category == category; });
+    std::erase_if(prefs.overrides, [&](const auto& rule) { return rule.id == row.display.provider && CategoryOf(rule.context) == category; });
+    std::erase_if(prefs.shown, [&](const auto& rule) { return rule.id == row.display.provider && CategoryOf(rule.context) == category; });
+}
 inline void SetManagementCommon(Preferences &prefs, const ManagementRow &row, Category category, bool shown)
 {
     Normalize(prefs);
+    ClearManagementAliases(prefs, row, category);
     for (const auto &member : row.members)
     {
         // The primary switch is an explicit show/hide action. Old migrated
@@ -155,6 +211,7 @@ inline void SetManagementResults(Preferences &prefs, const std::vector<Managemen
 }
 inline void SetManagementOverride(Preferences &prefs, const ManagementRow &row, Context context, Visibility value)
 {
+    ClearManagementAliases(prefs, row, CategoryOf(context));
     for (const auto &member : row.members) if (member.contexts & ContextBit(context)) SetOverride(prefs, member.id, context, value);
 }
 enum class ManagementView { Objects, Applications, Extensions };

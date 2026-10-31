@@ -1,6 +1,6 @@
 #include "shell/shell_extension_service.h"
 #include "shell/shell_extension_menu_presentation.h"
-#include "shell/shell_extension_discovery.h"
+#include "shell_menu_samples.h"
 #include "common/json_string.h"
 #include <chrono>
 #include <filesystem>
@@ -522,6 +522,26 @@ void BenchmarkMenuBackgroundAndManagement()
     };
     ext::MenuService service(workspace.path / L"cache"); service.Configure(prefs);
     background(service, "background-empty-inventory");
+    // This is the default settings view: installed-source metadata only. Keep
+    // its timing and completeness separate from actual command observations.
+    auto installed = selection.request; installed.catalogueOnly = true;
+    for (const auto scenario : {"extensions-cold", "extensions-refresh", "extensions-reopen"})
+    {
+        const bool force = std::string_view(scenario) == "extensions-refresh";
+        auto observation = begin();
+        auto view = call(observation, [&] { return service.Inspect(installed, force); });
+        const auto deadline = GetTickCount64() + 30000;
+        while (view.scanning && GetTickCount64() < deadline)
+        {
+            pumpFor(300);
+            view = call(observation, [&] { return service.Inspect(installed); });
+        }
+        const bool correct = !view.scanning && !view.registrations.rows.empty() &&
+            traceCounters().queries == observation.before.queries;
+        report(scenario, observation, !view.scanning, view.registrations.rows.size(), 0, 0, false, correct, {}, "result", false);
+        failures += !correct;
+        if (std::string_view(scenario) != "extensions-cold") service.EndInspection();
+    }
     const auto inspect = [&](std::string_view scenario, bool force) {
         auto metadata = selection.request; metadata.rootMetadataOnly = true;
         auto observation = begin();

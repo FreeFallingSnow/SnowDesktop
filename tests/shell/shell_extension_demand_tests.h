@@ -477,7 +477,7 @@ inline void LearnFromManagement()
     };
     {
         ext::MenuService service(cache, factory, [catalogue] { return catalogue; }, {}, {}, [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
-        service.Configure(prefs); service.Inspect(first);
+        service.Configure(prefs); service.Query(first, ext::QueryPriority::Inspect);
         PumpUntil([&] {
             if (probes < 2) return false;
             try {
@@ -490,7 +490,7 @@ inline void LearnFromManagement()
                 const auto plan = ext::PlanDemandQueries(catalogue, observed, prefs, second, 1);
                 return schema == 3 && !plan.full && plan.sources.size() == 2;
             } catch (...) { return false; }
-        }, "explicit management learns and persists canonical and legacy source proof");
+        }, "explicit complete source proof persists canonical and legacy routing evidence");
         Expect(aggregate == 1, "management source learning does not repeat the selected aggregate query");
         service.Shutdown();
     }

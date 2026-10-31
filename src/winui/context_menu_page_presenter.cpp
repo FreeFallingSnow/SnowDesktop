@@ -50,7 +50,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::MenuFlyoutItem refresh, chooseObject, chooseFolder, chooseDesktop;
     muxc::SelectorBar views;
     muxc::SelectorBarItem byObject, byApplication, byExtension;
-    ext::ManagementView mode = ext::ManagementView::Objects;
+    ext::ManagementView mode = ext::ManagementView::Applications;
     std::string routeFocus;
     std::vector<ext::ManagementRow> filteredRows;
     muxc::TextBlock heading, status, refreshStatus;
@@ -152,7 +152,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         presenter_controls::HideSettingsTabScrollBar(tabs);
         presenter_controls::HideSettingsTabScrollBar(views);
         views.Items().Append(byObject); views.Items().Append(byApplication); views.Items().Append(byExtension);
-        views.SelectedItem(byObject);
+        views.SelectedItem(byApplication);
         muxc::Grid selectors; selectors.ColumnSpacing(16);
         Column(selectors, 1, mux::GridUnitType::Auto); Column(selectors, 1, mux::GridUnitType::Star);
         tabs.HorizontalAlignment(mux::HorizontalAlignment::Left);
@@ -187,7 +187,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (closed || updating) return;
             mode = views.SelectedItem() == byApplication ? ext::ManagementView::Applications :
                 views.SelectedItem() == byExtension ? ext::ManagementView::Extensions : ext::ManagementView::Objects;
-            ClearRows(); BuildRows();
+            ClearRows(); Reload();
         }); revoke.push_back([c = views, changedView] { c.SelectionChanged(changedView); });
         auto reload = refresh.Click([this](auto &&, auto &&) { if (active && !closed) Reload(true); });
         revoke.push_back([c = refresh, reload] { c.Click(reload); });
@@ -196,7 +196,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         auto folders = chooseFolder.Click([this](auto &&, auto &&) { if (active && !closed) Pick(true); });
         revoke.push_back([c = chooseFolder, folders] { c.Click(folders); });
         auto desktop = chooseDesktop.Click([this](auto &&, auto &&) {
-            request = {}; request.context = ext::Context::Desktop; request.background = true; routed = false; Reload(true);
+            request = {}; request.context = ext::Context::Desktop; request.background = true; routed = false;
+            mode = ext::ManagementView::Objects;
+            const bool before = std::exchange(updating, true); views.SelectedItem(byObject); updating = before;
+            Reload(true);
         }); revoke.push_back([c = chooseDesktop, desktop] { c.Click(desktop); });
         Text();
     }
@@ -248,6 +251,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!active || closed || !actions.contextMenu) return;
         try
         {
+            request.catalogueOnly = mode == ext::ManagementView::Applications;
             view = actions.contextMenu(request, refreshCatalogue);
             queryFailed = false;
             if (!routed && !view.selection.paths.empty())
@@ -268,9 +272,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!active || closed || !actions.contextMenu) return;
         try
         {
+            request.catalogueOnly = mode == ext::ManagementView::Applications;
             auto next = actions.contextMenu(request, false);
             queryFailed = false;
-            const bool changed = next.catalogue.revision != view.catalogue.revision;
+            const bool changed = next.catalogue.revision != view.catalogue.revision || next.registrations.revision != view.registrations.revision;
             if (request.paths.empty() && next.selection.context == ext::Context::Desktop && !next.selection.paths.empty()) request = next.selection;
             view = std::move(next);
             if (changed) { ext::MigrateAssociations(prefs, view.catalogue); BuildRows(); }
@@ -300,6 +305,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         request.background = category == ext::Category::Background;
         // A background menu has exactly one directory; multi-select applies to objects.
         if (request.background && request.paths.size() > 1) request.paths.resize(1);
+        if (mode == ext::ManagementView::Applications)
+        {
+            mode = ext::ManagementView::Objects;
+            const bool before = std::exchange(updating, true); views.SelectedItem(byObject); updating = before;
+        }
         Reload(true);
     }
     mux::UIElement Icon(const ext::Entry &entry)
@@ -415,7 +425,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         // Only explicit category/localization changes reset the list. Polling,
         // refresh and search reconcile identities and preserve surviving rows.
         if (rowCategory != category) { ClearRows(); rowCategory = category; }
-        filteredRows = ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()));
+        filteredRows = mode == ext::ManagementView::Applications
+            ? ext::ExtensionManagementRows(view.registrations, view.catalogue, category, std::wstring(search.Text()))
+            : ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()));
         hasVisibleRows = !filteredRows.empty();
         auto cards = ext::ManagementCards(filteredRows, category, mode);
         std::vector<ext::ManagementRow> visible;

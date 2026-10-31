@@ -26,6 +26,8 @@ struct CatalogueView
     Request selection;
     MenuView menu;
     bool scanning = false;
+    // Installed extensions are metadata, not proof of observed commands.
+    Catalogue registrations;
 };
 // An injected query replaces only the supervised process boundary in scheduler
 // tests. Scheduling, de-duplication, persistence and publication remain real.
@@ -96,6 +98,6 @@ template <> struct Fields<shell_extensions::MenuView>
 };
 template <> struct Fields<shell_extensions::CatalogueView>
 {
-    template<class T> static auto Tie(T &v) { return std::tie(v.catalogue, v.selection, v.menu, v.scanning); }
+    template<class T> static auto Tie(T &v) { return std::tie(v.catalogue, v.selection, v.menu, v.scanning, v.registrations); }
 };
 }

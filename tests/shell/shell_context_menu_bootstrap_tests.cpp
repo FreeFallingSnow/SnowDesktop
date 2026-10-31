@@ -1,6 +1,6 @@
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_extension_menu.h"
-#include "shell/shell_extension_discovery.h"
+#include "shell_menu_samples.h"
 #include <shlguid.h>
 #include <wrl/client.h>
 #include <wrl/implements.h>

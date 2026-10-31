@@ -33,8 +33,8 @@ struct Request
     // Private popup read projection. Absent keeps complete inspection; an empty
     // set reads no extension details. Part of the snapshot/query identity.
     std::optional<std::vector<std::string>> visibleMenuProviders;
-    // Automatic management discovery retains root metadata, never a complete
-    // popup/click snapshot. Explicit selection reads always keep this false.
+    // Settings command inspection retains roots, never a complete popup/click
+    // snapshot. Installed-extension management uses catalogueOnly on Inspect.
     bool rootMetadataOnly = false;
     friend bool operator==(const Request &, const Request &) = default;
 };
@@ -56,6 +56,25 @@ struct Reply
     std::vector<Entry> entries;
     std::string error;
 };
+
+inline bool HasVisibilityRule(const Preferences& prefs, const std::string& id, Context context)
+{
+    const auto key = StateVisibilityId(id);
+    return std::any_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto& rule) {
+        return StateVisibilityId(rule.id) == key && rule.category == CategoryOf(context);
+    }) || std::any_of(prefs.overrides.begin(), prefs.overrides.end(), [&](const auto& rule) {
+        return StateVisibilityId(rule.id) == key && rule.context == context && rule.visibility != Visibility::Inherit;
+    }) || std::any_of(prefs.shown.begin(), prefs.shown.end(), [&](const auto& rule) {
+        return StateVisibilityId(rule.id) == key && rule.context == context;
+    });
+}
+inline std::string EntryVisibilityId(const Preferences& prefs, const Entry& entry, Context context)
+{
+    if (const auto* pair = StatePairForVerb(entry.key)) return std::string(pair->id);
+    if (HasVisibilityRule(prefs, entry.provider, context)) return entry.provider;
+    return !entry.registration.empty() && HasVisibilityRule(prefs, entry.registration, context)
+        ? entry.registration : entry.provider;
+}
 
 struct NativeMenuResult
 {

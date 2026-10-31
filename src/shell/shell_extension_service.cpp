@@ -1,6 +1,5 @@
 #include "shell_extension_service.h"
 #include "shell_extension_diagnostics.h"
-#include "shell_extension_discovery.h"
 #include "shell_extension_attribution.h"
 #include "shell_extension_demand.h"
 #include "shell_menu_read_projection.h"
@@ -133,12 +132,6 @@ std::uint64_t Dependency(const Catalogue &catalogue, const Request &request, uns
         }
     return hash;
 }
-bool Configured(const Preferences &prefs, const std::string &id, Context context)
-{
-    const auto key = StateVisibilityId(id);
-    return std::any_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return StateVisibilityId(r.id) == key && r.category == CategoryOf(context); }) ||
-        std::any_of(prefs.overrides.begin(), prefs.overrides.end(), [&](const auto &r) { return StateVisibilityId(r.id) == key && r.context == context && r.visibility != Visibility::Inherit; });
-}
 }
 std::vector<Entry> VisibleSnapshot(const Preferences &prefs, const Reply &reply, unsigned contexts)
 {
@@ -150,9 +143,7 @@ std::vector<Entry> VisibleSnapshot(const Preferences &prefs, const Reply &reply,
             if (contexts & (1u << i))
             {
                 const auto context = static_cast<Context>(i);
-                const auto *pair = StatePairForVerb(entry.key);
-                const auto id = pair ? std::string(pair->id) :
-                    !entry.registration.empty() && Configured(prefs, entry.registration, context) ? entry.registration : entry.provider;
+                const auto id = EntryVisibilityId(prefs, entry, context);
                 hidden |= IsHidden(prefs, id, context);
             }
         if (entry.separator) { if (!result.empty() && !result.back().separator) result.push_back(entry); }
@@ -240,9 +231,6 @@ struct MenuService::Impl
     Key availableSignature;
     std::vector<Request> discovery;
     bool discoverRequested = false, discoverForce = false;
-    std::vector<Request> typeDiscovery;
-    size_t nextType = 0;
-    bool typesRequested = false, typesPreparing = false, typesForce = false, typeBatchForce = false;
     Preferences preferences;
     std::array<std::vector<std::string>, 2> readProjection;
     std::array<std::set<std::string>, 4> shown;
@@ -842,19 +830,28 @@ struct MenuService::Impl
         for (const auto &item : catalogue.rows) registered.emplace(item.id, &item);
         for (const auto &[key, row] : rows)
         {
-            // Independent metadata must not teach the inventory that a command
-            // exists in the real aggregate; routing evidence comes from inspection.
-            if (!row.request.sourceClsid.empty()) continue;
             if (!row.view.snapshot || row.expires <= MenuSnapshotCache::Now()) continue;
+            // An explicitly enabled extension is itself a display source. Its
+            // real selection roots can populate command settings. Attribution
+            // probes and unselected sources do not create aggregate evidence.
+            if (!row.request.sourceClsid.empty() && (row.priority == QueryPriority::Inspect ||
+                std::none_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto& entry) {
+                    if (entry.registration.empty()) return false;
+                    for (int i = 0; i < 4; ++i) if ((row.view.contexts & (1u << i)) &&
+                        HasVisibilityRule(preferences, entry.registration, static_cast<Context>(i)) &&
+                        !IsHidden(preferences, entry.registration, static_cast<Context>(i))) return true;
+                    return false;
+                }))) continue;
             for (const auto &entry : row.view.snapshot->entries)
             {
                 if (entry.separator || !entry.enabled || entry.provider.empty() || entry.label.empty() ||
                     entry.label == L"…" || entry.label == L"...") continue;
                 const auto known = registered.find(entry.registration);
                 if (known != registered.end() && !known->second->systemEnabled) continue;
-                const auto id = entry.registration.empty() ? entry.provider : entry.registration;
+                const bool extensionCommand = known != registered.end() && known->second->kind == RegistrationKind::Handler;
+                const auto id = entry.registration.empty() || extensionCommand ? entry.provider : entry.registration;
                 if (!observed.contains(id) && observed.size() >= 1024) continue;
-                if (!entry.registration.empty() && entry.registration != entry.provider)
+                if (!extensionCommand && !entry.registration.empty() && entry.registration != entry.provider)
                     if (auto legacy = observed.find(entry.provider); legacy != observed.end())
                     {
                         legacy->second.contexts &= ~row.view.contexts;
@@ -864,7 +861,7 @@ struct MenuService::Impl
                 auto &item = it->second;
                 if (inserted)
                 {
-                    if (known != registered.end()) item = *known->second;
+                    if (known != registered.end()) { item = *known->second; item.id = id; }
                     else { item.id = id; item.kind = RegistrationKind::Observed; }
                     item.linked = true; item.contexts = 0;
                 }
@@ -1157,7 +1154,43 @@ struct MenuService::Impl
                 if (reply.ok)
                 {
                     const auto associations = catalogue.associations.size();
-                    if (request.sourceClsid.empty()) Associate(catalogue, resolved, reply);
+                    if (request.sourceClsid.empty())
+                    {
+                        Associate(catalogue, resolved, reply);
+                        // A currently verified source stream for this exact
+                        // selection can identify its canonical root in the
+                        // fresh aggregate. Never infer an owner from captions.
+                        for (auto& entry : reply.entries) if (entry.registration.empty() && !entry.provider.empty())
+                        {
+                            std::set<std::string> owners;
+                            for (const auto& [sourceKey, source] : rows)
+                            {
+                                if (source.request.sourceClsid.empty() || source.invalid || !source.view.snapshot ||
+                                    !source.snapshotTargetChecked || source.expires <= MenuSnapshotCache::Now() ||
+                                    source.request.paths != request.paths || source.request.background != request.background ||
+                                    source.request.extended != request.extended || source.request.originalShortcutOnly != request.originalShortcutOnly) continue;
+                                for (const auto& root : source.view.snapshot->entries)
+                                    if (root.provider == entry.provider && root.key == entry.key && !root.registration.empty())
+                                        owners.insert(root.registration);
+                            }
+                            if (owners.size() == 1) entry.registration = *owners.begin();
+                        }
+                    }
+                    else
+                    {
+                        const Registration* owner = nullptr;
+                        auto clsid = request.sourceClsid;
+                        for (auto& c : clsid) c = towlower(c);
+                        for (const auto& registration : catalogue.rows)
+                            if (registration.kind == RegistrationKind::Handler && registration.systemEnabled &&
+                                Applies(registration, resolved) && registration.verbs.size() == 1 &&
+                                std::wstring(registration.verbs.front().begin(), registration.verbs.front().end()) == clsid)
+                            {
+                                if (owner) { owner = nullptr; break; }
+                                owner = &registration;
+                            }
+                        if (owner) for (auto& entry : reply.entries) entry.registration = owner->id;
+                    }
                     catalogueDirty |= associations != catalogue.associations.size();
                     row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64();
                     row.invalid = row.registryInvalid = false;
@@ -1340,7 +1373,7 @@ struct MenuService::Impl
             }
             if (!value.revision)
             {
-                std::lock_guard lock(mutex); scanning = false; typesRequested = false; catalogueStale = true;
+                std::lock_guard lock(mutex); scanning = false; catalogueStale = true;
                 failedRegistryRevision = std::max(failedRegistryRevision, scanRegistryRevision);
                 return; // An unsuccessful scan cannot masquerade as an empty registry.
             }
@@ -1391,7 +1424,6 @@ struct MenuService::Impl
                                     std::any_of(item.types.begin(), item.types.end(), [&](const auto &t) { return std::find(r.types.begin(), r.types.end(), t) != r.types.end(); });
                             });
                         });
-                        if (managementActive) typesRequested = true;
                     }
                     for (auto &[key, row] : rows)
                         if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) {
@@ -1658,26 +1690,6 @@ struct MenuService::Impl
             RefreshConfiguredSources(cache);
             StoreProvisionalSnapshots(cache);
             RefreshScopeVerification();
-            Catalogue typeCatalogue; bool discoverTypes = false;
-            {
-                std::lock_guard lock(mutex);
-                if (managementActive && typesRequested && !scanning && !scanRequested && catalogue.revision)
-                {
-                    typesRequested = false; typesPreparing = true; discoverTypes = true;
-                    typeCatalogue = catalogue; typeBatchForce = std::exchange(typesForce, false);
-                }
-            }
-            if (discoverTypes)
-            {
-                auto targets = DiscoverFileTypes(typeCatalogue, cache.Directory());
-                std::lock_guard lock(mutex);
-                if (managementActive && iterationManagementGeneration == managementGeneration)
-                {
-                    typeDiscovery = std::move(targets); nextType = 0; typesPreparing = false;
-                    // Keep the polling set bounded across repeated refreshes.
-                    std::erase_if(discovery, [&](const auto &r) { return !r.paths.empty() && std::filesystem::path(r.paths.front()).parent_path() == cache.Directory() / L"discovery-samples-v1"; });
-                }
-            }
             for (size_t i = 0; i < running.size();)
             {
                 auto &job = running[i];
@@ -1784,14 +1796,6 @@ struct MenuService::Impl
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
-                    // Metadata cannot consume the complete-menu budget. Its
-                    // bounded concurrency covers the same type/selection matrix.
-                    if (managementActive && metadataJobs < 3 && nextType < typeDiscovery.size())
-                    {
-                        const auto &target = typeDiscovery[nextType++];
-                        Queue(target, QueryPriority::Inspect, typeBatchForce);
-                        discovery.push_back(target);
-                    }
                     auto best = rows.end(); const auto now = GetTickCount64();
                     for (auto it = rows.begin(); it != rows.end(); ++it)
                         if (it->second.queued && it->second.due <= now &&
@@ -2060,8 +2064,7 @@ struct MenuService::Impl
             {
                 std::lock_guard lock(mutex);
                 const auto now = GetTickCount64();
-                if (stop || discoverRequested || startupWarm || desktopInspection || scanRequested || sourceScanRequested ||
-                    nextType < typeDiscovery.size()) wait = std::min(wait, DWORD(20));
+                if (stop || discoverRequested || startupWarm || desktopInspection || scanRequested || sourceScanRequested) wait = std::min(wait, DWORD(20));
                 for (const auto &[key, row] : rows)
                     if (row.queued) wait = std::min(wait, static_cast<DWORD>(row.due > now ? std::min(row.due - now, std::uint64_t(MAXDWORD - 1)) : 20));
             }
@@ -2246,13 +2249,16 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
         MenuTrace("catalogue", refresh ? "request.refresh" : "request.inspect");
         impl_->sourcePending = true;
         if (refresh) { impl_->sourceAttempts.clear(); impl_->sourceSelections.clear(); impl_->failedSources.clear(); }
-        impl_->scanRequested = true; impl_->discoverRequested = true;
-        impl_->discoverForce |= refresh;
-        impl_->typesRequested = true; impl_->typesForce |= refresh;
+        impl_->scanRequested = true;
+        if (!source.catalogueOnly)
+        {
+            impl_->discoverRequested = true;
+            impl_->discoverForce |= refresh;
+        }
     }
     impl_->RequestForegroundScan();
     impl_->inspected = true;
-    if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
+    if (!source.catalogueOnly && request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
     // Keep an explicit desktop inspection selected while its path is resolved
     // on the worker; returning the previous file here reroutes the settings UI.
     auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
@@ -2264,17 +2270,18 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
     const bool invalidated = previous != impl_->rows.end() && previous->second.invalid;
     // Polling observes the current discovery, never starts it over after the
     // ordinary query freshness window expires (or after cache eviction).
-    if (!selection.paths.empty() && (refresh || reopening || selectionKey != impl_->inspectedSelection || invalidated))
+    if (!source.catalogueOnly && !selection.paths.empty() && (refresh || reopening || selectionKey != impl_->inspectedSelection || invalidated))
     {
         impl_->inspectedSelection = selectionKey;
         impl_->RememberView(selection, impl_->Queue(selection, QueryPriority::Inspect, refresh));
     }
-    CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
-    result.scanning = impl_->sourcePending || impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested ||
-        impl_->typesRequested || impl_->typesPreparing || impl_->nextType < impl_->typeDiscovery.size();
+    CatalogueView result; result.catalogue = impl_->available; result.registrations = impl_->catalogue; result.selection = selection;
+    result.selection.catalogueOnly = source.catalogueOnly;
+    result.scanning = impl_->scanning || impl_->scanRequested;
+    if (!source.catalogueOnly) result.scanning |= impl_->sourcePending || impl_->desktopInspection || impl_->discoverRequested;
     for (const auto &target : impl_->discovery)
-        if (const auto it = impl_->rows.find(SelectionKey(target)); it != impl_->rows.end()) result.scanning |= it->second.view.pending;
-    if (const auto it = impl_->rows.find(SelectionKey(selection)); it != impl_->rows.end())
+        if (!source.catalogueOnly) if (const auto it = impl_->rows.find(SelectionKey(target)); it != impl_->rows.end()) result.scanning |= it->second.view.pending;
+    if (const auto it = impl_->rows.find(SelectionKey(selection)); !source.catalogueOnly && it != impl_->rows.end())
     {
         result.menu.pending = it->second.view.pending; result.menu.revision = it->second.view.revision;
         result.menu.contexts = it->second.view.contexts; result.menu.error = it->second.view.error;
@@ -2296,8 +2303,6 @@ void MenuService::EndInspection()
     impl_->foregroundScanDemand.Cancel();
     impl_->sourceScanRequested |= impl_->AnyEnabled();
     impl_->sourcePending = impl_->discoverRequested = impl_->discoverForce = impl_->desktopInspection = false;
-    impl_->typesRequested = impl_->typesPreparing = impl_->typesForce = impl_->typeBatchForce = false;
-    impl_->typeDiscovery.clear(); impl_->nextType = 0;
     impl_->discovery.clear(); impl_->sourceSelections.clear();
     for (auto &[key, row] : impl_->rows)
     {
