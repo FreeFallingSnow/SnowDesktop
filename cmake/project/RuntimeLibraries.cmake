@@ -1,0 +1,81 @@
+set(EVERYTHING_SOURCES
+    third_party/everything/src/Everything.c
+)
+
+set(PINYIN_DATA_SOURCES
+    third_party/pinyin-data/pinyin_full_table.cpp
+)
+
+set(IMGUI_SOURCES
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_win32.cpp
+    third_party/imgui/backends/imgui_impl_dx11.cpp
+)
+
+set(LUA_SOURCES
+    third_party/lua/lapi.c third_party/lua/lauxlib.c third_party/lua/lbaselib.c
+    third_party/lua/lcode.c third_party/lua/lcorolib.c third_party/lua/lctype.c
+    third_party/lua/ldblib.c third_party/lua/ldebug.c third_party/lua/ldo.c
+    third_party/lua/ldump.c third_party/lua/lfunc.c third_party/lua/lgc.c
+    third_party/lua/linit.c third_party/lua/liolib.c third_party/lua/llex.c
+    third_party/lua/lmathlib.c third_party/lua/lmem.c third_party/lua/loadlib.c
+    third_party/lua/lobject.c third_party/lua/lopcodes.c third_party/lua/loslib.c
+    third_party/lua/lparser.c third_party/lua/lstate.c third_party/lua/lstring.c
+    third_party/lua/lstrlib.c third_party/lua/ltable.c third_party/lua/ltablib.c
+    third_party/lua/ltm.c third_party/lua/lundump.c third_party/lua/lutf8lib.c
+    third_party/lua/lvm.c third_party/lua/lzio.c
+)
+
+set(MINHOOK64_SOURCES
+    third_party/minhook/src/buffer.c
+    third_party/minhook/src/hook.c
+    third_party/minhook/src/trampoline.c
+    third_party/minhook/src/hde/hde64.c
+)
+
+add_library(SnowDesktopWorkshopImgui STATIC ${IMGUI_SOURCES})
+target_compile_features(SnowDesktopWorkshopImgui PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopWorkshopImgui PUBLIC
+    third_party/imgui
+    third_party/imgui/backends
+)
+if(MSVC)
+    set_property(TARGET SnowDesktopWorkshopImgui PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopWorkshopImgui PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_definitions(SnowDesktopWorkshopImgui PRIVATE
+        _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+endif()
+
+add_library(SnowDesktopLua STATIC ${LUA_SOURCES})
+set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE C)
+target_include_directories(SnowDesktopLua PUBLIC third_party/lua)
+if(MSVC)
+    set_property(TARGET SnowDesktopLua PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopLua PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS}
+        /wd4244 /wd4310 /wd4324 /wd4701 /wd4702)
+endif()
+
+add_library(SnowDesktopEverything STATIC ${EVERYTHING_SOURCES})
+set_source_files_properties(${EVERYTHING_SOURCES} PROPERTIES LANGUAGE C)
+target_include_directories(SnowDesktopEverything PUBLIC
+    third_party/everything/include)
+if(MSVC)
+    set_property(TARGET SnowDesktopEverything PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopEverything PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /wd4100 /wd4133 /wd4996)
+endif()
+
+add_library(SnowDesktopPinyinData STATIC ${PINYIN_DATA_SOURCES})
+target_compile_features(SnowDesktopPinyinData PRIVATE cxx_std_20)
+target_include_directories(SnowDesktopPinyinData PUBLIC
+    third_party/pinyin-data)
+if(MSVC)
+    set_property(TARGET SnowDesktopPinyinData PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopPinyinData PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS})
+endif()
