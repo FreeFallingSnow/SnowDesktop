@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <atomic>
+#include <array>
 #include <mutex>
 #include <condition_variable>
 #include <filesystem>
@@ -5548,8 +5549,17 @@ void TestFileTypeDiscovery()
             "a common command across real selections remains one settings switch");
         {
             std::lock_guard lock(requestsMutex);
-            Expect(queried.size() == 4 && std::all_of(queried.begin(), queried.end(), [](const auto& request) { return request.rootMetadataOnly; }),
-                "switching from installed extensions queries exactly the four explicitly selected targets");
+            const std::array selected{imageRequest, pair, shift, document};
+            for (auto target : selected)
+            {
+                target.rootMetadataOnly = true;
+                Expect(std::count_if(queried.begin(), queried.end(), [&](const auto& request) {
+                    return request.paths == target.paths && request.context == target.context &&
+                        request.background == target.background && request.extended == target.extended;
+                }) == 1, "each explicitly selected format/shape is queried exactly once");
+            }
+            Expect(queried.size() == 8 && std::all_of(queried.begin(), queried.end(), [](const auto& request) { return request.rootMetadataOnly; }),
+                "switching from installed extensions adds four baseline roots plus only the four explicitly selected targets");
         }
         imageRequest.rootMetadataOnly = true;
         service.Inspect(imageRequest);

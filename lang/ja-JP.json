@@ -80,7 +80,6 @@
   "settings.contextMenu.mixed": "ファイルの種類によって設定が異なります",
   "settings.contextMenu.viewObjects": "対象別",
   "settings.contextMenu.viewApplications": "アプリ別",
-  "settings.contextMenu.viewExtensions": "ファイル形式別",
   "settings.contextMenu.more": "その他",
   "settings.contextMenu.groupToggle": "グループの表示／非表示",
   "settings.contextMenu.groupMixed": "一部表示",

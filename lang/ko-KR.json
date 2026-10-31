@@ -80,7 +80,6 @@
   "settings.contextMenu.mixed": "일부 파일 형식의 설정이 다릅니다",
   "settings.contextMenu.viewObjects": "대상별",
   "settings.contextMenu.viewApplications": "앱별",
-  "settings.contextMenu.viewExtensions": "파일 형식별",
   "settings.contextMenu.more": "더 보기",
   "settings.contextMenu.groupToggle": "그룹 표시/숨기기",
   "settings.contextMenu.groupMixed": "일부 표시",

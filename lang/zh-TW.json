@@ -80,7 +80,6 @@
   "settings.contextMenu.mixed": "部分類型設定不同",
   "settings.contextMenu.viewObjects": "依物件",
   "settings.contextMenu.viewApplications": "依應用程式",
-  "settings.contextMenu.viewExtensions": "依檔案類型",
   "settings.contextMenu.more": "更多",
   "settings.contextMenu.groupToggle": "顯示／隱藏整組",
   "settings.contextMenu.groupMixed": "部分顯示",

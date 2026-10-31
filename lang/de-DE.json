@@ -80,7 +80,6 @@
   "settings.contextMenu.mixed": "Einige Dateitypen haben unterschiedliche Einstellungen",
   "settings.contextMenu.viewObjects": "Nach Objekt",
   "settings.contextMenu.viewApplications": "Nach Anwendung",
-  "settings.contextMenu.viewExtensions": "Nach Dateityp",
   "settings.contextMenu.more": "Mehr",
   "settings.contextMenu.groupToggle": "Gruppe ein-/ausblenden",
   "settings.contextMenu.groupMixed": "Teilweise angezeigt",

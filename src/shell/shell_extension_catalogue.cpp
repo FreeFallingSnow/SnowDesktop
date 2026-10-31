@@ -388,6 +388,10 @@ struct ApplicationMetadataIndex
                         auto folder = std::filesystem::path(uninstall).parent_path();
                         const auto leaf = ApplicationPathKey(folder.filename().wstring());
                         if (leaf == L"uninstall" || leaf == L"uninstaller" || leaf == L"setup") folder = folder.parent_path();
+                        const auto uninstallVersion = folder.filename().wstring();
+                        if (!iconRoot.empty() && ApplicationPathContains(iconRoot, ApplicationPathKey(folder.wstring())) &&
+                            !uninstallVersion.empty() && std::all_of(uninstallVersion.begin(), uninstallVersion.end(), [](wchar_t c) { return iswdigit(c) || c == L'.'; }))
+                            folder = iconRoot;
                         profiles.Add({ApplicationDirectory(folder.wstring()), name, icon, 20});
                     }
                 }

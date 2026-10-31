@@ -5,7 +5,6 @@
 #include "shell/shell_extension_service.h"
 #include "shell/shell_extension_management.h"
 #include <array>
-#include <cmath>
 #include <cwctype>
 #include <set>
 #include <shobjidl.h>
@@ -40,7 +39,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     PersonalizationPageActions actions;
     mux::Style cardStyle;
     muxc::StackPanel root, content, managementSection;
-    muxc::ListView groups;
+    muxc::ItemsRepeater groups;
+    winrt::Windows::Foundation::Collections::IObservableVector<winrt::Windows::Foundation::IInspectable> cardItems =
+        winrt::single_threaded_observable_vector<winrt::Windows::Foundation::IInspectable>();
     muxc::ContentControl managementControls;
     muxc::Border managementCard;
     muxc::Border menuOptionsCard;
@@ -102,28 +103,26 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     explicit Impl(LocalizeCallback l, const mux::Style &style) : localize(std::move(l)), cardStyle(style)
     {
         root.Spacing(24); root.Margin({0, 0, 0, 12}); content.Spacing(12);
-        groups.Height(240); groups.SelectionMode(muxc::ListViewSelectionMode::None);
-        groups.IsItemClickEnabled(false); groups.Padding({0, 0, 0, 0});
         groups.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        groups.ItemTemplate(mux::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ContentControl HorizontalContentAlignment="Stretch" IsTabStop="False"/></DataTemplate>)").as<mux::DataTemplate>());
-        groups.ItemContainerStyle(mux::Markup::XamlReader::Load(LR"(<Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,8"/><Setter Property="MinHeight" Value="0"/><Setter Property="IsTabStop" Value="False"/></Style>)").as<mux::Style>());
-        muxc::ScrollViewer::SetHorizontalScrollMode(groups, muxc::ScrollMode::Disabled);
-        const auto realize = groups.ContainerContentChanging([this](auto&&, const muxc::ContainerContentChangingEventArgs& args) {
-            const auto slot = args.ItemContainer().ContentTemplateRoot().try_as<muxc::ContentControl>();
+        groups.ItemsSource(cardItems);
+        groups.Layout(muxc::StackLayout());
+        groups.ItemTemplate(mux::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ContentControl HorizontalContentAlignment="Stretch" IsTabStop="False" Margin="0,0,0,8"/></DataTemplate>)").as<mux::DataTemplate>());
+        const auto realize = groups.ElementPrepared([this](auto&&, const muxc::ItemsRepeaterElementPreparedEventArgs& args) {
+            const auto slot = args.Element().try_as<muxc::ContentControl>();
             if (!slot) return;
-            if (args.InRecycleQueue() || closed) { slot.Content(nullptr); return; }
-            const auto id = winrt::to_string(winrt::unbox_value<winrt::hstring>(args.Item()));
+            if (closed || args.Index() < 0 || static_cast<uint32_t>(args.Index()) >= cardItems.Size()) { slot.Content(nullptr); return; }
+            const auto id = winrt::to_string(winrt::unbox_value<winrt::hstring>(cardItems.GetAt(args.Index())));
             if (!cardModels.contains(id)) { slot.Content(nullptr); return; }
             Section(id);
             auto& card = sections.at(id);
             if (const auto old = card.host.get(); old && old != slot && old.Content() == card.surface) old.Content(nullptr);
             slot.Content(card.surface); card.host = winrt::make_weak(slot);
-            slot.IsEnabled(!prefs.showAll && initialized && sessionActive);
-            card.surface.Opacity(slot.IsEnabled() ? 1.0 : 0.55);
-            mux::Automation::AutomationProperties::SetName(args.ItemContainer(), CardTitle(cardModels.at(id)));
-            args.Handled(true);
+            mux::Automation::AutomationProperties::SetName(slot, CardTitle(cardModels.at(id)));
         });
-        revoke.push_back([control = groups, realize] { control.ContainerContentChanging(realize); });
+        const auto recycle = groups.ElementClearing([](auto&&, const muxc::ItemsRepeaterElementClearingEventArgs& args) {
+            if (const auto slot = args.Element().try_as<muxc::ContentControl>()) slot.Content(nullptr);
+        });
+        revoke.push_back([control = groups, realize, recycle] { control.ElementPrepared(realize); control.ElementClearing(recycle); });
         muxc::StackPanel menuOptions; menuOptions.Spacing(2);
         if (cardStyle) menuOptionsCard.Style(cardStyle);
         menuOptionsCard.Padding({0, 0, 0, 0});
@@ -213,12 +212,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (cardStyle) managementCard.Style(cardStyle);
         managementCard.Child(content);
         managementSection.Children().Append(managementCard);
+        // The existing page ScrollViewer owns scrolling and supplies the
+        // repeater's viewport; the list adds no nested scroll region.
+        managementSection.Children().Append(groups);
         managementControls.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         managementControls.Content(managementSection);
         root.Children().Append(managementControls);
-        // One bounded native scroll owner for both the page header and items.
-        // The containing settings ScrollViewer never measures an unbounded list.
-        groups.Header(root);
         timer.Interval(std::chrono::milliseconds(300));
         rowTimer.Interval(std::chrono::milliseconds(16));
         auto append = rowTimer.Tick([this](auto &&, auto &&) { AppendRows(); });
@@ -428,10 +427,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             auto& card = sections.at(id);
             const auto &model = cardModels.at(id); const auto state = ext::ManagementCardState(prefs, model, category);
-            const bool enabled = !prefs.showAll && initialized && sessionActive;
-            if (const auto host = card.host.get(); host && host.Content() == card.surface) host.IsEnabled(enabled);
-            card.surface.Opacity(enabled ? 1.0 : 0.55);
             card.title.Text(CardTitle(model));
+            if (card.expander) mux::Automation::AutomationProperties::SetName(card.expander, CardTitle(model));
             if (mode == ext::ManagementView::Applications && !model.rows.empty())
             {
                 const auto& image = model.rows.front().display;
@@ -477,12 +474,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         rowTimer.Stop();
         for (auto &row : rows) RemoveRow(row);
         for (auto &[id, card] : sections) if (card.revoke) card.revoke();
-        rows.clear(); groups.Items().Clear(); sections.clear(); cardModels.clear(); cardOrder.clear(); expandedSoftware.clear(); rowGroups.clear(); pendingRows.clear(); nextRow = 0;
+        rows.clear(); cardItems.Clear(); sections.clear(); cardModels.clear(); cardOrder.clear(); expandedSoftware.clear(); rowGroups.clear(); pendingRows.clear(); nextRow = 0;
         updating = before;
     }
     void ReconcileCards()
     {
-        const auto items = groups.Items();
+        const auto items = cardItems;
         for (uint32_t i = items.Size(); i > 0; --i)
         {
             const auto id = winrt::to_string(winrt::unbox_value<winrt::hstring>(items.GetAt(i - 1)));
@@ -555,13 +552,13 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             names.Children().Append(card.title); card.mixed.Text(L("settings.contextMenu.groupMixed")); card.mixed.FontSize(12);
             card.mixed.Opacity(0.7); names.Children().Append(card.mixed); header.Children().Append(names);
             card.toggle.OnContent(winrt::box_value(L"")); card.toggle.OffContent(winrt::box_value(L"")); card.toggle.MinWidth(0);
+            if (software) card.toggle.Width(40);
             card.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
             card.toggle.VerticalAlignment(mux::VerticalAlignment::Center); muxc::Grid::SetColumn(card.toggle, software ? 2 : 1);
-            // The native switch already includes a 12-DIP trailing content gap.
             header.Children().Append(card.toggle);
             ConfigureMixedActions(card.mixedActions, card.showAll, card.hideAll);
             muxc::Grid::SetColumn(card.mixedActions, software ? 2 : 1); header.Children().Append(card.mixedActions);
-            header.Margin({16, 12, 16, 12});
+            header.Margin(software ? mux::Thickness{0, 0, 0, 0} : mux::Thickness{16, 12, 16, 12});
             const auto changed = card.toggle.Toggled([this, group](auto &&, auto &&) {
                 if (!updating && sections.contains(group) && cardModels.contains(group) &&
                     ext::ManagementCardState(prefs, cardModels.at(group), category).has_value())
@@ -580,9 +577,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 card.expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
                 card.expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
                 presenter_controls::StyleInlineSettingsExpander(card.expander);
+                card.expander.Padding({0, 0, 0, 0});
+                card.expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"), winrt::box_value(mux::Thickness{0, 0, 8, 0}));
                 card.expander.Header(header); card.expander.Content(card.panel);
                 card.expander.IsExpanded(expandedSoftware.contains(group));
-                card.panel.Margin({12, 0, 12, 12});
                 const auto expanding = card.expander.Expanding([this, group](auto&&, auto&&) {
                     if (!closed && !updating && active) { expandedSoftware.insert(group); BuildRows(); }
                 });
@@ -632,6 +630,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.TextWrapping(mux::TextWrapping::Wrap); row.mixed.Text(L("settings.contextMenu.groupMixed")); names.Children().Append(row.mixed);
                 names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
                 row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(0);
+                row.toggle.Width(40);
                 row.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
                 row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
                 muxc::Grid::SetColumn(row.toggle, 2); layout.Children().Append(row.toggle);
@@ -655,7 +654,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 row.surface.MinHeight(0);
                 row.surface.Child(row.expander);
                 // Keep the native chevron hit area; only tighten its leading gap.
-                row.expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"), winrt::box_value(mux::Thickness{4, 0, 8, 0}));
+                row.expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"), winrt::box_value(mux::Thickness{0, 0, 8, 0}));
                 row.expander.Header(layout); muxc::ToolTipService::SetToolTip(row.expander, winrt::box_value(L("settings.contextMenu.locations")));
                 row.positionsPanel.Spacing(8);
                 const auto expanding = row.expander.Expanding([this, id = entry.id](auto &&, auto &&) {
@@ -837,7 +836,7 @@ void ContextMenuPagePresenter::SetActions(PersonalizationPageActions actions)
 }
 mux::UIElement ContextMenuPagePresenter::Content() const
 {
-    return impl_->groups;
+    return impl_->root;
 }
 void ContextMenuPagePresenter::ApplySnapshot(const SettingsSnapshot &snapshot)
 {
@@ -862,13 +861,6 @@ void ContextMenuPagePresenter::Activate()
     impl_->request = {};
     impl_->routed = false;
     impl_->Reload();
-}
-void ContextMenuPagePresenter::FitViewport(muxc::ScrollViewer viewport, double bottomInset)
-{
-    if (!impl_->active || viewport.ViewportHeight() <= 0 || !impl_->groups.XamlRoot()) return;
-    const auto top = impl_->groups.TransformToVisual(viewport).TransformPoint({0, 0}).Y + viewport.VerticalOffset();
-    const double height = std::max(200.0, viewport.ViewportHeight() - top - bottomInset);
-    if (std::abs(impl_->groups.Height() - height) > .5) impl_->groups.Height(height);
 }
 void ContextMenuPagePresenter::Deactivate()
 {

@@ -17,7 +17,6 @@ class ContextMenuPagePresenter final
     void RefreshLocalizedText();
     void RegisterFocusTargets(const FocusRegistrar &) const;
     void Activate();
-    void FitViewport(winrt::Microsoft::UI::Xaml::Controls::ScrollViewer viewport, double bottomInset);
     void Deactivate();
     void Close();
 
