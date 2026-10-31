@@ -18,6 +18,7 @@
 #include "steam/steam_workshop_sync.h"
 #include "steam/steam_workshop_watch_thread.h"
 #include "widget/package_source_lookup_cases.h"
+#include "widget/widget_script_read_ahead_cases.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
 #include "workshop_upload_validation.h"
@@ -2305,8 +2306,69 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
 }
 }
 
+void TestWorkshopUninstallWithReadAhead(bool legacyWatchRoot)
+{
+    using namespace snowdesktop::widget;
+    widget_script_read_ahead_tests::Fixture fixture;
+    const auto state = fixture.sandbox / L"state";
+    PackagePaths paths;
+    paths.builtin = state / L"builtin";
+    paths.installed = state / L"installed";
+    paths.development = state / L"dev";
+    paths.staging = state / L"staging";
+    paths.quarantine = state / L"quarantine";
+    paths.migrations = state / L"migrations";
+    paths.registry = state / L"packages.json";
+    const std::string id = "4c360510-dd3d-4d3d-9496-686477fcfa37";
+    fixture.Write(fixture.manifest,
+        R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,"id":"4c360510-dd3d-4d3d-9496-686477fcfa37","slug":"uninstall-read-ahead","version":"1.0.0","entry":"main.lua","name":"Uninstall read-ahead","permissions":[]})");
+    fixture.Write(fixture.script, "return widget.define({})\n");
+    WidgetPackageManager manager(paths);
+    std::string error;
+    InstalledPackage installed;
+    ValidationReport report;
+    if (!manager.Initialize(error) || !manager.InstallDirectory(fixture.root,
+            {"steam-workshop", "100"}, false, installed, report, error))
+        throw std::runtime_error("prepare real watched Workshop package: " + error);
+    Check(manager.UpdateSteamSubscriptionHistory("42", {"100"}, error),
+        "record the installed subscription before its removal");
+    const auto watchRoot = legacyWatchRoot ? std::wstring{} : paths.installed.wstring();
+    Check(fixture.watcher.Track(L"live", (installed.root / L"main.lua").wstring(),
+            (installed.root / L"widget.json").wstring(), watchRoot),
+        "arm the same installed-source read-ahead used by the host loader");
+    fixture.Ready(1);
+    SteamWorkshopSubscriptionSnapshot snapshot;
+    snapshot.authoritative = true;
+    snapshot.activeSteamAccountId = "42";
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(),
+        manager.ListPackages(), manager.SteamLibraryHistory());
+    const auto plan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+            plan.actions[0].packageId == id,
+        "the real subscription planner schedules the watched package removal");
+    // Leave the watch armed, representing disposal still queued on the worker.
+    // The negative-control mode uses the former host call's per-version watches
+    // and must fail at this real package-directory mutation, not in a mock.
+    const bool removed = manager.Uninstall(id, error);
+    if (!removed) std::cerr << "watched Workshop uninstall: " << error << '\n';
+    Check(removed && !manager.ContainsPackage(id) &&
+            !std::filesystem::exists(paths.installed / std::wstring(id.begin(), id.end())),
+        "a confirmed unsubscribe retires the UUID directory while source disposal is pending");
+    fixture.watcher.Stop();
+    widget_script_read_ahead_tests::Await([&] { return !fixture.watcher.Inspect().running; },
+        "release source notifications before the owned package fixture is cleaned");
+}
+
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--read-ahead-uninstall-negative-control")
+    {
+        try { TestWorkshopUninstallWithReadAhead(true); }
+        catch (const std::exception& error) { Check(false, error.what()); }
+        return failures == 0 ? 0 : 1;
+    }
+    try { TestWorkshopUninstallWithReadAhead(false); }
+    catch (const std::exception& error) { Check(false, error.what()); }
     TestManagerConnectionState(Check);
     TestManagerWorkshopItem(Check);
     try { TestManagerWorkspaceState(); }

@@ -39,15 +39,16 @@ public:
     WidgetScriptReadAhead& operator=(const WidgetScriptReadAhead&) = delete;
 
     bool Track(const std::wstring& instance, const std::wstring& script,
-        const std::wstring& manifest) noexcept
+        const std::wstring& manifest, const std::wstring& installedRoot = {}) noexcept
     {
         try
         {
             std::lock_guard lock(state_->mutex);
             if (state_->stopped || !state_->wake || instance.empty() ||
                 !std::filesystem::path(script).is_absolute() ||
-                !std::filesystem::path(manifest).is_absolute()) return false;
-            const Files files{script, manifest};
+                !std::filesystem::path(manifest).is_absolute() ||
+                (!installedRoot.empty() && !std::filesystem::path(installedRoot).is_absolute())) return false;
+            const Tracking files{{script, manifest}, installedRoot};
             const auto found = state_->instances.find(instance);
             if (found != state_->instances.end() && found->second == files &&
                 state_->snapshot.running)
@@ -110,11 +111,18 @@ private:
     static constexpr std::size_t MaximumWatches = MAXIMUM_WAIT_OBJECTS - 1;
     static constexpr std::size_t MaximumReadBytes = 1024 * 1024;
     using Files = std::array<std::wstring, 2>;
+    struct Tracking
+    {
+        Files files;
+        std::wstring installedRoot;
+        bool operator==(const Tracking&) const = default;
+    };
+    using TrackedFiles = std::map<std::wstring, std::wstring>;
     struct State
     {
         std::mutex mutex;
         HANDLE wake = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        std::map<std::wstring, Files> instances;
+        std::map<std::wstring, Tracking> instances;
         std::map<std::wstring, std::uint64_t> prepared;
         std::uint64_t revision = 0;
         Snapshot snapshot;
@@ -188,8 +196,25 @@ private:
         return success;
     }
 
+    static std::wstring StableWatchRoot(const std::wstring& file,
+        const std::wstring& installedRoot)
+    {
+        if (installedRoot.empty()) return {};
+        auto root = std::filesystem::path(installedRoot).lexically_normal();
+        if (root.filename().empty() && root != root.root_path()) root = root.parent_path();
+        const auto source = std::filesystem::path(file).lexically_normal();
+        auto part = source.begin();
+        for (const auto& component : root)
+        {
+            if (part == source.end() || _wcsicmp(part->c_str(), component.c_str()) != 0)
+                return {};
+            ++part;
+        }
+        return part == source.end() ? std::wstring{} : root.wstring();
+    }
+
     static std::vector<std::unique_ptr<Watch>> OpenWatches(
-        const std::set<std::wstring>& files)
+        const TrackedFiles& files)
     {
         constexpr DWORD sourceChanges = FILE_NOTIFY_CHANGE_FILE_NAME |
             FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE |
@@ -197,21 +222,30 @@ private:
             FILE_NOTIFY_CHANGE_SECURITY;
         constexpr DWORD parentChanges = FILE_NOTIFY_CHANGE_DIR_NAME |
             FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SECURITY;
-        std::map<std::wstring, DWORD> directories;
-        for (const auto& file : files)
+        struct Request { DWORD changes = 0; bool subtree = false; };
+        std::map<std::wstring, Request> directories;
+        for (const auto& [file, stableRoot] : files)
         {
-            const auto parent = std::filesystem::path(file).parent_path();
-            directories[parent.wstring()] |= sourceChanges;
+            // Uninstall moves installed/<UUID>, above the watched version.
+            // A child directory notification handle prevents that parent move
+            // on Windows, even though renaming the watched directory itself is
+            // allowed. Keep installed notifications outside every package tree.
+            const auto parent = stableRoot.empty()
+                ? std::filesystem::path(file).parent_path()
+                : std::filesystem::path(stableRoot);
+            auto& request = directories[parent.wstring()];
+            request.changes |= sourceChanges;
+            request.subtree = request.subtree || !stableRoot.empty();
             // A directory watch does not report replacement of its own root.
-            directories[parent.parent_path().wstring()] |= parentChanges;
+            directories[parent.parent_path().wstring()].changes |= parentChanges;
         }
         std::vector<std::unique_ptr<Watch>> watches;
-        for (const auto& [directory, changes] : directories)
+        for (const auto& [directory, request] : directories)
         {
             if (watches.size() == MaximumWatches) break;
             if (!IsLocalDirectory(directory)) continue;
             auto watch = std::make_unique<Watch>();
-            watch->handle = FindFirstChangeNotificationW(directory.c_str(), FALSE, changes);
+            watch->handle = FindFirstChangeNotificationW(directory.c_str(), request.subtree, request.changes);
             if (watch->handle != INVALID_HANDLE_VALUE)
                 watches.push_back(std::move(watch));
         }
@@ -224,7 +258,7 @@ private:
         (void)SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         try
         {
-            std::set<std::wstring> files;
+            TrackedFiles files;
             std::set<std::wstring> knownFiles;
             std::map<std::wstring, Stamp> stamps;
             std::vector<std::unique_ptr<Watch>> watches;
@@ -232,18 +266,19 @@ private:
             std::uint64_t revision = 0;
             for (;;)
             {
-                std::optional<std::set<std::wstring>> requestedFiles;
+                std::optional<TrackedFiles> requestedFiles;
                 {
                     std::lock_guard lock(state->mutex);
                     if (state->stopped) break;
                     if (revision != state->revision)
                     {
                         requestedFiles.emplace();
-                        for (const auto& [id, paths] : state->instances)
+                        for (const auto& [id, tracking] : state->instances)
                         {
                             (void)id;
-                            for (const auto& path : paths)
-                                requestedFiles->insert(path);
+                            for (const auto& path : tracking.files)
+                                requestedFiles->try_emplace(path,
+                                    StableWatchRoot(path, tracking.installedRoot));
                         }
                         revision = state->revision;
                         rebuild = true;
@@ -255,17 +290,18 @@ private:
                 if (requestedFiles)
                 {
                     files.clear();
-                    for (const auto& path : *requestedFiles)
+                    for (const auto& [path, stableRoot] : *requestedFiles)
                         if (IsLocalDirectory(std::filesystem::path(path).parent_path()))
-                            files.insert(path);
+                            files.emplace(path, stableRoot);
                 }
                 if (rebuild)
                 {
                     watches = OpenWatches(files);
                     std::erase_if(stamps, [&](const auto& item) { return !files.contains(item.first); });
                     std::erase_if(knownFiles, [&](const auto& file) { return !files.contains(file); });
-                    for (const auto& file : files)
+                    for (const auto& [file, stableRoot] : files)
                     {
+                        (void)stableRoot;
                         // Loading already read a newly tracked source. Establish
                         // its baseline after arming, without rereading that revision.
                         if (knownFiles.insert(file).second)
@@ -281,8 +317,9 @@ private:
                 // New watches are armed before rereading; an edit that occurs
                 // during preparation signals the next pass. Reopen after a hint
                 // because an editor can replace an entire package directory.
-                for (const auto& file : files)
+                for (const auto& [file, stableRoot] : files)
                 {
+                    (void)stableRoot;
                     if (!IsLocalDirectory(std::filesystem::path(file).parent_path()))
                     {
                         stamps.erase(file);

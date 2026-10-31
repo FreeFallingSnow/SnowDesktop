@@ -111,8 +111,58 @@ struct Fixture
     }
 };
 
+inline void RunInstalledDirectoryRetirement()
+{
+    Fixture fixture;
+    const auto installed = fixture.sandbox / L"installed";
+    const auto package = installed / L"4c360510-dd3d-4d3d-9496-686477fcfa37";
+    const auto version = package / L"1.0.0";
+    const auto script = version / L"scripts" / L"main.lua";
+    const auto manifest = version / L"widget.json";
+    std::filesystem::create_directories(script.parent_path());
+    Fixture::Write(script, "return 'first installed revision'\n");
+    Fixture::Write(manifest, "{\"version\":\"1.0.0\"}\n");
+    auto& watcher = fixture.watcher;
+    // Exercise case-insensitive root matching and a trailing directory separator.
+    auto watchRoot = installed.wstring() + L"\\";
+    CharUpperBuffW(watchRoot.data(), static_cast<DWORD>(watchRoot.size()));
+    Require(watcher.Track(L"first", script.wstring(), manifest.wstring(), watchRoot) &&
+            watcher.Track(L"second", script.wstring(), manifest.wstring(), watchRoot),
+        "track installed instances below a version and a nested script directory");
+    fixture.Ready(2);
+    Require(watcher.Inspect().watches == 2,
+        "installed scripts share the stable installed-root and parent notifications");
+
+    Fixture::Write(script, "return 'edited installed revision'\n");
+    fixture.Prepared(script, 0);
+    const auto previousScript = watcher.PreparedCount(script.wstring());
+    const auto previousManifest = watcher.PreparedCount(manifest.wstring());
+    watcher.Forget(L"first");
+    fixture.Ready(3);
+    // Keep the second instance tracked: this is the deterministic equivalent
+    // of a worker that has not processed the final asynchronous Forget yet.
+    if (!MoveFileExW(package.c_str(), fixture.retired.c_str(), MOVEFILE_WRITE_THROUGH))
+        throw std::runtime_error("a version source watch must not block retiring its UUID parent; Win32 error " +
+            std::to_string(GetLastError()));
+    std::filesystem::create_directories(script.parent_path());
+    Fixture::Write(script, "return 'reinstalled revision'\n");
+    Fixture::Write(manifest, "{\"version\":\"1.0.1\"}\n");
+    fixture.Prepared(script, previousScript);
+    fixture.Prepared(manifest, previousManifest);
+    Require(Fixture::Read(script).find("reinstalled revision") != std::string::npos,
+        "recursive stable-root notifications still prepare replacement installed files");
+
+    watcher.Forget(L"second");
+    const auto secondRetirement = fixture.sandbox / L"retired-again";
+    Require(MoveFileExW(package.c_str(), secondRetirement.c_str(), MOVEFILE_WRITE_THROUGH) != FALSE,
+        "immediate retirement after Forget does not require waiting for worker disposal");
+    Await([&] { return watcher.Inspect().files == 0 && watcher.Inspect().watches == 0; },
+        "the final installed instance eventually retires its shared notifications");
+}
+
 inline void Run()
 {
+    RunInstalledDirectoryRetirement();
     Fixture fixture;
     auto& watcher = fixture.watcher;
     Require(watcher.Track(L"first", fixture.script.wstring(), fixture.manifest.wstring()),

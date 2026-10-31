@@ -16452,8 +16452,18 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
 {
     if (const int index = FindWidget(widgetId); index >= 0)
         return widgets_[index].valid;
-    if (widgetHostFailures_.contains(widgetId))
-        return false;
+    if (const auto failure = widgetHostFailures_.find(widgetId);
+        failure != widgetHostFailures_.end())
+    {
+        // A retained desktop instance may outlive its unsubscribed package.
+        // Missing content is recoverable as soon as it is installed again;
+        // actual script/quota failures still require the normal retry action.
+        if (failure->second.kind !=
+                snowdesktop::widget_runtime::WidgetHostStateKind::PackageMissing ||
+            !IsWidgetPackageInstalled(packageId))
+            return false;
+        widgetHostFailures_.erase(failure);
+    }
     if (const auto package = GetWidgetPackage(packageId))
     {
         const auto grant = snowdesktop::widget::WidgetPermissionBroker::
@@ -16474,6 +16484,9 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
     {
         RuntimeRecordError(widgetId,
             "Widget package is missing, disabled, or has not been migrated");
+        if (!IsWidgetPackageInstalled(packageId))
+            widgetHostFailures_[widgetId].kind =
+                snowdesktop::widget_runtime::WidgetHostStateKind::PackageMissing;
         return false;
     }
     if (LoadWidget(path, widgetId))
@@ -17180,7 +17193,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         try
         {
             (void)d2dState_->scriptReadAhead.Track(widgetId, path,
-                (widgets_.back().packageRoot / L"widget.json").wstring());
+                (widgets_.back().packageRoot / L"widget.json").wstring(),
+                GetWidgetPackageManager().Paths().installed.wstring());
         }
         catch (...) { /* Optional path preparation must not fail the VM load. */ }
     }
@@ -33080,7 +33094,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             else
             {
                 for (const auto& instance : instances)
-                    (void)ReloadWidget(instance);
+                    (void)EnsureWidgetLoaded(instance, Utf8ToWideLocal(action.packageId));
                 result.errors.push_back(action.packageId + ": " + error);
             }
             continue;

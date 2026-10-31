@@ -1241,6 +1241,7 @@ struct NativeDragIntegrationAccess
 #include "../render/native_foreground_culling_cases.h"
 #include "../dock/native_dock_hover_cases.h"
 #include "../widget/native_widget_surface_handoff_cases.h"
+#include "../widget/widget_package_restore_cases.h"
 #include "../system/native_status_selection_cases.h"
 #include "../platform/native_popup_control_cases.h"
 #include "../platform/native_widget_settings_cases.h"
@@ -1356,6 +1357,10 @@ int main(int argc, char** argv)
             native_dock_hover_cases::Run(true);
         else if (argc == 2 && std::string_view(argv[1]) == "--widget-surface-handoff")
             native_widget_surface_handoff_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--widget-package-restore")
+            widget_package_restore_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--widget-package-restore-negative-control")
+            widget_package_restore_cases::Run(true);
         else if (argc == 4 && std::string_view(argv[1]) == "--dock-preview-fixture")
             return native_preview_order_cases::RunFixture(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order") native_preview_order_cases::Run();
