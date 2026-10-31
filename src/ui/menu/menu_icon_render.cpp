@@ -569,7 +569,7 @@ bool DrawOpticallyWeightedFluentGlyph(HDC dc, const wchar_t* glyph,
 }
 
 bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
-    bool disabled, int maximumImageSize)
+    bool disabled, int maximumImageSize, UINT dpi)
 {
     if (!dc || !image || bounds.right <= bounds.left ||
         bounds.bottom <= bounds.top)
@@ -596,10 +596,13 @@ bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
         std::min(boundsWidth, boundsHeight));
     if (maximumImageSize > 0)
         maximum = std::min(maximum, maximumImageSize);
-    const int width = std::max(1,
-        std::min(maximum, static_cast<int>(bitmap.bmWidth)));
-    const int height = std::max(1,
-        std::min(maximum, static_cast<int>(bitmap.bmHeight)));
+    double scale = 1.0;
+    if (bitmap.bmWidth <= 16 && bitmap.bmHeight <= 16)
+        scale = std::max(1.0, static_cast<double>(dpi) / USER_DEFAULT_SCREEN_DPI);
+    scale = std::min(scale, static_cast<double>(maximum) /
+        std::max(bitmap.bmWidth, bitmap.bmHeight));
+    const int width = std::max(1, static_cast<int>(std::lround(bitmap.bmWidth * scale)));
+    const int height = std::max(1, static_cast<int>(std::lround(bitmap.bmHeight * scale)));
     const int left = (bounds.left + bounds.right - width) / 2;
     const int top = (bounds.top + bounds.bottom - height) / 2;
     const BLENDFUNCTION blend{
@@ -824,6 +827,7 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         Scale(18, effectiveDpi),
         Scale(18, effectiveDpi),
     };
+    metrics.dpi = effectiveDpi;
     if (win10Style)
     {
         metrics.rowHeight = Scale(24, effectiveDpi);
@@ -1014,7 +1018,7 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         iconBounds.top += metrics.outerInset;
         iconBounds.bottom -= metrics.outerInset;
         DrawImageLayer(dc, image, iconBounds, disabled,
-            metrics.maximumImageSize);
+            metrics.maximumImageSize, metrics.dpi);
     }
     else if (item.glyph && *item.glyph)
     {
@@ -1118,7 +1122,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (image)
     {
         DrawImageLayer(dc, image, iconBounds, disabled,
-            metrics.maximumImageSize);
+            metrics.maximumImageSize, metrics.dpi);
     }
     else
     {
@@ -1224,7 +1228,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         imageBounds.top += metrics.outerInset;
         imageBounds.bottom -= metrics.outerInset;
         DrawImageLayer(dc, image, imageBounds, disabled,
-            metrics.maximumImageSize);
+            metrics.maximumImageSize, metrics.dpi);
     }
     else if (hasGlyph)
     {
@@ -1320,7 +1324,7 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
         iconFont ? static_cast<HGDIOBJ>(iconFont)
                  : GetStockObject(DEFAULT_GUI_FONT));
     if (image)
-        DrawImageLayer(dc, image, glyphBounds, false, metrics.maximumImageSize);
+        DrawImageLayer(dc, image, glyphBounds, false, metrics.maximumImageSize, metrics.dpi);
     else
         DrawGlyphLayer(dc, item.glyph, glyphBounds, palette.disabledText, &field);
     if (oldFont) SelectObject(dc, oldFont);

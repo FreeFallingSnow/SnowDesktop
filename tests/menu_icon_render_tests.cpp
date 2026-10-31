@@ -334,6 +334,83 @@ void CheckCompactRendering()
     DeleteObject(bitmap);
 }
 
+void CheckSmallNativeBitmapDpi()
+{
+    using namespace snowdesktop::menu_icon;
+    constexpr int width = 192, height = 96;
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = width; info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* raw = nullptr;
+    HBITMAP surface = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &raw, nullptr, 0);
+    HDC dc = CreateCompatibleDC(nullptr);
+    Expect(surface && raw && dc, "small native bitmap raster fixture is available");
+    const auto old = SelectObject(dc, surface);
+    const auto palette = ResolvePalette(true);
+    auto* pixels = static_cast<std::uint32_t*>(raw);
+    struct Sample { int width, height; int expected[4][2]; };
+    const Sample samples[] = {
+        {8, 8, {{8,8}, {10,10}, {12,12}, {16,16}}},
+        {13, 13, {{13,13}, {16,16}, {20,20}, {26,26}}},
+        {16, 16, {{16,16}, {20,20}, {24,24}, {32,32}}},
+        {20, 20, {{20,20}, {20,20}, {20,20}, {20,20}}},
+        {13, 8, {{13,8}, {16,10}, {20,12}, {26,16}}},
+        // A short side alone must not trigger enlargement; both axes are fitted.
+        {32, 8, {{22,6}, {28,7}, {32,8}, {32,8}}},
+        {8, 32, {{6,22}, {7,28}, {8,32}, {8,32}}},
+        {64, 32, {{22,11}, {28,14}, {33,17}, {44,22}}},
+    };
+    const UINT dpis[] = {96, 120, 144, 192};
+    for (const auto& sample : samples)
+    {
+        BITMAPINFO sourceInfo = info;
+        sourceInfo.bmiHeader.biWidth = sample.width;
+        sourceInfo.bmiHeader.biHeight = -sample.height;
+        void* sourceRaw = nullptr;
+        HBITMAP image = CreateDIBSection(nullptr, &sourceInfo, DIB_RGB_COLORS, &sourceRaw, nullptr, 0);
+        Expect(image && sourceRaw, "native bitmap fixture retains its original dimensions");
+        const bool monochrome = sample.width == 13 && sample.height == 13;
+        auto* sourcePixels = static_cast<std::uint32_t*>(sourceRaw);
+        for (int y = 0; y < sample.height; ++y)
+            for (int x = 0; x < sample.width; ++x)
+                sourcePixels[y * sample.width + x] = monochrome
+                    ? ((x + y) % 2 ? 0xffffffffu : 0xff000000u) : 0xffff0000u;
+        ItemView item; item.image = image;
+        for (size_t i = 0; i < std::size(dpis); ++i)
+        {
+            auto metrics = ResolveMetrics(dpis[i]);
+            const RECT row{0, 0, width, metrics.rowHeight};
+            std::fill_n(pixels, width * height, PixelColor(palette.background));
+            Expect(DrawItem(dc, nullptr, nullptr, item, row, 0, palette, metrics),
+                "native bitmap renders with the production menu renderer");
+            GdiFlush();
+            const RECT column{metrics.leftPadding, 0, metrics.leftPadding + metrics.iconColumnWidth, row.bottom};
+            const auto ink = FindPixelsDifferentFromColorInRect(pixels, width, height, column, palette.background);
+            if (ink.right - ink.left != sample.expected[i][0] || ink.bottom - ink.top != sample.expected[i][1])
+                std::cerr << "native size " << sample.width << 'x' << sample.height << " dpi=" << dpis[i]
+                    << " actual=" << ink.right - ink.left << 'x' << ink.bottom - ink.top << '\n';
+            Expect(ink.right - ink.left == sample.expected[i][0] && ink.bottom - ink.top == sample.expected[i][1],
+                "only legacy small images get the common DPI factor; normal images stay native and wide/tall images fit proportionally");
+            if (monochrome)
+            {
+                for (int y = ink.top; y < ink.bottom; ++y)
+                    for (int x = ink.left; x < ink.right; ++x)
+                    {
+                        const auto color = pixels[y * width + x] & 0x00ffffffu;
+                        Expect(color == 0 || color == 0x00ffffffu,
+                            "DPI compensation preserves a native monochrome icon without adding blur colors");
+                    }
+            }
+            else Expect(CountColorInRect(pixels, width, height, ink, RGB(255,0,0)) ==
+                sample.expected[i][0] * sample.expected[i][1], "native image edges are complete without cropping or a blurred fringe");
+        }
+        DeleteObject(image);
+    }
+    SelectObject(dc, old); DeleteDC(dc); DeleteObject(surface);
+}
+
 void CheckIconlessRows(HDC dc, std::uint32_t* pixels, int width, int height)
 {
     using namespace snowdesktop::menu_icon;
@@ -582,6 +659,7 @@ int wmain(int argc, wchar_t** argv)
     Expect(fluentFontHandle != nullptr && fontCount > 0,
         "embedded Fluent icon font is loaded for rendering");
     CheckCompactRendering();
+    CheckSmallNativeBitmapDpi();
 
     const auto light = snowdesktop::menu_icon::ResolvePalette(true);
     const auto dark = snowdesktop::menu_icon::ResolvePalette(false);

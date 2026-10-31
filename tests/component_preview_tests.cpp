@@ -336,6 +336,11 @@ int wmain()
         Expect(!IsWindowVisible(window.Handle()) && applied == 1,
             "private cancellation dismisses the preview without applying twice");
         POINT physicalAfter{}; GetPhysicalCursorPos(&physicalAfter);
+        if (physicalBefore.x != physicalAfter.x || physicalBefore.y != physicalAfter.y ||
+            foreground != GetForegroundWindow())
+            std::cerr << "private preview external state: cursor before=" << physicalBefore.x << ',' << physicalBefore.y
+                << " after=" << physicalAfter.x << ',' << physicalAfter.y
+                << " foreground before=" << foreground << " after=" << GetForegroundWindow() << '\n';
         Expect(physicalBefore.x == physicalAfter.x && physicalBefore.y == physicalAfter.y &&
             foreground == GetForegroundWindow(), "preview private input preserves OS cursor and foreground");
         window.Close();

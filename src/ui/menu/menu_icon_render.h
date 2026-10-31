@@ -49,6 +49,9 @@ struct Metrics
     int quickActionFontHeight = 18;
     // Zero preserves the existing image bounds; compact menus cap package art.
     int maximumImageSize = 0;
+    // Legacy menu bitmaps up to 16px use one DPI factor. Larger artwork
+    // already has its own raster size and is only reduced when it cannot fit.
+    UINT dpi = USER_DEFAULT_SCREEN_DPI;
 };
 
 struct ItemView
