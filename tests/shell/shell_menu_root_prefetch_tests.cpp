@@ -5,6 +5,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <objbase.h>
 #include <stdexcept>
 
@@ -36,6 +37,54 @@ struct Workspace
     }
     ~Workspace() { std::error_code error; std::filesystem::remove_all(path, error); }
 };
+}
+
+// Manual observation of installed providers. No popup is shown and no command
+// is invoked; both publications come from the same real helper session.
+void ProbeShellMenuIconStages()
+{
+    Workspace workspace;
+    const auto selected = workspace.path / L"selected.txt";
+    std::ofstream(selected) << "private icon stage sample";
+    const auto report = [](const char* phase, const ext::Reply& reply) {
+        for (const auto& entry : reply.entries)
+        {
+            if (entry.label != L"7-Zip" && entry.label != L"WinRAR") continue;
+            int left = entry.width, top = entry.height, right = 0, bottom = 0;
+            std::uint64_t hash = 14695981039346656037ull;
+            for (const auto byte : entry.pixels) { hash ^= byte; hash *= 1099511628211ull; }
+            if (entry.pixels.size() == static_cast<size_t>(entry.width * entry.height * 4))
+                for (int y = 0; y < entry.height; ++y)
+                    for (int x = 0; x < entry.width; ++x)
+                        if (entry.pixels[(static_cast<size_t>(y) * entry.width + x) * 4 + 3] > 127)
+                        {
+                            left = std::min(left, x); top = std::min(top, y);
+                            right = std::max(right, x + 1); bottom = std::max(bottom, y + 1);
+                        }
+            std::cout << "icon_stage phase=" << phase << " key=" << entry.key
+                << " width=" << entry.width << " height=" << entry.height
+                << " alpha_bounds=" << left << ',' << top << ',' << right << ',' << bottom
+                << " pixels_hash=" << hash << " children=" << entry.children.size() << std::endl;
+        }
+    };
+    for (const bool source : {false, true})
+    {
+        ext::Request request; request.paths = {selected.wstring()}; request.context = ext::Context::File;
+        if (source) { request.sourceClsid = L"{23170f69-40c1-278a-1000-000100020000}"; request.sourceKey = L"*"; }
+        ext::Session session(request, 8000, false);
+        std::optional<ext::Reply> complete;
+        const auto deadline = GetTickCount64() + 10000;
+        while (!complete && GetTickCount64() < deadline)
+        {
+            MSG event{};
+            while (PeekMessageW(&event, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&event); DispatchMessageW(&event); }
+            if (auto roots = session.PollRoots()) report("preview", *roots);
+            complete = session.Poll();
+            if (!complete) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        Check(complete && complete->ok, "real installed-provider icon observation completes");
+        report(source ? "source" : "aggregate", *complete);
+    }
 }
 
 static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, bool multiple = false)

@@ -45,6 +45,7 @@ void BenchmarkShellMenuFirstScreen();
 void BenchmarkDesktopMenus();
 void BenchmarkMenuBackgroundAndManagement();
 void TestShellMenuRootPrefetch();
+void ProbeShellMenuIconStages();
 void BenchmarkNativeMenuPreparation();
 
 namespace
@@ -6115,6 +6116,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-native-menu-preparation") BenchmarkNativeMenuPreparation();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-prepared-worker") TestShellMenuPreparedService();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-root-prefetch") TestShellMenuRootPrefetch();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-menu-icon-stages") ProbeShellMenuIconStages();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh")
