@@ -646,6 +646,7 @@ struct MenuService::Impl
     Request PopupRequest(Request request) const
     {
         request.catalogueOnly = false;
+        request.rootMetadataOnly = false;
         if (configured && request.sourceClsid.empty() && !request.startPinOnly)
             request.visibleMenuProviders = readProjection[static_cast<int>(
                 request.background || request.context == Context::Desktop ? Category::Background : Category::Objects)];
@@ -994,30 +995,31 @@ struct MenuService::Impl
             if (row.invalid) continue; // A requested live verification still owns the snapshot.
             const auto managementProof = SnapshotDependency(row.request, row.view.contexts, true);
             if (!managementProof) { finish(); continue; }
-            const auto visible = VisibleSnapshot(preferences, *row.view.snapshot, row.view.contexts);
-            const auto routable = [](const auto &entry) {
+            const auto needsSource = [&](const auto &entry) {
                 return !entry.separator && !entry.provider.empty() && entry.registration.empty() &&
-                    !StatePairForVerb(entry.key) && (!entry.key.empty() || !entry.pixels.empty());
+                    !StatePairForVerb(entry.key) && (!entry.key.empty() || !entry.pixels.empty()) &&
+                    (sourceSelections.contains(key) || !DemandSource(catalogue, available, entry.provider, row.view.contexts));
             };
-            const bool missingApplication = std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
-                const auto found = observed.find(entry.registration.empty() ? entry.provider : entry.registration);
-                return found != observed.end() && found->second.application.id.empty();
-            });
-            const bool missingRoute = std::any_of(visible.begin(), visible.end(), [&](const auto &entry) {
-                return routable(entry) && !DemandSource(catalogue, available, entry.provider, row.view.contexts);
-            });
-            if (missingApplication || missingRoute) sourceSelections.insert(key);
-            if (!sourceSelections.contains(key)) { finish(); continue; }
+            // A proven registration already supplies its own metadata. A new
+            // static/packaged root must not retry every unrelated COM handler.
+            std::vector<const Entry *> unresolved;
+            for (const auto &entry : row.view.snapshot->entries)
+                if (needsSource(entry)) unresolved.push_back(&entry);
+            if (unresolved.empty()) { finish(); continue; }
+            sourceSelections.insert(key);
             for (const auto &source : catalogue.rows)
             {
-                if ((source.kind != RegistrationKind::Handler && source.kind != RegistrationKind::Packaged) || !source.systemEnabled ||
+                // Packaged IExplorerCommand roots carry manifest registration
+                // identity from their direct GetState query. Activating them
+                // again as IContextMenu cannot improve that proof.
+                if (source.kind != RegistrationKind::Handler || !source.systemEnabled ||
                     source.verbs.empty() || failedSources.contains(source.id) || !DependsOn(source, row.request, row.view.contexts)) continue;
                 // Repeated file suffixes share many already-inspected root
                 // actions. Probe again only when this source sees a new action
                 // identity in this location, not once per sample path or Shift.
                 std::vector<Key> attempts;
-                for (const auto &entry : row.view.snapshot->entries) if (!entry.separator && !entry.provider.empty())
-                    attempts.push_back(settings_ipc::Pack(entry.provider, row.view.contexts, source.id, source.revision));
+                for (const auto *entry : unresolved)
+                    attempts.push_back(settings_ipc::Pack(entry->provider, row.view.contexts, source.id, source.revision));
                 if (std::all_of(attempts.begin(), attempts.end(), [&](const auto &attempt) { return sourceAttempts.contains(attempt); })) continue;
                 std::wstring typeKey;
                 for (const auto &path : source.sources)
@@ -1578,14 +1580,14 @@ struct MenuService::Impl
                 wchar_t executable[32768]{};
                 if (GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))))
                 {
-                    Request file; file.paths = {executable}; targets.push_back(file);
-                    Request folder; folder.paths = {std::filesystem::path(executable).parent_path().wstring()}; targets.push_back(folder);
+                    Request file; file.paths = {executable}; file.rootMetadataOnly = true; targets.push_back(file);
+                    Request folder; folder.paths = {std::filesystem::path(executable).parent_path().wstring()}; folder.rootMetadataOnly = true; targets.push_back(folder);
                     folder.background = true; folder.context = Context::FolderBackground; targets.push_back(folder);
                 }
                 PWSTR desktop = nullptr;
                 if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, KF_FLAG_DONT_VERIFY, nullptr, &desktop)))
                 {
-                    Request background; background.paths = {desktop}; background.background = true; background.context = Context::Desktop;
+                    Request background; background.paths = {desktop}; background.background = true; background.context = Context::Desktop; background.rootMetadataOnly = true;
                     targets.push_back(background); CoTaskMemFree(desktop);
                 }
                 std::erase_if(targets, [](const auto &request) { return !Local(request); });
@@ -2214,10 +2216,12 @@ void MenuService::Configure(Preferences preferences)
 }
 void MenuService::Manage(const Request &request)
 {
-    std::lock_guard lock(impl_->mutex); impl_->management = request; impl_->inspectedSelection.clear();
+    std::lock_guard lock(impl_->mutex); impl_->management = request; impl_->management.rootMetadataOnly = false; impl_->inspectedSelection.clear();
 }
-CatalogueView MenuService::Inspect(const Request &request, bool refresh)
+CatalogueView MenuService::Inspect(const Request &source, bool refresh)
 {
+    auto request = source;
+    request.rootMetadataOnly = false;
     std::lock_guard lock(impl_->mutex);
     const bool reopening = !impl_->managementActive;
     impl_->managementActive = true;

@@ -33,6 +33,9 @@ struct Request
     // Private popup read projection. Absent keeps complete inspection; an empty
     // set reads no extension details. Part of the snapshot/query identity.
     std::optional<std::vector<std::string>> visibleMenuProviders;
+    // Automatic management discovery retains root metadata, never a complete
+    // popup/click snapshot. Explicit selection reads always keep this false.
+    bool rootMetadataOnly = false;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -151,7 +154,7 @@ template <> struct Fields<shell_extensions::Request>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey,
-                        v.startPinOnly, v.originalShortcutOnly, v.omitNvidiaCompatibility, v.visibleMenuProviders);
+                        v.startPinOnly, v.originalShortcutOnly, v.omitNvidiaCompatibility, v.visibleMenuProviders, v.rootMetadataOnly);
     }
 };
 template <> struct Fields<shell_extensions::Entry>

@@ -708,7 +708,7 @@ struct Host
         return entries;
     }
     std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
-                            const std::wstring &title = L"root", const Request *request = nullptr)
+                            const std::wstring &title = L"root", const Request *request = nullptr, bool identityOnly = false)
     {
         std::vector<Entry> entries;
         std::vector<bool> omitted;
@@ -730,11 +730,13 @@ struct Host
                 }, PopupNeedsInitialView(verb));
                 tracking = previous;
             }
-            if (!RequiresNativePopup(child)) entry.children = Read(source, child, provider, depth + 1, entry.label);
-            const bool placeholder = entry.children.empty() ||
+            if (!RequiresNativePopup(child))
+                entry.children = Read(source, child, provider, depth + 1, entry.label, request,
+                    identityOnly || (request && request->rootMetadataOnly && !entry.key.empty()));
+            const bool placeholder = entry.children.empty() || (!identityOnly && !(request && request->rootMetadataOnly && !entry.key.empty()) &&
                 std::all_of(entry.children.begin(), entry.children.end(), [](const auto &e) {
                     return e.separator || (!e.token && e.children.empty());
-                });
+                }));
             if (placeholder)
             {
                 entry.children.clear(); entry.native = true; entry.token = next++;
@@ -757,7 +759,8 @@ struct Host
             ++count;
             wchar_t label[2048]{};
             MENUITEMINFOW item{sizeof(item)};
-            item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS | MIIM_DATA;
+            item.fMask = identityOnly ? MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU :
+                MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS | MIIM_DATA;
             item.dwTypeData = label;
             item.cch = std::size(label);
             if (!GetMenuItemInfoW(menu, i, TRUE, &item))
@@ -774,6 +777,15 @@ struct Host
             entry.key = Utf8(verb);
             if (OwnedVerb(verb) && IsRootMenuCommand(source.menu, item.wID))
                 continue;
+            if (identityOnly)
+            {
+                // Canonical roots need descendant verbs for the same duplicate
+                // normalization as a complete read, but no descendant captions,
+                // bitmap callbacks, resources or executable command tokens.
+                if (item.hSubMenu) readCascade(entry, item.hSubMenu, static_cast<UINT>(i), verb);
+                omitted.push_back(false); entries.push_back(std::move(entry));
+                continue;
+            }
             const bool deferred = item.hSubMenu && InspectPopup(item.hSubMenu) == PopupContents::Deferred;
             if (depth == 0 && deferred)
                 entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
@@ -907,7 +919,7 @@ struct Host
             source->directory = request.background ? request.paths.front() :
                 std::filesystem::path(request.paths.front()).parent_path().wstring();
             if (FAILED(source->site.InitializeSelection(folder, window, static_cast<UINT>(children.size()), children.data()))) continue;
-            std::function<std::optional<Entry>(IExplorerCommand*, int)> read = [&](IExplorerCommand* current, int depth) -> std::optional<Entry> {
+            std::function<std::optional<Entry>(IExplorerCommand*, int, bool)> read = [&](IExplorerCommand* current, int depth, bool headerOnly) -> std::optional<Entry> {
                 if (depth > 8 || count >= kMaximumEntries) return {};
                 source->site.Attach(current);
                 EXPCMDSTATE state = ECS_HIDDEN;
@@ -925,10 +937,13 @@ struct Host
                 GUID canonical{};
                 if (SUCCEEDED(current->GetCanonicalName(&canonical)) && !IsEqualGUID(canonical, GUID_NULL))
                 { wchar_t text[40]{}; StringFromGUID2(canonical, text, 40); entry.key = Utf8(text); }
-                PWSTR icon = nullptr;
-                if (SUCCEEDED(current->GetIcon(selection.Get(), &icon)) && icon)
-                { LoadMenuCommandIcon(entry, icon); CoTaskMemFree(icon); }
-                if (flags & ECF_HASSUBCOMMANDS)
+                if (!headerOnly)
+                {
+                    PWSTR icon = nullptr;
+                    if (SUCCEEDED(current->GetIcon(selection.Get(), &icon)) && icon)
+                    { LoadMenuCommandIcon(entry, icon); CoTaskMemFree(icon); }
+                }
+                if ((flags & ECF_HASSUBCOMMANDS) && !headerOnly)
                 {
                     ComPtr<IEnumExplorerCommand> enumeration;
                     if (SUCCEEDED(current->EnumSubCommands(&enumeration)) && enumeration)
@@ -936,11 +951,18 @@ struct Host
                         {
                             ComPtr<IExplorerCommand> child; ULONG fetched = 0;
                             if (enumeration->Next(1, &child, &fetched) != S_OK || fetched != 1 || !child) break;
-                            if (auto value = read(child.Get(), depth + 1)) entry.children.push_back(std::move(*value));
+                            if (auto value = read(child.Get(), depth + 1, request.rootMetadataOnly))
+                            {
+                                entry.children.push_back(std::move(*value));
+                                // Management only needs proof that this root
+                                // has an actual visible child. The explicit
+                                // selection query still reads every template.
+                                if (request.rootMetadataOnly) break;
+                            }
                         }
                     if (entry.children.empty()) entry.enabled = false;
                 }
-                else
+                else if (!headerOnly && !request.rootMetadataOnly)
                 {
                     entry.token = next++;
                     Command action; action.source = source.get(); action.explorer = current; action.selection = selection;
@@ -948,7 +970,7 @@ struct Host
                 }
                 return entry;
             };
-            if (auto entry = read(command.Get(), 0))
+            if (auto entry = read(command.Get(), 0, false))
             {
                 // A legacy aggregate may occasionally expose this modern verb.
                 // Some roots return GUID_NULL as their canonical name while
@@ -1260,6 +1282,15 @@ struct Host
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
+        if (request.rootMetadataOnly)
+        {
+            std::function<void(std::vector<Entry>&)> removeTokens = [&](auto& entries) {
+                for (auto& entry : entries) { entry.token = 0; removeTokens(entry.children); }
+            };
+            removeTokens(reply.entries);
+            commands.clear();
+            MenuTrace("management.metadata", "roots", 0, static_cast<unsigned>(reply.entries.size()));
+        }
         if (!request.sourceClsid.empty() && !request.sourceKey.empty() &&
             (!HandlerEnabled(request.sourceClsid) || !SourceRegistered(request.sourceClsid, request.sourceKey)))
             return Reply{true, {}, {}};

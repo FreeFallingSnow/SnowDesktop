@@ -9,7 +9,7 @@ namespace snowdesktop::shell_extensions
 inline bool CanPreviewPopupRoots(const Request& request, int depth)
 {
     return depth == 0 && request.visibleMenuProviders && !request.visibleMenuProviders->empty() &&
-        !request.catalogueOnly && !request.startPinOnly && request.sourceClsid.empty() && request.sourceKey.empty();
+        !request.catalogueOnly && !request.rootMetadataOnly && !request.startPinOnly && request.sourceClsid.empty() && request.sourceKey.empty();
 }
 
 // Build only from persisted command IDs and registration evidence. Unknown

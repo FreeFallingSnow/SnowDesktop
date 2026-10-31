@@ -5431,7 +5431,7 @@ void TestFileTypeDiscovery()
             std::lock_guard lock(requestsMutex);
             for (const auto *type : {L".png", L".docx"}) for (bool multi : {false, true}) for (bool shift : {false, true})
                 Expect(std::any_of(queried.begin(), queried.end(), [&](const auto &r) {
-                    return std::filesystem::path(r.paths.front()).extension() == type && r.paths.size() == (multi ? 2u : 1u) && r.extended == shift;
+                    return std::filesystem::path(r.paths.front()).extension() == type && r.paths.size() == (multi ? 2u : 1u) && r.extended == shift && r.rootMetadataOnly;
                 }), "normal and Shift discovery cover both single and same-type multiple selections");
             Expect(std::none_of(queried.begin(), queried.end(), [](const auto &r) { return std::filesystem::path(r.paths.front()).extension() == L".pdf"; }),
                 "system-disabled type registrations do not create discovery jobs");
@@ -5675,6 +5675,7 @@ void BenchmarkMenus()
 
 #include "shell/shell_extension_demand_tests.h"
 #include "shell/shell_menu_refresh_cases.h"
+#include "shell/shell_menu_discovery_cases.h"
 #include "shell/shell_visible_menu_read_cases.h"
 
 void ProbeNativeMenuPreparation()
@@ -6000,7 +6001,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-refresh")
-        { menu_refresh_tests::Run(); visible_read_tests::Run(); }
+        { menu_refresh_tests::Run(); visible_read_tests::Run(); menu_discovery_tests::Run(); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-visible-menu-read") visible_read_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap")
         { TestShellContextMenuBootstrap(); TestNativeMenuIsolation(); }
@@ -6158,6 +6159,7 @@ int wmain(int argc, wchar_t **argv)
             TestSelectionScopes();
             TestCatalogueDependencies();
             TestUsefulManagementItems();
+            menu_discovery_tests::Run();
             TestFileTypeDiscovery();
         }
     }

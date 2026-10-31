@@ -50,6 +50,7 @@ inline std::vector<Request> DiscoverFileTypes(const Catalogue &catalogue, const 
     {
         const auto bytes = DiscoverySample(type);
         Request single;
+        single.rootMetadataOnly = true;
         bool ready = true;
         for (int i = 1; i <= 2; ++i)
         {
