@@ -2361,6 +2361,12 @@ void TestWorkshopUninstallWithReadAhead(bool legacyWatchRoot)
 
 void TestBridgePipeRetirement()
 {
+    TemporaryDirectory temporary;
+    struct DeploymentScope
+    {
+        ~DeploymentScope() { workshopTestDeployment.clear(); }
+    } deploymentScope;
+    workshopTestDeployment = std::filesystem::canonical(temporary.path);
     std::wstring buffer(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     Check(length != 0 && length < buffer.size(), "locate the owned bridge-pipe child fixture");
@@ -2414,7 +2420,8 @@ int wmain(int argc, wchar_t** argv)
         catch (const std::exception& error) { Check(false, error.what()); }
         return failures == 0 ? 0 : 1;
     }
-    TestBridgePipeRetirement();
+    try { TestBridgePipeRetirement(); }
+    catch (const std::exception& error) { Check(false, error.what()); }
     try { TestWorkshopUninstallWithReadAhead(false); }
     catch (const std::exception& error) { Check(false, error.what()); }
     TestManagerConnectionState(Check);
