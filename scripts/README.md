@@ -24,6 +24,16 @@
 
 共同候选的完整 Release 产品构建成功后，立即保存运行文件并更新本检出 `.build/Release`，再开始测试；后续测试失败不撤回已交付的新构建。`productBuild`、`artifact`、`activation` 和最终测试结果分别保留。替换只处理已校验清单内的运行文件，保留原启动参数、`data/` 和 `data.debug/`；正在运行时先正常退出宿主，更新后恢复运行，旧运行文件保存在 `.build/activation-backups/`。本检出应用未运行时只安装新文件，回执为 `installed`，保持关闭以供下次启动；其他安装目录中的应用保持原状。本检出进程存在但控制窗口尚不可用时明确失败，保留现有文件。较旧源码快照不会覆盖已安装的新快照。复制或启动失败时恢复旧运行文件及原先的运行状态并记录失败，不把切换失败写成构建失败。Hook 已载入的外部进程保持运行，其现有映像在正常重启前仍属于旧构建。补切已有产品可使用 `scripts/build_activate.ps1 -ArtifactRun <runId>`，不需要等待或重跑测试。
 只读 `status -Batch B`、`wait ID -Batch B -Revision R`、原始日志及逐条证据仍绑定原批次，不能将新窗口的结果替代旧结果。
+候选 Run 结束及成功激活后自动清理旧运行文件：通常只保留一份当前产品候选和一份最近回滚备份。
+新产品尚未激活或 Run 仍持有执行租约时暂时保留对应产物；打包、发布运行文件和激活通过共享租约保护，
+清理独占租约不可用或旧 DLL 仍被占用时延后到下一次构建。
+打包成功、失败或退出时均释放读取租约，避免常驻发布界面阻止后续清理。只淘汰 `candidate-artifacts/<run>/runtime/`
+和旧 `activation-backups/`，保留不可变产物清单、哈希、Run、发布及验证记录，并为已清产物写入 `retention.json`。
+失败激活留下的恢复备份在后续成功激活前保留，不以旧的成功回执覆盖尚未完成的恢复需求。
+已淘汰运行文件不能再作为旧构建执行、验收或打包，应选择保留的构建或重新构建；共用编译工作区、`Release/data/`
+和 `data.debug/` 不参与清理。可在加载 `build_entry.ps1`、`build_protocol.ps1`、`build_candidate.ps1`、
+`build_candidate_artifacts.ps1` 后调用 `Invoke-CandidateRuntimeRetention <仓库绝对路径> -Preview` 查看计划，
+去掉 `-Preview` 执行同一策略。此规则不自动删除 `artifacts/` 发行包或 `.codex-probes/` 调查材料。
 活动候选最多32个，达到上限会等待；未配置权重时仍遵守同仓库重型执行互斥，不声称公平排队或自动依赖闭合。
 明确的全空计划直接发布 skipped，不复制源码、不创建Run或编译槽，也不计作测试通过。
 捕获失败、所有者退出或部分发布均保留证据，只能按原尝试显式检查/恢复；没有超时接管或自动重启。
