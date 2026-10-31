@@ -99,7 +99,18 @@ function Invoke-CandidateRuntimeRetention([string]$Root,[switch]$Preview) {
                 if($directory -eq $keep){continue}
                 $planned+=@($directory)
                 if($Preview){continue}
-                try {Remove-CandidateRetiredDirectory $backups ([IO.Path]::GetFileName($directory));$removed+=@($directory)}
+                try {
+                    $name=[IO.Path]::GetFileName($directory)
+                    $activation=Read-EntryJson (Join-Path $stateRoot ($name.Substring(0,32)+'.activation.json'))
+                    if($activation -and $activation.status -notin 'activated','installed','already-current'){
+                        $failedAt=Get-Field $activation 'completedUtc'
+                        $currentAt=Get-Field $current 'completedUtc'
+                        if(-not $failedAt -or -not $currentAt -or [DateTimeOffset]::Parse($failedAt) -ge [DateTimeOffset]::Parse($currentAt)){
+                            throw 'Activation recovery may still need this backup; retain it until a later successful activation.'
+                        }
+                    }
+                    Remove-CandidateRetiredDirectory $backups $name;$removed+=@($directory)
+                }
                 catch {$deferred+=@([pscustomobject]@{path=$directory;error=$_.Exception.Message})}
             }
         }

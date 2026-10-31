@@ -195,23 +195,26 @@ $code=Invoke-CandidateBatchPipeline $PSScriptRoot $request $context $record
     std::cout<<"PASS build failure retains runtime; successful product publishes and activates before failing tests\n";
 }
 void retention(const fs::path& repo) {
+    const auto windows_path=[](fs::path path){return utf8(path.make_preferred().wstring());};
     const auto root=temporary("runtime-retention"),state=root/L".build/collaboration";
     copy(repo,root,{"scripts/build_entry.ps1","scripts/build_protocol.ps1","scripts/build_inputs.ps1",
         "scripts/build_candidate.ps1","scripts/build_candidate_artifacts.ps1"});
-    const std::string old(32,'a'),active(32,'b'),current(32,'c');
+    const std::string old(32,'a'),active(32,'b'),current(32,'c'),failed(32,'d');
     const auto artifacts=root/L".build/candidate-artifacts",backups=root/L".build/activation-backups";
     const auto oldBackup=backups/wide(old+"-"+old),currentBackup=backups/wide(current+"-"+current);
+    const auto failedBackup=backups/wide(failed+"-"+failed);
     for(const auto& id:{old,active,current}){
         const auto directory=artifacts/wide(id),runtime=directory/L"runtime";
         write(runtime/L"SnowDesktop.exe",id);
         atomic(directory/L"artifact.json",Json::object({{"id",id},{"runId",id},{"publicationComplete",true},
-            {"runtime",utf8(runtime.wstring())},{"productRuntime",true},
+            {"runtime",windows_path(runtime)},{"productRuntime",true},
             {"createdUtc",id==current?"2026-10-31T03:00:00Z":"2026-10-31T02:00:00Z"}}).dump());
         atomic(state/L"runs"/wide(id+".json"),id==active?"{\"status\":\"running\",\"completedUtc\":null}":
             "{\"status\":\"passed\",\"completedUtc\":\"2026-10-31T03:00:00Z\"}");
     }
     write(oldBackup/L"old.dll","retired backup");write(currentBackup/L"old.dll","current rollback");
-    atomic(state/L"activation-current.json",Json::object({{"runId",current},{"backup",utf8(currentBackup.wstring())}}).dump());
+    atomic(state/L"activation-current.json",Json::object({{"runId",current},{"backup",windows_path(currentBackup)},
+        {"completedUtc","2026-10-31T03:00:00Z"}}).dump());
     write(root/L".build/Release/data/layout.json","personal layout");
     write(root/L".build/Release/data.debug/state.json","personal debug profile");
     write(root/L".build/candidate-slots/warm/output.obj","warm compiler output");
@@ -254,11 +257,19 @@ finally {if($reader){$reader.Dispose()}}
     CloseHandle(activeLease);
     require(invoke().at("status").str()=="completed"&&!fs::exists(artifacts/wide(active)/L"runtime")&&
         fs::exists(artifacts/wide(current)/L"runtime/SnowDesktop.exe"),"Completed superseded Run was not pruned to one runtime");
+    write(failedBackup/L"old.dll","needed for failed activation recovery");
+    atomic(state/wide(failed+".activation.json"),"{\"status\":\"failed\",\"completedUtc\":\"2026-10-31T04:00:00Z\"}");
+    require(invoke().at("status").str()=="deferred"&&read(failedBackup/L"old.dll")=="needed for failed activation recovery"&&
+        fs::exists(currentBackup/L"old.dll"),"Retention deleted a failed activation's recovery files");
+    atomic(state/L"activation-current.json",Json::object({{"runId",current},{"backup",windows_path(currentBackup)},
+        {"completedUtc","2026-10-31T05:00:00Z"}}).dump());
+    require(invoke().at("status").str()=="completed"&&!fs::exists(failedBackup)&&fs::exists(currentBackup/L"old.dll"),
+        "Successful later activation did not release the failed recovery backup");
     require(read(root/L".build/Release/data/layout.json")=="personal layout"&&
         read(root/L".build/Release/data.debug/state.json")=="personal debug profile"&&
         read(root/L".build/candidate-slots/warm/output.obj")=="warm compiler output"&&
         read(root/L"outside/sentinel")=="outside cleanup scope","Retention changed data, compiler workspace or outside files");
-    std::cout<<"PASS single-runtime/rollback retention, preview, busy readers, active Run, junction rejection, manifests and user data\n";
+    std::cout<<"PASS single-runtime/rollback retention, failed recovery protection, preview, busy readers, active Run, junction rejection, manifests and user data\n";
 }
 }
 int main(int argc,char** argv){

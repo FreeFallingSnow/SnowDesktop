@@ -523,9 +523,9 @@ $null = New-Item -ItemType Directory -Path $runtimeRoot -Force
 function Invoke-Statement($Statement) { . ([scriptblock]::Create($Statement.Extent.Text)) }
 if ([IO.Path]::GetFileName($Packager) -eq 'package_steam.ps1') {
     foreach ($variable in @('$runtimeFiles','$required')) {
-        $assignment = @($ast.EndBlock.Statements | Where-Object {
-            $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq $variable
-        })
+        $assignment = @($ast.FindAll({ param($node)
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq $variable
+        }, $true))
         if ($assignment.Count -ne 1) { throw 'Runtime inventory assignment not found' }
         . ([scriptblock]::Create($assignment[0].Extent.Text))
     }
@@ -534,9 +534,9 @@ if ([IO.Path]::GetFileName($Packager) -eq 'package_steam.ps1') {
         $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($source)) -Force
         [IO.File]::WriteAllText($source, 'fixture:' + $name)
     }
-    $loops = @($ast.EndBlock.Statements | Where-Object {
-        $_ -is [System.Management.Automation.Language.ForEachStatementAst] -and $_.Condition.Extent.Text -ceq '$required'
-    })
+    $loops = @($ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.ForEachStatementAst] -and $node.Condition.Extent.Text -ceq '$required'
+    }, $true))
     if ($loops.Count -ne 2) { throw 'Required-file validation and copy loops not found' }
 } else {
     $copyPayload = $ast.Find({ param($node)
