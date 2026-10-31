@@ -34,7 +34,7 @@ inline void Run(bool legacyMissingFailure = false)
     WidgetEngine engine;
     require(engine.InitPreview(context.Get(), text.Get()), "initialize isolated actual widget engine");
     const std::wstring packageId = L"4c360510-dd3d-4d3d-9496-686477fcfa37";
-    const std::string narrowId(packageId.begin(), packageId.end());
+    const auto narrowId = WideToUtf8(packageId);
     const std::wstring instance = L"retained-unsubscribed-instance";
     const auto source = profile.root / L"restore-source";
     std::filesystem::create_directories(source);
