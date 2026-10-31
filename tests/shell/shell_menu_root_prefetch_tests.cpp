@@ -1,5 +1,6 @@
 #include "shell/shell_extension_menu_presentation.h"
 #include "shell/shell_menu_read_projection.h"
+#include "shell/shell_explorer_command_state.h"
 #include "ui/menu/modern_menu_dynamic_items_rules.h"
 #include "shell_service_catalogue_fixture.h"
 #include <atomic>
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <objbase.h>
 #include <stdexcept>
+#include <wrl/implements.h>
 
 namespace
 {
@@ -106,6 +108,110 @@ void ProbeShellMenuIconStages()
         Check(complete && complete->ok, "real installed-provider icon observation completes");
         report(source ? "source" : "aggregate", *complete);
     }
+}
+
+static void RunExplorerCommandStateBatch()
+{
+    struct StateCommand final : Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IExplorerCommand>
+    {
+        unsigned id; bool pending; EXPCMDSTATE result; bool fail;
+        DWORD thread = GetCurrentThreadId(); std::vector<unsigned>& calls;
+        StateCommand(unsigned value, bool deferred, EXPCMDSTATE state, bool failure, std::vector<unsigned>& log)
+            : id(value), pending(deferred), result(state), fail(failure), calls(log) {}
+        IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR*) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR*) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR*) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetCanonicalName(GUID*) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetState(IShellItemArray*, BOOL slow, EXPCMDSTATE* state) override
+        {
+            Check(thread == GetCurrentThreadId(), "state completion retains the owning STA");
+            calls.push_back(id + (slow ? 100u : 0u));
+            if (!slow && pending) return E_PENDING;
+            if (fail) return E_FAIL;
+            *state = result; return S_OK;
+        }
+        IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetFlags(EXPCMDFLAGS*) override { return E_NOTIMPL; }
+        IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand**) override { return E_NOTIMPL; }
+    };
+    std::vector<unsigned> calls, visible;
+    std::vector<Microsoft::WRL::ComPtr<StateCommand>> candidates;
+    candidates.push_back(Microsoft::WRL::Make<StateCommand>(1, true, ECS_ENABLED, false, calls));
+    candidates.push_back(Microsoft::WRL::Make<StateCommand>(2, false, ECS_DISABLED | ECS_CHECKED, false, calls));
+    candidates.push_back(Microsoft::WRL::Make<StateCommand>(3, true, ECS_HIDDEN, false, calls));
+    candidates.push_back(Microsoft::WRL::Make<StateCommand>(4, true, ECS_ENABLED, true, calls));
+    unsigned publications = 0;
+    const bool serialNegative = GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_SERIAL_COMMAND_STATES", nullptr, 0) != 0;
+    ext::ReadExplorerCommandBatch(candidates, [&](auto& candidate, bool slow) {
+        EXPCMDSTATE state = ECS_HIDDEN;
+        const HRESULT result = ext::ReadExplorerCommandState(candidate.Get(), nullptr, slow || serialNegative, state);
+        if (result == E_PENDING) return false;
+        if (SUCCEEDED(result) && !(state & ECS_HIDDEN))
+        {
+            if (candidate->id == 2)
+                Check((state & (ECS_DISABLED | ECS_CHECKED)) == (ECS_DISABLED | ECS_CHECKED),
+                    "fast completion retains disabled and checked state");
+            visible.push_back(candidate->id);
+        }
+        return true;
+    }, [&] {
+        if (publications++ == 0)
+            Check(visible == std::vector<unsigned>{2} && calls == std::vector<unsigned>({1, 2, 3, 4}),
+                "FAST_STATES_BEFORE_SLOW: publish confirmed peers before allowing pending calculations");
+    });
+    Check(publications == 4 && visible == std::vector<unsigned>({2, 1}),
+        "pending hidden/failed states introduce no speculative command and each pending root completes once");
+    Check(std::count(calls.begin(), calls.end(), 101u) == 1 &&
+        std::count(calls.begin(), calls.end(), 103u) == 1 && std::count(calls.begin(), calls.end(), 104u) == 1,
+        "slow work runs once per pending root");
+}
+
+static void RunIncrementalRootStates()
+{
+    Workspace workspace;
+    const auto file = workspace.path / L"staged.txt";
+    std::ofstream(file) << "private staged state fixture";
+    ext::Request request; request.paths = {file.wstring()}; request.context = ext::Context::File;
+    ext::Entry first; first.provider = "verb:staged-first"; first.key = "staged-first"; first.label = L"First state";
+    ext::Entry second; second.provider = "verb:staged-second"; second.key = "staged-second"; second.label = L"Second state";
+    first.enabled = second.enabled = false;
+    ext::Preferences prefs;
+    for (const auto& entry : {first, second}) ext::SetCommon(prefs, entry.provider, ext::Category::Objects, true);
+    std::atomic_bool releaseSecond = false, finish = false;
+    ext::MenuService service(workspace.path / L"cache", [&](const ext::Request&) {
+        auto sent = std::make_shared<unsigned>(0);
+        ext::QueryWork work;
+        work.pollRoots = [&, sent]() -> std::optional<ext::Reply> {
+            if (!*sent) { ++*sent; return ext::Reply{true, {first}, {}}; }
+            if (*sent == 1 && releaseSecond) { ++*sent; return ext::Reply{true, {first, second}, {}}; }
+            return {};
+        };
+        work.poll = [&]() -> std::optional<ext::Reply> {
+            if (!finish) return {};
+            auto readyFirst = first, readySecond = second;
+            readyFirst.enabled = readySecond.enabled = true; readyFirst.token = 81; readySecond.token = 82;
+            return ext::Reply{true, {readyFirst, readySecond}, {}};
+        };
+        work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
+        return work;
+    }, [] { return ext::Catalogue{}; });
+    service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+    const auto poll = [&] { if (auto update = options.pollItems(items, true)) items = std::move(*update); };
+    Until([&] { poll(); return items.size() == 1; }, "first confirmed state header arrives before all work completes");
+    const auto command = items.front().command;
+    releaseSecond = true;
+    Until([&] { poll(); return items.size() == 2; }, "LATE_ROOT_STATE_VISIBLE: later confirmed headers publish during the same query");
+    Check(items.front().command == command && !items.front().enabled && !items.back().enabled &&
+        !options.pollItemsFinished() && !service.View(request).snapshot,
+        "incremental headers retain row identity and never acquire executable or durable authority");
+    finish = true;
+    Until([&] { poll(); return options.pollItemsFinished(); }, "complete state results finish without hover or a second query");
+    Check(items.size() == 2 && items.front().command == command && items.front().enabled && items.back().enabled,
+        "final state updates existing rows without duplicating earlier headers");
+    service.Shutdown();
 }
 
 static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, bool multiple = false)
@@ -390,6 +496,18 @@ static void RunStableSourceCompletion(bool footer, bool previewImage = false,
 
 void TestShellMenuRootPrefetch()
 {
+    RunExplorerCommandStateBatch();
+    RunIncrementalRootStates();
+    {
+        ext::Request selected; selected.visibleMenuProviders = std::vector<std::string>{"verb:sevenzip"};
+        Check(!ext::NeedsSynchronousCascades(selected), "selective archive menus need no hidden synchronous Send To work");
+        selected.visibleMenuProviders->push_back("verb:sendto");
+        Check(ext::NeedsSynchronousCascades(selected), "Send To preserves its complete asynchronous population guarantee");
+        selected.visibleMenuProviders = std::vector<std::string>{"*"};
+        Check(ext::NeedsSynchronousCascades(selected), "show-all menus preserve Send To completeness");
+        selected.visibleMenuProviders.reset();
+        Check(ext::NeedsSynchronousCascades(selected), "unprojected management and native reads retain complete trees");
+    }
     {
         ext::Entry original; original.provider = "verb:stable"; original.key = "stable"; original.label = L"7-Zip";
         auto owned = original; owned.registration = "clsid:first";

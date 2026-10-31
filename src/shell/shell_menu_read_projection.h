@@ -88,4 +88,18 @@ inline bool ReadMenuRootDetails(const Request &request, const std::string &canon
             (!legacyPrefix.empty() && id.starts_with(legacyPrefix))) return true;
     return false;
 }
+
+inline bool NeedsSynchronousCascades(const Request& request)
+{
+    // Send To can expose a readable but incomplete asynchronous subtree.
+    // Preserve Shell's completion guarantee whenever that subtree is read;
+    // selective popups can initialize their other cascades after the headers.
+    return !CanPreviewPopupRoots(request, 0) ||
+        ReadMenuRootDetails(request, "verb:sendto", "menu:send to:") ||
+        std::any_of(request.visibleMenuProviders->begin(), request.visibleMenuProviders->end(), [](const auto& id) {
+            // Unknown caption identities can include a localized Send To.
+            // WinRAR's observed cascade has the explicit initialization path.
+            return id.starts_with("menu:") && !id.starts_with("menu:winrar:");
+        });
+}
 }

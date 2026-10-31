@@ -1,5 +1,6 @@
 #include "shell_extension_menu.h"
 #include "shell_menu_read_projection.h"
+#include "shell_explorer_command_state.h"
 #include "shell_extension_source.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_menu_registry_watch.h"
@@ -725,6 +726,11 @@ struct Host
         std::vector<Cascade> cascades;
         const bool previewRoots = rootPreview && request && CanPreviewPopupRoots(*request, depth);
         const auto readCascade = [&](Entry &entry, HMENU child, UINT index, const std::wstring &verb) {
+            // Without SYNCCASCADEMENU, even a readable popup may still need
+            // its initialization message before it supplies the complete tree.
+            // Send To retains the synchronous query path above this reader.
+            if (request && !NeedsSynchronousCascades(*request))
+                MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(child), MAKELPARAM(index, FALSE));
             if (depth < 8 && InspectPopup(child) == PopupContents::Deferred)
             {
                 progress("initialize deferred popup: " + Utf8(entry.label));
@@ -739,7 +745,7 @@ struct Host
                 }, PopupNeedsInitialView(verb));
                 tracking = previous;
             }
-            if (!RequiresNativePopup(child)) entry.children = Read(source, child, provider, depth + 1, entry.label);
+            if (!RequiresNativePopup(child)) entry.children = Read(source, child, provider, depth + 1, entry.label, request);
             const bool placeholder = entry.children.empty() ||
                 std::all_of(entry.children.begin(), entry.children.end(), [](const auto &e) {
                     return e.separator || (!e.token && e.children.empty());
@@ -906,30 +912,45 @@ struct Host
         });
         if (!request.background) for (const auto id : ids)
             children.push_back(sameFolder ? ILFindLastID(id) : reinterpret_cast<PCUITEMID_CHILD>(id));
+        struct Candidate { const Registration* registration; std::unique_ptr<Native> source; };
+        std::vector<Candidate> candidates;
         for (const auto& registration : packages)
-        {
-            if (!registration.systemEnabled || registration.verbs.empty() || !Applies(registration, request)) continue;
+            if (registration.systemEnabled && !registration.verbs.empty() && Applies(registration, request))
+                candidates.push_back({&registration, {}});
+        const auto append = [&](Candidate& candidate, bool allowSlow) {
+            const auto& registration = *candidate.registration;
             const auto provider = "verb:" + registration.verbs.front();
             if (request.visibleMenuProviders && std::none_of(request.visibleMenuProviders->begin(), request.visibleMenuProviders->end(),
-                    [&](const auto& id) { return id == "*" || id == provider || id == registration.id; })) continue;
-            CLSID clsid{};
-            if (FAILED(CLSIDFromString(Wide(registration.verbs.front()).c_str(), &clsid))) continue;
-            ComPtr<IExplorerCommand> command;
-            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&command))))
-            { MenuTrace("packaged_commands", "activation_failed"); continue; }
-            auto source = std::make_unique<Native>();
-            source->explorer = command;
-            source->explorerClass = Wide(registration.verbs.front());
-            source->paths = request.paths; source->folder = folder;
-            source->directory = request.background ? request.paths.front() :
-                std::filesystem::path(request.paths.front()).parent_path().wstring();
-            if (FAILED(source->site.InitializeSelection(folder, window, static_cast<UINT>(children.size()), children.data()))) continue;
+                    [&](const auto& id) { return id == "*" || id == provider || id == registration.id; })) return true;
+            if (!candidate.source)
+            {
+                CLSID clsid{};
+                if (FAILED(CLSIDFromString(Wide(registration.verbs.front()).c_str(), &clsid))) return true;
+                ComPtr<IExplorerCommand> command;
+                if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&command))))
+                { MenuTrace("packaged_commands", "activation_failed"); return true; }
+                candidate.source = std::make_unique<Native>();
+                auto& source = candidate.source;
+                source->explorer = command;
+                source->explorerClass = Wide(registration.verbs.front());
+                source->paths = request.paths; source->folder = folder;
+                source->directory = request.background ? request.paths.front() :
+                    std::filesystem::path(request.paths.front()).parent_path().wstring();
+                if (FAILED(source->site.InitializeSelection(folder, window, static_cast<UINT>(children.size()), children.data())))
+                    return true;
+            }
+            auto& source = candidate.source;
+            const auto countBefore = count;
+            const auto tokenBefore = next;
+            bool pending = false;
             std::function<std::optional<Entry>(IExplorerCommand*, int)> read = [&](IExplorerCommand* current, int depth) -> std::optional<Entry> {
                 if (depth > 8 || count >= kMaximumEntries) return {};
                 source->site.Attach(current);
                 EXPCMDSTATE state = ECS_HIDDEN;
-                HRESULT hr = current->GetState(selection.Get(), FALSE, &state);
-                if (hr == E_PENDING) hr = current->GetState(selection.Get(), TRUE, &state);
+                MenuTiming stateTiming("packaged_commands.state");
+                const HRESULT hr = ReadExplorerCommandState(current, selection.Get(), allowSlow, state);
+                stateTiming.Record(hr == E_PENDING ? "pending" : allowSlow ? "deferred.complete" : "fast.complete");
+                if (hr == E_PENDING && !allowSlow) { pending = true; return {}; }
                 if (FAILED(hr) || (state & ECS_HIDDEN)) return {};
                 ++count;
                 Entry entry; entry.enabled = !(state & ECS_DISABLED); entry.checked = (state & ECS_CHECKED) != 0;
@@ -957,6 +978,7 @@ struct Host
                             {
                                 entry.children.push_back(std::move(*value));
                             }
+                            if (pending) break;
                         }
                     if (entry.children.empty()) entry.enabled = false;
                 }
@@ -968,7 +990,17 @@ struct Host
                 }
                 return entry;
             };
-            if (auto entry = read(command.Get(), 0))
+            auto entry = read(source->explorer.Get(), 0);
+            if (pending)
+            {
+                // The fast pass may have visited siblings before a slow child.
+                // Discard their unpublished authority before retrying the root.
+                commands.erase(commands.lower_bound(tokenBefore), commands.end());
+                next = tokenBefore; count = countBefore;
+                MenuTrace("packaged_commands", "state.deferred");
+                return false;
+            }
+            if (entry)
             {
                 entry->registration = registration.id;
                 // A legacy aggregate may occasionally expose this modern verb.
@@ -984,7 +1016,30 @@ struct Host
                 reply.entries.push_back(std::move(*entry));
                 menus.push_back(std::move(source));
             }
-        }
+            return true;
+        };
+        const auto publish = [&] {
+            if (!rootPreview || !CanPreviewPopupRoots(request, 0)) return;
+            auto roots = reply;
+            roots.ok = true;
+            for (auto& entry : roots.entries)
+            {
+                entry.token = 0;
+                if (entry.children.empty()) entry.enabled = false;
+                else
+                {
+                    Entry loading; loading.label = L"…"; loading.enabled = false;
+                    entry.children = {std::move(loading)};
+                }
+            }
+            IdentifyEntries(roots.entries);
+            rootPreview(std::move(roots));
+            MenuTrace("packaged_commands", "fast_roots.ready");
+        };
+        // Management retains its complete metadata contract; popup queries
+        // stream fast roots while slow states finish in the same supervised STA.
+        if (CanPreviewPopupRoots(request, 0)) ReadExplorerCommandBatch(candidates, append, publish);
+        else for (auto& candidate : candidates) append(candidate, true);
         timing.Record("complete");
     }
     void NvidiaCompatibility(const Request &request, Reply &reply)
@@ -1252,8 +1307,9 @@ struct Host
         // A partly populated Send To popup can already contain a third-party
         // item, so placeholder detection alone cannot recognize its async work.
         // Automatic management metadata owns no executable/complete child tree.
-        const UINT flags = CMF_NORMAL | (request.rootMetadataOnly ? 0u : CMF_SYNCCASCADEMENU) | (request.background ? 0 : CMF_ITEMMENU) |
+        const UINT flags = CMF_NORMAL | (!request.rootMetadataOnly && NeedsSynchronousCascades(request) ? CMF_SYNCCASCADEMENU : 0u) | (request.background ? 0 : CMF_ITEMMENU) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
+        MenuTrace("query.cascades", flags & CMF_SYNCCASCADEMENU ? "synchronous" : "after_headers");
         if (!request.startPinOnly)
         {
             // Background ExplorerCommands have no selected items: Terminal

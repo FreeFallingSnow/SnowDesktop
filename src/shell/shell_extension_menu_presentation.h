@@ -246,8 +246,8 @@ class Presentation
   private:
     bool ShowRoots(std::vector<modern_menu::Item> &items, const MenuView &view, UINT moreCommand)
     {
-        if (cached_ || rootsShown_ || !view.roots || view.roots->entries.empty()) return false;
-        rootsShown_ = true;
+        if (cached_ || !view.roots || view.roots->entries.empty() || rootRevision_ == view.revision) return false;
+        rootRevision_ = view.revision;
         return UpdateNormal(items, view.roots->entries, moreCommand, true);
     }
     bool RemoveRoots(std::vector<modern_menu::Item> &items)
@@ -493,7 +493,7 @@ class Presentation
     std::uint64_t initialRevision_ = 0;
     std::uint64_t startRevision_ = 0;
     std::vector<HBITMAP> images_;
-    bool rootsShown_ = false;
+    std::uint64_t rootRevision_ = UINT64_MAX;
     std::set<UINT> rootCommands_;
 };
 } // namespace snowdesktop::shell_extensions
