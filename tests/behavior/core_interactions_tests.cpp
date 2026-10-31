@@ -341,6 +341,8 @@ struct NativeDragIntegrationAccess
 #include "module_access.inc"
 };
 
+#include "core_drag_matrix.h"
+
 namespace behavior
 {
 namespace fs = std::filesystem;
@@ -475,29 +477,25 @@ void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWO
     Require(SUCCEEDED(status) && (deferredDefault ? (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) : effect == expected),
         "release must honor latest gesture and source capabilities");
 }
-// The representative rows are independent product contracts, not a Cartesian
-// enumeration: verbs, capability boundary, release-time change, cancel, and
-// delayed multi-file extraction each protect a distinct failure.
-void Files(std::string_view row)
+void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
 {
-    Require(row == "sync-copy" || row == "copy" || row == "move" || row == "default-move" || row == "link" || row == "batch" || row == "unsupported" || row == "cancel", "unknown file matrix row");
     Profile p;
-    const bool delayed = row != "sync-copy";
-    const bool rejected = row == "unsupported";
-    const bool cancel = row == "cancel";
-    const bool link = row == "link";
-    const bool move = row == "move" || row == "default-move";
-    const bool batch = row == "batch";
-    const DWORD keys = row == "default-move" || cancel ? 0 : link ? MK_ALT : move ? MK_SHIFT : MK_CONTROL;
-    const DWORD expected = rejected || cancel ? 0 : link ? DROPEFFECT_LINK : move ? DROPEFFECT_MOVE : DROPEFFECT_COPY;
-    const DWORD allowed = rejected ? DROPEFFECT_MOVE : DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+    const bool delayed = test.asynchronous;
+    const bool cancel = test.cancel;
+    const bool link = test.release.effect == DROPEFFECT_LINK;
+    const bool move = test.release.effect == DROPEFFECT_MOVE;
+    const bool batch = test.directory;
+    const DWORD keys = test.release.keys;
+    const DWORD allowed = test.allowed;
+    const DWORD expected = cancel ? DROPEFFECT_NONE : test.release.effect & allowed;
     const auto file = p.root / L"source/Payload.txt";
     Write(file, "payload-bytes");
     std::vector<fs::path> files{file};
     if (batch) { files.push_back(p.root / L"source/Folder"); Write(files.back() / L"nested.txt", "nested-bytes"); }
     const auto before = Read(Access::LayoutPath(*p.app));
     auto source = ole_file_source_fixture::Make(files, delayed);
-    Submit(p, *source.Get(), keys, allowed, expected, {150,150}, cancel, MK_LBUTTON | MK_SHIFT, row == "default-move");
+    Submit(p, *source.Get(), keys, allowed, expected, {150,150}, cancel,
+        MK_LBUTTON | (test.enterShift ? MK_SHIFT : 0), deferredDefault);
     if (expected) Wait([&] { return Access::FileDropIdle(*p.app) && (!delayed || source->ends == 1) && Access::Items(*p.app).size() == 1 + files.size(); });
     const auto outputs = Outputs(p);
     Require(outputs.size() == (expected ? files.size() : 0), "exact physical output count");
@@ -505,6 +503,7 @@ void Files(std::string_view row)
     if (!expected)
     {
         Require(source->starts == 0 && source->ends == 0 && Read(file) == "payload-bytes" &&
+            (!batch || Read(files.back() / L"nested.txt") == "nested-bytes") &&
             Read(Access::LayoutPath(*p.app)) == before, "cancel/reject has no I/O or saved-state side effects");
         return;
     }
@@ -525,6 +524,18 @@ void Files(std::string_view row)
         "first output occupies the requested empty cell");
     if (batch) Require(!Same(cells[0].second, cells[1].second), "batch outputs cannot overlap");
     Reload(p, cells);
+}
+void Files(std::string_view row)
+{
+    Require(row == "sync-copy" || row == "copy" || row == "move" || row == "default-move" || row == "link" || row == "batch" || row == "unsupported" || row == "cancel", "unknown file matrix row");
+    const bool move = row == "move" || row == "default-move";
+    const bool link = row == "link";
+    drag_matrix::Case test{row != "sync-copy", row == "batch",
+        {link ? "link" : move ? "move" : "copy", row == "default-move" || row == "cancel" ? 0u : link ? MK_ALT : move ? MK_SHIFT : MK_CONTROL,
+         static_cast<DWORD>(link ? DROPEFFECT_LINK : move ? DROPEFFECT_MOVE : DROPEFFECT_COPY)},
+        static_cast<DWORD>(row == "unsupported" ? DROPEFFECT_MOVE : DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK),
+        true, row == "cancel"};
+    FileCase(test, row == "default-move");
 }
 struct HeldRead
 {
@@ -592,10 +603,85 @@ void Interleaved(bool failFirst)
 #include "container_scenarios.h"
 #include "module_contracts.h"
 
+namespace drag_matrix
+{
+int RunChild(const std::string& id)
+{
+    std::array<wchar_t, 32768> executable{};
+    const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+    behavior::Require(length > 0 && length < executable.size(), "locate matrix executable");
+    std::wstring command = L"\"" + std::wstring(executable.data(), length) + L"\" --matrix-case ";
+    command.append(id.begin(), id.end());
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(executable.data(), command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process))
+        throw std::runtime_error("cannot start isolated matrix case " + id);
+    CloseHandle(process.hThread);
+    const DWORD wait = WaitForSingleObject(process.hProcess, 60000);
+    if (wait != WAIT_OBJECT_0)
+    {
+        TerminateProcess(process.hProcess, 124);
+        WaitForSingleObject(process.hProcess, 5000);
+    }
+    DWORD code = 1;
+    if (!GetExitCodeProcess(process.hProcess, &code)) code = 1;
+    CloseHandle(process.hProcess);
+    return static_cast<int>(code);
+}
+int Command(int argc, char** argv)
+{
+    const auto cases = Enumerate();
+    const std::string_view mode = argv[1];
+    if (mode == "--matrix-case")
+    {
+        behavior::Require(argc == 3, "--matrix-case requires an exact ID");
+        const auto it = std::find_if(cases.begin(), cases.end(), [&](const auto& c) { return Id(c) == argv[2]; });
+        behavior::Require(it != cases.end(), "unknown matrix ID");
+        behavior::scene = argv[2];
+        behavior::FileCase(*it);
+        std::cout << "PASS " << behavior::scene << std::endl;
+        return 0;
+    }
+    behavior::Require(mode == "--matrix-list" || mode == "--matrix-run", "unknown matrix command");
+    behavior::Require(argc <= 5 && (argc <= 3 || argc == 5), "use [filter [shard-index shard-count]]");
+    const std::string filter = argc >= 3 ? argv[2] : "";
+    const std::size_t shard = argc == 5 ? std::stoull(argv[3]) : 0;
+    const std::size_t shards = argc == 5 ? std::stoull(argv[4]) : 1;
+    behavior::Require(shards > 0 && shard < shards, "invalid shard");
+    std::cout << "MODEL external-desktop async=" << std::size(asyncValues)
+        << " selection=" << std::size(directoryValues) << " release=" << std::size(gestures)
+        << " capabilities=" << std::size(capabilities) << " enter=" << std::size(enterValues)
+        << " end=" << std::size(cancelValues) << " raw=" << RawCount()
+        << " excluded=" << RawCount() - cases.size() << " applicable=" << cases.size()
+        << " exclusion-reason=leave-has-no-release-event" << std::endl;
+    std::size_t selected = 0, passed = 0, failed = 0;
+    for (std::size_t index = 0; index < cases.size(); ++index)
+    {
+        const auto id = Id(cases[index]);
+        if (index % shards != shard || id.find(filter) == std::string::npos) continue;
+        ++selected;
+        if (mode == "--matrix-list") std::cout << id << '\n';
+        else
+        {
+            std::cout << "RUN " << id << std::endl;
+            const auto code = RunChild(id);
+            if (code == 0) { ++passed; std::cout << "PASS " << id << std::endl; }
+            else { ++failed; std::cout << "FAIL " << id << " exit=" << code << std::endl; }
+        }
+    }
+    behavior::Require(selected != 0, "matrix selection is empty");
+    std::cout << "RESULT selected=" << selected << " pass=" << passed << " fail=" << failed
+        << " skip=0 unexecuted=" << (mode == "--matrix-list" ? selected : 0)
+        << " outside-selection=" << cases.size() - selected << std::endl;
+    return failed ? 1 : 0;
+}
+}
+
 int main(int argc, char** argv)
 {
     try
     {
+        if (argc >= 2 && std::string_view(argv[1]).starts_with("--matrix-")) return drag_matrix::Command(argc, argv);
         behavior::Require(argc == 2, "one named behavior is required");
         behavior::scene = argv[1];
         if (behavior::scene == "settings") behavior::Settings();

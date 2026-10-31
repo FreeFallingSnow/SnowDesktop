@@ -210,6 +210,15 @@ if (BUILD_TESTING)
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
     endforeach()
+    # Each case runs in a fresh process because the isolated host graph has
+    # process lifetime. The executable owns enumeration and stable case IDs.
+    foreach(shard RANGE 0 7)
+        add_test(NAME behavior_drag_matrix_${shard}
+            COMMAND SnowDesktopNativeDragIntegrationTests --matrix-run . ${shard} 8)
+        set_tests_properties(behavior_drag_matrix_${shard} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 3600 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior;drag-matrix")
+    endforeach()
     set_tests_properties(behavior_sync_copy PROPERTIES TIMEOUT 60 PROCESSORS 3)
     set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
 
