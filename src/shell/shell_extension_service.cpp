@@ -307,7 +307,7 @@ struct MenuService::Impl
             {
                 // Recover registration paths after a cache loss. No extension
                 // is activated, and only the selected sources acquire proof.
-                const auto inventory = ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, false, sourceScanDemand);
+                const auto inventory = ReadSourceRegistrationInventory(HKEY_CLASSES_ROOT, sourceScanDemand);
                 for (auto& seed : seeds) if (seed.kind == RegistrationKind::Handler && seed.sources.empty())
                     if (const auto found = std::find_if(inventory.rows.begin(), inventory.rows.end(), [&](const auto& row) {
                         return row.id == seed.id;
@@ -371,6 +371,17 @@ struct MenuService::Impl
     bool AttributionPending(const Request &request, const Preferences &fallback) const
     {
         if ((configured ? preferences : fallback).showAll) return false;
+        if (configured && !managementActive && request.sourceClsid.empty() && !request.startPinOnly)
+        {
+            // An aggregate can finish before cold source paths are recovered.
+            // Keep that popup subscribed until the worker publishes its source
+            // plan atomically with the recovered catalogue. Ordinary exact-path
+            // refreshes do not add a new wait to healthy warm snapshots.
+            if (sourceScanning && sourceMetadataRecovery && GetTickCount64() - sourceScanStarted < 8000) return true;
+            if (sourceScanRequested)
+                for (const auto& source : ConfiguredSources())
+                    if (source.kind == RegistrationKind::Handler && source.sources.empty()) return true;
+        }
         if (request.startPinOnly || catalogue.revision || (!scanning && !scanRequested) ||
             // Inventory attribution enumerates the whole machine and can outlast a
             // single helper. Known rows remain visible throughout this bounded wait.
@@ -583,6 +594,21 @@ struct MenuService::Impl
                 for (auto &[key, row] : rows)
                     if (row.registryInvalid && row.view.snapshot && !row.view.pending) row.checkRequested = true;
                 RebuildAvailable();
+                // Initial dispatch may have had no source paths yet. Supplement
+                // that existing aggregate rather than restarting it or waiting
+                // for a second opening to discover the independent sources.
+                std::vector<std::tuple<Request, QueryPriority, bool>> queries;
+                for (auto& [key, row] : rows)
+                {
+                    if (row.inspection || row.priority == QueryPriority::Inspect || row.priority == QueryPriority::Execute ||
+                        !row.request.sourceClsid.empty() || row.request.startPinOnly || row.request.originalShortcutOnly ||
+                        !row.view.contexts || (!row.view.snapshot && !row.view.pending && !row.queued)) continue;
+                    const auto plan = PlanDemandQueries(catalogue, available, preferences, row.request, row.view.contexts);
+                    if (row.view.sources != plan.sources) { row.view.sources = plan.sources; ++row.view.revision; }
+                    for (const auto& source : plan.sources)
+                        queries.emplace_back(source, row.priority, row.force || !RuntimeProof(row.request, row.view.contexts));
+                }
+                for (const auto& [request, priority, force] : queries) Queue(request, priority, force);
                 MenuTrace("catalogue.sources", "completed", 0, static_cast<unsigned>(sourceCatalogue.rows.size()));
             }
         }
@@ -1279,8 +1305,19 @@ struct MenuService::Impl
             cache.Store(job.ticket, reply);
         }
         auto executable = reply;
-        { std::lock_guard lock(mutex); latestPreferences = preferences; enforcePreferences = configured; }
-        if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, reply, contexts);
+        {
+            std::lock_guard lock(mutex); latestPreferences = preferences; enforcePreferences = configured;
+            // Apply the same current, unique proof to this fresh executable
+            // copy. Tokens still come exclusively from the fresh aggregate;
+            // derived ownership never enters the durable display snapshot.
+            if (request.sourceClsid.empty())
+                for (auto& entry : executable.entries) if (entry.registration.empty())
+                {
+                    const auto owners = CurrentSourceOwners(request, entry);
+                    if (owners.size() == 1) entry.registration = *owners.begin();
+                }
+        }
+        if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, executable, contexts);
         bool invoked = false;
         for (auto &click : clicks)
         {

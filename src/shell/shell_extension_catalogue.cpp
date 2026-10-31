@@ -722,6 +722,7 @@ struct Scanner
     CatalogueForegroundDemand *control = nullptr;
     bool capture = false;
     bool menuCommandsOnly = false;
+    bool sourceRegistrationOnly = false;
     using CapturedRegistration = std::tuple<Registration, std::wstring, std::wstring>;
     std::vector<CapturedRegistration> captured;
     Catalogue result;
@@ -817,6 +818,7 @@ struct Scanner
             auto &info = it->second;
             const auto root = L"CLSID\\" + clsid;
             info.module = Read(classes, root + L"\\InprocServer32");
+            if (sourceRegistrationOnly) return it->second;
             const auto module = LocalModule(info.module);
             info.application = module.empty() ? CommandApplication(Read(classes, root + L"\\LocalServer32")) : ApplicationForModule(module);
             info.label = Label(Read(classes, root, L"LocalizedString"));
@@ -831,7 +833,7 @@ struct Scanner
     }
     void Image(Entry &entry, const std::wstring &icon)
     {
-        if (icon.empty()) return;
+        if (sourceRegistrationOnly || icon.empty()) return;
         const auto [image, inserted] = images.try_emplace(icon);
         if (inserted) LoadIcon(image->second, icon);
         entry.width = image->second.width; entry.height = image->second.height;
@@ -862,7 +864,7 @@ struct Scanner
             icon, AssetRevision(icon)));
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
-        if (!module.empty() && !registrationModules.contains(row.id))
+        if (!sourceRegistrationOnly && !module.empty() && !registrationModules.contains(row.id))
         {
             // A handler can be registered for hundreds of types. Do not
             // evaluate filesystem normalization again for every captured row.
@@ -1039,8 +1041,9 @@ struct Scanner
     void Root(const std::wstring &root, unsigned contexts, const std::vector<std::wstring> &types = {})
     {
         if (control) control->WaitUntilAllowed();
-        for (const auto &verb : Children(classes, root + L"\\shell", control))
-            Verb(root + L"\\shell\\" + verb, contexts, types);
+        if (!sourceRegistrationOnly)
+            for (const auto &verb : Children(classes, root + L"\\shell", control))
+                Verb(root + L"\\shell\\" + verb, contexts, types);
         for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers", control))
             HandlerRegistration(root + L"\\shellex\\ContextMenuHandlers\\" + name, contexts, types);
     }
@@ -1192,6 +1195,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
         if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
         struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
         Scanner local{scanner.classes}; local.control = foreground; local.capture = true;
+        local.sourceRegistrationOnly = scanner.sourceRegistrationOnly;
         while (true)
         {
             const auto index = next.fetch_add(1, std::memory_order_relaxed);
@@ -1271,12 +1275,14 @@ std::vector<ExactSource> ExactSources(const std::vector<Registration> &seeds)
     return result;
 }
 }
-static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegroundDemand *foreground)
+static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegroundDemand *foreground,
+                                  bool sourceRegistrationOnly = false)
 {
     snowdesktop::performance::Scope scope("shell.catalogue", "scan");
     MenuTiming timing("catalogue");
     if (foreground) foreground->WaitUntilAllowed();
     Scanner scanner{classes}; scanner.control = foreground;
+    scanner.sourceRegistrationOnly = sourceRegistrationOnly;
     const unsigned files = ContextBit(Context::File), folders = ContextBit(Context::Folder);
     scanner.Root(L"*", files); scanner.Root(L"AllFilesystemObjects", files | folders);
     scanner.Root(L"Directory", folders); scanner.Root(L"Folder", folders); scanner.Root(L"Drive", folders);
@@ -1303,7 +1309,14 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
     timing.Record("packages");
     scanner.FinishRows();
     timing.Record("rows");
-    scanner.ClassifyApplications();
+    if (!sourceRegistrationOnly) scanner.ClassifyApplications();
+    if (sourceRegistrationOnly)
+    {
+        // This is routing input for a following exact read, never a complete
+        // inventory or a cache/selection proof in its own right.
+        timing.Record("source_paths", static_cast<unsigned>(scanner.result.rows.size()));
+        return std::move(scanner.result);
+    }
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
     scanner.result.folderRevision = scanner.FolderRevision();
     scanner.result.backgroundRevisions = {scanner.BackgroundRevision(Context::FolderBackground), scanner.BackgroundRevision(Context::Desktop)};
@@ -1313,6 +1326,10 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
 Catalogue ReadCatalogue(HKEY classes, bool packages)
 {
     return ReadCatalogueImpl(classes, packages, nullptr);
+}
+Catalogue ReadSourceRegistrationInventory(HKEY classes, CatalogueForegroundDemand &foreground)
+{
+    return ReadCatalogueImpl(classes, false, &foreground, true);
 }
 std::vector<Registration> ReadPackagedMenuCommands(HKEY classes)
 {

@@ -18,6 +18,7 @@
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_extension_service.h"
 #include "shell/shell_extension_source.h"
+#include "shell/shell_extension_menu_presentation.h"
 #include "shell/shell_catalogue_workers.h"
 #include "shell/shell_menu_registry_watch.h"
 #include "platform/foreground_fullscreen.h"
@@ -528,6 +529,23 @@ static void CheckSourceIdentityBeforeCatalogue()
     Check(ext::SourceRegistrationId(clsid, L"", fixture.value).empty() &&
         ext::SourceRegistrationId(L"{7C0947B1-19F8-46E2-AC45-263432A07002}", scope, fixture.value).empty(),
         "unknown scopes and different classes never acquire the source's identity");
+    Put(fixture.value, L"CLSID\\" + clsid, nullptr, L"Management-only source label");
+    Put(fixture.value, scope + L"\\shell\\static\\command", nullptr, L"private-unused.exe \"%1\"");
+    ext::CatalogueForegroundDemand foreground{true};
+    const auto full = ext::ReadCatalogue(fixture.value, false);
+    const auto recovered = ext::ReadSourceRegistrationInventory(fixture.value, foreground);
+    Check(recovered.rows.size() == 1 && !recovered.revision && !recovered.folderRevision &&
+        !recovered.backgroundRevisions[0] && !recovered.backgroundRevisions[1],
+        "runtime source recovery omits static commands and never advertises complete scope proof");
+    const auto exact = ext::ReadCatalogueSources(recovered.rows, &foreground, fixture.value);
+    const auto management = std::find_if(full.rows.begin(), full.rows.end(), [&](const auto& row) { return row.id == owner; });
+    Check(management != full.rows.end() && exact.rows.size() == 1 &&
+        recovered.rows.front().sources == management->sources && recovered.rows.front().types == management->types &&
+        recovered.rows.front().verbs == management->verbs && recovered.rows.front().contexts == management->contexts &&
+        recovered.rows.front().systemEnabled == management->systemEnabled &&
+        recovered.rows.front().application.id.empty() &&
+        exact.rows.front().menuRevision == management->menuRevision,
+        "source recovery preserves registration routing and policy; the following exact reader establishes normal command proof");
     const auto directory = std::filesystem::temp_directory_path() /
         (L"SnowDesktop-SourceIdentity-" + std::filesystem::path(fixture.path).filename().wstring());
     Check(std::filesystem::create_directory(directory), "own source provenance workspace");
@@ -541,14 +559,21 @@ static void CheckSourceIdentityBeforeCatalogue()
     ext::Request request; request.paths = {selected.wstring()}; request.context = ext::Context::File;
     request.sourceClsid = clsid; request.sourceKey = scope;
     const bool suppressOwner = GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_SUPPRESS_SOURCE_OWNER", nullptr, 0) != 0;
+    std::atomic_uint aggregateQueries{0}, invocations{0}, invalidInvocations{0};
     ext::MenuService service(directory / L"cache", [&](const ext::Request& target) {
         ext::Entry entry; entry.provider = "menu:source command:1"; entry.label = L"Source command";
+        const bool aggregateQuery = target.sourceClsid.empty();
+        entry.token = aggregateQuery ? 500 + ++aggregateQueries : 42;
         // Only the external COM query is substituted. Its registration proof
         // is read from the same real private registry as the native producer.
         if (!suppressOwner && !target.sourceClsid.empty())
             entry.registration = ext::SourceRegistrationId(target.sourceClsid, target.sourceKey, fixture.value);
         ext::QueryWork work;
         work.poll = [entry] { return std::optional<ext::Reply>{ext::Reply{true, {entry}, {}}}; };
+        work.invoke = [&, aggregateQuery, token = entry.token](UINT issued, POINT) {
+            if (aggregateQuery && issued == token) ++invocations;
+            else ++invalidInvocations;
+        };
         work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
         return work;
     }, [] { ext::Catalogue empty; empty.revision = 1; return empty; });
@@ -582,14 +607,87 @@ static void CheckSourceIdentityBeforeCatalogue()
     const auto supplemented = service.MenuDisplay(aggregate, prefs);
     Check(supplemented.snapshot && supplemented.snapshot->entries.size() == 1,
         "LATE_SOURCE_PROVENANCE: a completed aggregate gains its exact selection's later source identity without another query");
+    const auto reference = ext::AppendReference({}, supplemented.snapshot->entries.front());
+    const auto execute = [&] {
+        auto completed = std::make_shared<std::promise<bool>>();
+        auto result = completed->get_future();
+        service.Execute(aggregate, reference, {}, [completed](bool ok) { completed->set_value(ok); });
+        const bool ready = result.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+        Check(ready, "source provenance invocation completes within its bounded allowance");
+        return result.get();
+    };
+    const auto queriesBeforeClick = aggregateQueries.load();
+    Check(execute() && invocations == 1 && invalidInvocations == 0 && aggregateQueries > queriesBeforeClick,
+        "FRESH_SOURCE_INVOCATION: display provenance resolves only a newly issued aggregate token, never the source token");
     const std::wstring secondClsid = L"{7C0947B1-19F8-46E2-AC45-263432A07002}";
     Put(fixture.value, scope + L"\\shellex\\ContextMenuHandlers\\Other", nullptr, secondClsid);
     auto ambiguous = request; ambiguous.sourceClsid = secondClsid; query(ambiguous);
     Check(aggregateHidden(),
         "two current source owners with the same aggregate identity remain ambiguous");
+    Check(!execute() && invocations == 1 && invalidInvocations == 0,
+        "AMBIGUOUS_SOURCE_INVOCATION: a retained display reference cannot authorize a later ambiguous aggregate");
     service.Shutdown();
     Check(RegDeleteTreeW(fixture.value, registration.c_str()) == ERROR_SUCCESS, "remove only the private source registration");
     Check(ext::SourceRegistrationId(clsid, scope, fixture.value).empty(), "removed sources cannot retain registration proof");
+}
+
+static void CheckLateSourceDirectory()
+{
+    PrivateRegistry fixture;
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop-LateSourceDirectory-" + std::filesystem::path(fixture.path).filename().wstring());
+    Check(std::filesystem::create_directory(directory), "own late source directory workspace");
+    struct Cleanup
+    {
+        std::filesystem::path directory;
+        ~Cleanup() { std::error_code ignored; std::filesystem::remove_all(directory, ignored); }
+    } cleanup{directory};
+    const std::wstring clsid = L"{7C0947B1-19F8-46E2-AC45-263432A07003}";
+    const std::string owner = "clsid:{7c0947b1-19f8-46e2-ac45-263432a07003}";
+    Put(fixture.value, L"*\\shellex\\ContextMenuHandlers\\Late", nullptr, clsid);
+    ext::CatalogueForegroundDemand foreground{true};
+    const auto recovered = ext::ReadSourceRegistrationInventory(fixture.value, foreground);
+    const auto exact = ext::ReadCatalogueSources(recovered.rows, &foreground, fixture.value);
+    Check(exact.rows.size() == 1, "exact source exists before its delayed publication");
+    ext::Request request; request.context = ext::Context::File;
+    const auto selected = directory / L"selected.png"; std::ofstream(selected) << "private";
+    request.paths = {selected.wstring()};
+    std::atomic_uint aggregates{0}, sources{0};
+    std::atomic_bool release{false};
+    ext::MenuService service(directory / L"cache", [&](const ext::Request& target) {
+        ext::Entry entry; entry.label = L"Late source command"; entry.provider = "menu:late source command:1";
+        if (target.sourceClsid.empty()) { ++aggregates; entry.token = 51; }
+        else { ++sources; entry.registration = ext::SourceRegistrationId(target.sourceClsid, target.sourceKey, fixture.value); }
+        ext::QueryWork work;
+        work.poll = [entry] { return std::optional<ext::Reply>{ext::Reply{true, {entry}, {}}}; };
+        work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
+        return work;
+    }, [] { return ext::Catalogue{}; }, {}, {}, [&](const auto&) {
+        const auto deadline = GetTickCount64() + 3000;
+        while (!release && GetTickCount64() < deadline) Sleep(1);
+        return exact;
+    });
+    ext::Preferences prefs; ext::SetCommon(prefs, owner, ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:unresolved", ext::Category::Objects, true); service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<snowdesktop::modern_menu::Item> items; snowdesktop::modern_menu::Options options;
+    popup.Attach(items, options, 0);
+    const auto aggregateDeadline = GetTickCount64() + 1500;
+    while ((!aggregates || !service.View(request).snapshot) && GetTickCount64() < aggregateDeadline) Sleep(1);
+    const auto initial = service.MenuDisplay(request, prefs);
+    const bool held = aggregates && service.View(request).snapshot && initial.attributionPending &&
+        options.pollItemsFinished && !options.pollItemsFinished();
+    release = true;
+    const auto deadline = GetTickCount64() + 5000;
+    while (options.pollItems && options.pollItemsFinished && !options.pollItemsFinished() && GetTickCount64() < deadline)
+    {
+        if (auto update = options.pollItems(items, true)) items = std::move(*update);
+        Sleep(1);
+    }
+    Check(held && options.pollItemsFinished && options.pollItemsFinished() && sources > 0 &&
+        std::any_of(items.begin(), items.end(), [](const auto& item) { return item.label == L"Late source command"; }),
+        "LATE_SOURCE_DIRECTORY: an aggregate finishing before source metadata remains subscribed and gains the live source command");
+    service.Shutdown();
 }
 
 static void CheckPopupPackageActivationMetadata()
@@ -659,6 +757,7 @@ static void CheckPopupPackageActivationMetadata()
 void TestCatalogueRegistryHandles()
 {
     CheckSourceIdentityBeforeCatalogue();
+    CheckLateSourceDirectory();
     CheckPopupPackageActivationMetadata();
     CheckSelectedCatalogueSources();
     // Real subscriptions: nested browse-state writes must not signal menu

@@ -59,6 +59,11 @@ std::optional<Entry> ReadMenuCommandRootIcon(IExplorerCommand* command,
 class CatalogueForegroundDemand;
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
                                             CatalogueForegroundDemand &foreground);
+// Recover handler registration paths after a runtime cache loss. Enumerates
+// class associations and live handler policy, without static verbs, package
+// discovery, application classification or icons. Routing seeds only: revision
+// and full-scope proofs stay zero; callers must perform an exact source read.
+Catalogue ReadSourceRegistrationInventory(HKEY classes, CatalogueForegroundDemand &foreground);
 // Recheck only exact, already known Verb/Handler registration paths and the
 // extension associations named by those seeds. No class/package enumeration or
 // extension activation. Missing/unsupported registrations are omitted.
