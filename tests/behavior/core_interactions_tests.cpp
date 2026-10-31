@@ -537,7 +537,7 @@ void ProductionMessageWiring(bool control)
     Require(cell.column == 1 && cell.row == 1, "production completion retains requested landing");
     Reload(p, {{output, cell}});
 }
-void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
+void FileCase(const drag_matrix::Case& test, bool deferredDefault = false, bool corruptExternalSource = false)
 {
     Profile p;
     const bool delayed = test.asynchronous;
@@ -554,6 +554,16 @@ void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
     if (batch) { files.push_back(p.root / L"source/Folder"); Write(files.back() / L"nested.txt", "nested-bytes"); }
     const auto before = Read(Access::LayoutPath(*p.app));
     auto source = ole_file_source_fixture::Make(files, delayed);
+    if (corruptExternalSource)
+    {
+        Require(delayed && !batch && test.release.effect == DROPEFFECT_COPY,
+            "byte-corruption control requires one delayed copy source");
+        const auto wrong = p.root / L"incorrect-source/Payload.txt";
+        Write(wrong, "wrong-payload");
+        // Substitute only the external provider's data; production still
+        // reads, routes, copies and reports completion normally.
+        source->multiParentPaths = {wrong};
+    }
     Submit(p, *source.Get(), keys, allowed, expected, {150,150}, cancel,
         MK_LBUTTON | (test.enterShift ? MK_SHIFT : 0), deferredDefault);
     if (expected) Wait([&] { return Access::FileDropIdle(*p.app) && (!delayed || source->ends == 1) && Access::Items(*p.app).size() == 1 + files.size(); });
@@ -585,6 +595,20 @@ void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
         "first output occupies the requested empty cell");
     if (batch) Require(!Same(cells[0].second, cells[1].second), "batch outputs cannot overlap");
     Reload(p, cells);
+}
+void CorruptCopyControl()
+{
+    const drag_matrix::Case test{true, false, {"copy", MK_CONTROL, DROPEFFECT_COPY},
+        DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, true, false};
+    try { FileCase(test, false, true); }
+    catch (const std::exception& error)
+    {
+        Require(std::string_view(error.what()).find("output bytes survive actual I/O") != std::string_view::npos,
+            "corrupt source must fail at the output-byte business assertion");
+        std::cout << "EXPECTED FAILURE output bytes survive actual I/O" << std::endl;
+        return;
+    }
+    Require(false, "corrupt source unexpectedly passed the output-byte business assertion");
 }
 void Files(std::string_view row)
 {
@@ -789,6 +813,7 @@ int main(int argc, char** argv)
         else if (behavior::scene == "dock") behavior::DockLifecycle();
         else if (behavior::scene == "dispatch-desktop" || behavior::scene == "dispatch-control")
             behavior::ProductionMessageWiring(behavior::scene == "dispatch-control");
+        else if (behavior::scene == "negative-copy-bytes") behavior::CorruptCopyControl();
         else if (behavior::scene == "interleaved" || behavior::scene == "failed-first")
             behavior::Interleaved(behavior::scene == "failed-first");
         else if (behavior::RunContainerScenario(behavior::scene)) {}

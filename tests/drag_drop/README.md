@@ -53,6 +53,8 @@ D01–D16 保留其已确认的事实范围。表内未补定的行为继续待�
 
 `behavior_dispatch-desktop` 与 `behavior_dispatch-control` 用隔离消息窗口分别进入生产桌面和控制窗口过程，检查真实后台读取消息、源读取及文件提交完成消息，再检查文件、落点和保存重载。夹具仍以独立定时器驱动后台维护服务，不执行完整 `DesktopApp::Run`、真实桌面窗口或 Explorer 输入；消息接线条目不能代替未接入的其他拖动路径。
 
+`behavior_negative-copy-bytes` 在外部数据源边界提供同名错误内容，要求正常生产链执行后在输出字节断言处失败；其他异常和未检出错误都使对照失败。该对照只证明文件内容断言的失败信号。
+
 ## 执行集合
 
 驱动为 `tests/behavior/core_interactions_tests.cpp`；生产宿主图与测试共用相同实现。`container_access.inc` 只提供场景设置、观察和生产入口调用，`container_scenarios.h` 保存业务断言。外部 Shell provider、菜单显示和完成消息的先后是可控边界，路由、队列、文件提交、刷新和存储不由替身直接返回成功。

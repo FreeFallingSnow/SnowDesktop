@@ -205,7 +205,7 @@ if (BUILD_TESTING)
         settings-host manifest group-type-contract
         container-collection container-files container-mapping container-collection-group container-file-group container-mapping-group
         member-collection member-files member-reorder right-copy right-cancel target-replaced target-remapped
-        dispatch-desktop dispatch-control)
+        dispatch-desktop dispatch-control negative-copy-bytes)
         add_test(NAME behavior_${row} COMMAND SnowDesktopNativeDragIntegrationTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
