@@ -513,8 +513,73 @@ void CheckSelectedCatalogueSources()
 }
 }
 
+static void CheckPopupPackageActivationMetadata()
+{
+    PrivateRegistry fixture;
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop-PopupPackages-" + std::filesystem::path(fixture.path).filename().wstring());
+    Check(std::filesystem::create_directory(directory), "own private popup manifest directory");
+    struct DirectoryCleanup
+    {
+        std::filesystem::path directory;
+        ~DirectoryCleanup() { std::error_code ignored; std::filesystem::remove_all(directory, ignored); }
+    } cleanup{directory};
+    const std::wstring packageKey = L"Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages\\PopupExample_1.0.0.0_x64__publisher";
+    Put(fixture.value, packageKey, L"PackageRootFolder", directory.wstring());
+    const auto manifest = directory / L"AppxManifest.xml";
+    const auto write = [&](const std::string& xml) {
+        std::ofstream output(manifest, std::ios::binary | std::ios::trunc);
+        output << xml; output.close(); Check(!output.fail(), "write private popup manifest");
+    };
+    const auto text = [](char suffix) {
+        return std::string("<Package><Identity Name=\"PopupExample\"/><Properties><DisplayName>Management application</DisplayName></Properties><Extensions><Extension Category=\"windows.fileExplorerContextMenus\">") +
+            "<ItemType Type=\"*\"><Verb Id=\"File\" Clsid=\"{9DA22F71-3BC8-4A65-9824-9AE3FC94100" + suffix + "}\"/></ItemType>" +
+            "<ItemType Type=\"Directory\"><Verb Id=\"Folder\" Clsid=\"{9DA22F71-3BC8-4A65-9824-9AE3FC941002}\"/></ItemType>" +
+            "<ItemType Type=\"Directory\\Background\"><Verb Id=\"Background\" Clsid=\"{9DA22F71-3BC8-4A65-9824-9AE3FC941003}\"/></ItemType>" +
+            "</Extension></Extensions></Package>";
+    };
+    const bool eagerNegative = GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_EAGER_PACKAGE_METADATA", nullptr, 0) != 0;
+    const auto compare = [&] {
+        const auto full = ext::ReadCatalogue(fixture.value, true);
+        const auto popup = eagerNegative ? ext::ReadCatalogue(fixture.value, true).rows : ext::ReadPackagedMenuCommands(fixture.value);
+        Check(full.rows.size() == 3 && popup.size() == full.rows.size(), "popup discovery retains every registered context command");
+        for (const auto& row : full.rows)
+        {
+            const auto found = std::find_if(popup.begin(), popup.end(), [&](const auto& candidate) { return candidate.id == row.id; });
+            Check(found != popup.end() && found->kind == row.kind && found->verbs == row.verbs &&
+                found->sources == row.sources && found->types == row.types && found->contexts == row.contexts &&
+                found->systemEnabled == row.systemEnabled,
+                "POPUP_ACTIVATION_EQUIVALENT: current class, package identity, scope and live policy match complete discovery");
+            Check(row.application.name == L"Management application" && row.display.label == row.application.name,
+                "management discovery retains its localized application metadata");
+            Check(found->application.id.empty() && found->application.name.empty() && found->display.label.empty() && found->display.pixels.empty(),
+                "NO_EAGER_MANAGEMENT_METADATA: popup prerequisites contain activation data without management presentation");
+        }
+        return popup;
+    };
+    write(text('1'));
+    const auto first = compare();
+    write(text('4'));
+    const auto changed = compare();
+    const auto fileCommand = [](const auto& rows) {
+        return std::find_if(rows.begin(), rows.end(), [](const auto& row) { return row.contexts == ext::ContextBit(ext::Context::File); });
+    };
+    Check(fileCommand(first) != first.end() && fileCommand(changed) != changed.end() &&
+        fileCommand(first)->id != fileCommand(changed)->id,
+        "fresh popup discovery observes an in-place command registration change");
+    Check(std::filesystem::remove(manifest), "remove only the owned package manifest");
+    Check(ext::ReadPackagedMenuCommands(fixture.value).empty(), "deleted manifests cannot supply stale popup commands");
+    write("<Package>");
+    Check(ext::ReadPackagedMenuCommands(fixture.value).empty(), "malformed manifests cannot supply popup commands");
+    write(text('1'));
+    compare();
+    Check(RegDeleteTreeW(fixture.value, packageKey.c_str()) == ERROR_SUCCESS, "unregister the private package");
+    Check(ext::ReadPackagedMenuCommands(fixture.value).empty(), "cached XML cannot restore an unregistered popup package");
+}
+
 void TestCatalogueRegistryHandles()
 {
+    CheckPopupPackageActivationMetadata();
     CheckSelectedCatalogueSources();
     // Real subscriptions: nested browse-state writes must not signal menu
     // invalidation, including when a genuine registration changes concurrently.

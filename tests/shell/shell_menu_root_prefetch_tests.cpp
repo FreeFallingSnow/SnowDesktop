@@ -117,8 +117,8 @@ static void RunExplorerCommandStateBatch()
     {
         unsigned id; bool pending; EXPCMDSTATE result; bool fail;
         DWORD thread = GetCurrentThreadId(); std::vector<unsigned>& calls;
-        StateCommand(unsigned value, bool deferred, EXPCMDSTATE state, bool failure, std::vector<unsigned>& log)
-            : id(value), pending(deferred), result(state), fail(failure), calls(log) {}
+        StateCommand(unsigned commandId, bool deferred, EXPCMDSTATE state, bool failure, std::vector<unsigned>& log)
+            : id(commandId), pending(deferred), result(state), fail(failure), calls(log) {}
         IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR*) override { return E_NOTIMPL; }
         IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR*) override { return E_NOTIMPL; }
         IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR*) override { return E_NOTIMPL; }

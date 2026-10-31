@@ -717,6 +717,7 @@ struct Scanner
     HKEY classes;
     CatalogueForegroundDemand *control = nullptr;
     bool capture = false;
+    bool menuCommandsOnly = false;
     using CapturedRegistration = std::tuple<Registration, std::wstring, std::wstring>;
     std::vector<CapturedRegistration> captured;
     Catalogue result;
@@ -1073,14 +1074,17 @@ struct Scanner
                 Registration row; row.kind = RegistrationKind::Packaged;
                 row.id = "package:" + Utf8(Lower(family + L":" + clsid));
                 std::wstring module;
-                if (!verb.module.empty())
-                    for (const auto& content : {contentDirectory, directory})
-                        if (module.empty() && !content.empty()) module = LocalModule((std::filesystem::path(content) / verb.module).wstring());
-                row.application = ApplicationForModule(module);
-                const auto name = PackageDisplayName(verb, package, directory);
-                if (row.application.id.empty()) row.application.id = "package:" + Utf8(Lower(family));
-                if (!name.empty() && !row.application.id.starts_with("install:")) row.application.name = name;
-                if (!UsableShellDisplayName(row.application.name)) row.application.name = family.substr(0, family.find(L'_'));
+                if (!menuCommandsOnly)
+                {
+                    if (!verb.module.empty())
+                        for (const auto& content : {contentDirectory, directory})
+                            if (module.empty() && !content.empty()) module = LocalModule((std::filesystem::path(content) / verb.module).wstring());
+                    row.application = ApplicationForModule(module);
+                    const auto name = PackageDisplayName(verb, package, directory);
+                    if (row.application.id.empty()) row.application.id = "package:" + Utf8(Lower(family));
+                    if (!name.empty() && !row.application.id.starts_with("install:")) row.application.name = name;
+                    if (!UsableShellDisplayName(row.application.name)) row.application.name = family.substr(0, family.find(L'_'));
+                }
                 row.sources = {L"package:" + package + L":" + id}; row.verbs = {Utf8(Lower(clsid))};
                 row.contexts = type == L"Directory" ? ContextBit(Context::Folder) : type == L"Directory\\Background" ? ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop) : ContextBit(Context::File);
                 if (type != L"*" && type != L"Directory" && type != L"Directory\\Background") row.types = {Lower(type)};
@@ -1308,9 +1312,16 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
 }
 std::vector<Registration> ReadPackagedMenuCommands(HKEY classes)
 {
+    MenuTiming timing("packaged.registration");
     Scanner scanner{classes};
+    // The popup activates these exact classes and obtains its title, icon and
+    // state from the real command. Installed-application attribution, package
+    // display resources and fallback images belong to management, not this
+    // prerequisite for every fresh selection. Keep live manifests and policy.
+    scanner.menuCommandsOnly = true;
     scanner.Packages();
     scanner.FinishRows();
+    timing.Record("activation_metadata", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result.rows);
 }
 void LoadMenuCommandIcon(Entry& entry, const std::wstring& location) { LoadIcon(entry, location); }
