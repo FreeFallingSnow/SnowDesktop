@@ -5,6 +5,7 @@
 #include "shell/shell_menu_read_projection.h"
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_service_catalogue_fixture.h"
+#include "shell/shell_icon_stage_probe.h"
 #include "shell/shell_extension_attribution.h"
 #include "shell/shell_extension_management.h"
 #include "shell/shell_extension_menu_items.h"
@@ -5952,11 +5953,12 @@ void TestNativeMenuIsolation()
 int wmain(int argc, wchar_t **argv)
 {
     const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
+    const bool iconStageProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-installed-icon-stages";
     const bool powerShellProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-powershell-submenus";
     const bool shortcutProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-shortcut-archives";
     const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
         std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
-    if (nvidiaProbe || archiveProbe || powerShellProbe || shortcutProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    if (nvidiaProbe || archiveProbe || powerShellProbe || shortcutProbe || iconStageProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
@@ -6106,6 +6108,13 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
         if (shortcutProbe) ProbeShortcutArchives();
         else if (archiveProbe) ProbeArchiveSubmenus();
+        else if (iconStageProbe)
+        {
+            TemporaryDirectory directory;
+            const auto file = directory.path / L"selected.txt";
+            std::ofstream(file) << "private installed icon stage sample";
+            shell_icon_stage_probe::Run(file);
+        }
         else if (powerShellProbe) ProbePowerShellSubmenus();
         else if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
