@@ -474,8 +474,11 @@ void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWO
     Access::FreshExternalDwell(*p.app);
     effect = allowed;
     const auto status = adapter->Drop(&source, keys, Access::ExternalPoint(point), &effect);
-    Require(SUCCEEDED(status) && (deferredDefault ? (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) : effect == expected),
-        "release must honor latest gesture and source capabilities");
+    // A synchronous optimized Shell move has already removed the source;
+    // returning MOVE would tell the drag source to remove it a second time.
+    const DWORD returned = !source.asynchronous && expected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : expected;
+    Require(SUCCEEDED(status) && (deferredDefault ? (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) : effect == returned),
+        "release must honor the gesture, capabilities and optimized move protocol");
 }
 void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
 {
@@ -507,7 +510,8 @@ void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
             Read(Access::LayoutPath(*p.app)) == before, "cancel/reject has no I/O or saved-state side effects");
         return;
     }
-    if (delayed) Require(source->starts == 1 && source->ends == 1 && SUCCEEDED(source->outcome), "one balanced successful source lease");
+    if (delayed) Require(source->starts == 1 && source->ends == 1 && SUCCEEDED(source->outcome) &&
+        source->endEffect == (move ? DROPEFFECT_NONE : expected), "one balanced source lease reports the performed effect");
     std::vector<std::pair<fs::path, GridCell>> cells;
     for (const auto& original : files)
     {
