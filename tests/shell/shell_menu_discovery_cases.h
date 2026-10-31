@@ -347,8 +347,16 @@ void CheckSoftwareManagementPresentation()
         ext::CommonShown(prefs, handler.id, ext::Category::Objects) && !ext::CommonShown(prefs, other.id, ext::Category::Objects),
         "one software switch updates all of its original registrations and leaves the other application unchanged");
     Expect(!ext::UsableShellDisplayName(L"@missing.dll,-1") && !ext::UsableShellDisplayName(L"ms-resource:AppName") &&
+        !ext::UsableShellDisplayName(L"Vendor App<Product") &&
         ext::UsableShellDisplayName(L"7-Zip") && ext::UsableShellDisplayName(L"本地化应用"),
         "primary names accept real brands/localized captions and reject unresolved resources");
+    installed.rows = {first, second, other};
+    installed.rows[0].application = {"ten", L"tool 10"};
+    installed.rows[1].application = {"two", L"Tool 2"};
+    installed.rows[2].application = {"alpha", L"alpha"};
+    const auto sorted = ext::ExtensionManagementRows(installed, {}, ext::Category::Objects);
+    Expect(sorted.size() == 3 && sorted[0].display.label == L"alpha" && sorted[1].display.label == L"Tool 2" &&
+        sorted[2].display.label == L"tool 10", "software presentation uses case-insensitive natural name ordering");
 }
 
 void CheckColdExtensionRecovery()

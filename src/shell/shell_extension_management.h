@@ -90,7 +90,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
     }
     std::stable_sort(result.begin(), result.end(), [category](const auto &a, const auto &b) {
         const auto x = ManagementGroup(a, category), y = ManagementGroup(b, category);
-        return x != y ? x < y : a.display.label < b.display.label;
+        return x != y ? x < y : CompareShellDisplayNames(a.display.label, b.display.label) < 0;
     });
     return result;
 }
@@ -149,7 +149,8 @@ inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& regis
         if (filter.empty() || text.find(filter) != std::wstring::npos) result.push_back(std::move(row));
     }
     std::stable_sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
-        return a.display.label != b.display.label ? a.display.label < b.display.label : a.id < b.id;
+        const auto names = CompareShellDisplayNames(a.display.label, b.display.label);
+        return names ? names < 0 : a.id < b.id;
     });
     return result;
 }
@@ -298,7 +299,8 @@ inline std::vector<ManagementCard> ManagementCards(const std::vector<ManagementR
     for (auto &[id, card] : cards) result.push_back(std::move(card));
     std::stable_sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
         if (a.id == "app:@unknown" || b.id == "app:@unknown") return b.id == "app:@unknown" && a.id != b.id;
-        return a.title < b.title;
+        const auto names = CompareShellDisplayNames(a.title, b.title);
+        return names ? names < 0 : a.id < b.id;
     });
     return result;
 }

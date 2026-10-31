@@ -276,7 +276,9 @@ Application ModuleApplication(const std::wstring &module)
                         return label;
                     };
                     const auto product = text(L"ProductName"), company = text(L"CompanyName");
-                    const auto name = UsableShellDisplayName(product) ? product : text(L"FileDescription");
+                    const auto description = text(L"FileDescription");
+                    const auto name = (Lower(std::filesystem::path(module).extension().wstring()) == L".exe" && UsableShellDisplayName(description)) ||
+                        !UsableShellDisplayName(product) ? description : product;
                     if (!UsableShellDisplayName(name)) continue;
                     result.name = name;
                     // Product+company unifies one application's EXE and Shell
@@ -427,11 +429,11 @@ std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
         {
             ComPtr<IXMLDOMNode> type, server; classes->get_item(c, &type);
             if (normalized(ManifestAttribute(type.Get(), L"Id")) != normalized(item.clsid)) continue;
-            auto path = ManifestAttribute(type.Get(), L"Path");
+            auto modulePath = ManifestAttribute(type.Get(), L"Path");
             type->get_parentNode(&server);
-            if (path.empty()) path = ManifestAttribute(server.Get(), L"Path");
-            if (path.empty()) path = ManifestAttribute(server.Get(), L"Executable");
-            if (!path.empty()) { item.module = std::move(path); break; }
+            if (modulePath.empty()) modulePath = ManifestAttribute(server.Get(), L"Path");
+            if (modulePath.empty()) modulePath = ManifestAttribute(server.Get(), L"Executable");
+            if (!modulePath.empty()) { item.module = std::move(modulePath); break; }
         }
         result.push_back(std::move(item));
     }
@@ -540,7 +542,14 @@ struct Scanner
     {
         if (module.empty()) return {};
         const auto [it, inserted] = applications.try_emplace(module);
-        if (inserted) it->second = ModuleApplication(module);
+        if (inserted)
+        {
+            it->second = ModuleApplication(module);
+            const auto application = L"Applications\\" + std::filesystem::path(module).filename().wstring();
+            auto friendly = Label(Read(classes, application, L"FriendlyAppName"));
+            if (!UsableShellDisplayName(friendly)) friendly = Label(Read(classes, application + L"\\Application", L"ApplicationName"));
+            if (UsableShellDisplayName(friendly)) it->second.name = std::move(friendly);
+        }
         return it->second;
     }
     Application CommandApplication(const std::wstring &command)
@@ -675,6 +684,13 @@ struct Scanner
         const auto subCommands = values.String(L"SubCommands");
         row.application = !handler.empty() ? HandlerApplication(handler) :
             !delegate.empty() ? HandlerApplication(delegate) : CommandApplication(command);
+        if (!row.application.id.empty())
+        {
+            const auto shell = path.rfind(L"\\shell\\");
+            auto friendly = shell == std::wstring::npos ? std::wstring{} :
+                Label(Read(classes, path.substr(0, shell) + L"\\Application", L"ApplicationName"));
+            if (UsableShellDisplayName(friendly)) row.application.name = std::move(friendly);
+        }
         // Never infer equivalence from the caption, verb alone, or a bare
         // SubCommands list. Keep arguments case-sensitive and compare the
         // complete payload rather than a collision-prone display hash.

@@ -1585,13 +1585,13 @@ void TestRegistryCatalogue()
     put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}\\InprocServer32", nullptr, module.c_str());
     catalogue = ext::ReadCatalogue(registry.key, false);
     const auto app = find("reg:*\\shell\\provided").application;
-    Expect(app.name == L"Provider Tool.exe" && !app.id.empty(), "application metadata comes from a quoted registered executable, not the menu caption");
+    Expect(app.name == L"Provider Tool" && !app.id.empty(), "application metadata comes from a quoted registered executable, not the menu caption");
     Expect(find("reg:*\\shell\\second").application == app, "different commands from the same executable share an application filter");
     Expect(find("reg:*\\shell\\unquoted").application == app, "installer commands with unquoted executable spaces retain module attribution");
     Expect(find("reg:*\\shell\\unknown").application.id.empty() && find("reg:*\\shell\\script").application.id.empty(),
         "unknown captions and interpreter payloads are not guessed as an application");
-    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
-        find("reg:*\\shell\\library").application.name == L"Provider Shell.dll", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
+    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell" &&
+        find("reg:*\\shell\\library").application.name == L"Provider Shell", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
 
     std::filesystem::remove(module);
     catalogue = ext::ReadCatalogue(registry.key, false);
@@ -1600,12 +1600,22 @@ void TestRegistryCatalogue()
     std::ofstream(module) << "metadata fixture restored";
     put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}\\InprocServer32", nullptr, program.c_str());
     put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}", nullptr, L"Updated provider");
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}", L"LocalizedString", L"Updated provider");
     catalogue = ext::ReadCatalogue(registry.key, false);
     Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application == app &&
         find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").display.label == L"Updated provider",
         "a fresh catalogue observes changed provider registration and label");
-    Expect(find("reg:*\\shell\\library").application.name == L"Provider Shell.dll",
+    Expect(find("reg:*\\shell\\library").application.name == L"Provider Shell",
         "a fresh catalogue rechecks previously missing command modules after their restoration");
+    put(L"Applications\\Provider Tool.exe", L"FriendlyAppName", L"本地化工具");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("reg:*\\shell\\provided").application.name == L"本地化工具" &&
+        find("reg:*\\shell\\provided").application.id == app.id,
+        "a registered friendly application name replaces the fallback caption without changing software identity");
+    put(L"Applications\\Provider Tool.exe", L"FriendlyAppName", L"@missing-provider.dll,-1");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("reg:*\\shell\\provided").application == app,
+        "an unresolved friendly resource falls back to validated module metadata on the next scan");
 
     // Real registry lookups are case-insensitive. Metadata indexing must keep
     // captions intact and stay local to each scan; policy is never inferred
