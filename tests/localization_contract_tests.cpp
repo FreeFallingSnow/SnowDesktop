@@ -632,6 +632,10 @@ References CollectGlobalBindings(const std::vector<fs::path>& files,
     for (const auto& path : bridgeFiles)
         sources.push_back({PathLabel(path, root), audit::Lex(ReadFile(path))});
     sources.push_back({"CMakeLists.txt", audit::Lex(ReadFile(root / "CMakeLists.txt"), false, true)});
+    for (const auto& path : SortedFiles(root / "cmake", [](const fs::path& path) {
+             return path.extension() == ".cmake";
+         }))
+        sources.push_back({PathLabel(path, root), audit::Lex(ReadFile(path), false, true)});
     auto references = audit::CollectLiteralBindings(sources, keys);
     const auto add = [&](const std::string& key, const std::string& location) {
         references[key].push_back(location);
