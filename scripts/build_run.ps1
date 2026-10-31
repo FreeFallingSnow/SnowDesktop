@@ -707,6 +707,12 @@ try {
             }
             Write-RunRecord $record
             if(Get-Command Publish-CompiledTestHistory -ErrorAction SilentlyContinue){Publish-CompiledTestHistory $root $request $record}
+            if($candidateExecution){
+                try {
+                    . (Join-Path $PSScriptRoot 'build_candidate_artifacts.ps1')
+                    $null=Invoke-CandidateRuntimeRetention $root
+                } catch {[Console]::Error.WriteLine('Runtime cleanup deferred: '+$_.Exception.Message)}
+            }
         }
         if($ownerLease){$ownerLease.Dispose()}
     }

@@ -53,6 +53,8 @@ function Wait-SnowDesktopPackagingRun([string]$Root,[string]$Task,[string]$Run) 
 
 function Get-SnowDesktopPackagingContext([string]$Root,[string]$ArtifactRun='') {
     $Root=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')
+    $runtimeLease=Open-CandidateRuntimeLease $Root
+    try {
     if(-not $ArtifactRun){
         $active=Read-EntryJson (Join-Path $Root '.build/collaboration/activation-current.json')
         if(-not $active -or -not $active.runId){throw 'No saved build is selected. Specify -ArtifactRun after a successful standard build.'}
@@ -98,7 +100,8 @@ function Get-SnowDesktopPackagingContext([string]$Root,[string]$ArtifactRun='') 
         sourceDigest=$artifact.manifest.sourceDigest;sourceManifestDigest=$artifact.manifest.sourceManifestDigest;
         capturedHead=$artifact.manifest.sourceHead;artifactManifestDigest=$artifact.digest}
     return [pscustomobject]@{root=$Root;source=$source;runtime=$artifact.runtime;version=$version;
-        provenance=$provenance;sourceFiles=$selected}
+        provenance=$provenance;sourceFiles=$selected;runtimeLease=$runtimeLease}
+    } catch {$runtimeLease.Dispose();throw}
 }
 
 function Assert-SnowDesktopPackagingContext($Context) {
@@ -106,4 +109,7 @@ function Assert-SnowDesktopPackagingContext($Context) {
     foreach($file in $Context.sourceFiles){
         if((Get-FileDigest (Resolve-CandidatePath $Context.source $file.path)) -ne $file.sha256){throw 'Packaging source changed during packaging.'}
     }
+}
+function Close-SnowDesktopPackagingContext($Context) {
+    if($Context -and $Context.PSObject.Properties['runtimeLease']){$Context.runtimeLease.Dispose()}
 }

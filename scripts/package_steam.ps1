@@ -59,6 +59,7 @@ if ($BuildOutputDirectory -and -not $ArtifactRun) { throw 'Explicit build input 
 $originalRepositoryRoot = if ($ArtifactRepositoryRoot) { $ArtifactRepositoryRoot } else { $repositoryRoot }
 if (-not $SkipBuild) { $ArtifactRun = Invoke-SnowDesktopPackagingBuild $originalRepositoryRoot }
 $packagingContext = Get-SnowDesktopPackagingContext $originalRepositoryRoot $ArtifactRun
+try {
 if ($BuildOutputDirectory -and [IO.Path]::GetFullPath($BuildOutputDirectory).TrimEnd('\','/') -ne $packagingContext.runtime) {
     throw '-BuildOutputDirectory must match the selected saved ArtifactRun; unbound packaging inputs are rejected.'
 }
@@ -395,3 +396,4 @@ $hash = Get-Sha256 -Path $zip
     Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 Write-Host "Steam payload generated: $zip" -ForegroundColor Green
 Write-Host "Only $runtimeDirectory\steam_api64.dll from the Steamworks SDK is included."
+} finally { Close-SnowDesktopPackagingContext $packagingContext }

@@ -367,6 +367,7 @@ if (-not $SkipBuild) {
     $ArtifactRun = Invoke-SnowDesktopPackagingBuild $originalRepositoryRoot
 }
 $packagingContext = Get-SnowDesktopPackagingContext $originalRepositoryRoot $ArtifactRun
+try {
 $repositoryRoot = $packagingContext.source
 $packagingDirectory = Join-Path $repositoryRoot 'packaging'
 $buildOutput = $packagingContext.runtime
@@ -802,3 +803,4 @@ Write-Host "  Checksums:$checksumPath"
 if (-not $signed) {
     Write-Warning "The MSIX is unsigned. Sign it before sideloading; Partner Center will perform its own validation during upload."
 }
+} finally { Close-SnowDesktopPackagingContext $packagingContext }

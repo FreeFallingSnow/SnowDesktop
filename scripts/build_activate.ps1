@@ -154,12 +154,23 @@ function Invoke-BuiltRuntimeActivation([string]$Root,$Artifact,[scriptblock]$Che
     }
 }
 function Invoke-CandidateRuntimeActivation([string]$Root,[string]$Run,[scriptblock]$CheckCancellation={}) {
+    $runtimeLease=Open-CandidateRuntimeLease $Root
+    $activation=$null
+    try {
     $artifact=Read-CandidateArtifact $Root $Run -VerifyFiles
     # Order by source capture, not completion time: a slow older build must
     # never replace a newer build that is already running.
     $snapshot=Read-CandidateManifest $Root $artifact.manifest.candidate
     Set-Field $artifact.manifest 'capturedUtc' $snapshot.manifest.capturedUtc
-    return Invoke-BuiltRuntimeActivation $Root $artifact $CheckCancellation
+    $activation=Invoke-BuiltRuntimeActivation $Root $artifact $CheckCancellation
+    return $activation
+    } finally {
+        $runtimeLease.Dispose()
+        if($activation -and $activation.status -in 'activated','installed','already-current'){
+            try {$null=Invoke-CandidateRuntimeRetention $Root}
+            catch {[Console]::Error.WriteLine('Runtime cleanup deferred: '+$_.Exception.Message)}
+        }
+    }
 }
 if($MyInvocation.InvocationName -eq '.'){return}
 $ErrorActionPreference='Stop'

@@ -100,8 +100,15 @@ $context=Get-SnowDesktopPackagingContext $Root ('a'*32)
 $package=Join-Path $Root 'artifacts/v1.2.3.0/fixture-package'
 $null=Copy-SnowDesktopDeploymentPayload -BuildOutput $context.runtime -Destination $package -RuntimeDirectory SnowDesktop.Runtime
 Assert-SnowDesktopPackagingContext $context
+$blockedCleanup=Open-CandidateRuntimeLease $Root -Exclusive
+if($blockedCleanup){$blockedCleanup.Dispose()}
+Close-SnowDesktopPackagingContext $context
+$releasedCleanup=Open-CandidateRuntimeLease $Root -Exclusive
+$leaseReleased=$null -ne $releasedCleanup
+if($releasedCleanup){$releasedCleanup.Dispose()}
 @{saved=$first.runtime;second=$second.runtime;package=$package;source=$context.source;
-    slot=$slot.directory;firstSlot=$slotPath;version=$context.version;provenance=$context.provenance}|ConvertTo-Json -Depth 5
+    slot=$slot.directory;firstSlot=$slotPath;version=$context.version;provenance=$context.provenance;
+    cleanupBlockedWhilePackaging=($null -eq $blockedCleanup);leaseReleasedAfterPackaging=$leaseReleased}|ConvertTo-Json -Depth 5
 )PS",true);
     Bridge bridge(repo,root,false,true);
     const auto result=bridge.invoke(driver,{utf8(root.wstring())},{},90);
@@ -111,6 +118,8 @@ Assert-SnowDesktopPackagingContext $context
     }
     require(result.code==0,"Product artifact fixture failed: "+result.out+result.err);
     const auto data=Json::parse(result.out);
+    require(data.at("cleanupBlockedWhilePackaging").boolean&&data.at("leaseReleasedAfterPackaging").boolean,
+        "Packaging failed to protect its saved runtime or retained its lease after completion");
     require(data.at("firstSlot").str()==data.at("slot").str(),"Fixture did not reuse the compiler workspace");
     const auto saved=fs::path(wide(data.at("saved").str())),second=fs::path(wide(data.at("second").str()));
     for(const auto* name:{"SnowDesktop.winmd","App.xbf","SettingsShell.xbf","Assets/Fonts/Example.ttf",

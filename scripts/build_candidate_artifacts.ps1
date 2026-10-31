@@ -5,6 +5,110 @@ function Get-CandidateArtifactDirectory([string]$Root,[string]$Id) {
     $store=Get-CandidateStore $Root
     return Resolve-CandidatePath ([IO.Path]::GetDirectoryName($store.slots)) ('candidate-artifacts/'+$Id)
 }
+function Open-CandidateRuntimeLease([string]$Root,[switch]$Exclusive) {
+    $directory=Resolve-CandidatePath $Root '.build/collaboration'
+    [void][IO.Directory]::CreateDirectory($directory)
+    $path=Resolve-CandidatePath $directory 'runtime-retention.lock'
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            $share=if($Exclusive){[IO.FileShare]::None}else{[IO.FileShare]::ReadWrite}
+            return [IO.File]::Open($path,'OpenOrCreate','ReadWrite',$share)
+        } catch {
+            if(-not (Test-EntrySharingViolation $_.Exception)){throw}
+            if($Exclusive){return $null}
+            if($watch.Elapsed.TotalSeconds -ge 30){throw 'Saved runtime cleanup is busy; retry the operation.'}
+            Start-Sleep -Milliseconds 100
+        }
+    } while($true)
+}
+function Remove-CandidateRetiredDirectory([string]$Base,[string]$Relative) {
+    # Resolve every directory before recursion. Never traverse a junction or
+    # let a generated manifest select a path outside the exact cleanup root.
+    $path=Resolve-CandidatePath $Base $Relative
+    if(-not [IO.Directory]::Exists($path)){return}
+    $pending=[Collections.Generic.Stack[string]]::new();$pending.Push($path)
+    while($pending.Count){
+        foreach($item in [IO.Directory]::EnumerateFileSystemEntries($pending.Pop())){
+            if([IO.File]::GetAttributes($item) -band [IO.FileAttributes]::ReparsePoint){throw 'Retired runtime contains a linked entry; retained for inspection.'}
+            if([IO.Directory]::Exists($item)){$pending.Push($item)}
+        }
+    }
+    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+}
+function Invoke-CandidateRuntimeRetention([string]$Root,[switch]$Preview) {
+    $lease=Open-CandidateRuntimeLease $Root -Exclusive
+    if(-not $lease){return [pscustomobject]@{status='busy';removed=@();deferred=@()}}
+    $outputLease=$null
+    $removed=@();$deferred=@();$planned=@()
+    try {
+        $stateRoot=Resolve-CandidatePath $Root '.build/collaboration'
+        try {$outputLease=[IO.File]::Open((Resolve-CandidatePath $stateRoot 'build.lock'),'OpenOrCreate','ReadWrite','None')}
+        catch {if(Test-EntrySharingViolation $_.Exception){return [pscustomobject]@{status='busy';removed=@();deferred=@()}};throw}
+        $current=Read-EntryJson (Join-Path $stateRoot 'activation-current.json')
+        $protected=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        if($current -and $current.runId -match '^[a-f0-9]{32}$'){[void]$protected.Add($current.runId)}
+        $artifacts=Resolve-CandidatePath $Root '.build/candidate-artifacts'
+        $candidates=@()
+        if([IO.Directory]::Exists($artifacts)){
+            foreach($directory in [IO.Directory]::EnumerateDirectories($artifacts)){
+                $id=[IO.Path]::GetFileName($directory)
+                if($id -notmatch '^[a-f0-9]{32}$'){continue}
+                try {
+                    $manifestPath=Resolve-CandidatePath $artifacts ($id+'/artifact.json')
+                    if(-not [IO.File]::Exists($manifestPath)){continue}
+                    $manifest=Read-CandidateJson $manifestPath
+                    $payload=Resolve-CandidatePath $artifacts ($id+'/runtime')
+                    if(-not [IO.Directory]::Exists($payload)){continue}
+                    if($manifest.id -ne $id -or $manifest.runId -ne $id -or -not $manifest.publicationComplete -or $manifest.runtime -ne $payload){throw 'Unrecognized artifact identity.'}
+                    # Persisted running states can outlive their process. Use
+                    # the actual executor lease without rewriting its record.
+                    $ownerPath=Resolve-CandidatePath $stateRoot ('runs/'+$id+'.owner.lock')
+                    if([IO.File]::Exists($ownerPath)){
+                        $owner=$null
+                        try {$owner=[IO.File]::Open($ownerPath,'Open','ReadWrite','None')}
+                        catch {if(Test-EntrySharingViolation $_.Exception){[void]$protected.Add($id)}else{throw}}
+                        finally {if($owner){$owner.Dispose()}}
+                    }
+                    $candidates+=@([pscustomobject]@{id=$id;manifest=$manifest;created=[DateTimeOffset]::Parse($manifest.createdUtc)})
+                } catch {$deferred+=@([pscustomobject]@{path=$directory;error=$_.Exception.Message})}
+            }
+        }
+        # A standalone packaging build can finish before it is activated.
+        # Keep its latest product as well until the next successful activation.
+        $latest=@($candidates|Where-Object {$_.manifest.productRuntime}|Sort-Object created -Descending|Select-Object -First 1)
+        if(-not $latest.Count){$latest=@($candidates|Sort-Object created -Descending|Select-Object -First 1)}
+        foreach($item in $latest){[void]$protected.Add($item.id)}
+        foreach($item in $candidates){
+            if($protected.Contains($item.id)){continue}
+            $relative=$item.id+'/runtime';$path=Resolve-CandidatePath $artifacts $relative;$planned+=@($path)
+            if($Preview){continue}
+            try {
+                Remove-CandidateRetiredDirectory $artifacts $relative
+                # Retain the immutable manifest, hashes and all Run evidence.
+                Write-CandidateJson ([pscustomobject]@{schemaVersion=1;runId=$item.id;runtimeRemoved=$true;removedUtc=[DateTime]::UtcNow.ToString('o');reason='superseded-runtime'}) (Resolve-CandidatePath $artifacts ($item.id+'/retention.json'))
+                $removed+=@($path)
+            } catch {$deferred+=@([pscustomobject]@{path=$path;error=$_.Exception.Message})}
+        }
+        $backups=Resolve-CandidatePath $Root '.build/activation-backups'
+        if([IO.Directory]::Exists($backups)){
+            $directories=@([IO.Directory]::EnumerateDirectories($backups)|Where-Object {[IO.Path]::GetFileName($_) -match '^[a-f0-9]{32}-[a-f0-9]{32}$'}|Sort-Object {[IO.Directory]::GetLastWriteTimeUtc($_)} -Descending)
+            $keep=if($directories.Count){$directories[0]}else{''}
+            if($current -and $current.backup -and $current.backup -in $directories){$keep=$current.backup}
+            foreach($directory in $directories){
+                if($directory -eq $keep){continue}
+                $planned+=@($directory)
+                if($Preview){continue}
+                try {Remove-CandidateRetiredDirectory $backups ([IO.Path]::GetFileName($directory));$removed+=@($directory)}
+                catch {$deferred+=@([pscustomobject]@{path=$directory;error=$_.Exception.Message})}
+            }
+        }
+        $receipt=[pscustomobject]@{schemaVersion=1;status=$(if($Preview){'preview'}elseif($deferred.Count){'deferred'}else{'completed'});
+            completedUtc=[DateTime]::UtcNow.ToString('o');retainedArtifacts=@($protected);planned=$planned;removed=$removed;deferred=$deferred}
+        if(-not $Preview){Write-CandidateJson $receipt (Join-Path $stateRoot 'runtime-retention.json')}
+        return $receipt
+    } finally {if($outputLease){$outputLease.Dispose()};$lease.Dispose()}
+}
 function Get-CandidateRuntimeFiles($Context,[string]$Action) {
     $output=Resolve-CandidatePath $Context.output $Context.configuration
     $files=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -72,6 +176,8 @@ function Get-CandidateRuntimeFiles($Context,[string]$Action) {
     return [pscustomobject]@{root=$output;profile=$profile;files=@($files|Sort-Object)}
 }
 function Publish-CandidateRuntime($Context,[string]$Action,[scriptblock]$CheckCancellation={}) {
+    $runtimeLease=Open-CandidateRuntimeLease $Context.runRoot
+    try {
     $live=Get-CandidateEntryContext $Context.source
     if(-not $live -or $live.runId -ne $Context.runId -or $live.nonce -ne $Context.nonce){throw 'Artifact publication requires its live candidate Run.'}
     Assert-EntryExecutionOwner $Context.source
@@ -129,6 +235,7 @@ function Publish-CandidateRuntime($Context,[string]$Action,[scriptblock]$CheckCa
         return [pscustomobject]@{schemaVersion=1;id=$Context.runId;candidate=$Context.snapshot;manifest=$jsonPath;manifestDigest=$digest;
             runtime=$payload;profile=$selection.profile;files=$records.Count;bytes=$bytes;productRuntime=$manifest.productRuntime;publicationComplete=$true;reuseAllowed=$false}
     }finally{foreach($item in $opened){$item.stream.Dispose()}}
+    } finally {$runtimeLease.Dispose()}
 }
 function Read-CandidateArtifact([string]$Root,[string]$Id,[string]$ExpectedDigest='',[switch]$VerifyFiles) {
     $directory=Get-CandidateArtifactDirectory $Root $Id
@@ -137,6 +244,7 @@ function Read-CandidateArtifact([string]$Root,[string]$Id,[string]$ExpectedDiges
     if($digest -notmatch '^[a-f0-9]{64}$' -or ($ExpectedDigest -and $digest -ne $ExpectedDigest) -or (Get-FileDigest $path) -ne $digest){throw 'Candidate artifact manifest integrity check failed.'}
     $manifest=Read-CandidateJson $path
     $runtime=Resolve-CandidatePath $directory 'runtime'
+    if(-not [IO.Directory]::Exists($runtime)){throw 'Saved runtime was retired by the retention policy; its manifest and validation evidence are preserved. Select a retained build or build again.'}
     if($manifest.schemaVersion -ne 1 -or $manifest.id -ne $Id -or $manifest.runId -ne $Id -or -not $manifest.publicationComplete -or
         $manifest.profile -notin 'product-runtime','test-files' -or $manifest.runtime -ne $runtime -or @($manifest.files).Count -lt 1 -or @($manifest.files).Count -gt 32768){throw 'Invalid candidate artifact identity.'}
     $snapshot=Read-CandidateManifest $Root $manifest.candidate

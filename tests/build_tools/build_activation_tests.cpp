@@ -194,9 +194,75 @@ $code=Invoke-CandidateBatchPipeline $PSScriptRoot $request $context $record
         "Later test failure withheld or erased the successful build");
     std::cout<<"PASS build failure retains runtime; successful product publishes and activates before failing tests\n";
 }
+void retention(const fs::path& repo) {
+    const auto root=temporary("runtime-retention"),state=root/L".build/collaboration";
+    copy(repo,root,{"scripts/build_entry.ps1","scripts/build_protocol.ps1","scripts/build_inputs.ps1",
+        "scripts/build_candidate.ps1","scripts/build_candidate_artifacts.ps1"});
+    const std::string old(32,'a'),active(32,'b'),current(32,'c');
+    const auto artifacts=root/L".build/candidate-artifacts",backups=root/L".build/activation-backups";
+    const auto oldBackup=backups/wide(old+"-"+old),currentBackup=backups/wide(current+"-"+current);
+    for(const auto& id:{old,active,current}){
+        const auto directory=artifacts/wide(id),runtime=directory/L"runtime";
+        write(runtime/L"SnowDesktop.exe",id);
+        atomic(directory/L"artifact.json",Json::object({{"id",id},{"runId",id},{"publicationComplete",true},
+            {"runtime",utf8(runtime.wstring())},{"productRuntime",true},
+            {"createdUtc",id==current?"2026-10-31T03:00:00Z":"2026-10-31T02:00:00Z"}}).dump());
+        atomic(state/L"runs"/wide(id+".json"),id==active?"{\"status\":\"running\",\"completedUtc\":null}":
+            "{\"status\":\"passed\",\"completedUtc\":\"2026-10-31T03:00:00Z\"}");
+    }
+    write(oldBackup/L"old.dll","retired backup");write(currentBackup/L"old.dll","current rollback");
+    atomic(state/L"activation-current.json",Json::object({{"runId",current},{"backup",utf8(currentBackup.wstring())}}).dump());
+    write(root/L".build/Release/data/layout.json","personal layout");
+    write(root/L".build/Release/data.debug/state.json","personal debug profile");
+    write(root/L".build/candidate-slots/warm/output.obj","warm compiler output");
+    write(root/L"outside/sentinel","outside cleanup scope");
+    const auto activeLease=CreateFileW((state/L"runs"/wide(active+".owner.lock")).c_str(),GENERIC_READ|GENERIC_WRITE,
+        0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    require(activeLease!=INVALID_HANDLE_VALUE,"Cannot hold active Run fixture lease");
+    write(root/L"retention.ps1",R"PS(param([switch]$Preview,[switch]$Hold,[switch]$Link,[switch]$Unlink)
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'scripts/build_entry.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_protocol.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_inputs.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_candidate.ps1')
+. (Join-Path $PSScriptRoot 'scripts/build_candidate_artifacts.ps1')
+$linkPath=Join-Path $PSScriptRoot ('.build/candidate-artifacts/'+('a'*32)+'/runtime/escape')
+if($Link){$null=New-Item -ItemType Junction -Path $linkPath -Target (Join-Path $PSScriptRoot 'outside')}
+if($Unlink){Remove-Item -LiteralPath $linkPath -Force}
+$reader=if($Hold){Open-CandidateRuntimeLease $PSScriptRoot}else{$null}
+try {Invoke-CandidateRuntimeRetention $PSScriptRoot -Preview:$Preview|ConvertTo-Json -Depth 8}
+finally {if($reader){$reader.Dispose()}}
+)PS",true);
+    const auto invoke=[&](const std::wstring& option=L""){
+        std::vector<std::wstring> args{powershell().wstring(),L"-NoProfile",L"-File",(root/L"retention.ps1").wstring()};
+        if(!option.empty())args.push_back(option);
+        const auto result=run(args,root,20);require(result.code==0,"Retention failed: "+result.out+result.err);return Json::parse(result.out);
+    };
+    require(invoke(L"-Preview").at("status").str()=="preview"&&fs::exists(oldBackup/L"old.dll")&&
+        fs::exists(artifacts/wide(old)/L"runtime/SnowDesktop.exe"),"Retention preview deleted files");
+    require(invoke(L"-Hold").at("status").str()=="busy"&&fs::exists(oldBackup/L"old.dll"),
+        "Retention ignored an active packaging/activation reader");
+    const auto linked=invoke(L"-Link");
+    require(linked.at("status").str()=="deferred"&&fs::exists(root/L"outside/sentinel")&&
+        fs::exists(artifacts/wide(old)/L"runtime/SnowDesktop.exe"),"Retention traversed a junction or erased its evidence");
+    require(invoke(L"-Unlink").at("status").str()=="completed"&&
+        !fs::exists(artifacts/wide(old)/L"runtime")&&!fs::exists(oldBackup)&&
+        fs::exists(artifacts/wide(old)/L"artifact.json")&&fs::exists(artifacts/wide(old)/L"retention.json")&&
+        fs::exists(artifacts/wide(active)/L"runtime/SnowDesktop.exe")&&fs::exists(currentBackup/L"old.dll"),
+        "Retention did not retire old bytes while preserving manifests, active Run and current rollback");
+    atomic(state/L"runs"/wide(active+".json"),"{\"status\":\"passed\",\"completedUtc\":\"2026-10-31T04:00:00Z\"}");
+    CloseHandle(activeLease);
+    require(invoke().at("status").str()=="completed"&&!fs::exists(artifacts/wide(active)/L"runtime")&&
+        fs::exists(artifacts/wide(current)/L"runtime/SnowDesktop.exe"),"Completed superseded Run was not pruned to one runtime");
+    require(read(root/L".build/Release/data/layout.json")=="personal layout"&&
+        read(root/L".build/Release/data.debug/state.json")=="personal debug profile"&&
+        read(root/L".build/candidate-slots/warm/output.obj")=="warm compiler output"&&
+        read(root/L"outside/sentinel")=="outside cleanup scope","Retention changed data, compiler workspace or outside files");
+    std::cout<<"PASS single-runtime/rollback retention, preview, busy readers, active Run, junction rejection, manifests and user data\n";
+}
 }
 int main(int argc,char** argv){
     if(argc==3&&std::string(argv[1])=="--activation-host"){try{return host(fs::path(wide(argv[2])));}catch(...){return 82;}}
     if(argc==3&&std::string(argv[2])=="--closed-old"){try{closed_activation(fs::path(wide(argv[1])),true);return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
-    return test_main(argc,argv,[&](const fs::path& repo){activation(repo);closed_activation(repo);ordering(repo);});
+    return test_main(argc,argv,[&](const fs::path& repo){activation(repo);closed_activation(repo);ordering(repo);retention(repo);});
 }

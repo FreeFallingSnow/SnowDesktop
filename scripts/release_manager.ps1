@@ -392,6 +392,7 @@ function Invoke-Package {
     . (Join-Path $scriptDirectory 'packaging_input.ps1')
     if (-not $ArtifactRun) { $ArtifactRun = Invoke-SnowDesktopPackagingBuild $repositoryRoot }
     $savedContext = Get-SnowDesktopPackagingContext $repositoryRoot $ArtifactRun
+    try {
     if ($savedContext.version -ne $context.Version) { throw 'Selected ArtifactRun version differs from the release version.' }
     Write-Host "[2/2] 生成携带版、MSIX 和商店上传包" `
         -ForegroundColor Cyan
@@ -433,6 +434,7 @@ function Invoke-Package {
     Write-Host "全部发行包已生成：" -ForegroundColor Green
     Write-Host "  $($context.VersionDirectory)"
     return $true
+    } finally { Close-SnowDesktopPackagingContext $savedContext }
 }
 
 function Invoke-LocalSquash {
