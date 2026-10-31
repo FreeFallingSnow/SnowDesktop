@@ -9,6 +9,7 @@ struct ManagementMember
     std::string id;
     unsigned contexts = 0;
     std::string group;
+    std::string provider;
     friend bool operator==(const ManagementMember &, const ManagementMember &) = default;
 };
 struct ManagementRow
@@ -58,7 +59,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
         else if (row.display.pixels.empty() && !entry.display.pixels.empty()) row.display = entry.display;
         const auto memberId = pair ? id : entry.id;
         const auto member = std::find_if(row.members.begin(), row.members.end(), [&](const auto &m) { return m.id == memberId; });
-        if (member == row.members.end()) row.members.push_back({memberId, entry.contexts, entry.display.registration});
+        if (member == row.members.end()) row.members.push_back({memberId, entry.contexts, entry.display.registration, entry.display.provider});
         else member->contexts |= entry.contexts;
         if (pair && !entry.display.label.empty()) pairLabels[id].insert(entry.display.label);
         row.contexts |= entry.contexts;
@@ -100,9 +101,8 @@ inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& regis
     auto sources = registrations;
     for (auto& source : sources.rows)
     {
-        if (source.kind == RegistrationKind::Handler && std::any_of(source.verbs.begin(), source.verbs.end(), [](const auto& verb) {
-            return StateCommandLower(verb) == "{470c0ebd-5d73-4d58-9ced-e91e22e23282}";
-        })) source.id = "state:start-pin"; // Keep Start on its existing dedicated lane.
+        if (StateCommandLower(source.id) == "clsid:{470c0ebd-5d73-4d58-9ced-e91e22e23282}")
+            source.id = "state:start-pin"; // Keep Start on its existing dedicated lane.
         source.linked = true;
         source.display.provider = source.id;
         source.display.registration.clear();
@@ -122,7 +122,7 @@ inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& regis
         for (const auto& command : observed.rows)
             if (!command.display.registration.empty() &&
                 std::any_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.display.registration; }))
-                commands.push_back({command.display.provider, command.contexts, command.display.registration});
+                commands.push_back({command.display.provider, command.contexts, command.display.registration, command.display.provider});
         for (const auto& command : commands)
             if (std::none_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.id; })) row.members.push_back(command);
     }
@@ -158,7 +158,7 @@ inline std::optional<bool> ManagementCommon(const Preferences &prefs, const Mana
     {
         auto id = member.id;
         const auto context = category == Category::Objects ? Context::File : Context::FolderBackground;
-        if (!member.group.empty()) { auto entry = row.display; entry.provider = id; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
+        if (!member.group.empty()) { auto entry = row.display; entry.provider = member.provider.empty() ? id : member.provider; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
         else if (id == row.display.provider) id = EntryVisibilityId(prefs, row.display, context);
         const bool shown = CommonShown(prefs, id, category);
         if (result && *result != shown) return {};
@@ -172,7 +172,7 @@ inline std::optional<Visibility> ManagementOverride(const Preferences &prefs, co
     for (const auto &member : row.members) if (member.contexts & ContextBit(context))
     {
         auto id = member.id;
-        if (!member.group.empty()) { auto entry = row.display; entry.provider = id; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
+        if (!member.group.empty()) { auto entry = row.display; entry.provider = member.provider.empty() ? id : member.provider; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
         else if (id == row.display.provider) id = EntryVisibilityId(prefs, row.display, context);
         const auto visibility = OverrideOf(prefs, id, context);
         if (result && *result != visibility) return {};
@@ -196,6 +196,16 @@ inline void SetManagementCommon(Preferences &prefs, const ManagementRow &row, Ca
     ClearManagementAliases(prefs, row, category);
     for (const auto &member : row.members)
     {
+        if (!member.group.empty() && member.id != member.group &&
+            std::any_of(row.members.begin(), row.members.end(), [&](const auto& parent) { return parent.id == member.group; }))
+        {
+            // Whole-extension edits clear command exceptions instead of
+            // manufacturing new command rules that defeat later inheritance.
+            std::erase_if(prefs.rules, [&](const auto& rule) { return rule.id == member.id && rule.category == category; });
+            std::erase_if(prefs.overrides, [&](const auto& rule) { return rule.id == member.id && CategoryOf(rule.context) == category; });
+            std::erase_if(prefs.shown, [&](const auto& rule) { return rule.id == member.id && CategoryOf(rule.context) == category; });
+            continue;
+        }
         // The primary switch is an explicit show/hide action. Old migrated
         // location opt-ins must not silently defeat it. Location controls can
         // add new exceptions afterwards; the other category is untouched.

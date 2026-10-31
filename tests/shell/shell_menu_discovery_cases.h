@@ -284,11 +284,21 @@ void CheckExtensionAndCommandControls()
     Expect(ext::VisibleSnapshot(prefs, {true, {future}, {}}, 1).empty(),
         "a whole-extension hide applies to future commands without sampling them first");
     ext::SetManagementCommon(prefs, groups.front(), ext::Category::Objects, true);
-    Expect(ext::VisibleSnapshot(prefs, {true, {first, second, future}, {}}, 1).size() == 3,
+    auto inheritedFirst = first, inheritedSecond = second;
+    inheritedFirst.registration = inheritedSecond.registration = extension.id;
+    Expect(!ext::HasVisibilityRule(prefs, first.provider, ext::Context::File) &&
+        ext::VisibleSnapshot(prefs, {true, {inheritedFirst, inheritedSecond, future}, {}}, 1).size() == 3,
         "a whole-extension action unifies existing exceptions and future-root inheritance");
+    ext::SetManagementCommon(prefs, groups.front(), ext::Category::Objects, false);
+    ext::SetCommon(prefs, first.provider, ext::Category::Objects, true);
+    const auto individualPlan = ext::PlanDemandQueries(inventory, view.catalogue, prefs, target, 1);
+    Expect(!individualPlan.full && individualPlan.sources.size() == 1,
+        "a command observed from an explicitly selected source retains its exact routing proof after the group is hidden");
     inventory.associations.push_back({first.provider, extension.id, ext::Context::File});
     ext::Preferences individual; ext::SetCommon(individual, first.provider, ext::Category::Objects, true);
     ext::MigrateAssociations(individual, inventory);
+    auto commandPacket = view.catalogue; commandPacket.associations = inventory.associations;
+    ext::MigrateAssociations(individual, commandPacket);
     Expect(ext::IsHidden(individual, extension.id, ext::Context::File),
         "legacy command migration cannot silently enable an entire dynamic handler");
     ext::ManagementRow alias; alias.display = first; alias.display.registration = "reg:static";
@@ -300,6 +310,39 @@ void CheckExtensionAndCommandControls()
     const auto encoded = snowdesktop::settings_ipc::Pack(view);
     Expect(snowdesktop::settings_ipc::Unpack<ext::CatalogueView>(encoded).registrations.rows.size() == 1,
         "settings IPC keeps installed sources separate from command observations");
+}
+
+void CheckColdExtensionRecovery()
+{
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"actual.snowmetadata"; std::ofstream(file) << "private";
+    ext::Request target; target.paths = {file.wstring()};
+    ext::Registration extension; extension.id = "clsid:{11111111-1111-1111-1111-111111111111}";
+    extension.kind = ext::RegistrationKind::Handler; extension.contexts = 1; extension.types = {L"*"};
+    extension.sources = {L"*\\shellex\\ContextMenuHandlers\\Example"};
+    extension.verbs = {"{11111111-1111-1111-1111-111111111111}"}; extension.revision = extension.menuRevision = 17;
+    ext::Catalogue inventory; inventory.revision = 7; inventory.rows = {extension};
+    ext::Entry action; action.provider = "verb:actual"; action.key = "actual"; action.label = L"Actual command";
+    std::atomic_uint globals = 0, checks = 0, sources = 0, aggregates = 0;
+    ext::MenuService service(temp.path / L"empty-cache", [&](const ext::Request& request) {
+        if (request.sourceClsid.empty()) ++aggregates; else ++sources;
+        return ext::QueryWork{[=] { return ext::Reply{true, {action}, {}}; }, {}};
+    }, [&] { ++globals; return inventory; }, {}, {}, [&](const auto& seeds) {
+        ++checks;
+        Expect(seeds.size() == 1 && seeds.front().id == extension.id,
+            "cold extension recovery asks the real source-verification path for the selected CLSID only");
+        return inventory;
+    });
+    ext::Preferences prefs; ext::SetCommon(prefs, extension.id, ext::Category::Objects, true);
+    service.Configure(prefs); service.Prewarm(target);
+    PumpUntil([&] { const auto view = service.MenuDisplay(target, prefs); return !view.pending && view.sourcesOnly; },
+        "cold group demand reaches its normal planning/publication boundary");
+    const auto view = service.MenuDisplay(target, prefs);
+    Expect(view.sources.size() == 1, "CACHE_LOSS_MUST_NOT_DISABLE_GROUP: an extension opt-in works without opening settings or a saved inventory");
+    PumpUntil([&] { return service.MenuDisplay(view.sources.front(), prefs).snapshot.has_value(); }, "recovered source roots arrive");
+    Expect(checks == 1 && globals == 0 && sources == 1 && aggregates == 0 &&
+        service.MenuDisplay(view.sources.front(), prefs).snapshot->entries.size() == 1,
+        "source recovery does not pretend to verify a full inventory or synthesize unrelated menus");
 }
 
 void CheckWorkerReuseBounds()
@@ -379,6 +422,7 @@ void Run()
     CheckManagementNeverExpands();
     CheckManagementBudgetIsolation();
     CheckExtensionAndCommandControls();
+    CheckColdExtensionRecovery();
     CheckWorkerReuseBounds();
 }
 }

@@ -100,7 +100,7 @@ inline DemandPlan PlanDemandQueries(const Catalogue &catalogue, const Catalogue 
                                     const Preferences &prefs, const Request &request, unsigned contexts)
 {
     DemandPlan plan;
-    if (!catalogue.revision || !contexts || request.paths.empty() || !request.sourceClsid.empty() ||
+    if ((!catalogue.revision && catalogue.rows.empty()) || !contexts || request.paths.empty() || !request.sourceClsid.empty() ||
         request.startPinOnly || request.originalShortcutOnly || request.extended) return plan;
     if (!request.background && std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
         const auto target = std::filesystem::path(path).lexically_normal();

@@ -1155,9 +1155,22 @@ struct Host
                 !SourceRegistered(request.sourceClsid, request.sourceKey)) return Reply{true, {}, {}};
             CLSID clsid{};
             if (FAILED(CLSIDFromString(request.startPinOnly ? startHandler : request.sourceClsid.c_str(), &clsid))) return {};
-            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
+            progress("activate selected source");
+            const auto factory = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context));
+            if (FAILED(factory))
             {
                 if (request.startPinOnly) return {};
+                CLSID nvidia{};
+                if (factory == CLASS_E_CLASSNOTAVAILABLE && SUCCEEDED(CLSIDFromString(NvidiaControlPanelClsid, &nvidia)) &&
+                    IsEqualGUID(clsid, nvidia))
+                {
+                    auto compatibility = request; compatibility.sourceClsid.clear(); compatibility.sourceKey.clear();
+                    Reply reply{true, {}, {}}; NvidiaCompatibility(compatibility, reply);
+                    IdentifyEntries(reply.entries);
+                    for (auto& entry : reply.entries) entry.token = 0;
+                    commands.clear();
+                    return reply;
+                }
                 ComPtr<IExplorerCommand> command;
                 if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) return {};
                 ComPtr<IShellItemArray> selection;

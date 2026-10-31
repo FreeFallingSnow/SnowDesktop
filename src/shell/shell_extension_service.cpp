@@ -220,6 +220,7 @@ struct MenuService::Impl
     std::future<Catalogue> sourceScan;
     SourceCatalogueReader readSources;
     bool sourceScanRequested = false, sourceScanning = false;
+    bool sourceMetadataRecovery = false;
     std::uint64_t checkedSourceRegistryRevision = 0, checkedSourceConfiguration = 0, sourceScanRegistryRevision = 0,
         sourceScanConfiguration = 0, sourceScanWorkGeneration = 0, sourceScanManagementGeneration = 0;
     std::vector<Registration> sourceScanSeeds;
@@ -298,7 +299,22 @@ struct MenuService::Impl
                 return ReadBackgroundCatalogueRevision(context, HKEY_CLASSES_ROOT, true, &scopedVerification[index].demand);
             };
         }
-        if (!readSources) readSources = [this](const auto &sources) { return ReadCatalogueSources(sources, &sourceScanDemand); };
+        if (!readSources) readSources = [this](const auto &sources) {
+            auto seeds = sources;
+            if (std::any_of(seeds.begin(), seeds.end(), [](const auto& source) {
+                return source.kind == RegistrationKind::Handler && source.sources.empty();
+            }))
+            {
+                // Recover registration paths after a cache loss. No extension
+                // is activated, and only the selected sources acquire proof.
+                const auto inventory = ReadCatalogueWithForegroundDemand(HKEY_CLASSES_ROOT, false, sourceScanDemand);
+                for (auto& seed : seeds) if (seed.kind == RegistrationKind::Handler && seed.sources.empty())
+                    if (const auto found = std::find_if(inventory.rows.begin(), inventory.rows.end(), [&](const auto& row) {
+                        return row.id == seed.id;
+                    }); found != inventory.rows.end()) seed = *found;
+            }
+            return ReadCatalogueSources(seeds, &sourceScanDemand);
+        };
         worker = std::thread([this] { Run(); });
     }
     QueryWork DispatchQuery(Request request)
@@ -432,6 +448,15 @@ struct MenuService::Impl
             Registration row; row.id = id; row.kind = RegistrationKind::Verb; row.contexts = contexts;
             return row; // The exact reader decodes this registration path, without a type enumeration.
         }
+        if (id.starts_with("clsid:"))
+        {
+            const auto text = id.substr(6);
+            const std::wstring clsid(text.begin(), text.end()); GUID parsed{};
+            if (FAILED(CLSIDFromString(clsid.c_str(), &parsed))) return {};
+            Registration row; row.id = id; row.kind = RegistrationKind::Handler;
+            row.contexts = contexts; row.verbs = {text};
+            return row;
+        }
         if (const auto *source = DemandSource(catalogue, available, id, contexts)) return *source;
         std::set<std::string> owners;
         for (const auto &association : catalogue.associations)
@@ -558,6 +583,9 @@ struct MenuService::Impl
             sourceScanConfiguration = configurationRevision; sourceScanRegistryRevision = registryRevision;
             sourceScanWorkGeneration = workGeneration; sourceScanManagementGeneration = managementGeneration;
             sourceScanSeeds = seeds;
+            sourceMetadataRecovery = std::any_of(seeds.begin(), seeds.end(), [](const auto& source) {
+                return source.kind == RegistrationKind::Handler && source.sources.empty();
+            });
             if (seeds.empty())
             {
                 sourceCatalogue = {}; checkedSourceRegistryRevision = registryRevision;
@@ -882,6 +910,12 @@ struct MenuService::Impl
                 item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
                 item.display.width = entry.width; item.display.height = entry.height; item.display.pixels = entry.pixels;
                 item.contexts |= row.view.contexts;
+                if (!row.request.sourceClsid.empty() && known != registered.end())
+                {
+                    const auto proof = L"routing:" + std::to_wstring(row.view.contexts) + L":" +
+                        std::wstring(known->second->id.begin(), known->second->id.end());
+                    if (std::find(item.sources.begin(), item.sources.end(), proof) == item.sources.end()) item.sources.push_back(proof);
+                }
                 if (known == registered.end())
                 {
                     if (item.contexts & ~ContextBit(Context::File)) item.types = {L"*"};
@@ -898,7 +932,7 @@ struct MenuService::Impl
         size_t bytes = 0;
         for (auto it = observed.begin(); it != observed.end();)
         {
-            const auto known = registered.find(it->first);
+            const auto known = registered.find(it->second.display.registration.empty() ? it->first : it->second.display.registration);
             bytes += settings_ipc::Pack(it->second).size();
             if (bytes > 8 * 1024 * 1024 || (catalogue.revision && !it->second.display.registration.empty() &&
                 (known == registered.end() || !known->second->systemEnabled)))
@@ -1825,7 +1859,7 @@ struct MenuService::Impl
                     }
                     if (priority != QueryPriority::Inspect && priority != QueryPriority::Execute &&
                         request.sourceClsid.empty() && !request.startPinOnly && sourceScanning &&
-                        KnownSelectionSources(contexts) && GetTickCount64() - sourceScanStarted < kInventoryWaitMs)
+                        KnownSelectionSources(contexts) && GetTickCount64() - sourceScanStarted < (sourceMetadataRecovery ? 8000 : kInventoryWaitMs))
                     {
                         row.queued = true; row.due = GetTickCount64() + 20;
                         break;
@@ -2275,7 +2309,19 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
         impl_->inspectedSelection = selectionKey;
         impl_->RememberView(selection, impl_->Queue(selection, QueryPriority::Inspect, refresh));
     }
-    CatalogueView result; result.catalogue = impl_->available; result.registrations = impl_->catalogue; result.selection = selection;
+    CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
+    if (source.catalogueOnly)
+    {
+        result.registrations = impl_->catalogue;
+        // Presentation needs names, icons, IDs and scopes, not server-only
+        // registration paths or activation metadata on every settings poll.
+        result.registrations.associations.clear();
+        for (auto& registration : result.registrations.rows)
+        {
+            registration.sources.clear(); registration.verbs.clear();
+            registration.display.token = 0; registration.display.children.clear();
+        }
+    }
     result.selection.catalogueOnly = source.catalogueOnly;
     result.scanning = impl_->scanning || impl_->scanRequested;
     if (!source.catalogueOnly) result.scanning |= impl_->sourcePending || impl_->desktopInspection || impl_->discoverRequested;
