@@ -522,12 +522,25 @@ void BenchmarkMenuBackgroundAndManagement()
     const auto inspect = [&](std::string_view scenario, bool force) {
         auto observation = begin();
         auto view = call(observation, [&] { return service.Inspect(selection.request, force); });
+        bool selectedSeen = false, selectedCorrect = false;
+        const auto observeSelection = [&] {
+            if (selectedSeen) return;
+            const auto target = service.View(selection.request);
+            if (target.pending || (!target.snapshot && target.error.empty())) return;
+            selectedSeen = true;
+            selectedCorrect = required(target);
+            report(std::string(scenario) + ":selected-result", observation, true, view.catalogue.rows.size(),
+                target.snapshot ? target.snapshot->entries.size() : 0, 0, false, selectedCorrect,
+                target.error, "result", target.snapshot.has_value());
+        };
+        observeSelection();
         auto nextProgress = GetTickCount64() + 5000;
         const auto deadline = GetTickCount64() + 180000;
         while ((view.scanning || view.menu.pending) && GetTickCount64() < deadline)
         {
             pumpFor(300); // Same observation cadence as the settings presenter.
             view = call(observation, [&] { return service.Inspect(selection.request, false); });
+            observeSelection();
             if (GetTickCount64() >= nextProgress)
             {
                 report(scenario, observation, false, view.catalogue.rows.size(), 0, 0, false, false, view.menu.error, "progress");
@@ -536,9 +549,17 @@ void BenchmarkMenuBackgroundAndManagement()
         }
         const bool complete = !view.scanning && !view.menu.pending;
         const auto target = service.View(selection.request);
-        const bool correct = complete && required(target);
+        // Full discovery can exceed the 64-entry selection cache. Settings
+        // retains observed root metadata after LRU eviction; verify this exact
+        // selection at its first completed reply rather than pinning its row
+        // or requiring that transient snapshot to survive every type sample.
+        const bool correct = complete && selectedSeen && selectedCorrect;
         report(scenario, observation, complete, view.catalogue.rows.size(), target.snapshot ? target.snapshot->entries.size() : 0,
             0, false, correct, view.menu.error, "result", target.snapshot.has_value());
+        std::cout << "{\"scenario\":" << quote(scenario) << ",\"stage\":\"identities\",\"ids\":[";
+        bool first = true;
+        for (const auto& id : ids(view.catalogue)) { if (!first) std::cout << ','; first = false; std::cout << quote(id); }
+        std::cout << "]}" << std::endl;
         failures += !complete || view.catalogue.rows.empty() || !correct || !view.menu.error.empty();
         return view;
     };
