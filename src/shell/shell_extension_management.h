@@ -1,6 +1,7 @@
 #pragma once
 #include "shell_extension_catalogue.h"
 #include "shell_menu_read_projection.h"
+#include "shell_extension_display_name.h"
 #include <cwctype>
 
 namespace snowdesktop::shell_extensions
@@ -99,34 +100,57 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
 inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& registrations, const Catalogue& observed,
                                                          Category category, std::wstring filter = {})
 {
-    auto sources = registrations;
-    for (auto& source : sources.rows)
+    std::map<std::string, ManagementRow> groups;
+    std::map<std::string, std::wstring> searchable;
+    const unsigned mask = category == Category::Objects ? 3 : 12;
+    for (const auto& source : registrations.rows)
     {
-        if (StateCommandLower(source.id) == "clsid:{470c0ebd-5d73-4d58-9ced-e91e22e23282}")
-            source.id = "state:start-pin"; // Keep Start on its existing dedicated lane.
-        source.linked = true;
-        source.display.provider = source.id;
-        source.display.registration.clear();
-        source.display.token = 0; source.display.children.clear();
+        if (!source.systemEnabled || !(source.contexts & mask) || source.kind == RegistrationKind::Observed) continue;
+        const bool application = !source.application.id.empty() && UsableShellDisplayName(source.application.name);
+        if (!application && (source.kind == RegistrationKind::Verb || !UsableShellDisplayName(source.display.label))) continue;
+        const auto id = application ? "app:" + source.application.id : "extension:" + source.id;
+        auto& row = groups[id];
+        if (row.id.empty())
+        {
+            row.id = id; row.display = source.display;
+            row.display.label = application ? source.application.name : source.display.label;
+            row.display.provider.clear(); row.display.registration.clear();
+            row.display.key.clear(); row.display.token = 0; row.display.children.clear();
+        }
+        else if (source.kind == RegistrationKind::Packaged && application) row.display.label = source.application.name;
+        if (row.display.pixels.empty() && !source.display.pixels.empty())
+        { row.display.width = source.display.width; row.display.height = source.display.height; row.display.pixels = source.display.pixels; }
+        auto memberId = source.id;
+        if (StateCommandLower(memberId) == "clsid:{470c0ebd-5d73-4d58-9ced-e91e22e23282}") memberId = "state:start-pin";
+        auto member = std::find_if(row.members.begin(), row.members.end(), [&](const auto& item) { return item.id == memberId; });
+        if (member == row.members.end()) row.members.push_back({memberId, source.contexts, {}, memberId});
+        else member->contexts |= source.contexts;
+        row.contexts |= source.contexts;
+        row.types.insert(row.types.end(), source.types.begin(), source.types.end());
+        if (application && std::find(row.applications.begin(), row.applications.end(), source.application) == row.applications.end()) row.applications.push_back(source.application);
+        searchable[id] += L" " + source.display.label;
+        for (const auto& type : source.types) searchable[id] += L" " + type;
     }
-    for (const auto& command : observed.rows)
-        if (std::none_of(sources.rows.begin(), sources.rows.end(), [&](const auto& source) {
-            return source.id == command.id || (!command.display.registration.empty() && source.id == command.display.registration);
-        }))
-            sources.rows.push_back(command);
-    auto result = ManagementRows(sources, category, std::move(filter));
-    for (auto& row : result)
+    std::vector<ManagementRow> result;
+    for (auto& c : filter) c = towlower(c);
+    for (auto& [id, row] : groups)
     {
-        // Group actions include current command exceptions as well as source
-        // rules, so the same switch also governs future roots from that source.
-        std::vector<ManagementMember> commands;
+        // Observed commands contribute exceptions to their known software,
+        // never additional visible rows or guessed application ownership.
         for (const auto& command : observed.rows)
-            if (!command.display.registration.empty() &&
-                std::any_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.display.registration; }))
-                commands.push_back({command.display.provider, command.contexts, command.display.registration, command.display.provider});
-        for (const auto& command : commands)
-            if (std::none_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.id; })) row.members.push_back(command);
+            if (!command.display.registration.empty() && std::any_of(row.members.begin(), row.members.end(), [&](const auto& parent) {
+                return parent.id == command.display.registration;
+            }) && std::none_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.display.provider; }))
+                row.members.push_back({command.display.provider, command.contexts, command.display.registration, command.display.provider});
+        std::sort(row.members.begin(), row.members.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
+        std::sort(row.types.begin(), row.types.end()); row.types.erase(std::unique(row.types.begin(), row.types.end()), row.types.end());
+        auto text = row.display.label + searchable[id];
+        for (auto& c : text) c = towlower(c);
+        if (filter.empty() || text.find(filter) != std::wstring::npos) result.push_back(std::move(row));
     }
+    std::stable_sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+        return a.display.label != b.display.label ? a.display.label < b.display.label : a.id < b.id;
+    });
     return result;
 }
 inline bool SameManagementRow(const ManagementRow &a, const ManagementRow &b)

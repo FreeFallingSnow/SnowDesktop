@@ -1,4 +1,5 @@
 #include "shell_extension_catalogue.h"
+#include "shell_extension_display_name.h"
 #include "shell_catalogue_workers.h"
 #include <atomic>
 #include <future>
@@ -233,15 +234,17 @@ Application ModuleApplication(const std::wstring &module)
     WIN32_FILE_ATTRIBUTE_DATA data{};
     if (!GetFileAttributesExW(module.c_str(), GetFileExInfoStandard, &data)) return {};
     const auto stamp = (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
-    struct Cached { std::uint64_t stamp; Application value; };
+    const auto language = GetThreadUILanguage(), fallbackLanguage = GetUserDefaultUILanguage();
+    const DWORD languages = MAKELONG(language, fallbackLanguage);
+    struct Cached { std::uint64_t stamp; DWORD languages; Application value; };
     static std::mutex mutex;
     static std::map<std::wstring, Cached> cache;
     const auto key = Lower(module);
     {
         std::lock_guard lock(mutex);
-        if (const auto found = cache.find(key); found != cache.end() && found->second.stamp == stamp) return found->second.value;
+        if (const auto found = cache.find(key); found != cache.end() && found->second.stamp == stamp && found->second.languages == languages) return found->second.value;
     }
-    Application result{"file:" + Utf8(key), std::filesystem::path(module).filename().wstring()};
+    Application result{"file:" + Utf8(key), std::filesystem::path(module).stem().wstring()};
     DWORD unused = 0;
     const DWORD size = GetFileVersionInfoSizeW(module.c_str(), &unused);
     if (size && size <= 4 * 1024 * 1024)
@@ -252,11 +255,16 @@ Application ModuleApplication(const std::wstring &module)
             struct Translation { WORD language, codepage; };
             Translation *translations = nullptr; UINT length = 0;
             if (VerQueryValueW(bytes.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void **>(&translations), &length))
-                for (size_t i = 0; i < length / sizeof(Translation); ++i)
+            {
+                std::vector<Translation> preferred(translations, translations + std::min<size_t>(256, length / sizeof(Translation)));
+                auto rank = [&](WORD value) { return value == language ? 0 : value == fallbackLanguage ? 1 :
+                    PRIMARYLANGID(value) == PRIMARYLANGID(language) ? 2 : value == 0 ? 3 : 4; };
+                std::stable_sort(preferred.begin(), preferred.end(), [&](const auto& a, const auto& b) { return rank(a.language) < rank(b.language); });
+                for (const auto& translation : preferred)
                 {
                     auto text = [&](const wchar_t *field) {
                         wchar_t query[128]{};
-                        swprintf_s(query, L"\\StringFileInfo\\%04x%04x\\%s", translations[i].language, translations[i].codepage, field);
+                        swprintf_s(query, L"\\StringFileInfo\\%04x%04x\\%s", translation.language, translation.codepage, field);
                         wchar_t *value = nullptr; UINT characters = 0;
                         if (!VerQueryValueW(bytes.data(), query, reinterpret_cast<void **>(&value), &characters) || !value || characters <= 1 || characters > 512) return std::wstring{};
                         std::wstring label(value, characters - 1);
@@ -268,19 +276,20 @@ Application ModuleApplication(const std::wstring &module)
                         return label;
                     };
                     const auto product = text(L"ProductName"), company = text(L"CompanyName");
-                    const auto name = product.empty() ? text(L"FileDescription") : product;
-                    if (name.empty()) continue;
+                    const auto name = UsableShellDisplayName(product) ? product : text(L"FileDescription");
+                    if (!UsableShellDisplayName(name)) continue;
                     result.name = name;
                     // Product+company unifies one application's EXE and Shell
                     // DLL. It is display metadata, never command authority.
-                    if (!product.empty() && !company.empty()) result.id = "product:" + Utf8(Lower(company + L"\n" + product));
+                    if (UsableShellDisplayName(product) && !company.empty()) result.id = "product:" + Utf8(Lower(company + L"\n" + product));
                     break;
                 }
+            }
         }
     }
     std::lock_guard lock(mutex);
     if (cache.size() >= 1024) cache.clear();
-    cache[key] = {stamp, result};
+    cache[key] = {stamp, languages, result};
     return result;
 }
 // Index small ASCII value lists only for this verb. Missing metadata fields do
@@ -322,7 +331,7 @@ struct KeyValues
 // Cache parsed XML only, never registration or policy. Every scan re-enumerates
 // packages and verifies file ID, size, write/change times before reusing results.
 // Missing, malformed or unidentifiable files are not negatively cached.
-struct ManifestVerb { std::wstring clsid, id, type; };
+struct ManifestVerb { std::wstring clsid, id, type, displayName, identity, module; };
 struct ManifestStamp
 {
     ULONGLONG volume;
@@ -357,6 +366,20 @@ std::wstring ManifestAttribute(IXMLDOMNode *node, const wchar_t *name)
     std::wstring result = text ? text : L"";
     SysFreeString(key); SysFreeString(text); return result;
 }
+ComPtr<IXMLDOMNode> ManifestNode(IXMLDOMNode* node, const wchar_t* expression)
+{
+    ComPtr<IXMLDOMNode> result;
+    BSTR query = SysAllocString(expression);
+    if (node) node->selectSingleNode(query, &result);
+    SysFreeString(query); return result;
+}
+std::wstring ManifestText(IXMLDOMNode* node)
+{
+    BSTR text = nullptr;
+    if (node) node->get_text(&text);
+    std::wstring result = text ? text : L"";
+    SysFreeString(text); return result;
+}
 std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
 {
     struct Cached { ManifestStamp stamp; std::vector<ManifestVerb> verbs; };
@@ -385,7 +408,32 @@ std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
     for (long i = 0; i < count; ++i)
     {
         ComPtr<IXMLDOMNode> verb, parent; nodes->get_item(i, &verb); verb->get_parentNode(&parent);
-        result.push_back({ManifestAttribute(verb.Get(), L"Clsid"), ManifestAttribute(verb.Get(), L"Id"), ManifestAttribute(parent.Get(), L"Type")});
+        ManifestVerb item;
+        item.clsid = ManifestAttribute(verb.Get(), L"Clsid"); item.id = ManifestAttribute(verb.Get(), L"Id");
+        item.type = ManifestAttribute(parent.Get(), L"Type");
+        item.displayName = ManifestText(ManifestNode(document.Get(), L"/*[local-name()='Package']/*[local-name()='Properties']/*[local-name()='DisplayName']").Get());
+        item.identity = ManifestAttribute(ManifestNode(document.Get(), L"/*[local-name()='Package']/*[local-name()='Identity']").Get(), L"Name");
+        auto application = ManifestNode(verb.Get(), L"ancestor::*[local-name()='Application'][1]");
+        if (!application) application = ManifestNode(document.Get(), L"//*[local-name()='Application'][1]");
+        item.module = ManifestAttribute(application.Get(), L"Executable");
+        // COM class paths identify the actual provider when a sparse package's
+        // application executable is only a launcher. Read metadata, never load it.
+        ComPtr<IXMLDOMNodeList> classes;
+        BSTR classQuery = SysAllocString(L"//*[local-name()='Class' and @Id]");
+        document->selectNodes(classQuery, &classes); SysFreeString(classQuery);
+        long classCount = 0; if (classes) classes->get_length(&classCount);
+        auto normalized = [](std::wstring value) { std::erase(value, L'{'); std::erase(value, L'}'); return Lower(std::move(value)); };
+        for (long c = 0; c < classCount; ++c)
+        {
+            ComPtr<IXMLDOMNode> type, server; classes->get_item(c, &type);
+            if (normalized(ManifestAttribute(type.Get(), L"Id")) != normalized(item.clsid)) continue;
+            auto path = ManifestAttribute(type.Get(), L"Path");
+            type->get_parentNode(&server);
+            if (path.empty()) path = ManifestAttribute(server.Get(), L"Path");
+            if (path.empty()) path = ManifestAttribute(server.Get(), L"Executable");
+            if (!path.empty()) { item.module = std::move(path); break; }
+        }
+        result.push_back(std::move(item));
     }
     // Recheck the open object and the current path. A replacement during XML
     // loading must not associate a new manifest with the old file identity.
@@ -397,6 +445,33 @@ std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
         cache.insert_or_assign(path, Cached{*stamp, result});
     }
     return result;
+}
+
+std::wstring PackageDisplayName(const ManifestVerb& verb, const std::wstring& package, const std::wstring& directory)
+{
+    if (!Lower(verb.displayName).starts_with(L"ms-resource:"))
+    {
+        auto value = Localized(verb.displayName);
+        return UsableShellDisplayName(value) ? value : std::wstring{};
+    }
+    std::vector<std::wstring> uris{verb.displayName};
+    auto resource = verb.displayName.substr(12);
+    if (!verb.identity.empty())
+    {
+        if (resource.starts_with(L"///")) uris.push_back(L"ms-resource://" + verb.identity + resource.substr(2));
+        else if (!resource.starts_with(L"//"))
+        {
+            if (!resource.starts_with(L"/")) uris.push_back(L"ms-resource://" + verb.identity + L"/resources/" + resource);
+            uris.push_back(L"ms-resource://" + verb.identity + (resource.starts_with(L"/") ? L"" : L"/") + resource);
+        }
+    }
+    for (const auto& uri : uris)
+        for (const auto& source : {package, directory + L"\\resources.pri"})
+        {
+            auto value = Localized(L"@{" + source + L"?" + uri + L"}");
+            if (UsableShellDisplayName(value)) return value;
+        }
+    return {};
 }
 
 struct Scanner
@@ -485,7 +560,8 @@ struct Scanner
             info.module = Read(classes, root + L"\\InprocServer32");
             const auto module = LocalModule(info.module);
             info.application = module.empty() ? CommandApplication(Read(classes, root + L"\\LocalServer32")) : ApplicationForModule(module);
-            info.label = Read(classes, root);
+            info.label = Label(Read(classes, root, L"LocalizedString"));
+            if (!UsableShellDisplayName(info.label)) info.label = Label(Read(classes, root));
             info.icon = Read(classes, root + L"\\DefaultIcon");
         }
         return it->second;
@@ -657,6 +733,7 @@ struct Scanner
         {
             if (control) control->WaitUntilAllowed();
             auto directory = Read(classes, root + L"\\" + package, L"PackageRootFolder");
+            const auto contentDirectory = directory;
             if (classes == HKEY_CLASSES_ROOT)
             {
                 // For sparse packages the compatibility registry value names
@@ -682,13 +759,21 @@ struct Scanner
                 const auto family = first != std::wstring::npos && last > first ? package.substr(0, first) + package.substr(last) : package;
                 Registration row; row.kind = RegistrationKind::Packaged;
                 row.id = "package:" + Utf8(Lower(family + L":" + clsid));
-                row.application = {"package:" + Utf8(Lower(family)), family.substr(0, family.find(L'_'))};
+                std::wstring module;
+                if (!verb.module.empty())
+                    for (const auto& content : {contentDirectory, directory})
+                        if (module.empty() && !content.empty()) module = LocalModule((std::filesystem::path(content) / verb.module).wstring());
+                row.application = ApplicationForModule(module);
+                const auto name = PackageDisplayName(verb, package, directory);
+                if (row.application.id.empty()) row.application.id = "package:" + Utf8(Lower(family));
+                if (!name.empty()) row.application.name = name;
+                if (!UsableShellDisplayName(row.application.name)) row.application.name = family.substr(0, family.find(L'_'));
                 row.sources = {L"package:" + package + L":" + id}; row.verbs = {Utf8(Lower(clsid))};
                 row.contexts = type == L"Directory" ? ContextBit(Context::Folder) : type == L"Directory\\Background" ? ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop) : ContextBit(Context::File);
                 if (type != L"*" && type != L"Directory" && type != L"Directory\\Background") row.types = {Lower(type)};
-                row.systemEnabled = !IsBlocked(clsid); row.display.label = family.substr(0, family.find(L'_'));
+                row.systemEnabled = !IsBlocked(clsid); row.display.label = row.application.name;
                 row.revision = Hash(settings_ipc::Pack(package, id, clsid));
-                Add(std::move(row), L"");
+                Add(std::move(row), module);
             }
         }
     }

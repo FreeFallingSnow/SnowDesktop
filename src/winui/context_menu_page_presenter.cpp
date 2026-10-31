@@ -61,6 +61,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     struct Card
     {
         muxc::StackPanel panel;
+        muxc::Border icon;
         muxc::TextBlock title, mixed;
         muxc::ToggleSwitch toggle;
         muxc::StackPanel mixedActions;
@@ -383,6 +384,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             const auto &model = cardModels.at(id); const auto state = ext::ManagementCardState(prefs, model, category);
             card.title.Text(CardTitle(model));
+            if (mode == ext::ManagementView::Applications && !model.rows.empty()) card.icon.Child(Icon(model.rows.front().display));
             if (state) card.toggle.IsOn(*state);
             card.toggle.Visibility(state ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             card.mixedActions.Visibility(state ? mux::Visibility::Collapsed : mux::Visibility::Visible);
@@ -429,17 +431,23 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             ? ext::ExtensionManagementRows(view.registrations, view.catalogue, category, std::wstring(search.Text()))
             : ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()));
         hasVisibleRows = !filteredRows.empty();
-        auto cards = ext::ManagementCards(filteredRows, category, mode);
+        std::vector<ext::ManagementCard> cards;
+        if (mode == ext::ManagementView::Applications)
+            for (const auto& software : filteredRows) cards.push_back({software.id, {}, software.display.label, {software}});
+        else cards = ext::ManagementCards(filteredRows, category, mode);
         std::vector<ext::ManagementRow> visible;
         cardModels.clear(); cardOrder.clear(); rowGroups.clear();
         for (auto &model : cards)
         {
             cardOrder.push_back(model.id);
-            for (const auto &row : model.rows) { rowGroups[row.id] = model.id; visible.push_back(row); }
+            if (mode != ext::ManagementView::Applications)
+                for (const auto &row : model.rows) { rowGroups[row.id] = model.id; visible.push_back(row); }
             cardModels.emplace(model.id, std::move(model));
         }
         pendingRows = ext::PlanManagementUpdates(rows, visible, [this](auto &row) { RemoveRow(row); });
         nextRow = 0;
+        if (mode == ext::ManagementView::Applications)
+            for (const auto& id : cardOrder) Section(id);
         UpdateChoices();
         AppendRows();
         if (nextRow < pendingRows.size()) rowTimer.Start();
@@ -450,18 +458,28 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!sections.contains(group))
         {
             Card card; card.panel.Spacing(0);
-            muxc::Grid header; Column(header, 1, mux::GridUnitType::Star); Column(header, 1, mux::GridUnitType::Auto);
+            muxc::Grid header;
+            const bool software = mode == ext::ManagementView::Applications;
+            if (software)
+            {
+                Column(header, 1, mux::GridUnitType::Auto);
+                card.icon.Width(20); card.icon.Height(20); card.icon.Margin({0, 0, 12, 0});
+                card.icon.VerticalAlignment(mux::VerticalAlignment::Center);
+                header.Children().Append(card.icon);
+            }
+            Column(header, 1, mux::GridUnitType::Star); Column(header, 1, mux::GridUnitType::Auto);
             muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center); names.Margin({0, 0, 16, 0});
             card.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); card.title.TextWrapping(mux::TextWrapping::Wrap);
+            muxc::Grid::SetColumn(names, software ? 1 : 0);
             names.Children().Append(card.title); card.mixed.Text(L("settings.contextMenu.groupMixed")); card.mixed.FontSize(12);
             card.mixed.Opacity(0.7); names.Children().Append(card.mixed); header.Children().Append(names);
             card.toggle.OnContent(winrt::box_value(L"")); card.toggle.OffContent(winrt::box_value(L"")); card.toggle.MinWidth(0);
             card.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
-            card.toggle.VerticalAlignment(mux::VerticalAlignment::Center); muxc::Grid::SetColumn(card.toggle, 1);
+            card.toggle.VerticalAlignment(mux::VerticalAlignment::Center); muxc::Grid::SetColumn(card.toggle, software ? 2 : 1);
             // The native switch already includes a 12-DIP trailing content gap.
             header.Children().Append(card.toggle);
             ConfigureMixedActions(card.mixedActions, card.showAll, card.hideAll);
-            muxc::Grid::SetColumn(card.mixedActions, 1); header.Children().Append(card.mixedActions);
+            muxc::Grid::SetColumn(card.mixedActions, software ? 2 : 1); header.Children().Append(card.mixedActions);
             header.Margin({16, 12, 16, 12}); card.panel.Children().Append(header);
             const auto changed = card.toggle.Toggled([this, group](auto &&, auto &&) {
                 if (!updating && sections.contains(group) && cardModels.contains(group) &&

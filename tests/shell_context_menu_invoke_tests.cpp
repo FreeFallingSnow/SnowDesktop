@@ -1271,7 +1271,7 @@ void TestPackageManifestRefresh()
     const auto manifest = temp.path / L"AppxManifest.xml";
     const std::string firstId = "{A6510AE1-9C45-4F16-A120-4A320B231001}";
     const std::string secondId = "{A6510AE1-9C45-4F16-A120-4A320B231002}";
-    auto text = [](const std::string &id) { return "<Package><Extensions><Extension Category=\"windows.fileExplorerContextMenus\"><ItemType Type=\"Directory\\Background\"><Verb Id=\"Inspect\" Clsid=\"" + id + "\"/></ItemType></Extension></Extensions></Package>"; };
+    auto text = [](const std::string &id) { return "<Package><Identity Name=\"Example\"/><Properties><DisplayName>本地化应用</DisplayName></Properties><Extensions><Extension Category=\"windows.fileExplorerContextMenus\"><ItemType Type=\"Directory\\Background\"><Verb Id=\"Inspect\" Clsid=\"" + id + "\"/></ItemType></Extension></Extensions></Package>"; };
     auto write = [](const std::filesystem::path &path, const std::string &xml) {
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         output.write(xml.data(), static_cast<std::streamsize>(xml.size()));
@@ -1288,6 +1288,11 @@ void TestPackageManifestRefresh()
         return catalogue.revision;
     };
     write(manifest, text(firstId));
+    {
+        const auto localized = ext::ReadCatalogue(registry.key, true);
+        Expect(localized.rows.size() == 1 && localized.rows.front().application.name == L"本地化应用" &&
+            localized.rows.front().display.label == L"本地化应用", "package properties supply a localized friendly name instead of a package identity");
+    }
     const auto firstRevision = check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
     Expect(firstRevision == check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}"), "unchanged manifest remains deterministic");
     FILE_BASIC_INFO oldBasic{};
@@ -1483,6 +1488,8 @@ void TestRegistryCatalogue()
     put(L"*\\shell\\hidden", L"LegacyDisable", L"");
     put(L"*\\shellex\\ContextMenuHandlers\\one", nullptr, L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}");
     put(L"Directory\\shellex\\ContextMenuHandlers\\two", nullptr, L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}");
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}", nullptr, L"InternalProvider");
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}", L"LocalizedString", L"本地化扩展");
     auto catalogue = ext::ReadCatalogue(registry.key, false);
     Expect(catalogue.rows.size() == 4, "registry catalogue finds type-specific verbs and merges a handler by CLSID");
     auto find = [&](const std::string &id) -> ext::Registration& {
@@ -1491,6 +1498,7 @@ void TestRegistryCatalogue()
     };
     auto &handler = find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}");
     Expect(handler.sources.size() == 2 && handler.contexts == 3 && !handler.linked, "one handler preserves both scopes without claiming a runtime association");
+    Expect(handler.display.label == L"本地化扩展", "extension LocalizedString takes precedence over its internal COM name");
     Expect(!find("reg:*\\shell\\hidden").systemEnabled, "system-disabled registration is excluded from available settings");
     ext::Request request; request.paths = {L"C:\\fixture.snowtest"}; request.context = ext::Context::File;
     ext::Reply reply; reply.ok = true;

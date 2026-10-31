@@ -234,7 +234,7 @@ void CheckExtensionAndCommandControls()
         ++queries;
         if (request.sourceClsid.empty()) ++aggregates; else ++sources;
         return ext::QueryWork{[=] { return ext::Reply{true, {first, second}, {}}; },
-            [&](UINT token, POINT) { Expect(token == second.token, "group-enabled invocation resolves the fresh aggregate token"); ++invoked; }};
+            [&](UINT token, POINT) { Expect(token == child.token, "group-enabled invocation resolves the fresh aggregate leaf token"); ++invoked; }};
     }, [=] { return inventory; }, {}, {}, [=](const auto&) { return inventory; });
     ext::Preferences prefs; service.Configure(prefs);
     auto installed = target; installed.catalogueOnly = true;
@@ -270,11 +270,13 @@ void CheckExtensionAndCommandControls()
     Expect(filtered.snapshot && filtered.snapshot->entries.size() == 1 && filtered.snapshot->entries.front().provider == second.provider,
         "a single-command hide overrides an enabled extension without hiding its sibling");
     std::atomic_bool completed = false; bool success = false;
-    service.Execute(target, ext::AppendReference({}, second), {}, [&](bool result) { success = result; completed = true; });
+    const auto visibleReference = ext::AppendReference(ext::AppendReference({}, prepared.snapshot->entries.back()),
+        prepared.snapshot->entries.back().children.front());
+    service.Execute(target, visibleReference, {}, [&](bool result) { success = result; completed = true; });
     PumpUntil([&] { return completed.load(); }, "a command shown by its extension setting finishes the fresh execution path");
     Expect(success && invoked == 1 && aggregates == 1, "extension display authority survives a separately resolved real invocation");
     completed = false; success = true;
-    service.Execute(target, ext::AppendReference({}, first), {}, [&](bool result) { success = result; completed = true; });
+    service.Execute(target, ext::AppendReference({}, prepared.snapshot->entries.front()), {}, [&](bool result) { success = result; completed = true; });
     PumpUntil([&] { return completed.load(); }, "a command-level hide is checked again during execution");
     Expect(!success && invoked == 1, "an enabled extension cannot execute a command explicitly hidden within it");
     groups = ext::ExtensionManagementRows(service.Inspect(installed).registrations, service.Inspect(installed).catalogue, ext::Category::Objects);
@@ -318,6 +320,35 @@ void CheckExtensionAndCommandControls()
     const auto encoded = snowdesktop::settings_ipc::Pack(view);
     Expect(snowdesktop::settings_ipc::Unpack<ext::CatalogueView>(encoded).registrations.rows.size() == 1,
         "settings IPC keeps installed sources separate from command observations");
+}
+
+void CheckSoftwareManagementPresentation()
+{
+    ext::Registration first; first.id = "reg:document\\shell\\open";
+    first.kind = ext::RegistrationKind::Verb; first.contexts = 1; first.types = {L".one"};
+    first.display.label = L"open"; first.application = {"software-one", L"本地化应用"};
+    auto second = first; second.id = "reg:other\\shell\\open"; second.types = {L".two"};
+    auto handler = first; handler.kind = ext::RegistrationKind::Handler; handler.id = "clsid:provider";
+    handler.contexts = 3; handler.display.label = L"InternalProvider";
+    auto other = first; other.id = "reg:unrelated"; other.application.id = "software-two";
+    auto opaque = first; opaque.id = "package:opaque"; opaque.kind = ext::RegistrationKind::Packaged;
+    opaque.application = {"opaque", L"0BF99681-825C-4B2A-A14F-2AC01DB9B70E"}; opaque.display.label = opaque.application.name;
+    ext::Catalogue installed; installed.rows = {first, second, handler, other, opaque};
+    ext::Catalogue observed; ext::Registration stale; stale.kind = ext::RegistrationKind::Observed;
+    stale.id = "observed:unknown"; stale.display.label = L"Old unknown command"; stale.contexts = 1; observed.rows = {stale};
+    const auto rows = ext::ExtensionManagementRows(installed, observed, ext::Category::Objects);
+    Expect(rows.size() == 2 && rows.front().display.label == L"本地化应用" && rows.front().members.size() == 3,
+        "software view merges registrations by identity, keeps same-name applications separate and omits opaque/stale rows");
+    const auto searched = ext::ExtensionManagementRows(installed, observed, ext::Category::Objects, L".two");
+    Expect(searched.size() == 1 && searched.front().members.size() == 3,
+        "a type search returns the complete software switch rather than narrowing its authority to the matched registration");
+    ext::Preferences prefs; ext::SetManagementCommon(prefs, searched.front(), ext::Category::Objects, true);
+    Expect(ext::CommonShown(prefs, first.id, ext::Category::Objects) && ext::CommonShown(prefs, second.id, ext::Category::Objects) &&
+        ext::CommonShown(prefs, handler.id, ext::Category::Objects) && !ext::CommonShown(prefs, other.id, ext::Category::Objects),
+        "one software switch updates all of its original registrations and leaves the other application unchanged");
+    Expect(!ext::UsableShellDisplayName(L"@missing.dll,-1") && !ext::UsableShellDisplayName(L"ms-resource:AppName") &&
+        ext::UsableShellDisplayName(L"7-Zip") && ext::UsableShellDisplayName(L"本地化应用"),
+        "primary names accept real brands/localized captions and reject unresolved resources");
 }
 
 void CheckColdExtensionRecovery()
@@ -442,6 +473,7 @@ void Run()
     check("no format sampling", CheckManagementNeverExpands);
     check("management budget", CheckManagementBudgetIsolation);
     check("extension and command controls", CheckExtensionAndCommandControls);
+    check("software management presentation", CheckSoftwareManagementPresentation);
     check("cold extension recovery", CheckColdExtensionRecovery);
     check("worker bounds", CheckWorkerReuseBounds);
     if (!failures.empty()) throw std::runtime_error(failures);

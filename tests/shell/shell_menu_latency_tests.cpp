@@ -1,5 +1,6 @@
 #include "shell/shell_extension_service.h"
 #include "shell/shell_extension_menu_presentation.h"
+#include "shell/shell_extension_management.h"
 #include "shell_menu_samples.h"
 #include "common/json_string.h"
 #include <chrono>
@@ -540,6 +541,19 @@ void BenchmarkMenuBackgroundAndManagement()
             traceCounters().queries == observation.before.queries;
         report(scenario, observation, !view.scanning, view.registrations.rows.size(), 0, 0, false, correct, {}, "result", false);
         failures += !correct;
+        if (std::string_view(scenario) == "extensions-cold")
+        {
+            std::cout << "{\"scenario\":\"extensions-cold\",\"stage\":\"software-groups\",\"groups\":[";
+            bool first = true;
+            for (const auto category : {ext::Category::Objects, ext::Category::Background})
+                for (const auto& row : ext::ExtensionManagementRows(view.registrations, view.catalogue, category))
+                {
+                    if (!first) std::cout << ','; first = false;
+                    std::cout << "{\"id\":" << quote(row.id) << ",\"name\":" << quote(utf8(row.display.label))
+                        << ",\"category\":" << static_cast<unsigned>(category) << ",\"members\":" << row.members.size() << '}';
+                }
+            std::cout << "]}" << std::endl;
+        }
         if (std::string_view(scenario) != "extensions-cold") service.EndInspection();
     }
     const auto inspect = [&](std::string_view scenario, bool force) {
