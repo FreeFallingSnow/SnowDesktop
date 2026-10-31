@@ -1,6 +1,7 @@
 #include "system_control_windows.h"
 #include "system_control_feedback.h"
 #include "system_awake_session.h"
+#include "system_control_hotspot_cache.h"
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Networking.Connectivity.h>
 #include <winrt/Windows.Networking.NetworkOperators.h>
@@ -124,45 +125,88 @@ namespace operators = winrt::Windows::Networking::NetworkOperators;
 namespace connectivity = winrt::Windows::Networking::Connectivity;
 class Hotspot final : public Backend
 {
-    operators::NetworkOperatorTetheringManager manager_{nullptr};
-    operators::NetworkOperatorTetheringManager Manager()
+    using ManagerHandle = operators::NetworkOperatorTetheringManager;
+    HotspotManagerCache<ManagerHandle> cache_;
+    std::shared_ptr<std::atomic<std::uint64_t>> generation_;
+    winrt::event_token networkChanged_{};
+    bool notificationsAttempted_ = false, notificationsAvailable_ = false;
+
+    void EnsureNotifications()
     {
-        // Keep the active manager when the upstream disappears, so Stop still
-        // works. Prefer an active hotspot over a newly preferred connection.
-        if (manager_)
+        if (notificationsAttempted_) return;
+        generation_ = std::make_shared<std::atomic<std::uint64_t>>(0);
+        notificationsAttempted_ = true;
+        try
         {
-            try { const auto state = manager_.TetheringOperationalState();
-                if (state == operators::TetheringOperationalState::On || state == operators::TetheringOperationalState::InTransition) return manager_; }
-            catch (const winrt::hresult_error&) { /* A disconnected upstream must not pin an invalid manager. */ }
-            manager_ = nullptr;
+            std::weak_ptr<std::atomic<std::uint64_t>> weak = generation_;
+            networkChanged_ = connectivity::NetworkInformation::NetworkStatusChanged(
+                [weak](const winrt::Windows::Foundation::IInspectable&) {
+                    if (const auto generation = weak.lock())
+                        generation->fetch_add(1, std::memory_order_release);
+                });
+            notificationsAvailable_ = true;
         }
+        catch (const winrt::hresult_error&) { /* Bounded rediscovery remains available without notifications. */ }
+    }
+
+    ManagerHandle Discover(const Cancellation& cancel)
+    {
+        if (cancel.Stop()) throw winrt::hresult_canceled();
         const auto upstream = connectivity::NetworkInformation::GetInternetConnectionProfile();
-        operators::NetworkOperatorTetheringManager fallback{nullptr};
+        ManagerHandle fallback{nullptr}, preferred{nullptr};
         for (const auto& profile : connectivity::NetworkInformation::GetConnectionProfiles())
         {
+            if (cancel.Stop()) throw winrt::hresult_canceled();
             try
             {
                 if (operators::NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(profile) != operators::TetheringCapability::Enabled) continue;
                 auto candidate = operators::NetworkOperatorTetheringManager::CreateFromConnectionProfile(profile);
                 const auto state = candidate.TetheringOperationalState();
                 if (state == operators::TetheringOperationalState::On || state == operators::TetheringOperationalState::InTransition)
-                { manager_ = candidate; return manager_; }
+                    return candidate;
+                // Reuse the candidate when the preferred profile is already
+                // in the inventory instead of creating its manager twice.
+                if (upstream && profile == upstream) preferred = candidate;
                 if (!fallback) fallback = candidate;
             }
             catch (const winrt::hresult_error&) { /* Continue past an inaccessible or disappearing profile. */ }
         }
+        if (cancel.Stop()) throw winrt::hresult_canceled();
+        if (preferred) return preferred;
         if (upstream && operators::NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(upstream) == operators::TetheringCapability::Enabled)
-            manager_ = operators::NetworkOperatorTetheringManager::CreateFromConnectionProfile(upstream);
-        else manager_ = fallback;
-        return manager_;
+            return operators::NetworkOperatorTetheringManager::CreateFromConnectionProfile(upstream);
+        return fallback;
+    }
+
+    ManagerHandle Manager(const Cancellation& cancel, bool refreshBeforeEnable = false)
+    {
+        EnsureNotifications();
+        return cache_.Get(std::chrono::steady_clock::now(), generation_->load(std::memory_order_acquire),
+            notificationsAvailable_, refreshBeforeEnable,
+            [](const ManagerHandle& manager) {
+                try
+                {
+                    switch (manager.TetheringOperationalState())
+                    {
+                    case operators::TetheringOperationalState::Off: return HotspotManagerState::Off;
+                    case operators::TetheringOperationalState::On: return HotspotManagerState::On;
+                    case operators::TetheringOperationalState::InTransition: return HotspotManagerState::InTransition;
+                    default: break;
+                    }
+                }
+                catch (const winrt::hresult_error&) { /* Rediscover an invalidated OS object. */ }
+                return HotspotManagerState::Unknown;
+            }, [this, &cancel] { return Discover(cancel); });
     }
 public:
+    ~Hotspot() override { Release({}); }
     std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
     {
         try
         {
             if (cancel.Stop()) return {{"host.hotspot", Missing(cancel.Failure().error)}};
-            const auto manager = Manager();
+            const auto manager = Manager(cancel);
+            if (cancel.Stop()) { cache_.Reset(); return {{"host.hotspot", Missing(cancel.Failure().error)}}; }
             if (!manager) return {{"host.hotspot", Missing("actionUnsupported")}};
             const auto state = manager.TetheringOperationalState();
             auto value = json::Object();
@@ -174,15 +218,18 @@ public:
             // Passwords are deliberately never sampled, logged or serialized.
             return {{"host.hotspot", Value(std::move(value))}};
         }
-        catch (const winrt::hresult_error& error) { return {{"host.hotspot", Missing(Error(static_cast<DWORD>(error.code().value)).error)}}; }
+        catch (const winrt::hresult_error& error)
+        { cache_.Reset(); return {{"host.hotspot", Missing(cancel.Stop() ? cancel.Failure().error : Error(static_cast<DWORD>(error.code().value)).error)}}; }
     }
     Result Execute(const Request& request, const Cancellation& cancel) override
     {
         try
         {
             if (cancel.Stop()) return cancel.Failure();
-            const auto manager = Manager(); if (!manager) return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
             const bool enabled = Argument(request, "enabled") == "1";
+            const auto manager = Manager(cancel, enabled);
+            if (cancel.Stop()) { cache_.Reset(); return cancel.Failure(); }
+            if (!manager) return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
             const auto before = manager.TetheringOperationalState();
             if (before == operators::TetheringOperationalState::InTransition || before == operators::TetheringOperationalState::Unknown)
                 return Error(ERROR_BUSY, "unavailable");
@@ -196,9 +243,20 @@ public:
                 return {state == operators::TetheringOperationalState::On ? 1. : 0., {}};
             }, ControlReadbackPause);
         }
-        catch (const winrt::hresult_error& error) { return Error(static_cast<DWORD>(error.code().value)); }
+        catch (const winrt::hresult_error& error)
+        { cache_.Reset(); return cancel.Stop() ? cancel.Failure() : Error(static_cast<DWORD>(error.code().value)); }
     }
-    void Release(std::string_view) override { manager_ = nullptr; }
+    void Release(std::string_view) override
+    {
+        cache_.Reset();
+        // Late callbacks keep only a weak generation, never this backend.
+        generation_.reset();
+        if (notificationsAvailable_)
+            try { connectivity::NetworkInformation::NetworkStatusChanged(networkChanged_); }
+            catch (const winrt::hresult_error&) { /* Service teardown can race notification removal. */ }
+        networkChanged_ = {};
+        notificationsAvailable_ = notificationsAttempted_ = false;
+    }
 };
 class Awake final : public Backend
 {

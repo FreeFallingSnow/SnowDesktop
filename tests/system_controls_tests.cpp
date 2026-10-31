@@ -7,6 +7,7 @@
 #include "system/controls/system_control_audio_presentation.h"
 #include "system/controls/system_control_brightness_identity.h"
 #include "system/controls/system_control_windows.h"
+#include "system/controls/system_control_hotspot_cache.h"
 #include "system/controls/system_awake_session.h"
 #include "widget/tasks/widget_system_control_tasks.h"
 #include <algorithm>
@@ -24,6 +25,7 @@ using namespace std::chrono_literals;
 using namespace snowdesktop::system_control;
 void Require(bool condition, const char* text)
 { if (!condition) { std::cerr << "FAIL: " << text << '\n'; std::exit(1); } }
+#include "system/system_control_hotspot_cases.h"
 void WifiProfilesKeepTheNetworkName()
 {
     using snowdesktop::system_control::windows::CreateWifiProfile;
@@ -1141,6 +1143,9 @@ void TestSystemControls()
     NewSubscriberDuringRelease();
     DirectTaskWithoutSubscriptionReleases();
     SlowSampleYieldsToReadyControl();
+    HotspotManagerCacheLifecycle();
+    SlowHotspotSamplingDoesNotCatchUp();
+    HotspotInvalidationAndShutdown();
     CancellableWinRtSamplingWait();
     HostOnlyCredentialsAndConfirmation();
     WidgetControlArgumentsStayWithinTheirContract();

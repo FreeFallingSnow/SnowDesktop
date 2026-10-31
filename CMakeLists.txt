@@ -169,6 +169,7 @@ set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 
 set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
     src/system/controls/system_controls.cpp
+    src/system/controls/system_control_hotspot_cache.h
     src/system/controls/system_control_windows.cpp
     src/system/controls/system_control_audio.cpp
     src/system/controls/system_control_power.cpp
@@ -1981,6 +1982,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_system_data_provider_tests.cpp
             tests/system_controls_tests.cpp
+            tests/system/system_control_hotspot_cases.h
             src/widget/tasks/widget_system_control_tasks.cpp
             src/widget/data/widget_system_data_provider.cpp
             src/widget/data/widget_gpu_sampler.cpp
