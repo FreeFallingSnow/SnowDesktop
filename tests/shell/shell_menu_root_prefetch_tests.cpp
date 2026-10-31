@@ -139,7 +139,7 @@ static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, b
     service.Shutdown();
 }
 
-static void RunStableSourceCompletion(bool footer)
+static void RunStableSourceCompletion(bool footer, bool previewImage = false)
 {
     Workspace workspace;
     const auto selected = workspace.path / L"selected.txt", cache = workspace.path / L"cache";
@@ -162,11 +162,19 @@ static void RunStableSourceCompletion(bool footer)
     ext::Entry child; child.key = "archive-action"; child.label = L"Archive action"; child.token = 91;
     seven.children = {child};
     auto sourceSeven = seven;
-    sourceSeven.width = sourceSeven.height = 1; sourceSeven.pixels = {10, 20, 30, 255};
+    sourceSeven.width = sourceSeven.height = 32;
+    sourceSeven.pixels.resize(32 * 32 * 4, 255);
+    auto finalSeven = sourceSeven;
+    finalSeven.width = finalSeven.height = 64; finalSeven.pixels.resize(64 * 64 * 4, 255);
     auto otherSeven = seven;
     otherSeven.provider = "verb:other-seven"; otherSeven.key = "other-seven";
+    otherSeven.children.front().label = L"Other archive action";
     otherSeven.children.front().token = 92;
     auto preview = seven;
+    if (previewImage)
+    {
+        preview.width = preview.height = 16; preview.pixels.resize(16 * 16 * 4, 255);
+    }
     ext::Entry loading; loading.label = L"…"; loading.enabled = false; preview.children = {loading};
     ext::Entry divider; divider.separator = true;
     ext::Preferences prefs;
@@ -188,7 +196,7 @@ static void RunStableSourceCompletion(bool footer)
             }
             if (!releaseAggregate) return {};
             // Reverse the root order and retain legitimate same-caption commands.
-            return ext::Reply{true, {sourceSeven, divider, rar, divider, otherSeven}, {}};
+            return ext::Reply{true, {finalSeven, divider, rar, divider, otherSeven}, {}};
         };
         if (!source) work.pollRoots = [&, sent]() -> std::optional<ext::Reply> {
             if (std::exchange(*sent, true)) return {};
@@ -214,7 +222,9 @@ static void RunStableSourceCompletion(bool footer)
     const auto archive = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"7-Zip"; });
     const auto position = std::distance(items.begin(), archive);
     const auto command = archive->command;
-    Check(archive->childrenPending && !archive->image, "private archive preview begins pending without an icon");
+    const auto firstImage = archive->image;
+    Check(archive->childrenPending && (firstImage != nullptr) == previewImage,
+        "private archive preview exposes the selected early-icon scenario");
     const auto rowCommands = [&] {
         std::vector<UINT> commands;
         for (const auto &item : items) if (!item.separator && item.command != 7) commands.push_back(item.command);
@@ -238,21 +248,40 @@ static void RunStableSourceCompletion(bool footer)
         items[static_cast<size_t>(position)].command == command && items[static_cast<size_t>(position)].image &&
         !items[static_cast<size_t>(position)].childrenPending,
         "LATE_SOURCE_NO_DUPLICATE: ownership and icon arrival complete the same preview row in place");
+    if (firstImage) Check(items[static_cast<size_t>(position)].image == firstImage,
+        "an already displayed preview bitmap is not replaced by a larger source bitmap");
     Check(std::count_if(items.begin(), items.end(), [](const auto &item) { return item.separator; }) == 1,
         "ONE_EXTENSION_BOUNDARY: independent batches do not introduce per-provider dividers");
     const auto childCommand = items[static_cast<size_t>(position)].children.front().command;
+    const auto sourceImage = items[static_cast<size_t>(position)].image;
     releaseAggregate = true;
     Until([&] { poll(); return options.pollItemsFinished(); }, "aggregate finalizes without reordering visible source rows");
     const auto completedCommands = rowCommands();
-    Check(completedCommands.size() == initialCommands.size() + 1 &&
-        std::equal(initialCommands.begin(), initialCommands.end(), completedCommands.begin()) && archives() == 2,
-        "STABLE_ROOT_ORDER: reversed aggregate order retains positions and a distinct same-caption command");
-    Check(items[static_cast<size_t>(position)].command == command &&
-        items[static_cast<size_t>(position)].children.front().command == childCommand,
+    auto retained = completedCommands;
+    std::erase_if(retained, [&](UINT id) {
+        return std::find(initialCommands.begin(), initialCommands.end(), id) == initialCommands.end();
+    });
+    Check(completedCommands.size() == initialCommands.size() + 1 && retained == initialCommands && archives() == 2,
+        "STABLE_ROOT_ORDER: fixed ordering retains existing relative order and distinct same-caption commands");
+    const auto completedArchive = std::find_if(items.begin(), items.end(),
+        [=](const auto &item) { return item.command == command; });
+    Check(completedArchive != items.end() && completedArchive->children.front().command == childCommand &&
+        completedArchive->image == sourceImage,
         "root and child command IDs survive aggregate ownership reconciliation");
     Check(std::count_if(items.begin(), items.end(), [](const auto &item) { return item.separator; }) == 1 &&
         !items.front().separator && !items.back().separator,
         "completed extension section has exactly one host boundary with or without the footer");
+    const auto renderOrder = [](const auto &rows) {
+        std::vector<std::pair<std::wstring, std::wstring>> result;
+        for (const auto &row : rows) if (!row.separator && row.command >= ext::Presentation::FirstCommand)
+            result.emplace_back(row.label, row.children.empty() ? L"" : row.children.front().label);
+        return result;
+    };
+    ext::Presentation warm(request, prefs, L"", L"", service);
+    std::vector<menu::Item> warmItems{host}; if (footer) warmItems.push_back(more);
+    menu::Options warmOptions; warm.Attach(warmItems, warmOptions, footer ? 7 : 0);
+    Check(renderOrder(items) == renderOrder(warmItems),
+        "COLD_WARM_SAME_ORDER: native aggregate order and cache hits use the same deterministic root ordering");
     Check(popup.Invoke(childCommand, {}), "the retained child command remains invokable");
     Until([&] { return invoked == 1; }, "retained command resolves against a fresh aggregate exactly once");
     service.Shutdown();
@@ -276,6 +305,8 @@ void TestShellMenuRootPrefetch()
     }
     RunStableSourceCompletion(false);
     RunStableSourceCompletion(true);
+    RunStableSourceCompletion(false, true);
+    RunStableSourceCompletion(true, true);
     ext::Request policy; policy.visibleMenuProviders = std::vector<std::string>{"*"};
     for (const auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
         for (const auto path : {L"C:\\Private\\file.txt", L"C:\\Private\\program.lnk", L"C:\\Private\\folder", L"::{645FF040-5081-101B-9F08-00AA002F954E}"})

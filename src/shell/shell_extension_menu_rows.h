@@ -37,6 +37,16 @@ inline bool SameDisplayEntry(const Entry& left, const Entry& right)
         std::tie(left.provider, left.key, left.label, left.native, left.registration),
         std::tie(right.provider, right.key, right.label, right.native, right.registration));
 }
+inline bool RootBefore(const Entry& left, const Entry& right)
+{
+    // Ownership is filled asynchronously and must not change display order.
+    // Apply the same ordering to previews, source payloads and cached aggregates.
+    const int title = CompareStringOrdinal(left.label.c_str(), -1, right.label.c_str(), -1, TRUE);
+    if (title == CSTR_LESS_THAN) return true;
+    if (title == CSTR_GREATER_THAN) return false;
+    return std::tie(left.provider, left.key, left.label, left.native) <
+        std::tie(right.provider, right.key, right.label, right.native);
+}
 inline bool SameEntry(const Entry& left, const Entry& right)
 {
     return std::tie(left.provider, left.key, left.registration, left.label, left.enabled,

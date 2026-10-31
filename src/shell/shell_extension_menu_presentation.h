@@ -309,6 +309,9 @@ class Presentation
         if (original) originalCommands_.insert(previous.command);
         else originalCommands_.erase(previous.command);
         next.command = previous.command;
+        // A higher-resolution or differently padded late bitmap must not resize
+        // artwork which is already visible during this popup session.
+        if (previous.image) next.image = previous.image;
         std::set<UINT> used;
         for (auto &child : next.children) if (!child.separator)
         {
@@ -392,8 +395,6 @@ class Presentation
                 auto merged = presentation_detail::MergeEntry(previous, entry, rootCommands_.contains(command));
                 if (!rootCommands_.contains(command) && presentation_detail::SameEntry(previous, merged)) continue;
                 auto converted = Convert({merged}, {}, original).front();
-                if (previous.width == merged.width && previous.height == merged.height && previous.pixels == merged.pixels)
-                    converted.image = found->image;
                 RebindRow(converted, *found);
                 *found = std::move(converted);
                 rowEntries_[command] = std::move(merged);
@@ -408,7 +409,20 @@ class Presentation
             additions.push_back(std::move(converted));
         }
         Insert(items, additions, moreCommand);
+        if (changed || !additions.empty()) OrderRows(items);
         return changed || !additions.empty();
+    }
+    void OrderRows(std::vector<modern_menu::Item> &items)
+    {
+        std::vector<modern_menu::Item> roots;
+        for (auto &item : items)
+            if (rowEntries_.contains(item.command)) roots.push_back(std::move(item));
+        std::stable_sort(roots.begin(), roots.end(), [&](const auto &left, const auto &right) {
+            return presentation_detail::RootBefore(rowEntries_.at(left.command), rowEntries_.at(right.command));
+        });
+        auto root = roots.begin();
+        for (auto &item : items)
+            if (rowEntries_.contains(item.command)) item = std::move(*root++);
     }
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
                                            const CommandReference &parent = {}, bool original = false)

@@ -25,6 +25,67 @@ void Expect(bool condition, const char* message)
     }
 }
 
+RECT FindPixelsDifferentFromColorInRect(const std::uint32_t* pixels,
+    int width, int height, const RECT& bounds, COLORREF color);
+
+void CheckImageResolutionScaling(HDC dc, std::uint32_t* pixels, int width, int height)
+{
+    using namespace snowdesktop::menu_icon;
+    const auto palette = ResolvePalette(true);
+    for (const UINT dpi : {96u, 120u, 144u, 192u})
+        for (const bool compact : {false, true})
+        {
+            const auto metrics = ResolveMetrics(dpi, compact);
+            const int target = metrics.iconFontHeight;
+            const RECT row{0, 0, width, metrics.rowHeight};
+            const RECT column{metrics.leftPadding, 0,
+                metrics.leftPadding + metrics.iconColumnWidth, metrics.rowHeight};
+            RECT previous{};
+            for (const int side : {8, 16, 32, 64})
+            {
+                BITMAPINFO info{};
+                info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                info.bmiHeader.biWidth = side; info.bmiHeader.biHeight = -side;
+                info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+                void* raw = nullptr;
+                const auto image = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &raw, nullptr, 0);
+                Expect(image && raw, "create a raw native icon at the selected resolution");
+                std::fill_n(static_cast<std::uint32_t*>(raw), side * side, 0xFF1464F0u);
+                ItemView item; item.image = image;
+                std::fill_n(pixels, width * height, 0u);
+                Expect(DrawItem(dc, nullptr, nullptr, item, row, 0, palette, metrics),
+                    "draw a native icon through the production menu renderer");
+                const auto ink = FindPixelsDifferentFromColorInRect(pixels, width, height, column, palette.background);
+                Expect(ink.right - ink.left == target && ink.bottom - ink.top == target,
+                    "FIXED_ICON_FOOTPRINT: native bitmap resolution cannot change the DPI-sized display area");
+                if (side != 8) Expect(EqualRect(&previous, &ink) != FALSE,
+                    "preview and final icon resolutions have identical painted bounds");
+                previous = ink;
+                DeleteObject(image);
+            }
+            for (const bool landscape : {false, true})
+            {
+                const int sourceWidth = landscape ? 32 : 16, sourceHeight = landscape ? 16 : 32;
+                BITMAPINFO info{};
+                info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                info.bmiHeader.biWidth = sourceWidth; info.bmiHeader.biHeight = -sourceHeight;
+                info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+                void* raw = nullptr;
+                const auto image = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &raw, nullptr, 0);
+                Expect(image && raw, "create a non-square raw menu image");
+                std::fill_n(static_cast<std::uint32_t*>(raw), sourceWidth * sourceHeight, 0xFF1464F0u);
+                ItemView item; item.image = image;
+                std::fill_n(pixels, width * height, 0u);
+                DrawItem(dc, nullptr, nullptr, item, row, 0, palette, metrics);
+                const auto ink = FindPixelsDifferentFromColorInRect(pixels, width, height, column, palette.background);
+                Expect(ink.right - ink.left == (landscape ? target : (target + 1) / 2) &&
+                    ink.bottom - ink.top == (landscape ? (target + 1) / 2 : target),
+                    "non-square native icons preserve aspect ratio inside the fixed logical area");
+                DeleteObject(image);
+            }
+        }
+}
+
 std::uint32_t PixelColor(COLORREF color)
 {
     return static_cast<std::uint32_t>(GetBValue(color)) |
@@ -674,6 +735,7 @@ int wmain(int argc, wchar_t** argv)
         "test Fluent submenu chevron font is created");
 
     CheckIconlessRows(dc, pixels, kWidth, kHeight);
+    CheckImageResolutionScaling(dc, pixels, kWidth, kHeight);
     CheckBuiltinArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
     CheckSemanticArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
     CheckLiteralLabels(dc, font, pixels, kWidth, kHeight, light, metrics96);
