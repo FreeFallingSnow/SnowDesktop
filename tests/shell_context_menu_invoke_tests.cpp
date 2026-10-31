@@ -33,6 +33,7 @@
 #include <wrl/client.h>
 #include <wrl/implements.h>
 #include <VersionHelpers.h>
+#include <winver.h>
 
 void TestCatalogueRegistryHandles();
 int RunCatalogueFullscreenFixture();
@@ -1461,6 +1462,58 @@ void TestParallelRegistryCatalogue()
         rowRevision(redirected, originalId) != rowRevision(recased, originalId) && redirected.folderRevision == proof,
         "a new scan follows a changed default ProgID and removes the old type without disturbing folder proof");
 }
+void TestVersionResourceDisplayNames(HKEY classes, const std::filesystem::path& directory)
+{
+    // Exercise the real version APIs with a private PE resource whose declared
+    // length includes stale template text after the string terminator.
+    using Bytes = std::vector<BYTE>;
+    const auto raw = [](const void* data, size_t length) { const auto first = static_cast<const BYTE*>(data); return Bytes(first, first + length); };
+    const auto block = [&](const wchar_t* key, WORD type, WORD valueLength, const Bytes& value, const std::vector<Bytes>& children) {
+        Bytes result(6);
+        memcpy(result.data() + 2, &valueLength, 2); memcpy(result.data() + 4, &type, 2);
+        const auto keyBytes = raw(key, (wcslen(key) + 1) * sizeof(wchar_t)); result.insert(result.end(), keyBytes.begin(), keyBytes.end());
+        while (result.size() % 4) result.push_back(0);
+        result.insert(result.end(), value.begin(), value.end());
+        for (const auto& child : children)
+        {
+            while (result.size() % 4) result.push_back(0);
+            result.insert(result.end(), child.begin(), child.end());
+        }
+        Expect(result.size() < 65536, "private version resource fits a WORD block length");
+        const auto size = static_cast<WORD>(result.size()); memcpy(result.data(), &size, 2); return result;
+    };
+    const wchar_t product[] = L"Vendor App\0<ProductName>";
+    const wchar_t company[] = L"Vendor Company\0<CompanyName>";
+    const auto strings = block(L"StringFileInfo", 1, 0, {}, {block(L"040904b0", 1, 0, {}, {
+        block(L"ProductName", 1, static_cast<WORD>(std::size(product)), raw(product, sizeof(product)), {}),
+        block(L"CompanyName", 1, static_cast<WORD>(std::size(company)), raw(company, sizeof(company)), {})})});
+    const WORD translation[] = {0x0409, 1200};
+    const auto translations = block(L"VarFileInfo", 1, 0, {}, {block(L"Translation", 0, static_cast<WORD>(sizeof(translation)), raw(translation, sizeof(translation)), {})});
+    VS_FIXEDFILEINFO fixed{}; fixed.dwSignature = 0xfeef04bd; fixed.dwStrucVersion = 0x10000; fixed.dwFileType = VFT_APP;
+    const auto resource = block(L"VS_VERSION_INFO", 0, static_cast<WORD>(sizeof(fixed)), raw(&fixed, sizeof(fixed)), {strings, translations});
+    wchar_t executable[32768]{};
+    Expect(GetModuleFileNameW(nullptr, executable, 32768) > 0, "locate the PE metadata template");
+    const auto file = directory / L"Private version metadata.exe";
+    Expect(CopyFileW(executable, file.c_str(), TRUE) != FALSE, "copy a private PE fixture without executing it");
+    const auto update = BeginUpdateResourceW(file.c_str(), FALSE);
+    Expect(update != nullptr, "open private version resource update");
+    const bool written = UpdateResourceW(update, MAKEINTRESOURCEW(16), MAKEINTRESOURCEW(1), 0x0409,
+        const_cast<BYTE*>(resource.data()), static_cast<DWORD>(resource.size())) != FALSE;
+    const bool saved = EndUpdateResourceW(update, written ? FALSE : TRUE) != FALSE;
+    Expect(written && saved, "publish the private version resource fixture");
+    HKEY key = nullptr;
+    Expect(RegCreateKeyExW(classes, L"*\\shell\\version-resource\\command", 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+        &key, nullptr) == ERROR_SUCCESS, "register private version resource command");
+    const auto command = L"\"" + file.wstring() + L"\" \"%1\"";
+    const auto status = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
+        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write private version resource command");
+    const auto catalogue = snowdesktop::shell_extensions::ReadCatalogue(classes, false);
+    const auto found = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [](const auto& row) { return row.id == "reg:*\\shell\\version-resource"; });
+    Expect(found != catalogue.rows.end() && found->application.name == L"Vendor App" &&
+        found->application.id == "product:vendor company\nvendor app", "version string tails cannot corrupt software captions or grouping identity");
+}
+
 void TestRegistryCatalogue()
 {
     TestPackageManifestRefresh();
@@ -1701,6 +1754,7 @@ void TestRegistryCatalogue()
                 "restore enabled background state before checking the next disable policy");
     }
 
+    TestVersionResourceDisplayNames(registry.key, temp.path);
 }
 
 void TestNvidiaCompatibility()

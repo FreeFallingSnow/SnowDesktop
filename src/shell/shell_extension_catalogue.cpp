@@ -267,7 +267,10 @@ Application ModuleApplication(const std::wstring &module)
                         swprintf_s(query, L"\\StringFileInfo\\%04x%04x\\%s", translation.language, translation.codepage, field);
                         wchar_t *value = nullptr; UINT characters = 0;
                         if (!VerQueryValueW(bytes.data(), query, reinterpret_cast<void **>(&value), &characters) || !value || characters <= 1 || characters > 512) return std::wstring{};
-                        std::wstring label(value, characters - 1);
+                        // Some vendors overstate wValueLength and leave template
+                        // bytes after the terminator. Never turn that tail into a
+                        // display name or application identity.
+                        std::wstring label(value, std::find(value, value + characters, L'\0'));
                         const auto first = label.find_first_not_of(L" \t\r\n");
                         if (first == std::wstring::npos) return std::wstring{};
                         label = label.substr(first, label.find_last_not_of(L" \t\r\n") - first + 1);
@@ -277,8 +280,7 @@ Application ModuleApplication(const std::wstring &module)
                     };
                     const auto product = text(L"ProductName"), company = text(L"CompanyName");
                     const auto description = text(L"FileDescription");
-                    const auto name = (Lower(std::filesystem::path(module).extension().wstring()) == L".exe" && UsableShellDisplayName(description)) ||
-                        !UsableShellDisplayName(product) ? description : product;
+                    const auto name = UsableShellDisplayName(product) ? product : description;
                     if (!UsableShellDisplayName(name)) continue;
                     result.name = name;
                     // Product+company unifies one application's EXE and Shell

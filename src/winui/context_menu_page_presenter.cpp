@@ -575,7 +575,25 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             }
             if (GetTickCount64() - started >= 6) break;
         }
-        if (nextRow >= pendingRows.size()) { rowTimer.Stop(); RemoveEmptySections(); }
+        if (nextRow >= pendingRows.size())
+        {
+            rowTimer.Stop(); RemoveEmptySections();
+            // A friendly name can change after cached metadata is refreshed.
+            // Move surviving cards into the new order without rebuilding their
+            // controls, switches or expanded position settings.
+            uint32_t desired = 0;
+            for (const auto& id : cardOrder) if (sections.contains(id))
+            {
+                const auto surface = sections.at(id).panel.Parent().as<mux::UIElement>();
+                uint32_t current = 0;
+                if (groups.Children().IndexOf(surface, current) && current != desired)
+                {
+                    groups.Children().RemoveAt(current);
+                    groups.Children().InsertAt(desired, surface);
+                }
+                ++desired;
+            }
+        }
     }
     void UpdateRow(Row &row, const ext::ManagementRow &entry)
     {
