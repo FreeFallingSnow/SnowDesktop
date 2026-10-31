@@ -2457,11 +2457,11 @@ if (BUILD_TESTING)
         LABELS core contract settings)
 
     snowdesktop_add_test(
-        SnowDesktopSettingsHostActionsSemanticsTests
-        settings_host_actions_semantics
-        SOURCES tests/settings_host_actions_semantics_tests.cpp
+        SnowDesktopSettingsHostSourceBoundariesTests
+        settings_host_source_boundaries
+        SOURCES tests/settings_host_source_boundaries_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract dock integration settings taskbar)
+        LABELS contract dock settings taskbar)
 
     snowdesktop_add_test(
         SnowDesktopSettingsSearchIndexTests
@@ -3130,16 +3130,13 @@ if (BUILD_TESTING)
     get_property(SNOWDESKTOP_TESTS_BEFORE_NATIVE_DRAG DIRECTORY PROPERTY TESTS)
     snowdesktop_add_test(
         SnowDesktopNativeDragIntegrationTests
-        native_drag_target_integration
+        behavior_sync_copy
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
-            tests/drag_drop/native_drag_integration_tests.cpp
-            tests/winui/private_pointer_island_probe.cpp
-            tests/settings/control_global_settings_tests.cpp
+            tests/behavior/core_interactions_tests.cpp
             ${SNOWDESKTOP_NATIVE_DRAG_SOURCES}
-        LABELS integration interaction slot widget)
-    source_group(TREE "${CMAKE_SOURCE_DIR}/tests" PREFIX "Tests" FILES
-        tests/winui/private_pointer_island_probe.cpp)
+        COMMAND_ARGUMENTS sync-copy
+        LABELS core integration isolated-native-model interaction)
     foreach(PROPERTY IN ITEMS
             INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS
             PRECOMPILE_HEADERS LINK_LIBRARIES LINK_OPTIONS
@@ -3175,270 +3172,14 @@ if (BUILD_TESTING)
         PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host")
     target_include_directories(SnowDesktopNativeDragIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/tests")
-    set_tests_properties(native_drag_target_integration PROPERTIES TIMEOUT 90)
-    add_test(NAME native_drag_commit_storage
-        COMMAND SnowDesktopNativeDragIntegrationTests --commit-storage)
-    set_tests_properties(native_drag_commit_storage PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
-    add_test(NAME native_async_layout_save
-        COMMAND SnowDesktopNativeDragIntegrationTests --async-layout-save)
-    set_tests_properties(native_async_layout_save PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
-    add_test(NAME native_drag_reload_storage
-        COMMAND SnowDesktopNativeDragIntegrationTests --reload-storage)
-    set_tests_properties(native_drag_reload_storage PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
-    add_test(NAME native_drag_async_reload
-        COMMAND SnowDesktopNativeDragIntegrationTests --async-reload-storage)
-    set_tests_properties(native_drag_async_reload PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    foreach(GESTURE IN ITEMS copy move alt_link ctrl_shift_link)
-        add_test(NAME native_ole_files_${GESTURE}
-            COMMAND SnowDesktopNativeDragIntegrationTests --ole-files ${GESTURE})
-        set_tests_properties(native_ole_files_${GESTURE} PROPERTIES
+    foreach(row IN ITEMS copy move default-move link batch unsupported cancel interleaved failed-first settings recovery search widget dock)
+        add_test(NAME behavior_${row} COMMAND SnowDesktopNativeDragIntegrationTests ${row})
+        set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
-        add_test(NAME native_ole_gesture_files_${GESTURE}
-            COMMAND SnowDesktopNativeDragIntegrationTests --ole-gesture-files ${GESTURE})
-        set_tests_properties(native_ole_gesture_files_${GESTURE} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
+            TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
     endforeach()
-
-    add_test(NAME native_ole_leave_lifecycle
-        COMMAND SnowDesktopNativeDragIntegrationTests --ole-leave-lifecycle)
-    set_tests_properties(native_ole_leave_lifecycle PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
-    foreach(RIGHT_DECISION IN ITEMS move copy link cancel dismiss)
-        add_test(NAME native_right_drag_files_${RIGHT_DECISION}
-            COMMAND SnowDesktopNativeDragIntegrationTests --right-drag-files ${RIGHT_DECISION})
-        set_tests_properties(native_right_drag_files_${RIGHT_DECISION} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
-    endforeach()
-
-    foreach(MEMBER_TYPE IN ITEMS collection files mapping)
-        add_test(NAME native_member_order_${MEMBER_TYPE}
-            COMMAND SnowDesktopNativeDragIntegrationTests --member-order ${MEMBER_TYPE})
-        set_tests_properties(native_member_order_${MEMBER_TYPE} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    endforeach()
-    foreach(INGRESS_TARGET IN ITEMS collection files mapping collection_group file_group_files file_group_mapping)
-        foreach(INGRESS_VERB IN ITEMS copy move alt_link ctrl_shift_link right_move right_copy right_link right_cancel right_dismiss)
-            add_test(NAME native_ole_widget_${INGRESS_TARGET}_${INGRESS_VERB}
-                COMMAND SnowDesktopNativeDragIntegrationTests --ole-widget-files ${INGRESS_TARGET} ${INGRESS_VERB})
-            set_tests_properties(native_ole_widget_${INGRESS_TARGET}_${INGRESS_VERB} PROPERTIES
-                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-                TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;ole")
-        endforeach()
-    endforeach()
-    foreach(DEFAULT_TARGET IN ITEMS desktop collection files mapping collection_group file_group_files file_group_mapping)
-        foreach(VOLUME_RELATION IN ITEMS same cross mixed)
-            add_test(NAME native_default_files_${DEFAULT_TARGET}_${VOLUME_RELATION}
-                COMMAND SnowDesktopNativeDragIntegrationTests --ole-default-files ${DEFAULT_TARGET} ${VOLUME_RELATION})
-            set_tests_properties(native_default_files_${DEFAULT_TARGET}_${VOLUME_RELATION} PROPERTIES
-                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-                TIMEOUT 180 SKIP_RETURN_CODE 77
-                LABELS "integration;shell;interaction;slot;ole;data")
-        endforeach()
-    endforeach()
-    foreach(DOCK_VERB IN ITEMS alt_link right_link right_cancel right_dismiss)
-        add_test(NAME native_ole_dock_folders_${DOCK_VERB}
-            COMMAND SnowDesktopNativeDragIntegrationTests --ole-dock-folders ${DOCK_VERB})
-        set_tests_properties(native_ole_dock_folders_${DOCK_VERB} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 180
-            LABELS "integration;shell;interaction;slot;ole;data;dock")
-    endforeach()
-    add_test(NAME native_folder_delivery_after_drag
-        COMMAND SnowDesktopNativeDragIntegrationTests --folder-delivery-after-drag)
-    set_tests_properties(native_folder_delivery_after_drag PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 30 LABELS "integration;interaction;slot;widget;data;shell")
-    foreach(MIXED_TARGET IN ITEMS collection files)
-        add_test(NAME native_mixed_selection_${MIXED_TARGET}
-            COMMAND SnowDesktopNativeDragIntegrationTests --mixed-selection ${MIXED_TARGET})
-        set_tests_properties(native_mixed_selection_${MIXED_TARGET} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-        foreach(MIXED_VERB IN ITEMS copy link)
-            add_test(NAME native_mixed_file_${MIXED_VERB}_${MIXED_TARGET}
-                COMMAND SnowDesktopNativeDragIntegrationTests --mixed-file-action ${MIXED_TARGET} ${MIXED_VERB})
-            set_tests_properties(native_mixed_file_${MIXED_VERB}_${MIXED_TARGET} PROPERTIES
-                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-                TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-        endforeach()
-    endforeach()
-    add_test(NAME native_group_member_order
-        COMMAND SnowDesktopNativeDragIntegrationTests --group-member-order)
-    set_tests_properties(native_group_member_order PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    foreach(GROUP_MEMBER_TYPE IN ITEMS files mapping)
-        add_test(NAME native_file_group_member_order_${GROUP_MEMBER_TYPE}
-            COMMAND SnowDesktopNativeDragIntegrationTests --group-member-order ${GROUP_MEMBER_TYPE})
-        set_tests_properties(native_file_group_member_order_${GROUP_MEMBER_TYPE} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    endforeach()
-
-    add_test(NAME native_widget_pair_storage
-        COMMAND SnowDesktopNativeDragIntegrationTests --widget-pair-storage)
-    add_test(NAME native_group_lifecycle_storage
-        COMMAND SnowDesktopNativeDragIntegrationTests --group-lifecycle-storage)
-    add_test(NAME native_dock_file_returns
-        COMMAND SnowDesktopNativeDragIntegrationTests --dock-file-returns)
-    add_test(NAME native_right_menu_capture_storage
-        COMMAND SnowDesktopNativeDragIntegrationTests --right-menu-capture)
-    set_tests_properties(native_right_menu_capture_storage PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    set_tests_properties(native_dock_file_returns PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
-    set_tests_properties(native_widget_pair_storage native_group_lifecycle_storage PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;dock")
-
-    foreach(GROUP_SURFACE_MODE IN ITEMS labels search date inactive)
-        add_test(NAME native_group_surface_${GROUP_SURFACE_MODE}
-            COMMAND SnowDesktopNativeDragIntegrationTests --group-surfaces ${GROUP_SURFACE_MODE})
-        set_tests_properties(native_group_surface_${GROUP_SURFACE_MODE} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    endforeach()
-    add_test(NAME native_self_ole_return
-        COMMAND SnowDesktopNativeDragIntegrationTests --ole-return)
-    add_test(NAME native_ole_completion_sequences
-        COMMAND SnowDesktopNativeDragIntegrationTests --ole-sequences)
-    add_test(NAME native_dock_generated_relations
-        COMMAND SnowDesktopNativeDragIntegrationTests --dock-generated-relations)
-    set_tests_properties(native_self_ole_return native_ole_completion_sequences native_dock_generated_relations PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
-    foreach(CONTENT_TARGET IN ITEMS desktop collection mapping dock)
-        add_test(NAME native_owned_content_${CONTENT_TARGET}
-            COMMAND SnowDesktopNativeDragIntegrationTests --owned-content ${CONTENT_TARGET})
-        add_test(NAME native_owned_content_cancel_${CONTENT_TARGET}
-            COMMAND SnowDesktopNativeDragIntegrationTests --owned-content-cancel ${CONTENT_TARGET})
-        set_tests_properties(native_owned_content_${CONTENT_TARGET} native_owned_content_cancel_${CONTENT_TARGET} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
-    endforeach()
-
-    foreach(GROUP_CONTENT_SURFACE IN ITEMS collection files mapping collection_group file_group_files file_group_mapping)
-        add_test(NAME native_group_type_${GROUP_CONTENT_SURFACE}
-            COMMAND SnowDesktopNativeDragIntegrationTests --group-type ${GROUP_CONTENT_SURFACE})
-        set_tests_properties(native_group_type_${GROUP_CONTENT_SURFACE} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-        if(NOT GROUP_CONTENT_SURFACE STREQUAL "collection")
-            add_test(NAME native_group_filter_${GROUP_CONTENT_SURFACE}
-                COMMAND SnowDesktopNativeDragIntegrationTests --group-filter ${GROUP_CONTENT_SURFACE})
-            set_tests_properties(native_group_filter_${GROUP_CONTENT_SURFACE} PROPERTIES
-                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-                TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-        endif()
-    endforeach()
-    foreach(NATIVE_ADDITIONAL_CASE IN ITEMS
-        "widget_package_restore|--widget-package-restore"
-        "workshop_unsubscribe_completion|--workshop-unsubscribe-completion"
-        "native_widget_folder_search|--widget-folder-search"
-        "native_group_search_type|--group-type-search"
-        "native_group_tab_dwell|--group-dwell"
-        "native_popup_request_lifecycle|--popup-request"
-        "native_external_dwell_restart|--external-dwell"
-        "native_ole_target_changes|--ole-target-changes"
-        "native_ole_partial_batch|--ole-partial-batch"
-        "native_dock_partition_storage|--dock-partitions"
-        "native_dock_removal_animation|--dock-removal"
-        "native_dock_running_pin_storage|--dock-running-pin-storage"
-        "native_dock_preview_order|--dock-preview-order"
-        "native_shortcut_final_targets|--shortcut-targets"
-        "native_folder_shortcut_handoff|--folder-shortcut-handoff"
-        "native_large_icon_storage_return|--large-icon-storage-return"
-        "native_namespace_mapping_rejection|--namespace-rejection")
-        string(REPLACE "|" ";" NATIVE_CASE_PARTS "${NATIVE_ADDITIONAL_CASE}")
-        list(GET NATIVE_CASE_PARTS 0 NATIVE_CASE_NAME)
-        list(GET NATIVE_CASE_PARTS 1 NATIVE_CASE_MODE)
-        add_test(NAME ${NATIVE_CASE_NAME} COMMAND SnowDesktopNativeDragIntegrationTests ${NATIVE_CASE_MODE})
-        set_tests_properties(${NATIVE_CASE_NAME} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
-    endforeach()
-
-    # Both modes collect preview sources from fixture processes using this
-    # executable identity. Keep their active-desktop enumerations disjoint.
-    set_tests_properties(native_drag_target_integration native_dock_preview_order
-        PROPERTIES RESOURCE_LOCK snowdesktop_preview_sources)
-
-    add_test(NAME native_icon_customization
-        COMMAND SnowDesktopNativeDragIntegrationTests --icon-customization)
-    set_tests_properties(native_icon_customization PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;icon;data;rendering")
-
-    add_test(NAME native_list_title_hover
-        COMMAND SnowDesktopNativeDragIntegrationTests --list-title-hover)
-    add_test(NAME native_dock_insertion_geometry
-        COMMAND SnowDesktopNativeDragIntegrationTests --dock-hover)
-    set_tests_properties(native_dock_insertion_geometry PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;dock;rendering")
-    add_test(NAME native_popup_control_catalog
-        COMMAND SnowDesktopNativeDragIntegrationTests --popup-control-catalog)
-    set_tests_properties(native_popup_control_catalog PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;widget;control")
-    add_test(NAME control_global_settings
-        COMMAND SnowDesktopNativeDragIntegrationTests --settings-control-global)
-    set_tests_properties(control_global_settings PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;settings;ipc")
-    add_test(NAME control_native_widget_settings
-        COMMAND SnowDesktopNativeDragIntegrationTests --settings-control-native-widget)
-    set_tests_properties(control_native_widget_settings PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;settings;ipc;widget;data")
-    add_test(NAME native_list_title_font_isolation
-        COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
-    add_test(NAME native_popup_display_menu
-        COMMAND SnowDesktopNativeDragIntegrationTests --popup-display-menu)
-    add_test(NAME native_input_safety
-        COMMAND SnowDesktopNativeDragIntegrationTests --input-safety)
-    add_test(NAME native_private_rename
-        COMMAND SnowDesktopNativeDragIntegrationTests --private-rename)
-    set_tests_properties(native_private_rename PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 30 RESOURCE_LOCK snowdesktop_desktop
-        LABELS "integration;interaction;input;ui")
-    add_test(NAME native_file_preview
-        COMMAND SnowDesktopNativeDragIntegrationTests --file-preview)
-    set_tests_properties(native_file_preview PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 60 LABELS "integration;interaction;shell")
-    set_tests_properties(native_list_title_hover native_list_title_font_isolation native_popup_display_menu PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 90 LABELS "integration;interaction;widget;rendering")
-    set_tests_properties(native_input_safety PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-        TIMEOUT 60 LABELS "integration;interaction;rendering")
-
-    # Every mode in this fixture uses its own process, GUID storage/profile and
-    # message-only HWND, except input safety uses native windows on an inactive
-    # private Win32 desktop. None starts the desktop host or clipboard service;
-    # Shell file operations touch only owned paths.
-    # Derive the set from registrations so new modes inherit this isolation
-    # contract without maintaining another list of test names.
-    get_property(SNOWDESKTOP_NATIVE_DRAG_TESTS DIRECTORY PROPERTY TESTS)
-    list(REMOVE_ITEM SNOWDESKTOP_NATIVE_DRAG_TESTS ${SNOWDESKTOP_TESTS_BEFORE_NATIVE_DRAG})
-    set_property(TEST ${SNOWDESKTOP_NATIVE_DRAG_TESTS} APPEND PROPERTY LABELS isolated-native-model)
+    set_tests_properties(behavior_sync_copy PROPERTIES TIMEOUT 60 PROCESSORS 3)
+    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
