@@ -46,12 +46,12 @@ void RefreshContainer(Profile& p, bool fromDisk, const std::wstring& memberId, b
         Wait([&] { return Access::ContainerWorkIdle(*p.app); });
     }
 }
-void SeedDestination(Profile& p, const ContainerRow& row, fs::path& existing)
+void SeedDestination(Profile& p, const ContainerRow& row, fs::path& existing, bool icon = false)
 {
     existing = row.mapped ? p.root / L"mapped/Existing.txt" : p.desktop / L"Sentinel.txt";
     if (row.mapped) Write(existing,"existing");
     Access::ResetContainerScene(*p.app,row.mapped ? p.desktop / L"Sentinel.txt" : fs::path{});
-    Access::SeedExternalStorage(*p.app,row.root,row.member,false,existing);
+    Access::SeedExternalStorage(*p.app,row.root,row.member,icon,existing);
     Require(Access::Save(*p.app),"save actual destination before receiving files");
     RefreshContainer(p,false,row.grouped ? L"ingress-active" : L"ingress-root",row.mapped);
 }
@@ -104,6 +104,93 @@ void ReceiveContainer(const ContainerRow& row)
         !source->wrongApartment && !source->fileReadBeforeStart,"source lease is balanced on its original apartment");
     check(); Require(Access::Save(*p.app),"persist container membership");
     RefreshContainer(p,true,memberId,row.mapped); check();
+}
+void MatrixContainer(const drag_matrix::Case& test)
+{
+    const auto found = std::find_if(std::begin(containerRows), std::end(containerRows),
+        [&](const auto& row) { return row.name == test.target; });
+    Require(found != std::end(containerRows), "matrix target must have a real native container adapter");
+    const auto& row = *found;
+    Profile p; fs::path existing; SeedDestination(p, row, existing, test.icon);
+    const auto directory = row.mapped ? existing.parent_path() : p.desktop;
+    const auto memberId = row.grouped ? L"ingress-active" : L"ingress-root";
+    const auto rootBefore = ContainerWidget(*p.app, L"ingress-root");
+    const auto memberBefore = ContainerWidget(*p.app, memberId);
+    const auto saved = Read(Access::LayoutPath(*p.app));
+    std::vector<fs::path> sources{p.root / L"incoming/Payload.txt"};
+    Write(sources.front(), "container-payload");
+    if (test.directory) { sources.push_back(p.root / L"incoming/Folder"); Write(sources.back() / L"nested.txt", "nested-payload"); }
+    auto source = ole_file_source_fixture::Make(sources, test.asynchronous);
+    const DWORD expected = test.cancel ? DROPEFFECT_NONE : test.release.effect & test.allowed;
+    Submit(p, *source.Get(), test.release.keys, test.allowed, expected,
+        test.icon ? POINT{50,50} : POINT{350,250}, test.cancel,
+        MK_LBUTTON | (test.enterShift ? MK_SHIFT : 0), false, Access::MemberContainer(*p.app,L"ingress-root"));
+    if (expected)
+        Wait([&] { return (!test.asynchronous || source->ends == 1) && Access::ContainerWorkIdle(*p.app) &&
+            Access::ContainerMembers(*p.app, memberId).size() == sources.size() + 1; });
+
+    std::vector<fs::path> outputs;
+    for (const auto& entry : fs::directory_iterator(directory))
+    {
+        std::error_code error;
+        if (!fs::equivalent(entry.path(), existing, error) || error) outputs.push_back(entry.path());
+    }
+    Require(outputs.size() == (expected ? sources.size() : 0), "native target receives exactly the requested outputs");
+    Require(!source->wrongApartment && !source->fileReadBeforeStart, "native target respects source apartment and lease ordering");
+    if (!expected)
+        Require(source->starts == 0 && source->ends == 0 && Read(Access::LayoutPath(*p.app)) == saved,
+            "rejected or cancelled native target leaves lease and persisted layout unchanged");
+    else if (test.asynchronous)
+        Require(source->starts == 1 && source->ends == 1 && SUCCEEDED(source->outcome) &&
+            source->endEffect == (expected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : expected),
+            "native target completes one source lease with the performed effect");
+
+    std::vector<fs::path> ordered{existing};
+    for (std::size_t index = 0; index < sources.size(); ++index)
+    {
+        const auto& original = sources[index];
+        const bool moved = expected == DROPEFFECT_MOVE;
+        Require(fs::exists(original) == !moved, "native target preserves or removes each original according to the action");
+        const auto bytes = index ? "nested-payload" : "container-payload";
+        if (!moved) Require(Read(index ? original / L"nested.txt" : original) == bytes, "unmoved source bytes remain unchanged");
+        if (!expected) continue;
+        const auto output = std::find_if(outputs.begin(), outputs.end(), [&](const auto& candidate) {
+            return expected == DROPEFFECT_LINK ? fs::equivalent(LinkTarget(candidate), original) : candidate.filename() == original.filename();
+        });
+        Require(output != outputs.end(), "native target output identity corresponds to selected source");
+        if (expected != DROPEFFECT_LINK) Require(Read(index ? *output / L"nested.txt" : *output) == bytes, "native target output bytes match source");
+        ordered.push_back(*output);
+    }
+    const auto check = [&] {
+        const auto& root = ContainerWidget(*p.app, L"ingress-root");
+        const auto& member = ContainerWidget(*p.app, memberId);
+        Require(root.type == row.root && root.title == rootBefore.title && root.customTitle == rootBefore.customTitle &&
+            root.autoCollect == rootBefore.autoCollect && root.singleCellIconMode == test.icon &&
+            root.gridSpan.columns == rootBefore.gridSpan.columns && root.gridSpan.rows == rootBefore.gridSpan.rows &&
+            Same(root.gridCell, rootBefore.gridCell) && root.childWidgetIds == rootBefore.childWidgetIds &&
+            root.activeCategoryId == rootBefore.activeCategoryId, "native root identity, representation and configuration survive");
+        const auto actual = Access::ContainerMembers(*p.app, memberId);
+        Require(member.type == row.member && member.sourceFolderPath == memberBefore.sourceFolderPath && SameFiles(actual, ordered),
+            "native active source owns each intended file exactly once");
+        if (!test.icon) Require(std::equal(actual.begin(), actual.end(), ordered.begin(), ordered.end(),
+            [](const auto& a, const auto& b) { return fs::equivalent(a,b); }), "expanded target preserves captured insertion order");
+        if (row.grouped) Require(ContainerWidget(*p.app,L"ingress-inactive").itemKeys.empty() &&
+            ContainerWidget(*p.app,L"ingress-inactive").privacyMode, "inactive source remains unchanged");
+        for (std::size_t i = 1; i < ordered.size(); ++i)
+            Require(Access::FreeDesktopCopies(*p.app,ordered[i]) == 0, "native ownership has no free desktop duplicate");
+        Require(Read(p.desktop / L"Sentinel.txt") == "untouched" && Read(existing) == (row.mapped ? "existing" : "untouched"),
+            "unrelated files retain their bytes");
+        if (!test.icon)
+        {
+            std::vector<fs::path> visible;
+            for (const auto& slot : Access::MemberContainer(*p.app,L"ingress-root")->GetSlots())
+                if (const auto* item = slot->GetItem(); item && !item->GetPath().empty()) visible.emplace_back(item->GetPath());
+            Require(SameFiles(visible, ordered), "expanded native slots expose the captured members");
+        }
+    };
+    check();
+    if (expected) Require(Access::Save(*p.app), "save native ingress membership");
+    RefreshContainer(p, true, memberId, row.mapped); check();
 }
 UINT MenuChoice(HMENU menu, const wchar_t* label)
 {

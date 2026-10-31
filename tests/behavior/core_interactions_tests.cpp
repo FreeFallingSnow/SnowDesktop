@@ -342,6 +342,7 @@ struct NativeDragIntegrationAccess
 };
 
 #include "core_drag_matrix.h"
+#include "drag_field_inventory.h"
 
 namespace behavior
 {
@@ -460,12 +461,14 @@ void Reload(Profile& p, const std::vector<std::pair<fs::path, GridCell>>& expect
     Require(Read(p.desktop / L"Sentinel.txt") == "untouched", "unrelated file survives");
 }
 void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWORD allowed,
-    DWORD expected, POINT point, bool cancel = false, DWORD enterKeys = MK_LBUTTON, bool deferredDefault = false)
+    DWORD expected, POINT point, bool cancel = false, DWORD enterKeys = MK_LBUTTON, bool deferredDefault = false,
+    WidgetContainer* expectedTarget = nullptr)
 {
     auto adapter = Access::ExternalAdapter(*p.app);
     auto effect = allowed;
     Require(SUCCEEDED(adapter->DragEnter(&source, enterKeys, Access::ExternalPoint(point), &effect)), "enter OLE boundary");
     Require(source.starts == 0 && (!source.asynchronous || source.fileReads == 0), "hover cannot render delayed files");
+    if (effect && expectedTarget) Require(Access::Target(*p.app) == expectedTarget, "hover selects requested native target");
     if (cancel)
     {
         Require(SUCCEEDED(adapter->DragLeave()), "cancel through real OLE leave");
@@ -634,19 +637,42 @@ int RunChild(const std::string& id)
 }
 int Command(int argc, char** argv)
 {
-    const auto cases = Enumerate();
     const std::string_view mode = argv[1];
+    if (mode == "--matrix-inventory")
+    {
+        behavior::Require(argc == 2, "--matrix-inventory takes no arguments");
+        std::cout << "CTEST_FULL_OUTPUT\n";
+        for (const auto& field : drag_field_inventory::fields)
+        {
+            constexpr std::string_view partial[]{"source.E01", "target.E01", "source.E02", "target.E02", "target.E03",
+                "P01", "P02", "P03", "G01", "G02", "T01", "T02", "T03", "T04", "X01"};
+            const bool mapped = std::find(std::begin(partial), std::end(partial), field.id) != std::end(partial);
+            std::cout << field.id << '\t' << field.kind << '\t' << (mapped ? "partial" : "unmapped") << '\t'
+                << field.label << '\t' << field.historicalValues << '\n';
+        }
+        std::cout << "INVENTORY fields=" << std::size(drag_field_inventory::fields)
+            << " note=partial-is-not-full-domain-coverage" << std::endl;
+        return 0;
+    }
+    const auto cases = Enumerate();
+    std::vector<std::string> identities;
+    identities.reserve(cases.size());
+    for (const auto& test : cases) identities.push_back(Id(test));
+    std::sort(identities.begin(), identities.end());
+    behavior::Require(std::adjacent_find(identities.begin(), identities.end()) == identities.end(),
+        "matrix case IDs must be unique");
     if (mode == "--matrix-case")
     {
         behavior::Require(argc == 3, "--matrix-case requires an exact ID");
         const auto it = std::find_if(cases.begin(), cases.end(), [&](const auto& c) { return Id(c) == argv[2]; });
         behavior::Require(it != cases.end(), "unknown matrix ID");
         behavior::scene = argv[2];
-        behavior::FileCase(*it);
+        if (it->target == "desktop") behavior::FileCase(*it);
+        else behavior::MatrixContainer(*it);
         std::cout << "PASS " << behavior::scene << std::endl;
         return 0;
     }
-    behavior::Require(mode == "--matrix-list" || mode == "--matrix-run", "unknown matrix command");
+    behavior::Require(mode == "--matrix-list" || mode == "--matrix-run" || mode == "--matrix-run-slice", "unknown matrix command");
     behavior::Require(argc <= 5 && (argc <= 3 || argc == 5), "use [filter [shard-index shard-count]]");
     const std::string filter = argc >= 3 ? argv[2] : "";
     const std::size_t shard = argc == 5 ? std::stoull(argv[3]) : 0;
@@ -654,12 +680,16 @@ int Command(int argc, char** argv)
     behavior::Require(shards > 0 && shard < shards, "invalid shard");
     // Preserve every case result in CTest/JUnit, including passing shards.
     std::cout << "CTEST_FULL_OUTPUT" << std::endl;
-    std::cout << "MODEL external-desktop async=" << std::size(asyncValues)
+    std::cout << "MODEL external-ingress targets=" << std::size(targets) << " representation=" << std::size(iconValues)
+        << " async=" << std::size(asyncValues)
         << " selection=" << std::size(directoryValues) << " release=" << std::size(gestures)
         << " capabilities=" << std::size(capabilities) << " enter=" << std::size(enterValues)
         << " end=" << std::size(cancelValues) << " raw=" << RawCount()
         << " excluded=" << RawCount() - cases.size() << " applicable=" << cases.size()
-        << " exclusion-reason=leave-has-no-release-event" << std::endl;
+        << " excluded-desktop-icon=" << RawCount() / (std::size(targets) * std::size(iconValues))
+        << " excluded-no-release=" << (RawCount() - RawCount() / (std::size(targets) * std::size(iconValues))) /
+            std::size(cancelValues) / std::size(gestures) * (std::size(gestures) - 1)
+        << " reasons=desktop-has-no-widget-icon,leave-has-no-release-event" << std::endl;
     std::size_t selected = 0, passed = 0, failed = 0;
     for (std::size_t index = 0; index < cases.size(); ++index)
     {
@@ -679,6 +709,11 @@ int Command(int argc, char** argv)
     std::cout << "RESULT selected=" << selected << " pass=" << passed << " fail=" << failed
         << " skip=0 unexecuted=" << (mode == "--matrix-list" ? selected : 0)
         << " outside-selection=" << cases.size() - selected << std::endl;
+    if (mode == "--matrix-run")
+    {
+        std::cout << "UNEXECUTED global-model: source, payload, relation, gesture, timing, environment and assertion domains are not fully mapped; total applicable paths unknown" << std::endl;
+        return 2;
+    }
     return failed ? 1 : 0;
 }
 }
