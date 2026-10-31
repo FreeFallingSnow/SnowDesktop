@@ -314,6 +314,8 @@ struct SteamWorkshopSubscriptionPollState {
         std::uint64_t queryId = 0;
         std::string expectedUnsubscribedPublishedFileId;
         std::vector<std::string> expectedRemovedPackageIds;
+        // Starts on the first pending reconciliation, after any host deferral.
+        std::chrono::steady_clock::time_point reconciliationDeadline{};
         snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done;
     };
     std::atomic<bool> queryInFlight{ false };

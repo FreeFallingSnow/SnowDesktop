@@ -2359,14 +2359,62 @@ void TestWorkshopUninstallWithReadAhead(bool legacyWatchRoot)
         "release source notifications before the owned package fixture is cleaned");
 }
 
+void TestBridgePipeRetirement()
+{
+    std::wstring buffer(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    Check(length != 0 && length < buffer.size(), "locate the owned bridge-pipe child fixture");
+    if (length == 0 || length >= buffer.size()) return;
+    buffer.resize(length);
+    std::error_code pathError;
+    const auto executable = std::filesystem::canonical(buffer, pathError);
+    Check(!pathError, "resolve the owned fixture binary without source/output junctions");
+    if (pathError) return;
+    snowdesktop::widget::SteamWorkshopSource source(executable);
+    for (int mode = 0; mode != 3; ++mode)
+    {
+        std::string error;
+        const bool success = source.Unsubscribe(std::to_string(900000000 + mode), error);
+        Check(success == (mode == 0),
+            "normal stdout EOF before process exit preserves the result and actual exit status");
+        if (mode != 0)
+            Check(!error.empty(), "nonzero exits and missing JSON remain failures after normal EOF");
+    }
+}
+
 int wmain(int argc, wchar_t** argv)
 {
+    // RunBridge launches this owned executable instead of Steam. Close both
+    // pipe writers, then remain alive long enough to reproduce the EOF/exit
+    // race deterministically, including nonzero-exit and empty-output cases.
+    if (argc == 5 && std::wstring_view(argv[1]) == L"workshop" &&
+        std::wstring_view(argv[2]) == L"unsubscribe" &&
+        std::wstring_view(argv[3]) == L"--item" &&
+        (std::wstring_view(argv[4]) == L"900000000" ||
+            std::wstring_view(argv[4]) == L"900000001" ||
+            std::wstring_view(argv[4]) == L"900000002"))
+    {
+        const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+        const HANDLE diagnostic = GetStdHandle(STD_ERROR_HANDLE);
+        const std::string payload = std::wstring_view(argv[4]) == L"900000002"
+            ? "" : "{\"ok\":true}\n";
+        DWORD written = 0;
+        const bool emitted = payload.empty() || (WriteFile(output, payload.data(),
+            static_cast<DWORD>(payload.size()), &written, nullptr) && written == payload.size());
+        SetStdHandle(STD_OUTPUT_HANDLE, nullptr);
+        SetStdHandle(STD_ERROR_HANDLE, nullptr);
+        if (output && output != INVALID_HANDLE_VALUE) CloseHandle(output);
+        if (diagnostic && diagnostic != INVALID_HANDLE_VALUE && diagnostic != output) CloseHandle(diagnostic);
+        Sleep(200);
+        ExitProcess(!emitted ? 8u : std::wstring_view(argv[4]) == L"900000001" ? 7u : 0u);
+    }
     if (argc == 2 && std::wstring_view(argv[1]) == L"--read-ahead-uninstall-negative-control")
     {
         try { TestWorkshopUninstallWithReadAhead(true); }
         catch (const std::exception& error) { Check(false, error.what()); }
         return failures == 0 ? 0 : 1;
     }
+    TestBridgePipeRetirement();
     try { TestWorkshopUninstallWithReadAhead(false); }
     catch (const std::exception& error) { Check(false, error.what()); }
     TestManagerConnectionState(Check);

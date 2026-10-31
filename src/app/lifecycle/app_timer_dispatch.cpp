@@ -199,11 +199,27 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 }
             }
         }
-        const bool hasUnsubscribeCompletion = std::any_of(
-            completions.begin(), completions.end(), [](const auto& value) {
-                return !value.expectedUnsubscribedPublishedFileId.empty();
-            });
-        if (ready->snapshot.CanSynchronize() && hasUnsubscribeCompletion &&
+        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
+        const auto targetRemoved = [&](const auto& completion) {
+            const auto& expectedId = completion.expectedUnsubscribedPublishedFileId;
+            return !expectedId.empty() &&
+                std::none_of(ready->snapshot.subscribedPublishedFileIds.begin(),
+                    ready->snapshot.subscribedPublishedFileIds.end(), [&](const auto& value) {
+                        return snowdesktop::widget::SteamPublishedFileId(value) == expectedId;
+                    }) &&
+                std::none_of(reconciledPackages.begin(), reconciledPackages.end(),
+                    [&](const auto& package) {
+                        if (package.builtin || package.development) return false;
+                        return (package.source.providerId == "steam-workshop" &&
+                            snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) == expectedId) ||
+                            std::find(completion.expectedRemovedPackageIds.begin(),
+                                completion.expectedRemovedPackageIds.end(), package.manifest.id) !=
+                                    completion.expectedRemovedPackageIds.end();
+                    });
+        };
+        const bool hasReconciledUnsubscribe = std::any_of(
+            completions.begin(), completions.end(), targetRemoved);
+        if (ready->snapshot.CanSynchronize() && hasReconciledUnsubscribe &&
             !hostReloaded)
         {
             // Run the same host reconciliation pass even if the managed
@@ -220,7 +236,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             "phase=poll.reconciled success=" + std::to_string(synchronizationSucceeded) +
             " hostReloaded=" + std::to_string(hostReloaded));
 
-        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
+        bool awaitingReconciliation = false;
         for (auto& completion : completions)
         {
             if (!completion.done)
@@ -233,37 +249,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             if (ready->snapshot.CanSynchronize() &&
                 !completion.expectedUnsubscribedPublishedFileId.empty())
             {
-                const std::string& expectedPublishedFileId =
-                    completion.expectedUnsubscribedPublishedFileId;
-                const bool stillSubscribed = std::any_of(
-                    ready->snapshot.subscribedPublishedFileIds.begin(),
-                    ready->snapshot.subscribedPublishedFileIds.end(),
-                    [&expectedPublishedFileId](const auto& value) {
-                        return snowdesktop::widget::SteamPublishedFileId(
-                                   value) == expectedPublishedFileId;
-                    });
-                const bool managedPackageRemains = std::any_of(
-                    reconciledPackages.begin(), reconciledPackages.end(),
-                    [&expectedPublishedFileId](const auto& package) {
-                        return !package.builtin && !package.development &&
-                            package.source.providerId == "steam-workshop" &&
-                            snowdesktop::widget::SteamPublishedFileId(
-                                package.source.externalItemId) ==
-                                expectedPublishedFileId;
-                    });
-                const bool expectedPackageRemains = std::any_of(
-                    reconciledPackages.begin(), reconciledPackages.end(),
-                    [&completion](const auto& package) {
-                        if (package.builtin || package.development)
-                            return false;
-                        return std::find(
-                            completion.expectedRemovedPackageIds.begin(),
-                            completion.expectedRemovedPackageIds.end(),
-                            package.manifest.id) !=
-                            completion.expectedRemovedPackageIds.end();
-                    });
-                completionSucceeded = !stillSubscribed &&
-                    !managedPackageRemains && !expectedPackageRemains;
+                completionSucceeded = targetRemoved(completion);
                 // Let the settings page use its operation-specific success
                 // message instead of reporting success for the entire sync.
                 completionMessage.clear();
@@ -273,12 +259,34 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                         "settings.widgets.workshop.unsubscribeNotReconciled");
                 }
             }
+            if (!completionSucceeded &&
+                !completion.expectedUnsubscribedPublishedFileId.empty())
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (completion.reconciliationDeadline == std::chrono::steady_clock::time_point{})
+                    completion.reconciliationDeadline = now + std::chrono::seconds(10);
+                if (now < completion.reconciliationDeadline)
+                {
+                    // Steam's accepted callback can precede its local cache
+                    // writes. Retain this operation for a fresh query; never
+                    // issue the remote unsubscribe again or spin here.
+                    std::lock_guard lock(steamWorkshopSubscriptionPollState_->mutex);
+                    completion.queryId = steamWorkshopSubscriptionPollState_->nextQueryId;
+                    steamWorkshopSubscriptionPollState_->settingsCompletions.push_back(std::move(completion));
+                    steamWorkshopSubscriptionPollState_->refreshPending.store(true);
+                    awaitingReconciliation = true;
+                    continue;
+                }
+            }
             completion.done(completionSucceeded
                     ? snowdesktop::winui::WidgetsPageHostOperationResult::
                           Success(true, completionMessage)
                     : snowdesktop::winui::WidgetsPageHostOperationResult::
                           Failure(completionMessage));
         }
+        // The regular host timer (or a real file change) drives the next
+        // query. Do not immediately launch a fresh query from this ready event.
+        if (awaitingReconciliation) return;
     }
 
     if (steamWorkshopSubscriptionPollState_->queryInFlight.load())
