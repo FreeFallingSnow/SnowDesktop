@@ -2,7 +2,12 @@
 # implementation languages; no Python discovery/driver enters CTest.
 include("${CMAKE_CURRENT_LIST_DIR}/SnowDesktop.PowerShell.cmake")
 if(BUILD_TESTING AND WIN32)
-    add_library(SnowDesktopBuildToolTestSupport STATIC tests/build_tool_test_support.cpp)
+    # Runtime process fixtures are explicit sources so inventory/retirement
+    # reviews see the non-C++ files consumed by the native drivers.
+    set_source_files_properties(tests/build_tool_bridge.ps1
+        tests/build_tools/fixtures/dsh_sdk_client.mjs PROPERTIES HEADER_FILE_ONLY TRUE)
+    add_library(SnowDesktopBuildToolTestSupport STATIC
+        tests/build_tool_test_support.cpp tests/build_tool_bridge.ps1)
     target_include_directories(SnowDesktopBuildToolTestSupport PUBLIC tests src)
     target_compile_features(SnowDesktopBuildToolTestSupport PUBLIC cxx_std_20)
     target_link_libraries(SnowDesktopBuildToolTestSupport PUBLIC shell32)
@@ -149,6 +154,7 @@ if(BUILD_TESTING AND WIN32)
     # their individual process deadlines and isolated fixtures remain unchanged.
     snowdesktop_add_native_tool_test(SnowDesktopDshCollaborationTests dsh_collaboration
         build_tools/dsh_collaboration_tests.cpp "tools;core;integration" 120)
+    target_sources(SnowDesktopDshCollaborationTests PRIVATE tests/build_tools/fixtures/dsh_sdk_client.mjs)
     add_test(NAME dsh_collaboration_client COMMAND SnowDesktopDshCollaborationTests "${CMAKE_CURRENT_SOURCE_DIR}" --client)
     set_tests_properties(dsh_collaboration_client PROPERTIES TIMEOUT 30 LABELS "tools;integration"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDshCollaborationTests>")

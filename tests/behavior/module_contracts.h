@@ -6,6 +6,7 @@
 #include "widget/tasks/widget_task_broker.h"
 #include "widget/api/widget_api_registry.h"
 #include "dock/dock_window_pin.h"
+#include "shell/shell_extension_service.h"
 #include "common/json_value.h"
 #include "widget/packages/widget_package.h"
 #include <set>
@@ -81,8 +82,8 @@ void Recovery()
     namespace storage = snowdesktop::layout_storage;
     const auto path = p.root / L"recovery/layout.json";
     fs::create_directories(path.parent_path());
-    const std::string first = R"({"schemaVersion":1,"items":[{"key":"owned-A","page":"page","x":1,"y":2}],"widgets":[{"id":"collection","type":"collection","items":["owned-A"]}]})";
-    const std::string second = R"({"schemaVersion":1,"items":[{"key":"owned-B","page":"page","x":3,"y":0}]})";
+    const std::string first = R"({"layoutSchemaVersion":1,"pages":[{"id":"page","columns":4,"rows":3}],"items":[{"key":"owned-A","page":"page","x":1,"y":2}],"widgets":[{"id":"collection","page":"page","x":0,"y":0,"type":"collection","items":["owned-A"]}]})";
+    const std::string second = R"({"layoutSchemaVersion":1,"pages":[{"id":"page","columns":4,"rows":3}],"items":[{"key":"owned-B","page":"page","x":3,"y":0}]})";
     std::string error;
     const bool firstSaved = storage::SaveDocument(path, first, &error);
     Require(firstSaved, "save first generation: " + error);
@@ -214,6 +215,12 @@ namespace behavior
 void SettingsHostCommit()
 {
     Profile profile;
+    // This fixture does not run DesktopApp's destructor. Match its explicit
+    // pre-CRT shutdown while COM and the main thread are still alive.
+    struct MenuServiceLifetime
+    {
+        ~MenuServiceLifetime() { snowdesktop::shell_extensions::SharedMenuService().Shutdown(); }
+    } menuServiceLifetime;
     using namespace snowdesktop;
     auto& controller = Access::HostSettings(*profile.app);
     const auto before = controller.Snapshot()->values.general;
