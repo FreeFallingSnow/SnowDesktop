@@ -1357,15 +1357,16 @@ struct Host
         // now, so publication never switches between two different artworks.
         std::map<std::wstring, std::wstring> iconClasses;
         for (const auto& registration : packages)
-            for (const auto& clsid : registration.verbs)
-                iconClasses.emplace(Lower(Wide(clsid)), Wide(clsid));
+            if (registration.systemEnabled && Applies(registration, request))
+                for (const auto& clsid : registration.verbs)
+                    iconClasses.emplace(Lower(Wide(clsid)), Wide(clsid));
         if (!request.sourceClsid.empty()) iconClasses.emplace(Lower(request.sourceClsid), request.sourceClsid);
         std::map<std::wstring, std::optional<Entry>> rootIcons;
         ComPtr<IShellItemArray> iconSelection;
         const auto prepareRootIcon = [&](Entry& entry) {
             if (entry.separator || entry.key.empty()) return;
             const auto found = iconClasses.find(Lower(Wide(entry.key)));
-            if (found == iconClasses.end()) return;
+            if (found == iconClasses.end() || !HandlerEnabled(found->second)) return;
             try
             {
                 const auto [cached, first] = rootIcons.try_emplace(found->first);
