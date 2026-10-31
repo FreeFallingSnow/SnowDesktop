@@ -7103,6 +7103,25 @@ int main(int argc, char** argv)
     Check(rules::ResolveDockClickAction(true, true, true) ==
             rules::DockClickAction::Restore,
         "minimized state must take precedence over stale foreground state");
+    for (const bool active : {false, true})
+    for (const bool restoring : {false, true})
+    for (const auto requested : {rules::DockClickAction::Launch,
+            rules::DockClickAction::Activate, rules::DockClickAction::Minimize,
+            rules::DockClickAction::Restore})
+    {
+        Check(rules::ResolveDockTransitionClickAction(requested, active, restoring) == requested,
+            "a captured Dock action must survive animation start, reversal, and completion before release");
+    }
+    Check(rules::ResolveDockTransitionClickAction(rules::DockClickAction::None, true, true) ==
+            rules::DockClickAction::Minimize &&
+            rules::ResolveDockTransitionClickAction(rules::DockClickAction::None, true, false) ==
+            rules::DockClickAction::Restore,
+        "a command without a captured action still reverses the active transition");
+    Check(rules::ResolveDockTransitionClickAction(rules::DockClickAction::None, false, false) ==
+            rules::DockClickAction::None &&
+            rules::ResolveDockTransitionClickAction(rules::DockClickAction::None, false, true) ==
+            rules::DockClickAction::None,
+        "a command without an active transition still resolves from current window state");
     Check(rules::ResolveDockWindowPreviewClickAction(false, false) ==
             rules::DockClickAction::Activate,
         "a background preview card must activate its own window");

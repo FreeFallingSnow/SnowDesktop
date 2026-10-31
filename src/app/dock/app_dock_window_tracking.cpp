@@ -1247,14 +1247,6 @@ bool DesktopApp::ActivateOrToggleDockItem(
     }
     found->second.window = target;
     found->second.minimized = IsIconic(target) != FALSE;
-    if (action == DockClickAction::None)
-    {
-        action =
-            snowdesktop::dock_window_rules::ResolveDockClickAction(
-                found->second.running,
-                found->second.minimized,
-                found->second.foreground);
-    }
     const bool transitionActiveForTarget =
         dockWindowTransition_ &&
         dockWindowTransition_->IsActiveFor(
@@ -1263,12 +1255,16 @@ bool DesktopApp::ActivateOrToggleDockItem(
         transitionActiveForTarget
         ? dockWindowTransition_->GetDirection()
         : DockWindowTransitionDirection::Minimize;
-    if (transitionActiveForTarget)
+    action = snowdesktop::dock_window_rules::ResolveDockTransitionClickAction(
+        action, transitionActiveForTarget,
+        activeTransitionDirection == DockWindowTransitionDirection::Restore);
+    if (action == DockClickAction::None)
     {
-        action = activeTransitionDirection ==
-                DockWindowTransitionDirection::Minimize
-            ? DockClickAction::Restore
-            : DockClickAction::Minimize;
+        action =
+            snowdesktop::dock_window_rules::ResolveDockClickAction(
+                found->second.running,
+                found->second.minimized,
+                found->second.foreground);
     }
     if (pressedAnchorScreen &&
         (action == DockClickAction::Restore ||
@@ -1383,6 +1379,17 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     const bool minimized = IsIconic(target) != FALSE;
     DockClickAction action =
         pressedAction.value_or(DockClickAction::None);
+    const bool transitionActiveForTarget =
+        dockWindowTransition_ &&
+        dockWindowTransition_->IsActiveFor(
+            target);
+    const auto activeTransitionDirection =
+        transitionActiveForTarget
+        ? dockWindowTransition_->GetDirection()
+        : DockWindowTransitionDirection::Minimize;
+    action = snowdesktop::dock_window_rules::ResolveDockTransitionClickAction(
+        action, transitionActiveForTarget,
+        activeTransitionDirection == DockWindowTransitionDirection::Restore);
     if (action == DockClickAction::None)
     {
         const HWND foreground =
@@ -1392,21 +1399,6 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 true, minimized,
                 DockWindowsShareApplicationIdentity(
                     target, foreground));
-    }
-    const bool transitionActiveForTarget =
-        dockWindowTransition_ &&
-        dockWindowTransition_->IsActiveFor(
-            target);
-    const auto activeTransitionDirection =
-        transitionActiveForTarget
-        ? dockWindowTransition_->GetDirection()
-        : DockWindowTransitionDirection::Minimize;
-    if (transitionActiveForTarget)
-    {
-        action = activeTransitionDirection ==
-                DockWindowTransitionDirection::Minimize
-            ? DockClickAction::Restore
-            : DockClickAction::Minimize;
     }
     if (pressedAnchorScreen &&
         (action == DockClickAction::Restore ||
