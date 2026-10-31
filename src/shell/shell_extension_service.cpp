@@ -193,6 +193,7 @@ struct MenuService::Impl
         MenuSnapshotCache::Ticket ticket; QueryWork work;
         std::uint64_t started;
         bool startPinOnly = false;
+        bool rootMetadataOnly = false;
         unsigned contexts = 0;
         std::optional<Reply> reply;
         std::uint64_t verificationRevision = 0;
@@ -1768,21 +1769,24 @@ struct MenuService::Impl
                 }
                 if (sourceJob->reply && CompleteSource(*sourceJob, *sourceJob->reply, cache)) sourceJob.reset();
             }
-            // Arbitrary extensions retain two supervised slots. Microsoft's
-            // Start handler has one reserved slot and never inherits a worker
-            // that has loaded third-party DLLs.
+            // Root-only management has three supervised slots of its own. The
+            // two complete-menu slots stay available for real popup work, and
+            // Microsoft's Start handler keeps its separate reserved slot.
             while (true)
             {
                 const auto startJobs = std::count_if(running.begin(), running.end(), [](const auto &job) {
                     return job.startPinOnly;
                 });
-                const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs + (sourceJob ? 1 : 0);
+                const auto metadataJobs = std::count_if(running.begin(), running.end(), [](const auto &job) {
+                    return !job.startPinOnly && job.rootMetadataOnly;
+                });
+                const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs - metadataJobs + (sourceJob ? 1 : 0);
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
-                    // Background queries share one slot, including metadata probes.
-                    // Keep the second slot available for an explicit popup or click.
-                    if (managementActive && normalJobs < 1 && nextType < typeDiscovery.size())
+                    // Metadata cannot consume the complete-menu budget. Its
+                    // bounded concurrency covers the same type/selection matrix.
+                    if (managementActive && metadataJobs < 3 && nextType < typeDiscovery.size())
                     {
                         const auto &target = typeDiscovery[nextType++];
                         Queue(target, QueryPriority::Inspect, typeBatchForce);
@@ -1791,7 +1795,7 @@ struct MenuService::Impl
                     auto best = rows.end(); const auto now = GetTickCount64();
                     for (auto it = rows.begin(); it != rows.end(); ++it)
                         if (it->second.queued && it->second.due <= now &&
-                            (it->second.request.startPinOnly ? startJobs < 1 :
+                            (it->second.request.startPinOnly ? startJobs < 1 : it->second.request.rootMetadataOnly ? metadataJobs < 3 :
                                 normalJobs < (it->second.priority <= QueryPriority::Menu ? 2 : 1)) &&
                             (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
@@ -1925,7 +1929,7 @@ struct MenuService::Impl
                     MenuTrace("schedule", "prewarm_no_aggregate");
                     continue;
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, request.rootMetadataOnly, contexts, {}, 0, 0};
                 job.managementOnly = priority == QueryPriority::Inspect;
                 job.managementGeneration = dispatchManagementGeneration;
                 { std::lock_guard lock(mutex);
@@ -1935,7 +1939,7 @@ struct MenuService::Impl
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
             if (!sourceJob && std::count_if(running.begin(), running.end(), [](const auto &job) {
-                    return !job.startPinOnly;
+                    return !job.startPinOnly && !job.rootMetadataOnly;
                 }) == 0)
                 if (auto job = NextSource())
                 {

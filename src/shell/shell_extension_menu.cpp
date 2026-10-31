@@ -35,6 +35,8 @@ constexpr size_t kMaximumEntries = 2048;
 constexpr std::uint64_t kMenuSignatureSeed = 14695981039346656037ull;
 std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
+std::atomic<unsigned> metadataSessions{0};
+constexpr unsigned kMaximumMetadataSessions = 3;
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 constexpr unsigned kMaximumWarmQueries = 8;
 // Management keeps lighter root metadata, while retained vendor callbacks are
@@ -1618,7 +1620,7 @@ struct Session::Impl
     std::uint64_t generation = 0;
     DWORD timeout = 8000;
     bool delivered = false, detached = false, succeeded = false, startPinOnly = false;
-    bool reusableQuery = false;
+    bool reusableQuery = false, rootMetadataOnly = false;
     unsigned queryUses = 0;
     unsigned maximumQueryUses = kMaximumWarmQueries;
     bool ownsSessionSlot = false, preparationOnly = false, preparationReady = false, preparationFailed = false;
@@ -1646,7 +1648,7 @@ struct Session::Impl
         if (!detached) process->Stop();
         RemoveSample();
         RemoveRetiredSamples();
-        if (ownsSessionSlot) (startPinOnly ? startPinSessions : sessions).fetch_sub(1);
+        if (ownsSessionSlot) (startPinOnly ? startPinSessions : rootMetadataOnly ? metadataSessions : sessions).fetch_sub(1);
     }
 };
 thread_local std::vector<std::unique_ptr<Session::Impl>> Session::Impl::idle;
@@ -1698,7 +1700,8 @@ void Session::ReleasePreparedMenuWorker()
 Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedWorker)
 {
     MenuTiming timing("helper_start");
-    auto &counter = request.startPinOnly ? startPinSessions : sessions;
+    auto &counter = request.startPinOnly ? startPinSessions : request.rootMetadataOnly ? metadataSessions : sessions;
+    const auto limit = request.startPinOnly ? 1u : request.rootMetadataOnly ? kMaximumMetadataSessions : 2u;
     bool acquiredSlot = false;
     try
     {
@@ -1708,12 +1711,13 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         std::erase_if(idle, [=](const auto &worker) {
             return worker->generation != generation || !worker->process->Running() ||
                 GetTickCount64() - worker->born >= kWorkerLifetimeMs ||
-                (!worker->startPinOnly && worker->queryUses >= MaximumWorkerQueries(request)) ||
-                (!request.startPinOnly && !usePreparedWorker && !worker->startPinOnly && !worker->preparationOnly);
+                (!worker->startPinOnly && worker->queryUses >= worker->maximumQueryUses) ||
+                (!request.startPinOnly && !usePreparedWorker && !worker->startPinOnly && !worker->preparationOnly &&
+                    worker->rootMetadataOnly == request.rootMetadataOnly);
         });
         const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
             if (request.startPinOnly) return worker->startPinOnly;
-            if (!usePreparedWorker || worker->startPinOnly) return false;
+            if (!usePreparedWorker || worker->startPinOnly || worker->rootMetadataOnly != request.rootMetadataOnly) return false;
             if (!worker->preparationOnly) return worker->reusableQuery;
             return !request.background && request.context != Context::Desktop && !request.catalogueOnly &&
                 request.sourceClsid.empty() && request.sourceKey.empty() && !request.originalShortcutOnly;
@@ -1722,14 +1726,14 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         if (reused) { impl_ = std::move(*available); idle.erase(available); }
         if (!impl_ || !impl_->ownsSessionSlot)
         {
-            if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
+            if (counter.fetch_add(1) >= limit)
             {
                 counter.fetch_sub(1);
                 if (!usePreparedWorker) throw settings_ipc::ProtocolError("too many Shell menus");
                 // Preparation is optional. Yield its reserved slot to real
                 // source/background work before refusing an interactive query.
-                if (!request.startPinOnly) ReleasePreparedMenuWorker();
-                if (request.startPinOnly || counter.fetch_add(1) >= 2u)
+                if (!request.startPinOnly && !request.rootMetadataOnly) ReleasePreparedMenuWorker();
+                if (request.startPinOnly || counter.fetch_add(1) >= limit)
                 {
                     if (!request.startPinOnly) counter.fetch_sub(1);
                     throw settings_ipc::ProtocolError("too many Shell menus");
@@ -1740,6 +1744,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
         if (!impl_) impl_ = std::make_unique<Impl>();
         impl_->startPinOnly = request.startPinOnly;
         impl_->reusableQuery = usePreparedWorker && !request.startPinOnly;
+        impl_->rootMetadataOnly = request.rootMetadataOnly;
         impl_->maximumQueryUses = MaximumWorkerQueries(request);
         ++impl_->queryUses;
         impl_->ownsSessionSlot = true; acquiredSlot = false;
@@ -1793,6 +1798,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedW
 Session::~Session()
 {
     const bool startPinOnly = impl_->startPinOnly;
+    const bool metadataOnly = impl_->rootMetadataOnly;
     // Reuse only a successful, non-invoked worker explicitly opted into by the
     // service. Its owning STA and loaded handlers stay warm, while each new
     // query gets a fresh menu/selection. Host retains old callback targets.
@@ -1817,9 +1823,9 @@ Session::~Session()
                 impl_->born = GetTickCount64();
             }
             const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
-                return worker->startPinOnly == startPinOnly;
+                return worker->startPinOnly == startPinOnly && worker->rootMetadataOnly == metadataOnly;
             });
-            if (pooled < (startPinOnly ? 1 : 2))
+            if (pooled < (startPinOnly ? 1 : metadataOnly ? static_cast<int>(kMaximumMetadataSessions) : 2))
             {
                 if (startPinOnly)
                 {
@@ -1835,7 +1841,7 @@ Session::~Session()
 void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
 unsigned Session::SelectionContexts() const noexcept { return impl_->selectionContexts; }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
-std::optional<Reply> Session::PollRoots() { return std::exchange(impl_->roots, {}); }
+std::optional<Reply> Session::PollRoots() { return impl_->rootMetadataOnly ? std::optional<Reply>{} : std::exchange(impl_->roots, {}); }
 std::optional<Reply> Session::Poll()
 {
     if (impl_->delivered)
@@ -1849,6 +1855,10 @@ std::optional<Reply> Session::Poll()
         return {};
     impl_->delivered = true;
     impl_->succeeded = impl_->reply->ok;
+    // Enforce the metadata boundary for every helper path, including original
+    // shortcut recovery and substituted diagnostic executors.
+    if (impl_->rootMetadataOnly)
+        for (auto &entry : impl_->reply->entries) { entry.token = 0; entry.children.clear(); }
     std::function<void(const std::vector<Entry> &)> identify = [&](const auto &entries) {
         for (const auto &entry : entries)
         { if (entry.token && !entry.native && StatePairForVerb(entry.key)) impl_->statefulTokens.insert(entry.token);
@@ -1860,6 +1870,7 @@ std::optional<Reply> Session::Poll()
 }
 void Session::Invoke(UINT token, POINT position, HWND owner)
 {
+    if (impl_->rootMetadataOnly) throw settings_ipc::ProtocolError("metadata menu cannot execute commands");
     if (!impl_->delivered || !impl_->process->Running())
         throw settings_ipc::ProtocolError("Shell command session is no longer available");
     MenuTiming timing("invoke_ack");

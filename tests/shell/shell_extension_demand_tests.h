@@ -397,9 +397,10 @@ inline void OrdinaryMenusDoNotProbe(bool previouslyInspected)
         if (previouslyInspected && round == 0)
         {
             service.Inspect(managed);
-            PumpUntil([&] { return !service.Inspect(managed).scanning && service.View(managed).snapshot.has_value(); },
-                "explicit management attribution finishes before ordinary work");
-            Expect(probes > 0, "explicit Inspect retains handler attribution work");
+            auto metadata = managed; metadata.rootMetadataOnly = true;
+            PumpUntil([&] { return !service.Inspect(managed).scanning && service.View(metadata).snapshot.has_value(); },
+                "explicit management root metadata finishes before ordinary work");
+            Expect(probes == 0, "settings inspection never adds source attribution work");
             service.EndInspection();
         }
         const auto before = probes.load(), beforeAggregates = aggregates.load();

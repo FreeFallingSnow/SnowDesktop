@@ -182,10 +182,38 @@ void CheckManagementNeverExpands()
         "management retains the actual root switch and leaves unknown ownership unknown");
 }
 
+// Hold the external metadata boundary. A real user menu must still dispatch
+// and publish while all three management queries remain unfinished.
+void CheckManagementBudgetIsolation()
+{
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"actual.snowmetadata"; std::ofstream(file) << "private";
+    ext::Request request; request.paths = {file.wstring()};
+    std::atomic_uint metadata = 0, complete = 0;
+    std::atomic_bool release = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request& target) {
+        const bool roots = target.rootMetadataOnly;
+        if (roots) ++metadata; else ++complete;
+        return ext::QueryWork{[&, roots]() -> std::optional<ext::Reply> {
+            if (roots && !release) return {};
+            return ext::Reply{true, {}, {}};
+        }, {}};
+    }, [] { ext::Catalogue catalogue; catalogue.revision = 1; return catalogue; });
+    service.Inspect();
+    PumpUntil([&] { return metadata == 3; }, "three bounded management root queries start concurrently");
+    service.QueryFullMenu(request);
+    PumpUntil([&] { const auto view = service.View(request); return view.snapshot && !view.pending; },
+        "an actual menu completes while the metadata budget is fully held");
+    Expect(metadata == 3 && complete == 1,
+        "MANAGEMENT_MUST_NOT_STARVE_POPUP: metadata stays bounded and cannot consume actual-menu capacity");
+    release = true;
+    PumpUntil([&] { return !service.Inspect().scanning; }, "remaining management roots finish after release");
+}
+
 void CheckWorkerReuseBounds()
 {
     TemporaryDirectory temp;
-    const auto file = temp.path / L"worker.snowmetadata"; std::ofstream(file) << "private";
+    const auto file = temp.path / L"prepared-retention.txt"; std::ofstream(file) << "private";
     ext::Request request; request.paths = {file.wstring()};
     ext::TakeMenuRegistryChanges(); ext::Session::ReleaseIdleWorker();
     const auto query = [&](bool metadata) {
@@ -193,8 +221,17 @@ void CheckWorkerReuseBounds()
         ext::Session session(request, 2000, true);
         const auto pid = session.ProcessId();
         std::optional<ext::Reply> reply;
-        PumpUntil([&] { reply = session.Poll(); return reply.has_value(); }, "bounded query worker replies");
+        PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); }, "bounded query worker replies");
         Expect(reply->ok, "a healthy metadata/ordinary worker completes its private query");
+        if (metadata)
+        {
+            Expect(reply->entries.size() == 1 && !reply->entries.front().token && reply->entries.front().children.empty() && !session.PollRoots(),
+                "metadata consumers receive only roots even from a substituted helper executor");
+            bool denied = false;
+            try { session.Invoke(1, {}); }
+            catch (const std::exception& error) { denied = std::string(error.what()).find("metadata") != std::string::npos; }
+            Expect(denied, "metadata sessions reject invocation before touching the helper");
+        }
         return pid;
     };
     for (const auto limit : {8u, 32u})
@@ -215,6 +252,31 @@ void CheckWorkerReuseBounds()
     Expect(query(false) != metadataPid,
         "a full menu never inherits a metadata worker beyond the ordinary query lifetime");
     ext::Session::ReleaseIdleWorker();
+
+    // Exercise the real parent process budget as well as the service scheduler.
+    std::vector<std::unique_ptr<ext::Session>> held;
+    for (unsigned i = 0; i < 5; ++i)
+    {
+        request.rootMetadataOnly = i < 3;
+        held.push_back(std::make_unique<ext::Session>(request, 2000, true));
+    }
+    for (bool metadata : {true, false})
+    {
+        request.rootMetadataOnly = metadata;
+        bool denied = false;
+        try { ext::Session excess(request, 2000, true); }
+        catch (const std::exception& error) { denied = std::string(error.what()).find("too many") != std::string::npos; }
+        Expect(denied, "metadata and complete-menu process budgets both reject overflow");
+    }
+    for (const auto& session : held)
+    {
+        std::optional<ext::Reply> reply;
+        PumpUntil([&] { if (!reply) reply = session->Poll(); return reply.has_value(); },
+            "each separately budgeted worker returns its own reply");
+        Expect(reply->ok, "full metadata capacity leaves two healthy actual-menu workers available");
+    }
+    held.clear();
+    ext::Session::ReleaseIdleWorker();
 }
 
 void Run()
@@ -223,6 +285,7 @@ void Run()
     CheckUnrelatedRegistrationDoesNotRetry(false);
     CheckUnrelatedRegistrationDoesNotRetry(true);
     CheckManagementNeverExpands();
+    CheckManagementBudgetIsolation();
     CheckWorkerReuseBounds();
 }
 }
