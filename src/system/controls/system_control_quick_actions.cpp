@@ -13,18 +13,18 @@ namespace
 constexpr std::pair<const char*, UINT32> Topologies[]{
     {"internal", SDC_TOPOLOGY_INTERNAL}, {"clone", SDC_TOPOLOGY_CLONE},
     {"extend", SDC_TOPOLOGY_EXTEND}, {"external", SDC_TOPOLOGY_EXTERNAL}};
-std::pair<DWORD, std::string> ProjectionState()
+std::pair<DWORD, std::string> ProjectionState(const ProjectionApi& api)
 {
     for (int attempt = 0; attempt < 3; ++attempt)
     {
         UINT32 paths = 0, modes = 0;
-        LONG status = GetDisplayConfigBufferSizes(QDC_DATABASE_CURRENT, &paths, &modes);
+        LONG status = api.bufferSizes(QDC_DATABASE_CURRENT, &paths, &modes);
         if (status) return {static_cast<DWORD>(status), {}};
         if (!paths || paths > 1024 || modes > 4096) return {ERROR_NOT_SUPPORTED, {}};
         std::vector<DISPLAYCONFIG_PATH_INFO> path(paths);
         std::vector<DISPLAYCONFIG_MODE_INFO> mode((std::max)(modes, UINT32{1}));
         DISPLAYCONFIG_TOPOLOGY_ID topology{};
-        status = QueryDisplayConfig(QDC_DATABASE_CURRENT, &paths, path.data(), &modes, mode.data(), &topology);
+        status = api.query(QDC_DATABASE_CURRENT, &paths, path.data(), &modes, mode.data(), &topology);
         if (status == ERROR_INSUFFICIENT_BUFFER) continue;
         if (status) return {static_cast<DWORD>(status), {}};
         for (const auto& [name, flag] : Topologies)
@@ -36,16 +36,21 @@ std::pair<DWORD, std::string> ProjectionState()
 class Projection final : public Backend
 {
 public:
-    std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation&) override
+    explicit Projection(ProjectionApi api) : api_(api) {}
+    std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
     {
-        const auto [status, name] = ProjectionState();
+        if (cancel.Stop()) return {{"host.projection", Missing(cancel.Failure().error)}};
+        const auto [status, name] = ProjectionState(api_);
         if (status) return {{"host.projection", Missing(Error(status).error)}};
         auto value = json::Object(); value.object["mode"] = json::Text(name);
         auto modes = json::Array();
-        for (const auto& [id, flag] : Topologies)
+        for (const auto& topology : Topologies)
         {
-            auto item = json::Object(); item.object["id"] = json::Text(id);
-            item.object["available"] = json::Boolean(SetDisplayConfig(0, nullptr, 0, nullptr, SDC_VALIDATE | flag) == ERROR_SUCCESS);
+            auto item = json::Object(); item.object["id"] = json::Text(topology.first);
+            // Offer the standard choices; validate only an explicit switch.
+            // Even SDC_VALIDATE can wait on the display broker and contend with
+            // Win32k input/UI locks, so it must never run in passive sampling.
+            item.object["available"] = json::Boolean(true);
             modes.array.push_back(std::move(item));
         }
         value.object["modes"] = std::move(modes);
@@ -57,18 +62,21 @@ public:
         for (const auto& [id, flag] : Topologies) if (wanted == id)
         {
             if (cancel.Stop()) return cancel.Failure();
-            LONG status = SetDisplayConfig(0, nullptr, 0, nullptr, SDC_VALIDATE | flag);
+            LONG status = api_.set(0, nullptr, 0, nullptr, SDC_VALIDATE | flag);
             if (status) return Error(static_cast<DWORD>(status), "actionUnsupported");
-            status = SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | flag);
+            if (cancel.Stop()) return cancel.Failure();
+            status = api_.set(0, nullptr, 0, nullptr, SDC_APPLY | flag);
             if (status) return Error(static_cast<DWORD>(status));
             return ConfirmControlValue(1, 0, cancel, [&]() -> ControlReadback {
-                const auto [readStatus, mode] = ProjectionState();
+                const auto [readStatus, mode] = ProjectionState(api_);
                 return readStatus ? ControlReadback{std::nullopt, Error(readStatus)} : ControlReadback{mode == wanted ? 1. : 0., {}};
             }, ControlReadbackPause);
         }
         return Error(ERROR_INVALID_PARAMETER, "invalidArguments");
     }
     void Release(std::string_view) override {}
+private:
+    ProjectionApi api_;
 };
 
 // Windows' system airplane switch has no public desktop SDK setter. Keep the
@@ -298,7 +306,7 @@ public:
     void Release(std::string_view) override {}
 };
 }
-std::shared_ptr<Backend> CreateProjectionBackend() { return std::make_shared<Projection>(); }
+std::shared_ptr<Backend> CreateProjectionBackend(ProjectionApi api) { return std::make_shared<Projection>(api); }
 std::shared_ptr<Backend> CreateHotspotBackend() { return std::make_shared<Hotspot>(); }
 std::shared_ptr<Backend> CreateAirplaneBackend() { return std::make_shared<Airplane>(); }
 std::shared_ptr<Backend> CreateAwakeBackend() { return std::make_shared<Awake>(); }

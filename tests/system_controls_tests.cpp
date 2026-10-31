@@ -26,6 +26,91 @@ using namespace snowdesktop::system_control;
 void Require(bool condition, const char* text)
 { if (!condition) { std::cerr << "FAIL: " << text << '\n'; std::exit(1); } }
 #include "system/system_control_hotspot_cases.h"
+void ProjectionSamplingNeverValidatesDisplayChanges()
+{
+    // Exercise the production backend, replacing only the Windows display API.
+    // A passive sample must not validate a display change even when a mode would
+    // be unsupported. Explicit switches must still validate, apply and read back.
+    struct Display
+    {
+        unsigned queries = 0, validations = 0, applies = 0;
+        LONG readStatus = ERROR_SUCCESS, validationStatus = ERROR_SUCCESS, applyStatus = ERROR_SUCCESS;
+        DISPLAYCONFIG_TOPOLOGY_ID topology = DISPLAYCONFIG_TOPOLOGY_INTERNAL;
+        std::shared_ptr<std::atomic_bool> cancelOnValidate;
+        static Display*& Active() { static Display* value = nullptr; return value; }
+        static LONG WINAPI BufferSizes(UINT32, UINT32* paths, UINT32* modes)
+        { *paths = *modes = 1; return Active()->readStatus; }
+        static LONG WINAPI Query(UINT32, UINT32*, DISPLAYCONFIG_PATH_INFO*, UINT32*,
+            DISPLAYCONFIG_MODE_INFO*, DISPLAYCONFIG_TOPOLOGY_ID* topology)
+        { ++Active()->queries; *topology = Active()->topology; return Active()->readStatus; }
+        static LONG WINAPI Set(UINT32 paths, DISPLAYCONFIG_PATH_INFO* path, UINT32 modes,
+            DISPLAYCONFIG_MODE_INFO* mode, UINT32 flags)
+        {
+            Require(paths == 0 && !path && modes == 0 && !mode, "projection uses a named topology");
+            auto& self = *Active();
+            if (flags & SDC_VALIDATE)
+            {
+                ++self.validations;
+                if (self.cancelOnValidate) self.cancelOnValidate->store(true);
+                return self.validationStatus;
+            }
+            Require((flags & SDC_APPLY) != 0, "projection requests validation or an explicit apply");
+            ++self.applies;
+            if (!self.applyStatus) self.topology = static_cast<DISPLAYCONFIG_TOPOLOGY_ID>(flags & 0xf);
+            return self.applyStatus;
+        }
+    } display;
+    Display::Active() = &display;
+    auto backend = windows::CreateProjectionBackend({&Display::BufferSizes, &Display::Query, &Display::Set});
+    Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 30s};
+    display.validationStatus = ERROR_BAD_CONFIGURATION;
+    for (unsigned sample = 0; sample < 100; ++sample)
+    {
+        const auto snapshot = backend->Sample("projection", cancel).at("host.projection");
+        Require(snapshot.available && json::String(snapshot.value, "mode") == "internal",
+            "passive projection sampling reports the actual topology");
+        Require(display.validations == 0 && display.applies == 0,
+            "passive projection sampling must never enter SetDisplayConfig");
+        const auto* choices = snapshot.value.Find("modes");
+        Require(choices && choices->array.size() == 4 &&
+            std::all_of(choices->array.begin(), choices->array.end(), [](const auto& mode) {
+                return json::Flag(mode, "available"); }), "standard projection choices remain selectable until attempted");
+    }
+    Require(display.queries == 100 && display.validations == 0 && display.applies == 0,
+        "repeated passive samples never call SetDisplayConfig or preflight a display change");
+    Request request; request.name = "host.projection.set"; request.arguments["mode"] = "extend";
+    auto result = backend->Execute(request, cancel);
+    Require(!result.ok && result.error == "actionUnsupported" && result.platformCode == ERROR_BAD_CONFIGURATION &&
+        display.validations == 1 && display.applies == 0, "unsupported projection changes stop before applying");
+    display.validationStatus = ERROR_SUCCESS;
+    for (const auto* mode : {"internal", "clone", "extend", "external"})
+    {
+        request.arguments["mode"] = mode;
+        Require(backend->Execute(request, cancel).ok, "explicit projection switches validate, apply and confirm readback");
+        Require(json::String(backend->Sample("projection", cancel).at("host.projection").value, "mode") == mode,
+            "projection polling reads the switched topology without caching the old mode");
+    }
+    Require(display.validations == 5 && display.applies == 4, "only explicit choices enter display configuration");
+    display.applyStatus = ERROR_ACCESS_DENIED;
+    result = backend->Execute(request, cancel);
+    Require(!result.ok && result.error == "accessDenied" && display.applies == 5,
+        "projection preserves native apply failures");
+    display.cancelOnValidate = cancel.canceled;
+    result = backend->Execute(request, cancel);
+    Require(!result.ok && result.error == "canceled" && display.applies == 5,
+        "cancellation during validation prevents a display change");
+    const auto validations = display.validations;
+    Require(!backend->Execute(request, cancel).ok && display.validations == validations,
+        "already canceled projection requests never validate or apply");
+    const auto queries = display.queries;
+    Require(!backend->Sample("projection", cancel).at("host.projection").available && display.queries == queries,
+        "canceled projection samples do not query display state");
+    cancel.canceled->store(false);
+    display.readStatus = ERROR_ACCESS_DENIED;
+    const auto snapshot = backend->Sample("projection", cancel).at("host.projection");
+    Require(!snapshot.available && snapshot.error == "accessDenied", "failed topology reads remain unavailable");
+    Display::Active() = nullptr;
+}
 void WifiProfilesKeepTheNetworkName()
 {
     using snowdesktop::system_control::windows::CreateWifiProfile;
@@ -1146,6 +1231,7 @@ void TestSystemControls()
     HotspotManagerCacheLifecycle();
     SlowHotspotSamplingDoesNotCatchUp();
     HotspotInvalidationAndShutdown();
+    ProjectionSamplingNeverValidatesDisplayChanges();
     CancellableWinRtSamplingWait();
     HostOnlyCredentialsAndConfirmation();
     WidgetControlArgumentsStayWithinTheirContract();
