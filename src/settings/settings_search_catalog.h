@@ -175,6 +175,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.softwareDesktop.description"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
     {SettingsPage::ContextMenu, "contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions.description"},
+    {SettingsPage::ContextMenu, "contextMenu.expandAllExtensions", "settings.contextMenu.expandAllExtensions", "settings.contextMenu.expandAllExtensions.description"},
     {SettingsPage::ContextMenu, "contextMenu.hidePageManagement", "settings.contextMenu.showPageManagement", "settings.contextMenu.hidePageManagement.description"},
     {SettingsPage::ContextMenu, "contextMenu.hideMoreManagement", "settings.contextMenu.showMoreManagement", ""},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},

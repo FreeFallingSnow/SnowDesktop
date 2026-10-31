@@ -62,7 +62,7 @@ SD_IPC_FIELDS(shell_extensions::Selection, v.provider, v.command, v.label, v.pla
 SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);
 SD_IPC_FIELDS(shell_extensions::Rule, v.id, v.category, v.shown);
 SD_IPC_FIELDS(shell_extensions::LocationOverride, v.id, v.context, v.visibility);
-SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden, v.shown, v.rulesVersion, v.rules, v.overrides);
+SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden, v.shown, v.rulesVersion, v.rules, v.overrides, v.showAll);
 SD_IPC_FIELDS(StatusBarSettings,
     v.enabled, v.position, v.monitorScope, v.scale, v.theme,
     v.clock, v.tray, v.network, v.volume, v.battery, v.controlCenter,

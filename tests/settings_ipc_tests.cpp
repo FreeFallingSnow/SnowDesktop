@@ -303,15 +303,17 @@ void TestCodec()
             "switch shortcut enablement and chosen chord cross the settings-process boundary");
     }
     // Each option must independently reach the desktop host from settings.
-    for (int flags = 0; flags < 8; ++flags)
+    for (int flags = 0; flags < 16; ++flags)
     {
         extensions.contextMenuExpandQuickActions = (flags & 1) != 0;
         extensions.contextMenuHidePageManagement = (flags & 2) != 0;
         extensions.contextMenuHideMoreManagement = (flags & 4) != 0;
+        extensions.shellExtensions.showAll = (flags & 8) != 0;
         const auto restored = Unpack<GeneralSettings>(Pack(extensions));
         Check(restored.contextMenuExpandQuickActions == extensions.contextMenuExpandQuickActions &&
             restored.contextMenuHidePageManagement == extensions.contextMenuHidePageManagement &&
-            restored.contextMenuHideMoreManagement == extensions.contextMenuHideMoreManagement,
+            restored.contextMenuHideMoreManagement == extensions.contextMenuHideMoreManagement &&
+            restored.shellExtensions.showAll == extensions.shellExtensions.showAll,
             "independent context-menu options cross the settings-process boundary");
     }
     extensions.statusBar.enabled = true;

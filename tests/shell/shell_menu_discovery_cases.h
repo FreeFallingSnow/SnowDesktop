@@ -1,4 +1,5 @@
 #pragma once
+#include "shell/shell_extension_application.h"
 
 namespace menu_discovery_tests
 {
@@ -211,6 +212,39 @@ void CheckManagementBudgetIsolation()
     PumpUntil([&] { return !service.Inspect().scanning; }, "remaining management roots finish after release");
 }
 
+void CheckManagementRegistrySwitch()
+{
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"actual.snowmetadata"; std::ofstream(file) << "private";
+    ext::Request target; target.paths = {file.wstring()};
+    std::atomic_uint metadata = 0, complete = 0;
+    std::atomic_bool release = false;
+    ext::Catalogue inventory; inventory.revision = 1;
+    ext::Registration registration; registration.id = "reg:*\\shell\\example";
+    registration.contexts = 1; registration.types = {L"*"}; inventory.rows = {registration};
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request& request) {
+        const bool roots = request.rootMetadataOnly;
+        if (roots) ++metadata; else ++complete;
+        return ext::QueryWork{[&, roots]() -> std::optional<ext::Reply> {
+            if (roots && !release) return {};
+            ext::Entry entry; entry.provider = "verb:actual"; entry.key = "actual"; entry.label = L"Actual";
+            return ext::Reply{true, {entry}, {}};
+        }, {}};
+    }, [&] { return inventory; });
+    service.Inspect(target);
+    PumpUntil([&] { return metadata == 3; }, "command inspection starts only its bounded metadata reads");
+    ext::Request installed; installed.catalogueOnly = true;
+    service.Inspect(installed);
+    service.QueryFullMenu(target);
+    PumpUntil([&] { return service.View(target).snapshot.has_value(); },
+        "returning to software inspection keeps ordinary actual menu reads available");
+    release = true;
+    PumpUntil([&] { return !service.Inspect(installed).scanning; }, "registry-only inspection finishes independently");
+    const auto view = service.Inspect(installed);
+    Expect(metadata == 3 && complete == 1 && view.catalogue.rows.empty() && view.registrations.rows.size() == 1,
+        "software view retires queued command discovery and never includes observed commands");
+}
+
 // Real registry/publication/visibility/execution paths; only the external Shell
 // boundary returns deterministic vendor commands. No user data is modified.
 void CheckExtensionAndCommandControls()
@@ -232,6 +266,7 @@ void CheckExtensionAndCommandControls()
     std::atomic_uint queries = 0, sources = 0, aggregates = 0, invoked = 0;
     ext::MenuService service(temp.path / L"cache", [&](const ext::Request& request) {
         ++queries;
+        if (request.rootMetadataOnly) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
         if (request.sourceClsid.empty()) ++aggregates; else ++sources;
         return ext::QueryWork{[=] { return ext::Reply{true, {first, second}, {}}; },
             [&](UINT token, POINT) { Expect(token == child.token, "group-enabled invocation resolves the fresh aggregate leaf token"); ++invoked; }};
@@ -243,7 +278,7 @@ void CheckExtensionAndCommandControls()
     auto view = service.Inspect(installed);
     Expect(queries == 0 && view.registrations.rows.size() == 1 && view.catalogue.rows.empty(),
         "EXTENSION_MANAGEMENT_ZERO_SHELL: installed sources never masquerade as actual commands");
-    auto groups = ext::ExtensionManagementRows(view.registrations, view.catalogue, ext::Category::Objects);
+    auto groups = ext::ExtensionManagementRows(view.registrations, ext::Category::Objects);
     Expect(groups.size() == 1 && groups.front().members.front().id == extension.id,
         "an unobserved registered extension has an actionable whole-extension switch");
     ext::SetManagementCommon(prefs, groups.front(), ext::Category::Objects, true);
@@ -257,7 +292,7 @@ void CheckExtensionAndCommandControls()
     const auto prepared = service.MenuDisplay(plan.sources.front(), prefs);
     Expect(prepared.snapshot && prepared.snapshot->entries.size() == 2 && prepared.snapshot->entries.back().children.size() == 1,
         "a whole extension exposes every returned root with complete immediate children");
-    view = service.Inspect(installed);
+    view = service.Inspect(target);
     auto commands = ext::ManagementRows(view.catalogue, ext::Category::Objects);
     Expect(commands.size() == 2 && std::all_of(commands.begin(), commands.end(), [&](const auto& row) {
         return row.members.size() == 1 && row.members.front().id != extension.id &&
@@ -279,9 +314,9 @@ void CheckExtensionAndCommandControls()
     service.Execute(target, ext::AppendReference({}, prepared.snapshot->entries.front()), {}, [&](bool result) { success = result; completed = true; });
     PumpUntil([&] { return completed.load(); }, "a command-level hide is checked again during execution");
     Expect(!success && invoked == 1, "an enabled extension cannot execute a command explicitly hidden within it");
-    groups = ext::ExtensionManagementRows(service.Inspect(installed).registrations, service.Inspect(installed).catalogue, ext::Category::Objects);
-    Expect(groups.size() == 1 && !ext::ManagementCommon(prefs, groups.front(), ext::Category::Objects),
-        "whole-extension state reports a mixed command exception");
+    groups = ext::ExtensionManagementRows(service.Inspect(installed).registrations, ext::Category::Objects);
+    Expect(groups.size() == 1 && ext::ManagementCommon(prefs, groups.front(), ext::Category::Objects) == true,
+        "registry-only application state does not absorb actual-command exceptions");
     ext::SetManagementCommon(prefs, groups.front(), ext::Category::Objects, false);
     auto future = second; future.provider = "verb:future"; future.registration = extension.id;
     Expect(ext::VisibleSnapshot(prefs, {true, {future}, {}}, 1).empty(),
@@ -289,9 +324,9 @@ void CheckExtensionAndCommandControls()
     ext::SetManagementCommon(prefs, groups.front(), ext::Category::Objects, true);
     auto inheritedFirst = first, inheritedSecond = second;
     inheritedFirst.registration = inheritedSecond.registration = extension.id;
-    Expect(!ext::HasVisibilityRule(prefs, first.provider, ext::Context::File) &&
-        ext::VisibleSnapshot(prefs, {true, {inheritedFirst, inheritedSecond, future}, {}}, 1).size() == 3,
-        "a whole-extension action unifies existing exceptions and future-root inheritance");
+    Expect(ext::HasVisibilityRule(prefs, first.provider, ext::Context::File) &&
+        ext::VisibleSnapshot(prefs, {true, {inheritedFirst, inheritedSecond, future}, {}}, 1).size() == 2,
+        "registration-only actions preserve independently configured command exceptions");
     ext::SetManagementCommon(prefs, groups.front(), ext::Category::Objects, false);
     ext::SetCommon(prefs, first.provider, ext::Category::Objects, true);
     const auto individualPlan = ext::PlanDemandQueries(inventory, view.catalogue, prefs, target, 1);
@@ -317,8 +352,9 @@ void CheckExtensionAndCommandControls()
         ext::VisibleSnapshot(legacy, {true, {staticEntry}, {}}, 2).size() == 1 &&
         ext::VisibleSnapshot(legacy, {true, {sibling}, {}}, 1).size() == 1,
         "a static location edit preserves the legacy alias in other locations and applications");
-    const auto encoded = snowdesktop::settings_ipc::Pack(view);
-    Expect(snowdesktop::settings_ipc::Unpack<ext::CatalogueView>(encoded).registrations.rows.size() == 1,
+    const auto encoded = snowdesktop::settings_ipc::Pack(service.Inspect(installed));
+    const auto installedPacket = snowdesktop::settings_ipc::Unpack<ext::CatalogueView>(encoded);
+    Expect(installedPacket.registrations.rows.size() == 1 && installedPacket.catalogue.rows.empty(),
         "settings IPC keeps installed sources separate from command observations");
 }
 
@@ -334,12 +370,12 @@ void CheckSoftwareManagementPresentation()
     auto opaque = first; opaque.id = "package:opaque"; opaque.kind = ext::RegistrationKind::Packaged;
     opaque.application = {"opaque", L"0BF99681-825C-4B2A-A14F-2AC01DB9B70E"}; opaque.display.label = opaque.application.name;
     ext::Catalogue installed; installed.rows = {first, second, handler, other, opaque};
-    ext::Catalogue observed; ext::Registration stale; stale.kind = ext::RegistrationKind::Observed;
-    stale.id = "observed:unknown"; stale.display.label = L"Old unknown command"; stale.contexts = 1; observed.rows = {stale};
-    const auto rows = ext::ExtensionManagementRows(installed, observed, ext::Category::Objects);
+    ext::Registration stale; stale.kind = ext::RegistrationKind::Observed;
+    stale.id = "observed:unknown"; stale.display.label = L"Old unknown command"; stale.contexts = 1; installed.rows.push_back(stale);
+    const auto rows = ext::ExtensionManagementRows(installed, ext::Category::Objects);
     Expect(rows.size() == 2 && rows.front().display.label == L"本地化应用" && rows.front().members.size() == 3,
         "software view merges registrations by identity, keeps same-name applications separate and omits opaque/stale rows");
-    const auto searched = ext::ExtensionManagementRows(installed, observed, ext::Category::Objects, L".two");
+    const auto searched = ext::ExtensionManagementRows(installed, ext::Category::Objects, L".two");
     Expect(searched.size() == 1 && searched.front().members.size() == 3,
         "a type search returns the complete software switch rather than narrowing its authority to the matched registration");
     ext::Preferences prefs; ext::SetManagementCommon(prefs, searched.front(), ext::Category::Objects, true);
@@ -354,9 +390,77 @@ void CheckSoftwareManagementPresentation()
     installed.rows[0].application = {"ten", L"tool 10"};
     installed.rows[1].application = {"two", L"Tool 2"};
     installed.rows[2].application = {"alpha", L"alpha"};
-    const auto sorted = ext::ExtensionManagementRows(installed, {}, ext::Category::Objects);
+    const auto sorted = ext::ExtensionManagementRows(installed, ext::Category::Objects);
     Expect(sorted.size() == 3 && sorted[0].display.label == L"alpha" && sorted[1].display.label == L"Tool 2" &&
         sorted[2].display.label == L"tool 10", "software presentation uses case-insensitive natural name ordering");
+}
+
+void CheckInstalledApplicationProfiles()
+{
+    ext::ApplicationProfileIndex index;
+    index.Add({L"C:\\Creative", L"After Effects", {}, 30});
+    index.Add({L"C:\\Creative", L"Photoshop", {}, 30});
+    index.Add({L"C:\\Creative\\After Effects", L"After Effects", L"ae.exe", 20});
+    index.Add({L"C:\\Creative\\Photoshop", L"Photoshop", L"ps.exe", 20});
+    Expect(!index.Find(L"C:\\Creative\\Media Encoder\\encoder.exe"),
+        "a shared custom installation parent never attributes another Adobe product to After Effects");
+    const auto photoshop = index.Find(L"c:\\creative\\Photoshop\\Plug-ins\\shell.dll");
+    Expect(photoshop && photoshop->name == L"Photoshop", "a precise installation boundary attributes its nested extension");
+    index.Add({L"C:\\Tools\\PowerToys", L"PowerToys (Preview)", L"powertoys.exe", 30});
+    index.Add({L"C:\\Tools\\PowerToys\\", L"PowerToys (Preview) x64", {}, 30});
+    const auto toys = index.Find(L"C:\\Tools\\PowerToys\\WinUI3Apps\\PowerRename.dll");
+    Expect(toys && toys->name == L"PowerToys (Preview)" && toys->icon == L"powertoys.exe",
+        "architecture duplicates share the installation and its main application icon");
+    Expect(!index.Find(L"C:\\Tools\\PowerToysOther\\shell.dll"), "path prefixes require an actual directory boundary");
+    index.Add({L"C:\\MWORKS\\Syslab 2026b", L"MWORKS.Syslab 2026b", {}, 20});
+    index.Add({L"C:\\MWORKS\\Sysplorer 2026b", L"MWORKS.Sysplorer 2026b", {}, 20});
+    const auto lab = index.Find(L"C:\\MWORKS\\Syslab 2026b\\Bin\\syslab.exe");
+    const auto plorer = index.Find(L"C:\\MWORKS\\Sysplorer 2026b\\Bin64\\activate_sysplorer.exe");
+    Expect(lab && plorer && lab->root != plorer->root && plorer->name == L"MWORKS.Sysplorer 2026b",
+        "sibling products stay distinct while a helper belongs to its own installed product");
+}
+
+void CheckShowAllPolicy()
+{
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"actual.snowmetadata"; std::ofstream(file) << "private";
+    ext::Request target; target.paths = {file.wstring()};
+    ext::Entry known; known.provider = "verb:known"; known.key = "known"; known.label = L"Known";
+    auto unknown = known; unknown.provider = "menu:unattributed"; unknown.key.clear(); unknown.label = L"Unattributed";
+    auto disabled = known; disabled.provider = "verb:disabled"; disabled.key = "disabled"; disabled.enabled = false;
+    ext::Entry child; child.provider = "verb:child"; child.key = "child"; child.label = L"Prepared child";
+    unknown.children = {child};
+    const ext::Reply complete{true, {known, unknown, disabled}, {}};
+    ext::Preferences selective; ext::SetCommon(selective, known.provider, ext::Category::Objects, true);
+    ext::SetOverride(selective, unknown.provider, ext::Context::File, ext::Visibility::Hide);
+    auto all = selective; all.showAll = true;
+    const auto savedRules = all.rules; const auto savedOverrides = all.overrides;
+    const auto packet = ext::WritePreferences(all);
+    JsonValue json; Expect(ParseJson(packet, json), "show-all preferences serialize");
+    const auto restored = ext::ReadPreferences(&json);
+    Expect(restored == all, "show-all preserves every stored individual rule through persistence");
+    for (int i = 0; i < 4; ++i)
+        Expect(ext::HasOptIns(all, static_cast<ext::Context>(i)) && ext::VisibleSnapshot(all, complete, 1u << i).size() == 3,
+            "show-all includes unattributed and disabled roots in every context without changing their Shell state");
+    auto filtered = ext::VisibleSnapshot(selective, complete, 1);
+    Expect(filtered.size() == 1 && filtered.front().provider == known.provider,
+        "turning off show-all restores existing visibility rules");
+    std::atomic_uint calls = 0; std::atomic_bool projected = false;
+    ext::MenuService service(temp.path / L"all-cache", [&](const ext::Request& request) {
+        if (request.paths == target.paths) { ++calls; projected = request.visibleMenuProviders && *request.visibleMenuProviders == std::vector<std::string>{"*"}; }
+        return ext::QueryWork{[=] { return complete; }, {}};
+    }, [] { ext::Catalogue value; value.revision = 1; return value; });
+    service.Configure(all); service.Prewarm(target);
+    PumpUntil([&] { const auto view = service.MenuDisplay(target, all); return view.snapshot && !view.sourcesOnly && view.snapshot->entries.size() == 3; },
+        "show-all prewarms the full actual menu even with no source attribution or per-command opt-ins");
+    Expect(calls > 0 && projected && all.rules == savedRules && all.overrides == savedOverrides,
+        "the full read bypasses projection and does not rewrite selective settings");
+    const auto full = service.MenuDisplay(target, all);
+    Expect(full.snapshot->entries[1].children.size() == 1 && !full.snapshot->entries[2].enabled,
+        "show-all retains prepared children and native disabled state");
+    service.Configure(selective); service.Query(target);
+    PumpUntil([&] { const auto view = service.MenuDisplay(target, selective); return view.snapshot && !view.pending && view.snapshot->entries.size() == 1; },
+        "disabling show-all cannot leak the formerly unfiltered snapshot");
 }
 
 void CheckColdExtensionRecovery()
@@ -480,8 +584,11 @@ void Run()
     check("source ambiguity", [] { CheckUnrelatedRegistrationDoesNotRetry(true); });
     check("no format sampling", CheckManagementNeverExpands);
     check("management budget", CheckManagementBudgetIsolation);
+    check("registry-only mode switch", CheckManagementRegistrySwitch);
     check("extension and command controls", CheckExtensionAndCommandControls);
     check("software management presentation", CheckSoftwareManagementPresentation);
+    check("installed application profiles", CheckInstalledApplicationProfiles);
+    check("show all extensions", CheckShowAllPolicy);
     check("cold extension recovery", CheckColdExtensionRecovery);
     check("worker bounds", CheckWorkerReuseBounds);
     if (!failures.empty()) throw std::runtime_error(failures);

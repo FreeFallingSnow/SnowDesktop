@@ -1332,15 +1332,16 @@ int main(int argc, char** argv)
     GeneralSettings saved;
     Check(!saved.steamShowRunningStatus, "Steam running status is opt-in for new settings");
     saved.steamShowRunningStatus = true;
-    Check(!saved.contextMenuExpandQuickActions && !saved.contextMenuHidePageManagement &&
+    Check(!saved.shellExtensions.showAll && !saved.contextMenuExpandQuickActions && !saved.contextMenuHidePageManagement &&
         !saved.contextMenuHideMoreManagement,
         "context-menu layout and page hiding are opt-in");
-    for (int flags = 0; flags < 8; ++flags)
+    for (int flags = 0; flags < 16; ++flags)
     {
         GeneralSettings menuOptions, restored;
         menuOptions.contextMenuExpandQuickActions = (flags & 1) != 0;
         menuOptions.contextMenuHidePageManagement = (flags & 2) != 0;
         menuOptions.contextMenuHideMoreManagement = (flags & 4) != 0;
+        menuOptions.shellExtensions.showAll = (flags & 8) != 0;
         restored.contextMenuExpandQuickActions = !menuOptions.contextMenuExpandQuickActions;
         restored.contextMenuHidePageManagement = !menuOptions.contextMenuHidePageManagement;
         restored.contextMenuHideMoreManagement = !menuOptions.contextMenuHideMoreManagement;
@@ -1348,7 +1349,8 @@ int main(int argc, char** argv)
             LoadGeneralSettings(path.c_str(), restored) &&
             restored.contextMenuExpandQuickActions == menuOptions.contextMenuExpandQuickActions &&
             restored.contextMenuHidePageManagement == menuOptions.contextMenuHidePageManagement &&
-            restored.contextMenuHideMoreManagement == menuOptions.contextMenuHideMoreManagement,
+            restored.contextMenuHideMoreManagement == menuOptions.contextMenuHideMoreManagement &&
+            restored.shellExtensions.showAll == menuOptions.shellExtensions.showAll,
             "each context-menu option can be enabled and disabled independently across restart");
     }
     saved.contextMenuExpandQuickActions = true;

@@ -70,6 +70,7 @@ struct Preferences
     int rulesVersion = 2;
     std::vector<Rule> rules;
     std::vector<LocationOverride> overrides;
+    bool showAll = false;
     friend bool operator==(const Preferences &, const Preferences &) = default;
 };
 inline void Normalize(Preferences &value)
@@ -140,6 +141,7 @@ inline Preferences ReadPreferences(const JsonValue *json)
         return result;
     if (const auto *enabled = json->Find("enabled"); enabled && enabled->IsBoolean())
         result.enabled = enabled->boolean;
+    if (const auto *all = json->Find("showAll"); all && all->IsBoolean()) result.showAll = all->boolean;
     if (const auto *rows = json->Find("selections"); rows && rows->IsArray())
         for (const auto &row : rows->array)
         {
@@ -230,7 +232,8 @@ inline std::string Quote(const std::string &text)
 inline std::string WritePreferences(Preferences value)
 {
     Normalize(value);
-    std::string out = std::string("{\"enabled\":") + (value.enabled ? "true" : "false") + ",\"selections\":[";
+    std::string out = std::string("{\"enabled\":") + (value.enabled ? "true" : "false") +
+        ",\"showAll\":" + (value.showAll ? "true" : "false") + ",\"selections\":[";
     bool first = true;
     for (const auto &row : value.selections)
     {
@@ -280,6 +283,7 @@ inline std::string WritePreferences(Preferences value)
 }
 inline bool IsHidden(const Preferences &prefs, const std::string &id, Context context)
 {
+    if (prefs.showAll) return false;
     if (StatePairForId(id))
     {
         const auto key = StateVisibilityId(id);
@@ -353,6 +357,7 @@ inline void SetOverride(Preferences &prefs, const std::string &id, Context conte
 }
 inline std::set<std::string> EffectiveShownIds(const Preferences &prefs, Context context)
 {
+    if (prefs.showAll) return {"*"};
     std::map<std::string, bool> states;
     for (const auto &row : prefs.shown) if (row.context == context) states[row.id] = true;
     // Match IsHidden's first-record precedence, including retained legacy data.

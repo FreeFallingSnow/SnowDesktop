@@ -1,5 +1,6 @@
 #include "shell_extension_catalogue.h"
 #include "shell_extension_display_name.h"
+#include "shell_extension_application.h"
 #include "shell_catalogue_workers.h"
 #include <atomic>
 #include <future>
@@ -197,6 +198,8 @@ std::wstring LocalModule(std::wstring path)
     if (!file.is_absolute() || PathIsNetworkPathW(path.c_str()) || GetDriveTypeW(file.root_path().c_str()) == DRIVE_REMOTE) return {};
     const auto attributes = GetFileAttributesW(path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return {};
+    wchar_t longPath[32768]{};
+    if (GetLongPathNameW(path.c_str(), longPath, 32768)) return std::filesystem::path(longPath).lexically_normal().wstring();
     return file.lexically_normal().wstring();
 }
 std::wstring CommandModule(const std::wstring &command)
@@ -296,6 +299,158 @@ Application ModuleApplication(const std::wstring &module)
     cache[key] = {stamp, languages, result};
     return result;
 }
+
+std::wstring ApplicationDirectory(std::wstring directory)
+{
+    wchar_t expanded[32768]{};
+    if (directory.empty() || !ExpandEnvironmentStringsW(directory.c_str(), expanded, 32768)) return {};
+    PathUnquoteSpacesW(expanded); directory = expanded;
+    const std::filesystem::path path(directory);
+    if (!path.is_absolute() || path == path.root_path() || PathIsNetworkPathW(directory.c_str()) ||
+        GetDriveTypeW(path.root_path().c_str()) == DRIVE_REMOTE) return {};
+    const auto attributes = GetFileAttributesW(directory.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return {};
+    wchar_t longPath[32768]{};
+    if (GetLongPathNameW(directory.c_str(), longPath, 32768)) directory = longPath;
+    directory = ApplicationPathKey(std::filesystem::path(directory).lexically_normal().wstring());
+    static const auto generic = [] {
+        std::vector<std::wstring> result;
+        for (const auto* folder : {&FOLDERID_ProgramFiles, &FOLDERID_ProgramFilesX86, &FOLDERID_ProgramData,
+            &FOLDERID_LocalAppData, &FOLDERID_RoamingAppData, &FOLDERID_Profile, &FOLDERID_Windows,
+            &FOLDERID_ProgramFilesCommon, &FOLDERID_ProgramFilesCommonX86})
+        {
+            PWSTR value = nullptr;
+            if (SUCCEEDED(SHGetKnownFolderPath(*folder, KF_FLAG_DONT_VERIFY, nullptr, &value)))
+            { result.push_back(ApplicationPathKey(value)); CoTaskMemFree(value); }
+        }
+        return result;
+    }();
+    if (std::find(generic.begin(), generic.end(), directory) != generic.end()) return {};
+    wchar_t windows[32768]{};
+    if (GetWindowsDirectoryW(windows, 32768) && ApplicationPathContains(ApplicationPathKey(windows), directory)) return {};
+    return directory;
+}
+std::wstring ApplicationExecutableRoot(const std::wstring& module)
+{
+    auto directory = std::filesystem::path(module).parent_path();
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        const auto name = ApplicationPathKey(directory.filename().wstring());
+        const bool version = !name.empty() && iswdigit(name.front()) &&
+            std::all_of(name.begin(), name.end(), [](wchar_t c) { return iswdigit(c) || c == L'.'; });
+        if (!version && name != L"bin" && name != L"bin32" && name != L"bin64" && name != L"win32" &&
+            name != L"win64" && name != L"x86" && name != L"x64" && name != L"amd64" &&
+            name != L"support files" && name != L"office6" && name != L"office16") break;
+        directory = directory.parent_path();
+    }
+    return ApplicationDirectory(directory.wstring());
+}
+struct ApplicationMetadataIndex
+{
+    ApplicationProfileIndex profiles;
+    std::mutex mutex;
+    std::map<std::wstring, ClassifiedApplication> modules;
+    std::map<std::wstring, std::wstring> boundaries;
+    std::map<std::string, std::wstring> icons;
+    explicit ApplicationMetadataIndex(HKEY classes, CatalogueForegroundDemand* foreground)
+    {
+        if (classes != HKEY_CLASSES_ROOT) return; // Private registry fixtures stay isolated.
+        for (const auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+        {
+            for (const auto* base : {L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+                L"Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"})
+                for (const auto& key : Children(hive, base, foreground))
+                {
+                    const auto path = std::wstring(base) + L"\\" + key;
+                    const auto name = Localized(Read(hive, path, L"DisplayName"));
+                    if (!UsableShellDisplayName(name)) continue;
+                    const auto icon = Read(hive, path, L"DisplayIcon");
+                    const auto root = ApplicationDirectory(Read(hive, path, L"InstallLocation"));
+                    if (!root.empty()) profiles.Add({root, name, icon, 30});
+                    wchar_t iconFile[32768]{}; wcsncpy_s(iconFile, icon.c_str(), _TRUNCATE); PathParseIconLocationW(iconFile);
+                    const auto module = LocalModule(iconFile);
+                    if (!module.empty()) profiles.Add({ApplicationExecutableRoot(module), name, icon, 20});
+                    const auto uninstall = CommandModule(Read(hive, path, L"UninstallString"));
+                    if (!uninstall.empty())
+                    {
+                        auto folder = std::filesystem::path(uninstall).parent_path();
+                        const auto leaf = ApplicationPathKey(folder.filename().wstring());
+                        if (leaf == L"uninstall" || leaf == L"uninstaller" || leaf == L"setup") folder = folder.parent_path();
+                        profiles.Add({ApplicationDirectory(folder.wstring()), name, icon, 20});
+                    }
+                }
+            const std::wstring base = L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths";
+            for (const auto& key : Children(hive, base, foreground))
+            {
+                const auto module = CommandModule(Read(hive, base + L"\\" + key));
+                if (module.empty()) continue;
+                const auto application = ModuleApplication(module);
+                profiles.Add({ApplicationExecutableRoot(module), application.name, module, 10});
+            }
+        }
+    }
+    std::wstring Boundary(std::filesystem::path directory)
+    {
+        const auto key = ApplicationPathKey(directory.wstring());
+        if (const auto old = boundaries.find(key); old != boundaries.end()) return old->second;
+        std::vector<std::wstring> visited;
+        std::wstring result;
+        for (unsigned depth = 0; depth < 10 && !directory.empty() && directory != directory.root_path(); ++depth, directory = directory.parent_path())
+        {
+            const auto current = ApplicationPathKey(directory.wstring());
+            if (const auto old = boundaries.find(current); old != boundaries.end()) { result = old->second; break; }
+            if (ApplicationDirectory(directory.wstring()).empty()) break;
+            visited.push_back(current);
+            for (const auto* marker : {L"Uninstall.exe", L"unins000.exe", L"uninstall(x64).exe", L"uninstall(x86).exe"})
+            {
+                const auto file = directory / marker;
+                const auto attributes = GetFileAttributesW(file.c_str());
+                if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) { result = current; break; }
+            }
+            if (!result.empty()) break;
+        }
+        for (const auto& path : visited) boundaries[path] = result;
+        return result;
+    }
+    ClassifiedApplication Resolve(const std::wstring& module, const Application& fallback)
+    {
+        std::lock_guard lock(mutex);
+        const auto key = ApplicationPathKey(module);
+        if (const auto old = modules.find(key); old != modules.end()) return old->second;
+        auto profile = profiles.Find(module);
+        const auto boundary = !profile || profile->strength <= 10 ? Boundary(std::filesystem::path(module).parent_path()) : std::wstring{};
+        if (!boundary.empty() && (!profile || (profile->strength <= 10 && ApplicationPathContains(boundary, profile->root))))
+        {
+            auto name = std::filesystem::path(boundary).filename().wstring();
+            if (name.size() > 1 && name.front() == L'v' && iswdigit(name[1]))
+                name = std::filesystem::path(boundary).parent_path().filename().wstring() + L" " + name;
+            // Folder casing is presentation only; preserve the actual long path.
+            wchar_t actual[32768]{};
+            if (GetLongPathNameW(boundary.c_str(), actual, 32768))
+            {
+                const std::filesystem::path path(actual);
+                name = path.filename().wstring();
+                if (name.size() > 1 && towlower(name.front()) == L'v' && iswdigit(name[1])) name = path.parent_path().filename().wstring() + L" " + name;
+            }
+            profile = InstalledApplicationRecord{boundary, name, boundary + L"\\Uninstall.exe", 15};
+        }
+        ClassifiedApplication result{fallback, {}};
+        if (profile)
+        {
+            result.application = {"install:" + Utf8(profile->root), profile->name}; result.icon = profile->icon;
+            if (!result.icon.empty()) icons[result.application.id] = result.icon;
+        }
+        modules.emplace(key, result); return result;
+    }
+    std::wstring Icon(const std::string& id)
+    {
+        std::lock_guard lock(mutex);
+        const auto found = icons.find(id);
+        if (found == icons.end()) return {};
+        wchar_t path[32768]{}; wcsncpy_s(path, found->second.c_str(), _TRUNCATE); PathParseIconLocationW(path);
+        return GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES ? std::wstring{} : found->second;
+    }
+};
 // Index small ASCII value lists only for this verb. Missing metadata fields do
 // not need individual registry queries. Unicode, large or unsuccessful lists
 // retain direct reads; policy presence checks always use the live registry.
@@ -483,7 +638,8 @@ struct Scanner
     HKEY classes;
     CatalogueForegroundDemand *control = nullptr;
     bool capture = false;
-    std::vector<std::pair<Registration, std::wstring>> captured;
+    using CapturedRegistration = std::tuple<Registration, std::wstring, std::wstring>;
+    std::vector<CapturedRegistration> captured;
     Catalogue result;
     std::vector<Registration> folderRows;
     std::array<std::vector<Registration>, 2> backgroundRows;
@@ -494,6 +650,7 @@ struct Scanner
     struct HandlerMetadata { std::wstring label, module, icon; Application application; };
     std::map<std::wstring, HandlerMetadata> handlers;
     std::map<std::wstring, Application> commands, applications;
+    std::map<std::string, std::wstring> registrationModules;
     std::map<std::wstring, std::wstring> labels;
     std::map<std::wstring, bool> policies;
     std::map<std::wstring, Entry> images;
@@ -550,7 +707,7 @@ struct Scanner
             const auto application = L"Applications\\" + std::filesystem::path(module).filename().wstring();
             auto friendly = Label(Read(classes, application, L"FriendlyAppName"));
             if (!UsableShellDisplayName(friendly)) friendly = Label(Read(classes, application + L"\\Application", L"ApplicationName"));
-            if (UsableShellDisplayName(friendly)) it->second.name = std::move(friendly);
+            if (it->second.id.starts_with("file:") && UsableShellDisplayName(friendly)) it->second.name = std::move(friendly);
         }
         return it->second;
     }
@@ -604,16 +761,17 @@ struct Scanner
         });
         return Hash(settings_ipc::Pack(rows));
     }
-    void Add(Registration row, const std::wstring &icon)
+    void Add(Registration row, const std::wstring &icon, const std::wstring &module = {})
     {
         if (control) control->WaitUntilAllowed();
         // Workers keep individual sources; the caller applies the original
         // scan order and global identity/row limit before loading images.
-        if (capture) { captured.emplace_back(std::move(row), icon); return; }
+        if (capture) { captured.emplace_back(std::move(row), icon, module); return; }
         row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision ? row.menuRevision : row.revision,
             icon, AssetRevision(icon)));
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
+        if (!module.empty()) registrationModules.try_emplace(row.id, LocalModule(module));
         row.display.provider = row.id;
         if (row.contexts & ContextBit(Context::Folder))
         {
@@ -661,6 +819,28 @@ struct Scanner
         }
         std::sort(result.rows.begin(), result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     }
+    void ClassifyApplications()
+    {
+        // This postpass belongs only to the software inventory. Scope proofs
+        // and menu revisions retain the original registration metadata, so
+        // presentation grouping cannot invalidate or authorize native menus.
+        ApplicationMetadataIndex metadata(classes, control);
+        for (auto& row : result.rows)
+        {
+            if (control) control->WaitUntilAllowed();
+            const auto found = registrationModules.find(row.id);
+            if (found == registrationModules.end() || found->second.empty()) continue;
+            row.application = metadata.Resolve(found->second, row.application).application;
+            const auto icon = metadata.Icon(row.application.id);
+            if (!icon.empty())
+            {
+                Entry image; Image(image, icon);
+                if (!image.pixels.empty())
+                { row.display.width = image.width; row.display.height = image.height; row.display.pixels = std::move(image.pixels); }
+            }
+            row.revision = Hash(settings_ipc::Pack(row.revision, row.application, row.display.pixels));
+        }
+    }
     void Verb(const std::wstring &path, unsigned contexts, const std::vector<std::wstring> &types)
     {
         const auto verb = path.substr(path.find_last_of(L'\\') + 1);
@@ -691,7 +871,7 @@ struct Scanner
             const auto shell = path.rfind(L"\\shell\\");
             auto friendly = shell == std::wstring::npos ? std::wstring{} :
                 Label(Read(classes, path.substr(0, shell) + L"\\Application", L"ApplicationName"));
-            if (UsableShellDisplayName(friendly)) row.application.name = std::move(friendly);
+            if (row.application.id.starts_with("file:") && UsableShellDisplayName(friendly)) row.application.name = std::move(friendly);
         }
         // Never infer equivalence from the caption, verb alone, or a bare
         // SubCommands list. Keep arguments case-sensitive and compare the
@@ -713,7 +893,7 @@ struct Scanner
         const auto module = !handler.empty() ? Handler(handler).module :
             !delegate.empty() ? Handler(delegate).module : CommandModule(command);
         row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
-        Add(std::move(row), icon);
+        Add(std::move(row), icon, module);
     }
     void HandlerRegistration(const std::wstring &path, unsigned contexts, const std::vector<std::wstring> &types)
     {
@@ -734,7 +914,7 @@ struct Scanner
         row.application = info.application;
         row.revision = Hash(settings_ipc::Pack(info.module));
         row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(info.module)));
-        Add(std::move(row), info.icon.empty() ? info.module : info.icon);
+        Add(std::move(row), info.icon.empty() ? info.module : info.icon, info.module);
     }
     void Root(const std::wstring &root, unsigned contexts, const std::vector<std::wstring> &types = {})
     {
@@ -784,14 +964,14 @@ struct Scanner
                 row.application = ApplicationForModule(module);
                 const auto name = PackageDisplayName(verb, package, directory);
                 if (row.application.id.empty()) row.application.id = "package:" + Utf8(Lower(family));
-                if (!name.empty()) row.application.name = name;
+                if (!name.empty() && !row.application.id.starts_with("install:")) row.application.name = name;
                 if (!UsableShellDisplayName(row.application.name)) row.application.name = family.substr(0, family.find(L'_'));
                 row.sources = {L"package:" + package + L":" + id}; row.verbs = {Utf8(Lower(clsid))};
                 row.contexts = type == L"Directory" ? ContextBit(Context::Folder) : type == L"Directory\\Background" ? ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop) : ContextBit(Context::File);
                 if (type != L"*" && type != L"Directory" && type != L"Directory\\Background") row.types = {Lower(type)};
                 row.systemEnabled = !IsBlocked(clsid); row.display.label = row.application.name;
                 row.revision = Hash(settings_ipc::Pack(package, id, clsid));
-                Add(std::move(row), module);
+                Add(std::move(row), module, module);
             }
         }
     }
@@ -880,7 +1060,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
     // Small/private inventories avoid thread setup. One to eight workers bound
     // additional CPU work while native menu helpers remain active.
     if (roots.size() < 64) { serial(); return; }
-    std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
+    std::vector<std::vector<Scanner::CapturedRegistration>> results(roots.size());
     std::atomic_size_t next = 0;
     const unsigned workerCount = std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u);
     const bool completed = detail::RunCatalogueWorkers(workerCount, foreground, [&] {
@@ -903,7 +1083,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
         results.clear(); serial(); return;
     }
     for (auto &result : results)
-        for (auto &row : result) scanner.Add(std::move(row.first), row.second);
+        for (auto& [row, icon, module] : result) scanner.Add(std::move(row), icon, module);
 }
 struct ExactSource
 {
@@ -995,6 +1175,7 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
     ReadFileRoots(scanner, fileRoots, foreground);
     if (packages) scanner.Packages();
     scanner.FinishRows();
+    scanner.ClassifyApplications();
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
     scanner.result.folderRevision = scanner.FolderRevision();
     scanner.result.backgroundRevisions = {scanner.BackgroundRevision(Context::FolderBackground), scanner.BackgroundRevision(Context::Desktop)};
@@ -1138,6 +1319,7 @@ void Associate(Catalogue &catalogue, const Request &request, Reply &reply)
 }
 void MigrateAssociations(Preferences &prefs, const Catalogue &catalogue)
 {
+    if (prefs.showAll) return; // Bypassing display rules must not manufacture opt-ins.
     for (const auto &a : catalogue.associations)
     {
         // A dynamic command opt-in is not consent to enable every other

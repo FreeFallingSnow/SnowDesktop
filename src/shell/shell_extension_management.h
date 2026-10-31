@@ -97,7 +97,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
 
 // Installed sources and observed commands have different completeness. This
 // view lists registered extensions without claiming they produced a live menu.
-inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& registrations, const Catalogue& observed,
+inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& registrations,
                                                          Category category, std::wstring filter = {})
 {
     std::map<std::string, ManagementRow> groups;
@@ -135,13 +135,8 @@ inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& regis
     for (auto& c : filter) c = towlower(c);
     for (auto& [id, row] : groups)
     {
-        // Observed commands contribute exceptions to their known software,
-        // never additional visible rows or guessed application ownership.
-        for (const auto& command : observed.rows)
-            if (!command.display.registration.empty() && std::any_of(row.members.begin(), row.members.end(), [&](const auto& parent) {
-                return parent.id == command.display.registration;
-            }) && std::none_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == command.display.provider; }))
-                row.members.push_back({command.display.provider, command.contexts, command.display.registration, command.display.provider});
+        // This view owns only registration rules. Command observations and
+        // exceptions belong to the independent actual-object view.
         std::sort(row.members.begin(), row.members.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
         std::sort(row.types.begin(), row.types.end()); row.types.erase(std::unique(row.types.begin(), row.types.end()), row.types.end());
         auto text = row.display.label + searchable[id];

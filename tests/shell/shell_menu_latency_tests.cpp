@@ -546,7 +546,7 @@ void BenchmarkMenuBackgroundAndManagement()
             std::cout << "{\"scenario\":\"extensions-cold\",\"stage\":\"software-groups\",\"groups\":[";
             bool first = true;
             for (const auto category : {ext::Category::Objects, ext::Category::Background})
-                for (const auto& row : ext::ExtensionManagementRows(view.registrations, view.catalogue, category))
+                for (const auto& row : ext::ExtensionManagementRows(view.registrations, category))
                 {
                     if (!first) std::cout << ','; first = false;
                     std::cout << "{\"id\":" << quote(row.id) << ",\"name\":" << quote(utf8(row.display.label))

@@ -1681,6 +1681,28 @@ void TestRegistryCatalogue()
     Expect(find("reg:*\\shell\\metadata-case").display.label == L"Mixed metadata caption" &&
         find("reg:*\\shell\\metadata-unicode").display.label == longCaption,
         "metadata lookup preserves mixed-case value names and full Unicode captions");
+    // Real installation boundaries unify helpers without relying on a shared
+    // product caption. Sibling installations keep independent identities.
+    const auto suiteA = temp.path / L"Product suite A", suiteB = temp.path / L"Product suite B";
+    for (const auto& suite : {suiteA, suiteB})
+    {
+        std::filesystem::create_directories(suite / L"bin");
+        std::ofstream(suite / L"Uninstall.exe") << "private marker";
+        std::ofstream(suite / L"bin" / L"tool.exe") << "private module";
+        std::ofstream(suite / L"bin" / L"helper.exe") << "private module";
+    }
+    put(L"*\\shell\\suite-main\\command", nullptr, (L"\"" + (suiteA / L"bin" / L"tool.exe").wstring() + L"\" %1").c_str());
+    put(L"Directory\\shell\\suite-helper\\command", nullptr, (L"\"" + (suiteA / L"bin" / L"helper.exe").wstring() + L"\" %1").c_str());
+    put(L"*\\shell\\sibling-main\\command", nullptr, (L"\"" + (suiteB / L"bin" / L"tool.exe").wstring() + L"\" %1").c_str());
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    const auto suiteMain = find("reg:*\\shell\\suite-main"), suiteHelper = find("reg:directory\\shell\\suite-helper");
+    Expect(suiteMain.application.id.starts_with("install:") && suiteMain.application == suiteHelper.application &&
+        suiteMain.application.name == L"Product suite A" && find("reg:*\\shell\\sibling-main").application != suiteMain.application,
+        "actual installation markers group helpers and keep sibling installations separate");
+    const auto exactSuite = ext::ReadCatalogueSources({suiteHelper}, nullptr, registry.key);
+    Expect(exactSuite.rows.size() == 1 && exactSuite.rows.front().menuRevision == suiteHelper.menuRevision &&
+        !exactSuite.rows.front().application.id.starts_with("install:"),
+        "a runtime exact-source check retains the same native dependency without installation enumeration");
     const auto folderProof = catalogue.folderRevision;
     Expect(folderProof && folderProof == ext::ReadFolderCatalogueRevision(registry.key, false),
         "full inventory and folder-only verification agree for shared handler registrations");
@@ -5549,14 +5571,14 @@ void TestFileTypeDiscovery()
         ext::Request installed; installed.catalogueOnly = true;
         restored.Inspect(installed);
         PumpUntil([&] { return !restored.Inspect(installed).scanning; }, "durable command inventory is restored independently of helper success");
-        auto items = restored.Inspect(installed).catalogue.rows;
+        auto items = restored.Inspect({}).catalogue.rows;
         Expect(std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:image" && r.application.id == "app:image"; }) &&
             std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:document"; }),
             "application and command metadata survive service reconstruction without exact snapshots");
         for (const auto &item : items) Expect(!item.display.token && item.display.children.empty(), "durable inventory contains only root display metadata");
         imageEnabled = false; restored.Inspect(installed, true);
         PumpUntil([&] { return !restored.Inspect(installed).scanning; }, "system-disable registry refresh settles without format probes");
-        items = restored.Inspect(installed).catalogue.rows;
+        items = restored.Inspect({}).catalogue.rows;
         Expect(std::none_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:image" || r.id == "menu:image-batch" || r.id == "menu:image-shift"; }) &&
             std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:document"; }),
             "retiring a changed image registration leaves unrelated cached document commands intact");

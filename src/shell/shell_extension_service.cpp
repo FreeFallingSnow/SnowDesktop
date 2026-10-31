@@ -210,7 +210,7 @@ struct MenuService::Impl
     std::set<Key> sourceAttempts, sourceSelections;
     std::set<std::string> failedSources;
     bool sourcePending = false;
-    bool managementActive = false;
+    bool managementActive = false, managementCatalogueOnly = true;
     std::uint64_t managementGeneration = 1, workGeneration = 1, scanWorkGeneration = 0, scanManagementGeneration = 0;
     std::mutex mutex;
     std::map<Key, Row> rows;
@@ -370,6 +370,7 @@ struct MenuService::Impl
     // Called while mutex holds the same row and catalogue used for display.
     bool AttributionPending(const Request &request, const Preferences &fallback) const
     {
+        if ((configured ? preferences : fallback).showAll) return false;
         if (request.startPinOnly || catalogue.revision || (!scanning && !scanRequested) ||
             // Inventory attribution enumerates the whole machine and can outlast a
             // single helper. Known rows remain visible throughout this bounded wait.
@@ -387,6 +388,7 @@ struct MenuService::Impl
     bool Enabled(const Request &request, unsigned contexts = 0) const
     {
         if (!configured) return true;
+        if (preferences.showAll) return true;
         if (!contexts && (request.background || request.context == Context::Desktop))
             contexts = ContextBit(request.context == Context::Desktop ? Context::Desktop : Context::FolderBackground);
         // Object attributes are resolved only on the worker. Until then accept
@@ -545,7 +547,17 @@ struct MenuService::Impl
                     const auto current = std::find_if(sourceCatalogue.rows.begin(), sourceCatalogue.rows.end(), [&](const auto &row) { return row.id == seed.id; });
                     if (current != sourceCatalogue.rows.end())
                     {
-                        catalogue.rows.push_back(*current);
+                        auto refreshed = *current;
+                        if (seed.application.id.starts_with("install:") && MenuRevision(seed) == MenuRevision(*current))
+                        {
+                            // Exact runtime checks do not enumerate installed
+                            // apps. Retain already classified presentation only
+                            // while its original menu dependency still agrees.
+                            refreshed.application = seed.application;
+                            refreshed.display.width = seed.display.width; refreshed.display.height = seed.display.height;
+                            refreshed.display.pixels = seed.display.pixels;
+                        }
+                        catalogue.rows.push_back(std::move(refreshed));
                         if (MenuRevision(seed) && (MenuRevision(seed) != MenuRevision(*current) || seed.systemEnabled != current->systemEnabled))
                             changed.push_back(seed);
                     }
@@ -669,6 +681,7 @@ struct MenuService::Impl
                 request.background || request.context == Context::Desktop ? Category::Background : Category::Objects)];
         request.omitNvidiaCompatibility = configured && request.background &&
             request.context == Context::Desktop && request.sourceClsid.empty() &&
+            !preferences.showAll &&
             !NvidiaCompatibilityShown(shown[static_cast<int>(Context::Desktop)]);
         return request;
     }
@@ -1827,7 +1840,7 @@ struct MenuService::Impl
                     return !job.startPinOnly && job.rootMetadataOnly;
                 });
                 const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs - metadataJobs + (sourceJob ? 1 : 0);
-                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false;
+                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false, allExtensions = false;
                 {
                     std::lock_guard lock(mutex);
                     auto best = rows.end(); const auto now = GetTickCount64();
@@ -1840,6 +1853,7 @@ struct MenuService::Impl
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
                     dispatchManagementGeneration = managementGeneration;
                     sequence = row.sequence; dependency = row.dependency; invalid = row.invalid; row.queued = false;
+                    allExtensions = configured && preferences.showAll;
                 }
                 if (priority == QueryPriority::Prewarm && !Local(request))
                 {
@@ -1917,7 +1931,7 @@ struct MenuService::Impl
                     auto &row = rows[key];
                     // Classification and planning run on the worker. UI reads
                     // only this plan and immutable, separately keyed snapshots.
-                    if (!row.inspection && priority != QueryPriority::Execute &&
+                    if (!row.inspection && priority != QueryPriority::Execute && !preferences.showAll &&
                         !row.fullMenuRequested && configured &&
                         request.sourceClsid.empty() && !request.startPinOnly && !request.originalShortcutOnly)
                     {
@@ -1960,7 +1974,7 @@ struct MenuService::Impl
                     }
                     else row.view.sourcesOnly = false;
                 }
-                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly)
+                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly && !allExtensions)
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key]; row.view.pending = false; row.fullMenuRequested = false;
@@ -2267,7 +2281,22 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
     request.rootMetadataOnly = true;
     std::lock_guard lock(impl_->mutex);
     const bool reopening = !impl_->managementActive;
+    const bool modeChanged = impl_->managementActive && impl_->managementCatalogueOnly != source.catalogueOnly;
+    if (modeChanged)
+    {
+        // Switching back to the registry view retires only management menu
+        // work; actual popup/prewarm/accepted execution lanes remain intact.
+        ++impl_->managementGeneration;
+        impl_->discoverRequested = impl_->discoverForce = impl_->desktopInspection = false;
+        impl_->discovery.clear(); impl_->inspectedSelection.clear();
+        for (auto& [key, row] : impl_->rows) if (row.priority == QueryPriority::Inspect && row.clicks.empty())
+        {
+            row.queued = row.view.pending = row.inspection = row.checkInspection = row.managementAttributionRequested = false;
+            row.targetCheckDemand.reset();
+        }
+    }
     impl_->managementActive = true;
+    impl_->managementCatalogueOnly = source.catalogueOnly;
     if (reopening)
     {
         impl_->sourceScanRequested = false;
@@ -2278,7 +2307,7 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
         impl_->scanRequested = true;
         MenuTrace("catalogue", "request.stale_inspect");
     }
-    if (refresh || !impl_->inspected || reopening)
+    if (refresh || !impl_->inspected || reopening || modeChanged)
     {
         MenuTrace("catalogue", refresh ? "request.refresh" : "request.inspect");
         impl_->sourcePending = true;
@@ -2309,7 +2338,8 @@ CatalogueView MenuService::Inspect(const Request &source, bool refresh)
         impl_->inspectedSelection = selectionKey;
         impl_->RememberView(selection, impl_->Queue(selection, QueryPriority::Inspect, refresh));
     }
-    CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
+    CatalogueView result; result.selection = selection;
+    if (!source.catalogueOnly) result.catalogue = impl_->available;
     if (source.catalogueOnly)
     {
         result.registrations = impl_->catalogue;
