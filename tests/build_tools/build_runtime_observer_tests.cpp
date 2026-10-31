@@ -50,22 +50,13 @@ void tests(const fs::path& repo){
     const auto entry=run(entryArguments,root,15);require(entry.code==0&&!fs::exists(root/L"alive.json"),"Entry probe executed fixture main: "+entry.out+entry.err);
     const auto entryReport=Json::parse(read(root/L"reports/Entry.manual.json"));
     require(entryReport.at("mode").str()=="entry-probe"&&entryReport.at("imageEntryReached").boolean&&entryReport.at("probeStopped").boolean&&entryReport.at("entryPointRva").integer()>0&&entryReport.at("dllInitializationMayRun").boolean&&!entryReport.at("reuseAllowed").boolean,"Entry probe lost its boundary or was reported as reusable execution evidence");
-    for(const auto* name:{L"SnowDesktopDemoModeRulesTests",L"SnowDesktopWidgetCompositionLayerRulesTests"}){
-        const auto target=executable().parent_path()/(std::wstring(name)+L".exe");require(fs::is_regular_file(target),"Real rule executable was not built for entry probe comparison");
-        const auto observeRule=[&](const std::wstring& boundary,const std::wstring& suffix){
-            const auto path=root/(std::wstring(name)+suffix+L".json");std::vector<std::wstring> command{observer.wstring(),L"--test",name,L"--report",path.wstring()};
-            if(!boundary.empty())command.push_back(boundary);command.insert(command.end(),{L"--",target.wstring(),repo.wstring()});
-            const auto result=run(command,repo,15);require(result.code==0,"Real rule observation failed: "+result.out+result.err);return Json::parse(read(path));
-        };
-        const auto full=observeRule(L"",L"-full"),beforeEntry=observeRule(L"--entry-probe",L"-entry");
-        const auto fullModules=root_modules(full),entryModules=root_modules(beforeEntry);
-        // Entry is a bounded observation, not proof that CRT/main cannot load
-        // more DLLs. Keep the measured gap visible instead of accepting it as
-        // complete runtime closure or making equality an invalid expectation.
-        require(beforeEntry.at("imageEntryReached").boolean&&beforeEntry.at("runtimeClosure").str()=="unclosed"&&!beforeEntry.at("reuseAllowed").boolean,"Real rule probe claimed reusable runtime closure");
-        for(const auto& image:entryModules)require(fullModules.contains(image),"Entry image identity was absent or changed in the full rule observation");
-        std::cout<<"Observed root modules at entry/full: "<<utf8(name)<<" "<<entryModules.size()<<"/"<<fullModules.size()<<"; closure unclosed\n";
-    }
+    const auto fullModules=root_modules(first),entryModules=root_modules(entryReport);
+    require(entryReport.at("runtimeClosure").str()=="unclosed"&&!entryReport.at("reuseAllowed").boolean,
+        "Entry observation must not claim reusable runtime closure");
+    for(const auto& image:entryModules)require(fullModules.contains(image),
+        "Entry image identity was absent or changed in full execution of the same owned binary");
+    require(entryModules.size()<fullModules.size(),
+        "The real transient DLL must distinguish full execution from entry-only observation");
     const Env telemetry={{L"SNOWDESKTOP_TEST_RUNTIME_REPORT_ROOT",(root/L"telemetry").wstring()}};
     const auto env=run({observer.wstring(),L"--test",L"Env",L"--",observed.wstring(),root.wstring(),L"--env-check"},root,15,telemetry);
     require(env.code==0&&fs::is_directory(root/L"telemetry"),"Observer report routing changed its child environment: "+env.out+env.err);

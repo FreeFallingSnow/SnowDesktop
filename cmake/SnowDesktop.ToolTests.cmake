@@ -60,9 +60,9 @@ if(BUILD_TESTING AND WIN32)
     target_sources(SnowDesktopDeploymentPackagingContractTests PRIVATE tests/release_publication_tests.cpp)
     target_link_libraries(SnowDesktopDeploymentPackagingContractTests PRIVATE SnowDesktopBuildToolTestSupport)
     snowdesktop_add_native_tool_test(SnowDesktopSteamLocalDeployContractTests steam_local_deploy_contract
-        steam_local_deploy_contract_tests.cpp "contract;deployment;integration;steam" 60)
+        steam_local_deploy_contract_tests.cpp "tools;deployment;integration;steam" 60)
     snowdesktop_add_native_tool_test(SnowDesktopDeploymentManifestIntegrationTests deployment_manifest_integration
-        deployment_manifest_integration.cpp "build;integration;packaging;winui" 60)
+        deployment_manifest_integration.cpp "tools;build;integration;packaging;winui" 60)
     snowdesktop_add_native_tool_test(SnowDesktopBuildWorkflowTests build_workflow
         build_workflow_tests.cpp "integration;tools" 300
         tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
@@ -70,8 +70,7 @@ if(BUILD_TESTING AND WIN32)
         build_tools/build_test_dependency_tests.cpp "tools;core;integration" 120)
     snowdesktop_add_native_tool_test(SnowDesktopRuntimeObserverTests test_runtime_modules
         build_tools/build_runtime_observer_tests.cpp "tools;core;integration" 120)
-    add_dependencies(SnowDesktopRuntimeObserverTests SnowDesktopTestRuntimeObserver SnowDesktopRuntimeObserverFixtureA SnowDesktopRuntimeObserverFixtureB
-        SnowDesktopDemoModeRulesTests SnowDesktopWidgetCompositionLayerRulesTests)
+    add_dependencies(SnowDesktopRuntimeObserverTests SnowDesktopTestRuntimeObserver SnowDesktopRuntimeObserverFixtureA SnowDesktopRuntimeObserverFixtureB)
     target_sources(SnowDesktopTestDependencyTests PRIVATE tests/build_tools/build_source_report_tests.cpp tests/build_tools/build_test_runtime_inputs_tests.cpp)
     add_test(NAME test_runtime_inputs COMMAND SnowDesktopTestDependencyTests "${CMAKE_CURRENT_SOURCE_DIR}" --runtime-inputs)
     set_tests_properties(test_runtime_inputs PROPERTIES TIMEOUT 120 LABELS "tools;core;integration"

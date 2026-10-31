@@ -35,7 +35,7 @@
 - 正式测试的源码、驱动及断言使用 C++；被测工具保留自身语言，必要进程/协议/数据夹具不能代替 C++ 验收断言。`SnowDesktopTests` 是测试程序的唯一聚合清单；应用、工具、核心、快速分组及筛选构建均由同一 CMake/CTest 声明和标签派生，不在脚本复制清单。
 - 标准入口 `scripts/test.bat` 无参数仅显示用法。`name <regex>` / `label <regex>` 定向选择；`core` 选应用核心，`fast` 另排除 `integration`，`full` 选应用全量；三者均排除 `tools`、`manual`。`tools` 单选构建工具回归，应用与工具分别报告覆盖。
 - 协作、计划、筛选、PowerShell 启动、等待、重试、共享资源和看板属于 `tools`。普通应用聚合不依赖工具目标，仅工具回归不编译整套应用测试；计划中使用 `-Suites tools` 或明确测试名，可与应用需求合并并分别记覆盖。
-- `manual` 为显式按需诊断，`name/label` 可选、`list` 必须显示。`shell_file_operation_worker` 仅相关 Shell 阻塞或文件操作排查时用 `scripts/test.bat name "^shell_file_operation_worker$"` 执行，预检回归仍在自动集合；手动结果单独报告。
+- `manual` 为显式按需诊断，`name/label` 可选、`list` 必须显示；手动诊断结果单独报告。一次性排查优先使用忽略的任务目录，长期诊断仍须符合测试准入规则。
 - 选择集合必须非空且充分，按实际影响核对 `core/fast` 或正则选中集合。六项必需工具回归不能因依赖缺失被移出清单；阻断、零执行和未运行不得报告通过，不自动安装依赖。
 - CTest 默认并行，并行度来自 `CMakePresets.json`。隔离临时目录、端口、日志、用户数据；共享桌面、Explorer、宿主输出等声明 `RESOURCE_LOCK`，确实无法隔离才 `RUN_SERIAL`。不将整套串行化或用盲目并发/延长超时代替隔离。记录实际并行度、总耗时、失败与未运行项。
 - 真实环境端到端条目标记 `integration`，不进 `fast`。异步检查采用有界条件等待及可控完成顺序，避免固定睡眠；覆盖所测生命周期相关的取消、销毁、交错及部分失败。

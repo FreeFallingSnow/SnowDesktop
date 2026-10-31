@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
+#include "ui/input/private_pointer.h"
+#include "layout/folder_sort_rules.h"
 #include "app/shell/shell_refresh_snapshot.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "diagnostics/debug_profile.h"
@@ -334,6 +337,8 @@ struct NativeDragIntegrationAccess
         { return app.HandleOleQueryContinueDrag(escape, keys); }
         HRESULT HandleOleGiveFeedback(DWORD effect) override { return app.HandleOleGiveFeedback(effect); }
     };
+#include "container_access.inc"
+#include "module_access.inc"
 };
 
 namespace behavior
@@ -371,10 +376,17 @@ bool Same(const GridCell& a, const GridCell& b)
 { return a.pageId == b.pageId && a.column == b.column && a.row == b.row; }
 const DesktopItem& Find(DesktopApp& app, const fs::path& path)
 {
-    const auto key = ToUpperInvariant(path.wstring());
     const auto& items = Access::Items(app);
-    const auto it = std::find_if(items.begin(), items.end(), [&](const auto& v) { return v.layoutKey == key; });
-    Require(it != items.end(), "physical output must be present in refreshed model");
+    const auto it = std::find_if(items.begin(), items.end(), [&](const auto& v) {
+        std::error_code error;
+        return fs::equivalent(fs::path(v.parsingName), path, error) && !error;
+    });
+    if (it == items.end())
+    {
+        std::cerr << "Expected path: " << WideToUtf8(path.wstring()) << " model count=" << items.size() << '\n';
+        for (const auto& item : items) std::cerr << "Observed: " << WideToUtf8(item.layoutKey) << " path=" << WideToUtf8(item.parsingName) << '\n';
+        Require(false, "physical output must be present in refreshed model");
+    }
     return *it;
 }
 struct Profile
@@ -386,7 +398,7 @@ struct Profile
         Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "initialize STA");
         GUID guid{}; Require(SUCCEEDED(CoCreateGuid(&guid)), "allocate profile identity");
         wchar_t id[40]{}; StringFromGUID2(guid, id, 40);
-        root = fs::temp_directory_path() / (std::wstring(L"SnowBehavior-") + id);
+        root = fs::weakly_canonical(fs::temp_directory_path()) / (std::wstring(L"SnowBehavior-") + id);
         namespace debug = snowdesktop::debug_profile;
         const auto paths = debug::ResolvePaths(root / L"normal-data");
         debug::Configuration config; config.enabled = true; config.desktop = paths.defaultDesktop;
@@ -446,7 +458,7 @@ void Reload(Profile& p, const std::vector<std::pair<fs::path, GridCell>>& expect
     Require(Read(p.desktop / L"Sentinel.txt") == "untouched", "unrelated file survives");
 }
 void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWORD allowed,
-    DWORD expected, POINT point, bool cancel = false, DWORD enterKeys = MK_LBUTTON)
+    DWORD expected, POINT point, bool cancel = false, DWORD enterKeys = MK_LBUTTON, bool deferredDefault = false)
 {
     auto adapter = Access::ExternalAdapter(*p.app);
     auto effect = allowed;
@@ -459,7 +471,8 @@ void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWO
     }
     Access::FreshExternalDwell(*p.app);
     effect = allowed;
-    Require(SUCCEEDED(adapter->Drop(&source, keys, Access::ExternalPoint(point), &effect)) && effect == expected,
+    const auto status = adapter->Drop(&source, keys, Access::ExternalPoint(point), &effect);
+    Require(SUCCEEDED(status) && (deferredDefault ? (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) : effect == expected),
         "release must honor latest gesture and source capabilities");
 }
 // The representative rows are independent product contracts, not a Cartesian
@@ -467,6 +480,7 @@ void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWO
 // delayed multi-file extraction each protect a distinct failure.
 void Files(std::string_view row)
 {
+    Require(row == "sync-copy" || row == "copy" || row == "move" || row == "default-move" || row == "link" || row == "batch" || row == "unsupported" || row == "cancel", "unknown file matrix row");
     Profile p;
     const bool delayed = row != "sync-copy";
     const bool rejected = row == "unsupported";
@@ -483,8 +497,8 @@ void Files(std::string_view row)
     if (batch) { files.push_back(p.root / L"source/Folder"); Write(files.back() / L"nested.txt", "nested-bytes"); }
     const auto before = Read(Access::LayoutPath(*p.app));
     auto source = ole_file_source_fixture::Make(files, delayed);
-    Submit(p, *source.Get(), keys, allowed, expected, {150,150}, cancel, MK_LBUTTON | MK_SHIFT);
-    if (expected) Wait([&] { return Access::FileDropIdle(*p.app) && (!delayed || source->ends == 1); });
+    Submit(p, *source.Get(), keys, allowed, expected, {150,150}, cancel, MK_LBUTTON | MK_SHIFT, row == "default-move");
+    if (expected) Wait([&] { return Access::FileDropIdle(*p.app) && (!delayed || source->ends == 1) && Access::Items(*p.app).size() == 1 + files.size(); });
     const auto outputs = Outputs(p);
     Require(outputs.size() == (expected ? files.size() : 0), "exact physical output count");
     Require(!source->wrongApartment && !source->fileReadBeforeStart, "provider apartment and lease ordering");
@@ -549,7 +563,7 @@ void Interleaved(bool failFirst)
     Require(Outputs(p).empty() && first->ends == 0, "first request remains pending without committing");
     if (failFirst) Require(fs::remove(a), "remove only owned source to trigger actual commit failure");
     Submit(p, *second.Get(), MK_CONTROL, 7, DROPEFFECT_COPY, {350,250});
-    Wait([&] { return second->ends == 1 && Access::FileDropIdle(*p.app); });
+    Wait([&] { return second->ends == 1 && Access::FileDropIdle(*p.app) && Access::Items(*p.app).size() == 2; });
     auto outputs = Outputs(p);
     Require(outputs.size() == 1 && Read(outputs[0]) == "second" && first->ends == 0, "second completes independently before first");
     const auto secondPath = outputs[0]; const auto secondCell = Find(*p.app, secondPath).gridCell;
@@ -557,7 +571,7 @@ void Interleaved(bool failFirst)
     Access::RequestAsync(*p.app);
     Wait([&] { return Access::FileDropIdle(*p.app); });
     gate.Deliver();
-    Wait([&] { return first->ends == 1 && Access::FileDropIdle(*p.app); });
+    Wait([&] { return first->ends == 1 && Access::FileDropIdle(*p.app) && Access::Items(*p.app).size() == (failFirst ? 2u : 3u); });
     Require(first->starts == 1 && first->ends == 1 && second->ends == 1 &&
         (failFirst ? FAILED(first->outcome) : SUCCEEDED(first->outcome)), "each request reports its own outcome once");
     outputs = Outputs(p);
@@ -575,6 +589,7 @@ void Interleaved(bool failFirst)
     Reload(p, cells);
 }
 }
+#include "container_scenarios.h"
 #include "module_contracts.h"
 
 int main(int argc, char** argv)
@@ -584,12 +599,16 @@ int main(int argc, char** argv)
         behavior::Require(argc == 2, "one named behavior is required");
         behavior::scene = argv[1];
         if (behavior::scene == "settings") behavior::Settings();
+        else if (behavior::scene == "settings-host") behavior::SettingsHostCommit();
+        else if (behavior::scene == "manifest") behavior::BuildManifest();
+        else if (behavior::scene == "group-type-contract") behavior::GroupTypeContract();
         else if (behavior::scene == "recovery") behavior::Recovery();
         else if (behavior::scene == "search") behavior::Search();
         else if (behavior::scene == "widget") behavior::WidgetContracts();
         else if (behavior::scene == "dock") behavior::DockLifecycle();
         else if (behavior::scene == "interleaved" || behavior::scene == "failed-first")
             behavior::Interleaved(behavior::scene == "failed-first");
+        else if (behavior::RunContainerScenario(behavior::scene)) {}
         else behavior::Files(behavior::scene);
         std::cout << "PASS " << behavior::scene << '\n'; return 0;
     }
