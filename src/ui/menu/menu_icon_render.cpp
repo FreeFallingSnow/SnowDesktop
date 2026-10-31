@@ -24,13 +24,6 @@ struct BitmapDeleter
     void operator()(HBITMAP bitmap) const { if (bitmap) DeleteObject(bitmap); }
 };
 
-int ResolveImageSize(const Metrics& metrics, bool quickAction = false)
-{
-    int size = quickAction ? metrics.quickActionFontHeight : metrics.iconFontHeight;
-    if (metrics.maximumImageSize > 0) size = std::min(size, metrics.maximumImageSize);
-    return std::max(1, size);
-}
-
 HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
     const Metrics& metrics, bool quickAction = false,
     MenuQuickIcon quickIcon = MenuQuickIcon::FontGlyph)
@@ -50,7 +43,9 @@ HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
     }
     if (!palette.colorIcons || builtinIcon == BuiltinIcon::None)
         return nullptr;
-    const int size = ResolveImageSize(metrics, quickAction);
+    int size = quickAction ? metrics.quickActionFontHeight : metrics.iconFontHeight;
+    if (metrics.maximumImageSize > 0)
+        size = std::min(size, metrics.maximumImageSize);
     using Bitmap = std::unique_ptr<std::remove_pointer_t<HBITMAP>, BitmapDeleter>;
     using Key = std::tuple<BuiltinIcon, bool, int>;
     // Only the current draw borrows the bitmap; no menu model owns cache entries.
@@ -574,7 +569,7 @@ bool DrawOpticallyWeightedFluentGlyph(HDC dc, const wchar_t* glyph,
 }
 
 bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
-    bool disabled, int imageSize)
+    bool disabled, int maximumImageSize)
 {
     if (!dc || !image || bounds.right <= bounds.left ||
         bounds.bottom <= bounds.top)
@@ -599,10 +594,12 @@ bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
     const int boundsHeight = static_cast<int>(bounds.bottom - bounds.top);
     int maximum = std::max(1,
         std::min(boundsWidth, boundsHeight));
-    maximum = std::min(maximum, std::max(1, imageSize));
-    const double scale = static_cast<double>(maximum) / std::max(bitmap.bmWidth, bitmap.bmHeight);
-    const int width = std::clamp(static_cast<int>(std::lround(bitmap.bmWidth * scale)), 1, maximum);
-    const int height = std::clamp(static_cast<int>(std::lround(bitmap.bmHeight * scale)), 1, maximum);
+    if (maximumImageSize > 0)
+        maximum = std::min(maximum, maximumImageSize);
+    const int width = std::max(1,
+        std::min(maximum, static_cast<int>(bitmap.bmWidth)));
+    const int height = std::max(1,
+        std::min(maximum, static_cast<int>(bitmap.bmHeight)));
     const int left = (bounds.left + bounds.right - width) / 2;
     const int top = (bounds.top + bounds.bottom - height) / 2;
     const BLENDFUNCTION blend{
@@ -1017,7 +1014,7 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         iconBounds.top += metrics.outerInset;
         iconBounds.bottom -= metrics.outerInset;
         DrawImageLayer(dc, image, iconBounds, disabled,
-            ResolveImageSize(metrics));
+            metrics.maximumImageSize);
     }
     else if (item.glyph && *item.glyph)
     {
@@ -1121,7 +1118,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (image)
     {
         DrawImageLayer(dc, image, iconBounds, disabled,
-            ResolveImageSize(metrics, true));
+            metrics.maximumImageSize);
     }
     else
     {
@@ -1227,7 +1224,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         imageBounds.top += metrics.outerInset;
         imageBounds.bottom -= metrics.outerInset;
         DrawImageLayer(dc, image, imageBounds, disabled,
-            ResolveImageSize(metrics));
+            metrics.maximumImageSize);
     }
     else if (hasGlyph)
     {
@@ -1323,7 +1320,7 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
         iconFont ? static_cast<HGDIOBJ>(iconFont)
                  : GetStockObject(DEFAULT_GUI_FONT));
     if (image)
-        DrawImageLayer(dc, image, glyphBounds, false, ResolveImageSize(metrics));
+        DrawImageLayer(dc, image, glyphBounds, false, metrics.maximumImageSize);
     else
         DrawGlyphLayer(dc, item.glyph, glyphBounds, palette.disabledText, &field);
     if (oldFont) SelectObject(dc, oldFont);

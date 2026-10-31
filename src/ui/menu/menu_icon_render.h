@@ -47,7 +47,7 @@ struct Metrics
     int quickActionTextFontHeight = 12;
     int iconFontHeight = 18;
     int quickActionFontHeight = 18;
-    // Zero uses the logical icon size; compact menus can cap artwork further.
+    // Zero preserves the existing image bounds; compact menus cap package art.
     int maximumImageSize = 0;
 };
 
