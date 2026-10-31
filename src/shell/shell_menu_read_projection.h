@@ -4,6 +4,17 @@
 
 namespace snowdesktop::shell_extensions
 {
+// Static registrations/package roots already name an individual command.
+// Preserve their established authority; dynamic CLSID groups allow exceptions
+// for each generated root without changing unrelated legacy alias scopes.
+inline std::string MenuEntryVisibilityId(const Preferences& prefs, const Entry& entry, Context context)
+{
+    if (const auto* pair = StatePairForVerb(entry.key)) return std::string(pair->id);
+    if (!entry.registration.empty() && !entry.registration.starts_with("clsid:") &&
+        HasVisibilityRule(prefs, entry.registration, context)) return entry.registration;
+    return EntryVisibilityId(prefs, entry, context);
+}
+
 // Popup projection is independent of selected object type. Metadata and
 // management queries never publish provisional user-menu headers.
 inline bool CanPreviewPopupRoots(const Request& request, int depth)

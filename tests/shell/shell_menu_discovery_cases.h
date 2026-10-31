@@ -172,9 +172,10 @@ void CheckManagementNeverExpands()
         }
         return ext::QueryWork{[reply] { return reply; }, {}};
     }, [catalogue] { return catalogue; });
-    service.Inspect();
-    PumpUntil([&] { return !service.Inspect().scanning; }, "deferred-root metadata discovery completes");
-    const auto result = service.Inspect();
+    ext::Request installed; installed.catalogueOnly = true;
+    service.Inspect(installed);
+    PumpUntil([&] { return !service.Inspect(installed).scanning; }, "installed metadata completes without synthetic file samples");
+    const auto result = service.Inspect(installed);
     Expect(metadata == 0 && complete == 0 && sources == 0 && !partialProof,
         "MANAGEMENT_MUST_NOT_SAMPLE: registry file types cannot create synthetic menu queries");
     Expect(result.registrations.rows.size() == 1 && result.catalogue.rows.empty() &&
@@ -306,7 +307,14 @@ void CheckExtensionAndCommandControls()
     ext::SetManagementCommon(individual, alias, ext::Category::Objects, false);
     auto staticEntry = first; staticEntry.registration = "reg:static";
     Expect(ext::VisibleSnapshot(individual, {true, {staticEntry}, {}}, 1).empty(),
-        "editing a static registration retires a legacy canonical alias that would otherwise defeat the switch");
+        "an explicit static registration setting overrides its retained legacy canonical alias");
+    ext::Preferences legacy; ext::SetCommon(legacy, first.provider, ext::Category::Objects, true);
+    ext::SetManagementOverride(legacy, alias, ext::Context::File, ext::Visibility::Hide);
+    auto sibling = first; sibling.registration = "reg:other-application";
+    Expect(ext::VisibleSnapshot(legacy, {true, {staticEntry}, {}}, 1).empty() &&
+        ext::VisibleSnapshot(legacy, {true, {staticEntry}, {}}, 2).size() == 1 &&
+        ext::VisibleSnapshot(legacy, {true, {sibling}, {}}, 1).size() == 1,
+        "a static location edit preserves the legacy alias in other locations and applications");
     const auto encoded = snowdesktop::settings_ipc::Pack(view);
     Expect(snowdesktop::settings_ipc::Unpack<ext::CatalogueView>(encoded).registrations.rows.size() == 1,
         "settings IPC keeps installed sources separate from command observations");
@@ -416,13 +424,26 @@ void CheckWorkerReuseBounds()
 
 void Run()
 {
-    CheckMetadataIsolation();
-    CheckUnrelatedRegistrationDoesNotRetry(false);
-    CheckUnrelatedRegistrationDoesNotRetry(true);
-    CheckManagementNeverExpands();
-    CheckManagementBudgetIsolation();
-    CheckExtensionAndCommandControls();
-    CheckColdExtensionRecovery();
-    CheckWorkerReuseBounds();
+    // Independent fixtures report all broken boundaries in one execution.
+    // A failure must not prevent the other new production paths from running.
+    std::string failures;
+    const auto check = [&](const char* name, const auto& run) {
+        try { run(); }
+        catch (const std::exception& error) {
+            const auto failure = std::string(name) + ": " + error.what();
+            std::cerr << "FAILED CASE " << failure << std::endl;
+            if (!failures.empty()) failures += "; ";
+            failures += failure;
+        }
+    };
+    check("metadata isolation", CheckMetadataIsolation);
+    check("source retry", [] { CheckUnrelatedRegistrationDoesNotRetry(false); });
+    check("source ambiguity", [] { CheckUnrelatedRegistrationDoesNotRetry(true); });
+    check("no format sampling", CheckManagementNeverExpands);
+    check("management budget", CheckManagementBudgetIsolation);
+    check("extension and command controls", CheckExtensionAndCommandControls);
+    check("cold extension recovery", CheckColdExtensionRecovery);
+    check("worker bounds", CheckWorkerReuseBounds);
+    if (!failures.empty()) throw std::runtime_error(failures);
 }
 }

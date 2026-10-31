@@ -2235,8 +2235,8 @@ std::vector<Entry> VisibleEntries(const Preferences &prefs, const std::vector<En
             if (!result.empty() && !result.back().separator)
                 result.push_back(entry);
         }
-        else if (!IsHidden(prefs, EntryVisibilityId(prefs, entry, context), context) &&
-                 !(mixed && IsHidden(prefs, EntryVisibilityId(prefs, entry, Context::Folder), Context::Folder)))
+        else if (!IsHidden(prefs, MenuEntryVisibilityId(prefs, entry, context), context) &&
+                 !(mixed && IsHidden(prefs, MenuEntryVisibilityId(prefs, entry, Context::Folder), Context::Folder)))
             result.push_back(entry);
     }
     while (!result.empty() && result.back().separator)

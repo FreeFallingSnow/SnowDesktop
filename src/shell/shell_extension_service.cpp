@@ -143,7 +143,7 @@ std::vector<Entry> VisibleSnapshot(const Preferences &prefs, const Reply &reply,
             if (contexts & (1u << i))
             {
                 const auto context = static_cast<Context>(i);
-                const auto id = EntryVisibilityId(prefs, entry, context);
+                const auto id = MenuEntryVisibilityId(prefs, entry, context);
                 hidden |= IsHidden(prefs, id, context);
             }
         if (entry.separator) { if (!result.empty() && !result.back().separator) result.push_back(entry); }

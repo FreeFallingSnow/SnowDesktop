@@ -1,5 +1,6 @@
 #pragma once
 #include "shell_extension_catalogue.h"
+#include "shell_menu_read_projection.h"
 #include <cwctype>
 
 namespace snowdesktop::shell_extensions
@@ -158,8 +159,8 @@ inline std::optional<bool> ManagementCommon(const Preferences &prefs, const Mana
     {
         auto id = member.id;
         const auto context = category == Category::Objects ? Context::File : Context::FolderBackground;
-        if (!member.group.empty()) { auto entry = row.display; entry.provider = member.provider.empty() ? id : member.provider; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
-        else if (id == row.display.provider) id = EntryVisibilityId(prefs, row.display, context);
+        if (!member.group.empty()) { auto entry = row.display; entry.provider = member.provider.empty() ? id : member.provider; entry.registration = member.group; id = MenuEntryVisibilityId(prefs, entry, context); }
+        else if (id == row.display.provider) id = MenuEntryVisibilityId(prefs, row.display, context);
         const bool shown = CommonShown(prefs, id, category);
         if (result && *result != shown) return {};
         result = shown;
@@ -172,33 +173,23 @@ inline std::optional<Visibility> ManagementOverride(const Preferences &prefs, co
     for (const auto &member : row.members) if (member.contexts & ContextBit(context))
     {
         auto id = member.id;
-        if (!member.group.empty()) { auto entry = row.display; entry.provider = member.provider.empty() ? id : member.provider; entry.registration = member.group; id = EntryVisibilityId(prefs, entry, context); }
-        else if (id == row.display.provider) id = EntryVisibilityId(prefs, row.display, context);
+        if (!member.group.empty()) { auto entry = row.display; entry.provider = member.provider.empty() ? id : member.provider; entry.registration = member.group; id = MenuEntryVisibilityId(prefs, entry, context); }
+        else if (id == row.display.provider) id = MenuEntryVisibilityId(prefs, row.display, context);
         const auto visibility = OverrideOf(prefs, id, context);
         if (result && *result != visibility) return {};
         result = visibility;
     }
     return result;
 }
-inline void ClearManagementAliases(Preferences& prefs, const ManagementRow& row, Category category)
-{
-    if (row.display.registration.empty() || row.display.provider.empty() ||
-        std::any_of(row.members.begin(), row.members.end(), [&](const auto& member) { return member.id == row.display.provider; })) return;
-    // A known static command previously stored under its canonical alias is
-    // the same control. Retire that alias so it cannot defeat this explicit edit.
-    std::erase_if(prefs.rules, [&](const auto& rule) { return rule.id == row.display.provider && rule.category == category; });
-    std::erase_if(prefs.overrides, [&](const auto& rule) { return rule.id == row.display.provider && CategoryOf(rule.context) == category; });
-    std::erase_if(prefs.shown, [&](const auto& rule) { return rule.id == row.display.provider && CategoryOf(rule.context) == category; });
-}
 inline void SetManagementCommon(Preferences &prefs, const ManagementRow &row, Category category, bool shown)
 {
     Normalize(prefs);
-    ClearManagementAliases(prefs, row, category);
     for (const auto &member : row.members)
     {
         if (!member.group.empty() && member.id != member.group &&
             std::any_of(row.members.begin(), row.members.end(), [&](const auto& parent) { return parent.id == member.group; }))
         {
+            if (!member.group.starts_with("clsid:")) continue;
             // Whole-extension edits clear command exceptions instead of
             // manufacturing new command rules that defeat later inheritance.
             std::erase_if(prefs.rules, [&](const auto& rule) { return rule.id == member.id && rule.category == category; });
@@ -221,8 +212,12 @@ inline void SetManagementResults(Preferences &prefs, const std::vector<Managemen
 }
 inline void SetManagementOverride(Preferences &prefs, const ManagementRow &row, Context context, Visibility value)
 {
-    ClearManagementAliases(prefs, row, CategoryOf(context));
-    for (const auto &member : row.members) if (member.contexts & ContextBit(context)) SetOverride(prefs, member.id, context, value);
+    for (const auto &member : row.members) if (member.contexts & ContextBit(context))
+    {
+        if (!member.group.empty() && !member.group.starts_with("clsid:") && member.id != member.group &&
+            std::any_of(row.members.begin(), row.members.end(), [&](const auto& parent) { return parent.id == member.group; })) continue;
+        SetOverride(prefs, member.id, context, value);
+    }
 }
 enum class ManagementView { Objects, Applications, Extensions };
 struct ManagementCard
