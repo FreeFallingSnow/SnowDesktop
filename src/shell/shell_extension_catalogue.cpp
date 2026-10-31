@@ -300,7 +300,7 @@ Application ModuleApplication(const std::wstring &module)
     return result;
 }
 
-std::wstring ApplicationDirectory(std::wstring directory)
+std::wstring ReadApplicationDirectory(std::wstring directory)
 {
     wchar_t expanded[32768]{};
     if (directory.empty() || !ExpandEnvironmentStringsW(directory.c_str(), expanded, 32768)) return {};
@@ -334,7 +334,16 @@ std::wstring ApplicationDirectory(std::wstring directory)
     if (GetWindowsDirectoryW(windows, 32768) && ApplicationPathContains(ApplicationPathKey(windows), directory)) return {};
     return directory;
 }
-std::wstring ApplicationExecutableRoot(const std::wstring& module)
+using ApplicationDirectoryCache = std::map<std::wstring, std::wstring>;
+std::wstring ApplicationDirectory(std::wstring directory, ApplicationDirectoryCache& cache)
+{
+    const auto key = ApplicationPathKey(directory);
+    if (const auto old = cache.find(key); old != cache.end()) return old->second;
+    auto result = ReadApplicationDirectory(std::move(directory));
+    cache.emplace(key, result);
+    return result;
+}
+std::wstring ApplicationExecutableRoot(const std::wstring& module, ApplicationDirectoryCache& cache)
 {
     auto directory = std::filesystem::path(module).parent_path();
     for (unsigned i = 0; i < 4; ++i)
@@ -348,7 +357,7 @@ std::wstring ApplicationExecutableRoot(const std::wstring& module)
             name != L"app" && name != L"application") break;
         directory = directory.parent_path();
     }
-    return ApplicationDirectory(directory.wstring());
+    return ApplicationDirectory(directory.wstring(), cache);
 }
 struct ApplicationMetadataIndex
 {
@@ -359,6 +368,11 @@ struct ApplicationMetadataIndex
     std::map<std::string, std::wstring> icons;
     std::map<std::wstring, std::string> canonicalProducts;
     std::map<std::wstring, std::wstring> preferredIcons;
+    // These memos live for exactly one inventory scan. Explicit refreshes
+    // revalidate directories, installation records and icon files from scratch.
+    ApplicationDirectoryCache directories;
+    std::map<std::wstring, std::optional<InstalledApplicationRecord>> moduleProfiles;
+    std::map<std::string, std::wstring> validatedIcons;
     explicit ApplicationMetadataIndex(HKEY classes, CatalogueForegroundDemand* foreground)
     {
         if (classes != HKEY_CLASSES_ROOT) return; // Private registry fixtures stay isolated.
@@ -372,10 +386,10 @@ struct ApplicationMetadataIndex
                     const auto name = Localized(Read(hive, path, L"DisplayName"));
                     if (!UsableShellDisplayName(name)) continue;
                     const auto icon = Read(hive, path, L"DisplayIcon");
-                    auto root = ApplicationDirectory(Read(hive, path, L"InstallLocation"));
+                    auto root = ApplicationDirectory(Read(hive, path, L"InstallLocation"), directories);
                     wchar_t iconFile[32768]{}; wcsncpy_s(iconFile, icon.c_str(), _TRUNCATE); PathParseIconLocationW(iconFile);
                     const auto module = LocalModule(iconFile);
-                    const auto iconRoot = ApplicationExecutableRoot(module);
+                    const auto iconRoot = ApplicationExecutableRoot(module, directories);
                     const auto version = std::filesystem::path(root).filename().wstring();
                     if (!root.empty() && !iconRoot.empty() && ApplicationPathContains(iconRoot, root) &&
                         !version.empty() && std::all_of(version.begin(), version.end(), [](wchar_t c) { return iswdigit(c) || c == L'.'; }))
@@ -392,7 +406,7 @@ struct ApplicationMetadataIndex
                         if (!iconRoot.empty() && ApplicationPathContains(iconRoot, ApplicationPathKey(folder.wstring())) &&
                             !uninstallVersion.empty() && std::all_of(uninstallVersion.begin(), uninstallVersion.end(), [](wchar_t c) { return iswdigit(c) || c == L'.'; }))
                             folder = iconRoot;
-                        profiles.Add({ApplicationDirectory(folder.wstring()), name, icon, 20});
+                        profiles.Add({ApplicationDirectory(folder.wstring(), directories), name, icon, 20});
                     }
                 }
             const std::wstring base = L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths";
@@ -401,7 +415,7 @@ struct ApplicationMetadataIndex
                 const auto module = CommandModule(Read(hive, base + L"\\" + key));
                 if (module.empty()) continue;
                 const auto application = ModuleApplication(module);
-                profiles.Add({ApplicationExecutableRoot(module), application.name, module, 10});
+                profiles.Add({ApplicationExecutableRoot(module, directories), application.name, module, 10});
             }
         }
     }
@@ -415,7 +429,7 @@ struct ApplicationMetadataIndex
         {
             const auto current = ApplicationPathKey(directory.wstring());
             if (const auto old = boundaries.find(current); old != boundaries.end()) { result = old->second; break; }
-            if (ApplicationDirectory(directory.wstring()).empty()) break;
+            if (ApplicationDirectory(directory.wstring(), directories).empty()) break;
             visited.push_back(current);
             const auto leaf = ApplicationPathKey(directory.filename().wstring());
             if (leaf == L"app" || leaf == L"application" || leaf == L"bin" || leaf == L"bin64" || leaf == L"bin32") continue;
@@ -432,6 +446,8 @@ struct ApplicationMetadataIndex
     }
     std::optional<InstalledApplicationRecord> Profile(const std::wstring& module)
     {
+        const auto key = ApplicationPathKey(module);
+        if (const auto old = moduleProfiles.find(key); old != moduleProfiles.end()) return old->second;
         auto profile = profiles.Find(module);
         const auto boundary = !profile || profile->strength <= 10 ? Boundary(std::filesystem::path(module).parent_path()) : std::wstring{};
         if (!boundary.empty() && (!profile || (profile->strength <= 10 && ApplicationPathContains(boundary, profile->root))))
@@ -448,7 +464,8 @@ struct ApplicationMetadataIndex
             profile = InstalledApplicationRecord{boundary, name, boundary + L"\\Uninstall.exe", 15};
         }
         // App Paths describes an executable, not necessarily an installation.
-        if (profile && profile->strength <= 10) return {};
+        if (profile && profile->strength <= 10) profile.reset();
+        moduleProfiles.emplace(key, profile);
         return profile;
     }
     void Prepare(const std::map<std::string, std::wstring>& registrations, CatalogueForegroundDemand* foreground)
@@ -460,7 +477,7 @@ struct ApplicationMetadataIndex
             if (module.empty() || registered.contains(module)) continue;
             const auto application = ModuleApplication(module);
             registered.emplace(module, application);
-            const auto root = ApplicationExecutableRoot(module);
+            const auto root = ApplicationExecutableRoot(module, directories);
             if (ApplicationPathKey(std::filesystem::path(module).extension().wstring()) == L".exe" &&
                 application.id.starts_with("product:") &&
                 ApplicationPathKey(std::filesystem::path(root).filename().wstring()) == ApplicationPathKey(application.name))
@@ -477,7 +494,7 @@ struct ApplicationMetadataIndex
             if (application.id.starts_with("product:") && name == installed) products[profile->root].insert(application.id);
             wchar_t iconFile[32768]{}; wcsncpy_s(iconFile, profile->icon.c_str(), _TRUNCATE); PathParseIconLocationW(iconFile);
             if (!name.empty() && installed.starts_with(name) && ApplicationPathKey(std::filesystem::path(module).extension().wstring()) == L".exe" &&
-                !ApplicationPathContains(profile->root, ApplicationPathKey(iconFile)) && ApplicationExecutableRoot(module) == profile->root)
+                !ApplicationPathContains(profile->root, ApplicationPathKey(iconFile)) && ApplicationExecutableRoot(module, directories) == profile->root)
                 preferredIcons[profile->root] = module;
         }
         for (const auto& [root, values] : products) if (values.size() == 1) canonicalProducts[root] = *values.begin();
@@ -504,10 +521,13 @@ struct ApplicationMetadataIndex
     std::wstring Icon(const std::string& id)
     {
         std::lock_guard lock(mutex);
+        if (const auto old = validatedIcons.find(id); old != validatedIcons.end()) return old->second;
         const auto found = icons.find(id);
         if (found == icons.end()) return {};
         wchar_t path[32768]{}; wcsncpy_s(path, found->second.c_str(), _TRUNCATE); PathParseIconLocationW(path);
-        return GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES ? std::wstring{} : found->second;
+        auto result = GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES ? std::wstring{} : found->second;
+        validatedIcons.emplace(id, result);
+        return result;
     }
 };
 // Index small ASCII value lists only for this verb. Missing metadata fields do
@@ -883,8 +903,11 @@ struct Scanner
         // This postpass belongs only to the software inventory. Scope proofs
         // and menu revisions retain the original registration metadata, so
         // presentation grouping cannot invalidate or authorize native menus.
+        MenuTiming timing("catalogue.classification");
         ApplicationMetadataIndex metadata(classes, control);
+        timing.Record("profiles");
         metadata.Prepare(registrationModules, control);
+        timing.Record("prepared");
         for (auto& row : result.rows)
         {
             if (control) control->WaitUntilAllowed();
@@ -897,22 +920,27 @@ struct Scanner
                 row.revision = Hash(settings_ipc::Pack(row.revision, row.application));
             }
         }
+        timing.Record("names", static_cast<unsigned>(metadata.modules.size()));
         // Resolve every member first so one shared product icon also reaches
         // registrations that sort before the representative executable.
+        std::map<std::wstring, Entry> images;
         for (auto& row : result.rows)
         {
             if (control) control->WaitUntilAllowed();
             const auto icon = metadata.Icon(row.application.id);
             if (!icon.empty())
             {
-                Entry image; Image(image, icon);
+                const auto [stored, inserted] = images.try_emplace(icon);
+                if (inserted) Image(stored->second, icon);
+                const auto& image = stored->second;
                 if (!image.pixels.empty() && (row.display.width != image.width || row.display.height != image.height || row.display.pixels != image.pixels))
                 {
-                    row.display.width = image.width; row.display.height = image.height; row.display.pixels = std::move(image.pixels);
+                    row.display.width = image.width; row.display.height = image.height; row.display.pixels = image.pixels;
                     row.revision = Hash(settings_ipc::Pack(row.revision, row.display.width, row.display.height, row.display.pixels));
                 }
             }
         }
+        timing.Record("icons", static_cast<unsigned>(images.size()));
     }
     void Verb(const std::wstring &path, unsigned contexts, const std::vector<std::wstring> &types)
     {

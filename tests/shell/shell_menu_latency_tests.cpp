@@ -550,7 +550,15 @@ void BenchmarkMenuBackgroundAndManagement()
                 {
                     if (!first) std::cout << ','; first = false;
                     std::cout << "{\"id\":" << quote(row.id) << ",\"name\":" << quote(utf8(row.display.label))
-                        << ",\"category\":" << static_cast<unsigned>(category) << ",\"members\":" << row.members.size() << '}';
+                        << ",\"category\":" << static_cast<unsigned>(category) << ",\"members\":" << row.members.size()
+                        << ",\"source_ids\":[";
+                    bool firstSource = true;
+                    for (const auto& id : row.members)
+                    {
+                        if (!firstSource) std::cout << ',';
+                        firstSource = false; std::cout << quote(id.id);
+                    }
+                    std::cout << "]}";
                 }
             std::cout << "]}" << std::endl;
         }
