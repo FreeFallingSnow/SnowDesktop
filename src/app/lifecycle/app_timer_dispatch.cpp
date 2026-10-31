@@ -203,7 +203,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             completions.begin(), completions.end(), [](const auto& value) {
                 return !value.expectedUnsubscribedPublishedFileId.empty();
             });
-        if (synchronizationSucceeded && hasUnsubscribeCompletion &&
+        if (ready->snapshot.CanSynchronize() && hasUnsubscribeCompletion &&
             !hostReloaded)
         {
             // Run the same host reconciliation pass even if the managed
@@ -227,7 +227,10 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 continue;
             bool completionSucceeded = synchronizationSucceeded;
             std::wstring completionMessage = synchronizationMessage;
-            if (completionSucceeded &&
+            // An accepted unsubscribe concerns this item, not every update in
+            // the same reconciliation. A different package may need permission
+            // review even though this item's package was removed successfully.
+            if (ready->snapshot.CanSynchronize() &&
                 !completion.expectedUnsubscribedPublishedFileId.empty())
             {
                 const std::string& expectedPublishedFileId =
@@ -261,6 +264,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                     });
                 completionSucceeded = !stillSubscribed &&
                     !managedPackageRemains && !expectedPackageRemains;
+                // Let the settings page use its operation-specific success
+                // message instead of reporting success for the entire sync.
+                completionMessage.clear();
                 if (!completionSucceeded)
                 {
                     completionMessage = _LW(

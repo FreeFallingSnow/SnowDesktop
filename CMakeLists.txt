@@ -3348,6 +3348,7 @@ if (BUILD_TESTING)
     endforeach()
     foreach(NATIVE_ADDITIONAL_CASE IN ITEMS
         "widget_package_restore|--widget-package-restore"
+        "workshop_unsubscribe_completion|--workshop-unsubscribe-completion"
         "native_widget_folder_search|--widget-folder-search"
         "native_group_search_type|--group-type-search"
         "native_group_tab_dwell|--group-dwell"

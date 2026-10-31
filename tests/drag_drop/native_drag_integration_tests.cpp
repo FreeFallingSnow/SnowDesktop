@@ -1196,10 +1196,12 @@ struct NativeDragIntegrationAccess
 #include "../platform/native_widget_settings_access.inc"
 #include "../dock/native_dock_removal_access.inc"
 #include "../widget/native_widget_surface_handoff_access.inc"
+#include "../steam/native_workshop_completion_access.inc"
 #include "../system/native_status_selection_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
+#include "../steam/workshop_unsubscribe_completion_cases.h"
 #include "native_drag_foreground_damage_cases.h"
 #include "native_async_layout_save_cases.h"
 #include "native_drag_reload_cases.h"
@@ -1361,6 +1363,8 @@ int main(int argc, char** argv)
             widget_package_restore_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--widget-package-restore-negative-control")
             widget_package_restore_cases::Run(true);
+        else if (argc == 2 && std::string_view(argv[1]) == "--workshop-unsubscribe-completion")
+            workshop_unsubscribe_completion_cases::Run();
         else if (argc == 4 && std::string_view(argv[1]) == "--dock-preview-fixture")
             return native_preview_order_cases::RunFixture(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order") native_preview_order_cases::Run();
