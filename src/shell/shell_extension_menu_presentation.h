@@ -2,6 +2,7 @@
 #include "ui/menu/modern_menu.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_service.h"
+#include "shell_extension_menu_rows.h"
 #include <algorithm>
 #include <set>
 
@@ -163,7 +164,7 @@ class Presentation
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
         MoveMoreToBottom(items, moreCommand);
-        if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries), {}, cachedOriginal_), moreCommand);
+        if (cached_) UpdateNormal(items, cached_->entries, moreCommand, false, cachedOriginal_);
         if (!normalDone_)
         {
             const auto view = service_.MenuDisplay(normalSource_, prefs_, true);
@@ -196,7 +197,6 @@ class Presentation
                     if (view.pending) progressed |= ShowRoots(updated, view, moreCommand);
                     if (!view.pending)
                     {
-                        progressed |= RemoveRoots(updated);
                         if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
                         {
                             auto additions = std::move(view.snapshot->entries);
@@ -206,20 +206,11 @@ class Presentation
                                 return (startLane_ && pair && pair->id == "state:start-pin") ||
                                     (warm && !cachedOriginal_ && refreshState_ && !pair);
                             });
-                            if (!normalSource_.originalShortcutOnly && (!originalCommands_.empty() || !sources_.empty()))
-                                progressed |= SupplementChildren(updated, additions);
-                            additions = NewNormalEntries(std::move(additions));
-                            if (!additions.empty())
-                            {
-                                auto converted = Convert(additions, {}, normalSource_.originalShortcutOnly);
-                                ReuseRootRows(converted);
-                                Insert(updated, converted, moreCommand);
-                                progressed = true;
-                            }
+                            progressed |= UpdateNormal(updated, additions, moreCommand, false,
+                                normalSource_.originalShortcutOnly, true);
                         }
+                        progressed |= RemoveRoots(updated);
                         normalDone_ = !view.attributionPending;
-                        rootImages_.clear();
-                        rootRows_.clear();
                         progressed |= normalDone_;
                     }
                 }
@@ -229,7 +220,7 @@ class Presentation
                     if (!view.pending)
                     {
                         if (view.snapshot && view.revision > startRevision_ && view.error.empty())
-                            Insert(updated, Convert(view.snapshot->entries), moreCommand);
+                            UpdateNormal(updated, view.snapshot->entries, moreCommand);
                         startDone_ = progressed = true;
                     }
                 }
@@ -256,61 +247,19 @@ class Presentation
     bool ShowRoots(std::vector<modern_menu::Item> &items, const MenuView &view, UINT moreCommand)
     {
         if (cached_ || rootsShown_ || !view.roots || view.roots->entries.empty()) return false;
-        auto entries = NewNormalEntries(view.roots->entries);
-        auto converted = Convert(entries);
-        for (size_t i = 0; i < converted.size(); ++i)
-        {
-            auto &item = converted[i];
-            // Separators belong to this provisional batch too; retaining one
-            // would leave a duplicate/leading divider after final publication.
-            rootCommands_.insert(item.command);
-            if (!item.separator)
-            {
-                // Leaf headers are provisional too. Enable them in place when
-                // the same query finishes, even while the pointer stays here.
-                item.childrenPending = true;
-                rootReferences_.push_back(AppendReference({}, entries[i]));
-                rootImages_[item.command] = item.image;
-                rootRows_.push_back({item.command, item.label});
-            }
-        }
-        Insert(items, converted, moreCommand);
         rootsShown_ = true;
-        return !converted.empty();
-    }
-    void ReuseRootRows(std::vector<modern_menu::Item> &items)
-    {
-        std::set<UINT> used;
-        for (const auto &item : items)
-            if (rootImages_.contains(item.command)) used.insert(item.command);
-        for (auto &item : items) if (!item.separator)
-        {
-            if (!rootImages_.contains(item.command))
-            {
-                // Provisional headers carry no executable identity. Descendant
-                // normalization/native fallback may refine the final reference;
-                // keep the same labelled header while binding its NEW reference.
-                const auto old = std::find_if(rootRows_.begin(), rootRows_.end(), [&](const auto &row) {
-                    return row.second == item.label && !used.contains(row.first);
-                });
-                if (old != rootRows_.end())
-                {
-                    commands_[old->first] = commands_.at(item.command);
-                    item.command = old->first; used.insert(item.command);
-                }
-            }
-            if (const auto image = rootImages_.find(item.command); image != rootImages_.end() && image->second)
-                item.image = image->second;
-        }
+        return UpdateNormal(items, view.roots->entries, moreCommand, true);
     }
     bool RemoveRoots(std::vector<modern_menu::Item> &items)
     {
         if (rootCommands_.empty()) return false;
-        std::erase_if(items, [&](const auto &item) { return rootCommands_.contains(item.command); });
-        for (const auto &reference : rootReferences_)
-            if (const auto old = std::find(displayedNormal_.begin(), displayedNormal_.end(), reference); old != displayedNormal_.end())
-                displayedNormal_.erase(old);
-        rootReferences_.clear(); rootCommands_.clear();
+        std::erase_if(items, [&](const auto &item) {
+            if (!rootCommands_.contains(item.command)) return false;
+            rowEntries_.erase(item.command);
+            return true;
+        });
+        rootCommands_.clear();
+        presentation_detail::RemoveEmptySeparators(items);
         return true;
     }
     struct SourceLane { Request request; bool done = false; };
@@ -343,50 +292,38 @@ class Presentation
                 // State-changing commands retain their per-opening refresh and
                 // dedicated execution rules, even when a source emits them too.
                 std::erase_if(additions, [](const auto &entry) { return StatePairForVerb(entry.key) != nullptr; });
-                Insert(items, Convert(NewNormalEntries(std::move(additions))), moreCommand);
+                UpdateNormal(items, additions, moreCommand);
             }
             source.done = true;
             progressed = true;
         }
         return progressed;
     }
-    bool SupplementChildren(std::vector<modern_menu::Item> &items, const std::vector<Entry> &entries,
-                            const CommandReference &parent = {})
+    // Rebind visible IDs to the fresh exact reference, including descendants
+    // whose parent acquired registration metadata. Never relax execution lookup.
+    void RebindRow(modern_menu::Item &next, const modern_menu::Item &previous)
     {
-        bool changed = false, divider = false;
-        std::vector<CommandReference> observed;
-        for (const auto &entry : entries)
+        const auto reference = commands_.at(next.command);
+        const bool original = originalCommands_.contains(next.command);
+        commands_[previous.command] = reference;
+        if (original) originalCommands_.insert(previous.command);
+        else originalCommands_.erase(previous.command);
+        next.command = previous.command;
+        std::set<UINT> used;
+        for (auto &child : next.children) if (!child.separator)
         {
-            if (entry.separator) { divider = true; continue; }
-            const auto reference = AppendReference(parent, entry);
-            observed.push_back(reference);
-            auto remaining = std::count(observed.begin(), observed.end(), reference);
-            auto existing = items.end();
-            for (auto item = items.begin(); item != items.end(); ++item)
+            const auto &childReference = commands_.at(child.command);
+            const auto old = std::find_if(previous.children.begin(), previous.children.end(), [&](const auto &candidate) {
+                const auto found = commands_.find(candidate.command);
+                return !candidate.separator && !used.contains(candidate.command) && found != commands_.end() &&
+                    presentation_detail::SameDisplayReference(found->second.back(), childReference.back());
+            });
+            if (old != previous.children.end())
             {
-                const auto command = commands_.find(item->command);
-                if (!item->separator && command != commands_.end() && command->second == reference && --remaining == 0)
-                { existing = item; break; }
+                used.insert(old->command);
+                RebindRow(child, *old);
             }
-            if (existing != items.end())
-            {
-                if (!entry.children.empty())
-                    changed |= SupplementChildren(existing->children, entry.children, reference);
-            }
-            else if (!parent.empty())
-            {
-                if (divider && !items.empty() && !items.back().separator)
-                { modern_menu::Item separator; separator.separator = true; items.push_back(separator); }
-                // Keep command IDs of visible siblings, including repeated
-                // canonical commands, distinct from the new child subtree.
-                for (const auto &command : commands_) converting_.insert(command.first);
-                auto additions = Convert({entry}, parent);
-                items.insert(items.end(), std::make_move_iterator(additions.begin()), std::make_move_iterator(additions.end()));
-                changed = true;
-            }
-            divider = false;
         }
-        return changed;
     }
     static bool IsOurCommand(UINT command)
     {
@@ -397,60 +334,94 @@ class Presentation
     {
         if (additions.empty())
             return;
+        const auto anchor = std::find_if(items.begin(), items.end(),
+            [=](const auto &item) { return moreCommand && item.command == moreCommand; });
+        if (anchor != items.end())
+        {
+            // Attach already established the host/footer boundary. Moving it
+            // again here would create one separator per arriving query batch.
+            items.insert(anchor, additions.begin(), additions.end());
+            return;
+        }
         if (!items.empty() && !items.back().separator &&
-            std::none_of(items.begin(), items.end(),
-                         [=](const auto &item) { return moreCommand && item.command == moreCommand; }))
+            std::none_of(items.begin(), items.end(), [](const auto &item) {
+                return !item.separator && IsOurCommand(item.command);
+            }))
         {
             modern_menu::Item divider;
             divider.separator = true;
             divider.command = FirstCommand;
             items.push_back(divider);
         }
-        InsertBeforeMore(items, additions, moreCommand, false);
+        items.insert(items.end(), additions.begin(), additions.end());
     }
-    std::vector<Entry> NewNormalEntries(std::vector<Entry> entries)
+    bool UpdateNormal(std::vector<modern_menu::Item> &items, const std::vector<Entry> &entries,
+                      UINT moreCommand, bool pending = false, bool original = false,
+                      bool completeRoots = false)
     {
-        std::vector<Entry> result;
-        const auto previous = displayedNormal_;
-        std::vector<CommandReference> observed;
-        for (auto &entry : entries)
+        bool changed = false;
+        std::set<UINT> used;
+        std::vector<modern_menu::Item> additions;
+        for (const auto &entry : entries)
         {
-            if (entry.separator)
+            // Top-level extensions form one continuous section. Native
+            // separators inside their submenus remain in the converted tree.
+            if (entry.separator) continue;
+            auto found = std::find_if(items.begin(), items.end(), [&](const auto &item) {
+                const auto row = rowEntries_.find(item.command);
+                return !used.contains(item.command) && row != rowEntries_.end() &&
+                    originalCommands_.contains(item.command) == original &&
+                    presentation_detail::SameDisplayEntry(row->second, entry);
+            });
+            if (found == items.end() && completeRoots)
             {
-                if (!result.empty() && !result.back().separator)
-                    result.push_back(std::move(entry));
+                // Only this query's non-executable preview may refine its
+                // identity after materializing children/native fallbacks.
+                // Complete rows from other sources never match by caption.
+                found = std::find_if(items.begin(), items.end(), [&](const auto &item) {
+                    return !used.contains(item.command) && rootCommands_.contains(item.command) &&
+                        item.label == entry.label;
+                });
+            }
+            if (found != items.end())
+            {
+                const auto command = found->command;
+                used.insert(command);
+                if (pending) continue; // A preview cannot downgrade a complete source row.
+                const auto &previous = rowEntries_.at(command);
+                auto merged = presentation_detail::MergeEntry(previous, entry, rootCommands_.contains(command));
+                if (!rootCommands_.contains(command) && presentation_detail::SameEntry(previous, merged)) continue;
+                auto converted = Convert({merged}, {}, original).front();
+                if (previous.width == merged.width && previous.height == merged.height && previous.pixels == merged.pixels)
+                    converted.image = found->image;
+                RebindRow(converted, *found);
+                *found = std::move(converted);
+                rowEntries_[command] = std::move(merged);
+                rootCommands_.erase(command);
+                changed = true;
                 continue;
             }
-            const auto reference = AppendReference({}, entry);
-            observed.push_back(reference);
-            if (std::count(observed.begin(), observed.end(), reference) <=
-                std::count(previous.begin(), previous.end(), reference))
-                continue;
-            displayedNormal_.push_back(reference);
-            result.push_back(std::move(entry));
+            auto converted = Convert({entry}, {}, original).front();
+            converted.childrenPending = pending;
+            rowEntries_[converted.command] = entry;
+            if (pending) rootCommands_.insert(converted.command);
+            additions.push_back(std::move(converted));
         }
-        while (!result.empty() && result.back().separator)
-            result.pop_back();
-        return result;
+        Insert(items, additions, moreCommand);
+        return changed || !additions.empty();
     }
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
                                            const CommandReference &parent = {}, bool original = false)
     {
-        if (parent.empty())
-            converting_.clear();
         std::vector<modern_menu::Item> result;
         for (const auto &e : entries)
         {
             modern_menu::Item item;
             const auto reference = AppendReference(parent, e);
-            const auto existing = std::find_if(commands_.begin(), commands_.end(), [&](const auto &command) {
-                return command.second == reference && !converting_.contains(command.first);
-            });
-            item.command = existing == commands_.end() ? ++nextCommand_ : existing->first;
+            item.command = ++nextCommand_;
             commands_[item.command] = reference;
             if (original) originalCommands_.insert(item.command);
             else originalCommands_.erase(item.command);
-            converting_.insert(item.command);
             item.label = e.label;
             item.accessKey = e.accessKey;
             item.enabled = e.enabled;
@@ -491,9 +462,8 @@ class Presentation
     unsigned contexts_ = 0;
     UINT nextCommand_ = FirstCommand;
     std::map<UINT, CommandReference> commands_;
-    std::set<UINT> converting_;
     std::set<UINT> originalCommands_;
-    std::vector<CommandReference> displayedNormal_;
+    std::map<UINT, Entry> rowEntries_;
     std::vector<SourceLane> sources_;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
@@ -504,8 +474,5 @@ class Presentation
     std::vector<HBITMAP> images_;
     bool rootsShown_ = false;
     std::set<UINT> rootCommands_;
-    std::vector<CommandReference> rootReferences_;
-    std::map<UINT, HBITMAP> rootImages_;
-    std::vector<std::pair<UINT, std::wstring>> rootRows_;
 };
 } // namespace snowdesktop::shell_extensions

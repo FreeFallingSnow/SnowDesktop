@@ -1,6 +1,7 @@
 #include "shell/shell_extension_menu_presentation.h"
 #include "shell/shell_menu_read_projection.h"
 #include "ui/menu/modern_menu_dynamic_items_rules.h"
+#include "shell_service_catalogue_fixture.h"
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -91,7 +92,7 @@ static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, b
     popup.Attach(items, options, 0);
     auto poll = [&] { if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next); };
     Until([&] { poll(); return !items.empty(); }, "root becomes visible while the full query is deliberately blocked");
-    Check(items.size() == 3 && items.front().label == L"Provider" && items.front().childrenPending,
+    Check(items.size() == 2 && items.front().label == L"Provider" && items.front().childrenPending,
         "root carries a transient pending subtree");
     Check(items.front().children.size() == 1 && !items.front().children.front().enabled,
         "unfinished children expose no enabled command");
@@ -115,8 +116,8 @@ static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, b
     // sufficient for every child to finish and publish automatically.
     finish = true;
     Until([&] { poll(); return options.pollItemsFinished(); }, "children finish without an enter-submenu request");
-    Check(items.size() == 3 && !items.front().separator && items[1].separator && !items.back().separator,
-        "final publication replaces provisional dividers without leading or duplicate separators");
+    Check(items.size() == 2 && !items.front().separator && !items.back().separator,
+        "top-level extensions remain one section without native or publication-batch dividers");
     Check(queries == 1 && items.front().command == parentCommand && items.front().image == image,
         "one query retains root command identity and image while completing children");
     Check(!items.front().childrenPending && items.front().children.front().label == L"Ready action",
@@ -138,8 +139,143 @@ static void RunRootPrefetchCase(const wchar_t* extension, bool folder = false, b
     service.Shutdown();
 }
 
+static void RunStableSourceCompletion(bool footer)
+{
+    Workspace workspace;
+    const auto selected = workspace.path / L"selected.txt", cache = workspace.path / L"cache";
+    std::ofstream(selected) << "private stable menu fixture";
+    ext::Request request; request.paths = {selected.wstring()}; request.context = ext::Context::File;
+    ext::Catalogue catalogue; catalogue.revision = 1;
+    for (int index = 0; index < 2; ++index)
+    {
+        ext::Registration source;
+        const auto clsid = "{185581d0-0f34-4419-9439-36d1032d901" + std::to_string(index) + "}";
+        source.id = "clsid:" + clsid; source.verbs = {clsid};
+        source.kind = ext::RegistrationKind::Handler; source.contexts = 1; source.types = {L"*"};
+        source.sources = {L"*\\shellex\\ContextMenuHandlers\\Stable" + std::to_wstring(index)};
+        source.revision = source.menuRevision = 1;
+        catalogue.rows.push_back(std::move(source));
+    }
+    shell_service_fixture::SeedMetadata(cache, catalogue);
+    ext::Entry rar; rar.provider = "verb:rar-stable"; rar.key = "rar-stable"; rar.label = L"WinRAR";
+    ext::Entry seven; seven.provider = "verb:seven-stable"; seven.key = "seven-stable"; seven.label = L"7-Zip";
+    ext::Entry child; child.key = "archive-action"; child.label = L"Archive action"; child.token = 91;
+    seven.children = {child};
+    auto sourceSeven = seven;
+    sourceSeven.width = sourceSeven.height = 1; sourceSeven.pixels = {10, 20, 30, 255};
+    auto otherSeven = seven;
+    otherSeven.provider = "verb:other-seven"; otherSeven.key = "other-seven";
+    otherSeven.children.front().token = 92;
+    auto preview = seven;
+    ext::Entry loading; loading.label = L"…"; loading.enabled = false; preview.children = {loading};
+    ext::Entry divider; divider.separator = true;
+    ext::Preferences prefs;
+    for (const auto &source : catalogue.rows) ext::SetCommon(prefs, source.id, ext::Category::Objects, true);
+    for (const auto &entry : {rar, seven, otherSeven}) ext::SetCommon(prefs, entry.provider, ext::Category::Objects, true);
+    std::atomic_bool releaseSeven = false, releaseAggregate = false;
+    std::atomic<unsigned> invoked = 0;
+    ext::MenuService service(cache, [&](const ext::Request &target) {
+        const bool source = !target.sourceClsid.empty();
+        const bool archiveSource = target.sourceClsid == std::wstring(catalogue.rows.back().verbs.front().begin(),
+            catalogue.rows.back().verbs.front().end());
+        auto sent = std::make_shared<bool>(false);
+        ext::QueryWork work;
+        work.poll = [&, source, archiveSource]() -> std::optional<ext::Reply> {
+            if (source)
+            {
+                if (archiveSource && !releaseSeven) return {};
+                return ext::Reply{true, {archiveSource ? sourceSeven : rar}, {}};
+            }
+            if (!releaseAggregate) return {};
+            // Reverse the root order and retain legitimate same-caption commands.
+            return ext::Reply{true, {sourceSeven, divider, rar, divider, otherSeven}, {}};
+        };
+        if (!source) work.pollRoots = [&, sent]() -> std::optional<ext::Reply> {
+            if (std::exchange(*sent, true)) return {};
+            return ext::Reply{true, {preview, divider, rar}, {}};
+        };
+        work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
+        work.invoke = [&, source](UINT token, POINT) {
+            Check(!source && token == 91, "stable row invocation uses the aggregate's exact fresh child reference");
+            ++invoked;
+        };
+        return work;
+    }, [catalogue] { return catalogue; }, {}, {},
+       [catalogue](const auto &seeds) { return shell_service_fixture::Sources(catalogue, seeds); });
+    service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    menu::Item host; host.command = 5; host.label = L"Host action";
+    menu::Item more; more.command = 7; more.label = L"More";
+    std::vector<menu::Item> items{host}; if (footer) items.push_back(more);
+    menu::Options options; popup.Attach(items, options, footer ? 7 : 0);
+    const auto poll = [&] { if (auto next = options.pollItems(items, true)) items = std::move(*next); };
+    const auto archives = [&] { return std::count_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"7-Zip"; }); };
+    Until([&] { poll(); return archives() == 1; }, "aggregate preview appears while the independent archive source is held");
+    const auto archive = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"7-Zip"; });
+    const auto position = std::distance(items.begin(), archive);
+    const auto command = archive->command;
+    Check(archive->childrenPending && !archive->image, "private archive preview begins pending without an icon");
+    const auto rowCommands = [&] {
+        std::vector<UINT> commands;
+        for (const auto &item : items) if (!item.separator && item.command != 7) commands.push_back(item.command);
+        return commands;
+    };
+    const auto initialCommands = rowCommands();
+    releaseSeven = true;
+    Until([&] {
+        poll();
+        const auto view = service.MenuDisplay(request, prefs, true);
+        return std::any_of(view.sources.begin(), view.sources.end(), [&](const auto &source) {
+            if (source.sourceClsid != std::wstring(catalogue.rows.back().verbs.front().begin(),
+                    catalogue.rows.back().verbs.front().end())) return false;
+            const auto ready = service.MenuDisplay(source, prefs, true);
+            return ready.snapshot.has_value() && !ready.pending && !ready.attributionPending;
+        });
+    },
+        "independent archive payload completes while the aggregate stays held");
+    poll();
+    Check(archives() == 1 && rowCommands() == initialCommands &&
+        items[static_cast<size_t>(position)].command == command && items[static_cast<size_t>(position)].image &&
+        !items[static_cast<size_t>(position)].childrenPending,
+        "LATE_SOURCE_NO_DUPLICATE: ownership and icon arrival complete the same preview row in place");
+    Check(std::count_if(items.begin(), items.end(), [](const auto &item) { return item.separator; }) == 1,
+        "ONE_EXTENSION_BOUNDARY: independent batches do not introduce per-provider dividers");
+    const auto childCommand = items[static_cast<size_t>(position)].children.front().command;
+    releaseAggregate = true;
+    Until([&] { poll(); return options.pollItemsFinished(); }, "aggregate finalizes without reordering visible source rows");
+    const auto completedCommands = rowCommands();
+    Check(completedCommands.size() == initialCommands.size() + 1 &&
+        std::equal(initialCommands.begin(), initialCommands.end(), completedCommands.begin()) && archives() == 2,
+        "STABLE_ROOT_ORDER: reversed aggregate order retains positions and a distinct same-caption command");
+    Check(items[static_cast<size_t>(position)].command == command &&
+        items[static_cast<size_t>(position)].children.front().command == childCommand,
+        "root and child command IDs survive aggregate ownership reconciliation");
+    Check(std::count_if(items.begin(), items.end(), [](const auto &item) { return item.separator; }) == 1 &&
+        !items.front().separator && !items.back().separator,
+        "completed extension section has exactly one host boundary with or without the footer");
+    Check(popup.Invoke(childCommand, {}), "the retained child command remains invokable");
+    Until([&] { return invoked == 1; }, "retained command resolves against a fresh aggregate exactly once");
+    service.Shutdown();
+}
+
 void TestShellMenuRootPrefetch()
 {
+    {
+        ext::Entry original; original.provider = "verb:stable"; original.key = "stable"; original.label = L"7-Zip";
+        auto owned = original; owned.registration = "clsid:first";
+        Check(ext::presentation_detail::SameDisplayEntry(original, owned), "late ownership is display metadata");
+        auto different = owned; different.registration = "clsid:second";
+        Check(!ext::presentation_detail::SameDisplayEntry(owned, different), "known distinct owners never collapse by title");
+        different = original; different.key = "different";
+        Check(!ext::presentation_detail::SameDisplayEntry(original, different), "same-caption different canonical commands stay distinct");
+        original.children = {owned, owned}; owned.children = {different};
+        auto incoming = original; incoming.children.push_back(owned);
+        const auto merged = ext::presentation_detail::MergeEntry(original, incoming, false);
+        Check(merged.children.size() == 3 && merged.children.back().children.size() == 1,
+            "child supplementation preserves repeated command multiplicity and new subtrees");
+    }
+    RunStableSourceCompletion(false);
+    RunStableSourceCompletion(true);
     ext::Request policy; policy.visibleMenuProviders = std::vector<std::string>{"*"};
     for (const auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
         for (const auto path : {L"C:\\Private\\file.txt", L"C:\\Private\\program.lnk", L"C:\\Private\\folder", L"::{645FF040-5081-101B-9F08-00AA002F954E}"})
