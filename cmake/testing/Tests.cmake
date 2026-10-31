@@ -204,7 +204,8 @@ if (BUILD_TESTING)
     foreach(row IN ITEMS copy move default-move link batch unsupported cancel interleaved failed-first settings recovery search widget dock
         settings-host manifest group-type-contract
         container-collection container-files container-mapping container-collection-group container-file-group container-mapping-group
-        member-collection member-files member-reorder right-copy right-cancel target-replaced target-remapped)
+        member-collection member-files member-reorder right-copy right-cancel target-replaced target-remapped
+        dispatch-desktop dispatch-control)
         add_test(NAME behavior_${row} COMMAND SnowDesktopNativeDragIntegrationTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"

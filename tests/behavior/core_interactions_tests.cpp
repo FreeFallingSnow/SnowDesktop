@@ -23,6 +23,10 @@ struct NativeDragIntegrationAccess
     static inline std::uint64_t fileCompletionMessages = 0;
     static inline std::uint64_t graceTimerMessages = 0;
     static inline std::uint64_t maintenanceTimerMessages = 0;
+    static inline std::uint64_t sourceCompletionMessages = 0;
+    static inline std::uint64_t commitCompletionMessages = 0;
+    static inline int productionDispatch = 0; // 1: desktop WndProc; 2: control WndProc
+    static inline LONG_PTR previousWindowData = 0;
 
     static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
@@ -34,6 +38,19 @@ struct NativeDragIntegrationAccess
         {
             try
             {
+                if (productionDispatch && (message == kBackgroundShellReadyMessage || message == kShellFileOperationCompletedMessage))
+                {
+                    if (message == kBackgroundShellReadyMessage) ++asyncReadMessages;
+                    else
+                    {
+                        ++fileCompletionMessages;
+                        const auto* completion = reinterpret_cast<const snowdesktop::ShellFileOperationUiCompletion*>(lp);
+                        if (!completion) throw std::runtime_error("production completion message has no owned result");
+                        if (completion->fileOperation) ++commitCompletionMessages; else ++sourceCompletionMessages;
+                    }
+                    return productionDispatch == 2 ? DesktopApp::ControlWndProc(window, message, wp, lp)
+                        : DesktopApp::WndProc(window, message, wp, lp);
+                }
                 if (message == WM_TIMER && wp == kDesktopHostWatchTimerId)
                 {
                     ++maintenanceTimerMessages;
@@ -82,6 +99,9 @@ struct NativeDragIntegrationAccess
         fileCompletionMessages = 0;
         graceTimerMessages = 0;
         maintenanceTimerMessages = 0;
+        sourceCompletionMessages = 0;
+        commitCompletionMessages = 0;
+        productionDispatch = 0;
         previousWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(completionWindow,
             GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&AsyncWindowProc)));
         if (!previousWindowProc) throw std::runtime_error("install the isolated native completion dispatcher");
@@ -89,12 +109,24 @@ struct NativeDragIntegrationAccess
         if (!SetTimer(completionWindow, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr))
             throw std::runtime_error("start the native fixture's production-period background delivery timer");
     }
+    static void EnableProductionDispatch(DesktopApp& app, bool control)
+    {
+        if (asyncOwner != &app || productionDispatch) throw std::runtime_error("dispatch fixture requires one bound host");
+        SetLastError(ERROR_SUCCESS);
+        previousWindowData = SetWindowLongPtrW(completionWindow, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
+        if (!previousWindowData && GetLastError() != ERROR_SUCCESS) throw std::runtime_error("bind host to owned message window");
+        productionDispatch = control ? 2 : 1;
+        if (control) app.controlHwnd_ = completionWindow;
+    }
     static void UnbindAsync(DesktopApp& app)
     {
         if (asyncOwner != &app) return;
         KillTimer(completionWindow, kShellChangeTimerId);
         KillTimer(completionWindow, kExternalOleDragLeaveGraceTimerId);
         KillTimer(completionWindow, kDesktopHostWatchTimerId);
+        if (productionDispatch) SetWindowLongPtrW(completionWindow, GWLP_USERDATA, previousWindowData);
+        productionDispatch = 0;
+        previousWindowData = 0;
         SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWindowProc));
         previousWindowProc = nullptr;
         asyncOwner = nullptr;
@@ -483,6 +515,28 @@ void Submit(Profile& p, ole_file_source_fixture::Source& source, DWORD keys, DWO
     Require(SUCCEEDED(status) && (deferredDefault ? (effect == DROPEFFECT_COPY || effect == DROPEFFECT_MOVE) : effect == returned),
         "release must honor the gesture, capabilities and optimized move protocol");
 }
+void ProductionMessageWiring(bool control)
+{
+    Profile p;
+    Access::EnableProductionDispatch(*p.app, control);
+    // Observe a real background read through the selected production WndProc.
+    Access::RequestAsync(*p.app);
+    Wait([&] { return Access::asyncReadMessages > 0 && Access::FileDropIdle(*p.app); });
+    const auto sourcePath = p.root / L"incoming/Dispatch.txt";
+    Write(sourcePath, "dispatch-payload");
+    auto source = ole_file_source_fixture::Make({sourcePath}, true);
+    Submit(p, *source.Get(), MK_CONTROL, DROPEFFECT_COPY | DROPEFFECT_MOVE,
+        DROPEFFECT_COPY, {150,150});
+    const auto output = p.desktop / L"Dispatch.txt";
+    Wait([&] { return source->ends == 1 && Access::FileDropIdle(*p.app) &&
+        Access::sourceCompletionMessages > 0 && Access::commitCompletionMessages > 0 && Access::Items(*p.app).size() == 2; });
+    Require(source->starts == 1 && SUCCEEDED(source->outcome) && source->endEffect == DROPEFFECT_COPY &&
+        Read(sourcePath) == "dispatch-payload" && Read(output) == "dispatch-payload",
+        "production message routing completes the matching source and physical copy");
+    const auto cell = Find(*p.app, output).gridCell;
+    Require(cell.column == 1 && cell.row == 1, "production completion retains requested landing");
+    Reload(p, {{output, cell}});
+}
 void FileCase(const drag_matrix::Case& test, bool deferredDefault = false)
 {
     Profile p;
@@ -733,6 +787,8 @@ int main(int argc, char** argv)
         else if (behavior::scene == "search") behavior::Search();
         else if (behavior::scene == "widget") behavior::WidgetContracts();
         else if (behavior::scene == "dock") behavior::DockLifecycle();
+        else if (behavior::scene == "dispatch-desktop" || behavior::scene == "dispatch-control")
+            behavior::ProductionMessageWiring(behavior::scene == "dispatch-control");
         else if (behavior::scene == "interleaved" || behavior::scene == "failed-first")
             behavior::Interleaved(behavior::scene == "failed-first");
         else if (behavior::RunContainerScenario(behavior::scene)) {}
