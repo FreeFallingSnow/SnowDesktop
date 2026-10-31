@@ -923,14 +923,14 @@ struct Scanner
         timing.Record("names", static_cast<unsigned>(metadata.modules.size()));
         // Resolve every member first so one shared product icon also reaches
         // registrations that sort before the representative executable.
-        std::map<std::wstring, Entry> images;
+        std::map<std::wstring, Entry> applicationImages;
         for (auto& row : result.rows)
         {
             if (control) control->WaitUntilAllowed();
             const auto icon = metadata.Icon(row.application.id);
             if (!icon.empty())
             {
-                const auto [stored, inserted] = images.try_emplace(icon);
+                const auto [stored, inserted] = applicationImages.try_emplace(icon);
                 if (inserted) Image(stored->second, icon);
                 const auto& image = stored->second;
                 if (!image.pixels.empty() && (row.display.width != image.width || row.display.height != image.height || row.display.pixels != image.pixels))
@@ -940,7 +940,7 @@ struct Scanner
                 }
             }
         }
-        timing.Record("icons", static_cast<unsigned>(images.size()));
+        timing.Record("icons", static_cast<unsigned>(applicationImages.size()));
     }
     void Verb(const std::wstring &path, unsigned contexts, const std::vector<std::wstring> &types)
     {
