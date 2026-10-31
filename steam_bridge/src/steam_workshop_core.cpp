@@ -89,7 +89,8 @@ std::string ResultName(EResult result)
 
 template<typename Result, typename Tick>
 bool WaitForCall(SteamAPICall_t call, Result& result,
-    std::chrono::milliseconds timeout, Tick&& tick, std::string& error)
+    std::chrono::milliseconds timeout, const bool& sessionInvalid,
+    Tick&& tick, std::string& error)
 {
     if (call == k_uAPICallInvalid)
     {
@@ -100,8 +101,16 @@ bool WaitForCall(SteamAPICall_t call, Result& result,
     while (std::chrono::steady_clock::now() < deadline)
     {
         SteamAPI_RunCallbacks();
+        // The Steam process probe can be false while InitEx, IPC and backend
+        // calls all work (for example in a directly launched development build).
+        // Observe this initialized session's IPC/shutdown callbacks instead.
+        if (sessionInvalid)
+        {
+            error = "The Steam client connection was lost during the operation";
+            return false;
+        }
         ISteamUtils* utils = SteamUtils();
-        if (!utils || !SteamAPI_IsSteamRunning())
+        if (!utils)
         {
             error = "The Steam client connection was lost during the operation";
             return false;
@@ -344,7 +353,7 @@ bool SteamWorkshopCore::Initialize(CoreError& error)
         // Pump without the snapshot mutex: a callback may request a fresh
         // sample or invalidate the session, and UI readers must never block.
         SteamAPI_RunCallbacks();
-        if (SteamAPI_IsSteamRunning() && connectionCallbacks_ &&
+        if (connectionCallbacks_ &&
             !connectionCallbacks_->sessionInvalid)
         {
             connectionCallbacks_->sampleRequested = false;
@@ -403,7 +412,7 @@ bool SteamWorkshopCore::PollConnection(CoreError& error, bool retry)
     if (sessionInitialized_)
     {
         SteamAPI_RunCallbacks();
-        if (!SteamAPI_IsSteamRunning() || !connectionCallbacks_ ||
+        if (!connectionCallbacks_ ||
             connectionCallbacks_->sessionInvalid)
         {
             // PollConnection is an idle-only entry point. No outstanding UGC
@@ -464,7 +473,7 @@ void SteamWorkshopCore::SampleActiveConnection()
     status.diagnostic = "The Steam client session is unavailable";
     // A callback may have invalidated all stored Steam state. Do not access
     // those interfaces, or tear them down underneath the active submit.
-    if (!invalid && SteamAPI_IsSteamRunning())
+    if (!invalid)
     {
         ISteamUtils* utils = SteamUtils();
         ISteamUser* user = SteamUser();
@@ -543,7 +552,7 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
     SteamUGCQueryCompleted_t completed{};
     std::string message;
     if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed,
-            std::chrono::seconds(30),
+            std::chrono::seconds(30), connectionCallbacks_->sessionInvalid,
             [this] { SampleActiveConnection(); }, message))
     {
         SetError(error, kSteamOperationTimedOut, "query_timed_out", message);
@@ -627,7 +636,7 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     ugc->SetReturnAdditionalPreviews(guard.handle, true);
     SteamUGCQueryCompleted_t completed{}; std::string message; SteamUGCDetails_t details{};
     if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed,
-            std::chrono::seconds(30),
+            std::chrono::seconds(30), connectionCallbacks_->sessionInvalid,
             [this] { SampleActiveConnection(); }, message) ||
         completed.m_eResult != k_EResultOK || completed.m_unNumResultsReturned != 1 ||
         !ugc->GetQueryUGCResult(guard.handle, 0, &details) || details.m_eResult != k_EResultOK || details.m_nPublishedFileId != itemId)
@@ -666,7 +675,7 @@ std::optional<WorkshopEulaStatus> SteamWorkshopCore::GetEulaStatus(
     WorkshopEULAStatus_t result{};
     std::string message;
     if (!WaitForCall(ugc->GetWorkshopEULAStatus(), result,
-            std::chrono::seconds(30),
+            std::chrono::seconds(30), connectionCallbacks_->sessionInvalid,
             [this] { SampleActiveConnection(); }, message))
     {
         SetError(error, kSteamOperationTimedOut, "eula_query_failed", message);
@@ -744,7 +753,8 @@ bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
     SteamUGCQueryCompleted_t queryCompleted{};
     if (remaining() == std::chrono::milliseconds::zero() ||
         !WaitForCall(ugc->SendQueryUGCRequest(guard.handle), queryCompleted,
-            remaining(), [this] { SampleActiveConnection(); }, message))
+            remaining(), connectionCallbacks_->sessionInvalid,
+            [this] { SampleActiveConnection(); }, message))
     {
         SetError(error,
             message == "Steam operation timed out" || message.empty()
@@ -781,7 +791,8 @@ bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
         RemoteStorageSubscribePublishedFileResult_t result{};
         completed = remaining() != std::chrono::milliseconds::zero() &&
             WaitForCall(ugc->SubscribeItem(itemId), result,
-                remaining(), [this] { SampleActiveConnection(); }, message);
+                remaining(), connectionCallbacks_->sessionInvalid,
+                [this] { SampleActiveConnection(); }, message);
         resultCode = result.m_eResult;
         resultItemId = result.m_nPublishedFileId;
     }
@@ -790,7 +801,8 @@ bool SteamWorkshopCore::SetSubscribed(std::uint64_t publishedFileId,
         RemoteStorageUnsubscribePublishedFileResult_t result{};
         completed = remaining() != std::chrono::milliseconds::zero() &&
             WaitForCall(ugc->UnsubscribeItem(itemId), result,
-                remaining(), [this] { SampleActiveConnection(); }, message);
+                remaining(), connectionCallbacks_->sessionInvalid,
+                [this] { SampleActiveConnection(); }, message);
         resultCode = result.m_eResult;
         resultItemId = result.m_nPublishedFileId;
     }
@@ -965,7 +977,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
         CreateItemResult_t created{};
         if (!WaitForCall(ugc->CreateItem(appId, k_EWorkshopFileTypeCommunity),
-                created, std::chrono::seconds(60),
+                created, std::chrono::seconds(60), connectionCallbacks_->sessionInvalid,
                 [this] { SampleActiveConnection(); }, message))
         {
             SetError(error, kSteamOperationFailed, "create_item_failed", message);
@@ -1118,7 +1130,8 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     if (progress)
         progress(PublishProgress{ PublishStage::Preparing,
             static_cast<std::uint64_t>(itemId), 0, 0, 0, true });
-    const bool completed = WaitForCall(call, submitted, request.timeout, [&]
+    const bool completed = WaitForCall(call, submitted, request.timeout,
+        connectionCallbacks_->sessionInvalid, [&]
     {
         SampleActiveConnection();
         if (!progress || std::chrono::steady_clock::now() < nextProgress) return;
