@@ -20,5 +20,5 @@
 ## 回归与观察
 
 - [workshop_validation_cache_tests.h](../../tests/steam/workshop_validation_cache_tests.h) 使用真实私有归档验证内容替换、相同元数据、错误、删除、写入互斥、进程级复用及容量淘汰，纳入现有 `widget_author_tools`。
-- [ui_animation_scheduler_tests.cpp](../../tests/ui_animation_scheduler_tests.cpp) 使用私有 HWND_MESSAGE 验证 SendMessage、PostMessage/DispatchMessage、同步范围恢复、owner 取代、取消与异常；不操作桌面宿主。
+- 动画调度与呈现合并目前没有专门的长期行为测试；修改时需定向核对同步消息、排队呈现、owner 取代、取消和异常收尾，不由验包缓存测试代称通过。
 - `SNOWDESKTOP_MENU_TRACE` 为可选诊断，`phase=workshop.validation` 下的 `validate.archive` 与 `cache.hit` 可核对首次验包及后续复用。不记录包路径或选择名。

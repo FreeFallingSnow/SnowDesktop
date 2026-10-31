@@ -44,4 +44,4 @@ Explorer 私有托盘结构、WNF 状态和部分设备 API 的兼容性依赖 W
 
 运行日志和性能采集入口见 [LOGGING.md](../../diagnostics/LOGGING.md) 与 [PERFORMANCE.md](../../diagnostics/PERFORMANCE.md)。
 
-托盘回调、焦点、图标几何和采集链测试位于 [tests/system/](../../../tests/system/)、[tray_model_tests.cpp](../../../tests/tray_model_tests.cpp)、[tray_focus_tests.cpp](../../../tests/tray_focus_tests.cpp) 和 [tray_live_tests.cpp](../../../tests/tray_live_tests.cpp)。生产面板预览使用实际模型与渲染器，可检查布局、像素和无设备副作用路径；桌面交互、第三方菜单、真实硬件和多屏显示按 [AGENTS.md](../../../AGENTS.md) 完成对应场景验证。
+托盘回调、焦点、图标几何和采集链目前没有专门的长期行为测试。生产面板预览使用实际模型与渲染器，可用于定向检查布局、像素和无设备副作用路径；桌面交互、第三方菜单、真实硬件和多屏显示按 [AGENTS.md](../../../AGENTS.md) 完成对应场景验证。

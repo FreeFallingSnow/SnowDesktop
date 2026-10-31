@@ -185,24 +185,18 @@ compositor.csv 仅表达显示合成，不能代表每个动画，也不能完�
 
 ## 回归与测量边界
 
-原生回归使用官方 Windows x64 Trace Processor v58.2 解析 SDK 输出。可安装官方 Perfetto Skill 后运行 `python <skill>/bin/trace_processor --version`，或为测试进程设置 `SNOWDESKTOP_TRACE_PROCESSOR`，指向原生可执行文件。
-
-默认缓存文件为 `~/.local/share/perfetto/prebuilts/trace_processor_shell-adfa6bad3d72be3b.exe`，SHA-256 为 `adfa6bad3d72be3ba9b83fa2b17b69fa13b3ab1cad0f42e52b86188bd5f0f997`。缺少分析工具时回归明确失败。
-
-`widget_runtime_diagnostics` 使用真实 SDK、真实 Lua 和官方分析器验证 native trace、
-CPU 可用/不可用、层级、flow、预设过滤、重启、幂等、会话隔离及失败证据。其隐藏
-控制专用 HWND 仅用于实际 CLI/管道集成，不启动桌面宿主。渲染回归通过 SDK
-Interceptor 观察已序列化事件，不保留另一套产品 profiler。
+当前长期执行集合没有覆盖原生 trace、CPU 可用/不可用、层级、flow、预设过滤、重启、
+幂等、会话隔离及失败证据的专门行为测试。相关改动使用真实 SDK、真实 Lua 和官方分析器
+进行定向检查；临时程序与负载放在忽略的任务目录，保留实际命令、输入身份和报告。
 
 当前链路覆盖宿主或显式组件评估进程，角色记录于 manifest。独立设置进程明确排除。Lua 分配流量、
 后台任务归因、调度事件和共享 GPU 数据源使用上述实际产品入口。跨进程分析、
 显示呈现到具体视觉对象的归因及目标机器上的完整负载开销仍需独立验证。
 标准构建、可控工作负载和独立设置预览不能替代桌面实际显示与交互验收。
 
-`SnowDesktopWidgetRuntimeDiagnosticsTests --performance-overhead <全新目录>` 执行
-真实 Lua 配额分配/回调与固定探针负载，轮换五种采集模式各五次，记录进程 CPU、
-墙钟、常驻内存和停止后的安静窗口。冷关闭与 SDK 初始化后的关闭分开记录；
-这项测量只适用于明确的夹具工作负载，不代表整个桌面应用的开销验收。
+测量采集开销时，固定工作负载并轮换采集模式，记录进程 CPU、墙钟、常驻内存和停止后的
+安静窗口。冷关闭与 SDK 初始化后的关闭分开记录；结果只适用于对应工作负载，不代表
+整个桌面应用的开销验收。
 
 ## 组件开发中的性能评估
 

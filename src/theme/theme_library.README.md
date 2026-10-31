@@ -254,9 +254,10 @@ new readers accept old libraries. Old strict readers reject libraries with these
 fields, so downgrading requires exporting packages or retaining the previous
 private-library backup. External version 1 packages keep their existing compatibility.
 
-`theme_workflow` tests cover codecs, retry journals, authorship, agreement state,
-locks, cancellation, stale preparations and real offscreen rendering. Passing
-these tests does not claim live Settings UI, Explorer or online Steam acceptance.
+The current permanent suite has no dedicated theme-workflow coverage. Changes
+need targeted checks for codecs, retry journals, authorship, agreement state,
+locks, cancellation, stale preparations and real offscreen rendering. Live
+Settings UI, Explorer and online Steam need their own acceptance evidence.
 
 Theme previews use a gallery of separate production renders. Full global themes
 demonstrate their surface on the existing mapped-folder component without

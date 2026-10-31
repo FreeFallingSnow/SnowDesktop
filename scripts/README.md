@@ -170,11 +170,11 @@ Run ID；不会在普通构建后猜测最近候选。`-SkipBuild` 使用已激�
 ```bat
 scripts\build.bat
 scripts\build_debug.bat
-scripts\test.bat name "^widget_settings_service$"
+scripts\test.bat name "^behavior_settings$"
 scripts\test.bat fast
 scripts\test.bat core
-scripts\test.bat label rules
-scripts\test.bat name quick_navigation
+scripts\test.bat label behavior
+scripts\test.bat name "^behavior_search$"
 scripts\test.bat list
 scripts\widget-dev.bat widgets\reminders
 scripts\widget-dev.bat widgets\reminders -Once
@@ -296,9 +296,9 @@ Visual Studio/MSVC 下可在本地配置预设的 `cacheVariables` 中指定正�
 测试按使用场景分层：日常改动优先用 `name <regex>` 或 `label <regex>` 运行最小充分集合；
 `core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；显式 `full` 运行完整自动测试集合。
 无参数只显示用法，不配置、构建或执行测试；直接调用 PowerShell 测试入口而未指定模式时只列清单。
-这些自动模式与对应 CTest 预设都排除 `manual` 手动诊断。Shell 文件操作集成测试已独立为手动诊断，
-平时不执行，遇到相关文件操作或 Shell 阻塞问题时运行 `scripts\test.bat name "^shell_file_operation_worker$"`；
-其预检回归仍自动运行。`name` / `label` 的显式筛选可以包含手动条目，`list` 会显示全部条目及标签。
+这些自动模式与对应 CTest 预设都排除 `manual` 手动诊断。当前文件操作行为测试及覆盖边界见
+[核心拖放行为矩阵](../tests/drag_drop/README.md)；外部 Shell 兼容性与阻塞场景按实际问题定向验证。
+`name` / `label` 的显式筛选可以包含手动条目，`list` 会显示全部条目及标签。
 直接使用 CTest 时，`tests` 是自动全量，`all-tests` 包含手动诊断；自动全量通过不代表手动条目已执行。
 筛选参数是 CTest 正则表达式。跨模块、公共 API、异步和基础设施改动也按调用链与依赖选择相关项目；
 原生 Visual Studio 定向构建先读取生成的 `ProjectReference` 图，合并已包含在其他所选目标中的构建入口。

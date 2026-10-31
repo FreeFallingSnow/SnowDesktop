@@ -131,8 +131,7 @@
 | 参数校验、服务桥、完成／取消／撤权／清理 | `widget_engine.cpp/.h`、`widget_task_broker.cpp`；共享执行继续使用 `system_controls.cpp/.h` |
 | 宿主确认、凭据和模态取消 | 复用已提取的 `system_control_prompt.cpp` 提示设施，接应用持有的回调；不依赖面板模型存活 |
 | Lua 类型和正式说明 | `../widgets/snowdesktop-lua-widget/library/snowdesktop-v2.lua`、`../widgets/snowdesktop-lua-widget/references/api-v2.md` |
-| 契约、权限、手势和实例生命周期 | 现有 CTest `widget_api_registry`、`widget_permission_state`、`widget_task_broker`，按实际接线补充引擎相关回归 |
-| 预览零副作用 | 现有 `widget_author_preview_cli` 验证真实 Lua 参数／权限拒绝；`widget_system_data_provider` 验证 Dispatch 成功预览不进入任何 live 副作用 |
-| 后端取消、释放与竞争 | `tests/system_controls_tests.cpp` 隶属 CTest **`widget_system_data_provider`**，可执行目标 `SnowDesktopWidgetSystemDataProviderTests`；不存在单独的 `system_controls` CTest 条目 |
+| 权限和任务撤权的部分公共边界 | CTest `behavior_widget` 使用真实 Lua API 检查权限与任务撤权，不覆盖全部系统控制任务 |
+| 系统控制完整契约、预览零副作用、后端取消与竞争 | 当前长期执行集合尚未覆盖；修改时沿真实任务和后端接线定向验证，不能由相邻组件测试代称通过 |
 
 最低回归应覆盖 19 项注册及 feature／权限对应、严格参数类型与未知键拒绝、缺少手势／权限、取消确认、撤权和实例重载后的迟到结果、真实 ID 失效、并发采样／执行／释放、预览零系统调用及旧输出任务兼容。竞争场景用可控同步门复现，不以固定 sleep 猜测调度。
