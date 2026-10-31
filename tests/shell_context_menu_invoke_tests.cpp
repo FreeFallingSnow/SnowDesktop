@@ -1694,11 +1694,18 @@ void TestRegistryCatalogue()
     put(L"*\\shell\\suite-main\\command", nullptr, (L"\"" + (suiteA / L"bin" / L"tool.exe").wstring() + L"\" %1").c_str());
     put(L"Directory\\shell\\suite-helper\\command", nullptr, (L"\"" + (suiteA / L"bin" / L"helper.exe").wstring() + L"\" %1").c_str());
     put(L"*\\shell\\sibling-main\\command", nullptr, (L"\"" + (suiteB / L"bin" / L"tool.exe").wstring() + L"\" %1").c_str());
+    const auto genericRoot = temp.path / L"Application";
+    std::filesystem::create_directories(genericRoot);
+    std::ofstream(genericRoot / L"Uninstall.exe") << "private marker";
+    std::ofstream(genericRoot / L"viewer.exe") << "private module";
+    put(L"*\\shell\\generic-install\\command", nullptr, (L"\"" + (genericRoot / L"viewer.exe").wstring() + L"\" %1").c_str());
     catalogue = ext::ReadCatalogue(registry.key, false);
     const auto suiteMain = find("reg:*\\shell\\suite-main"), suiteHelper = find("reg:directory\\shell\\suite-helper");
     Expect(suiteMain.application.id.starts_with("install:") && suiteMain.application == suiteHelper.application &&
         suiteMain.application.name == L"Product suite A" && find("reg:*\\shell\\sibling-main").application != suiteMain.application,
         "actual installation markers group helpers and keep sibling installations separate");
+    Expect(find("reg:*\\shell\\generic-install").application.name == L"viewer",
+        "a generic Application folder and uninstall marker cannot replace validated program metadata");
     const auto exactSuite = ext::ReadCatalogueSources({suiteHelper}, nullptr, registry.key);
     Expect(exactSuite.rows.size() == 1 && exactSuite.rows.front().menuRevision == suiteHelper.menuRevision &&
         !exactSuite.rows.front().application.id.starts_with("install:"),
@@ -1982,18 +1989,16 @@ void TestManagementFilters()
     const auto base = ext::ManagementRows(catalogue, ext::Category::Objects);
     const auto applications = ext::ManagementCards(base, ext::Category::Objects, ext::ManagementView::Applications);
     Expect(applications.size() == 3 && applications.back().id == "app:@unknown", "application cards keep same-named providers separate and unidentified items in their own card");
-    const auto types = ext::ManagementCards(base, ext::Category::Objects, ext::ManagementView::Extensions);
-    const auto png = std::find_if(types.begin(), types.end(), [](const auto &card) { return card.title == L".png"; });
-    const auto jpg = std::find_if(types.begin(), types.end(), [](const auto &card) { return card.title == L".jpg"; });
-    Expect(png != types.end() && jpg != types.end() && jpg->rows.size() == 1, "type views include merged actions in each supported suffix card");
-    Expect(std::none_of(png->rows.begin(), png->rows.end(), [](const auto &row) {
-        return std::any_of(row.members.begin(), row.members.end(), [](const auto &member) { return member.id == "common" || member.id == "folders"; });
-    }), "common and folder actions have dedicated cards instead of repeating under every suffix");
     ext::Preferences cardPreferences;
     ext::SetOverride(cardPreferences, "png", ext::Context::File, ext::Visibility::Hide);
-    ext::SetManagementResults(cardPreferences, png->rows, ext::Category::Objects, true);
-    Expect(ext::ManagementCardState(cardPreferences, *jpg, ext::Category::Objects) == true &&
-        ext::OverrideOf(cardPreferences, "png", ext::Context::File) == ext::Visibility::Inherit, "group toggles share original state across type cards and restore location inheritance");
+    const auto imageAction = std::find_if(base.begin(), base.end(), [](const auto& row) {
+        return std::any_of(row.members.begin(), row.members.end(), [](const auto& member) { return member.id == "png"; });
+    });
+    Expect(imageAction != base.end(), "a merged image action remains manageable through object view");
+    ext::SetManagementCommon(cardPreferences, *imageAction, ext::Category::Objects, true);
+    Expect(ext::CommonShown(cardPreferences, "jpg", ext::Category::Objects) &&
+        ext::OverrideOf(cardPreferences, "png", ext::Context::File) == ext::Visibility::Inherit,
+        "one action keeps its complete type scope and restores location inheritance without a separate type view");
     const auto application = std::find_if(applications.begin(), applications.end(), [&](const auto &card) { return card.id == "app:" + editor.id; });
     Expect(application != applications.end() && !ext::ManagementCardState(cardPreferences, *application, ext::Category::Objects), "partly shown application cards report mixed state");
     ext::SetManagementResults(cardPreferences, application->rows, ext::Category::Objects, true);

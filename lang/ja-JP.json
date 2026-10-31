@@ -2755,5 +2755,7 @@
   "settings.debug.profile.nameHint": "重複しない名前を1～60文字で入力してください。新しい環境は空の設定とレイアウトで開始します。",
   "settings.agentOperations.title": "Agent 操作",
   "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
-  "settings.agentOperations.description": "AI アシスタントがローカル制御インターフェイスを通じて SnowDesktop を操作できます。"
+  "settings.agentOperations.description": "AI アシスタントがローカル制御インターフェイスを通じて SnowDesktop を操作できます。",
+  "settings.contextMenu.expandAllExtensions": "すべての拡張項目を表示",
+  "settings.contextMenu.expandAllExtensions.description": "現在の選択対象から読み取った拡張メニュー項目をすべて表示し、下の表示設定を無効にします。オフにすると元の設定に戻ります。"
 }

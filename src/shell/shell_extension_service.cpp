@@ -548,7 +548,7 @@ struct MenuService::Impl
                     if (current != sourceCatalogue.rows.end())
                     {
                         auto refreshed = *current;
-                        if (seed.application.id.starts_with("install:") && MenuRevision(seed) == MenuRevision(*current))
+                        if (MenuRevision(seed) == MenuRevision(*current))
                         {
                             // Exact runtime checks do not enumerate installed
                             // apps. Retain already classified presentation only
@@ -812,6 +812,7 @@ struct MenuService::Impl
                 sourceScanDemand.Cancel();
             }
             managementActive = true;
+            managementCatalogueOnly = false;
             if (!row.request.startPinOnly && row.request.sourceClsid.empty())
             {
                 scanRequested |= opening;

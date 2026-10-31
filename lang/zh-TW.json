@@ -2755,5 +2755,7 @@
   "settings.debug.profile.nameHint": "請輸入不重複的名稱，長度為1至60個字元。新環境使用空白設定與版面配置。",
   "settings.agentOperations.title": "Agent 操作",
   "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
-  "settings.agentOperations.description": "讓 AI 助手透過本機控制介面操作 SnowDesktop。"
+  "settings.agentOperations.description": "讓 AI 助手透過本機控制介面操作 SnowDesktop。",
+  "settings.contextMenu.expandAllExtensions": "展開全部擴充項目",
+  "settings.contextMenu.expandAllExtensions.description": "顯示目前物件讀取到的全部擴充功能表項目，並停用下方的顯示設定；關閉後恢復原設定。"
 }

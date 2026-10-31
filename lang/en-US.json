@@ -2755,5 +2755,7 @@
   "settings.debug.profile.nameHint": "Enter a unique name of 1–60 characters. New environments start with empty settings and layouts.",
   "settings.agentOperations.title": "Agent Operations",
   "settings.agentOperations.skill": "SnowDesktop Control Skill",
-  "settings.agentOperations.description": "Let your AI assistant operate SnowDesktop through its local control interface."
+  "settings.agentOperations.description": "Let your AI assistant operate SnowDesktop through its local control interface.",
+  "settings.contextMenu.expandAllExtensions": "Show all extension items",
+  "settings.contextMenu.expandAllExtensions.description": "Show every extension menu item read for the current selection and disable the display settings below. Turn off to restore your settings."
 }

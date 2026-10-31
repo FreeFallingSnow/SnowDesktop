@@ -2085,6 +2085,8 @@ void SettingsShell::HookEvents()
         if (closed_) return;
         if (iconLibraryPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::IconLibrary)
             iconLibraryPage_->FitViewport(PageScrollViewer(), PageSurface().Margin().Bottom);
+        if (contextMenuPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::ContextMenu)
+            contextMenuPage_->FitViewport(PageScrollViewer(), PageSurface().Margin().Bottom);
         if (focusPendingLayout_) FocusPendingTarget();
         if (FocusPrerequisiteInfoBar().IsOpen()) RefreshFocusPrerequisite();
         UpdateFocusHighlight();

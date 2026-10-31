@@ -418,6 +418,43 @@ void CheckInstalledApplicationProfiles()
     const auto plorer = index.Find(L"C:\\MWORKS\\Sysplorer 2026b\\Bin64\\activate_sysplorer.exe");
     Expect(lab && plorer && lab->root != plorer->root && plorer->name == L"MWORKS.Sysplorer 2026b",
         "sibling products stay distinct while a helper belongs to its own installed product");
+    index.Add({L"C:\\Office", L"Microsoft 365", L"office.exe", 30});
+    index.Add({L"C:\\Office", L"Microsoft Office 2021", L"office.exe", 30});
+    Expect(!index.Find(L"C:\\Office\\Root\\tool.exe") && index.SharedIcon(L"C:\\Office\\Root\\tool.exe") == L"office.exe",
+        "an agreed suite icon does not guess which conflicting suite name owns the installation");
+    Expect(index.SharedIcon(L"C:\\Creative\\Media Encoder\\encoder.exe").empty(),
+        "conflicting products cannot donate an arbitrary shared-parent icon");
+}
+
+void CheckApplicationRegistrationDetails()
+{
+    ext::Registration first; first.id = "reg:tool.one\\shell\\open"; first.contexts = 1;
+    first.types = {L".one"}; first.display.label = L"Open"; first.commandIdentity = "tool-open";
+    first.application = {"tool", L"Tool"};
+    auto second = first; second.id = "reg:tool.two\\shell\\open"; second.types = {L".two"};
+    auto handler = first; handler.id = "clsid:tool"; handler.kind = ext::RegistrationKind::Handler;
+    handler.contexts = 3; handler.types = {L"*"}; handler.display.label = L"Extension"; handler.commandIdentity.clear();
+    auto other = first; other.id = "reg:other"; other.application = {"other", L"Other"};
+    auto observed = first; observed.id = "observed:stale"; observed.kind = ext::RegistrationKind::Observed;
+    ext::Catalogue inventory; inventory.rows = {first, second, handler, other, observed};
+    const auto software = ext::ExtensionManagementRows(inventory, ext::Category::Objects);
+    const auto owner = std::find_if(software.begin(), software.end(), [](const auto& row) { return row.id == "app:tool"; });
+    Expect(owner != software.end(), "registered software is manageable before command observation");
+    const auto details = ext::ApplicationRegistrationRows(inventory, *owner, ext::Category::Objects);
+    const auto open = std::find_if(details.begin(), details.end(), [](const auto& row) { return row.members.size() == 2; });
+    Expect(details.size() == 2 && open != details.end() &&
+        std::all_of(inventory.rows.begin(), inventory.rows.end(), [](const auto& source) { return !source.linked; }),
+        "application expansion merges equivalent type registrations without manufacturing native attribution");
+    ext::Preferences prefs;
+    ext::SetManagementCommon(prefs, *open, ext::Category::Objects, true);
+    Expect(!ext::ManagementCommon(prefs, *owner, ext::Category::Objects).has_value() &&
+        ext::CommonShown(prefs, first.id, ext::Category::Objects) && ext::CommonShown(prefs, second.id, ext::Category::Objects) &&
+        !ext::CommonShown(prefs, handler.id, ext::Category::Objects) && !ext::CommonShown(prefs, other.id, ext::Category::Objects),
+        "one child switch controls only its original registrations and makes the software total mixed");
+    ext::SetManagementCommon(prefs, *owner, ext::Category::Objects, true);
+    Expect(ext::ManagementCommon(prefs, *owner, ext::Category::Objects) == true &&
+        std::none_of(prefs.rules.begin(), prefs.rules.end(), [](const auto& rule) { return rule.id.starts_with("app:") || rule.id.find('\n') != std::string::npos; }),
+        "the software total and its children share original rule identities");
 }
 
 void CheckShowAllPolicy()
@@ -588,6 +625,7 @@ void Run()
     check("extension and command controls", CheckExtensionAndCommandControls);
     check("software management presentation", CheckSoftwareManagementPresentation);
     check("installed application profiles", CheckInstalledApplicationProfiles);
+    check("registered application details", CheckApplicationRegistrationDetails);
     check("show all extensions", CheckShowAllPolicy);
     check("cold extension recovery", CheckColdExtensionRecovery);
     check("worker bounds", CheckWorkerReuseBounds);

@@ -2755,5 +2755,7 @@
   "settings.debug.profile.nameHint": "Ingresa un nombre único de 1 a 60 caracteres. Los entornos nuevos comienzan con ajustes y diseños vacíos.",
   "settings.agentOperations.title": "Operaciones del agente",
   "settings.agentOperations.skill": "Skill de control de SnowDesktop",
-  "settings.agentOperations.description": "Permite que tu asistente de IA controle SnowDesktop mediante su interfaz de control local."
+  "settings.agentOperations.description": "Permite que tu asistente de IA controle SnowDesktop mediante su interfaz de control local.",
+  "settings.contextMenu.expandAllExtensions": "Mostrar todos los elementos de extensiones",
+  "settings.contextMenu.expandAllExtensions.description": "Muestra todos los elementos de menú de extensiones leídos para la selección actual y desactiva los ajustes de visualización de abajo. Al desactivarlo, se restauran tus ajustes."
 }

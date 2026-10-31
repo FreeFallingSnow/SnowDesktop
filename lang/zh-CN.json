@@ -2755,5 +2755,7 @@
   "settings.debug.profile.nameHint": "请输入不重复的名称，长度为1至60个字符。新环境使用空白设置和布局。",
   "settings.agentOperations.title": "Agent 操作",
   "settings.agentOperations.skill": "SnowDesktop 操作 Skill",
-  "settings.agentOperations.description": "让 AI 助手通过本地控制接口操作 SnowDesktop。"
+  "settings.agentOperations.description": "让 AI 助手通过本地控制接口操作 SnowDesktop。",
+  "settings.contextMenu.expandAllExtensions": "展开全部扩展项目",
+  "settings.contextMenu.expandAllExtensions.description": "显示当前对象读取到的全部扩展菜单项目，并停用下方的显示设置；关闭后恢复原设置。"
 }

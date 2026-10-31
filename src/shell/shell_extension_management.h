@@ -44,14 +44,15 @@ inline bool MatchesManagementFilters(const ManagementRow &row, const std::string
     });
 }
 inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Category category, std::wstring filter = {},
-    const std::string &application = {}, const std::wstring &extension = {})
+    const std::string &application = {}, const std::wstring &extension = {}, bool registeredSources = false)
 {
     std::map<std::string, ManagementRow> grouped;
     std::map<std::string, std::set<std::wstring>> pairLabels;
     const unsigned mask = category == Category::Objects ? 3 : 12;
     for (const auto &entry : catalogue.rows)
     {
-        if (!entry.systemEnabled || !entry.linked || !(entry.contexts & mask)) continue;
+        if (!entry.systemEnabled || (!registeredSources && !entry.linked) ||
+            (registeredSources && entry.kind == RegistrationKind::Observed) || !(entry.contexts & mask)) continue;
         const auto *pair = StatePairForVerb(entry.display.key);
         if (!pair) pair = StatePairForId(entry.id);
         const auto id = pair ? std::string(pair->id) : entry.commandIdentity.empty() ? entry.id : "command:" + entry.commandIdentity;
@@ -92,6 +93,21 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
         const auto x = ManagementGroup(a, category), y = ManagementGroup(b, category);
         return x != y ? x < y : CompareShellDisplayNames(a.display.label, b.display.label) < 0;
     });
+    return result;
+}
+
+inline std::vector<ManagementRow> ApplicationRegistrationRows(const Catalogue& registrations,
+    const ManagementRow& software, Category category)
+{
+    std::set<std::string> members;
+    for (const auto& member : software.members) members.insert(member.id);
+    Catalogue selected;
+    for (const auto& source : registrations.rows)
+        if (members.contains(source.id) && source.kind != RegistrationKind::Observed) selected.rows.push_back(source);
+    // This projection exposes original registered switches without pretending
+    // any native command has been observed or uniquely attributed.
+    auto result = ManagementRows(selected, category, {}, {}, {}, true);
+    for (auto& row : result) row.id = software.id + "\n" + row.id;
     return result;
 }
 
@@ -239,7 +255,7 @@ inline void SetManagementOverride(Preferences &prefs, const ManagementRow &row, 
         SetOverride(prefs, member.id, context, value);
     }
 }
-enum class ManagementView { Objects, Applications, Extensions };
+enum class ManagementView { Objects, Applications };
 struct ManagementCard
 {
     std::string id, titleKey;
@@ -264,23 +280,6 @@ inline std::vector<ManagementCard> ManagementCards(const std::vector<ManagementR
             for (const auto &app : row.applications)
                 add("app:" + (app.id.empty() ? "@unknown" : app.id), app.name,
                     app.id.empty() ? "settings.contextMenu.unknownApplication" : "", row);
-        }
-        else if (view == ManagementView::Extensions && category == Category::Objects)
-        {
-            if (!(row.contexts & ContextBit(Context::File))) add("type:folder", {}, "settings.contextMenu.folders", row);
-            else if (row.types.empty() || std::find(row.types.begin(), row.types.end(), L"*") != row.types.end())
-                add("type:*", {}, "settings.contextMenu.anyExtension", row);
-            else
-            {
-                bool added = false;
-                for (auto type : row.types) if (!type.empty() && type.front() == L'.')
-                {
-                    for (auto &c : type) c = towlower(c);
-                    const auto encoded = settings_ipc::Pack(type);
-                    add("type:" + std::string(reinterpret_cast<const char *>(encoded.data()), encoded.size()), type, {}, row); added = true;
-                }
-                if (!added) add("type:other", {}, "settings.contextMenu.types", row);
-            }
         }
         else
         {

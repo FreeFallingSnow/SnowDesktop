@@ -74,6 +74,29 @@ public:
         }
         return result;
     }
+    std::wstring SharedIcon(const std::wstring& module) const
+    {
+        const auto path = ApplicationPathKey(module);
+        std::wstring result; size_t matched = 0;
+        for (const auto& [root, profiles] : profiles_)
+        {
+            if (root.size() <= matched || !ApplicationPathContains(root, path)) continue;
+            const auto strength = std::max_element(profiles.begin(), profiles.end(), [](const auto& a, const auto& b) { return a.strength < b.strength; })->strength;
+            if (strength < 20) continue;
+            std::set<std::wstring> names, icons;
+            bool complete = true;
+            for (const auto& profile : profiles) if (profile.strength == strength)
+            {
+                names.insert(ApplicationPathKey(profile.name));
+                if (profile.icon.empty()) complete = false;
+                else icons.insert(profile.icon);
+            }
+            // Conflicting suite names may still agree on a shared brand icon.
+            if (complete && names.size() > 1 && icons.size() == 1)
+            { result = *icons.begin(); matched = root.size(); }
+        }
+        return result;
+    }
 private:
     std::map<std::wstring, std::vector<InstalledApplicationRecord>> profiles_;
 };

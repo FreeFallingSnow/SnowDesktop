@@ -2755,5 +2755,7 @@
   "settings.debug.profile.nameHint": "Geben Sie einen eindeutigen Namen mit 1–60 Zeichen ein. Neue Umgebungen beginnen mit leeren Einstellungen und Layouts.",
   "settings.agentOperations.title": "Agent-Steuerung",
   "settings.agentOperations.skill": "Skill zur SnowDesktop-Steuerung",
-  "settings.agentOperations.description": "Lassen Sie Ihren KI-Assistenten SnowDesktop über die lokale Steuerschnittstelle bedienen."
+  "settings.agentOperations.description": "Lassen Sie Ihren KI-Assistenten SnowDesktop über die lokale Steuerschnittstelle bedienen.",
+  "settings.contextMenu.expandAllExtensions": "Alle Erweiterungseinträge anzeigen",
+  "settings.contextMenu.expandAllExtensions.description": "Alle für die aktuelle Auswahl gelesenen Erweiterungsmenüeinträge anzeigen und die Anzeigeeinstellungen darunter deaktivieren. Beim Ausschalten werden Ihre Einstellungen wiederhergestellt."
 }
