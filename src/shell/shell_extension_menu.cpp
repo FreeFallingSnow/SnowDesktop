@@ -718,7 +718,8 @@ struct Host
         return entries;
     }
     std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
-                            const std::wstring &title = L"root", const Request *request = nullptr)
+                            const std::wstring &title = L"root", const Request *request = nullptr,
+                            const std::function<void(Entry&)>& prepareRootIcon = {})
     {
         std::vector<Entry> entries;
         std::vector<bool> omitted;
@@ -836,6 +837,7 @@ struct Host
                 Bitmap(entry, entry.checked && item.hbmpChecked ? item.hbmpChecked : item.hbmpUnchecked);
             if (entry.pixels.empty() && !(item.fType & MFT_OWNERDRAW))
                 CallbackBitmap(entry, source, menu, item);
+            if (depth == 0 && prepareRootIcon) prepareRootIcon(entry);
             omitted.push_back(false); entries.push_back(std::move(entry));
         }
         if (!cascades.empty())
@@ -1193,6 +1195,14 @@ struct Host
         auto native = std::make_unique<Native>();
         native->directory = directory;
         native->paths = request.paths;
+        const auto finishSource = [&](Reply reply) {
+            if (request.sourceClsid.empty() || request.sourceKey.empty()) return reply;
+            if (!HandlerEnabled(request.sourceClsid)) return Reply{true, {}, {}};
+            const auto owner = SourceRegistrationId(request.sourceClsid, request.sourceKey);
+            if (owner.empty()) return Reply{true, {}, {}};
+            for (auto& entry : reply.entries) entry.registration = owner;
+            return reply;
+        };
         if (request.originalShortcutOnly)
         {
             progress("query original shortcut objects");
@@ -1224,7 +1234,7 @@ struct Host
                     IdentifyEntries(reply.entries);
                     for (auto& entry : reply.entries) entry.token = 0;
                     commands.clear();
-                    return reply;
+                    return finishSource(std::move(reply));
                 }
                 ComPtr<IExplorerCommand> command;
                 if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) return {};
@@ -1238,7 +1248,12 @@ struct Host
                 if (!request.sourceKey.empty() &&
                     (!HandlerEnabled(request.sourceClsid) || !SourceRegistered(request.sourceClsid, request.sourceKey)))
                     return Reply{true, {}, {}};
-                Reply reply; reply.ok = true; reply.entries.push_back(std::move(entry)); return reply;
+                if (auto image = ReadMenuCommandRootIcon(command.Get(), selection.Get(), entry.key))
+                {
+                    entry.width = image->width; entry.height = image->height;
+                    entry.pixels = std::move(image->pixels); entry.imageLogicalSize = image->imageLogicalSize;
+                }
+                Reply reply; reply.ok = true; reply.entries.push_back(std::move(entry)); return finishSource(std::move(reply));
             }
             ComPtr<IDataObject> data;
             if (!request.background)
@@ -1337,8 +1352,47 @@ struct Host
             if (FAILED(built)) return {};
         }
         else if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff, flags))) return {};
+        // A native preview may expose the same canonical root which the modern
+        // command replaces later. Acquire its icon through that same command
+        // now, so publication never switches between two different artworks.
+        std::map<std::wstring, std::wstring> iconClasses;
+        for (const auto& registration : packages)
+            for (const auto& clsid : registration.verbs)
+                iconClasses.emplace(Lower(Wide(clsid)), Wide(clsid));
+        if (!request.sourceClsid.empty()) iconClasses.emplace(Lower(request.sourceClsid), request.sourceClsid);
+        std::map<std::wstring, std::optional<Entry>> rootIcons;
+        ComPtr<IShellItemArray> iconSelection;
+        const auto prepareRootIcon = [&](Entry& entry) {
+            if (entry.separator || entry.key.empty()) return;
+            const auto found = iconClasses.find(Lower(Wide(entry.key)));
+            if (found == iconClasses.end()) return;
+            try
+            {
+                const auto [cached, first] = rootIcons.try_emplace(found->first);
+                if (first)
+                {
+                    if (!iconSelection && FAILED(SHCreateShellItemArrayFromIDLists(
+                        static_cast<UINT>(raw.size()), raw.data(), &iconSelection))) return;
+                    CLSID clsid{};
+                    ComPtr<IExplorerCommand> command;
+                    if (SUCCEEDED(CLSIDFromString(found->second.c_str(), &clsid)) &&
+                        SUCCEEDED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER,
+                            IID_PPV_ARGS(&command))))
+                    {
+                        if (native->site.HasView()) native->site.Attach(command.Get());
+                        cached->second = ReadMenuCommandRootIcon(command.Get(), iconSelection.Get(), Utf8(found->second));
+                    }
+                }
+                if (cached->second && Lower(Wide(cached->second->key)) == Lower(Wide(entry.key)))
+                {
+                    entry.width = cached->second->width; entry.height = cached->second->height;
+                    entry.pixels = cached->second->pixels; entry.imageLogicalSize = cached->second->imageLogicalSize;
+                }
+            }
+            catch (...) { /* Optional artwork cannot invalidate the native menu. */ }
+        };
         Reply reply;
-        reply.entries = Read(*native, native->menu, "", 0, L"root", &request);
+        reply.entries = Read(*native, native->menu, "", 0, L"root", &request, prepareRootIcon);
         if (request.startPinOnly)
             std::erase_if(reply.entries, [](const auto &entry) {
                 const auto *pair = StatePairForVerb(entry.key);
@@ -1362,7 +1416,7 @@ struct Host
             return Reply{true, {}, {}};
         reply.ok = true;
         menus.push_back(std::move(native));
-        return reply;
+        return finishSource(std::move(reply));
     }
     bool PrepareNative(const Request& request, const NativeMenuSelection& snapshot, POINT point)
     {

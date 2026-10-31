@@ -408,6 +408,25 @@ void CheckSmallNativeBitmapDpi()
         }
         DeleteObject(image);
     }
+    const std::vector<std::uint32_t> modernPixels(32 * 32, 0xffff0000u);
+    const ImageSourceView modernSource{reinterpret_cast<const std::uint8_t*>(modernPixels.data()),
+        modernPixels.size() * 4, 32, 32, 32 * 4};
+    const int logicalTargets[] = {16, 20, 24, 32};
+    for (size_t i = 0; i < std::size(dpis); ++i)
+    {
+        HBITMAP image = CreateImageBitmap(modernSource, logicalTargets[i]);
+        Expect(image != nullptr, "high resolution icon is prepared for the current monitor");
+        ItemView item; item.image = image;
+        const auto metrics = ResolveMetrics(dpis[i]);
+        const RECT row{0, 0, width, metrics.rowHeight};
+        DrawItem(dc, nullptr, nullptr, item, row, 0, palette, metrics);
+        GdiFlush();
+        const RECT column{metrics.leftPadding, 0, metrics.leftPadding + metrics.iconColumnWidth, row.bottom};
+        const auto ink = FindPixelsDifferentFromColorInRect(pixels, width, height, column, palette.background);
+        Expect(ink.right - ink.left == logicalTargets[i] && ink.bottom - ink.top == logicalTargets[i],
+            "modern icon density normalization is not scaled a second time by the menu renderer");
+        DeleteObject(image);
+    }
     SelectObject(dc, old); DeleteDC(dc); DeleteObject(surface);
 }
 

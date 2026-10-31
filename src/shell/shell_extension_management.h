@@ -135,7 +135,10 @@ inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& regis
         }
         else if (source.kind == RegistrationKind::Packaged && application) row.display.label = source.application.name;
         if (row.display.pixels.empty() && !source.display.pixels.empty())
-        { row.display.width = source.display.width; row.display.height = source.display.height; row.display.pixels = source.display.pixels; }
+        {
+            row.display.width = source.display.width; row.display.height = source.display.height;
+            row.display.pixels = source.display.pixels; row.display.imageLogicalSize = source.display.imageLogicalSize;
+        }
         auto memberId = source.id;
         if (StateCommandLower(memberId) == "clsid:{470c0ebd-5d73-4d58-9ced-e91e22e23282}") memberId = "state:start-pin";
         auto member = std::find_if(row.members.begin(), row.members.end(), [&](const auto& item) { return item.id == memberId; });
@@ -169,7 +172,8 @@ inline bool SameManagementRow(const ManagementRow &a, const ManagementRow &b)
 {
     return a.id == b.id && a.contexts == b.contexts && a.types == b.types && a.members == b.members && a.applications == b.applications &&
         a.display.label == b.display.label && a.display.width == b.display.width &&
-        a.display.height == b.display.height && a.display.pixels == b.display.pixels;
+        a.display.height == b.display.height && a.display.pixels == b.display.pixels &&
+        a.display.imageLogicalSize == b.display.imageLogicalSize;
 }
 // Reconcile identities without clearing existing controls. Metadata revisions,
 // child commands and execution tokens are intentionally irrelevant to settings.

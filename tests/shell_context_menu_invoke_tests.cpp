@@ -3335,7 +3335,8 @@ void TestUnchangedCataloguePersistence()
     row.verbs = {"unchanged"}; row.display.label = L"Original";
     row.linked = true; original.rows = {row};
     original.associations.push_back({"verb:unchanged", row.id, ext::Context::File});
-    const auto bytes = snowdesktop::settings_ipc::Pack(std::uint32_t(4), original);
+    const auto bytes = snowdesktop::settings_ipc::Pack(std::uint32_t(6), original,
+        std::vector<std::pair<std::string, std::uint64_t>>{{row.id, row.menuRevision}});
     {
         std::ofstream out(cataloguePath, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
@@ -3382,9 +3383,9 @@ void TestUnchangedCataloguePersistence()
         "read refreshed catalogue");
     const auto [schema, value, proof] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t,
         ext::Catalogue, std::vector<std::pair<std::string, std::uint64_t>>>>(updated);
-    Expect(schema == 5 && value.revision == 18 && value.rows[0].display.label == L"Changed" &&
+    Expect(schema == 6 && value.revision == 18 && value.rows[0].display.label == L"Changed" &&
         proof.size() == value.rows.size() && proof[0].first == value.rows[0].id,
-        "a legacy catalogue upgrades with separate command proof and new registration metadata");
+        "a changed catalogue retains separate command proof and new registration metadata");
     Expect(value.rows[0].linked && value.associations.size() == 1,
         "unchanged scans retain associations for subsequent changed registration scans");
 }
@@ -3460,7 +3461,7 @@ void TestIdleCatalogueInvalidation()
     Expect(static_cast<bool>(input.read(reinterpret_cast<char *>(bytes.data()), bytes.size())), "read refreshed persisted catalogue");
     const auto [schema, catalogue, proof] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t,
         ext::Catalogue, std::vector<std::pair<std::string, std::uint64_t>>>>(bytes);
-    Expect(schema == 5 && catalogue.revision == 3 && catalogue.rows.front().display.label == L"3" &&
+    Expect(schema == 6 && catalogue.revision == 3 && catalogue.rows.front().display.label == L"3" &&
         proof.size() == catalogue.rows.size() && proof.front().first == catalogue.rows.front().id,
         "lazy refresh still publishes and persists changed registration metadata");
 }
@@ -6124,7 +6125,12 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-background-management") BenchmarkMenuBackgroundAndManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-native-menu-preparation") BenchmarkNativeMenuPreparation();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-prepared-worker") TestShellMenuPreparedService();
-        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-root-prefetch") TestShellMenuRootPrefetch();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-root-prefetch")
+        {
+            TestShellMenuRootPrefetch();
+            TemporaryDirectory directory;
+            shell_icon_stage_probe::TestContracts(directory.path);
+        }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-menu-icon-stages") ProbeShellMenuIconStages();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();

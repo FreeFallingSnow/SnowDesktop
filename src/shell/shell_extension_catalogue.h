@@ -51,6 +51,9 @@ Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
 // Current package manifest commands only; no file-class scan or COM activation.
 std::vector<Registration> ReadPackagedMenuCommands(HKEY classes = HKEY_CLASSES_ROOT);
 void LoadMenuCommandIcon(Entry& entry, const std::wstring& location);
+// Read display metadata only, never state, children or invocation authority.
+std::optional<Entry> ReadMenuCommandRootIcon(IExplorerCommand* command,
+    IShellItemArray* selection, const std::string& fallbackKey);
 // Background refresh uses fewer workers and expands to the normal limit when
 // a foreground query raises demand. The ordinary reader keeps its full budget.
 class CatalogueForegroundDemand;

@@ -49,6 +49,9 @@ struct Entry
     int width = 0, height = 0;
     std::vector<unsigned char> pixels;
     wchar_t accessKey = 0;
+    // Nonzero only when the producer defines a logical menu-icon size. Pixel
+    // resolution is independent so modern assets can be decoded sharply for DPI.
+    int imageLogicalSize = 0;
 };
 struct Reply
 {
@@ -181,7 +184,7 @@ template <> struct Fields<shell_extensions::Entry>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.provider, v.key, v.label, v.token, v.enabled, v.checked, v.separator, v.native, v.children,
-                        v.width, v.height, v.pixels, v.accessKey, v.registration);
+                        v.width, v.height, v.pixels, v.accessKey, v.registration, v.imageLogicalSize);
     }
 };
 template <> struct Fields<shell_extensions::Reply>

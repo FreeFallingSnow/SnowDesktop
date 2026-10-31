@@ -1,5 +1,6 @@
 #pragma once
 #include "ui/menu/modern_menu.h"
+#include "ui/menu/menu_icon_render.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_service.h"
 #include "shell_extension_menu_rows.h"
@@ -163,6 +164,7 @@ class Presentation
     }
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
+        imageDpi_ = options.dpi ? options.dpi : USER_DEFAULT_SCREEN_DPI;
         MoveMoreToBottom(items, moreCommand);
         if (cached_) UpdateNormal(items, cached_->entries, moreCommand, false, cachedOriginal_);
         if (!normalDone_)
@@ -313,8 +315,9 @@ class Presentation
         // Reuse identical artwork, not the first available image. A complete
         // result must be able to correct an interim icon, in either size direction.
         if (previous.image && (!next.image ||
-            std::tie(nextEntry.width, nextEntry.height, nextEntry.pixels) ==
-            std::tie(previousEntry.width, previousEntry.height, previousEntry.pixels)))
+            (std::tie(nextEntry.width, nextEntry.height, nextEntry.pixels, nextEntry.imageLogicalSize) ==
+             std::tie(previousEntry.width, previousEntry.height, previousEntry.pixels, previousEntry.imageLogicalSize) &&
+             SameImageDimensions(next.image, previous.image))))
             next.image = previous.image;
         std::set<UINT> used;
         for (size_t index = 0; index < next.children.size(); ++index)
@@ -338,6 +341,12 @@ class Presentation
     static bool IsOurCommand(UINT command)
     {
         return command >= FirstCommand && command < FirstCommand + 65536;
+    }
+    static bool SameImageDimensions(HBITMAP left, HBITMAP right)
+    {
+        BITMAP a{}, b{};
+        return left && right && GetObjectW(left, sizeof(a), &a) && GetObjectW(right, sizeof(b), &b) &&
+            a.bmWidth == b.bmWidth && a.bmHeight == b.bmHeight;
     }
     static void Insert(std::vector<modern_menu::Item> &items, const std::vector<modern_menu::Item> &additions,
                        UINT moreCommand)
@@ -452,6 +461,19 @@ class Presentation
             if (e.width > 0 && e.height > 0 && e.width <= 128 && e.height <= 128 &&
                 e.pixels.size() == static_cast<size_t>(e.width * e.height * 4))
             {
+                if (e.imageLogicalSize > 0 && e.imageLogicalSize <= 128)
+                {
+                    const menu_icon::ImageSourceView source{e.pixels.data(), e.pixels.size(),
+                        static_cast<std::uint32_t>(e.width), static_cast<std::uint32_t>(e.height),
+                        static_cast<std::uint32_t>(e.width * 4)};
+                    if (auto image = menu_icon::CreateImageBitmap(source,
+                        std::clamp(MulDiv(e.imageLogicalSize, static_cast<int>(imageDpi_), USER_DEFAULT_SCREEN_DPI), 1, 512)))
+                    {
+                        images_.push_back(image); item.image = image;
+                    }
+                    result.push_back(std::move(item));
+                    continue;
+                }
                 BITMAPINFO info{};
                 info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
                 info.bmiHeader.biWidth = e.width;
@@ -482,6 +504,7 @@ class Presentation
     std::function<void(bool)> completed_;
     unsigned contexts_ = 0;
     UINT nextCommand_ = FirstCommand;
+    UINT imageDpi_ = USER_DEFAULT_SCREEN_DPI;
     std::map<UINT, CommandReference> commands_;
     std::set<UINT> originalCommands_;
     std::map<UINT, Entry> rowEntries_;

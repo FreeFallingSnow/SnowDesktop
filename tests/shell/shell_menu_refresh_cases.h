@@ -150,7 +150,7 @@ void CheckSourceProof(int mode)
     const auto [schema, observed] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<ext::Registration>>>(bytes);
     const auto found = std::find_if(observed.begin(), observed.end(), [&](const auto &r) { return r.id == action.provider; });
     const bool attributed = found != observed.end() && found->application.id == "refresh-app";
-    Expect(schema == 3 && attributed == (mode == 0), "only current target, snapshot, configuration and registration may acquire source proof");
+    Expect(schema == 4 && attributed == (mode == 0), "only current target, snapshot, configuration and registration may acquire source proof");
 }
 
 // Ordinary unknown opt-ins must not allocate a general prepared root. A

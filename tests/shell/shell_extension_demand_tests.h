@@ -107,8 +107,8 @@ inline void Streams(int mode)
     auto catalogue = Inventory(); const auto observed = Observed(catalogue);
     std::vector<std::pair<std::string, std::uint64_t>> proof;
     for (const auto &row : catalogue.rows) proof.emplace_back(row.id, row.menuRevision);
-    Write(cachePath / L"catalogue.bin", snowdesktop::settings_ipc::Pack(std::uint32_t(5), catalogue, proof));
-    Write(cachePath / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    Write(cachePath / L"catalogue.bin", snowdesktop::settings_ipc::Pack(std::uint32_t(6), catalogue, proof));
+    Write(cachePath / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(4), observed.rows));
     ext::Request request; request.paths = {file.wstring()};
     ext::Preferences prefs;
     ext::SetCommon(prefs, "verb:action0", ext::Category::Objects, true);
@@ -281,8 +281,8 @@ inline void CancelQueued()
     const auto catalogue = Inventory(), observed = Observed(catalogue);
     std::vector<std::pair<std::string, std::uint64_t>> proof;
     for (const auto &source : catalogue.rows) proof.emplace_back(source.id, source.menuRevision);
-    Write(cache / L"catalogue.bin", snowdesktop::settings_ipc::Pack(std::uint32_t(5), catalogue, proof));
-    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    Write(cache / L"catalogue.bin", snowdesktop::settings_ipc::Pack(std::uint32_t(6), catalogue, proof));
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(4), observed.rows));
     ext::Request request; request.paths = {file.wstring()};
     ext::Preferences prefs;
     for (int i = 0; i < 3; ++i) ext::SetCommon(prefs, Entry(i).provider, ext::Category::Objects, true);
@@ -488,7 +488,7 @@ inline void LearnFromManagement()
                 auto [schema, rows] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<ext::Registration>>>(bytes);
                 ext::Catalogue observed; observed.rows = std::move(rows);
                 const auto plan = ext::PlanDemandQueries(catalogue, observed, prefs, second, 1);
-                return schema == 3 && !plan.full && plan.sources.size() == 2;
+                return schema == 4 && !plan.full && plan.sources.size() == 2;
             } catch (...) { return false; }
         }, "explicit complete source proof persists canonical and legacy routing evidence");
         Expect(aggregate == 1, "management source learning does not repeat the selected aggregate query");
@@ -688,7 +688,7 @@ inline void KnownSourcePrewarm()
     auto catalogue = Inventory(); const auto observed = Observed(catalogue);
     const auto cache = temp.path / L"cache";
     shell_service_fixture::SeedMetadata(cache, catalogue);
-    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(4), observed.rows));
     ext::Request request; request.paths = {(temp.path / L"selected.txt").wstring()};
     std::ofstream(request.paths.front()) << "private";
     std::atomic_uint fullReads = 0, sourceReads = 0, aggregates = 0, sources = 0;
@@ -716,7 +716,7 @@ inline void LimitedReaderClosedGeneration()
     auto catalogue = Inventory(); const auto observed = Observed(catalogue);
     const auto cache = temp.path / L"cache";
     shell_service_fixture::SeedMetadata(cache, catalogue);
-    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(4), observed.rows));
     ext::Request request; request.paths = {(temp.path / L"selected.txt").wstring()};
     std::ofstream(request.paths.front()) << "private";
     std::atomic_uint sourceReads = 0, fullReads = 0, factories = 0;

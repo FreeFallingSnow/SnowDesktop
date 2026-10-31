@@ -13,7 +13,7 @@ inline void SeedMetadata(const std::filesystem::path &cache,
     std::filesystem::create_directories(cache);
     std::vector<std::pair<std::string, std::uint64_t>> menuProof;
     for (const auto &row : catalogue.rows) menuProof.emplace_back(row.id, row.menuRevision);
-    const auto bytes = snowdesktop::settings_ipc::Pack(std::uint32_t(5), catalogue, menuProof);
+    const auto bytes = snowdesktop::settings_ipc::Pack(std::uint32_t(6), catalogue, menuProof);
     std::ofstream output(cache / L"catalogue.bin", std::ios::binary);
     output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     if (!output) throw std::runtime_error("write isolated registration metadata");

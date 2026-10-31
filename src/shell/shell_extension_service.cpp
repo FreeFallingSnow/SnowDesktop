@@ -556,6 +556,7 @@ struct MenuService::Impl
                             refreshed.application = seed.application;
                             refreshed.display.width = seed.display.width; refreshed.display.height = seed.display.height;
                             refreshed.display.pixels = seed.display.pixels;
+                            refreshed.display.imageLogicalSize = seed.display.imageLogicalSize;
                         }
                         catalogue.rows.push_back(std::move(refreshed));
                         if (MenuRevision(seed) && (MenuRevision(seed) != MenuRevision(*current) || seed.systemEnabled != current->systemEnabled))
@@ -923,6 +924,7 @@ struct MenuService::Impl
                 item.display.provider = entry.provider; item.display.registration = entry.registration;
                 item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
                 item.display.width = entry.width; item.display.height = entry.height; item.display.pixels = entry.pixels;
+                item.display.imageLogicalSize = entry.imageLogicalSize;
                 item.contexts |= row.view.contexts;
                 if (!row.request.sourceClsid.empty() && known != registered.end())
                 {
@@ -968,7 +970,7 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); if (!observedDirty) return; value = available.rows; observedDirty = false; }
         try
         {
-            const auto bytes = settings_ipc::Pack(std::uint32_t(3), value);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(4), value);
             std::error_code error; std::filesystem::create_directories(cache.Directory(), error);
             const auto temporary = cache.Directory() / L"observed.tmp";
             std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
@@ -985,8 +987,11 @@ struct MenuService::Impl
             const auto size = std::filesystem::file_size(file, error); if (error || size > 8 * 1024 * 1024 + 16) return;
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
-            auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<Registration>>>(bytes);
-            if (schema != 3 || value.size() > 1024) return;
+            std::uint32_t schema = 0;
+            settings_ipc::Reader reader(bytes); reader(schema);
+            if (schema != 4) return;
+            std::vector<Registration> value; reader(value); reader.Finish();
+            if (value.size() > 1024) return;
             std::lock_guard lock(mutex);
             for (auto &entry : value)
                 if (!entry.id.empty() && entry.linked && entry.systemEnabled && !entry.display.provider.empty())
@@ -1159,6 +1164,23 @@ struct MenuService::Impl
             static_cast<unsigned>(reply.entries.size()));
         return true;
     }
+    std::set<std::string> CurrentSourceOwners(const Request& request, const Entry& entry) const
+    {
+        std::set<std::string> owners;
+        if (entry.provider.empty()) return owners;
+        const auto now = MenuSnapshotCache::Now();
+        for (const auto& [sourceKey, source] : rows)
+        {
+            if (source.request.sourceClsid.empty() || source.invalid || !source.view.snapshot ||
+                !source.snapshotTargetChecked || source.expires <= now ||
+                source.request.paths != request.paths || source.request.background != request.background ||
+                source.request.extended != request.extended || source.request.originalShortcutOnly != request.originalShortcutOnly) continue;
+            for (const auto& root : source.view.snapshot->entries)
+                if (root.provider == entry.provider && root.key == entry.key && !root.registration.empty())
+                    owners.insert(root.registration);
+        }
+        return owners;
+    }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
         Request request;
@@ -1205,24 +1227,8 @@ struct MenuService::Impl
                     if (request.sourceClsid.empty())
                     {
                         Associate(catalogue, resolved, reply);
-                        // A currently verified source stream for this exact
-                        // selection can identify its canonical root in the
-                        // fresh aggregate. Never infer an owner from captions.
-                        for (auto& entry : reply.entries) if (entry.registration.empty() && !entry.provider.empty())
-                        {
-                            std::set<std::string> owners;
-                            for (const auto& [sourceKey, source] : rows)
-                            {
-                                if (source.request.sourceClsid.empty() || source.invalid || !source.view.snapshot ||
-                                    !source.snapshotTargetChecked || source.expires <= MenuSnapshotCache::Now() ||
-                                    source.request.paths != request.paths || source.request.background != request.background ||
-                                    source.request.extended != request.extended || source.request.originalShortcutOnly != request.originalShortcutOnly) continue;
-                                for (const auto& root : source.view.snapshot->entries)
-                                    if (root.provider == entry.provider && root.key == entry.key && !root.registration.empty())
-                                        owners.insert(root.registration);
-                            }
-                            if (owners.size() == 1) entry.registration = *owners.begin();
-                        }
+                        // Current source streams are consulted on display
+                        // copies, so later ambiguous/expired proof is reversible.
                     }
                     else
                     {
@@ -1368,7 +1374,7 @@ struct MenuService::Impl
         {
             std::vector<std::pair<std::string, std::uint64_t>> menuProof;
             for (const auto &row : value.rows) menuProof.emplace_back(row.id, row.menuRevision);
-            const auto bytes = settings_ipc::Pack(std::uint32_t(5), value, menuProof);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(6), value, menuProof);
             if (bytes.size() > 32 * 1024 * 1024) return;
             std::error_code ignored; std::filesystem::create_directories(cache.Directory(), ignored);
             const auto temporary = cache.Directory() / L"catalogue.tmp";
@@ -1387,19 +1393,17 @@ struct MenuService::Impl
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
             std::uint32_t schema = 0; Catalogue value;
-            settings_ipc::Reader reader(bytes); reader(schema, value);
-            if (schema == 5)
+            settings_ipc::Reader reader(bytes); reader(schema);
+            if (schema != 6) return; // Older Entry layouts lack image logical size.
+            reader(value);
+            std::vector<std::pair<std::string, std::uint64_t>> menuProof;
+            reader(menuProof);
+            if (menuProof.size() != value.rows.size()) return;
+            for (size_t i = 0; i < menuProof.size(); ++i)
             {
-                std::vector<std::pair<std::string, std::uint64_t>> menuProof;
-                reader(menuProof);
-                if (menuProof.size() != value.rows.size()) return;
-                for (size_t i = 0; i < menuProof.size(); ++i)
-                {
-                    if (menuProof[i].first != value.rows[i].id) return;
-                    value.rows[i].menuRevision = menuProof[i].second;
-                }
+                if (menuProof[i].first != value.rows[i].id) return;
+                value.rows[i].menuRevision = menuProof[i].second;
             }
-            else if (schema != 4) return;
             reader.Finish();
             std::lock_guard lock(mutex); catalogue = std::move(value);
         }
@@ -2198,6 +2202,9 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         // only a unique, proven association when consulting current rules.
         for (auto &entry : reply.entries) if (entry.registration.empty())
         {
+            const auto owners = impl_->CurrentSourceOwners(row.request, entry);
+            if (owners.size() > 1) continue;
+            if (owners.size() == 1) { entry.registration = *owners.begin(); continue; }
             std::string registration;
             bool ambiguous = false;
             unsigned associatedContexts = 0;

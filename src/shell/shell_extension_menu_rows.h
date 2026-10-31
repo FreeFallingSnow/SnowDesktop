@@ -51,10 +51,10 @@ inline bool SameEntry(const Entry& left, const Entry& right)
 {
     return std::tie(left.provider, left.key, left.registration, left.label, left.enabled,
                left.checked, left.separator, left.native, left.width, left.height,
-               left.pixels, left.accessKey) ==
+               left.pixels, left.accessKey, left.imageLogicalSize) ==
         std::tie(right.provider, right.key, right.registration, right.label, right.enabled,
                right.checked, right.separator, right.native, right.width, right.height,
-               right.pixels, right.accessKey) &&
+               right.pixels, right.accessKey, right.imageLogicalSize) &&
         left.children.size() == right.children.size() &&
         std::equal(left.children.begin(), left.children.end(), right.children.begin(), SameEntry);
 }
@@ -65,6 +65,7 @@ inline Entry MergeEntry(const Entry& previous, Entry next, bool wasPending)
         next.width = previous.width;
         next.height = previous.height;
         next.pixels = previous.pixels;
+        next.imageLogicalSize = previous.imageLogicalSize;
     }
     if (wasPending || next.native) return next;
 

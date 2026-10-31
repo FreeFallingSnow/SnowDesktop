@@ -16,6 +16,8 @@
 #include <set>
 #include <string_view>
 #include <mutex>
+#include <memory>
+#include <utility>
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <shellapi.h>
@@ -118,39 +120,41 @@ std::uint64_t Hash(std::span<const std::byte> bytes)
     for (const auto byte : bytes) { hash ^= std::to_integer<unsigned char>(byte); hash *= 1099511628211ull; }
     return hash;
 }
-void LoadIcon(Entry &entry, std::wstring location)
+void LoadIcon(Entry &entry, std::wstring location, int pixelSize = 20)
 {
-    if (location.empty()) return;
+    if (location.empty() || pixelSize < 1 || pixelSize > 128) return;
     wchar_t path[32768]{};
     wcsncpy_s(path, location.c_str(), _TRUNCATE);
     const auto index = PathParseIconLocationW(path);
     if (PathIsNetworkPathW(path) || GetDriveTypeW(std::filesystem::path(path).root_path().c_str()) == DRIVE_REMOTE) return;
     struct IconRow { std::uint64_t stamp; Entry image; };
     static std::mutex iconMutex;
-    static std::map<std::wstring, IconRow> icons;
+    static std::map<std::pair<std::wstring, int>, IconRow> icons;
+    const auto cacheKey = std::make_pair(location, pixelSize);
     WIN32_FILE_ATTRIBUTE_DATA data{};
     if (!GetFileAttributesExW(path, GetFileExInfoStandard, &data)) return;
     const auto stamp = (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
     {
         std::lock_guard lock(iconMutex);
-        if (const auto found = icons.find(location); found != icons.end() && found->second.stamp == stamp)
+        if (const auto found = icons.find(cacheKey); found != icons.end() && found->second.stamp == stamp)
         { entry.width = found->second.image.width; entry.height = found->second.image.height; entry.pixels = found->second.image.pixels; return; }
     }
     HICON icon = nullptr;
-    if (FAILED(SHDefExtractIconW(path, index, 0, nullptr, &icon, MAKELONG(20, 20))) || !icon) return;
-    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth = 20;
-    info.bmiHeader.biHeight = -20; info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+    if (FAILED(SHDefExtractIconW(path, index, 0, nullptr, &icon, MAKELONG(pixelSize, pixelSize))) || !icon) return;
+    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth = pixelSize;
+    info.bmiHeader.biHeight = -pixelSize; info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
     void *pixels = nullptr;
     HDC dc = CreateCompatibleDC(nullptr);
     HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
     if (dc && bitmap && pixels)
     {
         const auto old = SelectObject(dc, bitmap);
-        memset(pixels, 0, 1600);
-        if (DrawIconEx(dc, 0, 0, icon, 20, 20, 0, nullptr, DI_NORMAL))
+        const size_t bytes = static_cast<size_t>(pixelSize) * pixelSize * 4;
+        memset(pixels, 0, bytes);
+        if (DrawIconEx(dc, 0, 0, icon, pixelSize, pixelSize, 0, nullptr, DI_NORMAL))
         {
-            entry.width = entry.height = 20;
-            entry.pixels.assign(static_cast<unsigned char *>(pixels), static_cast<unsigned char *>(pixels) + 1600);
+            entry.width = entry.height = pixelSize;
+            entry.pixels.assign(static_cast<unsigned char *>(pixels), static_cast<unsigned char *>(pixels) + bytes);
         }
         SelectObject(dc, old);
     }
@@ -162,7 +166,7 @@ void LoadIcon(Entry &entry, std::wstring location)
         std::lock_guard lock(iconMutex);
         if (icons.size() >= 512) icons.erase(icons.begin());
         Entry image; image.width = entry.width; image.height = entry.height; image.pixels = entry.pixels;
-        icons[location] = {stamp, std::move(image)};
+        icons[cacheKey] = {stamp, std::move(image)};
     }
 }
 template<class T> void Unique(std::vector<T> &items) { std::sort(items.begin(), items.end()); items.erase(std::unique(items.begin(), items.end()), items.end()); }
@@ -1324,7 +1328,36 @@ std::vector<Registration> ReadPackagedMenuCommands(HKEY classes)
     timing.Record("activation_metadata", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result.rows);
 }
-void LoadMenuCommandIcon(Entry& entry, const std::wstring& location) { LoadIcon(entry, location); }
+void LoadMenuCommandIcon(Entry& entry, const std::wstring& location)
+{
+    // Catalogue thumbnails retain their 20px contract. Popup artwork is a
+    // higher-resolution raster with an explicit, DPI-independent display size.
+    Entry image; LoadIcon(image, location, 32);
+    if (image.pixels.empty()) return;
+    entry.width = image.width; entry.height = image.height;
+    entry.pixels = std::move(image.pixels); entry.imageLogicalSize = 16;
+}
+std::optional<Entry> ReadMenuCommandRootIcon(IExplorerCommand* command,
+    IShellItemArray* selection, const std::string& fallbackKey)
+{
+    if (!command) return {};
+    GUID canonical{};
+    if (FAILED(command->GetCanonicalName(&canonical))) return {};
+    std::string key = fallbackKey;
+    if (!IsEqualGUID(canonical, GUID_NULL))
+    {
+        wchar_t text[40]{}; StringFromGUID2(canonical, text, 40); key = Utf8(text);
+    }
+    if (key.empty()) return {};
+    PWSTR location = nullptr;
+    const HRESULT hr = command->GetIcon(selection, &location);
+    std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> ownedLocation(location, &CoTaskMemFree);
+    Entry image;
+    if (SUCCEEDED(hr) && ownedLocation) LoadMenuCommandIcon(image, ownedLocation.get());
+    if (image.pixels.empty()) return {};
+    image.key = std::move(key);
+    return image;
+}
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
                                             CatalogueForegroundDemand &foreground)
 {
@@ -1442,6 +1475,7 @@ void Associate(Catalogue &catalogue, const Request &request, Reply &reply)
         {
             match->display.width = entry.width; match->display.height = entry.height;
             match->display.pixels = entry.pixels;
+            match->display.imageLogicalSize = entry.imageLogicalSize;
         }
         const Association association{entry.provider, match->id, selection.context};
         if (std::none_of(catalogue.associations.begin(), catalogue.associations.end(), [&](const auto &a) { return a.provider == association.provider && a.registration == association.registration && a.context == association.context; })) catalogue.associations.push_back(association);
