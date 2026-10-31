@@ -109,6 +109,7 @@ class Presentation
         : prefs_(std::move(prefs)), source_(source), normalSource_(source), originalSource_(source), service_(service), completed_(std::move(completed))
     {
         if (source.paths.empty() || !service_.MenuEnabled(source_, prefs_)) return;
+        refreshState_ = prefs_.showAll && !source.background;
         auto view = service_.MenuDisplay(source_, prefs_);
         initialRevision_ = view.revision;
         cached_ = std::move(view.snapshot);
