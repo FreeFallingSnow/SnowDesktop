@@ -729,6 +729,7 @@ struct Scanner
     struct HandlerMetadata { std::wstring label, module, icon; Application application; };
     std::map<std::wstring, HandlerMetadata> handlers;
     std::map<std::wstring, Application> commands, applications;
+    std::map<std::wstring, std::wstring> commandModules, localModules;
     std::map<std::string, std::wstring> registrationModules;
     std::map<std::wstring, std::wstring> labels;
     std::map<std::wstring, bool> policies;
@@ -790,11 +791,17 @@ struct Scanner
         }
         return it->second;
     }
+    const std::wstring& CommandModuleForScan(const std::wstring& command)
+    {
+        const auto [it, inserted] = commandModules.try_emplace(command);
+        if (inserted) it->second = CommandModule(command);
+        return it->second;
+    }
     Application CommandApplication(const std::wstring &command)
     {
         if (command.empty()) return {};
         const auto [it, inserted] = commands.try_emplace(command);
-        if (inserted) it->second = ApplicationForModule(CommandModule(command));
+        if (inserted) it->second = ApplicationForModule(CommandModuleForScan(command));
         return it->second;
     }
     const HandlerMetadata &Handler(const std::wstring &clsid)
@@ -850,7 +857,14 @@ struct Scanner
             icon, AssetRevision(icon)));
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
-        if (!module.empty()) registrationModules.try_emplace(row.id, LocalModule(module));
+        if (!module.empty() && !registrationModules.contains(row.id))
+        {
+            // A handler can be registered for hundreds of types. Do not
+            // evaluate filesystem normalization again for every captured row.
+            const auto [local, inserted] = localModules.try_emplace(module);
+            if (inserted) local->second = LocalModule(module);
+            registrationModules.emplace(row.id, local->second);
+        }
         row.display.provider = row.id;
         if (row.contexts & ContextBit(Context::Folder))
         {
@@ -992,7 +1006,7 @@ struct Scanner
         // Include values that affect applicability, not volatile registry write times.
         row.revision = Hash(settings_ipc::Pack(command, handler, values.String(L"AppliesTo"), values.String(L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
         const auto module = !handler.empty() ? Handler(handler).module :
-            !delegate.empty() ? Handler(delegate).module : CommandModule(command);
+            !delegate.empty() ? Handler(delegate).module : CommandModuleForScan(command);
         row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
         Add(std::move(row), icon, module);
     }
@@ -1260,8 +1274,10 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
     scanner.Root(L"Directory", folders); scanner.Root(L"Folder", folders); scanner.Root(L"Drive", folders);
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
+    timing.Record("basic.roots");
     const auto roots = Children(classes, L"", foreground);
     auto types = ReadTypeAssociations(classes, roots, scanner.associations, foreground);
+    timing.Record("type.associations");
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
     std::vector<FileRoot> fileRoots;
     for (const auto &name : roots)
@@ -1274,8 +1290,11 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
     for (const auto &name : Children(classes, L"SystemFileAssociations", foreground))
         fileRoots.push_back({L"SystemFileAssociations\\" + name, types[L"systemfileassociations\\" + Lower(name)]});
     ReadFileRoots(scanner, fileRoots, foreground);
+    timing.Record("file.roots", static_cast<unsigned>(scanner.localModules.size()));
     if (packages) scanner.Packages();
+    timing.Record("packages");
     scanner.FinishRows();
+    timing.Record("rows");
     scanner.ClassifyApplications();
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
     scanner.result.folderRevision = scanner.FolderRevision();
