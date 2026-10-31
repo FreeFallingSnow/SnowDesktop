@@ -16,6 +16,8 @@
 #include <thread>
 #include <vector>
 #include "shell/shell_extension_catalogue.h"
+#include "shell/shell_extension_service.h"
+#include "shell/shell_extension_source.h"
 #include "shell/shell_catalogue_workers.h"
 #include "shell/shell_menu_registry_watch.h"
 #include "platform/foreground_fullscreen.h"
@@ -513,6 +515,83 @@ void CheckSelectedCatalogueSources()
 }
 }
 
+static void CheckSourceIdentityBeforeCatalogue()
+{
+    PrivateRegistry fixture;
+    const std::wstring clsid = L"{7C0947B1-19F8-46E2-AC45-263432A07001}";
+    const std::wstring scope = L"PrivateSource";
+    const auto registration = scope + L"\\shellex\\ContextMenuHandlers\\Provider";
+    Put(fixture.value, registration, nullptr, clsid);
+    const std::string owner = "clsid:{7c0947b1-19f8-46e2-ac45-263432a07001}";
+    Check(ext::SourceRegistrationId(clsid, scope, fixture.value) == owner,
+        "a live exact registration provides canonical source provenance without an application inventory");
+    Check(ext::SourceRegistrationId(clsid, L"", fixture.value).empty() &&
+        ext::SourceRegistrationId(L"{7C0947B1-19F8-46E2-AC45-263432A07002}", scope, fixture.value).empty(),
+        "unknown scopes and different classes never acquire the source's identity");
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop-SourceIdentity-" + std::filesystem::path(fixture.path).filename().wstring());
+    Check(std::filesystem::create_directory(directory), "own source provenance workspace");
+    struct Cleanup
+    {
+        std::filesystem::path directory;
+        ~Cleanup() { std::error_code ignored; std::filesystem::remove_all(directory, ignored); }
+    } cleanup{directory};
+    const auto selected = directory / L"selected.png";
+    std::ofstream(selected) << "private query-boundary fixture";
+    ext::Request request; request.paths = {selected.wstring()}; request.context = ext::Context::File;
+    request.sourceClsid = clsid; request.sourceKey = scope;
+    const bool suppressOwner = GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_SUPPRESS_SOURCE_OWNER", nullptr, 0) != 0;
+    ext::MenuService service(directory / L"cache", [&](const ext::Request& target) {
+        ext::Entry entry; entry.provider = "menu:source command:1"; entry.label = L"Source command";
+        // Only the external COM query is substituted. Its registration proof
+        // is read from the same real private registry as the native producer.
+        if (!suppressOwner && !target.sourceClsid.empty())
+            entry.registration = ext::SourceRegistrationId(target.sourceClsid, target.sourceKey, fixture.value);
+        ext::QueryWork work;
+        work.poll = [entry] { return std::optional<ext::Reply>{ext::Reply{true, {entry}, {}}}; };
+        work.selectionContexts = [] { return ext::ContextBit(ext::Context::File); };
+        return work;
+    }, [] { ext::Catalogue empty; empty.revision = 1; return empty; });
+    const auto query = [&](const ext::Request& target) {
+        service.Query(target, ext::QueryPriority::Menu, true);
+        const auto deadline = GetTickCount64() + 5000;
+        auto view = service.View(target);
+        while ((view.pending || !view.snapshot) && GetTickCount64() < deadline)
+        {
+            Sleep(1); view = service.View(target);
+        }
+        Check(view.snapshot && !view.pending && view.snapshot->ok, "query completes before any global owner inventory exists");
+    };
+    ext::Preferences prefs; ext::SetCommon(prefs, owner, ext::Category::Objects, true);
+    auto aggregate = request; aggregate.sourceClsid.clear(); aggregate.sourceKey.clear();
+    const auto aggregateHidden = [&] {
+        const auto display = service.MenuDisplay(aggregate, prefs);
+        return display.snapshot && display.snapshot->entries.empty();
+    };
+    query(aggregate);
+    Check(aggregateHidden(), "an unknown aggregate caption alone cannot prove an enabled owner");
+    const auto otherFile = directory / L"other.png";
+    std::ofstream(otherFile) << "different private selection";
+    auto other = request; other.paths = {otherFile.wstring()}; query(other);
+    Check(aggregateHidden(), "another selection cannot supply aggregate source provenance");
+    query(request);
+    const auto display = service.MenuDisplay(request, prefs);
+    Check(display.snapshot && display.snapshot->entries.size() == 1 &&
+        display.snapshot->entries.front().label == L"Source command",
+        "SOURCE_OWNER_BEFORE_CATALOGUE: enabled caption-only source commands survive fast display projection");
+    const auto supplemented = service.MenuDisplay(aggregate, prefs);
+    Check(supplemented.snapshot && supplemented.snapshot->entries.size() == 1,
+        "LATE_SOURCE_PROVENANCE: a completed aggregate gains its exact selection's later source identity without another query");
+    const std::wstring secondClsid = L"{7C0947B1-19F8-46E2-AC45-263432A07002}";
+    Put(fixture.value, scope + L"\\shellex\\ContextMenuHandlers\\Other", nullptr, secondClsid);
+    auto ambiguous = request; ambiguous.sourceClsid = secondClsid; query(ambiguous);
+    Check(aggregateHidden(),
+        "two current source owners with the same aggregate identity remain ambiguous");
+    service.Shutdown();
+    Check(RegDeleteTreeW(fixture.value, registration.c_str()) == ERROR_SUCCESS, "remove only the private source registration");
+    Check(ext::SourceRegistrationId(clsid, scope, fixture.value).empty(), "removed sources cannot retain registration proof");
+}
+
 static void CheckPopupPackageActivationMetadata()
 {
     PrivateRegistry fixture;
@@ -579,6 +658,7 @@ static void CheckPopupPackageActivationMetadata()
 
 void TestCatalogueRegistryHandles()
 {
+    CheckSourceIdentityBeforeCatalogue();
     CheckPopupPackageActivationMetadata();
     CheckSelectedCatalogueSources();
     // Real subscriptions: nested browse-state writes must not signal menu

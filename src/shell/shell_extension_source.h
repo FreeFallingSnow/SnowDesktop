@@ -2,7 +2,9 @@
 #include <windows.h>
 #include <objbase.h>
 #include <string>
+#include <string_view>
 #include <iterator>
+#include <cwctype>
 
 namespace snowdesktop::shell_extensions
 {
@@ -30,5 +32,22 @@ inline bool SourceRegistered(const std::wstring &clsid, const std::wstring &scop
     }
     RegCloseKey(handlers);
     return registered;
+}
+
+// Carry provenance from a source-scoped read even when the application's
+// global attribution inventory has not finished. Enabled policy remains the
+// caller's separate live check; this identity never grants execution authority.
+inline std::string SourceRegistrationId(const std::wstring& clsid, const std::wstring& scope,
+                                      HKEY classes = HKEY_CLASSES_ROOT)
+{
+    if (!SourceRegistered(clsid, scope, classes)) return {};
+    GUID identity{};
+    if (FAILED(CLSIDFromString(clsid.c_str(), &identity))) return {};
+    wchar_t canonical[40]{};
+    if (!StringFromGUID2(identity, canonical, static_cast<int>(std::size(canonical)))) return {};
+    std::string result = "clsid:";
+    for (const auto character : std::wstring_view(canonical))
+        result.push_back(static_cast<char>(std::towlower(character)));
+    return result;
 }
 }
