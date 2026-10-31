@@ -69,9 +69,9 @@ inline void TestContracts(const std::filesystem::path& directory)
         std::wstring location; unsigned unrelatedCalls = 0;
         GUID canonical = {0xb41db860, 0x64e4, 0x11d2, {0x99, 0x06, 0xe4, 0x9f, 0xad, 0xc1, 0x73, 0xca}};
         IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR*) override { ++unrelatedCalls; return E_NOTIMPL; }
-        IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* value) override { return SHStrDupW(location.c_str(), value); }
+        IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* outputIcon) override { return SHStrDupW(location.c_str(), outputIcon); }
         IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR*) override { ++unrelatedCalls; return E_NOTIMPL; }
-        IFACEMETHODIMP GetCanonicalName(GUID* value) override { *value = canonical; return S_OK; }
+        IFACEMETHODIMP GetCanonicalName(GUID* outputCanonical) override { *outputCanonical = canonical; return S_OK; }
         IFACEMETHODIMP GetState(IShellItemArray*, BOOL, EXPCMDSTATE*) override { ++unrelatedCalls; return E_NOTIMPL; }
         IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override { ++unrelatedCalls; return E_NOTIMPL; }
         IFACEMETHODIMP GetFlags(EXPCMDFLAGS*) override { ++unrelatedCalls; return E_NOTIMPL; }
