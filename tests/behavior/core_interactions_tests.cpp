@@ -652,6 +652,8 @@ int Command(int argc, char** argv)
     const std::size_t shard = argc == 5 ? std::stoull(argv[3]) : 0;
     const std::size_t shards = argc == 5 ? std::stoull(argv[4]) : 1;
     behavior::Require(shards > 0 && shard < shards, "invalid shard");
+    // Preserve every case result in CTest/JUnit, including passing shards.
+    std::cout << "CTEST_FULL_OUTPUT" << std::endl;
     std::cout << "MODEL external-desktop async=" << std::size(asyncValues)
         << " selection=" << std::size(directoryValues) << " release=" << std::size(gestures)
         << " capabilities=" << std::size(capabilities) << " enter=" << std::size(enterValues)
