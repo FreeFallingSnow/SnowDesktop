@@ -302,6 +302,23 @@ returns the model passed to `view`/`render`, `event` and `dispose`. Keep renderi
 callbacks hot-path safe: do not create resources, load modules, start future
 queries, write storage or rebuild invariant data on every frame.
 
+## Settings, menus and appearance presets
+
+- Put ordinary component preferences in `widget.define({settings=...})` and use
+  the host's component-settings entry. Do not add another settings button,
+  context-menu command or configuration panel unless the user explicitly asks
+  for a separate workflow.
+- Give each actionable context-menu command a semantic host glyph through
+  `icon` and `iconFont`, or a declared resource image when that feature is
+  available. Reuse the host's Fluent icon vocabulary for actions such as
+  refresh; separators and informational rows do not need command icons.
+- Expose a selectable component appearance, such as a transparent theme,
+  through `settings.presets` with a stable `id`, localized `label` and grouped
+  `values`. Mark the intended initial choice with `default=true`; put its
+  material, opacity and foreground choices in that preset. Descriptor style
+  values remain fallbacks, not a replacement for a reselectable preset. Preserve
+  saved user choices, and do not apply a preset repeatedly from rendering code.
+
 ## Manifest boundaries
 
 - `id` is an immutable UUID; `version` is SemVer; `dataVersion` is positive.
