@@ -19,9 +19,15 @@ struct NativeDragIntegrationAccess
     static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
         if (asyncOwner && window == completionWindow &&
-            (message == kBackgroundShellReadyMessage || (message == WM_TIMER && wp == kDesktopHostWatchTimerId)))
+            (message == kBackgroundShellReadyMessage ||
+                (message == WM_TIMER && (wp == kDesktopHostWatchTimerId || wp == kShellChangeTimerId))))
         {
             try {
+                if (message == WM_TIMER && wp == kShellChangeTimerId) {
+                    // The production refresh callback schedules this timer to
+                    // apply its completed snapshot and any pending disk reload.
+                    asyncOwner->OnTimer(wp); return 0;
+                }
                 if (message == kBackgroundShellReadyMessage) { ++asyncReadMessages; asyncOwner->PollInitialShellRead(); }
                 asyncOwner->DrainBackgroundShellWork(); return 0;
             } catch (...) { asyncException = std::current_exception(); return 0; }
