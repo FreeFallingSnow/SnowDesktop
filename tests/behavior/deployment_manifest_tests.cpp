@@ -32,7 +32,7 @@ void BuildManifest(const fs::path& output)
             Require(unique.insert(path).second,"duplicate inventory path: "+path);
             const auto* alternate = row.Find("buildPath");
             const auto physical = alternate ? ManifestString(row,"buildPath") : path;
-            const fs::path relative = fs::u8path(physical);
+            const fs::path relative{std::u8string(physical.begin(), physical.end())};
             Require(!relative.is_absolute() && !relative.has_root_name() &&
                 std::none_of(relative.begin(),relative.end(),[](const auto& part) { return part == L".."; }),
                 "inventory path must stay inside its build output");
