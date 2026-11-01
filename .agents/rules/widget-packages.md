@@ -10,9 +10,15 @@
 | 官方社区组件 | `developer_assets/workshop_widgets/<slug>/` | 目标构建的 `data/widgets/dev/<slug>/`，独立发布 Workshop |
 | 产品 Skill | `widgets/snowdesktop-lua-widget/`、`widgets/snowdesktop-control/` | 随应用分发；分别提供组件开发与对外控制能力，不作为临时文件删除 |
 
-- 仅改 Lua 包、未改宿主原生代码/公共 API/CMake/构建脚本时，复用 `snowwidget lint`、组件测试、包校验和打包等入口，无需宿主构建或宿主全量。记录实际命令和结果；越出边界重新选检查。
+- 仅改组件包及其素材和说明、未改宿主原生代码/公共 API/CMake/共享构建脚本时，复用 `snowwidget lint`、组件测试、包校验和打包等入口，无需宿主构建或宿主全量。记录实际命令和结果；越出边界重新选检查。
 - 用户明确要求编译、任务越出纯包范围或需验证内置/开发来源切换时，运行标准 `scripts/build.bat`。独立候选构建不提前退出宿主或重启 Explorer，交付运行文件后再同步开发来源。
 - 组件开发 Skill 的加载条件见 [根规则](../../AGENTS.md#公共契约与本地化)。
+
+## 独立社区组件免登记
+
+- 修改范围仅限 `developer_assets/workshop_widgets/<slug>/` 的官方社区组件包、素材和说明，且不修改宿主原生代码、宿主公共 API、CMake 或共享构建脚本时，无需 Task 登记或协作登记，直接开展组件开发、检查、预览和打包；不调用 `task-open/task-stage`、`begin/claim/plan/ready-and-wait`，不加入宿主构建屏障。
+- 已登记任务确认符合上述范围时，先按[脚本手册](../../scripts/README.md)撤回自身编辑登记并关闭 Task，保留源码和验证记录，再继续独立开发。保留其他任务登记及未提交修改。
+- 需要修改宿主或共享构建设施时，在操作前恢复根规则规定的登记和执行权流程。开发来源同步、权限、用户数据保护及发布授权仍按本说明执行。
 
 ## 内置组件同步
 
