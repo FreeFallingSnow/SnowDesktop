@@ -537,8 +537,10 @@ struct DesktopBackdropCompositor::Impl
     bool popupTopmost = false;
     bool visible = true;
     bool animationPathRegionExpanded = false;
+    bool stableWindowRegion = false;
     RECT occlusionRect{};
     bool panelRegionSnapshotValid = false;
+    bool synchronizedStableWindowRegion = false;
     std::size_t synchronizedPanelCount = 0;
     RECT synchronizedOcclusionRect{};
     SIZE synchronizedWindowSize{};
@@ -550,9 +552,10 @@ struct DesktopBackdropCompositor::Impl
         available = false;
     }
 
-    void BeginCollection(bool complete)
+    void BeginCollection(bool complete, bool stableRegion = false)
     {
         completeCollection = complete;
+        stableWindowRegion = stableRegion;
         collectingFrame = true;
         if (complete)
             for (auto& panel : panels) panel.seen = false;
@@ -746,12 +749,14 @@ struct DesktopBackdropCompositor::Impl
         const UINT windowDpi = GetDpiForWindow(backdropWindow);
         const bool windowGeometryKnown = GetWindowRect(backdropWindow, &windowFrame) && windowDpi != 0;
         const SIZE windowSize{windowFrame.right - windowFrame.left, windowFrame.bottom - windowFrame.top};
+        if (stableWindowRegion && !windowGeometryKnown) return false;
         bool inputsMatch = panelRegionSnapshotValid && !animationPathRegionExpanded &&
+            synchronizedStableWindowRegion == stableWindowRegion &&
             windowGeometryKnown && synchronizedPanelCount == panels.size() &&
             EqualRect(&synchronizedOcclusionRect, &occlusionRect) &&
             synchronizedWindowSize.cx == windowSize.cx && synchronizedWindowSize.cy == windowSize.cy &&
             synchronizedWindowDpi == windowDpi;
-        if (inputsMatch)
+        if (inputsMatch && !stableWindowRegion)
         {
             for (const auto& panel : panels)
             {
@@ -780,34 +785,45 @@ struct DesktopBackdropCompositor::Impl
                 panel.regionFenceSynchronized = true;
             }
             synchronizedPanelCount = panels.size();
+            synchronizedStableWindowRegion = stableWindowRegion;
             synchronizedOcclusionRect = occlusionRect;
             synchronizedWindowSize = windowSize;
             synchronizedWindowDpi = windowDpi;
             panelRegionSnapshotValid = true;
         };
 
-        HRGN panelRegion = CreateRectRgn(0, 0, 0, 0);
+        // Staged Dock frames move inside one stable allocation. SetWindowRgn
+        // takes effect independently of the Composition commit: a tight new
+        // fence can cut away the still-displayed old glass. Keep this HWND
+        // fence stable and let the visual clips move with their own pixels.
+        // An empty collection still retires all glass synchronously.
+        HRGN panelRegion = stableWindowRegion && !panels.empty()
+            ? CreateRectRgn(0, 0, windowSize.cx, windowSize.cy)
+            : CreateRectRgn(0, 0, 0, 0);
         if (!panelRegion)
             return false;
-        for (const PanelVisual& panel : panels)
+        if (!stableWindowRegion)
         {
-            // Composition owns the AA contour. The outward region preserves
-            // its coverage but excludes the fully transparent outer corners.
-            HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
-                panel.regionFrame, panel.regionCornerRadius);
-            if (!frameRegion)
+            for (const PanelVisual& panel : panels)
             {
-                DeleteObject(panelRegion);
-                return false;
-            }
-            const int combineResult = CombineRgn(
-                panelRegion, panelRegion,
-                frameRegion, RGN_OR);
-            DeleteObject(frameRegion);
-            if (combineResult == ERROR)
-            {
-                DeleteObject(panelRegion);
-                return false;
+                // Composition owns the AA contour. The outward region preserves
+                // its coverage but excludes the fully transparent outer corners.
+                HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
+                    panel.regionFrame, panel.regionCornerRadius);
+                if (!frameRegion)
+                {
+                    DeleteObject(panelRegion);
+                    return false;
+                }
+                const int combineResult = CombineRgn(
+                    panelRegion, panelRegion,
+                    frameRegion, RGN_OR);
+                DeleteObject(frameRegion);
+                if (combineResult == ERROR)
+                {
+                    DeleteObject(panelRegion);
+                    return false;
+                }
             }
         }
 
@@ -835,9 +851,8 @@ struct DesktopBackdropCompositor::Impl
         }
 
         // The helper HWND is a synchronous visibility fence for the separate
-        // Windows Composition tree. Its region always matches the current
-        // panel collection, so a retired SpriteVisual can never remain visible
-        // after the application has removed that panel from the scene.
+        // Windows Composition tree. Ordinary collections fence each panel;
+        // staged Dock collections fence the allocation and guide exclusion.
         if (!SetWindowRgn(backdropWindow, panelRegion, FALSE))
         {
             DeleteObject(panelRegion);
@@ -1048,6 +1063,7 @@ struct DesktopBackdropCompositor::Impl
         popupTopmost = false;
         visible = true;
         animationPathRegionExpanded = false;
+        stableWindowRegion = false;
     }
 };
 
@@ -1896,7 +1912,7 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
     if (!impl_->available || !impl_->stagingFrame) return false;
     const RECT occlusion = impl_->stagedOcclusionRect;
     impl_->stagingFrame = false;
-    impl_->BeginCollection(true);
+    impl_->BeginCollection(true, true);
     struct ClearCandidate
     {
         std::vector<Impl::StagedPanel>& panels;
