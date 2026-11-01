@@ -13,7 +13,7 @@ if($Operation -eq 'configure'){
     if($Preset){$arguments=@('--preset',$Preset)}
     else{$arguments=@('-B',$Directory,'-S',$Source,'-A',$Architecture,('-DSNOWDESKTOP_OUTPUT_DIR='+$Output))}
     # A product+test Run must not turn BUILD_TESTING off and back on between
-    # its two builds: regenerating the native project invalidates WinUI inputs.
+    # its two builds: configuration-sensitive options and nested projects differ.
     # Only the live Run's hash-bound plan can opt the Release configure in.
     $runId=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if($Preset -eq 'release' -and $runId){

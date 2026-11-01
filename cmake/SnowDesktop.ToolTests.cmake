@@ -207,6 +207,9 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopBuildNoopTests build_noop_outputs
         build_tools/build_noop_tests.cpp "tools;integration" 240)
     set_tests_properties(build_noop_outputs PROPERTIES PROCESSORS 4)
+    add_test(NAME build_product_test_configuration COMMAND SnowDesktopBuildNoopTests "${CMAKE_CURRENT_SOURCE_DIR}" --configuration)
+    set_tests_properties(build_product_test_configuration PROPERTIES TIMEOUT 120 PROCESSORS 4 LABELS "tools;integration"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildNoopTests>")
     snowdesktop_add_native_tool_test(SnowDesktopBuildCandidateTests build_candidate
         build_tools/build_candidate_tests.cpp "tools;integration" 180)
     add_test(NAME build_candidate_compiler_context COMMAND SnowDesktopBuildCandidateTests "${CMAKE_CURRENT_SOURCE_DIR}" --compiler-context)

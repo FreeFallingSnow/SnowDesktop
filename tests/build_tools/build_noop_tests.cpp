@@ -126,6 +126,7 @@ $fragment=Join-Path $meta 'fragment.xml';[IO.File]::WriteAllText($fragment,'<Fra
     c.call({"task-open","noop","-TaskName","Actual output and graph no-op checks"});
 }
 Json build(Coordinator& c,const std::string& configuration="Release") {
+    std::cout<<"CASE product output build "<<configuration<<" starting"<<std::endl;
     const auto launch=c.bridge->call(c.scripts/L"build_run.ps1",{"-Command","start","-Task","noop","-Action","ide","-Configuration",configuration});
     const auto id=launch.at("id").str();const auto receipt=c.stateRoot/L"runs"/wide(id+".launch.json");
     until([&]{return fs::exists(receipt);},12);c.workers.push_back(Json::parse(read(receipt)));
@@ -141,6 +142,7 @@ Json build(Coordinator& c,const std::string& configuration="Release") {
     require(result.code==0&&view.at("status").str()=="passed","Output fixture build failed: "+view.dump()+result.err+logs);
     require(view.at("stageError").str().empty(),"Output fixture stage error: "+view.dump());
     require(logs.find("warning C")==std::string::npos&&logs.find("warning D")==std::string::npos&&logs.find("warning LNK")==std::string::npos,"Output fixture compiler/linker warning: "+logs);
+    std::cout<<"CASE product output build "<<configuration<<" completed"<<std::endl;
     return view;
 }
 void observations(const Json& view,int units) {
@@ -183,8 +185,54 @@ void program(const fs::path& output,int expected) {
     const auto result=run({(output/L"SnowDesktop.exe").wstring()},output);
     require(result.code==expected,"Arranged runtime returned stale/invalid code: "+std::to_string(result.code));
 }
-void configuration_scenario(const fs::path& repo,bool formerBehavior) {
+void configuration_scenario(const fs::path& repo,bool formerBehavior,bool duplicateReferences=false) {
     Coordinator c(repo,"nc",true,fixture_parent(repo));prepare(c,repo,"");
+    copy(repo,c.root,{"cmake/SnowDesktop.XamlReferences.targets"});
+    if(duplicateReferences)write(c.root/L"cmake/SnowDesktop.XamlReferences.targets",
+        "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><Target Name=\"SnowDesktopUseResolvedXamlReferences\" AfterTargets=\"CppWinRTAddXamlReferences\"/></Project>");
+    write(c.root/L"canonical/External.winmd","resolved metadata");
+    write(c.root/L".build/metadata/Project.winmd","distinct project metadata");
+    write(c.root/L"references.props",R"XML(<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+ <Import Project="$(ProjectDir)..\cmake\SnowDesktop.XamlReferences.targets"/>
+ <Target Name="CppWinRTAddXamlReferences" BeforeTargets="ClCompile">
+  <ItemGroup>
+   <WinMDReferenceToCompile Include="$(ProjectDir)..\canonical\External.winmd"/>
+   <XamlReferencesToCompile Include="$(ProjectDir)metadata\*.winmd"/>
+  </ItemGroup>
+ </Target>
+ <Target Name="FixtureRecordReferences" AfterTargets="SnowDesktopUseResolvedXamlReferences">
+  <ItemGroup><XamlReferencesToCompile Include="@(WinMDReferenceToCompile)"/></ItemGroup>
+  <WriteLinesToFile File="$(ProjectDir)resolved-references.txt" Lines="@(XamlReferencesToCompile->'%(FullPath)')"
+   Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8"/>
+ </Target>
+</Project>)XML");
+    // This contract needs only one native DLL and its test, rather than the
+    // complete output-layout fixture's five programs and nested child build.
+    write(c.root/L"CMakeLists.txt",R"CMAKE(cmake_minimum_required(VERSION 3.24)
+project(ProductTestConfiguration LANGUAGES CXX)
+include(cmake/SnowDesktop.SharedBuildGuard.cmake)
+snowdesktop_check_shared_output()
+include(cmake/SnowDesktop.ProductBuild.cmake)
+option(BUILD_TESTING "Build fixture tests" OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+add_library(SnowDesktopHookEntry SHARED src/dll.cpp)
+set_property(TARGET SnowDesktopHookEntry PROPERTY VS_USER_PROPS "${CMAKE_SOURCE_DIR}/references.props")
+target_compile_features(SnowDesktopHookEntry PRIVATE cxx_std_20)
+target_compile_options(SnowDesktopHookEntry PRIVATE /W4 /WX /Z7)
+target_compile_definitions(SnowDesktopHookEntry PRIVATE FIXTURE_TESTING=$<BOOL:${BUILD_TESTING}>)
+snowdesktop_private_runtime_target(SnowDesktopHookEntry "${CMAKE_BINARY_DIR}/$<CONFIG>")
+snowdesktop_add_product_build(SnowDesktopReleaseBuild SnowDesktopHookEntry)
+if(BUILD_TESTING)
+ enable_testing()
+ add_executable(SnowDesktopProductDependencyTests src/dependency-test.cpp)
+ add_dependencies(SnowDesktopProductDependencyTests SnowDesktopHookEntry)
+ set_target_properties(SnowDesktopProductDependencyTests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+ add_test(NAME product_dependency COMMAND SnowDesktopProductDependencyTests)
+ set_tests_properties(product_dependency PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopProductDependencyTests>")
+endif()
+snowdesktop_install_shared_guard()
+)CMAKE");
+    std::cout<<"CASE combined configuration "<<(formerBehavior?"control":"candidate")<<" starting"<<std::endl;
     if(formerBehavior){
         auto command=read(c.scripts/L"build_command.ps1");
         replace(command,"if($plan.mode -ne 'skipped'){$arguments+=@('-DBUILD_TESTING:BOOL=ON')}",
@@ -202,6 +250,7 @@ if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
 if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
 $root=Split-Path $PSScriptRoot -Parent
 [IO.File]::WriteAllText((Join-Path $root 'product-time.txt'),[IO.File]::GetLastWriteTimeUtc((Join-Path $root '.build/Release/SnowDesktop.Runtime/SnowDesktopHookEntry.dll')).ToFileTimeUtc().ToString())
+Copy-Item -LiteralPath (Join-Path $root 'canonical/External.winmd') -Destination (Join-Path $root '.build/metadata/EXTERNAL.winmd')
 )PS",true);
     const auto opened=c.begin("noop");const auto batch=opened.at("batchId").str();
     c.plan("noop",batch,0,"selected","product_dependency","module","src,CMakePresets.json");
@@ -209,7 +258,10 @@ $root=Split-Path $PSScriptRoot -Parent
     until([&]{return fs::exists(c.stateRoot/wide(batch+".json"));},100,"Combined native product/test batch did not complete");
     const auto result=c.result(batch);
     require(result.at("outcome").str()=="passed","Combined native product/test batch failed: "+result.dump());
-    const auto output=c.root/L".build/Release";program(output,7);
+    const auto output=c.root/L".build/Release";
+    const auto references=read(c.root/L".build/resolved-references.txt");
+    require(std::count(references.begin(),references.end(),'\n')==2&&references.find("canonical")!=std::string::npos&&references.find("Project.winmd")!=std::string::npos,
+        "Duplicate resolved XAML provider or missing project metadata: "+references);
     const auto library=output/L"SnowDesktop.Runtime/SnowDesktopHookEntry.dll";
     WIN32_FILE_ATTRIBUTE_DATA data{};
     require(GetFileAttributesExW(library.c_str(),GetFileExInfoStandard,&data)!=0,"Cannot observe completed native dependency");
@@ -219,9 +271,21 @@ $root=Split-Path $PSScriptRoot -Parent
     const auto coverage=Json::parse(read(c.stateRoot/wide(batch+".coverage.json")));
     require(coverage.at("completed").items.size()==1&&coverage.at("completed").items[0].at("name").str()=="product_dependency",
         "Product/test configuration changed the executed selection");
+    std::cout<<"CASE combined configuration completed"<<std::endl;
 }
 void scenario(const fs::path& repo,const std::string& control) {
-    if(control=="configuration"){configuration_scenario(repo,true);return;}
+    if(control=="configuration-control"){configuration_scenario(repo,true);return;}
+    if(control=="references-control"){configuration_scenario(repo,false,true);return;}
+    if(control=="configuration"){
+        configuration_scenario(repo,false);
+        const auto result=run({executable().wstring(),repo.wstring(),L"--configuration-control"},repo,60,{},true);
+        require(result.code==1&&result.err.find("Test configuration rebuilt an already completed product dependency")!=std::string::npos,
+            "Configuration negative control missed its native output assertion: "+result.out+result.err);
+        const auto references=run({executable().wstring(),repo.wstring(),L"--references-control"},repo,60,{},true);
+        require(references.code==1&&references.err.find("Duplicate resolved XAML provider or missing project metadata")!=std::string::npos,
+            "Reference negative control missed its resolved-provider assertion: "+references.out+references.err);
+        return;
+    }
     Coordinator c(repo,"n",false,fixture_parent(repo));prepare(c,repo,control);
     const auto output=c.root/L".build/Release";
     observations(build(c),7);program(output,7);
@@ -245,11 +309,7 @@ void scenario(const fs::path& repo,const std::string& control) {
         const auto result=run({executable().wstring(),repo.wstring(),wide("--"+mutation.first)},c.root,80,{},true);
         require(result.code==1&&result.err.find(mutation.second)!=std::string::npos,"Negative control missed its business assertion: "+result.out+result.err);
     }
-    configuration_scenario(repo,false);
-    const auto configuration=run({executable().wstring(),repo.wstring(),L"--configuration"},repo,100,{},true);
-    require(configuration.code==1&&configuration.err.find("Test configuration rebuilt an already completed product dependency")!=std::string::npos,
-        "Configuration negative control missed its native output assertion: "+configuration.out+configuration.err);
-    std::cout<<"PASS arranged Release/Debug no-op output preservation, linker state, source/header invalidation, missing-DLL repair, grouped graph, nested telemetry and combined product/test configuration; all three controls fail\n";
+    std::cout<<"PASS arranged Release/Debug no-op output preservation, linker state, source/header invalidation, missing-DLL repair, grouped graph and nested telemetry; both legacy controls fail\n";
 }
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){scenario(repo,argc>2?std::string(argv[2]).substr(2):"");});}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- C++/WinRT discovers merged project metadata in OutDir. Self-contained
+       deployment also copies package metadata there after compilation. Prefer
+       the resolved references that MarkupCompilePass2 adds, as C++/WinRT already
+       does for ReferenceCopyLocalPaths, and retain distinct project metadata.
+       Otherwise arrangement toggles duplicate XAML providers between builds. -->
+  <Target Name="SnowDesktopUseResolvedXamlReferences"
+          AfterTargets="CppWinRTAddXamlReferences">
+    <ItemGroup>
+      <XamlReferencesToCompile Remove="@(WinMDReferenceToCompile)"
+          MatchOnMetadata="Filename;Extension"
+          MatchOnMetadataOptions="CaseInsensitive" />
+    </ItemGroup>
+  </Target>
+</Project>

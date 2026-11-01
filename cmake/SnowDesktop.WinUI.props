@@ -7,6 +7,7 @@
   <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props"
           Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')"
           Label="LocalAppDataPlatform" />
+  <Import Project="$(MSBuildThisFileDirectory)SnowDesktop.XamlReferences.targets" />
 
   <!-- CMake emits a desktop vcxproj, so provide the native XAML properties
        normally supplied by the Store project flavor without selecting that
@@ -78,6 +79,18 @@
           BeforeTargets="FixupCLCompileOptions"
           DependsOnTargets="MarkupCompilePass1;CppWinRTMakeProjections;CppWinRTSetXamlLocalAssembly;CppWinRTAddXamlReferences;MarkupCompilePass2"
           Condition="'@(ApplicationDefinition)' != ''" />
+
+  <!-- CMake's per-item PCH paths belong to each consuming target. Generated
+       XAML sources use the same existing source header, rather than alternating
+       between the host and test target's absolute cmake_pch.hxx path. Native
+       compiler PCH item metadata and forced includes remain target-scoped. -->
+  <Target Name="SnowDesktopXamlPrecompiledHeader"
+          AfterTargets="GetPrecompiledHeaderFile"
+          Condition="'$(XamlLanguage)' == 'CppWinRT'">
+    <PropertyGroup>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+    </PropertyGroup>
+  </Target>
 
   <!-- Capture the exact self-contained payload selected by the restored
        Windows App SDK targets. Packaging consumes this manifest instead of
