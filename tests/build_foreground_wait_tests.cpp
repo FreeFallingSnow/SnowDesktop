@@ -29,6 +29,38 @@ void test(const fs::path& repo) {
         auto result=Json::object({{"batchId",batch},{"outcome","passed"},{"participants",Json::array({Json::object({{"id","retirement-race"},{"editRevision",1}})})}});
         try{atomic(folder/wide(batch+".json"),result.dump());std::this_thread::sleep_for(std::chrono::milliseconds(2200));require(r->running(),"Retirement transaction gap returned early");state["current"]=Json{};save();}catch(...){CloseHandle(lock);throw;}CloseHandle(lock);
         require(output(*r,"completed").at("result").dump()==result.dump(),"Common result changed");fs::remove(folder/wide(batch+".json"));
+        // A captured build remains observable while a separate edit window opens.
+        auto stoppedOwner=me;stoppedOwner["startTicks"]="0";
+        auto unrelated=Json::object({{"id",std::string(32,'b')},{"phase","building"},{"owner",stoppedOwner},{"participants",Json::array({})}});
+        auto captured=Json::object({{"id",batch},{"phase","building"},{"owner",me},{"participants",Json::array({
+            Json::object({{"id","captured-result"},{"state","finished"},{"editRevision",1}}),
+            Json::object({{"id","captured-peers"},{"state","finished"},{"editRevision",1}})})}});
+        state["current"]=Json{};state["activeCandidates"]=Json::array({unrelated,captured});save();
+        auto [capturedResult,crt]=begin("captured-result",{"--condition","result","--batch",batch,"--revision","1"});
+        auto [capturedPeers,cpt]=begin("captured-peers",{"--condition","peers","--batch",batch,"--revision","1"});
+        auto observed=[&](const Json& ticket,int minimum){
+            const auto value=Json::parse(read(folder/wide(ticket.at("id").str()+".wait.json")));
+            require(value.at("status").str()=="waiting","Captured build was not observed: "+value.dump());
+            return value.at("observations").integer()>=minimum&&value.at("reason").str()=="Frozen build is running.";
+        };
+        until([&]{return observed(crt,1)&&observed(cpt,1);},8,"captured result/peer observers reach the running build");
+        const auto observations=Json::parse(read(folder/wide(crt.at("id").str()+".wait.json"))).at("observations").integer();
+        state["current"]=Json::object({{"id",std::string(32,'c')},{"phase","editing"},{"participants",Json::array({
+            Json::object({{"id","unrelated-editor"},{"state","finished"},{"check",Json::object({{"status","failed"}})}})})}});save();
+        until([&]{return observed(crt,observations+2)&&observed(cpt,1);},8,"captured build stays selected after another edit window opens");
+        const auto capturedResultValue=Json::object({{"batchId",batch},{"outcome","passed"},{"participants",captured.at("participants")}});
+        lock=CreateFileW((folder/L"state.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,0,nullptr);require(lock!=INVALID_HANDLE_VALUE,"Captured retirement lease unavailable");
+        try{atomic(folder/wide(batch+".json"),capturedResultValue.dump());state["activeCandidates"]=Json::array({unrelated});save();}catch(...){CloseHandle(lock);throw;}CloseHandle(lock);
+        require(output(*capturedResult,"completed").at("result").dump()==capturedResultValue.dump()&&
+            output(*capturedPeers,"completed").at("result").dump()==capturedResultValue.dump(),"Captured common result changed");
+        fs::remove(folder/wide(batch+".json"));
+        captured["owner"]=stoppedOwner;captured["participants"]=Json::array({Json::object({{"id","captured-stopped"},{"state","finished"},{"editRevision",1}})});
+        state["activeCandidates"]=Json::array({unrelated,captured});save();
+        auto [stopped,st]=begin("captured-stopped",{"--condition","result","--batch",batch,"--revision","1"});
+        require(output(*stopped,"attention",2).at("reason").str().find("Build owner exited")!=std::string::npos,
+            "Captured owner loss did not require recovery");
+        require(st.at("batchId").str()==batch,"Captured owner wait lost its batch");
+        state["activeCandidates"]=Json::array({});
         state["current"]=Json::object({{"id",batch},{"phase","editing"},{"participants",Json::array({Json::object({{"id","file-editor"},{"state","editing"},{"ownedFiles",Json::array({"src/own.cpp"})}}),Json::object({{"id","peer"},{"state","editing"},{"ownedFiles",Json::array({"src/peer.cpp"})}})})}});save();
         auto [f,ft]=begin("file-editor",{"--condition","files","--files","src/peer.cpp"});std::this_thread::sleep_for(std::chrono::milliseconds(300));require(f->running(),"Busy peer files reported eligible");state["current"]["participants"].items[1]["state"]="finished";save();output(*f,"eligible");
         // The wait runs in another process; observe its durable handoff result.
@@ -51,7 +83,7 @@ void test(const fs::path& repo) {
         require(bt.has("deadlineUtc"),"Bounded request lacks deadline evidence");
         for(const auto& value:owners)stop_owner(value);
     } catch(...){for(const auto& value:owners)stop_owner(value);throw;}
-    std::cout<<"PASS real foreground blocking, unchanged PID, reconnect, locked retirement gap, file handoff, check attention, explicit cancel/resume, crash recovery and bounded timeout"<<std::endl;
+    std::cout<<"PASS real foreground blocking, unchanged PID, reconnect, locked retirement gap, captured batch/result/owner tracking, file handoff, check attention, explicit cancel/resume, crash recovery and bounded timeout"<<std::endl;
 }
 }
 int main(int argc,char** argv) {return test_main(argc,argv,test);}

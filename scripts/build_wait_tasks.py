@@ -95,8 +95,19 @@ def overlaps(a, b):
     a, b = a.lower(), b.lower()
     return a == b or a.startswith(b + '/') or b.startswith(a + '/')
 
-def condition(ticket, state, result):
+def observed_batch(ticket, state):
     current = state.get('current')
+    if ticket['condition'] not in ('peers', 'result'):
+        return current
+    expected = ticket.get('batchId')
+    if current and current.get('id') == expected:
+        return current
+    return next((batch for batch in state.get('activeCandidates', [])
+                 if batch.get('id') == expected), None)
+
+
+def condition(ticket, state, result):
+    current = observed_batch(ticket, state)
     expected = ticket.get('batchId')
     if current and result and result.get('batchId') == current.get('id'):
         return 'attention', 'Result is durable but retirement is interrupted; use status/recover.'
@@ -180,7 +191,7 @@ def worker(repo, directory, module, ticket_id):
                         state = module.read_json(directory, 'state.json') or {'current': None}
                         if state.get('repositoryRoot') and Path(state['repositoryRoot']).resolve() != repo:
                             raise ValueError('Repository identity mismatch')
-                        current = state.get('current')
+                        current = observed_batch(ticket, state)
                         if current and current.get('phase') not in ('editing', 'building'):
                             raise ValueError('Unknown batch phase')
                         if current:
