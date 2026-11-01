@@ -179,6 +179,24 @@ if (BUILD_TESTING)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHookEntryTests>")
 
 
+    # Existing host behavior scenarios unrelated to drag tests.
+    set(SNOWDESKTOP_BEHAVIOR_SOURCES ${SNOWDESKTOP_SOURCES})
+    list(REMOVE_ITEM SNOWDESKTOP_BEHAVIOR_SOURCES src/main.cpp)
+    snowdesktop_add_test(SnowDesktopBehaviorTests behavior_settings
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/behavior/core_interactions_tests.cpp ${SNOWDESKTOP_BEHAVIOR_SOURCES}
+        COMMAND_ARGUMENTS settings
+        LABELS core integration isolated-native-model interaction)
+    snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
+    foreach(row IN ITEMS recovery search widget dock settings-host manifest group-type-contract)
+        add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
+        set_tests_properties(behavior_${row} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBehaviorTests>"
+            TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
+    endforeach()
+    set_tests_properties(behavior_settings PROPERTIES TIMEOUT 60 PROCESSORS 3)
+    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+
     include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
     snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts
         build_tools/build_product_artifacts_tests.cpp "tools;integration;packaging" 120)
