@@ -14,7 +14,7 @@ function(snowdesktop_add_test TEST_TARGET TEST_NAME)
     endif()
 
     add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
-    target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopTextInput)
+    snowdesktop_use_runtime_modules(${TEST_TARGET})
     if ("src/dock/dock_window_pin.cpp" IN_LIST SNOW_TEST_SOURCES OR "src/dock/dock_window_transition.cpp" IN_LIST SNOW_TEST_SOURCES)
         target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopWindowSupport)
     endif()

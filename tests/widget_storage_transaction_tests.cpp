@@ -2,6 +2,7 @@
 #include "widget/storage/widget_storage_value.h"
 #include "widget/storage/widget_settings_preview.h"
 #include "widget/storage/widget_storage_persistence.h"
+#include "test_temporary_directory.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -112,23 +113,10 @@ void TestSnapshotAndNetChanges()
 void TestPersistenceBytesAndFailureRecovery()
 {
     using namespace snowdesktop::widget_runtime;
-    const auto directory = std::filesystem::temp_directory_path() /
-        (L"SnowDesktop-storage-equivalence-" + std::to_wstring(GetCurrentProcessId()) +
-            L"-" + std::to_wstring(GetTickCount64()));
-    std::filesystem::create_directory(directory);
+    const snowdesktop::test::TemporaryDirectory fixture;
+    const auto& directory = fixture.path;
     const auto path = directory / L"storage.json";
     const auto temporary = std::filesystem::path(path.wstring() + L".tmp");
-    struct Cleanup
-    {
-        std::filesystem::path directory, path, temporary;
-        ~Cleanup()
-        {
-            std::error_code ignored;
-            std::filesystem::remove(path, ignored);
-            std::filesystem::remove(temporary, ignored);
-            std::filesystem::remove(directory, ignored);
-        }
-    } cleanup{directory, path, temporary};
     const auto readText = [&] {
         std::ifstream input(path, std::ios::binary);
         return std::string(std::istreambuf_iterator<char>(input), {});
@@ -347,17 +335,9 @@ void TestSettingsPreviewCommitIsolation()
         ordinary.Set("callback","ordinary-side-effect",changed,error) && ordinary.ValidateCommit(error),
         "ordinary callback transaction remains usable during preview");
     committed=ordinary.TakeCandidate(); previews.InvalidateReads();
-    const auto directory=std::filesystem::temp_directory_path() /
-        (L"SnowDesktop-settings-preview-"+std::to_wstring(GetCurrentProcessId())+
-            L"-"+std::to_wstring(GetTickCount64()));
-    std::filesystem::create_directory(directory);
+    const snowdesktop::test::TemporaryDirectory fixture;
+    const auto& directory = fixture.path;
     const auto path=directory/L"storage.json";
-    struct Cleanup {
-        std::filesystem::path directory,path;
-        ~Cleanup(){std::error_code ignored; std::filesystem::remove(path,ignored);
-            std::filesystem::remove(path.wstring()+L".tmp",ignored);
-            std::filesystem::remove(directory,ignored);}
-    } cleanup{directory,path};
     StorageMap saved;
     const auto reload=[&] {
         saved.clear();
@@ -393,7 +373,7 @@ void TestSettingsPreviewCommitIsolation()
 }
 }
 
-int main()
+int main() try
 {
     TestReadWriteAndRemoval();
     TestFailureLeavesSourceUntouched();
@@ -413,4 +393,9 @@ int main()
     }
     std::cout << "widget storage transaction checks passed\n";
     return EXIT_SUCCESS;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAIL: " << error.what() << '\n';
+    return EXIT_FAILURE;
 }

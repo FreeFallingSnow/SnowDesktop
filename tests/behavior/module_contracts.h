@@ -112,7 +112,7 @@ void Recovery()
 }
 void Search()
 {
-    Profile profile;
+    HostProfile profile;
     std::vector<fs::path> files;
     for (const auto* name : {L"z-editor", L"editor notes", L"editor", L"unrelated"})
     {
@@ -141,7 +141,10 @@ void Search()
     Require(search.Submit(nullptr,0,{2,L"discarded",20}) && search.Submit(nullptr,0,{3,L"latest",20}), "typing remains responsive during blocked query");
     { std::lock_guard lock(gate->mutex); gate->release = true; gate->ready.notify_all(); }
     std::optional<snowdesktop::QuickNavigationEverythingSearchResult> result;
-    Wait([&] { auto next=search.TakeCompleted(); if(next) result=std::move(next); return result && result->generation == 3; });
+    Wait([&] { auto next=search.TakeCompleted(); if(next) result=std::move(next); return result && result->generation == 3; },
+        "latest search result generation=3", [&] {
+            return result ? "published generation=" + std::to_string(result->generation) : "no published result";
+        });
     Require(result->query == L"latest" && result->results.size() == 1 && result->results[0].name == L"latest", "only newest pending query reaches published results");
     search.Stop(); Require(!search.Submit(nullptr,0,{4,L"after-stop",20}), "disposed search rejects further work");
 }
@@ -183,11 +186,13 @@ void WidgetContracts()
 }
 void DockLifecycle()
 {
-    Profile p;
-    HWND first=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"Owned pin fixture",WS_POPUP,
+    Profile profile;
+    Apartment apartment;
+    WindowOwner firstOwner, unrelatedOwner;
+    HWND first=firstOwner.handle=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"Owned pin fixture",WS_POPUP,
         -12000,-12000,100,100,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     Require(first!=nullptr,"create exclusively owned window");
-    HWND unrelated=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"Pre-existing topmost fixture",WS_POPUP,
+    HWND unrelated=unrelatedOwner.handle=CreateWindowExW(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"Pre-existing topmost fixture",WS_POPUP,
         -12100,-12000,100,100,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     Require(unrelated!=nullptr,"create independent pre-existing topmost window");
     {
@@ -203,6 +208,7 @@ void DockLifecycle()
         "owner destruction releases its pin while preserving unrelated native TOPMOST");
     DestroyWindow(unrelated);
     DestroyWindow(first);
+    unrelatedOwner.handle = firstOwner.handle = nullptr;
     DockWindowPin pins; pins.Refresh(); Require(!pins.Toggle(first),"destroyed target cannot acquire a pin");
 }
 }
@@ -214,7 +220,7 @@ namespace behavior
 // No Windows setting or hotkey changes.
 void SettingsHostCommit()
 {
-    Profile profile;
+    HostProfile profile;
     // This fixture does not run DesktopApp's destructor. Match its explicit
     // pre-CRT shutdown while COM and the main thread are still alive.
     struct MenuServiceLifetime
@@ -249,7 +255,7 @@ void SettingsHostCommit()
 }
 void GroupTypeContract()
 {
-    Profile profile;
+    HostProfile profile;
     const auto desktopFile = profile.desktop / L"A.needle.txt";
     const auto desktopFolder = profile.desktop / L"Z.needle";
     const auto mapped = profile.root / L"mapped";
@@ -280,7 +286,9 @@ void GroupTypeContract()
     const auto refresh = [&](bool disk) {
         const auto delivered = Access::asyncReadMessages;
         Access::RequestAsync(*profile.app,disk);
-        Wait([&] { return Access::BackgroundIdle(*profile.app) && Access::asyncReadMessages>delivered; });
+        Wait([&] { return Access::BackgroundIdle(*profile.app) && Access::asyncReadMessages>delivered; },
+            disk ? "disk reload applied and background idle" : "refresh applied and background idle",
+            [&] { return Access::AsyncState(*profile.app); });
     };
     refresh(false); check();
     Access::DiscardGroupTypeRuntimeState(*profile.app);

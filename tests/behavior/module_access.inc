@@ -76,7 +76,9 @@ static std::vector<std::filesystem::path> GroupTypeOrder(DesktopApp& app, bool a
     const auto deadline = GetTickCount64() + 8000;
     while (view->folderSearch_->pending)
     {
-        if (GetTickCount64() > deadline) throw std::runtime_error("group search completion deadline");
+        if (GetTickCount64() > deadline)
+            throw std::runtime_error("waiting for grouped file search; pending=1 workerPresent=" +
+                std::to_string(static_cast<bool>(view->folderSearch_->worker)) + "; " + AsyncState(app));
         MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         view->EnsureFolderSearch();
     }

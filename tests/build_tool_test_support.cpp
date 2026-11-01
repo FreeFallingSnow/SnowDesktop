@@ -163,7 +163,19 @@ fs::path powershell(bool legacy) {if(!legacy){auto pinned=environment(L"SNOWDESK
 fs::path production_python() {std::wstring path(32768,0);DWORD count=SearchPathW(nullptr,L"python.exe",nullptr,static_cast<DWORD>(path.size()),path.data(),nullptr);require(count>0&&count<path.size(),"Python is unavailable for the existing external production tool (the test driver is native C++)");path.resize(count);return path;}
 fs::path standin() {auto path=executable().parent_path()/L"SnowDesktopBuildToolTestStandIn.exe";require(fs::is_regular_file(path),"Native stand-in missing");return path;}
 void replace(std::string& text,const std::string& before,const std::string& after) {auto position=text.find(before);require(position!=std::string::npos,"Fixture substitution missing: "+before);text.replace(position,before.size(),after);}
-void until(const std::function<bool()>& predicate,int seconds) {auto end=std::chrono::steady_clock::now()+std::chrono::seconds(seconds);do {if(predicate())return;std::this_thread::sleep_for(std::chrono::milliseconds(40));}while(std::chrono::steady_clock::now()<end);throw std::runtime_error("Fixture condition timed out");}
+void until(const std::function<bool()>& predicate,int seconds,std::string_view condition,
+    const std::source_location& location) {
+    const auto start=std::chrono::steady_clock::now();
+    const auto end=start+std::chrono::seconds(seconds);
+    do {
+        if(predicate())return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    }while(std::chrono::steady_clock::now()<end);
+    const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+    throw std::runtime_error("Timed out waiting for "+std::string(condition)+" after "+
+        std::to_string(elapsed)+"ms at "+location.file_name()+":"+
+        std::to_string(location.line())+" ("+location.function_name()+")");
+}
 Child::Child(const std::vector<std::wstring>& args,const fs::path& cwd,const Env& env,bool input,bool outputPipes,bool allowBreakaway):outputPipes_(outputPipes) {
     require(!args.empty(),"Missing command");static std::atomic<unsigned> sequence=0;
     auto stem="process-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++);
@@ -233,7 +245,14 @@ Result Bridge::invoke(const fs::path& script,const std::vector<std::string>& arg
     std::string request=id+'\t'+base64(utf8(root_.wstring()))+'\t'+base64(utf8(script.wstring()))+'\t';
     for(const auto& arg:args)request+=base64(arg)+",";
     request+='\t';for(const auto& [key,value]:env)request+=base64(utf8(key))+":"+base64(utf8(value))+",";
-    child_->send(request+"\n");until([&]{require(child_->running(),"Bridge exited: "+child_->out()+"\n"+child_->err());return fs::exists(response);},seconds);
+    child_->send(request+"\n");
+    try {
+        until([&]{require(child_->running(),"Bridge exited: "+child_->out()+"\n"+child_->err());return fs::exists(response);},seconds,
+            "bridge response "+id+" from "+utf8(script.wstring()));
+    } catch(const std::exception& error) {
+        throw std::runtime_error(std::string(error.what())+"\nresponse="+utf8(response.wstring())+
+            "\nstdout="+child_->out()+"\nstderr="+child_->err());
+    }
     std::istringstream stream(read(response));std::string code,out,err;std::getline(stream,code);std::getline(stream,out);std::getline(stream,err);
     return {std::stoi(code),unbase64(out),unbase64(err)};
 }

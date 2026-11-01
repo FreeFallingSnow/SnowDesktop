@@ -30,6 +30,13 @@
 - 全量失败后保留原报告，只补失败项与修正影响项。分别记录原失败、修正、定向命令及复用范围，保留输入未变的有效通过结果。
 - 环境、工具启动、基础设施阻断与产品缺陷分开。诊断有界且有停止条件；无法及时解除时保留限制并继续独立工作，不反复全量、扩大到无关排查或调整用户系统配置。
 
+## 生产实现、夹具与编译边界
+
+- 测试直接调用宿主、工具使用的生产实现；夹具只负责输入、隔离环境、外部依赖控制和结果观察。规则与数据检查使用模块入口，宿主路由、调度或提交缺陷保留对应真实接入路径，桌面效果按实机验收边界处理。
+- 宿主、工具和测试使用相同实现及兼容编译配置时，优先链接职责明确的生产静态库或对象库；同时核对宏、CRT、包含顺序、生成输入和链接依赖。必须保留不同构建变体时说明差异；不为复用把所有模块合成一个大库，也不以复制源码清单代替编译结果复用。
+- 夹具按场景准备实际需要的目录、运行时、COM、窗口、后台工作与定时器。共用准备代码和只读资源，每项测试独立持有可变状态；构造中途失败及断言失败也须释放自有资源。模块契约不默认构造 `DesktopApp`，确需宿主的场景保留真实调用与副作用观察。
+- 相同模块的场景优先复用已有驱动，按参数独立选择并报告；进程、权限、运行时或全局状态确需隔离时保留独立程序。按独立风险、构建和执行成本划分，不按函数数量拆程序，也不为减少程序数共享未重置状态。
+
 ## 长期测试的运行设施
 
 - 正式测试的源码、驱动及断言使用 C++；被测工具保留自身语言，必要进程/协议/数据夹具不能代替 C++ 验收断言。`SnowDesktopTests` 是测试程序的唯一聚合清单；应用、工具、核心、快速分组及筛选构建均由同一 CMake/CTest 声明和标签派生，不在脚本复制清单。
@@ -38,8 +45,9 @@
 - `manual` 为显式按需诊断，`name/label` 可选、`list` 必须显示；手动诊断结果单独报告。一次性排查优先使用忽略的任务目录，长期诊断仍须符合测试准入规则。
 - 选择集合必须非空且充分，按实际影响核对 `core/fast` 或正则选中集合。六项必需工具回归不能因依赖缺失被移出清单；阻断、零执行和未运行不得报告通过，不自动安装依赖。
 - CTest 默认并行，并行度来自 `CMakePresets.json`。隔离临时目录、端口、日志、用户数据；共享桌面、Explorer、宿主输出等声明 `RESOURCE_LOCK`，确实无法隔离才 `RUN_SERIAL`。不将整套串行化或用盲目并发/延长超时代替隔离。记录实际并行度、总耗时、失败与未运行项。
-- 真实环境端到端条目标记 `integration`，不进 `fast`。异步检查采用有界条件等待及可控完成顺序，避免固定睡眠；覆盖所测生命周期相关的取消、销毁、交错及部分失败。
-- 自动重试只由批次运行器按已审查白名单、结构化故障、有限次数与退避执行，校验输入并保留首次失败及 flaky 标记；未覆盖故障交接，不由模型盲目重跑到绿。不稳定场景应消除不确定性，或按其持续价值决定删除。
+- 真实环境端到端条目标记 `integration`，不进 `fast`。异步检查保留生产调度、失效判断及提交路径，用事件、屏障、完成通知或适用的模拟时间控制外部完成顺序；真实线程竞争与平台适配另按风险验证。避免固定睡眠，覆盖所测生命周期相关的取消、销毁、交错及部分失败。
+- 等待有界并说明所等条件；超时报告场景、阶段、预期和最后观察状态，区分准备、业务执行与清理。进程总超时负责最终兜底，条件等待预算按实际阶段设置；延长超时、降低并发或单独通过须有原因及测量依据。
+- 自动重试只由批次运行器按已审查白名单、结构化故障、有限次数与退避执行，校验输入并保留逐次日志、首次失败及 flaky 标记；未知超时和业务断言失败保留待诊断。单独补验通过只证明该次执行，不能消除未解释的失败。不稳定场景按风险修复、退出日常门禁并注明覆盖缺口，或按持续价值删除；具体协议见 [脚本手册](../../scripts/README.md)。
 
 ## 补验与证据复用
 
@@ -109,11 +117,11 @@
 - 关系标为支持、应拒绝、结构不适用、行为待定义。支持与拒绝均须有产品依据；约束仅排除结构不适用，应拒绝和非法输入仍验证无错误副作用，待定义不能默认通过/拒绝/跳过。
 - 范围内先列因素域及约束，再按风险选组合；核心/已知缺陷显式覆盖，其余按有依据的等价类、边界及组合强度减少重复，组合强度依风险确定。时序另建序列；新类型/状态/动作/修饰/传输先分类并定预期，不用默认分支或当前输出快照消除缺口。
 - 映射分别注明规则、路由、文件提交、布局持久化和实机边界；整体覆盖按实际行为与执行边界记录。待定义行为与尚未接入测试分开列出。
-- 当前产品矩阵与已确定行为见 [拖放行为说明](../../tests/drag_drop/README.md)；组合强度方法参考 [NIST FAQ](https://csrc.nist.gov/Projects/automated-combinatorial-testing-for-software/faqs)。
+- 重建拖放测试时先核对仍有效的产品行为及生产入口，按上述边界接入；已删除测试及矩阵不作为现有覆盖。组合强度方法参考 [NIST FAQ](https://csrc.nist.gov/Projects/automated-combinatorial-testing-for-software/faqs)。
 
 ## 实机验收
 
 - `fix/feat/perf/verify` 前取得与所声称结果相符的实际证据。视觉、交互、兼容性使用用户原始对象/场景或等价可观察证据；未验收的已编译修改按提交规范及时保存 `try`。
 - 桌面宿主自动化限制见根文件。UI 由用户实测时，仍完成可稳定自动化的路由与数据结果检查；缺少入口时明确记录接入工作及覆盖缺口。用户实测反馈可按 `verify` 记录。
 
-测试设计参考：[Google 评审要求](https://google.github.io/eng-practices/review/reviewer/looking-for.html#tests)、[实现变化检测](https://testing.googleblog.com/2015/01/testing-on-toilet-change-detector-tests.html)、[真实传输](https://google.github.io/styleguide/go/best-practices.html#use-real-transports)、[Rust](https://github.com/rust-lang/rust/blob/main/AGENTS.md#testing)、[Netdata](https://github.com/netdata/netdata/blob/master/AGENTS.md)。参考相应技术原则，执行本仓库的贡献、授权与验收规则。
+测试设计参考：[Google 测试边界与隔离](https://abseil.io/resources/swe-book/html/ch11.html)、[GoogleTest 夹具生命周期](https://google.github.io/googletest/primer.html#test-fixtures-using-the-same-data-configuration-for-multiple-tests)、[Chromium 异步任务测试](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/threading_and_tasks_testing.md)、[CMake 库目标](https://cmake.org/cmake/help/latest/command/add_library.html)、[LevelDB 生产库与测试构建](https://github.com/google/leveldb/blob/main/CMakeLists.txt)、[Google 评审要求](https://google.github.io/eng-practices/review/reviewer/looking-for.html#tests)。借鉴实现复用、隔离、受控完成和行为断言；沿用本仓库框架、执行权及验收规则。

@@ -5,7 +5,9 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <source_location>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace build_test {
@@ -55,7 +57,9 @@ fs::path powershell(bool legacy = false);
 fs::path production_python();
 fs::path standin();
 void replace(std::string& text, const std::string& before, const std::string& after);
-void until(const std::function<bool()>& predicate, int seconds = 25);
+void until(const std::function<bool()>& predicate, int seconds = 25,
+    std::string_view condition = "fixture condition",
+    const std::source_location& location = std::source_location::current());
 struct Result { int code = -1; std::string out, err; };
 class Child {
 public:

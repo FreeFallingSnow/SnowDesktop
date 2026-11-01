@@ -1,4 +1,5 @@
 #include "widget/tasks/widget_filesystem_handle_store.h"
+#include "test_temporary_directory.h"
 
 #include <windows.h>
 
@@ -15,27 +16,13 @@ void Expect(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
-std::filesystem::path CreateProbeDirectory()
-{
-    wchar_t temporary[MAX_PATH]{};
-    Expect(GetTempPathW(MAX_PATH, temporary) > 0,
-        "temporary directory is available");
-    const auto root = std::filesystem::path(temporary) /
-        (L"SnowDesktopWidgetFilesystemHandleStoreTests-" +
-            std::to_wstring(GetCurrentProcessId()));
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    error.clear();
-    Expect(std::filesystem::create_directories(root, error) && !error,
-        "probe directory is created");
-    return root;
-}
 }
 
-int main()
+int main() try
 {
     using namespace snowdesktop::widget_runtime;
-    const auto root = CreateProbeDirectory();
+    const snowdesktop::test::TemporaryDirectory temporary;
+    const auto& root = temporary.path;
     const auto registry = root / L"handles.json";
     const auto folder = root / L"selected";
     const auto file = folder / L"note.txt";
@@ -95,8 +82,11 @@ int main()
             reloaded.Size() == 0,
         "deleting an instance revokes its remaining grants");
 
-    std::error_code cleanupError;
-    std::filesystem::remove_all(root, cleanupError);
     std::cout << "widget filesystem handle store tests passed\n";
     return 0;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAIL: " << error.what() << '\n';
+    return 1;
 }

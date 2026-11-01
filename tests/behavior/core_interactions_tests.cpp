@@ -5,6 +5,7 @@
 #include "app/shell/shell_refresh_snapshot.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "diagnostics/debug_profile.h"
+#include "../test_temporary_directory.h"
 #include <fstream>
 #include <iostream>
 #include <exception>
@@ -55,6 +56,17 @@ struct NativeDragIntegrationAccess
     }
     static void RequestAsync(DesktopApp& app, bool disk = false) { app.ReloadItems(disk); }
     static bool BackgroundIdle(const DesktopApp& app) { return app.desktopItemsReady_ && !app.shellReloadPending_ && !app.shellRefreshRevision_.Running() && !app.readyShellRefresh_ && !app.layoutReload_.Pending() && app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty(); }
+    static std::string AsyncState(const DesktopApp& app)
+    {
+        return "desktopReady=" + std::to_string(app.desktopItemsReady_) +
+            " reloadPending=" + std::to_string(app.shellReloadPending_) +
+            " refreshRunning=" + std::to_string(app.shellRefreshRevision_.Running()) +
+            " readySnapshot=" + std::to_string(static_cast<bool>(app.readyShellRefresh_)) +
+            " layoutPending=" + std::to_string(app.layoutReload_.Pending()) +
+            " fileOperations=" + std::to_string(app.shellFileOperationInFlight_) +
+            " landingCaches=" + std::to_string(app.pendingLandingCaches_.size()) +
+            " completionMessages=" + std::to_string(asyncReadMessages);
+    }
     static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
     static DesktopApp& Scene(bool secondary)
     {
@@ -213,58 +225,85 @@ std::string Read(const fs::path& file)
     Require(static_cast<bool>(stream), "read physical output");
     return {std::istreambuf_iterator<char>(stream), {}};
 }
-template<class Predicate> void Wait(Predicate done)
+template<class Predicate, class Observation>
+void Wait(Predicate done, const std::string& condition, Observation observe)
 {
-    const auto deadline = GetTickCount64() + 12000;
+    const auto start = GetTickCount64();
+    const auto deadline = start + 12000;
     while (!done())
     {
-        Require(GetTickCount64() < deadline, "bounded completion deadline");
+        if (GetTickCount64() >= deadline)
+            Require(false, "waiting for " + condition +
+                " after " + std::to_string(GetTickCount64() - start) + "ms; last: " + observe());
         MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
         Access::ThrowAsyncException();
     }
+    Access::ThrowAsyncException();
 }
+// A private data profile is sufficient for storage/controller contracts.
+// Host composition and its asynchronous work are opt-in below.
 struct Profile
 {
-    fs::path root, desktop;
-    DesktopApp* app = nullptr;
+    snowdesktop::test::TemporaryDirectory temporary;
+    snowdesktop::debug_profile::Session previousSession = snowdesktop::debug_profile::Current();
+    fs::path root = temporary.path, desktop;
     Profile()
     {
-        Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "initialize STA");
-        GUID guid{}; Require(SUCCEEDED(CoCreateGuid(&guid)), "allocate profile identity");
-        wchar_t id[40]{}; StringFromGUID2(guid, id, 40);
-        root = fs::weakly_canonical(fs::temp_directory_path()) / (std::wstring(L"SnowBehavior-") + id);
         namespace debug = snowdesktop::debug_profile;
         const auto paths = debug::ResolvePaths(root / L"normal-data");
         debug::Configuration config; config.enabled = true; config.desktop = paths.defaultDesktop;
         std::string error;
-        Require(debug::Write(paths, config, error) && debug::Initialize(paths.normalData, {}, error), "isolate profile: " + error);
+        if (!debug::Write(paths, config, error) || !debug::Initialize(paths.normalData, {}, error))
+        {
+            debug::runtimeSession = std::move(previousSession);
+            throw std::runtime_error(scene + ": isolate profile: " + error);
+        }
         desktop = debug::Current().configuration.desktop;
-        Access::completionWindow = CreateWindowExW(0, L"STATIC", L"Behavior completion", 0,
-            0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
-        Require(Access::completionWindow != nullptr, "create owned message-only window");
-        // No Run(): no desktop window, hooks, Explorer or user's files are involved.
-        app = &Access::Scene(false);
-        fs::create_directories(root / L"layout");
-        Access::ConfigureModel(*app, root / L"layout");
-        Write(desktop / L"Sentinel.txt", "untouched");
-        Access::PopulateModel(*app, {desktop / L"Sentinel.txt"}, 0);
-        Access::PrepareReload(*app); Access::BindAsync(*app);
-        Require(Access::Save(*app), "persist starting layout");
     }
-    ~Profile()
+    ~Profile() { snowdesktop::debug_profile::runtimeSession = std::move(previousSession); }
+};
+struct Apartment
+{
+    Apartment() { Require(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "initialize STA"); }
+    ~Apartment() { CoUninitialize(); }
+};
+struct WindowOwner
+{
+    HWND handle = nullptr;
+    ~WindowOwner() { if (handle) DestroyWindow(handle); }
+};
+struct HostProfile : Profile
+{
+    Apartment apartment;
+    WindowOwner window;
+    DesktopApp* app = nullptr;
+    HostProfile()
+    {
+        try {
+            window.handle = CreateWindowExW(0, L"STATIC", L"Behavior completion", 0,
+                0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+            Require(window.handle != nullptr, "create owned message-only window");
+            Access::completionWindow = window.handle;
+            // No Run(): no desktop window, hooks, Explorer or user's files are involved.
+            app = &Access::Scene(false);
+            fs::create_directories(root / L"layout");
+            Access::ConfigureModel(*app, root / L"layout");
+            Write(desktop / L"Sentinel.txt", "untouched");
+            Access::PopulateModel(*app, {desktop / L"Sentinel.txt"}, 0);
+            Access::PrepareReload(*app); Access::BindAsync(*app);
+            Require(Access::Save(*app), "persist starting layout");
+        } catch (...) { Stop(); throw; }
+    }
+    ~HostProfile() { Stop(); }
+    void Stop()
     {
         if (app) Access::StopModel(*app);
-        if (Access::completionWindow) DestroyWindow(Access::completionWindow);
+        app = nullptr;
         Access::completionWindow = nullptr;
         // The uninitialized host graph has process lifetime; its destructor would
         // shut down global Shell services which this fixture never initialized.
-        std::error_code error;
-        const auto resolved = fs::weakly_canonical(root, error);
-        if (!error && resolved.parent_path() == fs::weakly_canonical(fs::temp_directory_path()) &&
-            resolved.filename().wstring().starts_with(L"SnowBehavior-")) fs::remove_all(resolved, error);
-        CoUninitialize();
     }
 };
 }

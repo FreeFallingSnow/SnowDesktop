@@ -68,7 +68,7 @@ if (BUILD_TESTING)
             src/ui/input/control_pointer.cpp
             src/ui/render/demo_cursor.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32 advapi32 gdi32 bcrypt
+        LINK_LIBRARIES SnowDesktopPointerInput user32 advapi32 gdi32 bcrypt
         LABELS contract integration ipc)
 
     snowdesktop_add_test(
@@ -177,6 +177,10 @@ if (BUILD_TESTING)
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe")
     set_tests_properties(hook_stable_entry_cross32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHookEntryTests>")
+    # Both 32-bit scenarios publish into the same intentionally stable entry
+    # cache. Their private target processes do not isolate that shared catalog.
+    set_tests_properties(hook_stable_entry hook_stable_entry32 hook_stable_entry_cross32
+        PROPERTIES RESOURCE_LOCK snowdesktop_hook_entry_cache)
 
 
     # Existing host behavior scenarios unrelated to drag tests.

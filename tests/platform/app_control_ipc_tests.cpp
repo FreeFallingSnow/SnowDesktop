@@ -140,7 +140,17 @@ void Pump()
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
     { TranslateMessage(&message); DispatchMessageW(&message); }
 }
-std::string Complete(std::future<std::string>& future)
+void RequireClientReady(std::future<std::string>& future, Server& server,
+    std::chrono::seconds timeout, const char* condition)
+{
+    if (future.wait_for(timeout) == std::future_status::ready) return;
+    // An async future waits for its worker in its destructor. Close the owned
+    // endpoint before throwing, so a blocked pipe client can unwind too.
+    server.Stop();
+    throw std::runtime_error(std::string("client timeout waiting for ") + condition +
+        " after " + std::to_string(timeout.count()) + "s; fixture endpoint stopped");
+}
+std::string Complete(std::future<std::string>& future, Server& server)
 {
     const auto deadline = GetTickCount64() + 5000;
     while (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready && GetTickCount64() < deadline)
@@ -148,7 +158,7 @@ std::string Complete(std::future<std::string>& future)
         Pump();
         MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
     }
-    Check(future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready, "client completes within deadline");
+    RequireClientReady(future, server, std::chrono::seconds(0), "UI-dispatched pipe response (5s deadline)");
     return future.get();
 }
 
@@ -174,18 +184,18 @@ void Transport()
         });
     };
     auto client = invoke();
-    auto response = Parse(Complete(client));
+    auto response = Parse(Complete(client, server));
     Check(response.Find("result")->Find("sequence")->number == 1, "real pipe dispatches and returns structured result");
     Check(response.Find("id")->string == "live", "wire preserves request ID");
     // Deliberately do not pump the UI. The worker's queued timeout must cancel
     // the operation; delivering its stale window message cannot mutate later.
     auto expired = invoke();
-    Check(expired.wait_for(std::chrono::seconds(4)) == std::future_status::ready, "unserviced UI has a bounded deadline");
+    RequireClientReady(expired, server, std::chrono::seconds(4), "unserviced UI request expiry");
     Check(expired.get().empty(), "expired request has no success reply");
     Pump();
     Check(mutations == 1, "timed-out queued action cannot execute after timeout");
     auto recovered = invoke();
-    response = Parse(Complete(recovered));
+    response = Parse(Complete(recovered, server));
     Check(response.Find("result")->Find("sequence")->number == 2, "connection recovers after timeout");
     auto oversized = std::async(std::launch::async, [&] {
         HANDLE pipe = Connect(endpoint);
@@ -196,12 +206,12 @@ void Transport()
         CloseHandle(pipe);
         return std::string(accepted ? "accepted" : "rejected");
     });
-    Check(Complete(oversized) == "rejected", "oversized frame rejected without UI dispatch");
+    Check(Complete(oversized, server) == "rejected", "oversized frame rejected without UI dispatch");
     Check(mutations == 2, "oversized frame cannot mutate");
     auto invalidUtf8 = std::async(std::launch::async, [&] {
         return Call(endpoint, std::string("{\"x\":\"") + static_cast<char>(0xff) + "\"}");
     });
-    Check(Complete(invalidUtf8).empty(), "invalid UTF-8 is rejected at the transport boundary");
+    Check(Complete(invalidUtf8, server).empty(), "invalid UTF-8 is rejected at the transport boundary");
     HANDLE written = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     Check(written != nullptr, "create shutdown fixture event");
     auto pending = std::async(std::launch::async, [&] {
@@ -212,7 +222,7 @@ void Transport()
     CloseHandle(written);
     Check(sent, "client writes request before shutdown");
     server.Stop();
-    Check(pending.wait_for(std::chrono::seconds(3)) == std::future_status::ready, "shutdown releases waiting client");
+    RequireClientReady(pending, server, std::chrono::seconds(3), "shutdown releasing waiting client");
     Check(pending.get().empty(), "shutdown cannot acknowledge unexecuted work");
     Pump();
     Check(mutations == 2 && !server.Running(), "shutdown cancels queued work and removes endpoint");

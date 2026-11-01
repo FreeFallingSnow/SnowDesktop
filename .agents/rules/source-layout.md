@@ -49,7 +49,7 @@
 - 同目录头文件使用文件名引用；宿主内部跨模块引用使用相对 `src/` 的明确模块路径，例如 `#include "dock/dock_settings.h"`。独立 Hook 及仓库外层调用方按构建边界保留必要的相对路径，构建目标显式声明所需 include 根。
 - 存在同名头文件时必须核对目标的实际 include 顺序，并使用能确定目标的路径。尤其要区分宿主 `src/steam/steam_app_identity.h` 与 `steam_bridge/src/steam_app_identity.h`，以及 `src/settings/`、`src/system/panel/` 与 `src/winui/` 中的同名头文件。
 - 正式入库的长期测试源码、驱动及专用辅助代码放在 `tests/`，新增文件归入 `tests/<module>/`；程序输出位于 `.build/<Configuration>/tests/`。临时验证按 [根规则](../../AGENTS.md#临时验证与长期测试准入)使用忽略的任务目录。
-- 长期测试统一在根目录 `CMakeLists.txt` 注册；整理目录不得在脚本中复制目标清单，也不得改变测试选择与资源隔离契约。
+- 长期测试由根目录 `CMakeLists.txt` 包含的 CMake 模块统一注册；生产共用目标归入 `cmake/targets/`，测试登记与夹具构建归入 `cmake/testing/`。整理目录不得在脚本中复制目标清单，也不得改变测试选择与资源隔离契约。
 - 移动源码时同步更新 CMake、头文件引用、Windows 资源路径、生成工具、源码契约测试及已有模块说明中的链接。保持 Visual Studio 源码分组与实际目录一致，并核对 Git 默认重命名检测结果。
 - 公共组件 API 的语义与版本按 [公共契约规则](../../AGENTS.md#公共契约与本地化) 执行；目录整理不得顺带改变接口契约。构建、提交及验证按 [根规则的任务索引](../../AGENTS.md#按任务读取) 执行。
 
