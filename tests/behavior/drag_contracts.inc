@@ -20,6 +20,7 @@ public:
     std::atomic<bool> wrongThread{false}, prematureRead{false};
     HRESULT outcome = E_PENDING;
     DWORD effect = 0;
+    BOOL asynchronous = TRUE;
     void CheckThread() { if (GetCurrentThreadId()!=thread) wrongThread = true; }
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f, STGMEDIUM* m) override
     {
@@ -35,8 +36,8 @@ public:
     HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*,DWORD,IAdviseSink*,DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
-    HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* enabled) override { if (!enabled) return E_POINTER; *enabled=TRUE; return S_OK; }
+    HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL enabled) override { asynchronous=enabled; return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* enabled) override { if (!enabled) return E_POINTER; *enabled=asynchronous; return S_OK; }
     HRESULT STDMETHODCALLTYPE StartOperation(IBindCtx*) override { CheckThread(); ++starts; return S_OK; }
     HRESULT STDMETHODCALLTYPE InOperation(BOOL* active) override { if (!active) return E_POINTER; *active=starts>ends; return S_OK; }
     HRESULT STDMETHODCALLTYPE EndOperation(HRESULT hr,IBindCtx*,DWORD completedEffect) override
@@ -139,7 +140,12 @@ void DragFiles()
         [&](bool ok){succeeded=ok;done=true;},outputs);
     Wait([&]{return done && Access::BackgroundIdle(*profile.app);},"aliased move result delivered and reloaded",[&]{return Access::AsyncState(*profile.app);});
     const auto moved = profile.desktop/moveInput.filename();
-    Require(queued && succeeded,"a completed aliased move is not falsely reported as failure");
+    Microsoft::WRL::ComPtr<IShellItem> aliasItem;
+    const HRESULT parsedAlias=SHCreateItemFromParsingName(alias.c_str(),nullptr,IID_PPV_ARGS(&aliasItem));
+    Require(queued && succeeded,"a completed aliased move is not falsely reported as failure; queued="+
+        std::to_string(queued)+" completed="+std::to_string(succeeded)+
+        " sourceExists="+std::to_string(fs::exists(moveInput))+" targetExists="+std::to_string(fs::exists(moved))+
+        " outputs="+std::to_string(outputs->outputs.size())+" aliasParse="+std::to_string(parsedAlias));
     Require(!fs::exists(moveInput) && Read(moved)=="moved bytes" && outputs->outputs.size()==1,
         "move has one actual output and removes exactly its source");
     Require(fs::equivalent(outputs->outputs.front().destination,moved),"reported move output is the actual file");
@@ -195,7 +201,7 @@ void DragPartial()
 void DragRelease()
 {
     // 66421876: require the actual release, commit, save and reload boundary.
-    HostProfile profile; DragInput input;
+    HostProfile profile(true); DragInput input;
     const auto file=profile.desktop/L"release.txt"; Write(file,"original release bytes");
     Access::PopulateModel(*profile.app,{file},0);
     Require(Access::Save(*profile.app),"seed the old persisted position");
@@ -203,10 +209,12 @@ void DragRelease()
     input.Move({260,160}); Access::ReleaseDrag(*profile.app,{260,160});
     const GridCell expected{L"__page:1",2,1};
     Require(!Access::HasDrag(*profile.app) && SameCell(Access::Cell(*profile.app,file),expected),"release commits the requested final cell and ends the session");
-    Access::PerturbCell(*profile.app); Access::Load(*profile.app);
+    Access::PerturbCell(*profile.app); Access::RequestAsync(*profile.app,true);
+    WaitForHost(profile,"actual disk layout and Shell snapshot applied after release");
     Require(SameCell(Access::Cell(*profile.app,file),expected),"real layout reload restores the released position");
     Access::Select(*profile.app,{file}); Access::BeginMembers(*profile.app,L"");
-    Access::CancelDrag(*profile.app); Access::Load(*profile.app);
+    Access::CancelDrag(*profile.app); Access::RequestAsync(*profile.app,true);
+    WaitForHost(profile,"actual disk reload after cancellation");
     Require(!Access::HasDrag(*profile.app) && SameCell(Access::Cell(*profile.app,file),expected) && Read(file)=="original release bytes",
         "cancel leaves persisted placement and source bytes unchanged");
 }
