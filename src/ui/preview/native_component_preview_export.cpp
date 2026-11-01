@@ -152,7 +152,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all" || component == "storage-hover";
 }
 
 std::optional<IconBeautifyPreset> ResolveIconPreset(std::string_view preset)
@@ -555,7 +555,7 @@ DesktopApp::ExportNativeComponentPreviews(
     };
     for (const ComponentDefinition& definition : definitions)
     {
-        if (request.component != "all" && request.component != definition.id)
+        if (request.component != "all" && request.component != "storage-hover" && request.component != definition.id)
             continue;
         component_preview::Model model =
             BuildAddWidgetMenuPreview(definition.command);
@@ -601,7 +601,8 @@ DesktopApp::ExportNativeComponentPreviews(
                 sourceWallpaper ? &*sourceWallpaper : nullptr,
                 request.transparent || request.contentOnly };
             component_preview::Bitmap rendered = card.render(
-                width, height, request.dpi, placement, settings, variant.hovered);
+                width, height, request.dpi, placement, settings,
+                variant.hovered || request.component == "storage-hover");
             if (rendered.width != width || rendered.height != height ||
                 rendered.pixels.size() !=
                     static_cast<std::size_t>(width) * height)

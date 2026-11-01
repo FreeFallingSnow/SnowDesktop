@@ -682,8 +682,9 @@ DesktopApp::RenderWidgetMenuPreview(
     options.previewScene = scene.get();
     options.luaEngine = previewEngine.get();
     options.pointer = hovered
-        ? POINT{ (desktopFrame.left + desktopFrame.right) / 2,
+        ? (iconMode ? POINT{ (desktopFrame.left + desktopFrame.right) / 2,
             (desktopFrame.top + desktopFrame.bottom) / 2 }
+            : POINT{ desktopFrame.left + 1, desktopFrame.top + 1 })
         : POINT{ -32000, -32000 };
     options.frame = desktopFrame;
     options.dpi = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
@@ -979,6 +980,13 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 preview->dateHeaders = settings.dateHeaders;
                 preview->showFileCategories = settings.showFileCategories;
                 preview->showSearchBox = settings.showSearchBox;
+                // Group layout belongs to its active child content view.
+                // Keep the isolated preview fixture in the selected layout.
+                if (preview->type == DesktopWidgetType::CollectionGroup ||
+                    preview->type == DesktopWidgetType::FileGroup)
+                    for (const auto& childId : preview->childWidgetIds)
+                        if (auto* child = scene->FindWidget(childId))
+                            child->listMode = settings.listMode;
             }
             return RenderWidgetMenuPreview(
                 scene, rootId, storage, width, height, dpi, stage, hovered);
