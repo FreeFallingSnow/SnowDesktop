@@ -1,6 +1,7 @@
 #include "operation_feedback.h"
 #include "operation_recovery_dialog.h"
 #include <commctrl.h>
+#include <shobjidl.h>
 #include "diagnostics/diagnostic_log.h"
 #include "common/l10n.h"
 #include "launcher_messages.h"
@@ -64,6 +65,33 @@ std::wstring Describe(const Failure& failure)
 }
 }
 
+HRESULT ShowTaskDialog(const TASKDIALOGCONFIG* dialog, int* selected,
+    int* radioButton, BOOL* verificationChecked)
+{
+    const auto presentation = BeginDialogPresentation();
+    return TaskDialogIndirect(dialog, selected, radioButton, verificationChecked);
+}
+
+int ShowMessageBox(HWND owner, const wchar_t* text, const wchar_t* caption,
+    UINT type)
+{
+    const auto presentation = BeginDialogPresentation();
+    return MessageBoxW(owner, text, caption, type);
+}
+
+HRESULT ShowModalWindow(IModalWindow* dialog, HWND owner)
+{
+    const auto presentation = BeginDialogPresentation();
+    return dialog ? dialog->Show(owner) : E_POINTER;
+}
+
+INT_PTR ShowDialog(HINSTANCE instance, const DLGTEMPLATE* dialog, HWND owner,
+    DLGPROC procedure, LPARAM parameter)
+{
+    const auto presentation = BeginDialogPresentation();
+    return DialogBoxIndirectParamW(instance, dialog, owner, procedure, parameter);
+}
+
 static void ShowImpl(const Failure& failure, bool log)
 {
     if (failure.error == ERROR_CANCELLED || failure.error == static_cast<DWORD>(E_ABORT) ||
@@ -72,9 +100,6 @@ static void ShowImpl(const Failure& failure, bool log)
         const auto message = Describe(failure);
         if (log) WriteDiagnosticLogEntry(message.c_str(), failure.warning
             ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Error);
-        // The native dialog pumps HWND messages, but not the host's waitable
-        // animation handle. Keep the bridge alive across TaskDialog fallback.
-        const auto presentation = BeginDialogPresentation();
         if (failure.stillRelevant)
         {
             TASKDIALOGCONFIG dialog{sizeof(dialog)};
@@ -90,10 +115,10 @@ static void ShowImpl(const Failure& failure, bool log)
                     SendMessageW(window, TDM_CLICK_BUTTON, IDOK, 0);
                 return S_OK;
             };
-            if (SUCCEEDED(TaskDialogIndirect(&dialog, nullptr, nullptr, nullptr))) return;
+            if (SUCCEEDED(ShowTaskDialog(&dialog, nullptr, nullptr, nullptr))) return;
             if (!ShouldPresent(failure)) return;
         }
-        MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_OK |
+        ShowMessageBox(nullptr, message.c_str(), L"SnowDesktop", MB_OK |
             (failure.warning ? MB_ICONWARNING : MB_ICONERROR) | MB_SETFOREGROUND);
     });
 }
@@ -113,7 +138,6 @@ RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t*
     struct Reset { bool& value; ~Reset() { value = false; } } reset{choosing};
     const auto message = Describe(failure);
     WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Warning);
-    const auto presentation = BeginDialogPresentation();
     const TASKDIALOG_BUTTON buttons[] = {
         { IDRETRY, _LW("app.operation.retry") },
         { IDCONTINUE, continueLabel },
@@ -129,8 +153,8 @@ RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t*
     dialog.pButtons = buttons;
     dialog.nDefaultButton = IDRETRY;
     int selected = IDCANCEL;
-    if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)))
-        selected = MessageBoxW(dialog.hwndParent, message.c_str(), L"SnowDesktop",
+    if (FAILED(ShowTaskDialog(&dialog, &selected, nullptr, nullptr)))
+        selected = ShowMessageBox(dialog.hwndParent, message.c_str(), L"SnowDesktop",
             MB_CANCELTRYCONTINUE | MB_ICONWARNING | MB_SETFOREGROUND);
     if (selected == IDRETRY || selected == IDTRYAGAIN) return RecoveryChoice::Retry;
     return selected == IDCONTINUE ? RecoveryChoice::Continue : RecoveryChoice::Cancel;

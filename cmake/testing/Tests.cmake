@@ -212,7 +212,7 @@ if (BUILD_TESTING)
         COMMAND_ARGUMENTS search
         LABELS core integration isolated-native-model interaction)
     snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
-    foreach(row IN ITEMS settings-host group-type-contract
+    foreach(row IN ITEMS settings-host group-type-contract native-dialog
             drag-source drag-files drag-batches drag-partial drag-release drag-popup)
         add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES

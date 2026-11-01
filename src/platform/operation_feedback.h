@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <commctrl.h>
 #include <sherrors.h>
 #include <functional>
 #include <memory>
@@ -9,6 +10,7 @@
 #include <utility>
 
 namespace snowdesktop { class UiAnimationScheduler; }
+struct IModalWindow;
 
 namespace snowdesktop::operation_feedback
 {
@@ -64,6 +66,16 @@ inline void Report(Failure failure) noexcept
 
 // These host functions are deliberately independent of the settings process.
 void Show(const Failure& failure);
+// Native modal loops dispatch HWND messages but do not wait on the host's
+// animation timer. These entries keep the current UI session's deadlines and
+// presentation moving; startup/worker callers without a session remain valid.
+HRESULT ShowTaskDialog(const TASKDIALOGCONFIG* dialog, int* selected,
+    int* radioButton, BOOL* verificationChecked);
+int ShowMessageBox(HWND owner, const wchar_t* text, const wchar_t* caption,
+    UINT type);
+HRESULT ShowModalWindow(IModalWindow* dialog, HWND owner);
+INT_PTR ShowDialog(HINSTANCE instance, const DLGTEMPLATE* dialog, HWND owner,
+    DLGPROC procedure, LPARAM parameter);
 class Session
 {
 public:

@@ -218,7 +218,7 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         &callbackContext);
 
     int selected = IDCANCEL;
-    if (SUCCEEDED(TaskDialogIndirect(
+    if (SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(
             &dialog, &selected, nullptr, nullptr)))
     {
         if (selected == 100) return WidgetConsentChoice::AllowAll;
@@ -226,7 +226,7 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         if (selected == 101) return WidgetConsentChoice::Deny;
         return WidgetConsentChoice::Cancel;
     }
-    const int fallback = MessageBoxW(nullptr,
+    const int fallback = snowdesktop::operation_feedback::ShowMessageBox(nullptr,
         presentation.content.c_str(), presentation.instruction.c_str(),
         MB_ICONWARNING | MB_YESNOCANCEL |
             MB_DEFBUTTON2);
@@ -261,7 +261,7 @@ void ShowWidgetPermissionErrorAsync(
 {
     std::thread([title = std::move(title),
                     message = std::move(message)]() {
-        MessageBoxW(nullptr, message.c_str(), title.c_str(),
+        snowdesktop::operation_feedback::ShowMessageBox(nullptr, message.c_str(), title.c_str(),
             MB_OK | MB_ICONERROR);
     }).detach();
 }
@@ -463,7 +463,7 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         {
             dialog->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
             dialog->SetTitle(_LW("app.interact.select_folder"));
-            if (SUCCEEDED(dialog->Show(hwnd_)))
+            if (SUCCEEDED(snowdesktop::operation_feedback::ShowModalWindow(dialog, hwnd_)))
             {
                 IShellItem* item = nullptr;
                 if (SUCCEEDED(dialog->GetResult(&item)))

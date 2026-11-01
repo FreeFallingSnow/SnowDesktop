@@ -3,12 +3,165 @@
 #include "navigation/quick_navigation_search_async.h"
 #include "shell/shell_extension_service.h"
 #include "diagnostics/diagnostic_log_modules.h"
+#include <wrl/implements.h>
 #include <condition_variable>
 #include <mutex>
 #include <utility>
 
 namespace behavior
 {
+// Real native modal loops, with only their user decision automated. No desktop
+// host, Explorer, files, device backend or credentials are involved.
+struct NativeDialogProgress
+{
+    static inline thread_local NativeDialogProgress* current = nullptr;
+    static constexpr wchar_t title[] = L"SnowDesktop isolated dialog regression";
+    snowdesktop::UiAnimationScheduler scheduler;
+    DWORD thread = GetCurrentThreadId();
+    ULONGLONG started = GetTickCount64();
+    HWND window = nullptr;
+    UINT_PTR watchdog = 0;
+    int ticks = 0, frames = 0, commits = 0;
+    bool wrongThread = false, timedOut = false;
+
+    NativeDialogProgress()
+    {
+        Require(scheduler.Initialize(), "initialize real dialog scheduler");
+        Require(scheduler.ScheduleInterval(10, [this](auto) {
+            wrongThread |= GetCurrentThreadId() != thread;
+            ++ticks;
+        }) != 0, "schedule component deadline");
+        Require(scheduler.StartAnimation(snowdesktop::UiAnimationSurface::Desktop,
+            [this](double) {
+                wrongThread |= GetCurrentThreadId() != thread;
+                ++frames;
+                return true;
+            }) != 0, "schedule animation frames");
+        watchdog = SetTimer(nullptr, 0, 10, +[](HWND, UINT, UINT_PTR, DWORD) {
+            auto* progress = current;
+            if (!progress) return;
+            // MessageBox supplies no creation callback. Match only this
+            // thread's active test dialog, never an external application.
+            if (!progress->window)
+            {
+                const HWND active = GetActiveWindow();
+                wchar_t caption[96]{};
+                if (active && GetWindowTextW(active, caption, 96) &&
+                    std::wstring_view(caption) == title)
+                    progress->window = active;
+            }
+            const bool advanced = progress->ticks >= 2 &&
+                progress->frames >= 2 && progress->commits >= 2;
+            progress->timedOut = GetTickCount64() - progress->started >= 1500;
+            if (progress->window && (advanced || progress->timedOut))
+                PostMessageW(progress->window, WM_CLOSE, 0, 0);
+        });
+        Require(watchdog != 0, "start bounded dialog watchdog");
+        current = this;
+    }
+    ~NativeDialogProgress()
+    {
+        KillTimer(nullptr, watchdog);
+        current = nullptr;
+    }
+    TASKDIALOGCONFIG TaskDialog()
+    {
+        TASKDIALOGCONFIG dialog{sizeof(dialog)};
+        dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
+        dialog.pszWindowTitle = title;
+        dialog.pszContent = L"Checking component deadlines and animation while a dialog is open.";
+        dialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+        dialog.nDefaultButton = IDCANCEL;
+        dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(this);
+        dialog.pfCallback = +[](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
+            if (notification == TDN_CREATED)
+                reinterpret_cast<NativeDialogProgress*>(data)->window = window;
+            return S_OK;
+        };
+        return dialog;
+    }
+};
+
+void NativeDialogs(bool rawControl = false)
+{
+    Profile profile;
+    Apartment apartment;
+    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES};
+    Require(InitCommonControlsEx(&controls) != FALSE, "initialize native dialogs");
+    for (const auto* kind : {"task", "message", "form", "modal-window"})
+    {
+        NativeDialogProgress progress;
+        snowdesktop::operation_feedback::Session session(&progress.scheduler, [&] {
+            progress.wrongThread |= GetCurrentThreadId() != progress.thread;
+            ++progress.commits;
+        });
+        int selected = 0;
+        if (std::string_view(kind) == "task")
+        {
+            auto dialog = progress.TaskDialog();
+            const auto result = rawControl
+                ? TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)
+                : snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr);
+            Require(SUCCEEDED(result), "show actual native task dialog");
+        }
+        else if (std::string_view(kind) == "message")
+            selected = snowdesktop::operation_feedback::ShowMessageBox(nullptr,
+                L"Checking a native warning dialog.", NativeDialogProgress::title, MB_OKCANCEL);
+        else if (std::string_view(kind) == "form")
+        {
+            struct Template { DLGTEMPLATE dialog; WORD menu, windowClass, title; } form{};
+            form.dialog.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME;
+            form.dialog.cx = 240; form.dialog.cy = 60;
+            const auto procedure = +[](HWND window, UINT message, WPARAM, LPARAM parameter) -> INT_PTR {
+                if (message == WM_INITDIALOG)
+                {
+                    reinterpret_cast<NativeDialogProgress*>(parameter)->window = window;
+                    return TRUE;
+                }
+                if (message == WM_CLOSE) { EndDialog(window, IDCANCEL); return TRUE; }
+                return FALSE;
+            };
+            selected = static_cast<int>(snowdesktop::operation_feedback::ShowDialog(
+                GetModuleHandleW(nullptr), &form.dialog, nullptr, procedure,
+                reinterpret_cast<LPARAM>(&progress)));
+        }
+        else
+        {
+            // Substitute only the Shell picker boundary. Its real Show call
+            // still runs a native modal loop on the calling STA.
+            struct Modal final : Microsoft::WRL::RuntimeClass<
+                Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IModalWindow>
+            {
+                TASKDIALOGCONFIG dialog{};
+                int selected = 0;
+                HRESULT STDMETHODCALLTYPE Show(HWND owner) override
+                {
+                    dialog.hwndParent = owner;
+                    return TaskDialogIndirect(&dialog, &selected, nullptr, nullptr);
+                }
+            };
+            auto modal = Microsoft::WRL::Make<Modal>();
+            modal->dialog = progress.TaskDialog();
+            Require(SUCCEEDED(snowdesktop::operation_feedback::ShowModalWindow(modal.Get(), nullptr)),
+                "show modal COM window on its STA");
+            selected = modal->selected;
+        }
+        std::cout << "dialog=" << kind << " ticks=" << progress.ticks <<
+            " frames=" << progress.frames << " commits=" << progress.commits << '\n';
+        Require(selected == IDCANCEL, std::string(kind) + ": cancellation result is preserved");
+        Require(!progress.timedOut && progress.ticks >= 2 && progress.frames >= 2 &&
+            progress.commits >= 2 && !progress.wrongThread,
+            std::string(kind) + ": component deadlines, animation and presentation must advance on the UI thread before the dialog closes");
+        const auto ticks = progress.ticks, frames = progress.frames, commits = progress.commits;
+        // Drain queued messages without dispatching the outer scheduler. A
+        // retired dialog must no longer advance deadlines or presentation.
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+        Require(progress.ticks == ticks && progress.frames == frames && progress.commits == commits,
+            "closing the dialog retires its presentation bridge");
+    }
+}
+
 void Search()
 {
     HostProfile profile;

@@ -80,7 +80,7 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
         return S_OK;
     };
     int selected = IDCANCEL;
-    return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+    return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
 }
 }
 
@@ -403,7 +403,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         auto result = settingsController_->InvokeHostAction(request);
         if (result.Succeeded()) result = settingsController_->FlushPending();
         if (!result.Succeeded())
-        { MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
+        { snowdesktop::operation_feedback::ShowMessageBox(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
         if (snowdesktop::NeedsDesktopStyleAnimations(preset, settingsController_->Snapshot()->values.dock))
         {
             const auto description = std::wstring(_LW("settings.desktopStyle.animationPrompt.description")) + L"\n\n" + _LW(kDesktopStyleAnimations[index]);
@@ -413,7 +413,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
                 request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStyleAnimations;
                 result = settingsController_->InvokeHostAction(request);
                 if (result.Succeeded()) result = settingsController_->FlushPending();
-                if (!result.Succeeded()) MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+                if (!result.Succeeded()) snowdesktop::operation_feedback::ShowMessageBox(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
             }
         }
         return;

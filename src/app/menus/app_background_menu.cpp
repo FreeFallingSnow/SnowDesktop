@@ -2288,7 +2288,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         {
             const auto result = RenamePage(pageSnapshot.revision, clickedPageId, pageNameDraft);
             if (!result.Succeeded())
-                MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+                snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_,
                     result.status == snowdesktop::PageLayoutOperationStatus::Stale
                         ? _LW("settings.pages.status.stale")
                         : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),

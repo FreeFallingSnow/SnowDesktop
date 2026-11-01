@@ -70,7 +70,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         dialog.cButtons = static_cast<UINT>(std::size(buttons));
         dialog.nDefaultButton = IDCANCEL;
         int selected = IDCANCEL;
-        return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+        return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
     };
     services.confirmPrograms = [this] {
         const TASKDIALOG_BUTTON buttons[] = {
@@ -86,7 +86,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         dialog.cButtons = static_cast<UINT>(std::size(buttons));
         dialog.nDefaultButton = IDCANCEL;
         int selected = IDCANCEL;
-        return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+        return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
     };
     services.exiting = [this] { return exitRequested_; };
     services.createConvertedView = [this](DesktopWidget* widget) {

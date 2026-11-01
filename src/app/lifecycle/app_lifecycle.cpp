@@ -1204,7 +1204,7 @@ bool DesktopApp::RequestRestart()
         nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
     if (pathLen == 0 || pathLen >= std::size(exePath))
     {
-        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+        snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_,
             _LW("app.run.no_path"), _LW("app.run.restart_failed"),
             MB_OK | MB_ICONERROR);
         return false;
@@ -1217,7 +1217,7 @@ bool DesktopApp::RequestRestart()
     {
         std::wstring message =
             _LFW("app.run.restart_error", std::to_wstring(error));
-        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
+        snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
             _LW("app.run.restart_failed"), MB_OK | MB_ICONERROR);
         return false;
     }

@@ -670,7 +670,7 @@ void DesktopApp::ShowItemContextMenu(
                 changes.emplace_back(index, std::move(config));
             }
             if (!SetLargeIconConfigs(changes))
-                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
             else if (backgroundCommand && presets::backgrounds[command - kContextLargeIconBackgroundFirst].value == kAppearancePresetCustom)
                 OpenLargeIconSettings(largeIconKeys);
         }
@@ -895,7 +895,7 @@ void DesktopApp::ShowItemContextMenu(
                 item.gridCell.row + span.rows <= page->rows && !AreGridSlotsMarked(occupied, item.gridCell, span);
             if (!fits) BeginLargeIconPlacement(itemIndex, config);
             else if (!SetLargeIconConfig(itemIndex, config))
-                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
     case kContextLargeIconSettings:
@@ -906,7 +906,7 @@ void DesktopApp::ShowItemContextMenu(
         {
             std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
             for (const auto& key : largeIconKeys) changes.emplace_back(FindItemIndexByKey(key), std::nullopt);
-            if (!SetLargeIconConfigs(changes)) MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+            if (!SetLargeIconConfigs(changes)) snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
     case kContextOpenCommand:

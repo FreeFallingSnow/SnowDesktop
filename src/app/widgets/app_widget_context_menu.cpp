@@ -70,7 +70,7 @@ bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
         return S_OK;
     };
     int selected = IDCANCEL;
-    return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) &&
+    return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) &&
         selected == IDYES;
 }
 }
@@ -1116,7 +1116,7 @@ void DesktopApp::ShowWidgetContextMenu(
         RestoreDesktopWindowLayer();
         if (command == kDockChooseIcon) OpenDockIconLibrary(menuWidgetId);
         else if (!SetDockIconAsset(menuWidgetId, {}))
-            MessageBoxW(hwnd_, _LW("iconLibrary.saveFailed"), L"SnowDesktop", MB_OK | MB_ICONWARNING);
+            snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("iconLibrary.saveFailed"), L"SnowDesktop", MB_OK | MB_ICONWARNING);
         return;
     }
 

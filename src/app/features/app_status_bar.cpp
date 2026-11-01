@@ -409,7 +409,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 hold->shortcutFinished = true;
                 if (result != S_OK)
                 {
-                    MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                    snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                     return;
                 }
                 const auto selection = input::CaptureSelection(target);
@@ -429,14 +429,14 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             if (!current()) return;
                             if (restored == S_OK) next(resolved);
                             else if (restored != HRESULT_FROM_WIN32(ERROR_CANCELLED))
-                                MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                         });
                     };
                     statusBarActivationToken_ = input::ScheduleTarget(uiAnimationScheduler_, original, std::move(callbacks));
                     if (!statusBarActivationToken_)
                     {
                         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar input method stage=restore-scheduler-unavailable", DiagnosticLogLevel::Error);
-                        MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                        snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                     }
                 };
                 snowdesktop::SystemPanelInputMethodActions actions;
@@ -457,7 +457,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             swprintf_s(message, L"StatusBar input method profile selection hr=0x%08lX", static_cast<unsigned long>(selected));
                             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, selected != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
                             if (selected != S_OK)
-                                MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                         });
                     }, selection.target.foreground);
                 };
@@ -492,7 +492,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (!statusBarActivationToken_)
         {
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar input method stage=capture-scheduler-unavailable", DiagnosticLogLevel::Error);
-            MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+            snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
     }
     else if (action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::SystemInputMethodPanel)
@@ -509,7 +509,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             SUCCEEDED(result) ? L"requested" : L"failed");
         if (FAILED(result))
         {
-            MessageBoxW(owner, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+            snowdesktop::operation_feedback::ShowMessageBox(owner, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
         statusBarActivationMonitor_ = nullptr;
     }
@@ -1174,7 +1174,7 @@ void DesktopApp::SyncStatusBar()
             [this](HMONITOR monitor) { CancelStatusBarActivation(monitor); },
             [this](const std::wstring& error) {
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, error.c_str(), DiagnosticLogLevel::Error);
-                MessageBoxW(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
             },
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
                 auto fillAppearance = snowdesktop::StatusBarFillAppearance(appearance);

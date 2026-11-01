@@ -257,7 +257,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         break;
     case kTrayRestartExplorerCommand:
         if (!RestartWindowsExplorer())
-            MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+            snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_,
                 _LW("app.interact.restart_explorer_fail"),
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;

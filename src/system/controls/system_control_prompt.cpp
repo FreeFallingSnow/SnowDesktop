@@ -1,4 +1,5 @@
 #include "system_control_prompt.h"
+#include "platform/operation_feedback.h"
 #include "ui/input/text_input_window.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "ui/render/native_form_style.h"
@@ -377,7 +378,7 @@ bool ConfirmSystemControl(HWND owner,system_control::Request& request,const std:
     const bool password=hidden||(system_control::RequiresPasswordPrompt(request)&&security!="open");
     if(!password&&!system_control::RequiresConfirmation(request.name))return true;
     Prompt prompt(request);prompt.state=state;prompt.appearance=appearance;prompt.hidden=hidden;prompt.passwordForm=password;prompt.actor=actor;prompt.target=target;prompt.dpi=owner?GetDpiForWindow(owner):96;if(!prompt.dpi)prompt.dpi=96;
-    auto form=FormTemplate();const auto result=DialogBoxIndirectParamW(GetModuleHandleW(nullptr),&form.dialog,owner,Prompt::Procedure,reinterpret_cast<LPARAM>(&prompt));
+    auto form=FormTemplate();const auto result=operation_feedback::ShowDialog(GetModuleHandleW(nullptr),&form.dialog,owner,Prompt::Procedure,reinterpret_cast<LPARAM>(&prompt));
     state->window=nullptr;const bool confirmed=result==IDOK&&PromptValid(state);
     if(!confirmed){request.password.Clear();request.hostConfirmed=false;if(state->error.empty())state->error=result==-1?"confirmationUnavailable":"userCanceled";}
     return confirmed;

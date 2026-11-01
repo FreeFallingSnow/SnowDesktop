@@ -268,6 +268,8 @@ int main(int argc, char** argv)
         if (behavior::scene == "settings-host") behavior::SettingsHostCommit();
         else if (behavior::scene == "group-type-contract") behavior::GroupTypeContract();
         else if (behavior::scene == "search") behavior::Search();
+        else if (behavior::scene == "native-dialog") behavior::NativeDialogs();
+        else if (behavior::scene == "native-dialog-control") behavior::NativeDialogs(true);
         else if (behavior::scene == "drag-source") behavior::DragSource();
         else if (behavior::scene == "drag-files") behavior::DragFiles();
         else if (behavior::scene == "drag-batches") behavior::DragBatches();

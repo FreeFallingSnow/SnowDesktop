@@ -172,7 +172,7 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
                 request.extensions.front().c_str());
     }
 
-    const HRESULT shown = dialog->Show(owner);
+    const HRESULT shown = snowdesktop::operation_feedback::ShowModalWindow(dialog.Get(), owner);
     if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
         result.canceled = true;

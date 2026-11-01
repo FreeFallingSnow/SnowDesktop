@@ -418,11 +418,11 @@ void DesktopApp::ConfirmPageRemoval(const std::wstring& pageId, POINT point)
             return S_OK;
         };
         int selected = IDCANCEL;
-        if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) || selected != IDYES) return;
+        if (FAILED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) || selected != IDYES) return;
     }
     const auto result = RemovePage(snapshot.revision, pageId);
     if (!result.Succeeded())
-        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+        snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_,
             result.status == snowdesktop::PageLayoutOperationStatus::Stale
                 ? _LW("settings.pages.status.stale")
                 : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),
