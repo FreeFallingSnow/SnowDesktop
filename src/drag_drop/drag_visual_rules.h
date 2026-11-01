@@ -96,9 +96,9 @@ struct PreviewWindowZOrderPolicy
 constexpr PreviewWindowZOrderPolicy
 ResolvePreviewWindowZOrderPolicy(bool visible, HWND visibleHint = nullptr) noexcept
 {
-    (void)visible;
     return PreviewWindowZOrderPolicy{
-        visibleHint ? visibleHint : HWND_TOPMOST, SWP_NOACTIVATE };
+        visibleHint ? visibleHint : HWND_TOPMOST,
+        SWP_NOACTIVATE | SWP_NOOWNERZORDER | (visible ? SWP_NOZORDER : 0u) };
 }
 
 // Presentation only: retain aspect ratio and the pointer's relative grab point.

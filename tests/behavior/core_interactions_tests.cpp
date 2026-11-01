@@ -4,6 +4,7 @@
 #include "ui/input/private_pointer.h"
 #include "layout/folder_sort_rules.h"
 #include "app/shell/shell_refresh_snapshot.h"
+#include "app/popup/popup_window_pair_z_order.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "behavior_fixture.h"
 #include <fstream>
@@ -202,6 +203,7 @@ struct NativeDragIntegrationAccess
     static const auto& Widgets(const DesktopApp& app) { return app.widgets_; }
 #include "module_access.inc"
 #include "drag_access.inc"
+#include "popup_drag_access.inc"
 };
 namespace behavior
 {
@@ -257,6 +259,7 @@ struct HostProfile : Profile
 }
 #include "host_contracts.inc"
 #include "drag_contracts.inc"
+#include "popup_drag_contracts.inc"
 int main(int argc, char** argv)
 {
     try {
@@ -270,6 +273,7 @@ int main(int argc, char** argv)
         else if (behavior::scene == "drag-batches") behavior::DragBatches();
         else if (behavior::scene == "drag-partial") behavior::DragPartial();
         else if (behavior::scene == "drag-release") behavior::DragRelease();
+        else if (behavior::scene == "drag-popup") behavior::DragPopup();
         else throw std::runtime_error("unknown behavior");
         std::cout << "PASS " << behavior::scene << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }

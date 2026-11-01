@@ -1439,6 +1439,7 @@ private:
     bool RenderFloatingPopupCompositionFrame();
     bool PresentFloatingPopupComposition();
     void SuspendFloatingPopupPresentation();
+    void PreserveFloatingPopupDragCapture();
     void PaintFloatingPopupWindow(HWND hwnd);
     POINT FloatingPopupClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;

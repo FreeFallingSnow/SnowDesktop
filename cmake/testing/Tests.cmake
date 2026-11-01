@@ -213,13 +213,14 @@ if (BUILD_TESTING)
         LABELS core integration isolated-native-model interaction)
     snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
     foreach(row IN ITEMS settings-host group-type-contract
-            drag-source drag-files drag-batches drag-partial drag-release)
+            drag-source drag-files drag-batches drag-partial drag-release drag-popup)
         add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBehaviorTests>"
             TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
     endforeach()
     set_tests_properties(behavior_search PROPERTIES TIMEOUT 60 PROCESSORS 3)
+    set_tests_properties(behavior_drag-popup PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
 
     # Deployment is a product integration contract. Its explicit output input
     # and dependency stay on this driver, outside the four module scenarios.

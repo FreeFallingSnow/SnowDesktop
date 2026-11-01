@@ -785,6 +785,9 @@ void DesktopApp::EndDragSession()
     presentedDragFeedbackRevision_ = 0;
     presentedDragNavHoverSide_ = 0;
     HideDragPreviewWindow();
+    const bool hadPreviewSurface = !!dragPreviewDcompSurface_;
+    ResetDragPreviewCompositionResources();
+    if (hadPreviewSurface) CommitCompositionAnimationFrame();
     ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存

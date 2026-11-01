@@ -65,22 +65,30 @@ void DesktopApp::ApplyDragPreviewLayerPolicy()
     const HWND visiblePopup = floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_)
         ? floatingPopupHwnd_ : nullptr;
     if (!visiblePreview && !visibleHint) return;
+    const auto aboveHosts = [&](HWND window) {
+        if (visiblePopup && !zOrder::IsAbove(window, visiblePopup)) return false;
+        for (const auto& host : persistentDockHosts_)
+            if (host && host->active && host->hwnd && IsWindowVisible(host->hwnd) &&
+                zOrder::IsTopmost(host->hwnd) && !zOrder::IsAbove(window, host->hwnd))
+                return false;
+        return true;
+    };
     const bool previewOrdered = !visiblePreview ||
-        (zOrder::IsTopmost(visiblePreview) &&
-            (!visiblePopup || zOrder::IsAbove(visiblePreview, visiblePopup)));
+        (zOrder::IsTopmost(visiblePreview) && aboveHosts(visiblePreview));
     const bool hintOrdered = !visibleHint ||
         (zOrder::IsTopmost(visibleHint) &&
             (!visiblePreview || zOrder::IsAbove(visibleHint, visiblePreview)) &&
-            (!visiblePopup || zOrder::IsAbove(visibleHint, visiblePopup)));
+            aboveHosts(visibleHint));
     if (previewOrdered && hintOrdered) return;
-    const auto policy = snowdesktop::drag_visual_rules::ResolvePreviewWindowZOrderPolicy(true, visibleHint);
     constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
-    // Raise the pair together above a newly opened Dock popup. A fixed order
-    // keeps the DComp ghost from alternating over the layered hint on refresh.
+    // Normalize both bands explicitly, bottom to top. An HWND that is itself
+    // crossing the TOPMOST boundary is not a reliable insertion anchor.
     HDWP batch = BeginDeferWindowPos((visibleHint ? 1 : 0) + (visiblePreview ? 1 : 0));
+    if (batch && visiblePreview) batch = DeferWindowPos(batch, visiblePreview, HWND_TOPMOST, 0, 0, 0, 0, flags);
     if (batch && visibleHint) batch = DeferWindowPos(batch, visibleHint, HWND_TOPMOST, 0, 0, 0, 0, flags);
-    if (batch && visiblePreview) batch = DeferWindowPos(batch, visiblePreview, policy.insertAfter, 0, 0, 0, 0, flags);
-    if (batch) EndDeferWindowPos(batch);
+    if (batch && EndDeferWindowPos(batch)) return;
+    if (visiblePreview) SetWindowPos(visiblePreview, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    if (visibleHint) SetWindowPos(visibleHint, HWND_TOPMOST, 0, 0, 0, 0, flags);
 }
 
 void DesktopApp::DestroyDragPreviewWindow()
@@ -504,13 +512,9 @@ void DesktopApp::SyncDragPreviewWindow()
         dragPreviewWindowBounds_ = requestedWindowBounds;
         dragPreviewWindowBoundsValid_ = true;
     }
-    else
-    {
-        // A Dock popup can enter the topmost band while the pointer is held
-        // still for dwell activation. Reassert the ghost even without a
-        // geometry update, while keeping the hint above the ghost.
-        ApplyDragPreviewLayerPolicy();
-    }
+    // Geometry changes preserve the current band/order. Repair only when a
+    // Dock or popup actually crossed above the presentation windows.
+    ApplyDragPreviewLayerPolicy();
 
     // Native input stays captured and external-window classification already
     // resolves below this presentation-only HWND. While OLE owns routing the
@@ -544,6 +548,7 @@ void DesktopApp::SyncDragPreviewWindow()
             hintHwnd_ && IsWindowVisible(hintHwnd_) ? hintHwnd_ : nullptr);
         SetWindowPos(dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0,
             policy.flags | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        ApplyDragPreviewLayerPolicy();
     }
 }
 
@@ -672,11 +677,12 @@ void DesktopApp::SyncTrayDragPreviewWindow()
         { dragPreviewWindowBoundsValid_ = false; HideDragPreviewWindow(); return; }
         dragPreviewWindowBounds_ = bounds; dragPreviewWindowBoundsValid_ = true;
     }
-    else ApplyDragPreviewLayerPolicy();
+    ApplyDragPreviewLayerPolicy();
     if ((!dragPreviewDcompSurface_ || preview.dirty) && !RenderTrayDragPreviewFrame())
     { HideDragPreviewWindow(); return; }
     if (!visible) SetWindowPos(dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0,
         policy.flags | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
+    ApplyDragPreviewLayerPolicy();
 }
 
 bool DesktopApp::IsDragPresentationOnlyWindow(HWND window) const

@@ -710,10 +710,11 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     if (popupAnimation_.IsClosing())
         return;
 
+    PreserveFloatingPopupDragCapture();
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
-    if (clearSelection)
+    if (clearSelection && !dragSession_.HasContext())
     {
         ClearSelection();
         for (auto& entry :

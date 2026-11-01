@@ -567,6 +567,7 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
 {
     // A transparent DComp frame does not make its native HWND click-through.
     // Retire input before discarding the last usable pixels.
+    PreserveFloatingPopupDragCapture();
     collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupDcompVisual_)
         floatingPopupDcompVisual_->SetContent(nullptr);
@@ -577,12 +578,29 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
 
 void DesktopApp::SuspendFloatingPopupPresentation()
 {
+    PreserveFloatingPopupDragCapture();
     collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_) &&
         ShouldShowFloatingPopupWindow() &&
         floatingPopupPresentationRetryCount_ < kPopupPresentationRetryLimit)
         SetTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId,
             kPopupPresentationRetryIntervalMs, nullptr);
+}
+
+void DesktopApp::PreserveFloatingPopupDragCapture()
+{
+    const bool dragging = dragSession_.IsActive() ||
+        widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize || largeIconGesture_;
+    if (dragging && !dragDropController_.IsTransportActive() &&
+        floatingPopupHwnd_ &&
+        snowdesktop::private_pointer::Capture() == floatingPopupHwnd_ &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        // Capture changes synchronously notify the old host. Its existing
+        // owned-host guard preserves the gesture once the desktop owns it.
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
+    }
 }
 
 void DesktopApp::RecoverFloatingPopupCompositionFailure(
@@ -1005,6 +1023,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
     {
+        PreserveFloatingPopupDragCapture();
         if (floatingPopupHwnd_) KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
         floatingPopupPresentationRetryCount_ = 0;
         StopFloatingPopupOutsideClickMonitor();
@@ -1320,9 +1339,6 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
     // drag. The existing close transition snapshots a Dock-folder source and
     // detaches only the outgoing popup target; keep the drag selection intact.
     popupMouseLeaveController_.Reset();
-    if (dragging && !dragDropController_.IsTransportActive() &&
-        snowdesktop::private_pointer::Capture() == floatingPopupHwnd_ && hwnd_ && IsWindow(hwnd_))
-        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     CloseCollectionPopup(!dragging);
 }
 
