@@ -272,8 +272,10 @@ public:
                 const bool pointerSafe = !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
                                       !(snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) &&
                                       !(snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000);
-                const bool canApply = popups_.size() == 1 &&
-                                      (popups_.front()->hoveredItem < 0 ||
+                POINT pointer{};
+                const bool hoveringRoot = !snowdesktop::private_pointer::CursorPosition(&pointer) ||
+                    snowdesktop::private_pointer::WindowAtPoint(pointer) == popups_.front()->hwnd;
+                const bool canApply = (!hoveringRoot || popups_.front()->hoveredItem < 0 ||
                                        (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
                                       pointerSafe;
                 if (!pendingItems)
@@ -307,7 +309,7 @@ public:
                 }
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
-                if (pendingItems && hovered >= 0)
+                if (pendingItems && hoveringRoot && hovered >= 0)
                 {
                     stable = options_.pollItemsStablePrefix &&
                         PreservesHoveredRow(rootItems_, *pendingItems, hovered);
@@ -317,11 +319,19 @@ public:
                     const int selected = popups_.front()->keyboardItem;
                     const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
                         ? rootItems_[selected].command : 0;
-                    rootItems_ = std::move(*pendingItems);
+                    const UINT hoveredCommand = hovered >= 0 && static_cast<size_t>(hovered) < rootItems_.size()
+                        ? rootItems_[hovered].command : 0;
+                    ApplyPolledItems(std::move(*pendingItems));
                     pendingItems.reset();
-                    RefreshPopup(*popups_.front(), true);
-                    if (hovered >= 0)
-                        SetHoveredItem(*popups_.front(), hovered, false, false);
+                    const int activeDepth = activeDepth_;
+                    RefreshPopup(*popups_.front(), true, true);
+                    if (hoveredCommand)
+                        for (size_t i = 0; i < rootItems_.size(); ++i)
+                            if (rootItems_[i].command == hoveredCommand)
+                            {
+                                SetHoveredItem(*popups_.front(), static_cast<int>(i), false, false);
+                                break;
+                            }
                     if (selectedCommand)
                         for (size_t i = 0; i < rootItems_.size(); ++i)
                             if (rootItems_[i].command == selectedCommand)
@@ -332,6 +342,7 @@ public:
                                 SetHoveredItem(*popups_.front(), static_cast<int>(i), true, false);
                                 break;
                             }
+                    activeDepth_ = activeDepth;
                     if (!options_.pollItemsFinished || options_.pollItemsFinished())
                         options_.pollItems = {};
                 }
@@ -2399,9 +2410,36 @@ private:
         ImmReleaseContext(focusWindow, context);
     }
 
-    void RefreshPopup(Popup &popup, bool preservePosition = false)
+    void ApplyPolledItems(std::vector<Item> items)
     {
-        CloseFromDepth(popup.depth + 1);
+        if (popups_.size() > 1)
+        {
+            Popup& child = *popups_[1];
+            Item& previous = rootItems_[child.parentItem];
+            const auto next = std::ranges::find_if(items, [&](const Item& item) {
+                return item.command == previous.command && item.label == previous.label &&
+                    item.enabled && !item.children.empty();
+            });
+            if (next == items.end())
+                CloseFromDepth(1);
+            else
+            {
+                // Keep the visible subtree's storage, selections and lazy
+                // preparation. Only its root vector object changes address;
+                // deeper popup vectors remain in the same retained storage.
+                next->children = std::move(previous.children);
+                child.parentItem = static_cast<int>(std::distance(items.begin(), next));
+                child.items = &next->children;
+            }
+        }
+        rootItems_ = std::move(items);
+    }
+
+    void RefreshPopup(Popup &popup, bool preservePosition = false,
+        bool preserveChildren = false)
+    {
+        if (!preserveChildren)
+            CloseFromDepth(popup.depth + 1);
         popup.hoveredItem = -1;
         popup.keyboardItem = -1;
         const int previousOffset = popup.scrollOffset;

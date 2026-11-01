@@ -168,7 +168,8 @@ struct Options
     /** Internal multi-stream publication; absent preserves one-shot polling. */
     std::function<bool()> pollItemsFinished;
     /** Allow appended rows while hovering an unchanged, stationary prefix.
-     * The controller still validates layout and protects presses/cascades. */
+     * The controller validates layout and protects presses; open cascades retain
+     * their windows and backing subtrees while root additions are published. */
     bool pollItemsStablePrefix = false;
     // Permit completed background subtrees to replace loading placeholders
     // while a cascade is open. Root layout/press protection still applies.
