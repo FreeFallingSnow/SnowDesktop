@@ -128,14 +128,19 @@ void DragFiles()
     RequirePaths(Access::CollectionPaths(*profile.app,L"receive"),{copied},"OLE completion actually commits into the target collection");
     Require(Access::fileCompletionMessages>0,"file completion traversed the production window procedure");
 
-    // A normal dot-component spelling is a valid Shell alias without requiring
-    // 8.3 names. Win32 extended prefixes are not accepted by this Shell parser.
+    // Use the native Shell spelling. Exercise 8.3 canonicalization when the
+    // volume provides a short name; otherwise still check the physical move.
     const auto moveInput = profile.root/L"source"/L"move.txt";
     Write(moveInput,"moved bytes");
-    const fs::path alias=moveInput.parent_path()/L"."/moveInput.filename();
+    auto alias=moveInput; alias.make_preferred();
+    std::vector<wchar_t> shortName(32768);
+    const DWORD shortLength=GetShortPathNameW(alias.c_str(),shortName.data(),static_cast<DWORD>(shortName.size()));
+    if (shortLength>0 && shortLength<shortName.size()) alias=fs::path(shortName.data());
+    std::cout << "INFO drag-files short-alias=" << (alias.wstring()!=moveInput.wstring()) << '\n';
     Microsoft::WRL::ComPtr<IShellItem> aliasItem;
     const HRESULT parsedAlias=SHCreateItemFromParsingName(alias.c_str(),nullptr,IID_PPV_ARGS(&aliasItem));
-    Require(SUCCEEDED(parsedAlias) && fs::equivalent(alias,moveInput),"fixture alias is a real Shell-resolvable source");
+    Require(SUCCEEDED(parsedAlias) && fs::equivalent(alias,moveInput),
+        "fixture alias is a real Shell-resolvable source; hr="+std::to_string(parsedAlias));
     auto outputs = std::make_shared<snowdesktop::ShellFileOperationResult>();
     bool done=false, succeeded=false;
     const bool queued = Access::SubmitFiles(*profile.app,{alias},L"",{260,250},MK_SHIFT,
