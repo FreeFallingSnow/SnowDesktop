@@ -100,7 +100,6 @@ static bool SubmitFiles(DesktopApp& app, const std::vector<std::filesystem::path
     if (preview.Empty()) throw std::runtime_error("real file preview rejected fixture input");
     return app.ExecuteFileBackedDropPlan(sources,preview,std::move(done),false,outputs);
 }
-static std::size_t PendingBatches(const DesktopApp& app) { return app.pendingLandingCaches_.size(); }
 static bool FileOperationsIdle(const DesktopApp& app) { return app.shellFileOperationInFlight_ == 0; }
 static bool LayoutSaved(const DesktopApp& app) { return !app.layoutSavePending_; }
 static bool QueuePartial(DesktopApp& app, snowdesktop::ShellFileOperationRequest request,

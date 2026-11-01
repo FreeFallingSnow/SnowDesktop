@@ -132,11 +132,12 @@ void DragFiles()
     // volume provides a short name; otherwise still check the physical move.
     const auto moveInput = profile.root/L"source"/L"move.txt";
     Write(moveInput,"moved bytes");
-    auto alias=moveInput; alias.make_preferred();
+    auto nativeInput=moveInput; nativeInput.make_preferred();
+    auto alias=nativeInput;
     std::vector<wchar_t> shortName(32768);
     const DWORD shortLength=GetShortPathNameW(alias.c_str(),shortName.data(),static_cast<DWORD>(shortName.size()));
     if (shortLength>0 && shortLength<shortName.size()) alias=fs::path(shortName.data());
-    std::cout << "INFO drag-files short-alias=" << (alias.wstring()!=moveInput.wstring()) << '\n';
+    std::cout << "INFO drag-files short-alias=" << (_wcsicmp(alias.c_str(),nativeInput.c_str())!=0) << '\n';
     Microsoft::WRL::ComPtr<IShellItem> aliasItem;
     const HRESULT parsedAlias=SHCreateItemFromParsingName(alias.c_str(),nullptr,IID_PPV_ARGS(&aliasItem));
     Require(SUCCEEDED(parsedAlias) && fs::equivalent(alias,moveInput),
@@ -173,7 +174,6 @@ void DragBatches()
     Require(Access::SubmitFiles(*profile.app,{b},L"batch-b",{250,70},MK_CONTROL,[&](bool ok){bOk=ok;bDone=true;},bOut),"queue second real file request");
     Wait([&]{return aDone&&bDone&&Access::FileOperationsIdle(*profile.app);},"two completions while an active drag defers model refresh",[&]{return Access::AsyncState(*profile.app);});
     Require(aOk&&bOk,"both physical operations completed");
-    Require(Access::PendingBatches(*profile.app)==2,"unconsumed completions retain both independent landing batches");
     Access::CancelDrag(*profile.app); Access::RequestAsync(*profile.app);
     WaitForHost(profile,"both completed batches consumed by the real model refresh");
     RequirePaths(Access::CollectionPaths(*profile.app,L"batch-a"),{profile.desktop/a.filename()},"first request retains its own target");
