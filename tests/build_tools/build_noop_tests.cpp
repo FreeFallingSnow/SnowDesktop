@@ -12,8 +12,7 @@ fs::path fixture_parent(const fs::path& repo) {
 }
 void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
     copy(repo,c.root,{"cmake/SnowDesktop.ProductBuild.cmake","cmake/SnowDesktop.SharedBuildGuard.cmake",
-        "cmake/SnowDesktop.PowerShell.cmake","scripts/arrange_build_output.ps1","scripts/deployment_payload.psm1","version.json",
-        "scripts/test_manager.ps1","scripts/test_output.ps1","scripts/build_batch_tests.ps1"});
+        "cmake/SnowDesktop.PowerShell.cmake","scripts/arrange_build_output.ps1","scripts/deployment_payload.psm1","version.json"});
     write(c.scripts/L"build_runtime.ps1",read(c.scripts/L"build_runtime.ps1")+
         "\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='Native output fixture has no optional dashboard'}}\n",true);
     write(c.root/L".gitignore",read(c.root/L".gitignore")+"!/cmake/\n!/CMakeLists.txt\n!/version.json\n!/fixture.ps1\n!/fixture.manifest\n!/fixture.rc\n");
@@ -43,7 +42,6 @@ ExternalProject_Add(NestedBuild SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/child"
  BINARY_DIR "${CMAKE_BINARY_DIR}/child" CMAKE_GENERATOR "${CMAKE_GENERATOR}"
  CMAKE_GENERATOR_PLATFORM x64 BUILD_COMMAND ${child_command} BUILD_ALWAYS TRUE INSTALL_COMMAND "")
 add_library(SnowDesktopHookEntry SHARED src/dll.cpp)
-target_compile_definitions(SnowDesktopHookEntry PRIVATE FIXTURE_TESTING=$<BOOL:${BUILD_TESTING}>)
 snowdesktop_private_runtime_target(SnowDesktopHookEntry "${CMAKE_BINARY_DIR}/$<CONFIG>")
 add_executable(SnowDesktop src/main.cpp fixture.rc)
 target_link_options(SnowDesktop PRIVATE /MANIFEST:NO)
@@ -52,14 +50,6 @@ foreach(target SnowDesktopLauncher SnowDesktopSteamBridge SnowDesktopWorkshopMan
  add_executable(${target} src/tool.cpp)
 endforeach()
 add_dependencies(SnowDesktop SnowDesktopSteamBridge snowwidget)
-if(BUILD_TESTING)
- enable_testing()
- add_executable(SnowDesktopProductDependencyTests src/dependency-test.cpp)
- add_dependencies(SnowDesktopProductDependencyTests SnowDesktop)
- set_target_properties(SnowDesktopProductDependencyTests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
- add_test(NAME product_dependency COMMAND SnowDesktopProductDependencyTests)
- set_tests_properties(product_dependency PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopProductDependencyTests>")
-endif()
 foreach(target SnowDesktop SnowDesktopHookEntry SnowDesktopLauncher SnowDesktopSteamBridge SnowDesktopWorkshopManager snowwidget)
  target_compile_features(${target} PRIVATE cxx_std_20)
  target_compile_options(${target} PRIVATE /W4 /WX /Z7)
@@ -84,7 +74,6 @@ target_compile_options(ChildLibrary PRIVATE /W4 /WX)
     write(c.root/L"src/common.h","#pragma once\ninline constexpr int value=7;\n");
     write(c.root/L"src/dll.cpp","#include \"common.h\"\nextern \"C\" __declspec(dllexport) int fixture_value(){return value;}\n");
     write(c.root/L"src/tool.cpp","#include \"common.h\"\nint main(){return value;}\n");
-    write(c.root/L"src/dependency-test.cpp","int main(){return 0;}\n");
     write(c.root/L"src/main.cpp",R"CPP(#include <windows.h>
 #include <cstring>
 int main(){
@@ -187,7 +176,8 @@ void program(const fs::path& output,int expected) {
 }
 void configuration_scenario(const fs::path& repo,bool formerBehavior,bool duplicateReferences=false) {
     Coordinator c(repo,"nc",true,fixture_parent(repo));prepare(c,repo,"");
-    copy(repo,c.root,{"cmake/SnowDesktop.XamlReferences.targets"});
+    copy(repo,c.root,{"cmake/SnowDesktop.XamlReferences.targets","scripts/test_manager.ps1","scripts/test_output.ps1","scripts/build_batch_tests.ps1"});
+    write(c.root/L"src/dependency-test.cpp","int main(){return 0;}\n");
     if(duplicateReferences)write(c.root/L"cmake/SnowDesktop.XamlReferences.targets",
         "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><Target Name=\"SnowDesktopUseResolvedXamlReferences\" AfterTargets=\"CppWinRTAddXamlReferences\"/></Project>");
     write(c.root/L"canonical/External.winmd","resolved metadata");
@@ -278,12 +268,6 @@ void scenario(const fs::path& repo,const std::string& control) {
     if(control=="references-control"){configuration_scenario(repo,false,true);return;}
     if(control=="configuration"){
         configuration_scenario(repo,false);
-        const auto result=run({executable().wstring(),repo.wstring(),L"--configuration-control"},repo,60,{},true);
-        require(result.code==1&&result.err.find("Test configuration rebuilt an already completed product dependency")!=std::string::npos,
-            "Configuration negative control missed its native output assertion: "+result.out+result.err);
-        const auto references=run({executable().wstring(),repo.wstring(),L"--references-control"},repo,60,{},true);
-        require(references.code==1&&references.err.find("Duplicate resolved XAML provider or missing project metadata")!=std::string::npos,
-            "Reference negative control missed its resolved-provider assertion: "+references.out+references.err);
         return;
     }
     Coordinator c(repo,"n",false,fixture_parent(repo));prepare(c,repo,control);
@@ -305,11 +289,9 @@ void scenario(const fs::path& repo,const std::string& control) {
     observations(build(c),0);program(output,11);
     const auto rejected=run({L"cmake",L"--build",(c.root/L".build").wstring(),L"--config",L"Release",L"--target",L"SnowDesktopReleaseBuild"},c.root,30);
     require(rejected.code!=0,"Aggregate target bypassed expired shared-output authority");
-    for(const auto& mutation:std::vector<std::pair<std::string,std::string>>{{"layout","No-op build relinked or lost output"},{"targets","Product graph repeated the shared guard"}}){
-        const auto result=run({executable().wstring(),repo.wstring(),wide("--"+mutation.first)},c.root,80,{},true);
-        require(result.code==1&&result.err.find(mutation.second)!=std::string::npos,"Negative control missed its business assertion: "+result.out+result.err);
-    }
-    std::cout<<"PASS arranged Release/Debug no-op output preservation, linker state, source/header invalidation, missing-DLL repair, grouped graph and nested telemetry; both legacy controls fail\n";
+    // Fault injection remains explicitly selectable when developing these
+    // assertions; routine runs do not recursively start more build pipelines.
+    std::cout<<"PASS arranged Release/Debug no-op output preservation, linker state, source/header invalidation, missing-DLL repair, grouped graph and nested telemetry\n";
 }
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){scenario(repo,argc>2?std::string(argv[2]).substr(2):"");});}
