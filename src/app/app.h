@@ -2775,7 +2775,8 @@ private:
         const DropPreviewList& preview,
         FileOperationCompletion completion = {},
         bool executeSynchronously = false,
-        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {});
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {},
+        std::uint64_t observationBatch = 0);
     /**
      * @brief 执行内部拖拽放置计划。
      * @param sourceList 拖拽源列表
@@ -2793,7 +2794,8 @@ private:
         const DropPreviewList& preview,
         FileOperationCompletion completion = {},
         bool executeSynchronously = false,
-        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {});
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {},
+        std::uint64_t observationBatch = 0);
     /**
      * @brief 将文件实际写入桌面（从源列表物化）。
      * @param sourceList 拖拽源列表
@@ -4643,6 +4645,8 @@ private:
     bool dropTargetRegistered_ = false;
     bool externalOleDragLeavePending_ = false;
     std::uint64_t externalOleDragLeaveDeadline_ = 0;
+    // Private diagnostic identity only; never controls the leave operation.
+    std::uint64_t externalOleLeaveObservation_ = 0;
     /** @} */
 
     OleDragDropAdapter* EnsureOleDragDropAdapter();
@@ -4682,7 +4686,8 @@ private:
         POINT point, DWORD keyState);
     DWORD DropExternalSlotContent(IDataObject* dataObject,
         const ExternalSlotDestination& destination, DWORD allowedEffects,
-        bool asynchronousSource, const std::vector<std::wstring>& knownPaths);
+        bool asynchronousSource, const std::vector<std::wstring>& knownPaths,
+        std::uint64_t observationCallsite = 0);
     bool CommitExternalSlotPaths(const ExternalSlotDestination& destination,
         const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
         FileOperationCompletion completion, bool synchronously,
@@ -4839,7 +4844,7 @@ private:
         IDataObject* dataObject,
         const std::vector<snowdesktop::virtual_file_drop::
             VirtualFileDescriptor>& descriptors,
-        bool* allEntriesMaterialized);
+        bool* allEntriesMaterialized, std::uint64_t* observationBatch = nullptr);
     static std::vector<std::wstring> TryExtractTextFromDataObject(
         const DropReferenceSnapshot& snapshot);
     static std::wstring ExtractDropUrl(

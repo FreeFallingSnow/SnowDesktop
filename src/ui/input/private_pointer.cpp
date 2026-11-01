@@ -34,11 +34,20 @@ struct Permit
     HWND window = nullptr;
     UINT message = 0;
     bool available = false;
+    bool forwarded = false;
+    std::uint64_t forward = 0;
 };
 
 struct Session;
 thread_local Session* current = nullptr;
 thread_local Permit permit;
+struct ActiveDelivery
+{
+    Session* owner = nullptr;
+    DeliveryIdentity identity;
+};
+thread_local ActiveDelivery activeDelivery;
+thread_local std::uint64_t nextObservedSession = 0;
 
 double ClockMilliseconds()
 {
@@ -148,12 +157,33 @@ struct Session
     unsigned projectedButtons = 0, dispatchDepth = 0;
     std::array<bool, 256> projectedKeys{}, deliveredKeys{};
     std::uint64_t nextSequence = 0;
+    std::uint64_t lastSuccessfulQueuedSequence = 0;
     bool wakePosted = false;
+    std::unique_ptr<DeliveryObservationLog> deliveryLog;
+    std::uint64_t nextObservedDelivery = 0;
+    std::uint64_t nextObservedForward = 0;
     double started = 0, lastClickTime = 0;
     HWND lastClickWindow = nullptr;
     POINT lastClickPoint{};
     Button lastClickButton = Button::Left;
     bool lastClickEligible = false, doublePress = false;
+
+    void RecordDelivery(DeliveryObservationKind kind, DeliveryIdentity identity,
+        HWND window, UINT message, WPARAM wp, LPARAM lp, LRESULT result = 0) noexcept
+    {
+        if (!deliveryLog) return;
+        const DWORD savedError = GetLastError();
+        // A device observed on another thread is unavailable here. Do not
+        // read or mutate that thread's log, including its failure flag.
+        if (deliveryLog->ownerThread != GetCurrentThreadId()) { SetLastError(savedError); return; }
+        // The buffer was reserved before the session and no user callback is
+        // invoked here. Loss is evidence unavailability, never input policy.
+        if (deliveryLog->failed || deliveryLog->entries.size() == deliveryLog->entries.capacity())
+        { deliveryLog->failed = true; SetLastError(savedError); return; }
+        try { deliveryLog->entries.push_back({kind, identity, window, message, wp, lp, result}); }
+        catch (...) { deliveryLog->failed = true; }
+        SetLastError(savedError);
+    }
 
     bool Notify() noexcept
     {
@@ -189,15 +219,32 @@ struct Session
             state.point, state.buttons, window, message, phase, key, codeUnit});
         if (state.trace.size() > MaxTrace) state.trace.erase(state.trace.begin());
     }
-    LRESULT Deliver(HWND window, UINT message, WPARAM wp = 0, LPARAM lp = 0) noexcept
+    LRESULT Deliver(HWND window, UINT message, WPARAM wp = 0, LPARAM lp = 0, std::uint64_t queuedSequence = 0) noexcept
     {
         if (!state.enabled || current != this || !Owned(window)) return 0;
         const Permit previous = permit;
+        const ActiveDelivery previousDelivery = activeDelivery;
+        DeliveryIdentity identity;
+        if (deliveryLog)
+        {
+            const DWORD savedError = GetLastError();
+            if (deliveryLog->ownerThread == GetCurrentThreadId() && !deliveryLog->failed)
+            {
+                if (nextObservedDelivery == (std::numeric_limits<std::uint64_t>::max)()) deliveryLog->failed = true;
+                else identity = {deliveryLog->session, queuedSequence,
+                    ++nextObservedDelivery, false, deliveryLog->ownerThread, 0, queuedSequence != 0};
+            }
+            SetLastError(savedError);
+        }
+        activeDelivery = {this, identity};
         permit = {window, message, true};
         ++dispatchDepth;
+        RecordDelivery(DeliveryObservationKind::begin, identity, window, message, wp, lp);
         const LRESULT result = SendMessageW(window, message, wp, lp);
+        RecordDelivery(DeliveryObservationKind::returned, identity, window, message, wp, lp, result);
         --dispatchDepth;
         permit = previous;
+        activeDelivery = previousDelivery;
         return result;
     }
     HWND Focus(HWND target) noexcept
@@ -281,6 +328,10 @@ struct Session
             wakePosted = true;
         }
         state.pendingEvents = pending.size();
+        if (deliveryLog && deliveryLog->ownerThread == thread && !deliveryLog->failed &&
+            (!event.sequence || event.sequence <= lastSuccessfulQueuedSequence))
+            deliveryLog->failed = true;
+        lastSuccessfulQueuedSequence = event.sequence;
         return true;
     }
     bool Destination(HWND& destination, POINT& client)
@@ -323,7 +374,7 @@ struct Session
                 if (state.sequence != event.sequence) { state.error = "private_keyboard_interrupted"; return; }
                 if (state.focused != destination || !Owned(destination))
                 { state.error = "private_keyboard_focus_changed"; return; }
-                Deliver(destination, WM_CHAR, static_cast<WPARAM>(unit), 1);
+                Deliver(destination, WM_CHAR, static_cast<WPARAM>(unit), 1, event.sequence);
             }
             return;
         }
@@ -357,7 +408,7 @@ struct Session
             return;
         }
         if (!released) deliveredKeys[event.key] = true;
-        Deliver(destination, message, event.key, KeyParameter(event.key, released, alt || Held(state, VK_MENU)));
+        Deliver(destination, message, event.key, KeyParameter(event.key, released, alt || Held(state, VK_MENU)), event.sequence);
     }
     void Process(const Event& event)
     {
@@ -428,7 +479,7 @@ struct Session
         // Notify at delivery time, before a target can enter a modal loop.
         // The cursor pose therefore cannot wait for that menu to close.
         if (!Notify() || !state.enabled || state.closing || current != this) return;
-        Deliver(destination, message, wp, lp);
+        Deliver(destination, message, wp, lp, event.sequence);
     }
     void Dispatch() noexcept
     {
@@ -470,6 +521,40 @@ Device::~Device()
     if (impl_->session.dispatcher) DestroyWindow(impl_->session.dispatcher);
 }
 const State& Device::Current() const noexcept { return impl_->session.state; }
+bool Device::EnableDeliveryObservation(std::size_t capacity) noexcept
+{
+    auto& session = impl_->session;
+    if (session.state.enabled || !capacity || (session.thread && session.thread != GetCurrentThreadId())) return false;
+    try
+    {
+        auto log = std::make_unique<DeliveryObservationLog>();
+        log->ownerThread = GetCurrentThreadId();
+        log->entries.reserve(capacity);
+        log->recordedCapacity = log->entries.capacity();
+        session.deliveryLog = std::move(log);
+        return true;
+    }
+    catch (...) { return false; }
+}
+const DeliveryObservationLog* Device::DeliveryObservations() const noexcept
+{
+    const auto* log = impl_->session.deliveryLog.get();
+    return log && log->ownerThread == GetCurrentThreadId() ? log : nullptr;
+}
+bool Device::LastQueuedEventIdentity(QueuedEventIdentity& identity) const noexcept
+{
+    identity = {};
+    const DWORD savedError = GetLastError();
+    const auto& session = impl_->session;
+    const auto* log = session.deliveryLog.get();
+    const DWORD thread = GetCurrentThreadId();
+    const bool valid = session.thread == thread && current == &session && session.state.enabled && !session.state.closing &&
+        log && log->ownerThread == thread && !log->failed && log->session && session.lastSuccessfulQueuedSequence &&
+        session.pending.size() == 1 && session.pending.front().sequence == session.lastSuccessfulQueuedSequence;
+    if (valid) identity = {thread, log->session, session.lastSuccessfulQueuedSequence};
+    SetLastError(savedError);
+    return valid;
+}
 bool Device::Begin(RECT bounds, POINT initial, Route route, Owns owns, std::string& error, MapPoint map)
 {
     error.clear(); auto& session = impl_->session;
@@ -492,7 +577,17 @@ bool Device::Begin(RECT bounds, POINT initial, Route route, Owns owns, std::stri
     session.route = std::move(route); session.owns = std::move(owns); session.map = std::move(map); session.thread = thread;
     session.projectedPoint = initial; session.projectedButtons = 0;
     session.projectedKeys.fill(false); session.deliveredKeys.fill(false);
-    session.pending.clear(); session.nextSequence = 0; session.lastClickEligible = false;
+    session.pending.clear(); session.nextSequence = 0; session.lastSuccessfulQueuedSequence = 0; session.lastClickEligible = false;
+    if (session.deliveryLog)
+    {
+        auto& log = *session.deliveryLog;
+        if (log.ownerThread == thread && nextObservedSession == (std::numeric_limits<std::uint64_t>::max)()) log.failed = true;
+        else if (log.ownerThread == thread)
+        {
+            log.entries.clear(); log.failed = false; log.session = ++nextObservedSession;
+            session.nextObservedDelivery = 0; session.nextObservedForward = 0;
+        }
+    }
     session.started = ClockMilliseconds(); current = &session;
     if (!session.Queue({Kind::Move, initial}, error)) { session.End(); return false; }
     return true;
@@ -559,11 +654,24 @@ void Device::SetObserver(Observe observe) { impl_->session.observe = std::move(o
 bool Active() noexcept { return current && current->state.enabled; }
 bool Enabled() noexcept { return Active(); }
 bool IsDispatchingVirtualInput() noexcept { return Active() && current->dispatchDepth != 0; }
+DeliveryIdentity CurrentDeliveryIdentity() noexcept
+{
+    if (!Active() || activeDelivery.owner != current) return {};
+    auto identity = activeDelivery.identity;
+    identity.forwarded = permit.forwarded;
+    identity.forward = permit.forward;
+    return identity;
+}
 bool MessageAllowed(HWND window, UINT message, WPARAM wp, LPARAM lp) noexcept
 {
     if (!Active() || !PointerMessage(message)) return true;
     if (permit.available && permit.window == window && permit.message == message)
-    { permit.available = false; return true; }
+    {
+        auto identity = CurrentDeliveryIdentity();
+        current->RecordDelivery(DeliveryObservationKind::permit_consumed, identity, window, message, wp, lp);
+        permit.available = false; return true;
+    }
+    current->RecordDelivery(DeliveryObservationKind::permit_rejected, CurrentDeliveryIdentity(), window, message, wp, lp);
     // These messages own OS-managed data. This is the terminal rejection
     // branch: callers must not dispatch or default-process the same message
     // afterwards. A main-loop rejection therefore never reaches a WndProc
@@ -580,11 +688,23 @@ ForwardScope::ForwardScope(HWND destination, UINT message) noexcept
 {
     if (!IsDispatchingVirtualInput() || !current->Owned(destination)) return;
     previousWindow_ = permit.window; previousMessage_ = permit.message; previousAvailable_ = permit.available;
-    permit = {destination, message, true}; armed_ = true;
+    previousForwarded_ = permit.forwarded; previousForward_ = permit.forward;
+    std::uint64_t forward = 0;
+    if (current->deliveryLog)
+    {
+        const DWORD savedError = GetLastError();
+        if (current->deliveryLog->ownerThread == GetCurrentThreadId() && !current->deliveryLog->failed)
+        {
+            if (current->nextObservedForward == (std::numeric_limits<std::uint64_t>::max)()) current->deliveryLog->failed = true;
+            else forward = ++current->nextObservedForward;
+        }
+        SetLastError(savedError);
+    }
+    permit = {destination, message, true, true, forward}; armed_ = true;
 }
 ForwardScope::~ForwardScope()
 {
-    if (armed_) permit = {previousWindow_, previousMessage_, previousAvailable_};
+    if (armed_) permit = {previousWindow_, previousMessage_, previousAvailable_, previousForwarded_, previousForward_};
 }
 BOOL CursorPosition(LPPOINT point) noexcept
 {

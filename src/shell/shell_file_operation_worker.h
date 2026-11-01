@@ -6,6 +6,8 @@
 #include <wrl/client.h>
 
 #include <condition_variable>
+#include <atomic>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -59,6 +61,10 @@ struct ShellFileOperationOutput
 struct ShellFileOperationResult
 {
     std::vector<ShellFileOperationOutput> outputs;
+    // Optional value-only diagnostic lineage. Populated before the read task
+    // is queued; never used by file-operation decisions or ownership.
+    std::uint64_t observationTask = 0;
+    std::uint64_t observationReadWork = 0;
 };
 
 struct ShellFileOperationRequest
@@ -159,15 +165,23 @@ public:
     ShellFileOperationWorker(const ShellFileOperationWorker&) = delete;
     ShellFileOperationWorker& operator=(const ShellFileOperationWorker&) = delete;
 
-    bool Enqueue(ShellFileOperationRequest request, Completion completion);
+    bool Enqueue(ShellFileOperationRequest request, Completion completion,
+        std::uint64_t observationWork = 0, std::uint64_t observationTask = 0);
     bool Enqueue(ShellDropRequest request, Completion completion);
     bool Enqueue(ShellRenameRequest request, RenameCompletion completion);
-    bool Enqueue(ShellReadRequest request, Completion completion);
+    bool Enqueue(ShellReadRequest request, Completion completion,
+        std::uint64_t observationWork = 0, std::uint64_t observationTask = 0);
     bool CanUndo() const;
     bool CanRedo() const;
     file_history::Description DescribeHistory(bool redo) const;
     bool EnqueueHistory(bool redo, std::shared_ptr<file_history::Result> result, Completion completion);
     void Stop();
+
+    // Instantaneous, nonblocking observation only. Idle does not prevent a
+    // future enqueue; stopping, lock contention and unsupported atomics are
+    // unavailable rather than evidence of a drained task.
+    enum class ObservedActivity { idle, busy, unavailable };
+    ObservedActivity TryObserveActivity() noexcept;
 
     /** @brief Execute a request synchronously on the calling STA. */
     static bool Execute(const ShellFileOperationRequest& request,
@@ -188,6 +202,8 @@ private:
             ShellRenameRequest, ShellReadRequest> request;
         Completion completion;
         RenameCompletion renameCompletion;
+        std::uint64_t observationTask = 0;
+        std::uint64_t observationWork = 0;
     };
 
     void Run();
@@ -198,6 +214,7 @@ private:
     std::deque<Task> tasks_;
     bool started_ = false;
     bool stopping_ = false;
+    std::atomic_bool executing_{false};
     std::shared_ptr<file_history::History> history_;
 };
 

@@ -29,16 +29,26 @@ inline std::optional<ULONGLONG> Volume(const std::wstring& path, bool source) no
     return read ? std::optional<ULONGLONG>{identity.VolumeSerialNumber} : std::nullopt;
 }
 
-inline std::optional<DWORD> Preferred(const std::vector<std::wstring>& paths,
-    const std::wstring& destination) noexcept
+// Optional, value-only record of the volume values already used by Preferred.
+// The single-source field is intentionally unset for multiple inputs.
+struct VolumeObservation
 {
+    std::optional<ULONGLONG> target, singleSource;
+};
+
+inline std::optional<DWORD> Preferred(const std::vector<std::wstring>& paths,
+    const std::wstring& destination, VolumeObservation* observation = nullptr) noexcept
+{
+    if (observation) *observation = {};
     if (paths.empty()) return std::nullopt;
     const auto target = Volume(destination, false);
+    if (observation) observation->target = target;
     if (!target) return std::nullopt;
     bool crossVolume = false;
     for (const auto& path : paths)
     {
         const auto source = Volume(path, true);
+        if (observation && paths.size() == 1) observation->singleSource = source;
         if (!source) return std::nullopt;
         crossVolume |= *source != *target;
     }

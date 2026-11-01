@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include "external_transfer_observation.h"
 
 namespace snowdesktop::ole_async_operation
 {
@@ -49,7 +50,8 @@ class OleAsyncFileOperationCompletion final
 public:
     OleAsyncFileOperationCompletion(
         ComPtr<IStream> stream, DWORD effect, std::function<DWORD()> resolvedEffect = {})
-        : stream_(std::move(stream)), effect_(effect), resolvedEffect_(std::move(resolvedEffect))
+        : stream_(std::move(stream)), effect_(effect), resolvedEffect_(std::move(resolvedEffect)),
+          observationTask_(external_transfer_observation::currentTask)
     {
     }
 
@@ -80,10 +82,13 @@ public:
                     SetPerformedDropEffectData(
                         dataObject.Get(), DROPEFFECT_NONE);
             }
-            asyncCapability->EndOperation(
-                succeeded ? S_OK : E_ABORT,
-                nullptr,
-                succeeded ? effect : DROPEFFECT_NONE);
+            const HRESULT endStatus = succeeded ? S_OK : E_ABORT;
+            const DWORD endEffect = succeeded ? effect : DROPEFFECT_NONE;
+            external_transfer_observation::Record(observationTask_, external_transfer_observation::Phase::end_operation_enter,
+                0, static_cast<std::int64_t>(endStatus), endEffect);
+            const auto endResult = asyncCapability->EndOperation(endStatus, nullptr, endEffect);
+            external_transfer_observation::Record(observationTask_, external_transfer_observation::Phase::end_operation,
+                0, static_cast<std::int64_t>(endResult));
         }
     }
 
@@ -92,6 +97,7 @@ private:
     ComPtr<IStream> stream_;
     DWORD effect_ = DROPEFFECT_NONE;
     std::function<DWORD()> resolvedEffect_;
+    std::uint64_t observationTask_ = 0;
 };
 
 
@@ -123,7 +129,10 @@ inline bool Prepare(
             asyncCapability.Get(), &asyncStream)) ||
         !asyncStream)
         return false;
-    if (FAILED(asyncCapability->StartOperation(nullptr)))
+    const auto startResult = asyncCapability->StartOperation(nullptr);
+    external_transfer_observation::Record(external_transfer_observation::currentTask,
+        external_transfer_observation::Phase::start_operation, 0, static_cast<std::int64_t>(startResult));
+    if (FAILED(startResult))
     {
         ComPtr<IDataObjectAsyncCapability> discarded;
         CoGetInterfaceAndReleaseStream(

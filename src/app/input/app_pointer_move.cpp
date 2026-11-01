@@ -14,6 +14,7 @@
 #include "app/popup/categorized_popup_scope.h"
 #include "native_item_drag_source.h"
 #include "widgets/group_tab_drag_preview.h"
+#include "drag_drop/external_transfer_observation.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -731,6 +732,49 @@ void DesktopApp::OnMouseMoveAt(
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            // Snapshot only the source list actually accepted by the native
+            // drag session. These values neither select items nor prove the
+            // earlier marquee or the eventual drop.
+            namespace diagnostic = snowdesktop::external_transfer_observation;
+            if (diagnostic::Enabled())
+            {
+                const DWORD saved = GetLastError();
+                const auto observation = diagnostic::NewTask();
+                const auto native = snowdesktop::private_pointer::CurrentDeliveryIdentity();
+                const diagnostic::NativeScopeIdentity scope{native.session, native.event, native.delivery,
+                    native.forward, native.ownerThread, native.forwarded, native.queuedEvent};
+                const auto& actual = dragSession_.SourceList();
+                diagnostic::RecordAny(0, diagnostic::Phase::native_capture_enter,
+                    reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(dragSession_.Items().size()),
+                    observation, {}, scope);
+                diagnostic::RecordAny(0, diagnostic::Phase::native_capture_source,
+                    reinterpret_cast<std::uintptr_t>(dragSession_.Source()), diagnostic::ObservedSize(actual.entries.size()),
+                    observation, {}, scope);
+                const std::size_t limit = diagnostic::EventLimit() / 3;
+                for (std::size_t i = 0; i < (std::min)(actual.entries.size(), limit); ++i)
+                {
+                    const auto& entry = actual.entries[i];
+                    const auto& key = entry.desktopKey;
+                    const auto bytes = key.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
+                        ? diagnostic::BlobLimit() + 1 : key.size() * sizeof(wchar_t);
+                    diagnostic::RecordAny(0, diagnostic::Phase::native_capture_entry,
+                        reinterpret_cast<std::uintptr_t>(entry.item), diagnostic::ObservedSize(entry.sourceIndex),
+                        observation, {}, scope);
+                    diagnostic::RecordAny(0, diagnostic::Phase::native_capture_entry_kind,
+                        reinterpret_cast<std::uintptr_t>(entry.item), static_cast<std::int64_t>(entry.kind),
+                        observation, {}, scope);
+                    diagnostic::RecordBlob(diagnostic::Phase::native_capture_key,
+                        reinterpret_cast<std::uintptr_t>(entry.item), observation, {}, key.data(), bytes);
+                }
+                if (actual.entries.size() > limit)
+                    diagnostic::RecordAny(0, diagnostic::Phase::native_capture_truncated,
+                        reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(actual.entries.size()),
+                        observation, {}, scope);
+                diagnostic::RecordAny(0, diagnostic::Phase::native_capture_return,
+                    reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(actual.entries.size()),
+                    observation, {}, scope);
+                SetLastError(saved);
+            }
             if (rightButtonItemDrag_)
                 suppressRightButtonUp_ = true;
             if (hwnd_ && IsWindow(hwnd_))

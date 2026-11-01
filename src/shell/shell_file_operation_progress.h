@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shell_file_operation_worker.h"
+#include "drag_drop/external_transfer_observation.h"
 #include <shobjidl.h>
 #include <sherrors.h>
 #include <wrl/implements.h>
@@ -21,6 +22,10 @@ public:
     std::shared_ptr<ShellFileOperationResult> result;
     bool completed = false;
     HRESULT failure = S_OK;
+    // Value-only identity for an enabled diagnostic session; no COM object
+    // or file handle is acquired by this observation.
+    std::uint64_t observationTask = 0, observationCall = 0;
+    bool observationMove = false;
 
     HRESULT Record(HRESULT status, IShellItem* original, IShellItem* created)
     {
@@ -37,8 +42,20 @@ public:
         // in outputs for landing/cleanup. The captured item also survives moves
         // and excludes recursive child notifications without reopening a file.
         int order = 0;
-        const bool requestedItem = sourceItem &&
-            SUCCEEDED(sourceItem->Compare(original, SICHINT_CANONICAL, &order)) && order == 0;
+        const HRESULT compared = sourceItem ? sourceItem->Compare(original, SICHINT_CANONICAL, &order) : E_POINTER;
+        if (observationCall)
+        {
+            const auto object = reinterpret_cast<std::uintptr_t>(this);
+            external_transfer_observation::Record(observationTask, observationMove
+                ? external_transfer_observation::Phase::tracked_move_post_compare_status
+                : external_transfer_observation::Phase::tracked_copy_post_compare_status,
+                object, compared, observationCall);
+            external_transfer_observation::Record(observationTask, observationMove
+                ? external_transfer_observation::Phase::tracked_move_post_compare_order
+                : external_transfer_observation::Phase::tracked_copy_post_compare_order,
+                object, order, observationCall);
+        }
+        const bool requestedItem = sourceItem && SUCCEEDED(compared) && order == 0;
         if (!requestedItem) return S_OK;
         PWSTR path = nullptr;
         if (SUCCEEDED(created->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
@@ -54,9 +71,43 @@ public:
     IFACEMETHODIMP PreRenameItem(DWORD, IShellItem*, LPCWSTR) override { return S_OK; }
     IFACEMETHODIMP PostRenameItem(DWORD, IShellItem*, LPCWSTR, HRESULT, IShellItem*) override { return S_OK; }
     IFACEMETHODIMP PreMoveItem(DWORD, IShellItem*, IShellItem*, LPCWSTR) override { return S_OK; }
-    IFACEMETHODIMP PostMoveItem(DWORD, IShellItem* original, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override { return Record(hr, original, item); }
+    IFACEMETHODIMP PostMoveItem(DWORD, IShellItem* original, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override
+    {
+        const auto object = reinterpret_cast<std::uintptr_t>(this);
+        if (observationCall && observationMove)
+        {
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_move_post_enter,
+                object, hr, observationCall);
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_move_post_source,
+                object, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(original)), observationCall);
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_move_post_created,
+                object, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(item)), observationCall);
+        }
+        const HRESULT returned = Record(hr, original, item);
+        if (observationCall && observationMove)
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_move_post_return,
+                object, returned, observationCall);
+        return returned;
+    }
     IFACEMETHODIMP PreCopyItem(DWORD, IShellItem*, IShellItem*, LPCWSTR) override { return S_OK; }
-    IFACEMETHODIMP PostCopyItem(DWORD, IShellItem* original, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override { return Record(hr, original, item); }
+    IFACEMETHODIMP PostCopyItem(DWORD, IShellItem* original, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override
+    {
+        const auto object = reinterpret_cast<std::uintptr_t>(this);
+        if (observationCall)
+        {
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_copy_post_enter,
+                object, hr, observationCall);
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_copy_post_source,
+                object, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(original)), observationCall);
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_copy_post_created,
+                object, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(item)), observationCall);
+        }
+        const HRESULT returned = Record(hr, original, item);
+        if (observationCall)
+            external_transfer_observation::Record(observationTask, external_transfer_observation::Phase::tracked_copy_post_return,
+                object, returned, observationCall);
+        return returned;
+    }
     IFACEMETHODIMP PreDeleteItem(DWORD, IShellItem*) override { return S_OK; }
     IFACEMETHODIMP PostDeleteItem(DWORD, IShellItem*, HRESULT, IShellItem*) override { return S_OK; }
     IFACEMETHODIMP PreNewItem(DWORD, IShellItem*, LPCWSTR) override { return S_OK; }
@@ -115,10 +166,39 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
         sink->source = path;
         sink->sourceItem = source;
         sink->result = result;
+        if ((step.function == FO_COPY || step.function == FO_MOVE) && external_transfer_observation::currentTask &&
+            external_transfer_observation::currentWork && external_transfer_observation::Enabled())
+        {
+            const DWORD saved = GetLastError();
+            sink->observationTask = external_transfer_observation::currentTask;
+            sink->observationMove = step.function == FO_MOVE;
+            sink->observationCall = external_transfer_observation::NewTask();
+            if (sink->observationCall)
+            {
+                const auto object = reinterpret_cast<std::uintptr_t>(sink.Get());
+                external_transfer_observation::Record(sink->observationTask, sink->observationMove
+                    ? external_transfer_observation::Phase::tracked_move_item_source : external_transfer_observation::Phase::tracked_copy_item_source,
+                    object, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(source.Get())), sink->observationCall);
+                external_transfer_observation::Record(sink->observationTask, sink->observationMove
+                    ? external_transfer_observation::Phase::tracked_move_item_result : external_transfer_observation::Phase::tracked_copy_item_result,
+                    object, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(result.get())), sink->observationCall);
+                const auto bytes = path.size() <= external_transfer_observation::BlobLimit() / sizeof(wchar_t)
+                    ? path.size() * sizeof(wchar_t) : external_transfer_observation::BlobLimit() + 1;
+                external_transfer_observation::RecordTaskBlob(sink->observationTask,
+                    sink->observationMove ? external_transfer_observation::Phase::tracked_move_item_path
+                        : external_transfer_observation::Phase::tracked_copy_item_path, object, sink->observationCall,
+                    path.data(), bytes);
+            }
+            SetLastError(saved);
+        }
         const auto newName = name.empty() ? nullptr : name.c_str();
         const HRESULT queued = step.function == FO_MOVE
             ? operation->MoveItem(source.Get(), destination.Get(), newName, sink.Get())
             : operation->CopyItem(source.Get(), destination.Get(), newName, sink.Get());
+        if (sink->observationCall)
+            external_transfer_observation::Record(sink->observationTask, sink->observationMove
+                ? external_transfer_observation::Phase::tracked_move_queue_return : external_transfer_observation::Phase::tracked_copy_queue_return,
+                reinterpret_cast<std::uintptr_t>(sink.Get()), queued, sink->observationCall);
         if (FAILED(queued)) { failure = queued; scheduledAll = false; break; }
         else sinks.push_back(std::move(sink));
     }

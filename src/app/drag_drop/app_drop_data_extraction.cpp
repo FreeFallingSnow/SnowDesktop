@@ -6,14 +6,89 @@
 #include "drag_drop/drop_text_rules.h"
 #include "drag_drop/url_drop_resource.h"
 #include "drag_drop/virtual_file_drop.h"
+#include "drag_drop/external_transfer_observation.h"
+#include "app/drag_drop/ole_drag_drop_adapter.h"
 
 #include <cstddef>
+#include <exception>
 #include <limits>
 
 // OLE file, URL, image and text payload extraction.
 
 namespace
 {
+// Optional observation of values already produced by the real extraction
+// path. It neither re-reads the medium nor changes the written file.
+void ObserveTextValue(snowdesktop::external_transfer_observation::Phase phase,
+    std::uintptr_t object, std::uint64_t call, const void* data, std::size_t size) noexcept
+{
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    if (!diagnostic::Enabled()) return;
+    const DWORD saved = GetLastError();
+    diagnostic::AdapterScopeIdentity scope{};
+    snowdesktop::ole_adapter_observation::Event event;
+    if (snowdesktop::ole_adapter_observation::Current(event))
+        scope = {event.session, event.call, event.parent, event.adapter, event.thread,
+            event.depth, static_cast<unsigned>(event.kind), true};
+    diagnostic::RecordBlob(phase, object, call, scope, data, size);
+    SetLastError(saved);
+}
+void ObserveWideText(snowdesktop::external_transfer_observation::Phase phase,
+    std::uintptr_t object, std::uint64_t call, std::wstring_view value) noexcept
+{
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    if (!diagnostic::Enabled()) return;
+    if (value.size() > (std::numeric_limits<std::size_t>::max)() / sizeof(wchar_t))
+        ObserveTextValue(phase, object, call, nullptr, diagnostic::BlobLimit() + 1);
+    else ObserveTextValue(phase, object, call, value.data(), value.size() * sizeof(wchar_t));
+}
+
+void ObserveVirtual(std::uint64_t task, snowdesktop::external_transfer_observation::Phase phase,
+    std::uintptr_t object, std::int64_t value, std::uint64_t extra) noexcept
+{
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    if (!task) return;
+    const DWORD saved = GetLastError();
+    diagnostic::AdapterScopeIdentity scope{};
+    snowdesktop::ole_adapter_observation::Event current;
+    if (snowdesktop::ole_adapter_observation::Current(current))
+        scope = {current.session, current.call, current.parent, current.adapter, current.thread,
+            current.depth, static_cast<unsigned>(current.kind), true};
+    diagnostic::Record(task, phase, object, value, extra, scope);
+    SetLastError(saved);
+}
+void ObserveVirtualPath(std::uint64_t task, snowdesktop::external_transfer_observation::Phase phase,
+    std::uintptr_t object, std::uint64_t member, std::wstring_view path) noexcept
+{
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    if (!task) return;
+    const auto size = path.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
+        ? diagnostic::BlobLimit() + 1 : path.size() * sizeof(wchar_t);
+    diagnostic::RecordTaskBlob(task, phase, object, member, path.data(), size);
+}
+
+void ObserveVirtualFileIdentity(std::uint64_t task, std::uintptr_t source,
+    std::uint64_t member, const std::wstring& path) noexcept
+{
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    if (!task || !member || !diagnostic::Enabled()) return;
+    const DWORD saved = GetLastError();
+    HANDLE file = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    FILE_ID_INFO identity{}; FILE_ATTRIBUTE_TAG_INFO attributes{};
+    const bool observed = file != INVALID_HANDLE_VALUE &&
+        GetFileInformationByHandleEx(file, FileIdInfo, &identity, sizeof(identity)) &&
+        GetFileInformationByHandleEx(file, FileAttributeTagInfo, &attributes, sizeof(attributes));
+    if (observed)
+        diagnostic::RecordTaskBlob(task, diagnostic::Phase::virtual_member_file_id, source, member,
+            &identity, sizeof(identity));
+    ObserveVirtual(task, diagnostic::Phase::virtual_member_identity_status, source,
+        observed ? static_cast<std::int64_t>(attributes.FileAttributes) : -1, member);
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    SetLastError(saved);
+}
+
 std::filesystem::path DropContentDirectory()
 {
     const auto root = snowdesktop::drop_staging::Directory();
@@ -66,8 +141,37 @@ std::wstring ReadWideHGlobalFormat(
     formatEtc.lindex = -1;
     formatEtc.tymed = TYMED_HGLOBAL;
     STGMEDIUM medium{};
-    if (FAILED(dataObject->GetData(
-            &formatEtc, &medium)))
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    const bool observe = format == CF_UNICODETEXT && diagnostic::Enabled();
+    std::uint64_t call = 0;
+    diagnostic::AdapterScopeIdentity scope{};
+    if (observe)
+    {
+        const DWORD saved = GetLastError();
+        call = diagnostic::NewTask();
+        snowdesktop::ole_adapter_observation::Event event;
+        if (snowdesktop::ole_adapter_observation::Current(event))
+            scope = {event.session, event.call, event.parent, event.adapter, event.thread,
+                event.depth, static_cast<unsigned>(event.kind), true};
+        diagnostic::RecordAny(0, diagnostic::Phase::unicode_getdata_caller_enter,
+            reinterpret_cast<std::uintptr_t>(dataObject), 0, call, scope);
+        SetLastError(saved);
+    }
+    const HRESULT getResult = dataObject->GetData(&formatEtc, &medium);
+    if (observe)
+    {
+        const DWORD saved = GetLastError();
+        diagnostic::AdapterScopeIdentity afterScope{};
+        snowdesktop::ole_adapter_observation::Event event;
+        if (snowdesktop::ole_adapter_observation::Current(event))
+            afterScope = {event.session, event.call, event.parent, event.adapter, event.thread,
+                event.depth, static_cast<unsigned>(event.kind), true};
+        diagnostic::RecordAny(0, diagnostic::Phase::unicode_getdata_caller_return,
+            reinterpret_cast<std::uintptr_t>(dataObject), static_cast<std::int64_t>(getResult), call, afterScope, {},
+            SUCCEEDED(getResult) ? medium.tymed : 0);
+        SetLastError(saved);
+    }
+    if (FAILED(getResult))
         return {};
 
     std::wstring result;
@@ -86,7 +190,12 @@ std::wstring ReadWideHGlobalFormat(
             const auto* terminator = std::find(
                 data, data + characterCount, L'\0');
             if (terminator != data + characterCount)
+            {
                 result.assign(data, terminator);
+                if (observe)
+                    ObserveWideText(diagnostic::Phase::unicode_extracted_value,
+                        reinterpret_cast<std::uintptr_t>(dataObject), call, result);
+            }
         }
         if (data)
             GlobalUnlock(medium.hGlobal);
@@ -491,8 +600,9 @@ DesktopApp::TryMaterializeVirtualFilesFromDataObject(
     IDataObject* dataObject,
     const std::vector<snowdesktop::virtual_file_drop::
         VirtualFileDescriptor>& descriptors,
-    bool* allEntriesMaterialized)
+    bool* allEntriesMaterialized, std::uint64_t* observationBatch)
 {
+    if (observationBatch) *observationBatch = 0;
     std::vector<std::wstring> paths;
     if (allEntriesMaterialized)
         *allEntriesMaterialized = false;
@@ -503,6 +613,22 @@ DesktopApp::TryMaterializeVirtualFilesFromDataObject(
         return paths;
     if (descriptors.empty())
         return paths;
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    std::uint64_t batch = 0;
+    if (observationBatch && diagnostic::Enabled())
+    {
+        const DWORD saved = GetLastError(); batch = diagnostic::NewTask(); SetLastError(saved);
+        *observationBatch = batch;
+    }
+    const auto sourceIdentity = reinterpret_cast<std::uintptr_t>(dataObject);
+    ObserveVirtual(batch, diagnostic::Phase::virtual_batch_enter, sourceIdentity,
+        diagnostic::ObservedSize(descriptors.size()), 0);
+    struct BatchObservation final
+    {
+        std::uint64_t batch; std::uintptr_t source; int exceptions; std::int64_t outcome = -1;
+        ~BatchObservation() { ObserveVirtual(batch, std::uncaught_exceptions() > exceptions
+            ? diagnostic::Phase::virtual_batch_unwound : diagnostic::Phase::virtual_batch_return, source, outcome, 0); }
+    } batchObservation{batch, sourceIdentity, std::uncaught_exceptions()};
 
     // Sources without IDataObjectAsyncCapability are rendered synchronously
     // by OLE. Keep that compatibility fallback bounded so one drop cannot
@@ -536,9 +662,29 @@ DesktopApp::TryMaterializeVirtualFilesFromDataObject(
             complete = false;
             continue;
         }
+        std::uint64_t member = 0;
+        if (batch)
+        { const DWORD saved = GetLastError(); member = diagnostic::NewTask(); SetLastError(saved); }
+        ObserveVirtual(batch, diagnostic::Phase::virtual_member_enter, sourceIdentity,
+            static_cast<std::int64_t>(safeDescriptor.descriptorIndex), member);
+        struct MemberObservation final
+        {
+            std::uint64_t batch, member; std::uintptr_t source; int exceptions; bool returned = false;
+            ~MemberObservation() { if (!returned && std::uncaught_exceptions() > exceptions)
+                ObserveVirtual(batch, diagnostic::Phase::virtual_member_unwound, source, -1, member); }
+        } memberObservation{batch, member, sourceIdentity, std::uncaught_exceptions()};
         auto materialized = snowdesktop::virtual_file_drop::
             MaterializeFileContents(dataObject, safeDescriptor,
                 destination.wstring(), remainingBytes);
+        ObserveVirtual(batch, diagnostic::Phase::virtual_member_return, sourceIdentity,
+            materialized ? static_cast<std::int64_t>(materialized->sizeBytes) : -1, member);
+        memberObservation.returned = true;
+        if (materialized)
+        {
+            ObserveVirtualPath(batch, diagnostic::Phase::virtual_member_path, sourceIdentity, member, materialized->path);
+            ObserveVirtualFileIdentity(batch, sourceIdentity, member, materialized->path);
+            diagnostic::CaptureStagingHandle(batch, member, sourceIdentity, materialized->path.c_str());
+        }
         if (!materialized || materialized->path.empty() ||
             materialized->sizeBytes > remainingBytes)
         {
@@ -556,6 +702,7 @@ DesktopApp::TryMaterializeVirtualFilesFromDataObject(
     }
     if (allEntriesMaterialized)
         *allEntriesMaterialized = complete;
+    batchObservation.outcome = complete ? 1 : 0;
     return paths;
 }
 
@@ -620,6 +767,8 @@ std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(
     if (classified.kind != Kind::PlainText)
         return paths;
     std::wstring text = std::move(classified.value);
+    ObserveWideText(snowdesktop::external_transfer_observation::Phase::text_classified_value,
+        reinterpret_cast<std::uintptr_t>(&snapshot), 0, text);
 
     std::wstring firstLine = text;
     size_t nl = firstLine.find_first_of(L"\r\n");
@@ -641,11 +790,17 @@ std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(
     std::wstring name = baseName + timePart + L".txt";
     const auto encodedText = EncodeUtf8WithBom(text);
     if (encodedText.empty()) return paths;
+    ObserveTextValue(snowdesktop::external_transfer_observation::Phase::text_encoded_value,
+        reinterpret_cast<std::uintptr_t>(&snapshot), 0, encodedText.data(), encodedText.size());
     const std::wstring textPath = WriteUniqueDropContentFile(
         std::move(name), L"snow_text.txt", encodedText.data(),
         encodedText.size());
     if (!textPath.empty())
+    {
+        ObserveWideText(snowdesktop::external_transfer_observation::Phase::text_staged_path,
+            reinterpret_cast<std::uintptr_t>(&snapshot), 0, textPath);
         paths.push_back(textPath);
+    }
 
     return paths;
 }

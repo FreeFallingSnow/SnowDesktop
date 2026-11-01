@@ -1,4 +1,5 @@
 #include "shell_file_operation_worker.h"
+#include "drag_drop/external_transfer_observation.h"
 #include "platform/operation_feedback.h"
 #include "shell_file_operation_progress.h"
 #include "shell_file_history.h"
@@ -511,14 +512,35 @@ ShellFileOperationWorker::~ShellFileOperationWorker()
     Stop();
 }
 
+ShellFileOperationWorker::ObservedActivity ShellFileOperationWorker::TryObserveActivity() noexcept
+{
+    const DWORD savedError = GetLastError();
+    ObservedActivity result = ObservedActivity::unavailable;
+    try
+    {
+        if (executing_.is_lock_free())
+        {
+            std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+            if (lock.owns_lock() && !stopping_)
+                result = tasks_.empty() && !executing_.load(std::memory_order_acquire)
+                    ? ObservedActivity::idle : ObservedActivity::busy;
+        }
+    }
+    catch (...) {}
+    SetLastError(savedError);
+    return result;
+}
+
 bool ShellFileOperationWorker::Enqueue(
-    ShellFileOperationRequest request, Completion completion)
+    ShellFileOperationRequest request, Completion completion, std::uint64_t observationWork, std::uint64_t observationTask)
 {
     if (request.steps.empty() && request.exactFileCopies.empty() &&
         request.shortcuts.empty())
         return false;
 
     Task pending{ std::move(request), std::move(completion) };
+    pending.observationTask = observationTask;
+    pending.observationWork = observationWork;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_)
@@ -621,6 +643,11 @@ void ShellFileOperationWorker::Stop()
 
     for (auto& task : cancelled)
     {
+        if (task.observationTask && task.observationWork)
+            external_transfer_observation::Record(task.observationTask,
+                external_transfer_observation::Phase::worker_task_cancelled,
+                reinterpret_cast<std::uintptr_t>(this),
+                std::holds_alternative<ShellReadRequest>(task.request) ? 1 : 2, task.observationWork);
         if (auto* drop = std::get_if<ShellDropRequest>(&task.request))
             CancelShellDropRequest(std::move(*drop));
         if (task.completion)
@@ -683,11 +710,14 @@ bool ShellFileOperationWorker::Enqueue(
     return true;
 }
 
-bool ShellFileOperationWorker::Enqueue(ShellReadRequest request, Completion completion)
+bool ShellFileOperationWorker::Enqueue(ShellReadRequest request, Completion completion,
+    std::uint64_t observationWork, std::uint64_t observationTask)
 {
     if (!request.read)
         return false;
     Task pending{ std::move(request), std::move(completion), {} };
+    pending.observationTask = observationTask;
+    pending.observationWork = observationWork;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_)
@@ -1216,6 +1246,23 @@ void ShellFileOperationWorker::Run()
 
     for (;;)
     {
+        // This guard precedes Task so that its destructor runs after every
+        // captured request/completion has been released on this worker.
+        struct ActivityEnd final
+        {
+            std::atomic_bool& active;
+            std::uintptr_t worker;
+            std::uint64_t task = 0, work = 0;
+            std::int64_t kind = 0;
+            bool armed = false;
+            ~ActivityEnd()
+            {
+                if (!armed) return;
+                external_transfer_observation::Record(task, external_transfer_observation::Phase::worker_task_finished,
+                    worker, kind, work);
+                active.store(false, std::memory_order_release);
+            }
+        } activity{executing_, reinterpret_cast<std::uintptr_t>(this)};
         Task task;
         {
             std::unique_lock<std::mutex> lock(mutex_);
@@ -1226,7 +1273,15 @@ void ShellFileOperationWorker::Run()
                 break;
             task = std::move(tasks_.front());
             tasks_.pop_front();
+            executing_.store(true, std::memory_order_release);
+            activity.task = task.observationTask; activity.work = task.observationWork;
+            activity.kind = std::holds_alternative<ShellReadRequest>(task.request) ? 1 :
+                std::holds_alternative<ShellFileOperationRequest>(task.request) ? 2 : 0;
+            activity.armed = true;
         }
+        if (activity.work)
+            external_transfer_observation::Record(activity.task, external_transfer_observation::Phase::worker_dequeued,
+                activity.worker, activity.kind, activity.work);
 
         if (auto* rename = std::get_if<ShellRenameRequest>(&task.request))
         {
@@ -1258,7 +1313,21 @@ void ShellFileOperationWorker::Run()
                 !operation->steps.empty() && std::all_of(operation->steps.begin(), operation->steps.end(),
                     [](const auto& step) { return step.function == FO_DELETE && (step.flags & FOF_ALLOWUNDO); });
             if (!onlyRecycling) history_->Clear();
-            const bool succeeded = SUCCEEDED(comResult) && Execute(*operation, &recycled);
+            if (SUCCEEDED(comResult) && activity.work)
+                external_transfer_observation::Record(activity.task, external_transfer_observation::Phase::worker_execute_enter,
+                    activity.worker, activity.kind, activity.work);
+            const auto executeOperation = [&] {
+                if (activity.task && activity.work)
+                {
+                    external_transfer_observation::Scope scope(activity.task, activity.work);
+                    return Execute(*operation, &recycled);
+                }
+                return Execute(*operation, &recycled);
+            };
+            const bool succeeded = SUCCEEDED(comResult) && executeOperation();
+            if (SUCCEEDED(comResult) && activity.work)
+                external_transfer_observation::Record(activity.task, external_transfer_observation::Phase::worker_execute_return,
+                    activity.worker, succeeded ? 1 : 0, activity.work);
             if (onlyRecycling && !recycled.empty()) history_->Record(std::move(recycled));
             else if (succeeded) history_->Clear();
             if (task.completion) task.completion(succeeded);
@@ -1266,7 +1335,7 @@ void ShellFileOperationWorker::Run()
         }
         if (std::holds_alternative<ShellDropRequest>(task.request)) history_->Clear();
         const bool succeeded = std::visit(
-            [comResult](auto& request) {
+            [comResult, &activity](auto& request) {
                 using Request = std::decay_t<decltype(request)>;
                 if constexpr (std::is_same_v<Request, ShellDropRequest>)
                     return ShellFileOperationWorker::Execute(
@@ -1277,8 +1346,24 @@ void ShellFileOperationWorker::Run()
                 {
                     if (FAILED(comResult))
                         return false;
-                    try { return request.read(); }
-                    catch (...) { return false; }
+                    if (activity.work)
+                        external_transfer_observation::Record(activity.task, external_transfer_observation::Phase::worker_execute_enter,
+                            activity.worker, activity.kind, activity.work);
+                    try
+                    {
+                        const bool succeeded = request.read();
+                        if (activity.work)
+                            external_transfer_observation::Record(activity.task, external_transfer_observation::Phase::worker_execute_return,
+                                activity.worker, succeeded ? 1 : 0, activity.work);
+                        return succeeded;
+                    }
+                    catch (...)
+                    {
+                        if (activity.work)
+                            external_transfer_observation::Record(activity.task, external_transfer_observation::Phase::worker_execute_return,
+                                activity.worker, -1, activity.work);
+                        return false;
+                    }
                 }
                 else
                     return false;

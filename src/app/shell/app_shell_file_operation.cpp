@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "drag_drop/ole_async_operation.h"
 #include "platform/pending_window_message.h"
 #include "app/lifecycle/startup_diagnostics.h"
@@ -6,6 +7,7 @@
 #include "shell/shell_file_history.h"
 
 #include <atomic>
+#include <limits>
 #include <new>
 #include <shldisp.h>
 #include <utility>
@@ -108,6 +110,20 @@ bool DesktopApp::QueueShellFileOperation(
         snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
     }
+    const auto observationTask = snowdesktop::external_transfer_observation::currentTask;
+    const auto observationWork = observationTask ? snowdesktop::external_transfer_observation::NewTask() : 0;
+    if (request.result && request.result->observationTask && request.result->observationReadWork && observationWork &&
+        request.result->observationReadWork <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+        snowdesktop::external_transfer_observation::Record(request.result->observationTask,
+            snowdesktop::external_transfer_observation::Phase::desktop_file_result_queue_binding,
+            reinterpret_cast<std::uintptr_t>(request.result.get()),
+            static_cast<std::int64_t>(request.result->observationReadWork), observationWork);
+    result->observationTask = observationTask;
+    result->observationWork = observationWork;
+    const auto observationCompletion = reinterpret_cast<std::uintptr_t>(result);
+    snowdesktop::external_transfer_observation::Record(observationTask,
+        snowdesktop::external_transfer_observation::Phase::file_queue_enter,
+        observationCompletion, 0, observationWork);
 
     std::vector<std::wstring> removedPaths;
     std::vector<DockEntry> removalPins;
@@ -147,14 +163,28 @@ bool DesktopApp::QueueShellFileOperation(
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
         [completionWindow, result](bool succeeded) {
+            const auto task = result->observationTask;
+            const auto work = result->observationWork;
+            const auto identity = reinterpret_cast<std::uintptr_t>(result);
+            snowdesktop::external_transfer_observation::Record(task,
+                snowdesktop::external_transfer_observation::Phase::file_completion_callback, identity, succeeded ? 1 : 0, work);
             result->succeeded = succeeded;
             if (!PostMessageW(
                     completionWindow,
                     kShellFileOperationCompletedMessage,
                     0,
                     reinterpret_cast<LPARAM>(result)))
+            {
+                snowdesktop::external_transfer_observation::Record(task,
+                    snowdesktop::external_transfer_observation::Phase::completion_post_failed, identity, 0, work);
                 delete result;
-        });
+            }
+            else snowdesktop::external_transfer_observation::Record(task,
+                snowdesktop::external_transfer_observation::Phase::completion_posted, identity, 0, work);
+        }, observationWork, observationTask);
+    snowdesktop::external_transfer_observation::Record(observationTask, queued ?
+        snowdesktop::external_transfer_observation::Phase::file_queued :
+        snowdesktop::external_transfer_observation::Phase::file_queue_failed, observationCompletion, queued ? 1 : 0, observationWork);
     if (!queued)
     {
         for (const auto& container : containers_)
@@ -352,6 +382,21 @@ bool DesktopApp::PrepareOleAsyncFileOperation(
 void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
 {
     auto result = snowdesktop::TakeShellFileOperationCompletion(lParam);
+    const auto task = result ? result->observationTask : 0;
+    const auto work = result ? result->observationWork : 0;
+    const auto identity = reinterpret_cast<std::uintptr_t>(result.get());
+    snowdesktop::external_transfer_observation::Scope observationScope(task, work);
+    snowdesktop::external_transfer_observation::Record(task,
+        snowdesktop::external_transfer_observation::Phase::completion_enter, identity,
+        result && result->fileOperation ? 1 : 0, work);
+    struct ObservationReturn final
+    {
+        std::uint64_t task;
+        std::uint64_t work;
+        std::uintptr_t identity;
+        ~ObservationReturn() { snowdesktop::external_transfer_observation::Record(task,
+            snowdesktop::external_transfer_observation::Phase::completion_return, identity, 0, work); }
+    } observationReturn{task, work, identity};
     if (!result || exitRequested_)
         return;
     if (result->fileOperation && shellFileOperationInFlight_ > 0)
@@ -430,8 +475,32 @@ bool snowdesktop::shell_refresh::Read(const Request& request, Snapshot& snapshot
 
 void DesktopApp::RequestShellRefresh()
 {
+    // Value-only diagnostic snapshots; the actual refresh scheduling remains
+    // entirely below. The adapter scope is context, not proof against unrelated
+    // same-thread reentrancy, and this hook is disabled unless explicitly armed.
+    const auto observe = [this](snowdesktop::external_transfer_observation::Phase phase) noexcept {
+        namespace diagnostic = snowdesktop::external_transfer_observation;
+        if (!diagnostic::Enabled()) return;
+        const DWORD savedError = GetLastError();
+        diagnostic::AdapterScopeIdentity scope;
+        snowdesktop::ole_adapter_observation::Event event;
+        if (snowdesktop::ole_adapter_observation::Current(event))
+        {
+            scope = {event.session, event.call, event.parent, event.adapter, event.thread,
+                event.depth, static_cast<unsigned>(event.kind), true};
+        }
+        const std::int64_t flags = (exitRequested_ ? 1 : 0) | (shellReloadPending_ ? 2 : 0) |
+            (shellRefreshRevision_.Running() ? 4 : 0) | (readyShellRefresh_ ? 8 : 0);
+        diagnostic::RecordAny(0, phase, reinterpret_cast<std::uintptr_t>(this), flags,
+            shellRefreshRevision_.Current(), scope);
+        SetLastError(savedError);
+    };
+    observe(snowdesktop::external_transfer_observation::Phase::shell_refresh_request_enter);
     if (exitRequested_)
+    {
+        observe(snowdesktop::external_transfer_observation::Phase::shell_refresh_request_return);
         return;
+    }
     shellRefreshScope_.Full();
     shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
@@ -444,6 +513,7 @@ void DesktopApp::RequestShellRefresh()
     // An active read/operation will drain pending work from its completion.
     if (!alreadyPending && hwnd_ && IsWindow(hwnd_))
         SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+    observe(snowdesktop::external_transfer_observation::Phase::shell_refresh_request_return);
 }
 
 void DesktopApp::RequestFolderRefresh(const std::vector<std::wstring>& paths)
@@ -617,6 +687,28 @@ void DesktopApp::RefreshShellItemsAsync()
     if (readyShellRefresh_)
     {
         auto snapshot = std::exchange(readyShellRefresh_, {});
+        // Observe the actual consumption of this same snapshot, separately
+        // from the earlier worker completion which merely made it ready.
+        // A missing window scope or an exception is diagnostic uncertainty.
+        namespace refreshDiagnostic = snowdesktop::external_transfer_observation;
+        struct ModelObservation final
+        {
+            bool enabled = false; std::uintptr_t context = 0; std::int64_t outcome = -1;
+            ~ModelObservation() noexcept
+            {
+                if (!enabled) return;
+                const DWORD saved = GetLastError();
+                refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_model_return, context, outcome);
+                SetLastError(saved);
+            }
+        } modelObservation{refreshDiagnostic::Enabled(), reinterpret_cast<std::uintptr_t>(snapshot.get())};
+        if (modelObservation.enabled)
+        {
+            const DWORD saved = GetLastError();
+            refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_model_enter,
+                modelObservation.context, snapshot->desktopComplete ? 1 : 0);
+            SetLastError(saved);
+        }
         if (!snapshot->desktopComplete)
         {
             shellReloadPending_ = false;
@@ -624,11 +716,13 @@ void DesktopApp::RefreshShellItemsAsync()
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, L"Shell refresh read failed; retaining current model", DiagnosticLogLevel::Warning);
             CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
                 _LW("settings.backup.restoreLayout.commitFailed")));
+            modelObservation.outcome = 1;
             return; // Retry on a new event, not in an unbounded timer loop.
         }
         if (snapshot->foldersOnly)
         {
             ApplyFolderRefresh(*snapshot);
+            modelObservation.outcome = 2;
             return;
         }
         const ULONGLONG started = GetTickCount64();
@@ -687,6 +781,7 @@ void DesktopApp::RefreshShellItemsAsync()
             metadataHits, metadataQueries, snapshot->modelMs, snapshot->layoutMs,
             snapshot->saveMs, snapshot->rebuildMs, snapshot->notifyMs);
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Shell, timing);
+        modelObservation.outcome = contentOnly ? 3 : 4;
         return;
     }
 
@@ -715,10 +810,18 @@ void DesktopApp::RefreshShellItemsAsync()
         snapshot->metadata = shellMetadataCache_;
     RequestFolderRefresh(request.folders);
     request.folders.clear();
-    const bool queued = shellModelWork_.Submit(L"desktop-read", [request = std::move(request), snapshot] {
+    const auto observationContext = reinterpret_cast<std::uintptr_t>(snapshot.get());
+    namespace refreshDiagnostic = snowdesktop::external_transfer_observation;
+    refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_submit_enter, observationContext, 0, *revision);
+    const bool queued = shellModelWork_.Submit(L"desktop-read", [request = std::move(request), snapshot,
+        observationContext, observedRevision = *revision] {
+        refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_read_enter, observationContext, 0, observedRevision);
         snapshot->desktopComplete = snowdesktop::shell_refresh::Read(request, *snapshot);
+        refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_read_return,
+            observationContext, snapshot->desktopComplete ? 1 : 0, observedRevision);
         return snapshot;
-    }, [this, revision = *revision](auto result) {
+    }, [this, revision = *revision, observationContext](auto result) {
+        refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_apply_enter, observationContext, result ? 1 : 0, revision);
         const bool current = shellRefreshRevision_.Finish(revision);
         if (current && result) readyShellRefresh_ = std::move(result);
         else if (current)
@@ -726,7 +829,9 @@ void DesktopApp::RefreshShellItemsAsync()
                 _LW("settings.backup.restoreLayout.commitFailed")));
         shellReloadPending_ = true;
         if (hwnd_) SetTimer(hwnd_, kShellChangeTimerId, 1, nullptr);
-    }, completionWindow, kBackgroundShellReadyMessage);
+        refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_apply_return, observationContext, current ? 1 : 0, revision);
+    }, completionWindow, kBackgroundShellReadyMessage, observationContext);
+    refreshDiagnostic::RecordAny(0, refreshDiagnostic::Phase::shell_refresh_submit_return, observationContext, queued ? 1 : 0, *revision);
     if (!queued)
     {
         shellRefreshRevision_.Finish(*revision);

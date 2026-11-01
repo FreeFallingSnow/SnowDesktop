@@ -8,6 +8,7 @@
 #include "widgets/lua_logical_slot.h"
 
 #include <stdexcept>
+#include <string_view>
 
 namespace
 {
@@ -220,7 +221,8 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
 
 DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     const ExternalSlotDestination& destination, DWORD allowedEffects,
-    bool asynchronousSource, const std::vector<std::wstring>& knownPaths)
+    bool asynchronousSource, const std::vector<std::wstring>& knownPaths,
+    std::uint64_t observationCallsite)
 {
     if (!dataObject) return DROPEFFECT_NONE;
     const bool volumeDefault = destination.volumeDefault &&
@@ -245,21 +247,109 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     // An explicit drop on an inactive tab activates that captured child only
     // after a successful commit. Ordinary content drops must not undo a later
     // user tab switch while their external source is still being read.
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    diagnostic::AdapterScopeIdentity hitScope{};
+    const bool traceHit = observationCallsite && diagnostic::Enabled();
+    if (traceHit)
+    {
+        const DWORD saved = GetLastError();
+        snowdesktop::ole_adapter_observation::Event current;
+        if (snowdesktop::ole_adapter_observation::Current(current))
+            hitScope = {current.session, current.call, current.parent, current.adapter, current.thread,
+                current.depth, static_cast<unsigned>(current.kind), true};
+        SetLastError(saved);
+    }
+    const auto hitNumber = [&](diagnostic::Phase phase, std::uintptr_t object, std::int64_t value) noexcept {
+        if (!traceHit) return;
+        const DWORD saved = GetLastError();
+        diagnostic::RecordAny(0, phase, object, value, observationCallsite, hitScope);
+        SetLastError(saved);
+    };
+    const auto hitBlob = [&](diagnostic::Phase phase, std::uintptr_t object, std::wstring_view value) noexcept {
+        if (!traceHit) return;
+        const DWORD saved = GetLastError();
+        const auto size = value.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
+            ? diagnostic::BlobLimit() + 1 : value.size() * sizeof(wchar_t);
+        diagnostic::RecordBlob(phase, object, observationCallsite, hitScope, value.data(), size);
+        SetLastError(saved);
+    };
     std::wstring activationGroupId;
     DesktopWidgetType activationGroupType = DesktopWidgetType::CollectionGroup;
     if (auto* group = dynamic_cast<CollectionGroup*>(dragSession_.TargetContainer()))
     {
         const auto* data = group->GetWidgetData();
         const auto hit = group->CategoryIdAtPoint(dragSession_.CurrentPoint());
-        if (data && !hit.empty() && hit == destination.widgetId && hit != group->GetActiveCollectionId())
-        { activationGroupId = data->id; activationGroupType = data->type; }
+        const auto object = reinterpret_cast<std::uintptr_t>(group);
+        if (traceHit)
+        {
+            hitNumber(diagnostic::Phase::group_hit_observed, object, 1);
+            hitNumber(diagnostic::Phase::group_hit_container, reinterpret_cast<std::uintptr_t>(static_cast<Container*>(group)), 0);
+            hitNumber(diagnostic::Phase::group_hit_widget, reinterpret_cast<std::uintptr_t>(data), data ? 1 : 0);
+            hitBlob(diagnostic::Phase::group_hit_value, object, hit);
+            hitBlob(diagnostic::Phase::group_hit_destination, object, destination.widgetId);
+        }
+        if (!traceHit)
+        {
+            if (data && !hit.empty() && hit == destination.widgetId && hit != group->GetActiveCollectionId())
+            { activationGroupId = data->id; activationGroupType = data->type; }
+        }
+        else
+        {
+            std::int64_t outcome = -1;
+            if (data && !hit.empty() && hit == destination.widgetId)
+            {
+                bool inactive = false;
+                {
+                    const auto active = group->GetActiveCollectionId();
+                    hitBlob(diagnostic::Phase::group_hit_active, object, active);
+                    inactive = hit != active;
+                }
+                outcome = inactive ? 1 : 0;
+                if (inactive) {
+                    hitBlob(diagnostic::Phase::group_hit_owner_id, reinterpret_cast<std::uintptr_t>(data), data->id);
+                    activationGroupId = data->id; activationGroupType = data->type;
+                }
+            }
+            hitNumber(diagnostic::Phase::group_hit_decision, object, outcome);
+        }
     }
     else if (auto* fileGroup = dynamic_cast<FileGroup*>(dragSession_.TargetContainer()))
     {
         const auto* data = fileGroup->GetWidgetData();
         const auto hit = fileGroup->SourceIdAtPoint(dragSession_.CurrentPoint());
-        if (data && !hit.empty() && hit == destination.widgetId && hit != fileGroup->GetActiveSourceId())
-        { activationGroupId = data->id; activationGroupType = data->type; }
+        const auto object = reinterpret_cast<std::uintptr_t>(fileGroup);
+        if (traceHit)
+        {
+            hitNumber(diagnostic::Phase::group_hit_observed, object, 2);
+            hitNumber(diagnostic::Phase::group_hit_container, reinterpret_cast<std::uintptr_t>(static_cast<Container*>(fileGroup)), 0);
+            hitNumber(diagnostic::Phase::group_hit_widget, reinterpret_cast<std::uintptr_t>(data), data ? 1 : 0);
+            hitBlob(diagnostic::Phase::group_hit_value, object, hit);
+            hitBlob(diagnostic::Phase::group_hit_destination, object, destination.widgetId);
+        }
+        if (!traceHit)
+        {
+            if (data && !hit.empty() && hit == destination.widgetId && hit != fileGroup->GetActiveSourceId())
+            { activationGroupId = data->id; activationGroupType = data->type; }
+        }
+        else
+        {
+            std::int64_t outcome = -1;
+            if (data && !hit.empty() && hit == destination.widgetId)
+            {
+                bool inactive = false;
+                {
+                    const auto active = fileGroup->GetActiveSourceId();
+                    hitBlob(diagnostic::Phase::group_hit_active, object, active);
+                    inactive = hit != active;
+                }
+                outcome = inactive ? 1 : 0;
+                if (inactive) {
+                    hitBlob(diagnostic::Phase::group_hit_owner_id, reinterpret_cast<std::uintptr_t>(data), data->id);
+                    activationGroupId = data->id; activationGroupType = data->type;
+                }
+            }
+            hitNumber(diagnostic::Phase::group_hit_decision, object, outcome);
+        }
     }
     const auto resolveActivationGroup = [this, activationGroupId, activationGroupType, destination]() -> DesktopWidget* {
         const auto parent = FindWidgetIndexById(activationGroupId);
@@ -374,17 +464,64 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         }
         if (volumeDefault && !input.owned && !input.copyOnly)
         {
-            *committedEffect = snowdesktop::default_file_drop_action::Preferred(input.paths, physicalDirectory)
-                .value_or(DROPEFFECT_COPY);
+            namespace diagnostic = snowdesktop::external_transfer_observation;
+            snowdesktop::default_file_drop_action::VolumeObservation volumes;
+            const auto task = result->observationTask;
+            const auto selected = snowdesktop::default_file_drop_action::Preferred(input.paths, physicalDirectory,
+                task && diagnostic::Enabled() ? &volumes : nullptr);
+            *committedEffect = selected.value_or(DROPEFFECT_COPY);
+            if (task)
+            {
+                const DWORD saved = GetLastError();
+                const auto object = reinterpret_cast<std::uintptr_t>(result.get());
+                const auto bytes = physicalDirectory.size() <= diagnostic::BlobLimit() / sizeof(wchar_t)
+                    ? physicalDirectory.size() * sizeof(wchar_t) : diagnostic::BlobLimit() + 1;
+                diagnostic::RecordTaskBlob(task, diagnostic::Phase::move_default_destination_path,
+                    object, 0, physicalDirectory.data(), bytes);
+                if (volumes.target) diagnostic::Record(task, diagnostic::Phase::move_default_target_volume,
+                    object, 0, *volumes.target);
+                if (volumes.singleSource) diagnostic::Record(task, diagnostic::Phase::move_default_source_volume,
+                    object, 0, *volumes.singleSource);
+                diagnostic::Record(task, diagnostic::Phase::move_default_selected, object,
+                    static_cast<std::int64_t>(*committedEffect), selected ? 1 : 0);
+                SetLastError(saved);
+            }
             resolved.preview.action = DropActionFromMods(static_cast<int>(
                 snowdesktop::ole_drag_rules::ModifiersForDropEffect(*committedEffect)));
         }
         auto completed = [this, destination, activationGroupId, resolveActivationGroup,
             finished = std::move(finished)](bool succeeded) mutable {
+            namespace diagnostic = snowdesktop::external_transfer_observation;
+            const auto task = diagnostic::Enabled() ? diagnostic::currentTask : 0;
+            const auto work = task ? diagnostic::currentWork : 0;
+            const auto number = [&](diagnostic::Phase phase, std::uintptr_t object, std::int64_t value) noexcept {
+                if (!task) return;
+                const DWORD saved = GetLastError();
+                diagnostic::Record(task, phase, object, value, work);
+                SetLastError(saved);
+            };
+            const auto blob = [&](diagnostic::Phase phase, std::uintptr_t object, std::wstring_view value) noexcept {
+                if (!task) return;
+                const DWORD saved = GetLastError();
+                const auto size = value.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
+                    ? diagnostic::BlobLimit() + 1 : value.size() * sizeof(wchar_t);
+                diagnostic::RecordTaskBlob(task, phase, object, work, value.data(), size);
+                SetLastError(saved);
+            };
+            number(diagnostic::Phase::group_completion_enter, reinterpret_cast<std::uintptr_t>(this), succeeded ? 1 : 0);
             if (succeeded && !activationGroupId.empty())
                 if (auto* group = resolveActivationGroup())
                 {
+                    if (task)
+                    {
+                        const auto object = reinterpret_cast<std::uintptr_t>(group);
+                        number(diagnostic::Phase::group_completion_resolved, object, static_cast<std::int64_t>(group->type));
+                        blob(diagnostic::Phase::group_completion_owner_id, object, group->id);
+                        blob(diagnostic::Phase::group_completion_active_before, object, group->activeCategoryId);
+                    }
                     group->activeCategoryId = destination.widgetId;
+                    if (task) blob(diagnostic::Phase::group_completion_active_after,
+                        reinterpret_cast<std::uintptr_t>(group), group->activeCategoryId);
                     for (const auto& container : containers_)
                         if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
                             view && view->GetWidgetData() == group)
@@ -396,6 +533,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
             if (finished) finished(succeeded);
+            number(diagnostic::Phase::group_completion_return, reinterpret_cast<std::uintptr_t>(this), succeeded ? 1 : 0);
         };
         return CommitExternalSlotPaths(resolved, input.paths, input.owned,
             input.copyOnly, std::move(completed), synchronously, result);
@@ -405,7 +543,15 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Layout, L"External file drop failed during content reading or destination commit", DiagnosticLogLevel::Warning);
     };
     const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
+    snowdesktop::external_transfer_observation::AdapterScopeIdentity adapterScope;
+    if (snowdesktop::external_transfer_observation::Enabled())
+    {
+        snowdesktop::ole_adapter_observation::Event event;
+        if (snowdesktop::ole_adapter_observation::Current(event))
+            adapterScope = {event.session, event.call, event.parent, event.adapter, event.thread,
+                event.depth, static_cast<unsigned>(event.kind), true};
+    }
     return snowdesktop::external_slot_transfer::Transfer(dataObject, effect,
         asynchronousSource, knownPaths, std::move(value), externalSlotReadWorker_,
-        stop, window, kShellFileOperationCompletedMessage, std::move(callbacks));
+        stop, window, kShellFileOperationCompletedMessage, std::move(callbacks), adapterScope, observationCallsite, result.get());
 }

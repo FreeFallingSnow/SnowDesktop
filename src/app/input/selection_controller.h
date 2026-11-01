@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+struct NativeDragIntegrationAccess;
+
 /**
  * Applies selection mutations consistently across every selectable surface.
  * The controller is data-shape generic so new slot-backed lists can join the
@@ -13,6 +15,7 @@
  */
 class SelectionController
 {
+    friend struct NativeDragIntegrationAccess;
 public:
     // Targets borrow current model flags only for the duration of an operation.
     // The anchor retains identities, never pointers into rebuilt lists.

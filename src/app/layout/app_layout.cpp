@@ -18,6 +18,8 @@
 #include "data/layout_geometry_codec.h"
 #include "data/dock_layout_codec.h"
 #include "data/full_data_backup.h"
+#include "drag_drop/external_transfer_observation.h"
+#include "ui/input/private_pointer.h"
 
 // ── 布局持久化 ──────────────────────────────────────────────
 
@@ -844,17 +846,43 @@ void DesktopApp::DeferScrollLayoutSave()
 
 void DesktopApp::RequestLayoutSave()
 {
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    const auto observe = [&](diagnostic::Phase phase) noexcept {
+        if (!diagnostic::Enabled()) return;
+        const DWORD saved = GetLastError();
+        const auto identity = snowdesktop::private_pointer::CurrentDeliveryIdentity();
+        const diagnostic::NativeScopeIdentity scope{identity.session, identity.event, identity.delivery,
+            identity.forward, identity.ownerThread, identity.forwarded, identity.queuedEvent};
+        const std::int64_t flags = (layoutSavePending_ ? 1 : 0) | (layoutScrollSave_.Pending() ? 2 : 0);
+        diagnostic::RecordAny(0, phase, reinterpret_cast<std::uintptr_t>(this), flags,
+            layoutSaveRevision_, {}, scope, layoutSaveRevision_);
+        SetLastError(saved);
+    };
+    observe(diagnostic::Phase::layout_request_enter);
     DeferScrollLayoutSave();
+    observe(diagnostic::Phase::layout_request_return);
 }
 
 bool DesktopApp::FinishLayoutSave(const snowdesktop::LayoutSaveQueue::Result& result,
     std::uint64_t revision, bool notifyFailure)
 {
-    if (revision != layoutSaveRevision_) return result.saved;
+    namespace diagnostic = snowdesktop::external_transfer_observation;
+    const auto observe = [&](diagnostic::Phase phase, bool returned) noexcept {
+        if (!diagnostic::Enabled()) return;
+        const DWORD saved = GetLastError();
+        const std::int64_t flags = (result.saved ? 1 : 0) | (revision == layoutSaveRevision_ ? 2 : 0) |
+            (layoutSavePending_ ? 4 : 0) | (returned ? 8 : 0);
+        diagnostic::RecordAny(0, phase, reinterpret_cast<std::uintptr_t>(this), flags, revision, {}, {}, layoutSaveRevision_);
+        SetLastError(saved);
+    };
+    observe(diagnostic::Phase::layout_finish_enter, false);
+    if (revision != layoutSaveRevision_)
+    { observe(diagnostic::Phase::layout_finish_return, result.saved); return result.saved; }
     if (result.saved)
     {
         layoutSavePending_ = false;
         layoutSaveFailureNotified_ = false;
+        observe(diagnostic::Phase::layout_finish_return, true);
         return true;
     }
     layoutSavePending_ = true;
@@ -865,6 +893,7 @@ bool DesktopApp::FinishLayoutSave(const snowdesktop::LayoutSaveQueue::Result& re
         layoutSaveFailureNotified_ = true;
         snowdesktop::operation_feedback::Report({"app.operation.layoutUnsaved", detail});
     }
+    observe(diagnostic::Phase::layout_finish_return, false);
     return false;
 }
 
@@ -1205,19 +1234,41 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
         snowdesktop::debug_profile::Current().configuration.pendingDesktopChange;
     // Only copied paths and serialized data cross the worker boundary. Model
     // access, rollback-sensitive callers and recovery prompts stay on the UI.
-    auto write = [path = std::filesystem::path(GetLayoutPath()), contents = file.str(), changedDesktop] {
+    const auto observationHost = reinterpret_cast<std::uintptr_t>(this);
+    auto write = [path = std::filesystem::path(GetLayoutPath()), contents = file.str(), changedDesktop, observationHost, revision] {
+        namespace diagnostic = snowdesktop::external_transfer_observation;
+        diagnostic::RecordAny(0, diagnostic::Phase::layout_write_enter, observationHost, 0, revision);
+        if (diagnostic::Enabled())
+        {
+            // Copy only the real arguments already held by the writer. Loss
+            // or budget exhaustion affects diagnostics, never the save.
+            const DWORD saved = GetLastError();
+            const auto& actualPath = path.native();
+            const auto pathBytes = actualPath.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
+                ? diagnostic::BlobLimit() + 1 : actualPath.size() * sizeof(wchar_t);
+            diagnostic::RecordBlob(diagnostic::Phase::layout_write_input_path, observationHost, revision,
+                {}, actualPath.data(), pathBytes);
+            diagnostic::RecordBlob(diagnostic::Phase::layout_write_input_bytes, observationHost, revision,
+                {}, contents.data(), contents.size());
+            SetLastError(saved);
+        }
         snowdesktop::LayoutSaveQueue::Result result;
         result.saved = changedDesktop
             ? snowdesktop::layout_storage::SaveClearedDocument(path, contents, &result.error)
             : snowdesktop::layout_storage::SaveDocument(path, contents, &result.error);
+        diagnostic::RecordAny(0, diagnostic::Phase::layout_write_return, observationHost, result.saved ? 1 : 0, revision);
         return result;
     };
     if (background && !changedDesktop)
     {
         queuedLayoutSaveRevision_ = revision;
-        if (layoutSaveQueue_.Submit(write, [this, revision, notifyFailure](auto result) {
+        namespace diagnostic = snowdesktop::external_transfer_observation;
+        diagnostic::RecordAny(0, diagnostic::Phase::layout_queue_enter, observationHost, 0, revision);
+        const bool queued = layoutSaveQueue_.Submit(write, [this, revision, notifyFailure](auto result) {
                 FinishLayoutSave(result, revision, notifyFailure);
-            }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage))
+            }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
+        diagnostic::RecordAny(0, diagnostic::Phase::layout_queue_return, observationHost, queued ? 1 : 0, revision);
+        if (queued)
             return true; // Accepted snapshot; pending clears only on completion.
     }
     if (!FinishLayoutSave(layoutSaveQueue_.SaveNow(std::move(write)), revision, notifyFailure))

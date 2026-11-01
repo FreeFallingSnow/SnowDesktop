@@ -1,4 +1,5 @@
 #include "external_drop_content.h"
+#include "external_transfer_observation.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -167,7 +168,19 @@ Paths ReadFilePaths(IDataObject* source)
     FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
     STGMEDIUM medium{};
     Paths paths;
-    if (FAILED(source->GetData(&format, &medium))) return paths;
+    // Observe the actual caller-side ABI return. The source may be a COM
+    // proxy; its address and inherited task scope do not prove source or
+    // session identity in the presence of reentrancy.
+    const auto task = external_transfer_observation::currentTask;
+    const DWORD savedError = GetLastError();
+    const auto call = external_transfer_observation::Enabled() ? external_transfer_observation::NewTask() : 0;
+    SetLastError(savedError);
+    external_transfer_observation::RecordAny(task, external_transfer_observation::Phase::file_paths_getdata_enter,
+        reinterpret_cast<std::uintptr_t>(source), 0, call);
+    const HRESULT result = source->GetData(&format, &medium);
+    external_transfer_observation::RecordAny(task, external_transfer_observation::Phase::file_paths_getdata_return,
+        reinterpret_cast<std::uintptr_t>(source), static_cast<std::int64_t>(result), call);
+    if (FAILED(result)) return paths;
     if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal)
     {
         const auto drop = static_cast<HDROP>(medium.hGlobal);

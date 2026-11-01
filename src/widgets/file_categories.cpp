@@ -24,7 +24,11 @@
 #include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
 #include "file_category_auto_collect_rules.h"
+#include "drag_drop/external_transfer_observation.h"
+#include "app/drag_drop/ole_drag_drop_adapter.h"
+#include "ui/input/private_pointer.h"
 #include <algorithm>
+#include <exception>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <unordered_set>
@@ -33,6 +37,115 @@
 static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex);
 static snowdesktop::widget_item_layout::Layout FileCategoryLocalLayout(
     FileCategories* widget);
+
+namespace
+{
+enum class CategoryObservationSite : std::int64_t { snapshot = 1, auto_collect = 2, prune = 3 };
+namespace category_diagnostic = snowdesktop::external_transfer_observation;
+
+// Captures only values already present at the real classification call. The
+// global recorder is bounded and disabled by default; a dropped event makes
+// observation unavailable and never changes the classification result.
+class CategoryObservation final
+{
+public:
+    CategoryObservation(const DesktopItem& item, const CategorySettings& settings,
+        const FileCategories* widget, const DesktopApp* host, CategoryObservationSite site) noexcept
+        : host_(reinterpret_cast<std::uintptr_t>(host))
+    {
+        if (!category_diagnostic::Enabled()) return;
+        const DWORD saved = GetLastError();
+        exceptions_ = std::uncaught_exceptions();
+        call_ = category_diagnostic::NewTask();
+        if (!call_) { SetLastError(saved); return; }
+        Any(category_diagnostic::Phase::category_classify_enter, host_, static_cast<std::int64_t>(site));
+        Any(category_diagnostic::Phase::category_classify_widget, reinterpret_cast<std::uintptr_t>(widget), 0);
+        const auto flags = (item.shortcutTarget.classified ? 1 : 0) | (item.shortcutTarget.directory ? 2 : 0) |
+            (item.shortcutTarget.application ? 4 : 0) | (item.isShortcut ? 8 : 0) |
+            (item.isApplicationShortcut ? 16 : 0) | (item.absolutePidl.get() ? 32 : 0);
+        Any(category_diagnostic::Phase::category_classify_item, reinterpret_cast<std::uintptr_t>(&item), flags);
+        Any(category_diagnostic::Phase::category_classify_settings, reinterpret_cast<std::uintptr_t>(&settings),
+            category_diagnostic::ObservedSize(settings.rules.size()));
+        Any(category_diagnostic::Phase::category_classify_settings_flags, reinterpret_cast<std::uintptr_t>(&settings),
+            settings.collectProgramsEnabled ? 1 : 0);
+        Blob(category_diagnostic::Phase::category_classify_item_key, reinterpret_cast<std::uintptr_t>(&item), item.layoutKey);
+        Blob(category_diagnostic::Phase::category_classify_item_name, reinterpret_cast<std::uintptr_t>(&item), item.name);
+        Blob(category_diagnostic::Phase::category_classify_item_path, reinterpret_cast<std::uintptr_t>(&item), item.parsingName);
+        Blob(category_diagnostic::Phase::category_classify_item_clsid, reinterpret_cast<std::uintptr_t>(&item), item.desktopIconClsid);
+        Blob(category_diagnostic::Phase::category_classify_shortcut_extension, reinterpret_cast<std::uintptr_t>(&item), item.shortcutTarget.extension);
+        const std::size_t maxRules = category_diagnostic::EventLimit() / 5;
+        const auto count = (std::min)(settings.rules.size(), maxRules);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const auto& rule = settings.rules[i]; const auto object = reinterpret_cast<std::uintptr_t>(&rule);
+            Any(category_diagnostic::Phase::category_classify_rule, object, static_cast<std::int64_t>(i));
+            Any(category_diagnostic::Phase::category_classify_rule_enabled, object, rule.enabled ? 1 : 0);
+            Blob(category_diagnostic::Phase::category_classify_rule_id, object, rule.id);
+            Blob(category_diagnostic::Phase::category_classify_rule_label, object, rule.customLabel);
+            Blob(category_diagnostic::Phase::category_classify_rule_extensions, object, rule.extensions);
+        }
+        if (settings.rules.size() > maxRules)
+            Any(category_diagnostic::Phase::category_classify_rules_truncated, host_,
+                category_diagnostic::ObservedSize(settings.rules.size()));
+        SetLastError(saved);
+    }
+    ~CategoryObservation() noexcept
+    {
+        if (!call_) return;
+        const DWORD saved = GetLastError();
+        Any(!returned_ || std::uncaught_exceptions() > exceptions_ ?
+            category_diagnostic::Phase::category_classify_unwound : category_diagnostic::Phase::category_classify_leave, host_, 0);
+        SetLastError(saved);
+    }
+    void Value(category_diagnostic::Phase phase, std::wstring_view value) const noexcept
+    { Blob(phase, host_, value); }
+    void Folder(bool value) const noexcept
+    { Any(category_diagnostic::Phase::category_classify_folder, host_, value ? 1 : 0); }
+    void Return(std::wstring_view value, std::int64_t branch) noexcept
+    {
+        if (!call_) return;
+        const DWORD saved = GetLastError();
+        Blob(category_diagnostic::Phase::category_classify_result, host_, value);
+        Any(category_diagnostic::Phase::category_classify_return, host_, branch);
+        returned_ = true;
+        SetLastError(saved);
+    }
+private:
+    void Any(category_diagnostic::Phase phase, std::uintptr_t object, std::int64_t value) const noexcept
+    {
+        if (!call_) return;
+        const DWORD saved = GetLastError();
+        category_diagnostic::AdapterScopeIdentity adapterScope{};
+        snowdesktop::ole_adapter_observation::Event adapter;
+        if (snowdesktop::ole_adapter_observation::Current(adapter))
+            adapterScope = {adapter.session, adapter.call, adapter.parent, adapter.adapter, adapter.thread,
+                adapter.depth, static_cast<unsigned>(adapter.kind), true};
+        const auto native = snowdesktop::private_pointer::CurrentDeliveryIdentity();
+        const category_diagnostic::NativeScopeIdentity nativeScope{native.session, native.event, native.delivery, native.forward,
+            native.ownerThread, native.forwarded, native.queuedEvent};
+        category_diagnostic::RecordAny(0, phase, object, value, call_, adapterScope, nativeScope);
+        SetLastError(saved);
+    }
+    void Blob(category_diagnostic::Phase phase, std::uintptr_t object, std::wstring_view value) const noexcept
+    {
+        if (!call_) return;
+        const DWORD saved = GetLastError();
+        category_diagnostic::AdapterScopeIdentity adapterScope{};
+        snowdesktop::ole_adapter_observation::Event adapter;
+        if (snowdesktop::ole_adapter_observation::Current(adapter))
+            adapterScope = {adapter.session, adapter.call, adapter.parent, adapter.adapter, adapter.thread,
+                adapter.depth, static_cast<unsigned>(adapter.kind), true};
+        const auto bytes = value.size() > category_diagnostic::BlobLimit() / sizeof(wchar_t)
+            ? category_diagnostic::BlobLimit() + 1 : value.size() * sizeof(wchar_t);
+        category_diagnostic::RecordBlob(phase, object, call_, adapterScope, value.data(), bytes);
+        SetLastError(saved);
+    }
+    std::uintptr_t host_ = 0;
+    std::uint64_t call_ = 0;
+    bool returned_ = false;
+    int exceptions_ = 0;
+};
+}
 
 /**
  * @brief 获取桌面项目文件扩展名的大写形式。
@@ -66,18 +179,31 @@ static bool IsFilesystemFolder(const DesktopItem& item)
  * @return 分类 ID 字符串，可能为 "folders"、"videos"、"images"、"documents"、
  *         "archives"、"audio"、自定义分类 ID 或 "others"。
  */
-static std::wstring FileCategoryIdForItem(const DesktopItem& item, const CategorySettings& settings)
+static std::wstring FileCategoryIdForItem(const DesktopItem& item, const CategorySettings& settings,
+    const FileCategories* widget, const DesktopApp* host, CategoryObservationSite site)
 {
+    CategoryObservation observed(item, settings, widget, host, site);
     const auto namespaceCategory = snowdesktop::category_collection_rules::
         DesktopNamespaceCategory(item, IsCategoryRuleEnabled(settings, L"programs"));
-    if (!namespaceCategory.empty()) return namespaceCategory;
+    observed.Value(category_diagnostic::Phase::category_classify_namespace, namespaceCategory);
+    if (!namespaceCategory.empty()) { observed.Return(namespaceCategory, 1); return namespaceCategory; }
     const std::wstring ext = DesktopItemExtensionUpper(item);
-    if (IsFilesystemFolder(item))
-        return IsCategoryRuleEnabled(settings, L"folders") ? L"folders" : L"others";
+    observed.Value(category_diagnostic::Phase::category_classify_extension, ext);
+    const bool folder = IsFilesystemFolder(item);
+    observed.Folder(folder);
+    if (folder)
+    {
+        const bool enabled = IsCategoryRuleEnabled(settings, L"folders");
+        observed.Return(enabled ? L"folders" : L"others", 2);
+        return enabled ? L"folders" : L"others";
+    }
     std::wstring categoryId = CategoryIdForItemType(settings, ext, item.shortcutTarget);
+    observed.Value(category_diagnostic::Phase::category_classify_type, categoryId);
     if (!categoryId.empty())
-        return categoryId;
-    return item.isApplicationShortcut && IsCategoryRuleEnabled(settings, L"programs") ? L"programs" : L"others";
+    { observed.Return(categoryId, 3); return categoryId; }
+    const bool programs = item.isApplicationShortcut && IsCategoryRuleEnabled(settings, L"programs");
+    observed.Return(programs ? L"programs" : L"others", 4);
+    return programs ? L"programs" : L"others";
 }
 
 /**
@@ -196,7 +322,8 @@ void FileCategories::EnsureCategorySnapshot() const
         std::wstring key = ToUpperInvariant(item.layoutKey);
         if (!seen.insert(key).second) continue;
         allKeys.push_back(key);
-        categorySnapshot_.keysByCategory[FileCategoryIdForItem(item, app_->GetCategorySettings())].push_back(key);
+        categorySnapshot_.keysByCategory[FileCategoryIdForItem(item, app_->GetCategorySettings(),
+            this, app_, CategoryObservationSite::snapshot)].push_back(key);
     }
 
     if (data_->dateHeaders)
@@ -478,7 +605,7 @@ bool FileCategories::CollectTopLevelDesktopItems()
         if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item))
             continue;
         if (!snowdesktop::file_category_auto_collect_rules::Matches(*data_,
-                FileCategoryIdForItem(item, app_->GetCategorySettings())))
+                FileCategoryIdForItem(item, app_->GetCategorySettings(), this, app_, CategoryObservationSite::auto_collect)))
             continue;
 
         std::wstring key = ToUpperInvariant(item.layoutKey);
@@ -525,7 +652,7 @@ bool FileCategories::PruneUncollectableItems()
                         IsCollectable(app_->GetCategorySettings(), item),
                         (extension == L".LNK" || extension == L".URL") &&
                             !item.shortcutTarget.classified,
-                        FileCategoryIdForItem(item, app_->GetCategorySettings()),
+                        FileCategoryIdForItem(item, app_->GetCategorySettings(), this, app_, CategoryObservationSite::prune),
                         widgets, selfIndex);
             }),
         data_->itemKeys.end());

@@ -72,7 +72,7 @@ void ReceiveContainer(const ContainerRow& row)
         "file must negotiate Copy with actual native target");
     Require(Access::Target(*p.app) == Access::MemberContainer(*p.app,L"ingress-root") && source->starts == 0,
         "real hit routing selects the intended container without reading delayed files");
-    Access::FreshExternalDwell(*p.app); effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+    effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
     Require(SUCCEEDED(adapter->Drop(source.Get(),MK_CONTROL,Access::ExternalPoint(point),&effect)) && effect == DROPEFFECT_COPY,
         "release submits the accepted file verb");
     Wait([&] { return source->ends == 1 && Access::ContainerWorkIdle(*p.app) &&
@@ -111,7 +111,9 @@ void MatrixContainer(const drag_matrix::Case& test)
         [&](const auto& row) { return row.name == test.target; });
     Require(found != std::end(containerRows), "matrix target must have a real native container adapter");
     const auto& row = *found;
-    Profile p; fs::path existing; SeedDestination(p, row, existing, test.icon);
+    Profile p; Access::EnableProductionDispatch(*p.app, false); Access::EnableFixtureControlWindow(*p.app);
+    fs::path existing; SeedDestination(p, row, existing, test.icon);
+    Wait([&] { return Access::ContainerWorkIdle(*p.app) && Access::LayoutSaveIdle(*p.app); });
     const auto directory = row.mapped ? existing.parent_path() : p.desktop;
     const auto memberId = row.grouped ? L"ingress-active" : L"ingress-root";
     const auto rootBefore = ContainerWidget(*p.app, L"ingress-root");
@@ -122,12 +124,34 @@ void MatrixContainer(const drag_matrix::Case& test)
     if (test.directory) { sources.push_back(p.root / L"incoming/Folder"); Write(sources.back() / L"nested.txt", "nested-payload"); }
     auto source = ole_file_source_fixture::Make(sources, test.asynchronous);
     const DWORD expected = test.cancel ? DROPEFFECT_NONE : test.release.effect & test.allowed;
+    const auto expectedFileBytes = [](std::size_t index) {
+        const std::string_view contents = index ? "nested-payload" : "container-payload";
+        std::vector<std::byte> bytes(contents.size());
+        if (!contents.empty()) std::memcpy(bytes.data(), contents.data(), contents.size());
+        return bytes;
+    };
+    std::vector<std::unique_ptr<ObservedPhysicalFile>> retainedSources, retainedOutputs;
+    if (expected == DROPEFFECT_COPY)
+        for (std::size_t index = 0; index < sources.size(); ++index)
+        {
+            const auto path = index ? sources[index] / L"nested.txt" : sources[index];
+            auto handle = std::make_unique<ObservedPhysicalFile>(path);
+            Require(handle->HasBytes(expectedFileBytes(index)) && handle->PathStillNamesObject(path),
+                "container copy source baseline belongs to the retained file object");
+            retainedSources.push_back(std::move(handle));
+        }
+    const auto traceBefore = Access::messageTrace->Observations().size();
+    const auto sourceMessagesBefore = Access::sourceCompletionMessages;
+    const auto commitMessagesBefore = Access::commitCompletionMessages;
+    const auto layoutRevisionBefore = Access::LayoutRevision(*p.app);
     Submit(p, *source.Get(), test.release.keys, test.allowed, expected,
         test.icon ? POINT{50,50} : POINT{350,250}, test.cancel,
         MK_LBUTTON | (test.enterShift ? MK_SHIFT : 0), false, Access::MemberContainer(*p.app,L"ingress-root"));
     if (expected)
         Wait([&] { return (!test.asynchronous || source->ends == 1) && Access::ContainerWorkIdle(*p.app) &&
+            Access::FileDropIdle(*p.app) &&
             Access::ContainerMembers(*p.app, memberId).size() == sources.size() + 1; });
+    else Wait([&] { return Access::ContainerWorkIdle(*p.app) && Access::LayoutSaveIdle(*p.app); });
 
     std::vector<fs::path> outputs;
     for (const auto& entry : fs::directory_iterator(directory))
@@ -136,14 +160,23 @@ void MatrixContainer(const drag_matrix::Case& test)
         if (!fs::equivalent(entry.path(), existing, error) || error) outputs.push_back(entry.path());
     }
     Require(outputs.size() == (expected ? sources.size() : 0), "native target receives exactly the requested outputs");
-    Require(!source->wrongApartment && !source->fileReadBeforeStart, "native target respects source apartment and lease ordering");
+    Require(!source->wrongApartment && !source->fileReadBeforeStart && !source->formatProbeObservationFailed,
+        "native target respects source apartment, lease ordering and format observation");
     if (!expected)
         Require(source->starts == 0 && source->ends == 0 && Read(Access::LayoutPath(*p.app)) == saved,
             "rejected or cancelled native target leaves lease and persisted layout unchanged");
     else if (test.asynchronous)
+    {
         Require(source->starts == 1 && source->ends == 1 && SUCCEEDED(source->outcome) &&
             source->endEffect == (expected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : expected),
             "native target completes one source lease with the performed effect");
+        Require(Access::sourceCompletionMessages > sourceMessagesBefore &&
+            Access::commitCompletionMessages > commitMessagesBefore,
+            "native target source and commit completions reach a production window procedure");
+        RequireCompletionTrace(traceBefore, Access::fixtureControlWindow,
+            drag_global::ole_driver::MessageRoute::control_window_proc);
+    }
+    if (expected) RequireObservedFilePayload(*source.Get(), sources);
 
     std::vector<fs::path> ordered{existing};
     for (std::size_t index = 0; index < sources.size(); ++index)
@@ -159,6 +192,18 @@ void MatrixContainer(const drag_matrix::Case& test)
         });
         Require(output != outputs.end(), "native target output identity corresponds to selected source");
         if (expected != DROPEFFECT_LINK) Require(Read(index ? *output / L"nested.txt" : *output) == bytes, "native target output bytes match source");
+        if (expected == DROPEFFECT_COPY)
+        {
+            const auto sourcePath = index ? original / L"nested.txt" : original;
+            const auto outputPath = index ? *output / L"nested.txt" : *output;
+            auto handle = std::make_unique<ObservedPhysicalFile>(outputPath);
+            Require(retainedSources[index]->PathStillNamesObject(sourcePath) &&
+                retainedSources[index]->HasBytes(expectedFileBytes(index)) &&
+                handle->PathStillNamesObject(outputPath) && handle->HasBytes(expectedFileBytes(index)) &&
+                !handle->SameObject(*retainedSources[index]),
+                "container copy creates a distinct output file while retaining the source object and bytes");
+            retainedOutputs.push_back(std::move(handle));
+        }
         ordered.push_back(*output);
     }
     const auto check = [&] {
@@ -189,8 +234,25 @@ void MatrixContainer(const drag_matrix::Case& test)
         }
     };
     check();
-    if (expected) Require(Access::Save(*p.app), "save native ingress membership");
+    if (expected)
+    {
+        Wait([&] { return Access::LayoutSaveIdle(*p.app); });
+        if (!row.mapped) Require(Access::LayoutRevision(*p.app) > layoutRevisionBefore,
+            "production native membership commit must schedule or perform the layout save");
+    }
     RefreshContainer(p, true, memberId, row.mapped); check();
+    if (expected == DROPEFFECT_COPY)
+        for (std::size_t index = 0; index < sources.size(); ++index)
+        {
+            const auto sourcePath = index ? sources[index] / L"nested.txt" : sources[index];
+            const auto outputPath = index ? ordered[index + 1] / L"nested.txt" : ordered[index + 1];
+            Require(retainedSources[index]->PathStillNamesObject(sourcePath) &&
+                retainedSources[index]->HasBytes(expectedFileBytes(index)) &&
+                retainedOutputs[index]->PathStillNamesObject(outputPath) &&
+                retainedOutputs[index]->HasBytes(expectedFileBytes(index)) &&
+                !retainedSources[index]->SameObject(*retainedOutputs[index]),
+                "container reload retains the original and copied file objects and their bytes");
+        }
 }
 UINT MenuChoice(HMENU menu, const wchar_t* label)
 {
@@ -221,7 +283,7 @@ void RightDecision(bool cancel)
     ComPtr<OleDragDropAdapter> adapter; adapter.Attach(new OleDragDropAdapter(&bridge));
     const POINT point{150,150}; DWORD effect=DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
     Require(SUCCEEDED(adapter->DragEnter(source.Get(),MK_RBUTTON,Access::ExternalPoint(point),&effect)),"right drag reaches adapter");
-    Access::FreshExternalDwell(*p.app); effect=DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+    effect=DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
     Require(SUCCEEDED(adapter->Drop(source.Get(),0,Access::ExternalPoint(point),&effect)) && menus==1,"one real host menu resolves right drag");
     if(cancel)
     {
@@ -312,7 +374,7 @@ void ChangedTarget(bool mapped)
     const POINT point{350,250};
     Require(SUCCEEDED(adapter->DragEnter(source.Get(),MK_LBUTTON|MK_CONTROL,Access::ExternalPoint(point),&effect)) && effect==DROPEFFECT_COPY,
         "capture original container through actual OLE route");
-    Access::FreshExternalDwell(*p.app); effect=DROPEFFECT_COPY | DROPEFFECT_MOVE;
+    effect=DROPEFFECT_COPY | DROPEFFECT_MOVE;
     Require(SUCCEEDED(adapter->Drop(source.Get(),MK_CONTROL,Access::ExternalPoint(point),&effect)) && source->starts==1,"submit independently retained delayed read");
     HeldRead gate; gate.Capture();
     if(mapped) Access::ChangeContainerMapping(*p.app,replacement); else Access::ReplaceContainerIdentity(*p.app);
