@@ -1,7 +1,9 @@
 #pragma once
 #include "ui/menu/modern_menu.h"
+#include "ui/menu/menu_icon_render.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_service.h"
+#include "shell_extension_menu_rows.h"
 #include <algorithm>
 #include <set>
 
@@ -106,12 +108,12 @@ class Presentation
     static constexpr UINT FirstCommand = 0x71000000;
     Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring,
                  MenuService &service = SharedMenuService(), std::function<void(bool)> completed = {})
-        : prefs_(std::move(prefs)), source_(source), normalSource_(source), service_(service), completed_(std::move(completed))
+        : prefs_(std::move(prefs)), source_(source), normalSource_(source), originalSource_(source), service_(service), completed_(std::move(completed))
     {
         if (source.paths.empty() || !service_.MenuEnabled(source_, prefs_)) return;
+        refreshState_ = prefs_.showAll && !source.background;
         auto view = service_.MenuDisplay(source_, prefs_);
         initialRevision_ = view.revision;
-        normalStarted_ = GetTickCount64();
         cached_ = std::move(view.snapshot);
         contexts_ = view.contexts;
         bool startShown = false, normalNeeded = false;
@@ -124,18 +126,8 @@ class Presentation
                 if (pair && pair->id == "state:start-pin") startShown = true;
                 else { normalNeeded = true; refreshState_ |= pair != nullptr; }
             }
-        startLane_ = startShown && !source.background && source.context != Context::Desktop && source.paths.size() == 1;
+        startLane_ = startShown && !normalNeeded && !source.background && source.context != Context::Desktop && source.paths.size() == 1;
         if (startShown && !startLane_) { normalNeeded = true; refreshState_ = true; }
-        if (normalNeeded && CanQueryOriginalShortcutObjects(source_))
-        {
-            originalSource_ = source_; originalSource_.originalShortcutOnly = true;
-            if (!cached_)
-            {
-                auto original = service_.MenuDisplay(originalSource_, prefs_);
-                cached_ = std::move(original.snapshot);
-                cachedOriginal_ = cached_.has_value();
-            }
-        }
         if (cached_)
         {
             // Pin state is external to the shortcut's timestamp. Display the
@@ -153,7 +145,7 @@ class Presentation
         if (normalNeeded)
         {
             if (refreshState_) service_.Invalidate(source_);
-            service_.Query(source_, QueryPriority::Menu, refreshState_ || cachedOriginal_);
+            service_.Query(source_, QueryPriority::Menu, refreshState_ || !view.error.empty());
         }
         startDone_ = !startLane_;
         if (startLane_)
@@ -172,29 +164,26 @@ class Presentation
     }
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
+        imageDpi_ = options.dpi ? options.dpi : USER_DEFAULT_SCREEN_DPI;
         MoveMoreToBottom(items, moreCommand);
-        if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries), {}, cachedOriginal_), moreCommand);
+        if (cached_) UpdateNormal(items, cached_->entries, moreCommand, false, cachedOriginal_);
         if (!normalDone_)
         {
-            SyncSources(service_.MenuDisplay(normalSource_, prefs_, true));
+            const auto view = service_.MenuDisplay(normalSource_, prefs_, true);
+            ShowRoots(items, view, moreCommand);
+            SyncSources(view);
             PollSources(items, moreCommand);
         }
         if ((!normalDone_ || !startDone_ || !SourcesDone()) && !source_.paths.empty())
         {
-            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && originalDone_ && SourcesDone(); };
+            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && SourcesDone(); };
             options.pollItemsStablePrefix = true;
+            options.pollPrefetchedSubmenus = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply)
                 {
-                    // A held button, open child or scroll position defers UI
-                    // changes, but must not stop supervised query recovery.
-                    if (!normalDone_)
-                    {
-                        auto view = service_.MenuDisplay(normalSource_, prefs_, true);
-                        MaybeStartOriginalQuery(view);
-                        if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
-                            RetryNormalQuery();
-                    }
+                    // The existing query continues while UI changes are held.
+                    // Missing/failed/slow results never start another query.
                     return {};
                 }
                 auto updated = current;
@@ -207,17 +196,8 @@ class Presentation
                 if (!normalDone_)
                 {
                     auto view = service_.MenuDisplay(normalSource_, prefs_, true);
-                    MaybeStartOriginalQuery(view);
-                    if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
-                    {
-                        // A failed prewarm may still be in backoff, or the helper
-                        // may have exited during this opening. Recover once with
-                        // a fresh query while this popup remains subscribed.
-                        // Shortcut recovery isolates original file handlers from
-                        // the delegated target aggregate that just failed.
-                        RetryNormalQuery();
-                    }
-                    else if (!view.pending)
+                    if (view.pending) progressed |= ShowRoots(updated, view, moreCommand);
+                    if (!view.pending)
                     {
                         if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
                         {
@@ -228,40 +208,12 @@ class Presentation
                                 return (startLane_ && pair && pair->id == "state:start-pin") ||
                                     (warm && !cachedOriginal_ && refreshState_ && !pair);
                             });
-                            if (!normalSource_.originalShortcutOnly && (!originalCommands_.empty() || !sources_.empty()))
-                                progressed |= SupplementChildren(updated, additions);
-                            additions = NewNormalEntries(std::move(additions));
-                            if (!additions.empty())
-                            {
-                                Insert(updated, Convert(additions, {}, normalSource_.originalShortcutOnly), moreCommand);
-                                progressed = true;
-                            }
+                            progressed |= UpdateNormal(updated, additions, moreCommand, false,
+                                normalSource_.originalShortcutOnly, true);
                         }
+                        progressed |= RemoveRoots(updated);
                         normalDone_ = !view.attributionPending;
                         progressed |= normalDone_;
-                    }
-                }
-                if (!originalDone_)
-                {
-                    auto view = service_.MenuDisplay(originalSource_, prefs_, true);
-                    if (!view.pending)
-                    {
-                        if (view.snapshot && view.revision > originalRevision_ && view.error.empty())
-                        {
-                            auto additions = std::move(view.snapshot->entries);
-                            std::erase_if(additions, [this](const auto &entry) {
-                                const auto *pair = StatePairForVerb(entry.key);
-                                return startLane_ && pair && pair->id == "state:start-pin";
-                            });
-                            additions = NewNormalEntries(std::move(additions));
-                            if (!additions.empty())
-                            {
-                                Insert(updated, Convert(additions, {}, true), moreCommand);
-                                progressed = true;
-                            }
-                        }
-                        originalDone_ = !view.attributionPending;
-                        progressed |= originalDone_;
                     }
                 }
                 if (!startDone_)
@@ -270,7 +222,7 @@ class Presentation
                     if (!view.pending)
                     {
                         if (view.snapshot && view.revision > startRevision_ && view.error.empty())
-                            Insert(updated, Convert(view.snapshot->entries), moreCommand);
+                            UpdateNormal(updated, view.snapshot->entries, moreCommand);
                         startDone_ = progressed = true;
                     }
                 }
@@ -294,6 +246,24 @@ class Presentation
     }
 
   private:
+    bool ShowRoots(std::vector<modern_menu::Item> &items, const MenuView &view, UINT moreCommand)
+    {
+        if (cached_ || !view.roots || view.roots->entries.empty() || rootRevision_ == view.revision) return false;
+        rootRevision_ = view.revision;
+        return UpdateNormal(items, view.roots->entries, moreCommand, true);
+    }
+    bool RemoveRoots(std::vector<modern_menu::Item> &items)
+    {
+        if (rootCommands_.empty()) return false;
+        std::erase_if(items, [&](const auto &item) {
+            if (!rootCommands_.contains(item.command)) return false;
+            rowEntries_.erase(item.command);
+            return true;
+        });
+        rootCommands_.clear();
+        presentation_detail::RemoveEmptySeparators(items);
+        return true;
+    }
     struct SourceLane { Request request; bool done = false; };
     bool SourcesDone() const
     {
@@ -307,7 +277,7 @@ class Presentation
     }
     bool PollSources(std::vector<modern_menu::Item> &items, UINT moreCommand)
     {
-        bool progressed = false, fallback = false;
+        bool progressed = false;
         for (auto &source : sources_) if (!source.done)
         {
             if (!service_.MenuEnabled(source.request, prefs_))
@@ -324,144 +294,164 @@ class Presentation
                 // State-changing commands retain their per-opening refresh and
                 // dedicated execution rules, even when a source emits them too.
                 std::erase_if(additions, [](const auto &entry) { return StatePairForVerb(entry.key) != nullptr; });
-                Insert(items, Convert(NewNormalEntries(std::move(additions))), moreCommand);
+                UpdateNormal(items, additions, moreCommand);
             }
-            else fallback = true;
             source.done = true;
             progressed = true;
         }
-        if (fallback && !sourcesRetried_)
-        {
-            sourcesRetried_ = true;
-            normalDone_ = false;
-            service_.QueryFullMenu(source_);
-        }
         return progressed;
     }
-    bool SupplementChildren(std::vector<modern_menu::Item> &items, const std::vector<Entry> &entries,
-                            const CommandReference &parent = {})
+    // Rebind visible IDs to the fresh exact reference, including descendants
+    // whose parent acquired registration metadata. Never relax execution lookup.
+    void RebindRow(modern_menu::Item &next, const modern_menu::Item &previous,
+                   const Entry &nextEntry, const Entry &previousEntry)
     {
-        bool changed = false, divider = false;
-        std::vector<CommandReference> observed;
-        for (const auto &entry : entries)
+        const auto reference = commands_.at(next.command);
+        const bool original = originalCommands_.contains(next.command);
+        commands_[previous.command] = reference;
+        if (original) originalCommands_.insert(previous.command);
+        else originalCommands_.erase(previous.command);
+        next.command = previous.command;
+        // Reuse identical artwork, not the first available image. A complete
+        // result must be able to correct an interim icon, in either size direction.
+        if (previous.image && (!next.image ||
+            (std::tie(nextEntry.width, nextEntry.height, nextEntry.pixels, nextEntry.imageLogicalSize) ==
+             std::tie(previousEntry.width, previousEntry.height, previousEntry.pixels, previousEntry.imageLogicalSize) &&
+             SameImageDimensions(next.image, previous.image))))
+            next.image = previous.image;
+        std::set<UINT> used;
+        for (size_t index = 0; index < next.children.size(); ++index)
         {
-            if (entry.separator) { divider = true; continue; }
-            const auto reference = AppendReference(parent, entry);
-            observed.push_back(reference);
-            auto remaining = std::count(observed.begin(), observed.end(), reference);
-            auto existing = items.end();
-            for (auto item = items.begin(); item != items.end(); ++item)
+            auto &child = next.children[index];
+            if (child.separator) continue;
+            const auto &childReference = commands_.at(child.command);
+            const auto old = std::find_if(previous.children.begin(), previous.children.end(), [&](const auto &candidate) {
+                const auto found = commands_.find(candidate.command);
+                return !candidate.separator && !used.contains(candidate.command) && found != commands_.end() &&
+                    presentation_detail::SameDisplayReference(found->second.back(), childReference.back());
+            });
+            if (old != previous.children.end())
             {
-                const auto command = commands_.find(item->command);
-                if (!item->separator && command != commands_.end() && command->second == reference && --remaining == 0)
-                { existing = item; break; }
+                used.insert(old->command);
+                RebindRow(child, *old, nextEntry.children[index],
+                    previousEntry.children[static_cast<size_t>(std::distance(previous.children.begin(), old))]);
             }
-            if (existing != items.end())
-            {
-                if (!entry.children.empty())
-                    changed |= SupplementChildren(existing->children, entry.children, reference);
-            }
-            else if (!parent.empty())
-            {
-                if (divider && !items.empty() && !items.back().separator)
-                { modern_menu::Item separator; separator.separator = true; items.push_back(separator); }
-                // Keep command IDs of visible siblings, including repeated
-                // canonical commands, distinct from the new child subtree.
-                for (const auto &command : commands_) converting_.insert(command.first);
-                auto additions = Convert({entry}, parent);
-                items.insert(items.end(), std::make_move_iterator(additions.begin()), std::make_move_iterator(additions.end()));
-                changed = true;
-            }
-            divider = false;
         }
-        return changed;
-    }
-    void MaybeStartOriginalQuery(const MenuView &view)
-    {
-        if (originalQueued_ || cached_ || !originalSource_.originalShortcutOnly ||
-            normalSource_.originalShortcutOnly || !view.pending || GetTickCount64() - normalStarted_ < 3000)
-            return;
-        // Preserve complete discovery while an isolated original-file query
-        // can expose useful rows ahead of a slow shortcut target aggregate.
-        originalQueued_ = true; originalDone_ = false;
-        originalRevision_ = service_.View(originalSource_).revision;
-        service_.Query(originalSource_, QueryPriority::Menu, true);
-    }
-    void RetryNormalQuery()
-    {
-        normalRetried_ = true;
-        if (originalQueued_) { normalDone_ = true; return; }
-        if (originalSource_.originalShortcutOnly)
-        {
-            normalSource_ = originalSource_;
-            initialRevision_ = service_.View(normalSource_).revision;
-        }
-        if (sourcesRetried_ && !normalSource_.originalShortcutOnly) service_.QueryFullMenu(normalSource_);
-        else service_.Query(normalSource_, QueryPriority::Menu, true);
     }
     static bool IsOurCommand(UINT command)
     {
         return command >= FirstCommand && command < FirstCommand + 65536;
+    }
+    static bool SameImageDimensions(HBITMAP left, HBITMAP right)
+    {
+        BITMAP a{}, b{};
+        return left && right && GetObjectW(left, sizeof(a), &a) && GetObjectW(right, sizeof(b), &b) &&
+            a.bmWidth == b.bmWidth && a.bmHeight == b.bmHeight;
     }
     static void Insert(std::vector<modern_menu::Item> &items, const std::vector<modern_menu::Item> &additions,
                        UINT moreCommand)
     {
         if (additions.empty())
             return;
+        const auto anchor = std::find_if(items.begin(), items.end(),
+            [=](const auto &item) { return moreCommand && item.command == moreCommand; });
+        if (anchor != items.end())
+        {
+            // Attach already established the host/footer boundary. Moving it
+            // again here would create one separator per arriving query batch.
+            items.insert(anchor, additions.begin(), additions.end());
+            return;
+        }
         if (!items.empty() && !items.back().separator &&
-            std::none_of(items.begin(), items.end(),
-                         [=](const auto &item) { return moreCommand && item.command == moreCommand; }))
+            std::none_of(items.begin(), items.end(), [](const auto &item) {
+                return !item.separator && IsOurCommand(item.command);
+            }))
         {
             modern_menu::Item divider;
             divider.separator = true;
             divider.command = FirstCommand;
             items.push_back(divider);
         }
-        InsertBeforeMore(items, additions, moreCommand, false);
+        items.insert(items.end(), additions.begin(), additions.end());
     }
-    std::vector<Entry> NewNormalEntries(std::vector<Entry> entries)
+    bool UpdateNormal(std::vector<modern_menu::Item> &items, const std::vector<Entry> &entries,
+                      UINT moreCommand, bool pending = false, bool original = false,
+                      bool completeRoots = false)
     {
-        std::vector<Entry> result;
-        const auto previous = displayedNormal_;
-        std::vector<CommandReference> observed;
-        for (auto &entry : entries)
+        bool changed = false;
+        std::set<UINT> used;
+        std::vector<modern_menu::Item> additions;
+        for (const auto &entry : entries)
         {
-            if (entry.separator)
+            // Top-level extensions form one continuous section. Native
+            // separators inside their submenus remain in the converted tree.
+            if (entry.separator) continue;
+            auto found = std::find_if(items.begin(), items.end(), [&](const auto &item) {
+                const auto row = rowEntries_.find(item.command);
+                return !used.contains(item.command) && row != rowEntries_.end() &&
+                    originalCommands_.contains(item.command) == original &&
+                    presentation_detail::SameDisplayEntry(row->second, entry);
+            });
+            if (found == items.end() && completeRoots)
             {
-                if (!result.empty() && !result.back().separator)
-                    result.push_back(std::move(entry));
+                // Only this query's non-executable preview may refine its
+                // identity after materializing children/native fallbacks.
+                // Complete rows from other sources never match by caption.
+                found = std::find_if(items.begin(), items.end(), [&](const auto &item) {
+                    return !used.contains(item.command) && rootCommands_.contains(item.command) &&
+                        item.label == entry.label;
+                });
+            }
+            if (found != items.end())
+            {
+                const auto command = found->command;
+                used.insert(command);
+                if (pending) continue; // A preview cannot downgrade a complete source row.
+                const auto &previous = rowEntries_.at(command);
+                auto merged = presentation_detail::MergeEntry(previous, entry, rootCommands_.contains(command));
+                if (!rootCommands_.contains(command) && presentation_detail::SameEntry(previous, merged)) continue;
+                auto converted = Convert({merged}, {}, original).front();
+                RebindRow(converted, *found, merged, previous);
+                *found = std::move(converted);
+                rowEntries_[command] = std::move(merged);
+                rootCommands_.erase(command);
+                changed = true;
                 continue;
             }
-            const auto reference = AppendReference({}, entry);
-            observed.push_back(reference);
-            if (std::count(observed.begin(), observed.end(), reference) <=
-                std::count(previous.begin(), previous.end(), reference))
-                continue;
-            displayedNormal_.push_back(reference);
-            result.push_back(std::move(entry));
+            auto converted = Convert({entry}, {}, original).front();
+            converted.childrenPending = pending;
+            rowEntries_[converted.command] = entry;
+            if (pending) rootCommands_.insert(converted.command);
+            additions.push_back(std::move(converted));
         }
-        while (!result.empty() && result.back().separator)
-            result.pop_back();
-        return result;
+        Insert(items, additions, moreCommand);
+        if (changed || !additions.empty()) OrderRows(items);
+        return changed || !additions.empty();
+    }
+    void OrderRows(std::vector<modern_menu::Item> &items)
+    {
+        std::vector<modern_menu::Item> roots;
+        for (auto &item : items)
+            if (rowEntries_.contains(item.command)) roots.push_back(std::move(item));
+        std::stable_sort(roots.begin(), roots.end(), [&](const auto &left, const auto &right) {
+            return presentation_detail::RootBefore(rowEntries_.at(left.command), rowEntries_.at(right.command));
+        });
+        auto root = roots.begin();
+        for (auto &item : items)
+            if (rowEntries_.contains(item.command)) item = std::move(*root++);
     }
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
                                            const CommandReference &parent = {}, bool original = false)
     {
-        if (parent.empty())
-            converting_.clear();
         std::vector<modern_menu::Item> result;
         for (const auto &e : entries)
         {
             modern_menu::Item item;
             const auto reference = AppendReference(parent, e);
-            const auto existing = std::find_if(commands_.begin(), commands_.end(), [&](const auto &command) {
-                return command.second == reference && !converting_.contains(command.first);
-            });
-            item.command = existing == commands_.end() ? ++nextCommand_ : existing->first;
+            item.command = ++nextCommand_;
             commands_[item.command] = reference;
             if (original) originalCommands_.insert(item.command);
             else originalCommands_.erase(item.command);
-            converting_.insert(item.command);
             item.label = e.label;
             item.accessKey = e.accessKey;
             item.enabled = e.enabled;
@@ -471,6 +461,19 @@ class Presentation
             if (e.width > 0 && e.height > 0 && e.width <= 128 && e.height <= 128 &&
                 e.pixels.size() == static_cast<size_t>(e.width * e.height * 4))
             {
+                if (e.imageLogicalSize > 0 && e.imageLogicalSize <= 128)
+                {
+                    const menu_icon::ImageSourceView source{e.pixels.data(), e.pixels.size(),
+                        static_cast<std::uint32_t>(e.width), static_cast<std::uint32_t>(e.height),
+                        static_cast<std::uint32_t>(e.width * 4)};
+                    if (auto image = menu_icon::CreateImageBitmap(source,
+                        std::clamp(MulDiv(e.imageLogicalSize, static_cast<int>(imageDpi_), USER_DEFAULT_SCREEN_DPI), 1, 512)))
+                    {
+                        images_.push_back(image); item.image = image;
+                    }
+                    result.push_back(std::move(item));
+                    continue;
+                }
                 BITMAPINFO info{};
                 info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
                 info.bmiHeader.biWidth = e.width;
@@ -501,22 +504,19 @@ class Presentation
     std::function<void(bool)> completed_;
     unsigned contexts_ = 0;
     UINT nextCommand_ = FirstCommand;
+    UINT imageDpi_ = USER_DEFAULT_SCREEN_DPI;
     std::map<UINT, CommandReference> commands_;
-    std::set<UINT> converting_;
     std::set<UINT> originalCommands_;
-    std::vector<CommandReference> displayedNormal_;
+    std::map<UINT, Entry> rowEntries_;
     std::vector<SourceLane> sources_;
-    bool sourcesRetried_ = false;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
-    bool normalRetried_ = false;
     bool cachedOriginal_ = false;
-    bool originalQueued_ = false, originalDone_ = true;
-    ULONGLONG normalStarted_ = 0;
-    std::uint64_t originalRevision_ = 0;
     bool startLane_ = false, normalDone_ = true, startDone_ = true;
     std::uint64_t initialRevision_ = 0;
     std::uint64_t startRevision_ = 0;
     std::vector<HBITMAP> images_;
+    std::uint64_t rootRevision_ = UINT64_MAX;
+    std::set<UINT> rootCommands_;
 };
 } // namespace snowdesktop::shell_extensions

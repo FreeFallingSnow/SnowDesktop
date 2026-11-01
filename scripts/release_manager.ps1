@@ -392,6 +392,7 @@ function Invoke-Package {
     . (Join-Path $scriptDirectory 'packaging_input.ps1')
     if (-not $ArtifactRun) { $ArtifactRun = Invoke-SnowDesktopPackagingBuild $repositoryRoot }
     $savedContext = Get-SnowDesktopPackagingContext $repositoryRoot $ArtifactRun
+    try {
     if ($savedContext.version -ne $context.Version) { throw 'Selected ArtifactRun version differs from the release version.' }
     Write-Host "[2/2] 生成携带版、MSIX 和商店上传包" `
         -ForegroundColor Cyan
@@ -433,6 +434,7 @@ function Invoke-Package {
     Write-Host "全部发行包已生成：" -ForegroundColor Green
     Write-Host "  $($context.VersionDirectory)"
     return $true
+    } finally { Close-SnowDesktopPackagingContext $savedContext }
 }
 
 function Invoke-LocalSquash {
@@ -447,6 +449,7 @@ function Invoke-LocalSquash {
     if ($context.SourceDirty) {
         throw "Source working tree must be clean before squash merge.`n$($context.SourceStatus)"
     }
+    Write-Host "合并前请核对：版本分支的最终候选已完成全量自动测试、核心实机验收并记录结果。" -ForegroundColor Yellow
     Assert-ExplicitVersionConfirmation `
         -ActionName "本地压缩合并与创建标签" `
         -Context $context
@@ -816,7 +819,8 @@ function Invoke-Prepare {
     Write-Host ""
     Write-Host "发布准备完成：发行包已生成。" `
         -ForegroundColor Green
-    Write-Host "提交源码修改后，可执行本地 squash；测试 main 后再远程发布。"
+    Write-Host "请先在版本分支完成并记录最终候选全量测试和核心实机验收，再执行本地 squash。"
+    Write-Host "已有构建身份匹配时优先复用，合并后测试 main 再远程发布。"
 }
 
 function Invoke-CommandAction {

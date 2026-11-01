@@ -57,6 +57,7 @@ void PrintUsage()
            " [--appearance dark|light|glass-dark|glass-light|glass-transparent|acrylic-dark|acrylic-light]"
            " [--background image-file]"
            " [--transparent] [--content-only]"
+           " [--icon-preset none|default|transparent-glass|dark-glass|light-glass] [--icon-only]"
            " [--canvas-width N] [--canvas-height N] [--padding N]"
            " [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
@@ -429,7 +430,7 @@ int RunNativePreviewHost(const std::filesystem::path& host,
     int dpi, std::wstring_view locale, std::wstring_view appearance,
     const std::filesystem::path& backgroundImage,
     int canvasWidth, int canvasHeight, int padding, bool transparent,
-    bool contentOnly)
+    bool contentOnly, std::wstring_view iconPreset, bool iconOnly)
 {
     const auto resultPath = CreateResultPath();
     if (!resultPath)
@@ -456,6 +457,13 @@ int RunNativePreviewHost(const std::filesystem::path& host,
     append(transparent ? L"1" : L"0");
     append(contentOnly ? L"1" : L"0");
     append(resultPath->wstring());
+    if (iconPreset != L"none" || iconOnly)
+    {
+        append(L""); // Optional theme package/id remain absent.
+        append(L"");
+        append(iconPreset);
+        append(iconOnly ? L"1" : L"0");
+    }
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -597,11 +605,14 @@ int wmain(int argc, wchar_t** argv)
         std::filesystem::path explicitHost;
         bool transparent = false;
         bool contentOnly = false;
+        std::wstring iconPreset = L"none";
+        bool iconOnly = false;
         for (int index = 4; index < argc; ++index)
         {
             const std::wstring_view option(argv[index]);
             if ((option == L"--dpi" || option == L"--locale" ||
                     option == L"--appearance" ||
+                    option == L"--icon-preset" ||
                     option == L"--background" ||
                     option == L"--canvas-width" ||
                     option == L"--canvas-height" ||
@@ -648,6 +659,19 @@ int wmain(int argc, wchar_t** argv)
                 transparent = true;
             else if (option == L"--content-only")
                 contentOnly = true;
+            else if (option == L"--icon-only")
+                iconOnly = true;
+            else if (option == L"--icon-preset")
+            {
+                iconPreset = argv[++index];
+                if (iconPreset != L"none" && iconPreset != L"default" &&
+                    iconPreset != L"transparent-glass" && iconPreset != L"dark-glass" &&
+                    iconPreset != L"light-glass")
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"unsupported icon beautification preset\"}\n";
+                    return 2;
+                }
+            }
             else if (option == L"--canvas-width")
             {
                 if (!ParseInteger(argv[++index], 320, 8192, canvasWidth))
@@ -699,7 +723,7 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunNativePreviewHost(*host, argv[2], outputDirectory,
             dpi, locale, appearance, backgroundImage,
-            canvasWidth, canvasHeight, padding, transparent, contentOnly);
+            canvasWidth, canvasHeight, padding, transparent, contentOnly, iconPreset, iconOnly);
     }
 
     if (command == L"inspect")

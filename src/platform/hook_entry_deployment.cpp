@@ -27,6 +27,26 @@ struct Handle
     HANDLE value = INVALID_HANDLE_VALUE;
     ~Handle() { if (value != INVALID_HANDLE_VALUE && value) CloseHandle(value); }
 };
+std::filesystem::path PhysicalImagePath(const std::filesystem::path& image)
+{
+    Handle file;
+    file.value = CreateFileW(image.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file.value == INVALID_HANDLE_VALUE) return {};
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetFinalPathNameByHandleW(file.value, path.data(),
+        static_cast<DWORD>(path.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (!length) return {};
+    if (length >= path.size()) { SetLastError(ERROR_FILENAME_EXCED_RANGE); return {}; }
+    path.resize(length);
+    // Keep ordinary DOS/UNC spelling for existing User32 registrations. The
+    // handle, rather than the caller's merged MSIX view, identifies the file.
+    if (path.starts_with(L"\\\\?\\UNC\\")) path = L"\\\\" + path.substr(8);
+    else if (path.starts_with(L"\\\\?\\") && path.size() > 6 && path[5] == L':') path.erase(0, 4);
+    if (_wcsicmp(path.c_str(), image.c_str()) == 0) return image;
+    return path;
+}
 struct Publication
 {
     std::mutex mutex;
@@ -178,8 +198,14 @@ std::wstring Prepare(const std::filesystem::path& cacheRoot,
         if (!CopyFileW(entrySource.c_str(), target.c_str(), FALSE) && !compatible) return {};
     }
     if (!HasEntryAbi(target, machine)) { SetLastError(ERROR_BAD_EXE_FORMAT); return {}; }
-    if (!publication.Publish(payload, implementation)) return {};
+    // New AppData files may exist only in the package's redirected store.
+    // Both User32 and the target-side loader run outside that merged view.
+    const auto physicalEntry = PhysicalImagePath(target);
+    if (physicalEntry.empty()) return {};
+    const auto physicalImplementation = PhysicalImagePath(implementation);
+    if (physicalImplementation.empty()) return {};
+    if (!publication.Publish(payload, physicalImplementation)) return {};
     SetLastError(ERROR_SUCCESS);
-    return target.wstring();
+    return physicalEntry.wstring();
 }
 }

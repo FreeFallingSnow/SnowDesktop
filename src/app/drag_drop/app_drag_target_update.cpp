@@ -139,6 +139,26 @@ void DesktopApp::RebindDragSourceAfterRebuild()
     // with empty source bindings; the next DragOver will rebuild its target.
     if (oldSourceList.Empty()) return;
 
+    if (oldSourceList.hasSearchResults)
+    {
+        DragSourceList rebound = oldSourceList;
+        for (const auto& container : containers_)
+            if (auto* widget = dynamic_cast<WidgetContainer*>(container.get()); widget &&
+                widget->GetWidgetData()->id == oldSourceList.searchViewId) { source = widget; break; }
+        if (!source) { EndDragSession(); return; }
+        std::vector<Item*> retained;
+        for (auto& entry : rebound.entries)
+        {
+            if (!entry.retainedItem) { EndDragSession(); return; }
+            entry.item = entry.retainedItem.get();
+            if (!entry.desktopKey.empty()) entry.desktopIndex = FindItemIndexByKey(entry.desktopKey);
+            retained.push_back(entry.item);
+        }
+        rebound.BindRuntimeOrigin(source);
+        dragSession_.RebindSource(source, std::move(retained), std::move(rebound));
+        return;
+    }
+
     if (oldSourceList.SourceSurfaceKind() ==
         snowdesktop::slot_contract::SlotSurfaceKind::Dock)
     {

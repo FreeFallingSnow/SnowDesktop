@@ -388,9 +388,10 @@ std::filesystem::path GetLegacyLocalAppDataRoot()
 
 std::filesystem::path GetStableHookEntryRoot()
 {
-    // Every channel and portable data directory uses the same registered
-    // image paths for this user. Feature implementations stay in their own
-    // leased data stores and are selected by the host's process catalog.
+    // Every channel uses this stable logical root. Prepare resolves a package
+    // redirection to the physical image before registering it with User32.
+    // Feature implementations stay in their own leased data stores and are
+    // selected by the host's process catalog.
     const auto root = GetLegacyLocalAppDataRoot();
     if (root.empty()) { SetLastError(ERROR_PATH_NOT_FOUND); return {}; }
     return root / L"HookEntry";

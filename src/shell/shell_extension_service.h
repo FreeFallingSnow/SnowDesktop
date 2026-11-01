@@ -17,6 +17,8 @@ struct MenuView
     // Independent display queries, never serialized as a complete snapshot.
     std::vector<Request> sources;
     bool sourcesOnly = false;
+    // Host-only interim headers. Excluded from IPC, durable snapshots and proof.
+    std::optional<Reply> roots;
 };
 struct CatalogueView
 {
@@ -24,6 +26,8 @@ struct CatalogueView
     Request selection;
     MenuView menu;
     bool scanning = false;
+    // Installed extensions are metadata, not proof of observed commands.
+    Catalogue registrations;
 };
 // An injected query replaces only the supervised process boundary in scheduler
 // tests. Scheduling, de-duplication, persistence and publication remain real.
@@ -33,6 +37,7 @@ struct QueryWork
     std::function<void(UINT, POINT)> invoke;
     std::function<void(UINT, POINT, HWND)> invokeWithOwner;
     std::function<unsigned()> selectionContexts;
+    std::function<std::optional<Reply>()> pollRoots;
 };
 class MenuService
 {
@@ -93,6 +98,6 @@ template <> struct Fields<shell_extensions::MenuView>
 };
 template <> struct Fields<shell_extensions::CatalogueView>
 {
-    template<class T> static auto Tie(T &v) { return std::tie(v.catalogue, v.selection, v.menu, v.scanning); }
+    template<class T> static auto Tie(T &v) { return std::tie(v.catalogue, v.selection, v.menu, v.scanning, v.registrations); }
 };
 }

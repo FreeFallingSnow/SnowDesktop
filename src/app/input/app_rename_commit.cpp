@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "settings/control_native_widget_settings.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "rename_model_update.h"
 #include "drag_drop/drag_input_rules.h"
 
@@ -185,7 +187,14 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
     const size_t widgetIndex = renameController_.OwnerIndex();
     const size_t memberIndex = renameController_.Index();
     const bool dockPopupEntry = renameController_.IsDockFolderEntry();
+    const std::wstring searchPath = renameController_.IsSearchResult() ? renameController_.Path() : L"";
     renameController_.Reset();
+    if (!searchPath.empty())
+    {
+        if (!cancel && !newName.empty() && newName != PathFindFileNameW(searchPath.c_str()) &&
+            !QueueRename({searchPath, newName, {}})) MessageBeep(MB_ICONWARNING);
+        return;
+    }
 
     const FolderEntry* entry = nullptr;
     if (dockPopupEntry)
@@ -256,7 +265,18 @@ void DesktopApp::CommitRename(bool cancel)
 
     if (renameController_.IsWidget())
     {
-        if (!cancel && renameIndex < widgets_.size())
+        if (!cancel && renameIndex < widgets_.size() && snowdesktop::single_cell_widget::Supports(widgets_[renameIndex].type))
+        {
+            try
+            {
+                const auto state = CaptureNativeWidgetSettings(widgets_[renameIndex].id);
+                const auto patch = snowdesktop::control_settings::ParseNativeWidgetSettingsPatch(state,
+                    snowdesktop::control::Object({{"title", snowdesktop::control::String(WideToUtf8(newName))}}));
+                if (!ApplyNativeWidgetSettings(state, patch)) MessageBeep(MB_ICONWARNING);
+            }
+            catch (const snowdesktop::control::Error&) { MessageBeep(MB_ICONWARNING); }
+        }
+        else if (!cancel && renameIndex < widgets_.size())
         {
             if (!newName.empty() &&
                 newName != widgets_[renameIndex].title)

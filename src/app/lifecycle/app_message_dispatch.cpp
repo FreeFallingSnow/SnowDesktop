@@ -1,4 +1,6 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "app/dock/dock_input_diagnostics.h"
@@ -80,6 +82,7 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
         hwnd == dockShellHookWindow_)
@@ -113,6 +116,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(source))
                 KeepDockTopmostForAction(target->anchor, dockSettings_.summonOnAppMinimize);
         return 1;
+    }
+    if (msg >= 0xC000 && msg == snowdesktop::WidgetFolderSearchReadyMessage())
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        return 0;
     }
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
         return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
@@ -199,26 +208,31 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return MA_NOACTIVATE;
     case WM_SETCURSOR:
     {
+        if (nativeMenuSession_ && nativeMenuSession_->Preparing() && LOWORD(lp) == HTCLIENT)
+        {
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_APPSTARTING));
+            return TRUE;
+        }
         if (largeIconGesture_ && LOWORD(lp) == HTCLIENT)
         {
-            SetCursor(LoadCursorW(nullptr, largeIconGesture_->valid ? IDC_SIZENWSE : IDC_NO));
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, largeIconGesture_->valid ? IDC_SIZENWSE : IDC_NO));
             return TRUE;
         }
         if (LOWORD(lp) != HTCLIENT) break;
         POINT guidePoint{};
-        if (GetCursorPos(&guidePoint) && ScreenToClient(hwnd_, &guidePoint) && IsPointInUsageGuide(guidePoint))
+        if (snowdesktop::private_pointer::CursorPosition(&guidePoint) && ScreenToClient(hwnd_, &guidePoint) && IsPointInUsageGuide(guidePoint))
         {
-            SetCursor(LoadCursorW(nullptr, (PtInRect(&usageGuidePauseRect_, guidePoint) ||
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, (PtInRect(&usageGuidePauseRect_, guidePoint) ||
                 PtInRect(&usageGuideSettingsRect_, guidePoint) ||
                 PtInRect(&usageGuideOpenSettingsRect_, guidePoint)) ? IDC_ARROW : IDC_SIZEALL));
             return TRUE;
         }
         POINT handlePoint{};
-        if (GetCursorPos(&handlePoint) && ScreenToClient(hwnd_, &handlePoint) && UpdateWidgetHandleCursor(handlePoint)) return TRUE;
+        if (snowdesktop::private_pointer::CursorPosition(&handlePoint) && ScreenToClient(hwnd_, &handlePoint) && UpdateWidgetHandleCursor(handlePoint)) return TRUE;
         if (CanEditLargeIcons() && !HasActiveContextMenuSession())
         {
             POINT pointer{};
-            if (GetCursorPos(&pointer) && ScreenToClient(hwnd_, &pointer) && !IsPointOccludedByOpenPopup(pointer))
+            if (snowdesktop::private_pointer::CursorPosition(&pointer) && ScreenToClient(hwnd_, &pointer) && !IsPointOccludedByOpenPopup(pointer))
             {
                 const auto index = HitTestItem(pointer);
                 if (index >= 0 && static_cast<size_t>(index) < items_.size() && items_[index].largeIcon)
@@ -227,7 +241,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     geometry.bounds = items_[index].bounds; geometry.gridCell = items_[index].gridCell; geometry.showTitle = false;
                     if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
                     const auto handle = GetStandaloneWidgetResizeHandleRect(geometry);
-                    if (PtInRect(&handle, pointer)) { SetCursor(LoadCursorW(nullptr, IDC_SIZENWSE)); return TRUE; }
+                    if (PtInRect(&handle, pointer)) { snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZENWSE)); return TRUE; }
                 }
             }
         }
@@ -235,7 +249,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         bool cursorPointAvailable = false;
         bool pointInsideCollectionPopup = false;
         POINT point{};
-        if (!resizeCursor && GetCursorPos(&point) &&
+        if (!resizeCursor && snowdesktop::private_pointer::CursorPosition(&point) &&
             ScreenToClient(hwnd_, &point))
         {
             cursorPointAvailable = true;
@@ -276,7 +290,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         if (resizeCursor)
         {
-            SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
             return TRUE;
         }
         if (widgetEngine_ && cursorPointAvailable)
@@ -299,7 +313,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     else if (cursor == "crosshair") cursorId = IDC_CROSS;
                     if (cursorId)
                     {
-                        SetCursor(LoadCursorW(nullptr, cursorId));
+                        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, cursorId));
                         return TRUE;
                     }
                 }
@@ -325,7 +339,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 else if (cursor == "crosshair") cursorId = IDC_CROSS;
                 if (cursorId)
                 {
-                    SetCursor(LoadCursorW(nullptr, cursorId));
+                    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, cursorId));
                     return TRUE;
                 }
             }
@@ -416,11 +430,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool primaryButtonDown =
             latencySensitivePointerActive &&
             !middleButtonWidgetMove_ &&
-            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
+            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         const bool middleButtonDown =
             latencySensitivePointerActive &&
             middleButtonWidgetMove_ &&
-            (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
+            (snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
         const bool gestureButtonDown =
             snowdesktop::drag_input_rules::
                 IsPointerGestureButtonDown(
@@ -449,7 +463,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             // pointer; passive hover additionally verifies that the sample
             // still belongs to the paired desktop surface.
             POINT cursorScreen{};
-            if (!GetCursorPos(&cursorScreen))
+            if (!snowdesktop::private_pointer::CursorPosition(&cursorScreen))
             {
                 // A captured drag, marquee, or widget gesture must keep making
                 // progress even if the live sample fails transiently. Passive
@@ -463,7 +477,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 if (samplePassiveHover)
                 {
                     const HWND hitWindow =
-                        WindowFromPoint(cursorScreen);
+                        snowdesktop::private_pointer::WindowAtPoint(cursorScreen);
                     const bool pointerOnContentWindow =
                         IsSameWindowTree(hwnd_, hitWindow);
                     const bool pointerOnPairedBackdropWindow =
@@ -505,7 +519,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
         }
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
-            GetCapture() != hwnd_ && !mouseDown_ &&
+            snowdesktop::private_pointer::Capture() != hwnd_ && !mouseDown_ &&
             !middleButtonWidgetMove_ && !dragSession_.IsActive() &&
             widgetAction_ == WidgetAction::None &&
             !luaWidgetPanelMouseDown_)
@@ -536,10 +550,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // accepting the leave; external dialogs and unrelated SnowDesktop
         // popups remain genuine leave targets.
         POINT cursorScreen{};
-        if (GetCursorPos(&cursorScreen))
+        if (snowdesktop::private_pointer::CursorPosition(&cursorScreen))
         {
             const HWND hitWindow =
-                WindowFromPoint(cursorScreen);
+                snowdesktop::private_pointer::WindowAtPoint(cursorScreen);
             const bool pointerOnContentWindow =
                 IsSameWindowTree(hwnd_, hitWindow);
             const bool pointerOnPairedBackdropWindow =
@@ -595,7 +609,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (floatingDockVisible_)
         {
             POINT cursor{};
-            if (GetCursorPos(&cursor))
+            if (snowdesktop::private_pointer::CursorPosition(&cursor))
             {
                 ScreenToClient(hwnd_, &cursor);
                 if (IsPointInPromotedDockLayer(cursor))
@@ -610,7 +624,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
-            GetCapture() != hwnd_ && !mouseDown_ &&
+            snowdesktop::private_pointer::Capture() != hwnd_ && !mouseDown_ &&
             !dragSession_.IsActive() &&
             widgetAction_ == WidgetAction::None &&
             !luaWidgetPanelMouseDown_)
@@ -623,7 +637,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
-            GetCapture() != hwnd_ && !mouseDown_ &&
+            snowdesktop::private_pointer::Capture() != hwnd_ && !mouseDown_ &&
             !middleButtonWidgetMove_ &&
             widgetAction_ == WidgetAction::None)
             return 0;
@@ -1177,6 +1191,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return HandleInputMessage(hwnd, msg, wp, lp);
     case WM_SYSKEYDOWN:
     {
+        typeToSelectSuppressChar_ = TryHandleFilePreviewKey(wp,
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
+        if (typeToSelectSuppressChar_) { typeToSelectSession_.Reset(); return 0; }
         if (wp == VK_RETURN && OnKeyDown(wp,
                 (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0))
             return 0;
@@ -1209,6 +1226,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SYSCHAR:
     {
+        if (typeToSelectSuppressChar_) return 0;
         if (wp > 0x7f) break;
         const char key = static_cast<char>(wp);
         if (!((key >= 'A' && key <= 'Z') ||
@@ -1260,7 +1278,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_KILLFOCUS:
         ClearSelectionForExternalWindow(
-            wp ? reinterpret_cast<HWND>(wp) : GetForegroundWindow());
+            wp ? reinterpret_cast<HWND>(wp) : snowdesktop::private_pointer::ForegroundWindow());
         typeToSelectSession_.Reset();
         typeToSelectImeComposing_ = false;
         typeToSelectSuppressChar_ = false;
@@ -1279,7 +1297,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             usageGuidePressedButton_ = 0;
             usageGuidePlacement_.EndDrag();
-            if (msg == WM_CANCELMODE && GetCapture() == hwnd_) ReleaseCapture();
+            if (msg == WM_CANCELMODE && snowdesktop::private_pointer::Capture() == hwnd_) snowdesktop::private_pointer::ReleasePointerCapture();
         }
         if (largeIconGesture_ && (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
             CancelLargeIconGesture();
@@ -1415,7 +1433,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 static_cast<std::size_t>(lp)))
             return 0;
         renameCommitPending_ = false;
-        if (GetFocus() != renameInputWindow_)
+        if (snowdesktop::private_pointer::FocusWindow() != renameInputWindow_)
             CommitRename(wp != 0);
         return 0;
     case kShellFileOperationCompletedMessage:

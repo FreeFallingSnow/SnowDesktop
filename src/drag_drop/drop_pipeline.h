@@ -15,7 +15,7 @@ using Completion = std::function<void(bool)>;
 
 inline bool AutoCollectSource(const DragSourceList& sources, const std::vector<DesktopWidget>& widgets)
 {
-    if (!sources.hasOriginWidget || sources.originWidgetType != DesktopWidgetType::FileCategories) return false;
+    if (sources.hasSearchResults || !sources.hasOriginWidget || sources.originWidgetType != DesktopWidgetType::FileCategories) return false;
     const auto widget = std::find_if(widgets.begin(), widgets.end(),
         [&](const auto& candidate) { return candidate.id == sources.originWidgetId; });
     return widget != widgets.end() && widget->autoCollect;

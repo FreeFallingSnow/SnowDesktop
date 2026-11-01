@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/widget_folder_search.h"
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/clipboard_file_operation.h"
 
@@ -76,6 +77,36 @@ std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstW
         return paths;
     }
 
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get()); view && view->UsesFolderSearch())
+        {
+            std::vector<std::wstring> paths;
+            for (const auto& row : view->folderSearch_->rows)
+                if (row.recursive && row.recursive->selected) paths.push_back(row.recursive->fullPath);
+            if (paths.empty()) continue;
+            // Mixed selection is one file operation, including direct desktop
+            // files and mapped entries alongside runtime-only descendants.
+            for (size_t index : view->FolderSearchSelectedIndices())
+                if (const auto& row = view->folderSearch_->rows[index]; !row.recursive)
+                {
+                    if (!row.desktopKey.empty())
+                    {
+                        const size_t item = FindItemIndexByKey(row.desktopKey);
+                        if (item < items_.size() && items_[item].desktopIconClsid.empty() && !items_[item].parsingName.empty())
+                            paths.push_back(items_[item].parsingName);
+                    }
+                    else
+                    {
+                        const size_t source = FindWidgetIndexById(row.sourceId);
+                        if (source < widgets_.size() && row.folderIndex < widgets_[source].folderEntries.size())
+                            paths.push_back(widgets_[source].folderEntries[row.folderIndex].fullPath);
+                    }
+                }
+            std::unordered_set<std::wstring> seen;
+            std::erase_if(paths, [&](const auto& path) { return !seen.insert(ToUpperInvariant(path)).second; });
+            if (firstWidgetIndex && view->GetWidgetData()) *firstWidgetIndex = FindWidgetIndexById(view->GetWidgetData()->id);
+            return paths;
+        }
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         const auto& widget = widgets_[i];
@@ -304,6 +335,15 @@ bool DesktopApp::PasteClipboardToFolderPath(
             FILE_ATTRIBUTE_DIRECTORY) == 0)
         return false;
 
+    // Clipboard providers may enter their own COM/Shell loop while rendering
+    // data. Keep native hover animation live until negotiation has returned.
+    // The caller may pass a widget-owned path; callbacks can rebuild widgets.
+    const std::wstring destinationPath = targetFolderPath;
+    snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+        uiAnimationScheduler_, [this] {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
     ComPtr<IDataObject> clipObj;
     if (FAILED(OleGetClipboard(&clipObj)) || !clipObj)
         return false;
@@ -371,7 +411,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
         const bool link = action == DropAction::Link;
         const DWORD effect = move ? DROPEFFECT_MOVE :
             link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
-        return QueueAsyncShellDrop(clipObj.Get(), targetFolderPath,
+        return QueueAsyncShellDrop(clipObj.Get(), destinationPath,
             snowdesktop::ClipboardShellDropKeyState(effect), {}, effect,
             std::move(operationCompletion), {}, true);
     }
@@ -379,7 +419,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
     if (paths.empty()) return false;
     if (action == DropAction::Move)
     {
-        snowdesktop::RemoveClipboardMoveNoOps(paths, targetFolderPath);
+        snowdesktop::RemoveClipboardMoveNoOps(paths, destinationPath);
         if (paths.empty())
         {
             operationCompletion(true);
@@ -401,7 +441,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
     }
 
     return MaterializeFilesToFolder(
-        sourceList, targetFolderPath,
+        sourceList, destinationPath,
         action, std::move(operationCompletion));
 }
 
@@ -426,6 +466,13 @@ bool DesktopApp::PasteClipboardToDesktop()
         info.hwnd = ShellDialogOwnerHwnd();
         info.lpVerb = "paste";
         info.nShow = SW_SHOWNORMAL;
+        // Namespace/clipboard fallbacks can keep a copy progress dialog in
+        // this STA until the Shell verb returns, just like a native menu verb.
+        snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+            uiAnimationScheduler_, [this] {
+                FlushPendingCompositionCommit();
+                FlushPendingQuickNavigationCompositionCommit();
+            });
         SafeInvokeCommand(bgMenu.Get(), &info);
         RequestShellRefresh();
     }

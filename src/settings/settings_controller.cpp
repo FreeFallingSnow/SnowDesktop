@@ -184,7 +184,7 @@ SettingsActionResult SettingsController::Open(SettingsRoute route)
             return result;
     }
 
-    if (route.page == SettingsPage::RuntimeModules && !values_.general.showAdvancedSettings)
+    if ((route.page == SettingsPage::RuntimeModules || route.page == SettingsPage::AgentOperations) && !values_.general.showAdvancedSettings)
         route = SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings");
     const bool openingSession = !sessionActive_;
     sessionActive_ = true;
@@ -310,13 +310,14 @@ void SettingsController::UpdateGeneral(
 {
     if (externalReplacementPending_) return;
     NormalizeGeneralAnimationSettings(settings);
+    settings.desktopIdleHideDelaySeconds = desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds);
     NormalizeStatusBarSettings(settings.statusBar);
     calendar::Normalize(settings.calendarDisplay);
     shell_extensions::Normalize(settings.shellExtensions);
     settings.diagnosticLogModules = diagnostics::NormalizeLogModules(settings.diagnosticLogModules);
     diagnostics::SetLogModules(settings.diagnosticLogModules);
     values_.general = std::move(settings);
-    if (!values_.general.showAdvancedSettings && route_.page == SettingsPage::RuntimeModules)
+    if (!values_.general.showAdvancedSettings && (route_.page == SettingsPage::RuntimeModules || route_.page == SettingsPage::AgentOperations))
         route_ = SettingsRoute::ForPage(SettingsPage::About, "about.showAdvancedSettings");
     MarkChanged(SettingsDomain::General, mode);
 }

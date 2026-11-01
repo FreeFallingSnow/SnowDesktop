@@ -5,6 +5,7 @@
 #include "common/l10n.h"
 #include "launcher_messages.h"
 #include "common/language_fallback.h"
+#include "ui/render/ui_animation_scheduler.h"
 #include <deque>
 #include <iterator>
 #include <vector>
@@ -14,6 +15,26 @@ namespace snowdesktop::operation_feedback
 namespace
 {
 constexpr UINT kDeliver = WM_APP + 1;
+struct DialogPresentation
+{
+    UiAnimationScheduler* animations = nullptr;
+    std::function<void()> flush;
+    DialogPresentation* previous = nullptr;
+};
+thread_local DialogPresentation* dialogPresentation = nullptr;
+
+std::unique_ptr<UiAnimationScheduler::MessagePumpScope> BeginDialogPresentation()
+{
+    if (!dialogPresentation || !dialogPresentation->animations ||
+        !dialogPresentation->animations->WaitHandle()) return {};
+    auto pump = std::make_unique<UiAnimationScheduler::MessagePumpScope>(
+        *dialogPresentation->animations, dialogPresentation->flush);
+    if (!pump->IsAvailable())
+        WriteDiagnosticLogEntry(L"Operation dialog animation pump unavailable",
+            DiagnosticLogLevel::Warning);
+    return pump;
+}
+
 std::wstring Describe(const Failure& failure)
 {
     std::wstring message = Locale::Instance().TrW(failure.messageKey.c_str());
@@ -51,6 +72,9 @@ static void ShowImpl(const Failure& failure, bool log)
         const auto message = Describe(failure);
         if (log) WriteDiagnosticLogEntry(message.c_str(), failure.warning
             ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Error);
+        // The native dialog pumps HWND messages, but not the host's waitable
+        // animation handle. Keep the bridge alive across TaskDialog fallback.
+        const auto presentation = BeginDialogPresentation();
         if (failure.stillRelevant)
         {
             TASKDIALOGCONFIG dialog{sizeof(dialog)};
@@ -89,6 +113,7 @@ RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t*
     struct Reset { bool& value; ~Reset() { value = false; } } reset{choosing};
     const auto message = Describe(failure);
     WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Warning);
+    const auto presentation = BeginDialogPresentation();
     const TASKDIALOG_BUTTON buttons[] = {
         { IDRETRY, _LW("app.operation.retry") },
         { IDCONTINUE, continueLabel },
@@ -113,6 +138,7 @@ RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t*
 
 struct Session::State
 {
+    DialogPresentation presentation;
     std::mutex mutex;
     std::deque<Failure> pending;
     HWND window = nullptr;
@@ -172,8 +198,11 @@ struct Session::State
     }
 };
 
-Session::Session() : state_(std::make_shared<State>())
+Session::Session(UiAnimationScheduler* animations,
+    std::function<void()> flushPresentation) : state_(std::make_shared<State>())
 {
+    state_->presentation = {animations, std::move(flushPresentation), dialogPresentation};
+    dialogPresentation = &state_->presentation;
     WNDCLASSW type{};
     type.lpfnWndProc = State::WindowProc;
     type.hInstance = GetModuleHandleW(nullptr);
@@ -193,5 +222,6 @@ Session::~Session()
     SetReporter({});
     { std::lock_guard lock(state_->mutex); state_->closed = true; }
     if (state_->window) DestroyWindow(state_->window);
+    dialogPresentation = state_->presentation.previous;
 }
 }

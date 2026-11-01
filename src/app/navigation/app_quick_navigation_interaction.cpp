@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "shell/shell_call_diagnostics.h"
@@ -99,7 +100,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
     SendMessageW(
         renameInputWindow_, EM_SETSEL,
         0, RenameInitialSelectionEnd(name, filePath, isDirectory));
-    SetFocus(renameInputWindow_);
+    snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
     InvalidateQuickNavigationWindow();
 }
 
@@ -897,7 +898,7 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
-    SetForegroundWindow(owner);
+    snowdesktop::private_pointer::SetInputForeground(owner);
     const UINT command = ShowModernMenu(menu, screenPoint, owner);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -989,7 +990,7 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
-    SetForegroundWindow(owner);
+    snowdesktop::private_pointer::SetInputForeground(owner);
     const UINT command = ShowModernMenu(menu, screenPoint, owner);
     DestroyMenu(menu);
     ClearMenuIcons();

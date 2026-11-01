@@ -267,7 +267,7 @@ bool IsUsableControllerSnapshot(
 bool IsWidgetsBackendPage(SettingsPage page) noexcept
 {
     return page == SettingsPage::Widgets ||
-        page == SettingsPage::DeveloperTools;
+        page == SettingsPage::DeveloperTools || page == SettingsPage::AgentOperations;
 }
 
 std::optional<std::filesystem::path> DialogResultPath(
@@ -1101,7 +1101,8 @@ struct SettingsWindowHost::Impl
                 advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings(),
                 snapshot ? snapshot->values.personalization.contextMenuStyle : 0,
                 snapshot && ResolveBarSettingsAvailability(snapshot->values.general.dockEnabled,
-                    snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
+                    snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
+                options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable);
         }
         if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
             snapshot->values.personalization.contextMenuStyle == 6))
@@ -1110,6 +1111,9 @@ struct SettingsWindowHost::Impl
                 return descriptor.focusId == "contextMenu.expandQuickActions";
             });
         }
+        const bool steamBridgeAvailable = options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable;
+        for (auto& descriptor : input.staticSettings)
+            if (descriptor.focusId == "general.steamRunningStatus") descriptor.visible = steamBridgeAvailable;
         if (!advancedFeaturesVisible)
         {
             for (auto& descriptor : input.staticSettings)
@@ -1363,6 +1367,20 @@ struct SettingsWindowHost::Impl
             updateAvailable = false;
         }
         shell->SetAgentSkillUpdateAvailable(updateAvailable);
+        bool controlUpdateAvailable = false;
+        try
+        {
+            const auto source = WidgetEngine::GetWidgetPackagePaths().builtin / L"snowdesktop-control";
+            for (auto target : snowdesktop::steam_bridge::DefaultAgentSkillTargets())
+            {
+                std::string error;
+                const auto status = snowdesktop::steam_bridge::InspectAgentSkill(source, {}, std::move(target), error,
+                    snowdesktop::steam_bridge::AgentSkillPackage::Control);
+                controlUpdateAvailable |= status.state == snowdesktop::steam_bridge::SkillInstallState::UpdateAvailable;
+            }
+        }
+        catch (...) { controlUpdateAvailable = false; }
+        shell->SetControlSkillUpdateAvailable(controlUpdateAvailable);
     }
 
     bool SetWidgetDeveloperToolsEnabled(std::uint64_t generation, bool enabled)
@@ -2490,6 +2508,47 @@ struct SettingsWindowHost::Impl
         homeAbout.setDebugProfileEnabled = [invokeDebugProfile](std::uint64_t generation, bool enabled) {
             invokeDebugProfile(generation, SettingsHostActions::Action::SetDebugProfileEnabled, enabled, {});
         };
+        homeAbout.selectDebugEnvironment = [invokeDebugProfile](std::uint64_t generation, std::wstring id) {
+            invokeDebugProfile(generation, SettingsHostActions::Action::SelectDebugEnvironment, false, std::move(id));
+        };
+        const auto editEnvironmentName = [weak, invokeDebugProfile](std::uint64_t generation, bool create) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->shell || !state->owner->DebugPageVisible() ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            auto& owner = *state->owner;
+            if (!owner.options.homeAboutStatus) return;
+            const auto status = owner.options.homeAboutStatus(generation, owner.controller->Snapshot()->revision);
+            const auto expectedId = status.debugEnvironmentId.value_or(L"");
+            if (!create && expectedId.empty()) return;
+            shell_impl::SettingsShellDialogRequest request;
+            request.generation = generation;
+            request.title = owner.L(create ? "settings.debug.profile.create" : "settings.debug.profile.rename");
+            request.message = owner.L("settings.debug.profile.nameHint");
+            request.primaryButtonText = request.title;
+            request.closeButtonText = owner.L("settings.dialog.cancel");
+            shell_impl::SettingsShellDialogRequest::TextInput input;
+            input.label = owner.L("settings.debug.profile.name");
+            input.value = create ? L"" : status.debugEnvironmentName.value_or(L"");
+            if (!create && input.value.empty()) input.value = owner.L("settings.debug.profile.defaultName");
+            input.completed = [weak, invokeDebugProfile, generation, create, expectedId](std::wstring name) {
+                const auto current = weak.lock();
+                if (!current || !current->alive.load() || !current->owner || !current->owner->controller ||
+                    !current->owner->DebugPageVisible() || !current->owner->controller->IsGenerationCurrent(generation)) return;
+                if (!create)
+                {
+                    if (!current->owner->options.homeAboutStatus) return;
+                    const auto latest = current->owner->options.homeAboutStatus(generation, current->owner->controller->Snapshot()->revision);
+                    if (latest.debugEnvironmentId.value_or(L"") != expectedId) return;
+                }
+                invokeDebugProfile(generation, create ? SettingsHostActions::Action::CreateDebugEnvironment
+                    : SettingsHostActions::Action::RenameDebugEnvironment, false, std::move(name));
+            };
+            request.textInput = std::move(input);
+            owner.shell->ShowConfirmation(std::move(request), [](bool) {});
+        };
+        homeAbout.createDebugEnvironment = [editEnvironmentName](std::uint64_t generation) { editEnvironmentName(generation, true); };
+        homeAbout.renameDebugEnvironment = [editEnvironmentName](std::uint64_t generation) { editEnvironmentName(generation, false); };
         homeAbout.chooseDebugDesktop = [weak, invokeDebugProfile](std::uint64_t generation) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
@@ -2508,7 +2567,9 @@ struct SettingsWindowHost::Impl
             const auto status = owner.options.homeAboutStatus(generation, owner.controller->Snapshot()->revision);
             if (!status.debugDataDirectory || status.debugDataDirectory->empty()) return;
             const auto root = std::filesystem::path(*status.debugDataDirectory).parent_path();
+            const auto environmentName = status.debugEnvironmentName.value_or(L"");
             const auto detail = owner.L("settings.debug.profile.clearConfirm") + L"\n\n" +
+                (environmentName.empty() ? owner.L("settings.debug.profile.defaultName") : environmentName) + L"\n" +
                 *status.debugDataDirectory + L"\n" + (root / L"FullBackups").wstring() +
                 L"\n" + (root / L"TempState").wstring() + L"\n" + (root / L"PrivateState").wstring();
             owner.ShowGenerationConfirmation(generation, owner.L("settings.debug.profile.clear"), detail,
@@ -2705,6 +2766,14 @@ struct SettingsWindowHost::Impl
         if (!controller->FlushAll().Succeeded())
         { error = "writeFailed"; feedback(); return result; }
         if (!themes::Load(themes::LibraryPath(), result.library, error)) { feedback(); return result; }
+        for (const auto& [id, theme] : result.library.themes)
+        {
+            (void)theme;
+            auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+            if (url.empty()) for (const auto& [item, origin] : result.library.workshop)
+                if (origin.ids.contains(id)) { url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item; break; }
+            if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
+        }
         themes::ReconcileReferences(result.library, current->values);
         if (request.command == ThemeLibraryCommand::Export)
         {
@@ -2736,6 +2805,22 @@ struct SettingsWindowHost::Impl
             result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
                 themes::ReconcileReferences(library, current->values);
                 auto next = current->values;
+                if (!request.replacement.empty())
+                {
+                    const auto source = themes::Find(library.themes, request.replacement);
+                    const auto destination = themes::Find(library.themes, request.id);
+                    if (!source || !destination ||
+                        theme_controls::VersionCounterpart(library, result.publishedUrls, *source) != request.id ||
+                        theme_controls::VersionCounterpart(library, result.publishedUrls, *destination) != request.replacement)
+                    { detail = "invalidSelection"; return false; }
+                    std::vector<std::string> targets;
+                    if (!themes::SwitchAppliedVersion(library, request.replacement, request.id, next, targets, detail)) return false;
+                    if (targets.empty()) return true;
+                    settingsTouched = true;
+                    if (apply(next).Succeeded()) { result.updatedIds.push_back(request.id); return true; }
+                    detail = "writeFailed";
+                    return false;
+                }
                 if (!themes::ApplyTarget(library, request.target, request.id, next, detail)) return false;
                 const auto theme = themes::Resolve(library.themes, request.id);
                 if (request.target == "global" && !themes::FullScope(theme->scopes))
@@ -2778,9 +2863,10 @@ struct SettingsWindowHost::Impl
         if (result.succeeded && request.command == ThemeLibraryCommand::Update)
         {
             auto next = current->values;
+            auto appliedReferences = result.library.references;
             std::vector<std::string> targets;
             for (const auto& changedId : result.updatedIds)
-                for (const auto& target : themes::ApplySavedUpdate(result.library, changedId, next, error))
+                for (const auto& target : themes::ApplySavedUpdate(result.library, changedId, next, error, &appliedReferences))
                     if (std::find(targets.begin(), targets.end(), target) == targets.end()) targets.push_back(target);
             bool applied = true;
             if (!targets.empty())
@@ -2826,6 +2912,15 @@ struct SettingsWindowHost::Impl
                         const auto found = library.references.find(target);
                         if (found == library.references.end() || found->second.id.empty()) continue;
                         const auto reference = found->second;
+                        if (target == "global" && std::find(result.updatedIds.begin(), result.updatedIds.end(),
+                                reference.id) == result.updatedIds.end())
+                        {
+                            const auto staged = appliedReferences.find(target);
+                            if (staged != appliedReferences.end() && !staged->second.id.empty() &&
+                                staged->second.id == reference.id)
+                                found->second = staged->second;
+                            continue;
+                        }
                         if (!themes::Select(library, target, reference.id, reference.kind, reference.scope, detail)) return false;
                     }
                     return true;

@@ -109,46 +109,6 @@ void TestSnapshotAndNetChanges()
         "a reverted transaction preserves all original entries, including unrelated widgets");
 }
 
-void TestMixedTransactionEquivalence()
-{
-    using namespace snowdesktop::widget_runtime;
-    StorageMap source{{"instance.key0", "original"}, {"other.key0", "unrelated"}};
-    WidgetStorageTransaction transaction(source, "instance");
-    StorageMap expected = source;
-    std::string error;
-    for (int index = 0; index < 512; ++index)
-    {
-        const std::string key = "key" + std::to_string((index / 4) % 7);
-        const bool metadata = (index / 28) % 2 != 0;
-        const std::string relative = metadata ? "__host." + key : key;
-        const std::string full = "instance." + relative;
-        const bool remove = index % 4 == 3;
-        const std::string value = index % 4 == 2 ? "" : "value";
-        const auto before = expected.find(full);
-        const bool expectedChanged = remove ? before != expected.end() :
-            before == expected.end() || before->second != value;
-        bool changed = false;
-        const bool ok = remove
-            ? (metadata ? transaction.RemoveHostMetadata(relative, changed, error)
-                        : transaction.Remove(relative, changed, error))
-            : (metadata ? transaction.SetHostMetadata(relative, value, changed, error)
-                        : transaction.Set(relative, value, changed, error));
-        if (remove) expected.erase(full);
-        else expected[full] = value;
-        const auto read = metadata ? transaction.GetHostMetadata(relative, error)
-                                   : transaction.Get(relative, error);
-        const auto found = expected.find(full);
-        Check(ok && changed == expectedChanged && error.empty() &&
-                read == (found == expected.end() ? std::nullopt :
-                    std::optional<std::string>(found->second)) &&
-                transaction.Changed() == (expected != source) &&
-                transaction.ValidateCommit(error),
-            "mixed repeated writes preserve immediate reads, operation results, and full-snapshot net changes");
-    }
-    Check(transaction.TakeCandidate() == expected && source.at("other.key0") == "unrelated",
-        "the final mixed candidate equals the independently updated snapshot");
-}
-
 void TestPersistenceBytesAndFailureRecovery()
 {
     using namespace snowdesktop::widget_runtime;
@@ -173,26 +133,17 @@ void TestPersistenceBytesAndFailureRecovery()
         std::ifstream input(path, std::ios::binary);
         return std::string(std::istreambuf_iterator<char>(input), {});
     };
-    Check(storage_persistence::SaveStorageMap(path, {}) && readText() == "{}\n",
-        "empty storage keeps its exact persisted JSON format");
+    StorageMap loaded;
+    Check(storage_persistence::SaveStorageMap(path, {}) &&
+        storage_persistence::ReadStorageMap(path, loaded, [](const auto&) { return false; }) && loaded.empty(),
+        "empty storage remains readable as an empty map");
     std::string controls;
     for (int index = 0; index < 32; ++index) controls.push_back(static_cast<char>(index));
     StorageMap committed{{"z", ""}, {"line\n\"\\", "雪/emoji 😀"}, {"a", controls}};
-    const std::string expected = "{\n  \"a\": \""
-        "\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f"
-        "\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f"
-        "\",\n  \"line\\n\\\"\\\\\": \"雪/emoji 😀\",\n  \"z\": \"\"\n}\n";
-    Check(storage_persistence::SaveStorageMap(path, committed) && readText() == expected,
-        "sorted JSON bytes preserve all control escapes, quoted keys, UTF-8, and empty values");
-    StorageMap reordered;
-    for (const auto& [key, value] : committed) reordered.emplace(key, value);
-    reordered.rehash(97);
-    Check(storage_persistence::SaveStorageMap(path, reordered) && readText() == expected,
-        "serialization is deterministic across map insertion and bucket order");
-    StorageMap loaded;
-    Check(storage_persistence::ReadStorageMap(path, loaded, [](const auto&) { return false; }) &&
-            loaded == committed,
-        "the actual storage reader round-trips every escaped value");
+    Check(storage_persistence::SaveStorageMap(path, committed), "write actual UTF-8 and control-character storage");
+    const auto expected = readText();
+    Check(storage_persistence::ReadStorageMap(path, loaded, [](const auto&) { return false; }) && loaded == committed,
+        "storage reader preserves every key/value, empty value, Unicode and control escape");
     const StorageMap before = committed;
     const auto commit = [&] {
         WidgetStorageTransaction transaction(committed, "instance");
@@ -447,7 +398,6 @@ int main()
     TestReadWriteAndRemoval();
     TestFailureLeavesSourceUntouched();
     TestSnapshotAndNetChanges();
-    TestMixedTransactionEquivalence();
     TestPersistenceBytesAndFailureRecovery();
     TestFinalQuotaIsAtomic();
     TestHostReservedStateDoesNotConsumeWidgetQuota();

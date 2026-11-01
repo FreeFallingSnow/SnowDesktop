@@ -52,6 +52,30 @@ return {
         assert(cells[3].row == 2 and cells[3].column == 0)
         assert(cells[4].row == 2 and cells[4].column == 2)
     end,
+    ["dragging a visible card lands on the requested index and keeps hidden cards"] = function()
+        local cards = { { id = "cpu" }, { id = "network" }, { id = "disk_io" } }
+        local function visible(id)
+            return id == "cpu" or id == "network" or id == "disk_io"
+        end
+        local saved = preferences.moveTo(nil, "disk_io", 1, visible)
+        assert(ids(preferences.arrange(cards, saved)) == "disk_io,cpu,network")
+        assert(preferences.order(saved)[2] == "memory")
+        assert(preferences.moveTo(saved, "disk_io", 1, visible) == nil)
+        assert(preferences.moveTo(saved, "disk_io", 0, visible) == nil)
+        assert(preferences.moveTo(saved, "disk_io", 4, visible) == nil)
+        saved = preferences.moveTo(saved, "cpu", 3, visible)
+        assert(ids(preferences.arrange(cards, saved)) == "disk_io,network,cpu")
+        assert(preferences.orientation(nil) == "vertical")
+        assert(preferences.orientation("row") == "horizontal")
+        assert(preferences.orientation("horizontal") == "horizontal")
+        assert(preferences.orientation("grid") == "vertical")
+        local shown = { { id = "cpu" }, { id = "memory" }, { id = "gpu" } }
+        local preview = preferences.preview(shown, "cpu", 3)
+        assert(shown[1].id == "cpu" and preview[1].id == "memory" and
+            preview[3].id == "cpu")
+        assert(preferences.preview(shown, "cpu", 1) == shown)
+        assert(preferences.preview(shown, "missing", 2) == shown)
+    end,
     ["font preference accepts both storage forms and bounds invalid persisted values"] = function()
         assert(preferences.fontScale(nil) == 1)
         assert(preferences.fontScale("125") == 1.25)

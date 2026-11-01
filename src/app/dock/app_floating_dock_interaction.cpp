@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "dock_platform_helpers.h"
@@ -53,11 +54,11 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         floatingDockPromotionInputToken_ = uiAnimationScheduler_.ScheduleInterval(50,
             [this](snowdesktop::UiScheduleToken token) {
                 if (token != floatingDockPromotionInputToken_) return;
-                (void)ObserveDockPromotionActivation(GetForegroundWindow());
+                (void)ObserveDockPromotionActivation(snowdesktop::private_pointer::ForegroundWindow());
                 RefreshFloatingDockPromotionInputs();
             });
 
-    const HWND foreground = GetForegroundWindow();
+    const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
     DWORD process = 0;
     if (foreground) GetWindowThreadProcessId(foreground, &process);
     const bool fullscreen = snowdesktop::fullscreen::ObserveForeground().has_value();
@@ -111,7 +112,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     auto* visibleHost = FindPersistentDockHost(hostWindow);
     if (borrowForeground && visibleHost && visibleHost->active && visibleHost->frameReady &&
         IsWindowVisible(hostWindow) && snowdesktop::popup_window_pair_z_order::IsTopmost(hostWindow) &&
-        GetForegroundWindow() == foreground)
+        snowdesktop::private_pointer::ForegroundWindow() == foreground)
     {
         // A registered hotkey supplies activation permission. A polled gesture
         // may not; allow one more request only when new native Dock input arrives.
@@ -127,7 +128,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
         BeginFloatingDockKeyboardSession(false);
         if (auto* current = FindPersistentDockHost(hostWindow))
             current->promotionInputBorrowedFocus = floatingDockKeyboardSessionActive_ && borrowSession;
-        const HWND observed = GetForegroundWindow();
+        const HWND observed = snowdesktop::private_pointer::ForegroundWindow();
         DWORD observedProcess = 0;
         if (observed) GetWindowThreadProcessId(observed, &observedProcess);
         if (auto* current = FindPersistentDockHost(hostWindow))
@@ -149,7 +150,7 @@ void DesktopApp::RefreshFloatingDockPromotionInput(PersistentDockHost& host, boo
     }
     if (auto* current = FindPersistentDockHost(hostWindow))
     {
-        const HWND actualForeground = GetForegroundWindow();
+        const HWND actualForeground = snowdesktop::private_pointer::ForegroundWindow();
         DWORD actualProcess = 0;
         if (actualForeground) GetWindowThreadProcessId(actualForeground, &actualProcess);
         if (floatingDockKeyboardSessionActive_ && actualForeground == floatingDockInputHwnd_)
@@ -222,7 +223,7 @@ void DesktopApp::ShowFloatingDock(
     if (!targetMonitor)
     {
         POINT cursorScreen{};
-        GetCursorPos(&cursorScreen);
+        snowdesktop::private_pointer::CursorPosition(&cursorScreen);
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
     }
@@ -248,65 +249,73 @@ void DesktopApp::ShowFloatingDock(
 
     const bool hostWasVisible =
         IsWindowVisible(floatingDockHost_->hwnd) != FALSE;
+    const bool hostWasPromoted = floatingDockHost_->promoted;
     // Each monitor owns its persistent visual independently. Summoning this
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
-    floatingDockHost_->promoted = true;
-    floatingDockHost_->promotionInputVisible = false;
-    floatingDockHost_->windowActionPromotion.Retain();
-    floatingDockHost_->mergedCloseAfterInteraction = false;
-    floatingDockHost_->passivelyRevealed = false;
-    floatingDockHost_->passiveRevealTick = 0;
-    floatingDockHost_->passiveLeaveStartTick = 0;
-    RefreshFloatingDockVisibilityState();
-    if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
-    // Rebuild shared chrome and hit regions before the first revealed frame.
-    UpdateFloatingDockWindowBounds(*floatingDockHost_, false, true);
-    floatingDockLastPointerPresentTick_ = 0;
     bool revealFramePrepared = false;
-    if (!hostWasVisible)
     {
-        POINT cursorDesktop{};
-        if (GetCursorPos(&cursorDesktop))
+        // Layout, status-bar refresh and renderer callbacks can all revisit
+        // visibility/layer policy. Keep the existing native band until the
+        // complete current frame is committed, including a visible idle Dock.
+        struct RevealPreparation
         {
-            if (hwnd_ && IsWindow(hwnd_))
-                ScreenToClient(hwnd_, &cursorDesktop);
-            else
+            bool& pending;
+            bool previous;
+            explicit RevealPreparation(bool& value) : pending(value), previous(value)
+            { pending = true; }
+            ~RevealPreparation() { pending = previous; }
+        } preparation(floatingDockHost_->revealPending);
+        ImmediateDockPaintDeferral defer(floatingDockHost_->immediatePaintDeferred);
+        floatingDockHost_->promoted = true;
+        floatingDockHost_->promotionInputVisible = false;
+        floatingDockHost_->windowActionPromotion.Retain();
+        floatingDockHost_->mergedCloseAfterInteraction = false;
+        floatingDockHost_->passivelyRevealed = false;
+        floatingDockHost_->passiveRevealTick = 0;
+        floatingDockHost_->passiveLeaveStartTick = 0;
+        if (!hostWasVisible)
+        {
+            POINT cursorDesktop{};
+            if (snowdesktop::private_pointer::CursorPosition(&cursorDesktop))
             {
-                cursorDesktop.x -= virtualLeft_;
-                cursorDesktop.y -= virtualTop_;
+                if (hwnd_ && IsWindow(hwnd_))
+                    ScreenToClient(hwnd_, &cursorDesktop);
+                else
+                {
+                    cursorDesktop.x -= virtualLeft_;
+                    cursorDesktop.y -= virtualTop_;
+                }
+                lastMousePoint_ = cursorDesktop;
             }
-            lastMousePoint_ = cursorDesktop;
         }
-        // A summon-only Host is fully hidden between sessions. Prepare and
-        // commit its current Dock/backdrop frame before showing the pair so
-        // DWM cannot expose the surface retained from the previous session.
+        RefreshFloatingDockVisibilityState();
+        if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
+        // Geometry and pixels use the same pointer sample on hidden reveals.
+        UpdateFloatingDockWindowBounds(*floatingDockHost_, false, true);
+        floatingDockLastPointerPresentTick_ = 0;
         revealFramePrepared =
-            RenderFloatingDockCompositionFrame(*floatingDockHost_);
-        if (revealFramePrepared)
-            revealFramePrepared =
-                FlushPendingCompositionCommit();
-        if (!revealFramePrepared)
+            RenderFloatingDockCompositionFrame(*floatingDockHost_) &&
+            FlushPendingCompositionCommit();
+    }
+    if (!revealFramePrepared)
+    {
+        // Retain the previous idle/hidden presentation when preparation fails.
+        // A recovery paint remains queued without exposing the old frame in a
+        // newly promoted window.
+        floatingDockHost_->promoted = hostWasPromoted;
+        RefreshFloatingDockVisibilityState();
+        if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
+        UpdatePersistentDockHostVisibility(*floatingDockHost_);
+        InvalidateFloatingDockWindow(*floatingDockHost_, true);
+        if (previouslySelectedMonitor &&
+            previouslySelectedMonitor != floatingDockMonitor_)
         {
-            // Do not trade availability for a stale or blank first frame.
-            // Keep the pair hidden, restore the idle state and leave an
-            // immediate paint queued so the next summon can reuse a fresh
-            // composition surface after recovery.
-            floatingDockHost_->promoted = false;
-            RefreshFloatingDockVisibilityState();
-            if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
-            InvalidateFloatingDockWindow(
-                *floatingDockHost_, true);
-            if (previouslySelectedMonitor &&
-                previouslySelectedMonitor != floatingDockMonitor_)
-            {
-                SyncPersistentDockHost(
-                    previouslySelectedMonitor);
-            }
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
-                L"Floating Dock summon deferred: frame not ready");
-            return;
+            SyncPersistentDockHost(previouslySelectedMonitor);
         }
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
+            L"Floating Dock summon deferred: frame not ready");
+        return;
     }
     // Rendering/host synchronization can pump work; recheck before promotion.
     if (FullscreenBlocksDockReveal(source, targetMonitor))
@@ -319,13 +328,6 @@ void DesktopApp::ShowFloatingDock(
     }
     UpdatePersistentDockHostVisibility(
         *floatingDockHost_);
-    if (hostWasVisible)
-    {
-        // A visible desktop-layer Host needs only the existing immediate
-        // repaint after its Z-order promotion; no SHOW transaction occurs.
-        InvalidateFloatingDockWindow(
-            *floatingDockHost_, true);
-    }
     RefreshFloatingDockPromotionInput(*floatingDockHost_);
     // Actual keyboard editors retain their explicit input request. All other
     // promotion paths use the same established pointer capability above.
@@ -381,9 +383,9 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
         // Hosts alike, before an outside-pointer timer can sample it.
         const auto buttons = snowdesktop::window_support::WindowSupport().PointerButtons();
         floatingDockPointerButtonsDown_ |= buttons ? *buttons : (
-            ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
-            ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
-            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+            ((snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u));
         if (!IsWindowVisible(ownedHost->hwnd))
         {
             const bool alreadyPromoted = ownedHost->promoted;
@@ -626,7 +628,7 @@ void DesktopApp::ToggleFloatingDock()
     if (desktopPassthroughActive_)
         return;
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    snowdesktop::private_pointer::CursorPosition(&cursorScreen);
     const HMONITOR monitor = MonitorFromPoint(
         cursorScreen, MONITOR_DEFAULTTONEAREST);
     if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, monitor))

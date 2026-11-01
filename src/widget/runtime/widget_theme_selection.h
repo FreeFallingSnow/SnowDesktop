@@ -32,10 +32,12 @@ struct WidgetThemeSelectionResult
 template<class Apply, class Rollback>
 WidgetThemeSelectionResult SelectWidgetTheme(const std::filesystem::path& path,
     const std::string& target, const std::string& id, Apply&& apply, Rollback&& rollback,
-    Library& output, std::string& error)
+    Library& output, std::string& error,
+    const std::function<bool(const Library&, std::string&)>& precondition = {})
 {
     WidgetThemeSelectionResult result;
     result.committed = Transact(path, [&](Library& library, std::string& detail) {
+        if (precondition && !precondition(library, detail)) return false;
         if (!Select(library, target, id, Kind::Global, Components, detail)) return false;
         const auto& reference = library.references.at(target);
         const auto frozen = Resolve(reference.snapshot, reference.id);

@@ -345,7 +345,11 @@ bool NativeStartMenu::ContainsPoint(POINT screen) const noexcept
 void NativeStartMenu::ObservePointer(bool down, bool pressed, bool ownedSurface) noexcept
 {
     if (pressed && !ownedSurface) impl_->invocation.DiscardContinuation();
-    if (Active() && impl_->pointer.Observe(down, pressed, ownedSurface)) Cancel(true);
+    if (Active() && impl_->pointer.Observe(down, pressed, ownedSurface))
+    {
+        WriteDiagnosticLogEntry(L"[DockStartMenu] later owned-surface pointer press requested dismissal");
+        Cancel(true);
+    }
 }
 bool NativeStartMenu::Toggle() noexcept
 {

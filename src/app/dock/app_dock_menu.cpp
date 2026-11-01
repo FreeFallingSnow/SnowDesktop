@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "settings/bar_settings_rules.h"
@@ -47,7 +48,7 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
 {
     const TASKDIALOG_BUTTON buttons[]{{IDYES, accept}, {IDCANCEL, cancel}};
     POINT anchor{};
-    GetCursorPos(&anchor);
+    snowdesktop::private_pointer::CursorPosition(&anchor);
     TASKDIALOGCONFIG dialog{};
     dialog.cbSize = sizeof(dialog);
     dialog.hwndParent = owner;
@@ -74,7 +75,7 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
             }
             else flags |= SWP_NOMOVE;
             SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, flags);
-            SetForegroundWindow(window);
+            snowdesktop::private_pointer::SetInputForeground(window);
         }
         return S_OK;
     };
@@ -886,12 +887,12 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             application->entry = std::move((*applications)[*match]);
             application->identity = std::move(identities[*match]);
             return application;
-        }, [showMenu, screenPoint, foreground = GetForegroundWindow()](
+        }, [showMenu, screenPoint, foreground = snowdesktop::private_pointer::ForegroundWindow()](
             std::shared_ptr<CatalogApplication> application) {
             POINT cursor{};
             // A slow Shell provider must not open an obsolete context menu
             // after the user has moved to another target or another window.
-            if (GetForegroundWindow() != foreground || !GetCursorPos(&cursor) ||
+            if (snowdesktop::private_pointer::ForegroundWindow() != foreground || !snowdesktop::private_pointer::CursorPosition(&cursor) ||
                 std::abs(cursor.x - screenPoint.x) > GetSystemMetrics(SM_CXDRAG) ||
                 std::abs(cursor.y - screenPoint.y) > GetSystemMetrics(SM_CYDRAG))
                 return;

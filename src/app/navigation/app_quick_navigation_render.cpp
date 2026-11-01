@@ -1433,58 +1433,27 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder));
 
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
-                    const int iconSz = QuickNavScale(28);
-                    RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
-                        (rowRectApp.top + rowRectApp.bottom - iconSz) / 2,
-                        rowRectApp.left + QuickNavScale(12) + iconSz,
-                        (rowRectApp.top + rowRectApp.bottom + iconSz) / 2);
+                    const std::wstring modifiedText = entry.modifiedText.empty()
+                        ? QuickNavigationFormatModifiedTime(entry.dateModified) : entry.modifiedText;
+                    const auto geometry = snowdesktop::file_search_result_row::Resolve(rowRectApp,
+                        {QuickNavScale(28), QuickNavScale(12), QuickNavScale(10), QuickNavScale(6),
+                         QuickNavScale(navigationSettings_.layout.fontSize + 6), QuickNavScale(5),
+                         QuickNavScale(118), QuickNavScale(156), QuickNavScale(8)}, !modifiedText.empty());
+                    const RECT iconRect = geometry.icon, nameRect = geometry.name, pathRect = geometry.path;
                     DrawD2DRoundedRectangle(ctx.Get(), iconRect,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(t.iconPlateFill),
-                        ToD2DColor(t.iconPlateBorder));
+                        ToD2DColor(t.iconPlateFill), ToD2DColor(t.iconPlateBorder));
                     DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
-
-                    const int textLeft = iconRect.right + QuickNavScale(10);
-                    RECT nameRect = rowRectApp;
-                    nameRect.left = textLeft;
-                    nameRect.right -= QuickNavScale(12);
-                    nameRect.top += QuickNavScale(6);
-                    nameRect.bottom = nameRect.top + QuickNavScale(navigationSettings_.layout.fontSize + 6);
-
-                    RECT pathRect = rowRectApp;
-                    pathRect.left = textLeft;
-                    pathRect.right -= QuickNavScale(12);
-                    pathRect.top = nameRect.bottom;
-                    pathRect.bottom -= QuickNavScale(5);
 
                     DrawD2DTextEllipsis(ctx.Get(),
                         entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
                         nameRect, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? t.selectedText : t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-                    const std::wstring modifiedText = entry.modifiedText.empty()
-                        ? QuickNavigationFormatModifiedTime(entry.dateModified)
-                        : entry.modifiedText;
                     if (!modifiedText.empty())
-                    {
-                        const int textGap = QuickNavScale(8);
-                        const int available = std::max<LONG>(1, pathRect.right - pathRect.left);
-                        const int maxDateWidth = std::min(QuickNavScale(156), available);
-                        const int minDateWidth = std::min(QuickNavScale(118), maxDateWidth);
-                        const int dateWidth = std::clamp(
-                            available / 3,
-                            minDateWidth,
-                            maxDateWidth);
-                        RECT modifiedRect = pathRect;
-                        modifiedRect.left = std::max<LONG>(modifiedRect.left,
-                            modifiedRect.right - dateWidth);
-                        pathRect.right = std::max<LONG>(pathRect.left,
-                            modifiedRect.left - textGap);
-
-                        DrawD2DTextEllipsis(ctx.Get(), modifiedText, modifiedRect,
+                        DrawD2DTextEllipsis(ctx.Get(), modifiedText, geometry.modified,
                             quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
                             DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                    }
                     DrawD2DTextEllipsis(ctx.Get(), entry.path, pathRect,
                         quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);

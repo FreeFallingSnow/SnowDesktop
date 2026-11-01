@@ -1,4 +1,6 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/input/widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
 #include "shell/shell_context_menu_invoke.h"
@@ -30,19 +32,26 @@ void DesktopApp::ShowFolderEntryContextMenu(
     size_t memberIndex,
     bool keepQuickNavigationOpen)
 {
-    if (widgetIndex >= widgets_.size() ||
+    const bool searchSelection = widgetIndex == static_cast<size_t>(-1) && memberIndex == static_cast<size_t>(-1);
+    if (!searchSelection && (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
-        memberIndex >= widgets_[widgetIndex].folderEntries.size())
+        memberIndex >= widgets_[widgetIndex].folderEntries.size()))
         return;
 
-    PrepareMenuIconsForPoint(screenPoint);
-
-    const std::wstring fullPath =
-        widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
     const std::vector<std::wstring> selectedPaths =
         GetSelectedFolderEntryPaths();
+    if (searchSelection && selectedPaths.empty()) return;
+    PrepareMenuIconsForPoint(screenPoint);
+    const std::wstring fullPath = searchSelection ? selectedPaths.front()
+        : widgets_[widgetIndex].folderEntries[memberIndex].fullPath;
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const bool searchResultMenu = searchSelection ||
+        (keepQuickNavigationOpen && !GetQuickNavigationEffectiveSearchText().empty()) ||
+        snowdesktop::widget_search_context_menu::IsSearchResultAtPoint(containers_, clientPoint);
+    const bool canPersonalizeIcon = singleSelection && !searchResultMenu;
     bool administratorLaunchSelected = false;
     for (const auto& path : selectedPaths)
     {
@@ -90,8 +99,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand,
         _LW("app.menu.properties"));
-    if (singleSelection) AppendWebsiteIconMenu(menu, fullPath);
-    if (singleSelection) AppendIconOverrideMenu(menu, fullPath);
+    if (canPersonalizeIcon) AppendWebsiteIconMenu(menu, fullPath);
+    if (canPersonalizeIcon) AppendIconOverrideMenu(menu, fullPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -106,10 +115,15 @@ void DesktopApp::ShowFolderEntryContextMenu(
     AppendMenuW(menu,
         hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextDeleteCommand, _LW("app.settings.delete"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextMoreCommand, _LW("app.menu.more_options"));
+    // A search selection can span different parents. Native folder extensions
+    // require one parent; the host's path-based batch commands work across them.
+    if (!searchSelection)
+    {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu,
+            hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextMoreCommand, _LW("app.menu.more_options"));
+    }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
@@ -134,17 +148,17 @@ void DesktopApp::ShowFolderEntryContextMenu(
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
 
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     snowdesktop::shell_extensions::Request shellRequest;
     shellRequest.paths = selectedPaths;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(
         menu, screenPoint, menuOwner, false, false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
     bool inlineEditorStarted = false;
 
-    if (ExecuteIconOverrideMenu(command, fullPath)) return;
+    if (canPersonalizeIcon && ExecuteIconOverrideMenu(command, fullPath)) return;
     switch (command)
     {
     case kContextOpenCommand:
@@ -186,12 +200,14 @@ void DesktopApp::ShowFolderEntryContextMenu(
             ShowPathProperties(selectedPaths.front());
         break;
     case kContextFetchWebsiteIconCommand:
-        if (singleSelection) FetchWebsiteIcon(selectedPaths.front());
+        if (canPersonalizeIcon) FetchWebsiteIcon(selectedPaths.front());
         break;
     case kContextRenameCommand:
         if (singleSelection)
         {
-            if (keepQuickNavigationOpen)
+            if (searchSelection)
+                BeginRenameSearchResult(fullPath);
+            else if (keepQuickNavigationOpen)
                 BeginQuickNavigationFolderEntryRename(
                     widgetIndex, memberIndex);
             else

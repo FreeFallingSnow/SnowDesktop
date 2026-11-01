@@ -60,6 +60,12 @@ struct SettingsShellProgress
 struct SettingsShellDialogRequest
 {
     struct PreviewImage { std::wstring title, path; };
+    struct TextInput
+    {
+        std::wstring label, value;
+        std::int32_t maxLength = 60;
+        std::function<void(std::wstring)> completed;
+    };
     std::uint64_t generation = 0;
     std::wstring title;
     std::wstring message;
@@ -69,6 +75,7 @@ struct SettingsShellDialogRequest
     bool defaultClose = false;
     std::wstring previewImagePath;
     std::vector<PreviewImage> previewImages;
+    std::optional<TextInput> textInput;
 };
 
 /**
@@ -200,6 +207,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         bool debugVisible);
     /** Shows an accessible attention dot when a selected Agent Skill is stale. */
     void SetAgentSkillUpdateAvailable(bool available);
+    void SetControlSkillUpdateAvailable(bool available);
 
     /**
      * Replaces AutoSuggestBox results for the current query.  A result from a
@@ -400,6 +408,7 @@ private:
     bool desktopStyleDockEnabled_ = false;
     bool closed_ = false;
     bool agentSkillUpdateAvailable_ = false;
+    bool controlSkillUpdateAvailable_ = false;
     std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};

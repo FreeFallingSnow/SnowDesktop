@@ -1,7 +1,9 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "theme/theme_workshop.h"
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_account_cache.h"
 #include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_app_identity.h"
 #include "layout/layout_scroll_save_rules.h"
@@ -52,10 +54,6 @@ const char* HostTimerPhase(WPARAM timerId) noexcept
 void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
     snowdesktop::performance::Scope trace("shared.maintenance", "steam.subscriptions");
-    if(GetTickCount64()-iconWorkshopLastPoll_>=60000)
-    {
-        iconWorkshopLastPoll_=GetTickCount64();snowdesktop::IconLibraryRequest request;request.action="autoSyncSubscriptions";(void)EditIconLibrary(request);
-    }
     if (!widgetEngine_) return;
 
     std::optional<SteamWorkshopSubscriptionPollState::ReadyQuery> ready;
@@ -201,11 +199,27 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 }
             }
         }
-        const bool hasUnsubscribeCompletion = std::any_of(
-            completions.begin(), completions.end(), [](const auto& value) {
-                return !value.expectedUnsubscribedPublishedFileId.empty();
-            });
-        if (synchronizationSucceeded && hasUnsubscribeCompletion &&
+        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
+        const auto targetRemoved = [&](const auto& completion) {
+            const auto& expectedId = completion.expectedUnsubscribedPublishedFileId;
+            return !expectedId.empty() &&
+                std::none_of(ready->snapshot.subscribedPublishedFileIds.begin(),
+                    ready->snapshot.subscribedPublishedFileIds.end(), [&](const auto& value) {
+                        return snowdesktop::widget::SteamPublishedFileId(value) == expectedId;
+                    }) &&
+                std::none_of(reconciledPackages.begin(), reconciledPackages.end(),
+                    [&](const auto& package) {
+                        if (package.builtin || package.development) return false;
+                        return (package.source.providerId == "steam-workshop" &&
+                            snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) == expectedId) ||
+                            std::find(completion.expectedRemovedPackageIds.begin(),
+                                completion.expectedRemovedPackageIds.end(), package.manifest.id) !=
+                                    completion.expectedRemovedPackageIds.end();
+                    });
+        };
+        const bool hasReconciledUnsubscribe = std::any_of(
+            completions.begin(), completions.end(), targetRemoved);
+        if (ready->snapshot.CanSynchronize() && hasReconciledUnsubscribe &&
             !hostReloaded)
         {
             // Run the same host reconciliation pass even if the managed
@@ -222,51 +236,46 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             "phase=poll.reconciled success=" + std::to_string(synchronizationSucceeded) +
             " hostReloaded=" + std::to_string(hostReloaded));
 
-        const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
+        bool awaitingReconciliation = false;
         for (auto& completion : completions)
         {
             if (!completion.done)
                 continue;
             bool completionSucceeded = synchronizationSucceeded;
             std::wstring completionMessage = synchronizationMessage;
-            if (completionSucceeded &&
+            // An accepted unsubscribe concerns this item, not every update in
+            // the same reconciliation. A different package may need permission
+            // review even though this item's package was removed successfully.
+            if (ready->snapshot.CanSynchronize() &&
                 !completion.expectedUnsubscribedPublishedFileId.empty())
             {
-                const std::string& expectedPublishedFileId =
-                    completion.expectedUnsubscribedPublishedFileId;
-                const bool stillSubscribed = std::any_of(
-                    ready->snapshot.subscribedPublishedFileIds.begin(),
-                    ready->snapshot.subscribedPublishedFileIds.end(),
-                    [&expectedPublishedFileId](const auto& value) {
-                        return snowdesktop::widget::SteamPublishedFileId(
-                                   value) == expectedPublishedFileId;
-                    });
-                const bool managedPackageRemains = std::any_of(
-                    reconciledPackages.begin(), reconciledPackages.end(),
-                    [&expectedPublishedFileId](const auto& package) {
-                        return !package.builtin && !package.development &&
-                            package.source.providerId == "steam-workshop" &&
-                            snowdesktop::widget::SteamPublishedFileId(
-                                package.source.externalItemId) ==
-                                expectedPublishedFileId;
-                    });
-                const bool expectedPackageRemains = std::any_of(
-                    reconciledPackages.begin(), reconciledPackages.end(),
-                    [&completion](const auto& package) {
-                        if (package.builtin || package.development)
-                            return false;
-                        return std::find(
-                            completion.expectedRemovedPackageIds.begin(),
-                            completion.expectedRemovedPackageIds.end(),
-                            package.manifest.id) !=
-                            completion.expectedRemovedPackageIds.end();
-                    });
-                completionSucceeded = !stillSubscribed &&
-                    !managedPackageRemains && !expectedPackageRemains;
+                completionSucceeded = targetRemoved(completion);
+                // Let the settings page use its operation-specific success
+                // message instead of reporting success for the entire sync.
+                completionMessage.clear();
                 if (!completionSucceeded)
                 {
                     completionMessage = _LW(
                         "settings.widgets.workshop.unsubscribeNotReconciled");
+                }
+            }
+            if (!completionSucceeded &&
+                !completion.expectedUnsubscribedPublishedFileId.empty())
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (completion.reconciliationDeadline == std::chrono::steady_clock::time_point{})
+                    completion.reconciliationDeadline = now + std::chrono::seconds(10);
+                if (now < completion.reconciliationDeadline)
+                {
+                    // Steam's accepted callback can precede its local cache
+                    // writes. Retain this operation for a fresh query; never
+                    // issue the remote unsubscribe again or spin here.
+                    std::lock_guard lock(steamWorkshopSubscriptionPollState_->mutex);
+                    completion.queryId = steamWorkshopSubscriptionPollState_->nextQueryId;
+                    steamWorkshopSubscriptionPollState_->settingsCompletions.push_back(std::move(completion));
+                    steamWorkshopSubscriptionPollState_->refreshPending.store(true);
+                    awaitingReconciliation = true;
+                    continue;
                 }
             }
             completion.done(completionSucceeded
@@ -275,6 +284,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                     : snowdesktop::winui::WidgetsPageHostOperationResult::
                           Failure(completionMessage));
         }
+        // The regular host timer (or a real file change) drives the next
+        // query. Do not immediately launch a fresh query from this ready event.
+        if (awaitingReconciliation) return;
     }
 
     if (steamWorkshopSubscriptionPollState_->queryInFlight.load())
@@ -292,6 +304,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             kSteamWorkshopSubscriptionFallbackPollIntervalMs)
         return;
     steamWorkshopSubscriptionLastQueryTick_ = now;
+    snowdesktop::IconLibraryRequest iconRequest;
+    iconRequest.action = "autoSyncSubscriptions";
+    (void)EditIconLibrary(iconRequest);
     const std::string locale = Locale::Instance().GetEffectiveLanguage();
     const auto installedPackages = widgetEngine_->ListWidgetPackages();
     const auto subscriptionHistory =
@@ -326,23 +341,24 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
         };
         trace("phase=theme_probe.begin");
-        // Local cache inspection decides whether theme work is relevant. All
-        // online theme requests still go through the independently capable bridge.
+        // Background reconciliation consumes only Steam's local manifests and
+        // completed downloads. It must never start a Steam API process.
         try
         {
             using namespace snowdesktop;
             themes::Library library; std::string error;
             bool relevant = themes::Load(themes::LibraryPath(), library, error) && !library.workshop.empty();
+            const auto account = widget::ReadSteamActiveUserSteamId();
             const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
-            const auto cache = widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+            const auto cache = widget::ReadCurrentSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
             for (const auto& item : cache.readyItems)
             {
                 std::error_code ec;
                 relevant = relevant || std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", ec);
             }
-            const auto bridge = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe";
-            if (relevant && themes::workshop::Available(bridge, SNOWDESKTOP_VERSION))
-                (void)themes::workshop::Sync(bridge, themes::LibraryPath(), library, error);
+            if (relevant && account == widget::ReadSteamActiveUserSteamId())
+                (void)themes::workshop::SyncLocal(cache, account,
+                    themes::LibraryPath(), library, error);
         }
         catch (...) { /* Failed/partial queries never remove installed themes. */ }
         trace("phase=theme_probe.end");
@@ -385,11 +401,11 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
     }
 
     DWORD keyState = MK_LBUTTON;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000)
         keyState |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)
         keyState |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)
         keyState |= MK_SHIFT;
     if (route == DwellTargetRefreshRoute::ExternalLocalFeedback)
     {
@@ -504,9 +520,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 namespace pair = snowdesktop::widget_pair_drop;
                 auto action = pair::ResolveAction(pair::GetOptions(
                     widgets_[mouseDownWidgetIndex_].type, widgets_[widgetPairTargetIndex_].type),
-                    (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
-                    (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
-                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
+                    (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+                    (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0,
+                    (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0);
                 if ((action == pair::Action::CreateCollectionGroup ||
                      action == pair::Action::CreateFileGroup) &&
                     !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
@@ -523,7 +539,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         }
         if (dragDropController_.IsTransportActive() ||
-            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
+            (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
             return;
 
         POINT recoveredPoint{};
@@ -613,7 +629,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             !detailColumnResizeActive_ && !luaWidgetPanelMouseDown_ &&
             widgetAction_ == WidgetAction::None && !renameController_.IsActive() && !luaInlineEdit_ &&
             shellPopupMenuLayerDepth_ == 0 && !snowdesktop::modern_menu::IsActive() &&
-            !settingsWindowOpening_ && !GetCapture(); };
+            !settingsWindowOpening_ && !snowdesktop::private_pointer::Capture(); };
         if (resourceRecovery.Poll(GetTickCount64(), userQuota, safeToRestart(),
                 [] { return GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS); },
                 [this, &safeToRestart] { return SaveLayoutSlots(false) && safeToRestart(); },
@@ -674,6 +690,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
+        UpdateDesktopIdleHide();
         // This periodic sample may restore hover after a missed mouse message,
         // but its reconcile mode still enforces the foreground-settle delay in
         // case the free-running timer lands inside the WindowFromPoint race.

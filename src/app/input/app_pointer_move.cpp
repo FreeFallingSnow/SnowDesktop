@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "desktop/desktop_hover_rules.h"
 #include "layout/collection_titleless_rules.h"
@@ -95,7 +96,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
         // Reuse the existing middle-button ownership and cancellation path;
         // pointer movement starts the ordinary desktop drag after its threshold.
         middleButtonWidgetMove_ = true;
-        SetCapture(hwnd_);
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
         SyncKeyboardNavFromSelection();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -120,7 +121,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     widgetPreviewCell_ = widgetDragOriginalCell_;
     widgetPreviewSpan_ = widgetDragOriginalSpan_;
     widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[widgetIndex].bounds, pt);
-    SetCapture(hwnd_);
+    snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -132,7 +133,7 @@ void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
         // A middle click selects the large icon without entering any launch,
         // primary-click or resize path.
         CancelPointerPressWithoutCaptureRelease();
-        ReleaseCapture();
+        snowdesktop::private_pointer::ReleasePointerCapture();
         UpdateLargeIconHover();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -216,13 +217,13 @@ bool DesktopApp::OnNativeMouseMoveAt(
         *dragPreviewSynced = false;
     constexpr WPARAM mouseButtons = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
         MK_XBUTTON1 | MK_XBUTTON2;
-    const HWND captured = GetCapture();
+    const HWND captured = snowdesktop::private_pointer::Capture();
     if (!(wp & mouseButtons) && IsOwnedPointerCaptureWindow(captured) &&
         CanCancelPointerPressAfterCaptureLoss() &&
         !(HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) & QS_MOUSEBUTTON) &&
-        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON) | GetAsyncKeyState(VK_XBUTTON1) |
-            GetAsyncKeyState(VK_XBUTTON2)) & 0x8000) == 0)
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_XBUTTON1) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_XBUTTON2)) & 0x8000) == 0)
     {
         // Device/connection changes can lose the matching button-up. Require
         // both a button-free pointer message and no physically held button:
@@ -231,11 +232,11 @@ bool DesktopApp::OnNativeMouseMoveAt(
         // their real release must retain click/drop semantics. Native OLE and
         // retained commits are excluded above.
         CancelPointerPressWithoutCaptureRelease();
-        if (GetCapture() == captured)
+        if (snowdesktop::private_pointer::Capture() == captured)
             ReleaseCapturePreservingPointerState();
         wchar_t recovery[192]{};
         swprintf_s(recovery, L"Pointer input recovered reason=button-free-return oldCapture=%p newCapture=%p messageButtons=0x%llX physicalButtons=0 queuedButtons=0",
-            static_cast<void*>(captured), static_cast<void*>(GetCapture()),
+            static_cast<void*>(captured), static_cast<void*>(snowdesktop::private_pointer::Capture()),
             static_cast<unsigned long long>(wp & mouseButtons));
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Input, recovery);
         return true;
@@ -250,7 +251,7 @@ bool DesktopApp::OnNativeMouseMoveAt(
     if ((snowdesktop::drag_input_rules::IsNativeDragActive(
             dragSession_.IsActive(), dragDropController_.IsTransportActive()) ||
             nativeWidgetGesture) &&
-        (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
+        (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
         return false;
     OnMouseMoveAt(wp, current, dragPreviewSynced);
     return true;
@@ -260,6 +261,7 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    UpdateDesktopIdleHide();
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     // This updater is also called after button-up was dequeued and by keyboard,
@@ -291,7 +293,7 @@ void DesktopApp::OnMouseMoveAt(
                     detailColumnResizeActive_ || luaWidgetPanelMouseDown_),
             (wp & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
                 MK_XBUTTON1 | MK_XBUTTON2)) != 0,
-            dragDropController_.IsTransportActive(), GetCapture() != nullptr);
+            dragDropController_.IsTransportActive(), snowdesktop::private_pointer::Capture() != nullptr);
     desktopWidgetPointerBatchActive_ =
         desktopWidgetPointerBatchActive_ || passivePointerMove;
     widgetPointerBatch.passive = passivePointerMove;
@@ -360,7 +362,7 @@ void DesktopApp::OnMouseMoveAt(
         mouseTrack.cbSize = sizeof(mouseTrack);
         mouseTrack.dwFlags = TME_LEAVE;
         mouseTrack.hwndTrack = hwnd_;
-        TrackMouseEvent(&mouseTrack);
+        snowdesktop::private_pointer::TrackLeave(&mouseTrack);
     }
 
     POINT oldMouse = lastMousePoint_;
@@ -396,8 +398,11 @@ void DesktopApp::OnMouseMoveAt(
         if (widgetEngine_)
         {
             bool interactionHoverRouted = false;
-            if (!luaWidgetPanelRequest_.widgetId.empty() &&
-                luaWidgetPanelAnimation_.IsInteractive())
+            const bool luaPanelInteractive = !luaWidgetPanelRequest_.widgetId.empty() &&
+                luaWidgetPanelAnimation_.IsInteractive();
+            const RECT luaPanel = luaPanelInteractive ? GetLuaWidgetPanelRect() : RECT{};
+            if (luaPanelInteractive &&
+                (luaWidgetPanelRequest_.modal || PtInRect(&luaPanel, current)))
             {
                 widgetEngine_->ClearInteractionHover("desktop");
                 const RECT content = GetLuaWidgetPanelContentRect();
@@ -416,6 +421,8 @@ void DesktopApp::OnMouseMoveAt(
             }
             else
             {
+                if (luaPanelInteractive)
+                    widgetEngine_->ClearInteractionHover(luaWidgetPanelRequest_.surface);
                 const size_t interactionWidget =
                     HitTestStandaloneWidgetIndex(current);
                 if (interactionWidget < widgets_.size() &&
@@ -504,10 +511,12 @@ void DesktopApp::OnMouseMoveAt(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
                     popupScrollbarDragStartOffset_, GetOpenCollectionPopupLayoutMetrics().scale);
-            popupScrollOffset_ = snowdesktop::widget_scroll_rules::
+            const int scroll = snowdesktop::widget_scroll_rules::
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,
                     current.y - popupScrollbarDragStartY_, geometry);
+            auto* search = GetCategorizedPopupView();
+            if (!search || !search->SetFolderSearchScrollOffset(scroll)) popupScrollOffset_ = scroll;
             (void)PresentDesktopForegroundComposition(popup);
         }
         return;
@@ -528,10 +537,10 @@ void DesktopApp::OnMouseMoveAt(
                 container->GetCellScale());
         if (data)
         {
-            data->scrollOffset = snowdesktop::widget_scroll_rules::
-                ApplyScrollbarThumbDrag(
-                    widgetScrollbarDragStartOffset_,
-                    current.y - widgetScrollbarDragStartY_, geometry);
+            const int next = snowdesktop::widget_scroll_rules::ApplyScrollbarThumbDrag(
+                widgetScrollbarDragStartOffset_, current.y - widgetScrollbarDragStartY_, geometry);
+            auto* search = dynamic_cast<ScrollingItemWidget*>(container);
+            if (!search || !search->SetFolderSearchScrollOffset(next)) data->scrollOffset = next;
             if (auto* group = dynamic_cast<FileGroup*>(container))
                 group->InvalidateHostedView();
             else
@@ -564,7 +573,7 @@ void DesktopApp::OnMouseMoveAt(
                 : nullptr);
         if (resizedWidget)
         {
-            auto& widget = *resizedWidget;
+            auto& widget = *ResolveWidgetContentViewData(resizedWidget);
             const float proposed = static_cast<float>(
                 current.x - detailColumnResizeHeaderLeft_) /
                 static_cast<float>(detailColumnResizeHeaderWidth_);
@@ -596,16 +605,16 @@ void DesktopApp::OnMouseMoveAt(
             if (detailColumnResizePopup_)
             {
                 const RECT popup =
-                    GetCollectionPopupRect(widget);
+                    GetCollectionPopupRect(*resizedWidget);
                 (void)PresentDesktopForegroundComposition(
                     popup);
             }
             else
             {
-                (void)QueueDesktopWidgetComposition(widget.id);
+                (void)QueueDesktopWidgetComposition(resizedWidget->id);
             }
         }
-        SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
         return;
     }
 
@@ -638,7 +647,7 @@ void DesktopApp::OnMouseMoveAt(
         {
             widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,
-                (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
+                (snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
         }
 
         // Lua content owns the pointer interaction. Do not fall through to
@@ -964,9 +973,9 @@ void DesktopApp::OnMouseMoveAt(
             const auto options = pair::GetOptions(movingType,
                 widgets_[widgetPairTargetIndex_].type);
             widgetPairAction_ = rightButtonItemDrag_ ? pair::Action::None : pair::ResolveAction(options,
-                (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
-                (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
-                (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
+                (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+                (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0,
+                (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0);
             if ((widgetPairAction_ == pair::Action::CreateCollectionGroup ||
                  widgetPairAction_ == pair::Action::CreateFileGroup) &&
                 !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
@@ -1040,9 +1049,9 @@ void DesktopApp::OnMouseMoveAt(
     {
         dragSession_.UpdatePoint(current);
         int currentMods = 0;
-        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
-        if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
-        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
+        if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
         if (dragSession_.UpdateActionFromMods(currentMods))
         {
             // Move/copy changes whether the source icons belong to the
@@ -1071,7 +1080,7 @@ void DesktopApp::OnMouseMoveAt(
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
                 const std::wstring sourceWidgetId =
                     sourceWidgetData ? sourceWidgetData->id : L"";
-                const HWND nativeCaptureHwnd = GetCapture();
+                const HWND nativeCaptureHwnd = snowdesktop::private_pointer::Capture();
 
                 HideDragHintWindow();
                 // Crossing into another process proves that this is a drag,
@@ -1130,7 +1139,7 @@ void DesktopApp::OnMouseMoveAt(
                             resumePoint);
                     const bool primaryButtonDown =
                         nativeResumeRequested &&
-                        (GetAsyncKeyState(PointerGestureVirtualKey()) &
+                        (snowdesktop::private_pointer::AsyncKeyState(PointerGestureVirtualKey()) &
                             0x8000) != 0;
                     const auto unwindAction =
                         snowdesktop::ole_drag_rules::
@@ -1165,7 +1174,7 @@ void DesktopApp::OnMouseMoveAt(
                         oleUiPumpStarted = false;
                     }
                     dataObj.Reset();
-                    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+                    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
                     if (unwindAction == snowdesktop::
                             ole_drag_rules::SelfOleUnwindAction::
                                 ResumeNativeHeld)
@@ -1184,14 +1193,14 @@ void DesktopApp::OnMouseMoveAt(
                             restoreFloatingDockCapture ||
                                 restoreFloatingPopupCapture
                             ? nativeCaptureHwnd : hwnd_;
-                        SetCapture(restoreCapture);
-                        if (GetCapture() != restoreCapture &&
+                        snowdesktop::private_pointer::SetPointerCapture(restoreCapture);
+                        if (snowdesktop::private_pointer::Capture() != restoreCapture &&
                             restoreCapture != hwnd_)
                         {
                             restoreCapture = hwnd_;
-                            SetCapture(restoreCapture);
+                            snowdesktop::private_pointer::SetPointerCapture(restoreCapture);
                         }
-                        if (GetCapture() == restoreCapture)
+                        if (snowdesktop::private_pointer::Capture() == restoreCapture)
                         {
                             mouseDown_ = true;
                             mouseDownHit_ = nullptr;
@@ -1232,7 +1241,7 @@ void DesktopApp::OnMouseMoveAt(
                     TryGetNativeDragResumePointFromCursor(
                         finishedOlePoint))
                 {
-                    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+                    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
                 }
 
                 if (hr == DRAGDROP_S_DROP && oleEffect == DROPEFFECT_MOVE

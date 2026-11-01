@@ -17,6 +17,5 @@ New-GitHubReleasePublication -Context $context|ConvertTo-Json -Depth 8
         require(read(root/L"github-release/SHA256SUMS.txt")=="BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD  "+std::string(portable)+"\n"&&read(root/L"SHA256SUMS.txt")=="private Store checksum inventory\n","Public/private checksum inventory altered");
     }
     write(root/portable,"");bridge.call(script,{});require(read(root/L"github-release/SHA256SUMS.txt")=="E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  "+std::string(portable)+"\n","Repeated publication preparation did not refresh digest");
-    auto text=read(repo/L"scripts/release_manager.ps1");auto start=text.find("function Publish-GitHubRelease");require(start!=std::string::npos,"GitHub publisher missing");text=text.substr(start);auto end=text.find("\nfunction ",1);if(end!=std::string::npos)text.resize(end);text.erase(std::remove_if(text.begin(),text.end(),[](unsigned char c){return std::isspace(c)!=0||c=='`';}),text.end());for(const auto& marker:{"$publication=New-GitHubReleasePublication-Context$context","$assets=$publication.Assets","--title$publication.Title","name=$publication.Title"})require(text.find(marker)!=std::string::npos,"Publisher transport lost shared attachment/title plan");require(text.find("$assets+=")==std::string::npos,"Publisher adds unreviewed attachments");
 }
 }

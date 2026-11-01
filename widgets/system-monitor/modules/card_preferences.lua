@@ -53,6 +53,53 @@ function M.move(saved, id, action, visible)
     return table.concat(order, ",")
 end
 
+function M.orientation(value)
+    if value == "horizontal" or value == "row" then return "horizontal" end
+    return "vertical"
+end
+
+-- Live drag preview. The saved card list is left untouched.
+function M.preview(cards, id, targetIndex)
+    if type(cards) ~= "table" or type(targetIndex) ~= "number" then
+        return cards
+    end
+    local kept, moving, index = {}, nil, nil
+    for position, card in ipairs(cards) do
+        if card.id == id then moving, index = card, position
+        else kept[#kept + 1] = card end
+    end
+    if not moving then return cards end
+    targetIndex = math.floor(targetIndex)
+    if targetIndex < 1 or targetIndex > #kept + 1 or targetIndex == index then
+        return cards
+    end
+    table.insert(kept, targetIndex, moving)
+    return kept
+end
+
+-- targetIndex is the visible slot after the dragged card leaves its old place.
+function M.moveTo(saved, id, targetIndex, visible)
+    local order, shown, index = M.order(saved), {}, nil
+    for _, key in ipairs(order) do
+        if visible(key) then
+            shown[#shown + 1] = key
+            if key == id then index = #shown end
+        end
+    end
+    if not index or type(targetIndex) ~= "number" then return nil end
+    targetIndex = math.floor(targetIndex)
+    if targetIndex < 1 or targetIndex > #shown or targetIndex == index then
+        return nil
+    end
+    table.remove(shown, index)
+    table.insert(shown, targetIndex, id)
+    local cursor = 1
+    for i, key in ipairs(order) do
+        if visible(key) then order[i], cursor = shown[cursor], cursor + 1 end
+    end
+    return table.concat(order, ",")
+end
+
 function M.fontScale(value)
     if type(value) ~= "number" and type(value) ~= "string" then return 1 end
     local percent = tonumber(value)

@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "quick_navigation_helpers.h"
@@ -9,9 +10,9 @@ namespace
 constexpr wchar_t kQuickNavigationOutsidePress[] = L"SnowDesktop.Navigation.OutsidePress";
 unsigned NavigationPointerButtons()
 {
-    return ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
-        ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
-        ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+    return ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
 }
 }
 
@@ -983,7 +984,7 @@ void DesktopApp::OpenQuickNavigation(
     if (!invocationScreenPoint)
     {
         POINT point{lastMousePoint_.x + virtualLeft_, lastMousePoint_.y + virtualTop_};
-        GetCursorPos(&point);
+        snowdesktop::private_pointer::CursorPosition(&point);
         invocationScreenPoint = point;
     }
     if (dockStartMenu_ && dockStartMenu_->DismissThen([this, source, invocationScreenPoint] {
@@ -1003,10 +1004,10 @@ void DesktopApp::OpenQuickNavigation(
                 return;
             }
             POINT screen{};
-            if (!GetCursorPos(&screen)) return;
+            if (!snowdesktop::private_pointer::CursorPosition(&screen)) return;
             const POINT point{screen.x - virtualLeft_, screen.y - virtualTop_};
             const auto* dock = GetDockContainerAtPoint(point);
-            const HWND foreground = GetForegroundWindow();
+            const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
             // Activated search keeps its normal deactivation/IME/menu route.
             // This supplement is for a popup whose activation request failed.
             const bool searchForeground = foreground && (foreground == target ||
@@ -1323,7 +1324,7 @@ void DesktopApp::OpenQuickNavigation(
 void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
     if (quickNavigationHwnd_) RemovePropW(quickNavigationHwnd_, kQuickNavigationOutsidePress);
-    const HWND captured = GetCapture();
+    const HWND captured = snowdesktop::private_pointer::Capture();
     if (captured && (captured == quickNavigationHwnd_ || captured == quickNavigationSearchEdit_ ||
         (renameController_.IsQuickNavigationPresentation() && captured == renameInputWindow_)))
         ReleaseCapturePreservingPointerState();
@@ -1359,7 +1360,7 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
     }
     POINT cursor{};
     if (!dockAnchorValid &&
-        GetCursorPos(&cursor))
+        snowdesktop::private_pointer::CursorPosition(&cursor))
     {
         quickNavigationAnimationDockRect_ = {};
         const POINT currentPointer = {
@@ -1396,7 +1397,7 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
     // Notifications. Never activate the desktop from that callback, or during
     // a queued handoff to another surface. Explicit dismissal may restore it
     // only while this search surface still owns the foreground.
-    const HWND foreground = GetForegroundWindow();
+    const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
     const bool searchHasForeground = foreground &&
         (foreground == quickNavigationHwnd_ ||
             foreground == quickNavigationSearchEdit_ ||

@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/render/file_search_result_row.h"
 
 #include "common/l10n.h"
 
@@ -123,25 +124,5 @@ inline bool QuickNavigationHasFileTime(const FILETIME& value)
 
 inline std::wstring QuickNavigationFormatModifiedTime(const FILETIME& value)
 {
-    if (!QuickNavigationHasFileTime(value))
-        return {};
-
-    FILETIME localTime{};
-    SYSTEMTIME systemTime{};
-    if (!FileTimeToLocalFileTime(&value, &localTime) ||
-        !FileTimeToSystemTime(&localTime, &systemTime))
-        return {};
-
-    auto padNumber = [](unsigned value, size_t width) {
-        std::wstring text = std::to_wstring(value);
-        if (text.size() < width)
-            text.insert(text.begin(), width - text.size(), L'0');
-        return text;
-    };
-    return _LFW("app.nav.file_modified",
-        padNumber(static_cast<unsigned>(systemTime.wYear), 4),
-        padNumber(static_cast<unsigned>(systemTime.wMonth), 2),
-        padNumber(static_cast<unsigned>(systemTime.wDay), 2),
-        padNumber(static_cast<unsigned>(systemTime.wHour), 2),
-        padNumber(static_cast<unsigned>(systemTime.wMinute), 2));
+    return snowdesktop::file_search_result_row::ModifiedTime(value);
 }

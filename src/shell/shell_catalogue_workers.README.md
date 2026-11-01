@@ -24,8 +24,6 @@
 `request.registry_revision` 和 `request.foreground` 记录请求代次与前台需求。阶段耗时可重叠，
 应结合请求日志及 CPU 采样分析，不能将耗时之和作为进程 CPU。
 
-控制器回归与私有注册表库存检查位于
-`tests/shell/shell_catalogue_registry_handle_tests.cpp`。原生全屏观察夹具只能显式调用
-`SnowDesktopShellContextMenuInvokeTests --fullscreen-scan-fixture`；其窗口位于现有窗口之后，
-保持原有焦点，并在十秒后销毁自身。它用于检查宿主的全屏观察及暂停/续扫日志，不代替游戏
-或桌面菜单交互的人工验收。
+目录扫描调度、私有注册表监听与全屏暂停目前没有专门的长期行为测试。相关改动需使用隔离库存、
+可控取消及前台需求检查结果和线程收尾，再结合菜单诊断核对实际暂停与续扫。临时观察程序放在
+忽略的任务目录；游戏和桌面菜单交互仍需对应场景验收。

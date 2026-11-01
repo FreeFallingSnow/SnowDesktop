@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 #include "theme/theme_library.h"
@@ -23,6 +24,11 @@ struct Request
     int padding = 72;
     bool transparent = false;
     bool contentOnly = false;
+    // Explicit offscreen icon appearance; never changes desktop defaults.
+    std::string iconPreset = "none";
+    bool iconOnly = false;
+    // Private export-only behavior override; absent preserves existing callers.
+    std::optional<bool> titleBarOnTop;
     // Private offscreen input. It never loads host settings or live providers.
     std::optional<themes::Theme> theme;
 };
@@ -43,6 +49,8 @@ struct Output
     int componentHeight = 0;
     int placementX = 0;
     int placementY = 0;
+    bool topTitleBarSupported = false;
+    bool usesTopTitleBar = false;
 };
 
 struct Result

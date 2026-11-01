@@ -38,6 +38,13 @@ RECT GuideWidget::GetSecondaryButtonRect(RECT body) const
     };
 }
 
+void GuideWidget::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    WidgetContainer::CollectControlRegions(regions);
+    AddControlRegion(regions, L"add", L"Add widget", GetPrimaryButtonRect(GetBodyRect()), WidgetHit::GuideAddWidgetBtn);
+    AddControlRegion(regions, L"details", L"Details", GetSecondaryButtonRect(GetBodyRect()), WidgetHit::GuideDetailsBtn);
+}
+
 WidgetHit GuideWidget::HitTestWidget(POINT pt) const
 {
     const WidgetHit base = WidgetContainer::HitTestWidget(pt);

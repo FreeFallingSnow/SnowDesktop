@@ -3,11 +3,13 @@
 
 #include "general_page_presenter.h"
 #include "settings_presenter_controls.h"
+#include "number_box_update_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <utility>
@@ -183,6 +185,9 @@ struct GeneralPagePresenter::Impl
     SettingsCard desktopPassthroughCard;
 
     muxc::ToggleSwitch autoStartToggle{nullptr};
+    muxc::ToggleSwitch steamPresenceToggle{nullptr};
+    SettingRow steamPresenceRow;
+    winrt::event_token steamPresenceToken{};
     muxc::StackPanel advancedFeatureControls{nullptr};
     muxc::Expander advancedFeatureExpander{nullptr};
     muxc::TextBlock advancedFeatureStatus{nullptr};
@@ -208,6 +213,9 @@ struct GeneralPagePresenter::Impl
     muxc::ToggleSwitch softwareDesktopHotkeyToggle{nullptr};
     HotkeyRecorder softwareDesktopHotkey;
     muxc::ToggleSwitch doubleClickHideToggle{nullptr};
+    muxc::ToggleSwitch idleHideToggle{nullptr};
+    muxc::ToggleSwitch idleHidePauseToggle{nullptr};
+    muxc::NumberBox idleHideDelay{nullptr};
     muxc::ComboBox languageCombo{nullptr};
     muxc::ToggleSwitch quickNavigationToggle{nullptr};
     muxc::TextBlock quickNavigationHotkeyLabel{nullptr};
@@ -230,6 +238,7 @@ struct GeneralPagePresenter::Impl
     SettingRow softwareDesktopHotkeyToggleRow;
     HotkeySettingRow softwareDesktopHotkeyRow;
     SettingRow doubleClickHideRow;
+    SettingRow idleHideRow, idleHideDelayRow, idleHidePauseRow;
     SettingRow languageRow;
     SettingRow quickNavigationToggleRow;
     HotkeySettingRow quickNavigationHotkeyRow;
@@ -263,6 +272,7 @@ struct GeneralPagePresenter::Impl
     winrt::event_token softwareDesktopToken{};
     winrt::event_token softwareDesktopHotkeyToken{};
     winrt::event_token doubleClickHideToken{};
+    winrt::event_token idleHideToken{}, idleHideDelayToken{}, idleHidePauseToken{};
     winrt::event_token languageSelectionToken{};
     winrt::event_token quickNavigationToken{};
     winrt::event_token pageNavigationToken{};
@@ -305,6 +315,15 @@ struct GeneralPagePresenter::Impl
         autoStartRow.Initialize(autoStartToggle);
         autoStartRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         startupCard.content.Children().Append(autoStartRow.root);
+        steamPresenceToggle = muxc::ToggleSwitch{};
+        steamPresenceRow.Initialize(steamPresenceToggle);
+        steamPresenceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        // The group pass skips collapsed rows. Initialize the shared surface
+        // before runtime bridge availability decides whether this row is shown.
+        presenter_controls::StyleSettingsSubrow(steamPresenceRow.root, false, 0.0);
+        steamPresenceRow.root.MinHeight(66.0);
+        steamPresenceRow.root.Visibility(mux::Visibility::Collapsed);
+        startupCard.content.Children().Append(steamPresenceRow.root);
         startupOwnershipNotice = muxc::InfoBar{};
         startupOwnershipNotice.Severity(
             muxc::InfoBarSeverity::Informational);
@@ -563,6 +582,24 @@ struct GeneralPagePresenter::Impl
         softwareDesktopHotkeyRow.Initialize(softwareDesktopHotkey);
         desktopBehaviorCard.content.Children().Append(softwareDesktopHotkeyRow.row.root);
         desktopBehaviorCard.content.Children().Append(doubleClickHideRow.root);
+        idleHideToggle = muxc::ToggleSwitch{};
+        idleHideRow.Initialize(idleHideToggle);
+        idleHideRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        desktopBehaviorCard.content.Children().Append(idleHideRow.root);
+        idleHideDelay = muxc::NumberBox{};
+        idleHideDelay.Minimum(1);
+        idleHideDelay.Maximum(snowdesktop::desktop_idle_hide::kMaxDelaySeconds);
+        idleHideDelay.SmallChange(1);
+        idleHideDelay.LargeChange(5);
+        idleHideDelay.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        idleHideDelay.Width(140);
+        idleHideDelayRow.Initialize(idleHideDelay);
+        idleHideDelayRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        desktopBehaviorCard.content.Children().Append(idleHideDelayRow.root);
+        idleHidePauseToggle = muxc::ToggleSwitch{};
+        idleHidePauseRow.Initialize(idleHidePauseToggle);
+        idleHidePauseRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        desktopBehaviorCard.content.Children().Append(idleHidePauseRow.root);
 
         InitializeCard(languageCard, cardStyle, root);
         languageCombo = muxc::ComboBox{};
@@ -714,6 +751,10 @@ struct GeneralPagePresenter::Impl
                 const bool enabled = autoStartToggle.IsOn();
                 actions.setAutoStart(generation, enabled);
             });
+        steamPresenceToken = steamPresenceToggle.Toggled([this](const auto&, const auto&) {
+            const bool enabled = steamPresenceToggle.IsOn();
+            CommitGeneral([enabled](GeneralSettings& settings) { settings.steamShowRunningStatus = enabled; });
+        });
         const auto registerClick = [this](const auto&, const auto&) {
                 if (closed || !active)
                     return;
@@ -742,6 +783,29 @@ struct GeneralPagePresenter::Impl
                     settings.doubleClickHideDesktop = enabled;
                 });
             });
+        idleHideToken = idleHideToggle.Toggled([this](const auto&, const auto&) {
+            UpdateDependentEnabledStates();
+            const bool enabled = idleHideToggle.IsOn();
+            CommitGeneral([enabled](GeneralSettings& settings) {
+                settings.desktopIdleHideEnabled = enabled;
+            });
+        });
+        idleHideDelayToken = idleHideDelay.ValueChanged([this](const auto&, const auto&) {
+            const double value = idleHideDelay.Value();
+            if (!std::isfinite(value)) return;
+            const int seconds = snowdesktop::desktop_idle_hide::NormalizeDelay(
+                static_cast<int>(std::round(std::clamp(value, 1.0,
+                    static_cast<double>(snowdesktop::desktop_idle_hide::kMaxDelaySeconds)))));
+            CommitGeneral([seconds](GeneralSettings& settings) {
+                settings.desktopIdleHideDelaySeconds = seconds;
+            });
+        });
+        idleHidePauseToken = idleHidePauseToggle.Toggled([this](const auto&, const auto&) {
+            const bool enabled = idleHidePauseToggle.IsOn();
+            CommitGeneral([enabled](GeneralSettings& settings) {
+                settings.desktopIdleHidePauseWithWindows = enabled;
+            });
+        });
         languageSelectionToken = languageCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 if (updatingControls || closed || !active || !hasSnapshot)
@@ -893,11 +957,17 @@ struct GeneralPagePresenter::Impl
     void PatchGeneral(const GeneralSettings& settings)
     {
         autoStartToggle.IsOn(settings.autoStartEnabled);
+        steamPresenceToggle.IsOn(settings.steamShowRunningStatus);
         softwareDesktopToggle.IsOn(settings.softwareDesktopEnabled);
         softwareDesktopHotkeyToggle.IsOn(settings.softwareDesktopHotkeyEnabled);
         softwareDesktopHotkey.SetValue(Chord(settings.softwareDesktopHotkeyModifiers,
             settings.softwareDesktopHotkeyVirtualKey), generation);
         doubleClickHideToggle.IsOn(settings.doubleClickHideDesktop);
+        idleHideToggle.IsOn(settings.desktopIdleHideEnabled);
+        const double idleSeconds = snowdesktop::desktop_idle_hide::NormalizeDelay(settings.desktopIdleHideDelaySeconds);
+        if (number_box_update_rules::ShouldWriteValue(idleHideDelay.Value(), idleSeconds))
+            idleHideDelay.Value(idleSeconds);
+        idleHidePauseToggle.IsOn(settings.desktopIdleHidePauseWithWindows);
         pageNavigationToggle.IsOn(
             settings.pageNavigationKeyboardEnabled);
         previousPageHotkey.SetValue(Chord(
@@ -944,6 +1014,10 @@ struct GeneralPagePresenter::Impl
 
     void UpdateDependentEnabledStates()
     {
+        idleHideDelay.IsEnabled(idleHideToggle.IsOn());
+        idleHideDelayRow.SetEnabled(idleHideToggle.IsOn());
+        idleHidePauseToggle.IsEnabled(idleHideToggle.IsOn());
+        idleHidePauseRow.SetEnabled(idleHideToggle.IsOn());
         UpdateConditionalHintVisibility();
         SetRecorderEnabled(softwareDesktopHotkey, softwareDesktopHotkeyToggle.IsOn());
         softwareDesktopHotkeyRow.row.SetEnabled(softwareDesktopHotkeyToggle.IsOn());
@@ -1098,6 +1172,8 @@ struct GeneralPagePresenter::Impl
             "settings.desktop.passthrough");
 
         autoStartRow.SetText(L("app.settings.auto_start"));
+        steamPresenceRow.SetText(L("settings.general.steamRunningStatus"));
+        muxa::AutomationProperties::SetName(steamPresenceToggle, L("settings.general.steamRunningStatus"));
         advancedFeatureRow.SetText(L("settings.general.advancedFeatures"));
         muxa::AutomationProperties::SetName(advancedFeatureExpander,
             L("settings.general.advancedFeatures"));
@@ -1126,6 +1202,12 @@ struct GeneralPagePresenter::Impl
         muxa::AutomationProperties::SetName(softwareDesktopHotkeyToggle,
             softwareDesktopHotkeyToggleRow.label.Text());
         doubleClickHideRow.SetText(L("app.settings.double_click_hide"));
+        idleHideRow.SetText(L("settings.desktop.idleHide"), L("settings.desktop.idleHide.description"));
+        idleHideDelayRow.SetText(L("settings.desktop.idleHide.delay"));
+        idleHidePauseRow.SetText(L("settings.desktop.idleHide.pauseWithWindows"));
+        muxa::AutomationProperties::SetName(idleHideToggle, idleHideRow.label.Text());
+        muxa::AutomationProperties::SetName(idleHideDelay, idleHideDelayRow.label.Text());
+        muxa::AutomationProperties::SetName(idleHidePauseToggle, idleHidePauseRow.label.Text());
         languageRow.SetText(L("app.settings.language"));
         quickNavigationToggleRow.SetText(
             L("app.settings.enable_global_navigation"));
@@ -1270,6 +1352,7 @@ struct GeneralPagePresenter::Impl
         GeneralAdvancedFeatureStatus status;
         if (actions.queryAdvancedFeatureStatus)
             status = actions.queryAdvancedFeatureStatus();
+        steamPresenceRow.root.Visibility(status.bridgeAvailable ? mux::Visibility::Visible : mux::Visibility::Collapsed);
 
         advancedFeaturesCard.root.Visibility(status.cardVisible
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
@@ -1504,6 +1587,7 @@ struct GeneralPagePresenter::Impl
             onboarding->Close();
             root.ActualThemeChanged(themeToken);
             autoStartToggle.Toggled(autoStartToken);
+            steamPresenceToggle.Toggled(steamPresenceToken);
             enableWindowSupport.Click(enableWindowSupportToken);
             disableWindowSupport.Click(disableWindowSupportToken);
             registerAdvancedFeaturesButton.Click(
@@ -1514,6 +1598,9 @@ struct GeneralPagePresenter::Impl
             softwareDesktopToggle.Toggled(softwareDesktopToken);
             softwareDesktopHotkeyToggle.Toggled(softwareDesktopHotkeyToken);
             doubleClickHideToggle.Toggled(doubleClickHideToken);
+            idleHideToggle.Toggled(idleHideToken);
+            idleHideDelay.ValueChanged(idleHideDelayToken);
+            idleHidePauseToggle.Toggled(idleHidePauseToken);
             languageCombo.SelectionChanged(languageSelectionToken);
             quickNavigationToggle.Toggled(quickNavigationToken);
             pageNavigationToggle.Toggled(pageNavigationToken);
@@ -1611,6 +1698,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
 
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
+    registerAliases(impl_->steamPresenceToggle, {"general.steamRunningStatus"});
     registerAliases(impl_->windowSupportExpander, {"general.windowSupport"});
     registerAliases(impl_->advancedFeatureExpander,
         {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
@@ -1648,6 +1736,9 @@ void GeneralPagePresenter::RegisterFocusTargets(
             "general.floatingDock.hotkey"});
     registerAliases(impl_->doubleClickHideToggle,
         {"desktop.doubleClickHide", "general.doubleClickHide"});
+    registerAliases(impl_->idleHideToggle, {"desktop.idleHide"});
+    registerAliases(impl_->idleHideDelay, {"desktop.idleHide.delay"});
+    registerAliases(impl_->idleHidePauseToggle, {"desktop.idleHide.pauseWithWindows"});
 }
 
 mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId,
@@ -1655,6 +1746,13 @@ mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId
 {
     if (prerequisite) *prerequisite = {};
     if (!impl_ || impl_->closed) return nullptr;
+    if ((focusId == "desktop.idleHide.delay" || focusId == "desktop.idleHide.pauseWithWindows") &&
+        !impl_->idleHideToggle.IsOn())
+    {
+        if (prerequisite)
+            *prerequisite = {"settings.search.prerequisite.enable", std::wstring(impl_->idleHideRow.label.Text().c_str())};
+        return impl_->idleHideToggle;
+    }
     if (focusId == "general.windowSupport")
     {
         if (reveal) impl_->windowSupportExpander.IsExpanded(true);

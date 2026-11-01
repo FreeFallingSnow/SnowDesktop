@@ -42,7 +42,13 @@ std::shared_ptr<Backend> CreateBrightnessBackend();
 std::shared_ptr<Backend> CreateWifiBackend();
 std::shared_ptr<Backend> CreateBluetoothBackend();
 std::shared_ptr<Backend> CreateMediaBackend();
-std::shared_ptr<Backend> CreateProjectionBackend();
+struct ProjectionApi
+{
+    decltype(&GetDisplayConfigBufferSizes) bufferSizes = &GetDisplayConfigBufferSizes;
+    decltype(&QueryDisplayConfig) query = &QueryDisplayConfig;
+    decltype(&SetDisplayConfig) set = &SetDisplayConfig;
+};
+std::shared_ptr<Backend> CreateProjectionBackend(ProjectionApi api = {});
 std::shared_ptr<Backend> CreateHotspotBackend();
 std::shared_ptr<Backend> CreateAirplaneBackend();
 std::shared_ptr<Backend> CreateAwakeBackend();

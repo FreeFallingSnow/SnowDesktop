@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -29,6 +30,7 @@
 #include "package_tool.h"
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
+#include "presence_lifetime.h"
 #include "workshop_project.h"
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -158,6 +160,7 @@ void PrintUsage()
         << "  SnowDesktopSteamBridge.exe configuration\n"
         << "  SnowDesktopSteamBridge.exe status\n"
         << "  SnowDesktopSteamBridge.exe entitlement status\n"
+        << "  SnowDesktopSteamBridge.exe presence --parent-handle HANDLE --stop-handle HANDLE\n"
         << "  SnowDesktopSteamBridge.exe workshop list-subscribed [--details]\n"
         << "  SnowDesktopSteamBridge.exe workshop list-published [--page N]\n"
         << "  SnowDesktopSteamBridge.exe workshop item-details --item ID\n"
@@ -1677,6 +1680,27 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (command == L"configuration" && argc == 2)
         return PrintConfiguration();
+    if (command == L"presence")
+    {
+#if SNOWDESKTOP_HAS_STEAMWORKS
+        std::unique_ptr<SteamApiSession> session;
+        auto retryAt = std::chrono::steady_clock::time_point{};
+        return snowdesktop::steam_bridge::RunPresenceLifetime(argc, argv, [&] {
+            if (session && !SteamAPI_IsSteamRunning()) session.reset();
+            if (session && std::chrono::steady_clock::now() >= retryAt &&
+                (!SteamUser() || !SteamUser()->BLoggedOn())) session.reset();
+            if (!session && std::chrono::steady_clock::now() >= retryAt)
+            {
+                retryAt = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+                auto candidate = std::make_unique<SteamApiSession>();
+                if (candidate->IsInitialized()) session = std::move(candidate);
+            }
+            if (session) SteamAPI_RunCallbacks();
+        });
+#else
+        return kSteamworksUnavailable;
+#endif
+    }
     if (command == L"status" && argc == 2)
         return PrintStatus();
     if (command == L"entitlement" && argc == 3 &&

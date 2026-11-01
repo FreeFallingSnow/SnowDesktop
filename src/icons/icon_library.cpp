@@ -308,10 +308,10 @@ IconLibrarySnapshot IconLibrary::Reconcile(const IconPackSubscriptions& subscrip
     for(const auto& download:subscriptions.downloads)
     {
         std::string packageError;
-        if(!digits(download.item)||!digits(download.owner)||!subscriptions.subscribed.contains(download.item)||
+        if(!digits(download.item)||(!subscriptions.localCache&&!digits(download.owner))||!subscriptions.subscribed.contains(download.item)||
             !icon_package::Validate(download.package,packageError)) {if(!packageError.empty())error=packageError;continue;}
         auto group=std::find_if(groups_.begin(),groups_.end(),[&](const auto& value){return value.workshopItem==download.item;});
-        if(group!=groups_.end()&&group->workshopOwner!=download.owner){error="iconWorkshop.authorMismatch";continue;}
+        if(group!=groups_.end()&&!subscriptions.localCache&&!group->workshopOwner.empty()&&group->workshopOwner!=download.owner){error="iconWorkshop.authorMismatch";continue;}
         const auto beforeGroups=groups_;const auto beforeEntries=entries_;
         if(group==groups_.end())
         {
@@ -320,6 +320,7 @@ IconLibrarySnapshot IconLibrary::Reconcile(const IconPackSubscriptions& subscrip
             value.source="steam-workshop";groups_.push_back(std::move(value));group=std::prev(groups_.end());changed=true;
         }
         if(std::find(group->accounts.begin(),group->accounts.end(),subscriptions.account)==group->accounts.end()){group->accounts.push_back(subscriptions.account);changed=true;}
+        if(!subscriptions.localCache&&group->workshopOwner.empty()){group->workshopOwner=download.owner;changed=true;}
         if(group->workshopHash==download.sha256)continue;
         changed=true;
         const auto groupId=group->id;bool installed=true;

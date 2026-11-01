@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Displays performance, storage, network, power, and uptime status.",
   "descriptionKey": "lua_widget.system_monitor.description",
   "preview": "preview.png",
@@ -64,7 +64,10 @@
       "lua_widget.system_monitor.order_previous": "前移",
       "lua_widget.system_monitor.order_next": "后移",
       "lua_widget.system_monitor.order_last": "移到最后",
-      "lua_widget.system_monitor.order_reset": "恢复默认顺序"
+      "lua_widget.system_monitor.order_reset": "恢复默认顺序",
+      "lua_widget.system_monitor.orientation": "排列方向",
+      "lua_widget.system_monitor.orientation_vertical": "纵向",
+      "lua_widget.system_monitor.orientation_horizontal": "横向"
     },
     "en-US": {
       "lua_widget.system_monitor.name": "System Monitor",
@@ -115,7 +118,10 @@
       "lua_widget.system_monitor.order_previous": "Move earlier",
       "lua_widget.system_monitor.order_next": "Move later",
       "lua_widget.system_monitor.order_last": "Move to last",
-      "lua_widget.system_monitor.order_reset": "Restore default order"
+      "lua_widget.system_monitor.order_reset": "Restore default order",
+      "lua_widget.system_monitor.orientation": "Arrangement",
+      "lua_widget.system_monitor.orientation_vertical": "Vertical",
+      "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "zh-TW": {
       "lua_widget.system_monitor.name": "系統監視器",
@@ -166,7 +172,10 @@
       "lua_widget.system_monitor.order_previous": "前移",
       "lua_widget.system_monitor.order_next": "後移",
       "lua_widget.system_monitor.order_last": "移到最後",
-      "lua_widget.system_monitor.order_reset": "還原預設順序"
+      "lua_widget.system_monitor.order_reset": "還原預設順序",
+      "lua_widget.system_monitor.orientation": "排列方向",
+      "lua_widget.system_monitor.orientation_vertical": "縱向",
+      "lua_widget.system_monitor.orientation_horizontal": "橫向"
     },
     "ja-JP": {
       "lua_widget.system_monitor.name": "システムモニター",
@@ -217,7 +226,10 @@
       "lua_widget.system_monitor.order_previous": "前へ移動",
       "lua_widget.system_monitor.order_next": "後ろへ移動",
       "lua_widget.system_monitor.order_last": "末尾に移動",
-      "lua_widget.system_monitor.order_reset": "既定の順序に戻す"
+      "lua_widget.system_monitor.order_reset": "既定の順序に戻す",
+      "lua_widget.system_monitor.orientation": "配置方向",
+      "lua_widget.system_monitor.orientation_vertical": "縦",
+      "lua_widget.system_monitor.orientation_horizontal": "横"
     },
     "ko-KR": {
       "lua_widget.system_monitor.name": "시스템 모니터",
@@ -268,7 +280,10 @@
       "lua_widget.system_monitor.order_previous": "앞으로 이동",
       "lua_widget.system_monitor.order_next": "뒤로 이동",
       "lua_widget.system_monitor.order_last": "맨 뒤로 이동",
-      "lua_widget.system_monitor.order_reset": "기본 순서 복원"
+      "lua_widget.system_monitor.order_reset": "기본 순서 복원",
+      "lua_widget.system_monitor.orientation": "배열 방향",
+      "lua_widget.system_monitor.orientation_vertical": "세로",
+      "lua_widget.system_monitor.orientation_horizontal": "가로"
     },
     "de-DE": {
       "lua_widget.system_monitor.name": "Systemmonitor",
@@ -319,7 +334,10 @@
       "lua_widget.system_monitor.order_previous": "Nach vorne",
       "lua_widget.system_monitor.order_next": "Nach hinten",
       "lua_widget.system_monitor.order_last": "Ans Ende",
-      "lua_widget.system_monitor.order_reset": "Standardreihenfolge wiederherstellen"
+      "lua_widget.system_monitor.order_reset": "Standardreihenfolge wiederherstellen",
+      "lua_widget.system_monitor.orientation": "Ausrichtung",
+      "lua_widget.system_monitor.orientation_vertical": "Vertikal",
+      "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "fr-FR": {
       "lua_widget.system_monitor.name": "Moniteur système",
@@ -370,7 +388,10 @@
       "lua_widget.system_monitor.order_previous": "Déplacer avant",
       "lua_widget.system_monitor.order_next": "Déplacer après",
       "lua_widget.system_monitor.order_last": "Placer en dernier",
-      "lua_widget.system_monitor.order_reset": "Rétablir l’ordre par défaut"
+      "lua_widget.system_monitor.order_reset": "Rétablir l’ordre par défaut",
+      "lua_widget.system_monitor.orientation": "Orientation",
+      "lua_widget.system_monitor.orientation_vertical": "Verticale",
+      "lua_widget.system_monitor.orientation_horizontal": "Horizontale"
     },
     "es-ES": {
       "lua_widget.system_monitor.name": "Monitor del sistema",
@@ -421,7 +442,10 @@
       "lua_widget.system_monitor.order_previous": "Mover antes",
       "lua_widget.system_monitor.order_next": "Mover después",
       "lua_widget.system_monitor.order_last": "Mover al final",
-      "lua_widget.system_monitor.order_reset": "Restaurar el orden predeterminado"
+      "lua_widget.system_monitor.order_reset": "Restaurar el orden predeterminado",
+      "lua_widget.system_monitor.orientation": "Orientación",
+      "lua_widget.system_monitor.orientation_vertical": "Vertical",
+      "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "es-419": {
       "lua_widget.system_monitor.name": "Monitor del sistema",
@@ -472,7 +496,10 @@
       "lua_widget.system_monitor.order_previous": "Mover antes",
       "lua_widget.system_monitor.order_next": "Mover después",
       "lua_widget.system_monitor.order_last": "Mover al final",
-      "lua_widget.system_monitor.order_reset": "Restaurar el orden predeterminado"
+      "lua_widget.system_monitor.order_reset": "Restaurar el orden predeterminado",
+      "lua_widget.system_monitor.orientation": "Orientación",
+      "lua_widget.system_monitor.orientation_vertical": "Vertical",
+      "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     },
     "pt-BR": {
       "lua_widget.system_monitor.name": "Monitor do sistema",
@@ -523,7 +550,10 @@
       "lua_widget.system_monitor.order_previous": "Mover para antes",
       "lua_widget.system_monitor.order_next": "Mover para depois",
       "lua_widget.system_monitor.order_last": "Mover para o fim",
-      "lua_widget.system_monitor.order_reset": "Restaurar ordem padrão"
+      "lua_widget.system_monitor.order_reset": "Restaurar ordem padrão",
+      "lua_widget.system_monitor.orientation": "Orientação",
+      "lua_widget.system_monitor.orientation_vertical": "Vertical",
+      "lua_widget.system_monitor.orientation_horizontal": "Horizontal"
     }
   },
   "defaultSize": {
@@ -570,6 +600,9 @@
     "data.system.storage.io",
     "data.system.storage.volumes",
     "data.system.gpu.details",
-    "interaction.contextMenu.submenu"
+    "interaction.contextMenu.submenu",
+    "interaction.pointerCapture",
+    "interaction.scroll.orientation",
+    "schedule.basic"
   ]
 }

@@ -2,39 +2,14 @@
 
 #include <memory>
 #include <functional>
-#include <string>
 
 #include <windows.h>
 #include <shlobj.h>
 
 namespace snowdesktop
 {
-
-// Private, never invoked. The kernel removes the sample even when a supervised
-// menu process is terminated while an extension is loading.
-struct ShellMenuInitializationFile
-{
-    ShellMenuInitializationFile();
-    ~ShellMenuInitializationFile();
-    ShellMenuInitializationFile(const ShellMenuInitializationFile&) = delete;
-    ShellMenuInitializationFile& operator=(const ShellMenuInitializationFile&) = delete;
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    std::wstring path;
-};
-
-class ShellFileMenuPrimer
-{
-public:
-    ShellFileMenuPrimer();
-    ~ShellFileMenuPrimer();
-    bool Initialize();
-private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
-
 /**
- * Hosts a minimal hidden Shell view while a classic context menu is open.
+ * Supplies folder and selection services while a classic context menu is open.
  *
  * Cascading verbs backed by IExplorerCommand query their site for
  * IServiceProvider/IFolderView/IShellBrowser. Without that site they can
@@ -50,19 +25,28 @@ public:
     ShellContextMenuSite& operator=(const ShellContextMenuSite&) = delete;
 
     bool Initialize(IShellFolder* folder, HWND owner);
-    bool Attach(IContextMenu* contextMenu);
-    // Load providers before creating a Shell view. Rebind the actual menu only
-    // after attaching that view, keeping synchronous cascades and final tokens.
+    bool Attach(IUnknown* contextMenu);
+    HRESULT InitializeSelection(IShellFolder* folder, HWND owner,
+        UINT count = 0, PCUITEMID_CHILD_ARRAY children = nullptr);
+    // Backgrounds and selections share one immutable site and one query.
+    // Cold missing entries never trigger a primer, retry or aggregate rebuild.
     using MenuFactory = std::function<HRESULT(HWND, IContextMenu**)>;
     HRESULT BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags,
         const MenuFactory& bind, IContextMenu** contextMenu);
+    // Item sites attach after cold QCM; background sites attach before QCM so
+    // commands can resolve the current directory. Both use one query and no
+    // enumerating Windows folder view or unpublished aggregate.
+    HRESULT BuildSelectionMenu(IShellFolder* folder, HWND owner, HMENU menu,
+        UINT firstCommand, UINT lastCommand, UINT flags, const MenuFactory& bind,
+        UINT count, PCUITEMID_CHILD_ARRAY children, IContextMenu** contextMenu);
     // Read built-in namespace verbs for a custom popup. These commands do not
     // need filesystem providers or a folder view; bind their aggregate once.
     HRESULT BuildNamespaceMenu(HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags,
         const MenuFactory& bind, IContextMenu** contextMenu);
     HWND HostWindow() const;
+    bool HasView() const;
     // Verb dialogs must use the same persistent, activatable owner as the
     // invocation structure, rather than the hidden view used to build menus.
     void SetInvocationOwner(HWND owner);

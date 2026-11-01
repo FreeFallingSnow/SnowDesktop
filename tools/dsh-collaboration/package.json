@@ -1,6 +1,6 @@
 {
   "name": "@local/snowdesktop-collaboration",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "private": true,
   "type": "module",
   "exports": {
@@ -17,9 +17,9 @@
     "client": {"platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-conversation"]}
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5",
     "@deepseek-ai/schemastery": "~3.18.5",
     "zod": "4.4.3"
   }

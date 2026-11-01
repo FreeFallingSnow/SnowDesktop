@@ -98,16 +98,16 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 
 ## 🧩 第三方代码与资源
 
-以下按在 SnowDesktop 中的用途分类。链接指向本地来源说明；完整版权与许可声明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+以下按在 SnowDesktop 中的用途分类。链接指向统一来源与许可声明中的对应条目，完整声明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
 
 ### 代码库、SDK 与运行时
 
 | 项目 | 用途 | 许可 |
 | --- | --- | --- |
-| [Everything SDK](third_party/everything/README.md) | 快捷导航查询 Everything 文件索引 | MIT |
-| [Dear ImGui](third_party/imgui/README.md) | 创意工坊管理器界面 | MIT |
-| [Lua](third_party/lua/README.md) | 组件脚本引擎与开发工具 | MIT |
-| [MinHook](third_party/minhook/README.md) | 任务栏和 Wallpaper Engine 捕获 Hook | BSD 2-Clause |
+| [Everything SDK](THIRD_PARTY_NOTICES.md#everything) | 快捷导航查询 Everything 文件索引 | MIT |
+| [Dear ImGui](THIRD_PARTY_NOTICES.md#imgui) | 创意工坊管理器界面 | MIT |
+| [Lua](THIRD_PARTY_NOTICES.md#lua) | 组件脚本引擎与开发工具 | MIT |
+| [MinHook](THIRD_PARTY_NOTICES.md#minhook) | 任务栏和 Wallpaper Engine 捕获 Hook | BSD 2-Clause |
 | [Windows App SDK](https://github.com/microsoft/WindowsAppSDK) | WinUI 3 设置界面及应用私有运行时 | Microsoft Software License Terms |
 | [Windows ML](https://learn.microsoft.com/windows/ai/new-windows-ml/) | 随 Windows App SDK 部署的运行时依赖 | Microsoft Software License Terms |
 | [WebView2 SDK](https://developer.microsoft.com/microsoft-edge/webview2/) | Windows App SDK 部署清单中的依赖 | BSD 3-Clause |
@@ -117,26 +117,26 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 
 | 项目 | 用途 | 许可 |
 | --- | --- | --- |
-| [pinyin-data](third_party/pinyin-data/README.md) | 汉字名称的全拼与首字母搜索 | MIT |
+| [pinyin-data](THIRD_PARTY_NOTICES.md#pinyin-data) | 汉字名称的全拼与首字母搜索 | MIT |
 
 ### 字体、图标与纹理
 
 | 项目 | 用途 | 许可 |
 | --- | --- | --- |
-| [MiSans Regular](third_party/misans/README.md) | 可选界面字体 | MiSans 字体许可协议 |
-| [HarmonyOS Sans SC](third_party/harmonyos-sans/README.md) | 可选界面字体 | HarmonyOS Sans Fonts License Agreement |
-| [Fluent System Icons](third_party/fluentui-system-icons/README.md) | 菜单、状态栏与控制中心图标 | MIT |
-| [Font Awesome Free Solid](third_party/font-awesome/README.md) | 组件兼容图标字体 | SIL OFL 1.1 |
-| [WinUI 亚克力噪点](third_party/microsoft-ui-xaml/README.md) | 玻璃材质噪点纹理 | MIT |
+| [MiSans Regular](THIRD_PARTY_NOTICES.md#misans) | 可选界面字体 | MiSans 字体许可协议 |
+| [HarmonyOS Sans SC](THIRD_PARTY_NOTICES.md#harmonyos-sans) | 可选界面字体 | HarmonyOS Sans Fonts License Agreement |
+| [Fluent System Icons](THIRD_PARTY_NOTICES.md#fluent-system-icons) | 菜单、状态栏与控制中心图标 | MIT |
+| [Font Awesome Free Solid](THIRD_PARTY_NOTICES.md#font-awesome) | 组件兼容图标字体 | SIL OFL 1.1 |
+| [WinUI 亚克力噪点](THIRD_PARTY_NOTICES.md#winui-acrylic-noise) | 玻璃材质噪点纹理 | MIT |
 
 ### 参考与改编项目
 
 | 项目 | 复用范围 | 许可 |
 | --- | --- | --- |
-| [YASB](third_party/yasb/README.md) | 托盘协议、回调与面板组织，以及蓝牙、电源模式、通知状态参考 | MIT |
-| [TranslucentTB](THIRD_PARTY_NOTICES.md#translucenttb-derived-portions) | 任务栏集成与桌面背景合成的部分代码 | GPL-3.0-only |
-| [DeskMakeover](THIRD_PARTY_NOTICES.md#deskmakeover-derived-shape-geometry) | 图标形状控制点与连续圆角几何 | MIT |
-| [OpenHarmony GraphicsEffect](third_party/graphics-effect/README.md) | 玻璃边缘光、扇区遮罩和内阴影计算 | Apache-2.0 |
+| [YASB](THIRD_PARTY_NOTICES.md#yasb) | 托盘协议、回调与面板组织，以及蓝牙、电源模式、通知状态参考 | MIT |
+| [TranslucentTB](THIRD_PARTY_NOTICES.md#translucenttb) | 任务栏集成与桌面背景合成的部分代码 | GPL-3.0-only |
+| [DeskMakeover](THIRD_PARTY_NOTICES.md#deskmakeover) | 图标形状控制点与连续圆角几何 | MIT |
+| [OpenHarmony GraphicsEffect](THIRD_PARTY_NOTICES.md#graphics-effect) | 玻璃边缘光、扇区遮罩和内阴影计算 | Apache-2.0 |
 
 ## 🤝 参与贡献
 

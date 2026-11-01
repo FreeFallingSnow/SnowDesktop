@@ -12,7 +12,7 @@ namespace snowdesktop::shell_extensions
 {
 namespace
 {
-constexpr std::uint32_t Schema = 11;
+constexpr std::uint32_t Schema = 12;
 constexpr std::uint64_t MaximumSnapshotBytes = 2 * 1024 * 1024;
 std::uint64_t Hash(std::span<const std::byte> bytes)
 {
@@ -82,7 +82,8 @@ bool Sanitize(std::vector<Entry> &entries, size_t &count, unsigned depth = 0)
     {
         if (++count > 2048 || entry.label.size() > 2048 || entry.provider.size() > 8192 ||
             entry.key.size() > 8192 || entry.registration.size() > 8192 || entry.width < 0 || entry.height < 0 || entry.width > 128 ||
-            entry.height > 128 || entry.pixels.size() != static_cast<size_t>(entry.width * entry.height * 4))
+            entry.height > 128 || entry.imageLogicalSize < 0 || entry.imageLogicalSize > 128 ||
+            entry.pixels.size() != static_cast<size_t>(entry.width * entry.height * 4))
             return false;
         entry.token = 0;
         if (!Sanitize(entry.children, count, depth + 1))
@@ -314,6 +315,9 @@ std::optional<Reply> MenuSnapshotCache::Find(const Ticket &ticket, std::uint64_t
             const auto data = Read(path, MaximumSnapshotBytes);
             if (!data)
                 return {};
+            std::uint32_t recordSchema = 0;
+            settings_ipc::Reader header(*data); header(recordSchema);
+            if (recordSchema != Schema) return {};
             auto [schema, identity, epoch, written, request, dependency, reply] = settings_ipc::Unpack<DiskRow>(*data);
             size_t count = 0;
             if ((ticket.dependency && dependency != ticket.dependency) || schema != Schema || identity != ticket.identity || epoch != ticket.epoch || !reply.ok ||
@@ -434,6 +438,9 @@ std::vector<std::pair<Request, Reply>> MenuSnapshotCache::Warm()
         try
         {
             const auto bytes = Read(path, MaximumSnapshotBytes); if (!bytes) continue;
+            std::uint32_t recordSchema = 0;
+            settings_ipc::Reader header(*bytes); header(recordSchema);
+            if (recordSchema != Schema) continue;
             const auto disk = settings_ipc::Unpack<DiskRow>(*bytes);
             const auto &request = std::get<4>(disk);
             const auto ticket = Capture(request);

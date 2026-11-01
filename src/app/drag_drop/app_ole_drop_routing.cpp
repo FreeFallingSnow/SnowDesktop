@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "drag_drop/ole_drag_rules.h"
 
@@ -129,10 +130,10 @@ bool DesktopApp::TryGetDesktopHoverPointFromCursor(
 {
     POINT screenPoint{};
     if (!hwnd_ || !IsWindow(hwnd_) ||
-        !GetCursorPos(&screenPoint))
+        !snowdesktop::private_pointer::CursorPosition(&screenPoint))
         return false;
     if (!IsDesktopInteractionSurfaceWindow(
-            WindowFromPoint(screenPoint)))
+            snowdesktop::private_pointer::WindowAtPoint(screenPoint)))
         return false;
 
     point = screenPoint;
@@ -144,7 +145,7 @@ bool DesktopApp::TryGetNativeDragHoverPointFromCursor(
 {
     POINT screenPoint{};
     if (!hwnd_ || !IsWindow(hwnd_) ||
-        !GetCursorPos(&screenPoint))
+        !snowdesktop::private_pointer::CursorPosition(&screenPoint))
         return false;
 
     const HWND hit =
@@ -161,10 +162,10 @@ bool DesktopApp::TryGetBaseDesktopHoverPointFromCursor(
 {
     POINT screenPoint{};
     if (!hwnd_ || !IsWindow(hwnd_) ||
-        !GetCursorPos(&screenPoint))
+        !snowdesktop::private_pointer::CursorPosition(&screenPoint))
         return false;
     if (!IsBaseDesktopHoverSurfaceWindow(
-            WindowFromPoint(screenPoint)))
+            snowdesktop::private_pointer::WindowAtPoint(screenPoint)))
         return false;
 
     point = screenPoint;
@@ -176,10 +177,10 @@ bool DesktopApp::TryGetNativeDragResumePointFromCursor(
 {
     POINT screenPoint{};
     if (!hwnd_ || !IsWindow(hwnd_) ||
-        !GetCursorPos(&screenPoint))
+        !snowdesktop::private_pointer::CursorPosition(&screenPoint))
         return false;
 
-    HWND hit = WindowFromPoint(screenPoint);
+    HWND hit = snowdesktop::private_pointer::WindowAtPoint(screenPoint);
     HWND root = hit ? GetAncestor(hit, GA_ROOT) : nullptr;
     if (!root)
         root = hit;
@@ -207,6 +208,10 @@ bool DesktopApp::TryGetNativeDragResumePointFromCursor(
  */
 bool DesktopApp::IsExternalDropWindowAt(POINT clientPoint) const
 {
+    // A software pointer has no desktop-wide OLE input stream. Keep its
+    // native in-app drag on that existing path; crossing process boundaries
+    // requires a separately implemented input adapter.
+    if (snowdesktop::private_pointer::Active()) return false;
     POINT screenPoint = clientPoint;
     ClientToScreen(hwnd_, &screenPoint);
     HWND hit = ResolveWindowBelowDragPreviewAt(screenPoint);

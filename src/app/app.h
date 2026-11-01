@@ -32,6 +32,7 @@
 #include "common/background_work.h"
 #include "data/data_cleanup.h"
 #include "platform/single_instance.h"
+#include "platform/control/control_server.h"
 #include "app/shell/shell_icon_work.h"
 #include "app/shell/shell_icon_request.h"
 #include "icons/icon_styled_pixels.h"
@@ -44,6 +45,7 @@
 #include "icons/icon_row_index.h"
 #include "app/dock/dock_icon_work.h"
 #include "desktop/desktop_namespace_registry.h"
+#include "desktop/desktop_idle_hide.h"
 #include "core/item.h"
 #include "core/slot.h"
 #include "core/container.h"
@@ -67,6 +69,9 @@
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
 namespace snowdesktop::page_mapping { struct State; struct Services; }
+namespace snowdesktop::app_control { struct Runtime; }
+namespace snowdesktop::control { struct ElementSnapshot; }
+namespace snowdesktop::control_settings { struct NativeWidgetSettingsState; struct NativeWidgetSettingsPatch; }
 namespace snowdesktop::dock_drop_model { struct Services; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
@@ -116,6 +121,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "desktop/desktop_drop_cache.h"
 #include "dock/dock_app_identity_rules.h"
 #include "shell/shell_launch_worker.h"
+#include "shell/file_preview.h"
 #include "drag_drop/url_drop_download_worker.h"
 #include "drag_drop/drop_text_rules.h"
 #include "drag_drop/virtual_file_drop.h"
@@ -167,6 +173,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "platform/auto_start_rules.h"
 #include "platform/deployment_context.h"
 #include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
 #include "layout/page_layout_settings.h"
 #include "layout/page_management_rules.h"
 
@@ -227,6 +234,7 @@ class WidgetSettingsService;
 namespace snowdesktop
 {
 class ShellContextMenuSite;
+class ShellNewMenu;
 class ShellNewItemCapture;
 struct AutoStartQueryResult
 {
@@ -306,6 +314,8 @@ struct SteamWorkshopSubscriptionPollState {
         std::uint64_t queryId = 0;
         std::string expectedUnsubscribedPublishedFileId;
         std::vector<std::string> expectedRemovedPackageIds;
+        // Starts on the first pending reconciliation, after any host deferral.
+        std::chrono::steady_clock::time_point reconciliationDeadline{};
         snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done;
     };
     std::atomic<bool> queryInFlight{ false };
@@ -1546,6 +1556,7 @@ private:
         POINT clientPoint, DockWindowPreviewTarget& target);
     void UpdateDockWindowPreview(POINT clientPoint);
     void OnDockWindowPreviewHoverTimer();
+    void RefreshDockWindowPreviewItems();
     void HideDockWindowPreview();
     void DismissDockWindowPreviewUntilLeave();
     /** @brief 根据当前指针所在窗口清理不应继续显示的桌面悬浮状态。 */
@@ -1634,6 +1645,22 @@ private:
         HWND window) const noexcept;
     /** Initialize the application-lifetime settings state owner. */
     void InitializeSettingsController();
+    void InitializeApplicationControl();
+    snowdesktop::control::Value ApplicationControlLayout() const;
+    snowdesktop::control::ElementSnapshot ApplicationControlElements();
+    snowdesktop::control::Value HandlePrivatePointer(std::string_view method, const snowdesktop::control::Value& params);
+    snowdesktop::control::Value PrivatePointerState(bool trace) const;
+    HWND PrivatePointerWindowAt(POINT point) const;
+    bool OwnsPrivatePointerWindow(HWND window) const;
+    void PresentPrivatePointer();
+    snowdesktop::control::Value HandleApplicationControl(
+        std::string_view method, const snowdesktop::control::Value& params);
+    snowdesktop::control::Value HandleControlSettings(
+        std::string_view method, const snowdesktop::control::Value& params);
+    snowdesktop::control_settings::NativeWidgetSettingsState CaptureNativeWidgetSettings(std::wstring_view id);
+    bool ApplyNativeWidgetSettings(const snowdesktop::control_settings::NativeWidgetSettingsState& expected,
+        const snowdesktop::control_settings::NativeWidgetSettingsPatch& patch);
+    bool NativeWidgetSearchAction(std::wstring_view id, const std::wstring& query);
     /** Release settings UI and services while their borrowed owners are alive. */
     void ShutdownSettingsInfrastructure() noexcept;
     /** Commit a validated layout backup on the application STA. */
@@ -1722,7 +1749,8 @@ private:
         return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
     }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
-    void ToggleDesktopIconsVisibility();
+    void ToggleDesktopIconsVisibility(bool automatic = false);
+    void UpdateDesktopIdleHide();
     /** @brief 判断隐藏桌面时该点是否位于保留元素（组件/Dock）上。 */
     bool IsPointOnRetainedElement(POINT pt) const;
     /** @brief 判断当前打开的集合弹窗是否属于隐藏桌面时保留的元素。 */
@@ -2026,6 +2054,8 @@ private:
         const RightDragMenuPresenter& presentMenu = {}, bool externalContent = false);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
+    bool TryHandleFilePreviewKey(WPARAM key, bool repeated = false);
+    std::wstring GetSelectedFilePreviewPath();
     /** @brief 在当前桌面、容器或弹出窗口中按名称前缀定位文件。 */
     bool TryHandleTypeToSelectChar(wchar_t ch, bool repeated = false);
     /** @brief 在桌面根输入上下文中处理可配置的本地翻页按键。 */
@@ -2088,7 +2118,8 @@ private:
     /** @brief 处理定时器事件。 @param timerId 定时器标识 */
     void OnTimer(WPARAM timerId);
     void PollSteamWorkshopSubscriptions(bool bypassThrottle = false);
-    ULONGLONG iconWorkshopLastPoll_ = 0;
+    std::unique_ptr<snowdesktop::steam_presence::Service> steamPresenceService_;
+    void UpdateSteamPresence();
     void StartSteamWorkshopWatcher();
     void StopSteamWorkshopWatcher();
     static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);
@@ -2194,7 +2225,7 @@ private:
      * @param mode 排序模式
      * @param ascending 是否升序
      */
-    void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true);
+    void SortWidgetContents(size_t widgetIndex, int mode, bool ascending = true, bool persist = true);
     /** @brief 更新剪切状态高亮显示。 */
     void UpdateCutState();
 
@@ -2275,9 +2306,22 @@ private:
         std::optional<RECT> dockRenameAnchor = std::nullopt,
         std::optional<size_t> dockMappingEntryIndex =
             std::nullopt);
+    void ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request request, POINT point,
+        const std::wstring& renameKey = {}, bool keepQuickNavigationOpen = false,
+        std::optional<RECT> renameAnchor = std::nullopt,
+        std::optional<size_t> dockMappingEntryIndex = std::nullopt,
+        snowdesktop::shell_extensions::NativeMenuSelection selection = {});
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
         bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
+    void AppendShellNewSubmenu(HMENU menu, const std::wstring& targetDir,
+        bool enabled = true);
+    HRESULT InitializeShellNewMenu(snowdesktop::ShellNewMenu& menu,
+        const std::wstring& targetDir, std::wstring desktopFilesWidgetId = {});
+    void PrepareShellNewSubmenu(std::unique_ptr<snowdesktop::ShellNewMenu>& menu,
+        const std::wstring& targetDir,
+        std::vector<snowdesktop::modern_menu::Item>& children,
+        std::wstring desktopFilesWidgetId = {});
     std::vector<snowdesktop::modern_menu::Item> BuildShellNewMenuItems(
         HMENU menu, IContextMenu* context);
     void InvokeNewMenuCommand(IContextMenu* context, UINT command,
@@ -3413,6 +3457,11 @@ private:
         return GetOpenPopupWidget() != nullptr &&
             popupAnimation_.IsInteractive();
     }
+    DesktopWidget* ResolveWidgetContentViewData(DesktopWidget* widget) const;
+    const DesktopWidget* ResolveWidgetContentViewData(const DesktopWidget* widget) const
+    {
+        return ResolveWidgetContentViewData(const_cast<DesktopWidget*>(widget));
+    }
     DesktopWidget* GetOpenPopupWidget();
     const DesktopWidget* GetOpenPopupWidget() const;
     size_t GetPopupItemCount(const DesktopWidget& widget) const;
@@ -3709,6 +3758,8 @@ private:
     RECT GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex) const;
     /** @brief 开始重命名文件夹条目。 @param widgetIndex 部件索引 @param memberIndex 成员索引 */
     void BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex);
+    void BeginRenameSearchResult(const std::wstring& path);
+    void BeginFolderEntryRenameEditor(const FolderEntry& entry, RECT rect, size_t owner, bool listMode);
     void BeginRenameDockFolderPopupEntry(size_t memberIndex);
     /** @brief 提交或取消文件夹条目重命名。 @param newName 新名称 @param cancel true 取消 */
     void CommitFolderEntryRename(const std::wstring& newName, bool cancel);
@@ -3994,6 +4045,7 @@ private:
     PersonalizationSettings collectionPopupAppearance_ =
         MakeCollectionPopupAppearancePreset(kAppearancePresetDark);
     bool desktopIconsHidden_ = false;
+    snowdesktop::desktop_idle_hide::State desktopIdleHide_;
     bool showHiddenHint_ = false;
     DWORD hiddenHintStartTick_ = 0;
     bool showWidgetAddedHint_ = false;
@@ -4062,6 +4114,7 @@ private:
         dockLaunchBounces_;
     DockPreviewHoverController dockWindowPreviewHover_;
     std::wstring dockWindowPreviewKey_;
+    DockAppIdentity dockWindowPreviewIdentity_;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
     DWORD systemTaskbarWindowScanTick_ = 0;
@@ -4241,6 +4294,7 @@ private:
         std::wstring shortcutFallbackUrl;
     };
     snowdesktop::ShellLaunchWorker shellLaunchWorker_;
+    snowdesktop::file_preview::Service filePreview_;
     snowdesktop::ShellLaunchWorker shellElevationWorker_{
         &snowdesktop::ShellLaunchWorker::ExecuteRunAsAdministrator };
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
@@ -4448,6 +4502,8 @@ private:
     bool exitRequested_ = false;
     std::unique_ptr<snowdesktop::single_instance::PreparedRestart> preparedRestart_;
     bool startupInitializationComplete_ = false;
+    snowdesktop::control::Server applicationControl_;
+    std::unique_ptr<snowdesktop::app_control::Runtime> applicationControlRuntime_;
     bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;
@@ -5076,5 +5132,7 @@ private:
     ComPtr<IContextMenu2> newMenuContextMenu_;
     ComPtr<IContextMenu2> activeContextMenu2_;
     ComPtr<IContextMenu3> activeContextMenu3_;
+    std::shared_ptr<snowdesktop::shell_extensions::NativeMenuSession> nativeMenuSession_;
+    snowdesktop::UiScheduleToken nativeMenuPollToken_ = 0;
     /** @} */
 };

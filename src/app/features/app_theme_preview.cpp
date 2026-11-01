@@ -6,6 +6,12 @@
 #include "system/status_bar/status_bar_layout.h"
 #include "theme/panel_gradient_renderer.h"
 #include "taskbar_hook/taskbar_material_render.h"
+#include "demo/scene.h"
+#include "demo/artifact_io.h"
+#include "ui/preview/video_writer.h"
+#include "widget/preview/widget_preview_scene.h"
+#include <unordered_map>
+#include <set>
 #include <cstring>
 #include <stdexcept>
 
@@ -15,6 +21,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
     using namespace snowdesktop;
     native_component_preview::Result result; result.request = request; result.stage = "theme-surface.render";
     const auto require = [](HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("offscreen theme renderer failed"); };
+#include "app_demo_scene_render.inc"
     try
     {
         const auto appearance = request.theme ? request.theme->appearance : personalizationSettings_;

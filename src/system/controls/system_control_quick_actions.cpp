@@ -1,6 +1,7 @@
 #include "system_control_windows.h"
 #include "system_control_feedback.h"
 #include "system_awake_session.h"
+#include "system_control_hotspot_cache.h"
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Networking.Connectivity.h>
 #include <winrt/Windows.Networking.NetworkOperators.h>
@@ -12,18 +13,18 @@ namespace
 constexpr std::pair<const char*, UINT32> Topologies[]{
     {"internal", SDC_TOPOLOGY_INTERNAL}, {"clone", SDC_TOPOLOGY_CLONE},
     {"extend", SDC_TOPOLOGY_EXTEND}, {"external", SDC_TOPOLOGY_EXTERNAL}};
-std::pair<DWORD, std::string> ProjectionState()
+std::pair<DWORD, std::string> ProjectionState(const ProjectionApi& api)
 {
     for (int attempt = 0; attempt < 3; ++attempt)
     {
         UINT32 paths = 0, modes = 0;
-        LONG status = GetDisplayConfigBufferSizes(QDC_DATABASE_CURRENT, &paths, &modes);
+        LONG status = api.bufferSizes(QDC_DATABASE_CURRENT, &paths, &modes);
         if (status) return {static_cast<DWORD>(status), {}};
         if (!paths || paths > 1024 || modes > 4096) return {ERROR_NOT_SUPPORTED, {}};
         std::vector<DISPLAYCONFIG_PATH_INFO> path(paths);
         std::vector<DISPLAYCONFIG_MODE_INFO> mode((std::max)(modes, UINT32{1}));
         DISPLAYCONFIG_TOPOLOGY_ID topology{};
-        status = QueryDisplayConfig(QDC_DATABASE_CURRENT, &paths, path.data(), &modes, mode.data(), &topology);
+        status = api.query(QDC_DATABASE_CURRENT, &paths, path.data(), &modes, mode.data(), &topology);
         if (status == ERROR_INSUFFICIENT_BUFFER) continue;
         if (status) return {static_cast<DWORD>(status), {}};
         for (const auto& [name, flag] : Topologies)
@@ -35,16 +36,21 @@ std::pair<DWORD, std::string> ProjectionState()
 class Projection final : public Backend
 {
 public:
-    std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation&) override
+    explicit Projection(ProjectionApi api) : api_(api) {}
+    std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
     {
-        const auto [status, name] = ProjectionState();
+        if (cancel.Stop()) return {{"host.projection", Missing(cancel.Failure().error)}};
+        const auto [status, name] = ProjectionState(api_);
         if (status) return {{"host.projection", Missing(Error(status).error)}};
         auto value = json::Object(); value.object["mode"] = json::Text(name);
         auto modes = json::Array();
-        for (const auto& [id, flag] : Topologies)
+        for (const auto& topology : Topologies)
         {
-            auto item = json::Object(); item.object["id"] = json::Text(id);
-            item.object["available"] = json::Boolean(SetDisplayConfig(0, nullptr, 0, nullptr, SDC_VALIDATE | flag) == ERROR_SUCCESS);
+            auto item = json::Object(); item.object["id"] = json::Text(topology.first);
+            // Offer the standard choices; validate only an explicit switch.
+            // Even SDC_VALIDATE can wait on the display broker and contend with
+            // Win32k input/UI locks, so it must never run in passive sampling.
+            item.object["available"] = json::Boolean(true);
             modes.array.push_back(std::move(item));
         }
         value.object["modes"] = std::move(modes);
@@ -56,18 +62,21 @@ public:
         for (const auto& [id, flag] : Topologies) if (wanted == id)
         {
             if (cancel.Stop()) return cancel.Failure();
-            LONG status = SetDisplayConfig(0, nullptr, 0, nullptr, SDC_VALIDATE | flag);
+            LONG status = api_.set(0, nullptr, 0, nullptr, SDC_VALIDATE | flag);
             if (status) return Error(static_cast<DWORD>(status), "actionUnsupported");
-            status = SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | flag);
+            if (cancel.Stop()) return cancel.Failure();
+            status = api_.set(0, nullptr, 0, nullptr, SDC_APPLY | flag);
             if (status) return Error(static_cast<DWORD>(status));
             return ConfirmControlValue(1, 0, cancel, [&]() -> ControlReadback {
-                const auto [readStatus, mode] = ProjectionState();
+                const auto [readStatus, mode] = ProjectionState(api_);
                 return readStatus ? ControlReadback{std::nullopt, Error(readStatus)} : ControlReadback{mode == wanted ? 1. : 0., {}};
             }, ControlReadbackPause);
         }
         return Error(ERROR_INVALID_PARAMETER, "invalidArguments");
     }
     void Release(std::string_view) override {}
+private:
+    ProjectionApi api_;
 };
 
 // Windows' system airplane switch has no public desktop SDK setter. Keep the
@@ -124,45 +133,88 @@ namespace operators = winrt::Windows::Networking::NetworkOperators;
 namespace connectivity = winrt::Windows::Networking::Connectivity;
 class Hotspot final : public Backend
 {
-    operators::NetworkOperatorTetheringManager manager_{nullptr};
-    operators::NetworkOperatorTetheringManager Manager()
+    using ManagerHandle = operators::NetworkOperatorTetheringManager;
+    HotspotManagerCache<ManagerHandle> cache_;
+    std::shared_ptr<std::atomic<std::uint64_t>> generation_;
+    winrt::event_token networkChanged_{};
+    bool notificationsAttempted_ = false, notificationsAvailable_ = false;
+
+    void EnsureNotifications()
     {
-        // Keep the active manager when the upstream disappears, so Stop still
-        // works. Prefer an active hotspot over a newly preferred connection.
-        if (manager_)
+        if (notificationsAttempted_) return;
+        generation_ = std::make_shared<std::atomic<std::uint64_t>>(0);
+        notificationsAttempted_ = true;
+        try
         {
-            try { const auto state = manager_.TetheringOperationalState();
-                if (state == operators::TetheringOperationalState::On || state == operators::TetheringOperationalState::InTransition) return manager_; }
-            catch (const winrt::hresult_error&) { /* A disconnected upstream must not pin an invalid manager. */ }
-            manager_ = nullptr;
+            std::weak_ptr<std::atomic<std::uint64_t>> weak = generation_;
+            networkChanged_ = connectivity::NetworkInformation::NetworkStatusChanged(
+                [weak](const winrt::Windows::Foundation::IInspectable&) {
+                    if (const auto generation = weak.lock())
+                        generation->fetch_add(1, std::memory_order_release);
+                });
+            notificationsAvailable_ = true;
         }
+        catch (const winrt::hresult_error&) { /* Bounded rediscovery remains available without notifications. */ }
+    }
+
+    ManagerHandle Discover(const Cancellation& cancel)
+    {
+        if (cancel.Stop()) throw winrt::hresult_canceled();
         const auto upstream = connectivity::NetworkInformation::GetInternetConnectionProfile();
-        operators::NetworkOperatorTetheringManager fallback{nullptr};
+        ManagerHandle fallback{nullptr}, preferred{nullptr};
         for (const auto& profile : connectivity::NetworkInformation::GetConnectionProfiles())
         {
+            if (cancel.Stop()) throw winrt::hresult_canceled();
             try
             {
                 if (operators::NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(profile) != operators::TetheringCapability::Enabled) continue;
                 auto candidate = operators::NetworkOperatorTetheringManager::CreateFromConnectionProfile(profile);
                 const auto state = candidate.TetheringOperationalState();
                 if (state == operators::TetheringOperationalState::On || state == operators::TetheringOperationalState::InTransition)
-                { manager_ = candidate; return manager_; }
+                    return candidate;
+                // Reuse the candidate when the preferred profile is already
+                // in the inventory instead of creating its manager twice.
+                if (upstream && profile == upstream) preferred = candidate;
                 if (!fallback) fallback = candidate;
             }
             catch (const winrt::hresult_error&) { /* Continue past an inaccessible or disappearing profile. */ }
         }
+        if (cancel.Stop()) throw winrt::hresult_canceled();
+        if (preferred) return preferred;
         if (upstream && operators::NetworkOperatorTetheringManager::GetTetheringCapabilityFromConnectionProfile(upstream) == operators::TetheringCapability::Enabled)
-            manager_ = operators::NetworkOperatorTetheringManager::CreateFromConnectionProfile(upstream);
-        else manager_ = fallback;
-        return manager_;
+            return operators::NetworkOperatorTetheringManager::CreateFromConnectionProfile(upstream);
+        return fallback;
+    }
+
+    ManagerHandle Manager(const Cancellation& cancel, bool refreshBeforeEnable = false)
+    {
+        EnsureNotifications();
+        return cache_.Get(std::chrono::steady_clock::now(), generation_->load(std::memory_order_acquire),
+            notificationsAvailable_, refreshBeforeEnable,
+            [](const ManagerHandle& manager) {
+                try
+                {
+                    switch (manager.TetheringOperationalState())
+                    {
+                    case operators::TetheringOperationalState::Off: return HotspotManagerState::Off;
+                    case operators::TetheringOperationalState::On: return HotspotManagerState::On;
+                    case operators::TetheringOperationalState::InTransition: return HotspotManagerState::InTransition;
+                    default: break;
+                    }
+                }
+                catch (const winrt::hresult_error&) { /* Rediscover an invalidated OS object. */ }
+                return HotspotManagerState::Unknown;
+            }, [this, &cancel] { return Discover(cancel); });
     }
 public:
+    ~Hotspot() override { Release({}); }
     std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
     {
         try
         {
             if (cancel.Stop()) return {{"host.hotspot", Missing(cancel.Failure().error)}};
-            const auto manager = Manager();
+            const auto manager = Manager(cancel);
+            if (cancel.Stop()) { cache_.Reset(); return {{"host.hotspot", Missing(cancel.Failure().error)}}; }
             if (!manager) return {{"host.hotspot", Missing("actionUnsupported")}};
             const auto state = manager.TetheringOperationalState();
             auto value = json::Object();
@@ -174,15 +226,18 @@ public:
             // Passwords are deliberately never sampled, logged or serialized.
             return {{"host.hotspot", Value(std::move(value))}};
         }
-        catch (const winrt::hresult_error& error) { return {{"host.hotspot", Missing(Error(static_cast<DWORD>(error.code().value)).error)}}; }
+        catch (const winrt::hresult_error& error)
+        { cache_.Reset(); return {{"host.hotspot", Missing(cancel.Stop() ? cancel.Failure().error : Error(static_cast<DWORD>(error.code().value)).error)}}; }
     }
     Result Execute(const Request& request, const Cancellation& cancel) override
     {
         try
         {
             if (cancel.Stop()) return cancel.Failure();
-            const auto manager = Manager(); if (!manager) return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
             const bool enabled = Argument(request, "enabled") == "1";
+            const auto manager = Manager(cancel, enabled);
+            if (cancel.Stop()) { cache_.Reset(); return cancel.Failure(); }
+            if (!manager) return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
             const auto before = manager.TetheringOperationalState();
             if (before == operators::TetheringOperationalState::InTransition || before == operators::TetheringOperationalState::Unknown)
                 return Error(ERROR_BUSY, "unavailable");
@@ -196,9 +251,20 @@ public:
                 return {state == operators::TetheringOperationalState::On ? 1. : 0., {}};
             }, ControlReadbackPause);
         }
-        catch (const winrt::hresult_error& error) { return Error(static_cast<DWORD>(error.code().value)); }
+        catch (const winrt::hresult_error& error)
+        { cache_.Reset(); return cancel.Stop() ? cancel.Failure() : Error(static_cast<DWORD>(error.code().value)); }
     }
-    void Release(std::string_view) override { manager_ = nullptr; }
+    void Release(std::string_view) override
+    {
+        cache_.Reset();
+        // Late callbacks keep only a weak generation, never this backend.
+        generation_.reset();
+        if (notificationsAvailable_)
+            try { connectivity::NetworkInformation::NetworkStatusChanged(networkChanged_); }
+            catch (const winrt::hresult_error&) { /* Service teardown can race notification removal. */ }
+        networkChanged_ = {};
+        notificationsAvailable_ = notificationsAttempted_ = false;
+    }
 };
 class Awake final : public Backend
 {
@@ -240,7 +306,7 @@ public:
     void Release(std::string_view) override {}
 };
 }
-std::shared_ptr<Backend> CreateProjectionBackend() { return std::make_shared<Projection>(); }
+std::shared_ptr<Backend> CreateProjectionBackend(ProjectionApi api) { return std::make_shared<Projection>(api); }
 std::shared_ptr<Backend> CreateHotspotBackend() { return std::make_shared<Hotspot>(); }
 std::shared_ptr<Backend> CreateAirplaneBackend() { return std::make_shared<Airplane>(); }
 std::shared_ptr<Backend> CreateAwakeBackend() { return std::make_shared<Awake>(); }

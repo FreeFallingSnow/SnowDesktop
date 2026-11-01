@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "app/render/foreground_paint_region.h"
@@ -31,7 +32,7 @@ DesktopApp::LargeIconMenuScope::~LargeIconMenuScope()
     // Menu windows consume pointer movement. Resume from the actual pointer,
     // not the last desktop point captured before the menu opened.
     POINT point{};
-    if (app_.hwnd_ && GetCursorPos(&point) && ScreenToClient(app_.hwnd_, &point))
+    if (app_.hwnd_ && snowdesktop::private_pointer::CursorPosition(&point) && ScreenToClient(app_.hwnd_, &point))
         app_.lastMousePoint_ = point;
     app_.UpdateLargeIconHover();
     if (app_.hwnd_) InvalidateRect(app_.hwnd_, nullptr, FALSE);
@@ -49,10 +50,10 @@ void DesktopApp::CancelLargeIconGesture()
 {
     if (!largeIconGesture_) return;
     largeIconGesture_.reset();
-    if (GetCapture() == hwnd_) ReleaseCapture();
+    if (snowdesktop::private_pointer::Capture() == hwnd_) snowdesktop::private_pointer::ReleasePointerCapture();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
-    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
     UpdateLargeIconHover();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -83,7 +84,7 @@ bool DesktopApp::HandleLargeIconPointerDown(POINT point)
     if (!PtInRect(&handle, point)) return false;
     largeIconGesture_ = LargeIconGesture{items_[index].layoutKey, *items_[index].largeIcon, items_[index].gridCell, false, true, true};
     largeIconGesture_->resizePointerOffset = snowdesktop::large_icon_shape::ResizePointerOffset(items_[index].bounds, point);
-    SetCapture(hwnd_);
+    snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     UpdateLargeIconHover();
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
@@ -115,7 +116,7 @@ bool DesktopApp::HandleLargeIconPointerMove(POINT point)
     gesture.valid = gesture.cell.pageId == page->id && gesture.cell.column >= 0 && gesture.cell.row >= 0 &&
         gesture.cell.column + span.columns <= page->columns && gesture.cell.row + span.rows <= page->rows &&
         !AreGridSlotsMarked(occupied, gesture.cell, span);
-    SetCursor(LoadCursorW(nullptr, gesture.valid ? IDC_SIZENWSE : IDC_NO));
+    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, gesture.valid ? IDC_SIZENWSE : IDC_NO));
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }

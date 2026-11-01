@@ -1,5 +1,7 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "modern_menu.h"
+#include "menu_control_snapshot.h"
 #include "ui/input/text_input_state.h"
 #include "platform/foreground_fullscreen.h"
 #include "ui/render/smooth_corner_geometry.h"
@@ -22,6 +24,8 @@
 #include <memory>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 
 namespace snowdesktop::modern_menu
 {
@@ -36,6 +40,7 @@ constexpr UINT_PTR kTextCaretTimer = 3;
 constexpr UINT kTextCaretBlinkMs = 530;
 constexpr UINT kCancelMessage = WM_APP + 0x311;
 std::atomic<HWND> gActiveRootMenu{ nullptr };
+std::atomic<std::uint64_t> gControlSession{0};
 
 bool IsWindowAbove(HWND upper, HWND lower)
 {
@@ -103,6 +108,7 @@ using DwmExtendFrameIntoClientAreaFn = HRESULT(WINAPI*)(
     HWND, const MARGINS*);
 
 class MenuController;
+thread_local MenuController* gControlController = nullptr;
 
 struct Popup
 {
@@ -249,8 +255,8 @@ public:
                 ShowWindow(previous, SW_HIDE);
                 PostMessageW(previous, kCancelMessage, TRUE, 0);
             }
-            SetForegroundWindow(rootWindow);
-            SetFocus(rootWindow);
+            snowdesktop::private_pointer::SetInputForeground(rootWindow);
+            snowdesktop::private_pointer::SetInputFocus(rootWindow);
             RestoreOwnedPopupZOrder();
             TraceOwnedPopupZOrder(
                 L"session-start", nullptr, true);
@@ -263,18 +269,42 @@ public:
         {
             if (options_.pollItems)
             {
+                const bool pointerSafe = !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
+                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) &&
+                                      !(snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000);
                 const bool canApply = popups_.size() == 1 &&
                                       (popups_.front()->hoveredItem < 0 ||
                                        (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
-                                      !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
-                                      !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
-                                      !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+                                      pointerSafe;
                 if (!pendingItems)
-                    pendingItems = options_.pollItems(rootItems_, canApply);
+                    pendingItems = options_.pollItems(rootItems_, canApply || (options_.pollPrefetchedSubmenus && pointerSafe));
                 else
                     // A layout-changing candidate may wait for pointer leave;
                     // continue deadline/recovery observation in the meantime.
                     options_.pollItems(rootItems_, false);
+                if (pendingItems && options_.pollPrefetchedSubmenus && pointerSafe)
+                {
+                    int parentDepth = -1, parentItem = -1; bool keyboard = false;
+                    const bool prefetched = ApplyPrefetchedChildren(rootItems_, *pendingItems, true,
+                        [&](auto &children) {
+                            parentDepth = parentItem = -1;
+                            for (const auto &popup : popups_) if (popup->items == &children)
+                            {
+                                parentDepth = popup->depth - 1; parentItem = popup->parentItem;
+                                keyboard = activeDepth_ == popup->depth;
+                                break;
+                            }
+                            // Destroy the loading popup before changing its backing
+                            // items. Root items and their hit geometry stay intact.
+                            if (parentDepth >= 0) CloseFromDepth(parentDepth + 1);
+                        },
+                        [&](auto &) {
+                            if (parentDepth >= 0 && static_cast<size_t>(parentDepth) < popups_.size())
+                                OpenSubmenu(*popups_[parentDepth], parentItem, keyboard);
+                        });
+                    if (prefetched)
+                        for (const auto &popup : popups_) Render(*popup);
+                }
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
                 if (pendingItems && hovered >= 0)
@@ -326,6 +356,11 @@ public:
                 PeekMessageW(
                     &message, nullptr, 0, 0, PM_REMOVE))
             {
+                // Private events are sent to the real popup procedure from
+                // their own queue. Messages dequeued here are physical input;
+                // they must not dismiss or operate a private menu session.
+                if (!snowdesktop::private_pointer::MessageAllowed(message.hwnd, message.message, message.wParam, message.lParam))
+                { ++processedMessages; continue; }
                 if (message.message == WM_QUIT)
                 {
                     PostQuitMessage(
@@ -393,7 +428,7 @@ public:
         // Activation can change before its posted cancellation is dispatched.
         // Sample while our popup HWNDs still exist so their normal destruction
         // cannot be mistaken for the user switching to an unrelated window.
-        const HWND foreground = GetForegroundWindow();
+        const HWND foreground = snowdesktop::private_pointer::ForegroundWindow();
         if (foreground && !IsSessionWindow(foreground) &&
             !IsOwnerWindow(foreground))
             externalActivation_ = true;
@@ -416,8 +451,8 @@ public:
         {
             snowdesktop::fullscreen::GuardFocusRequest(false,
                 snowdesktop::fullscreen::ObserveForeground, [this]() {
-                    SetForegroundWindow(options_.owner);
-                    SetFocus(options_.owner);
+                    snowdesktop::private_pointer::SetInputForeground(options_.owner);
+                    snowdesktop::private_pointer::SetInputFocus(options_.owner);
                 });
         }
         TraceOwnedPopupZOrder(L"after-focus-restore", nullptr, true);
@@ -433,12 +468,13 @@ public:
     LRESULT HandleMessage(Popup& popup, HWND hwnd,
         UINT message, WPARAM wParam, LPARAM lParam)
     {
+        if (!snowdesktop::private_pointer::MessageAllowed(hwnd, message, wParam, lParam)) return 0;
         switch (message)
         {
         case WM_MOUSEMOVE:
         {
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
-            TrackMouseEvent(&tracking);
+            snowdesktop::private_pointer::TrackLeave(&tracking);
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             const int hover = ScrollHintDirection(popup, point);
             const bool changed = popup.scrollHover != hover;
@@ -447,6 +483,9 @@ public:
             if (changed) Render(popup);
             return 0;
         }
+        case WM_CANCELMODE:
+            Cancel();
+            return 0;
         case WM_MOUSELEAVE:
             if (popup.scrollHover) { popup.scrollHover = 0; Render(popup); }
             if (popup.depth == ActiveDepth() &&
@@ -456,8 +495,14 @@ public:
             return 0;
 
         case WM_LBUTTONDOWN:
+        {
+            RECT client{}; GetClientRect(hwnd, &client);
+            const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (snowdesktop::private_pointer::Active() && !PtInRect(&client, point))
+            { Cancel(); return 0; }
             pointerPressed_ = true;
             return 0;
+        }
         case WM_LBUTTONUP:
         {
             pointerPressed_ = false;
@@ -545,6 +590,7 @@ public:
             ResetTextCaret(popup);
             return 0;
         case WM_ACTIVATE:
+            if (snowdesktop::private_pointer::Active()) return 0;
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
                 !closing_ && !IsSessionWindow(
                     reinterpret_cast<HWND>(lParam)))
@@ -574,14 +620,14 @@ public:
         case WM_SETCURSOR:
         {
             POINT point{};
-            GetCursorPos(&point);
+            snowdesktop::private_pointer::CursorPosition(&point);
             ScreenToClient(hwnd, &point);
             const int index = HitTest(popup, point);
             const bool overTextInput = index >= 0 &&
                 static_cast<size_t>(index) < popup.items->size() &&
                 (*popup.items)[index].textInput;
-            SetCursor(LoadCursorW(nullptr,
-                overTextInput ? IDC_IBEAM : IDC_ARROW));
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr,
+                overTextInput ? IDC_IBEAM : options_.pollItems ? IDC_APPSTARTING : IDC_ARROW));
             return TRUE;
         }
         case WM_NCHITTEST:
@@ -788,6 +834,102 @@ public:
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
         DeleteObject(bitmap);
+    }
+
+    HWND CompanionWindow() const
+    {
+        if (done_ || closing_ || !options_.zOrderCompanion) return nullptr;
+        const HWND window = options_.zOrderCompanion();
+        return window && IsWindow(window) && IsWindowVisible(window) ? window : nullptr;
+    }
+
+    std::vector<ControlSnapshot> Controls() const
+    {
+        std::vector<ControlSnapshot> result;
+        if (done_ || closing_) return result;
+        std::vector<std::vector<std::string>> itemIds;
+        std::vector<std::vector<std::string>> itemKeys;
+        for (const auto& holder : popups_)
+        {
+            const auto& popup = *holder;
+            if (!popup.items || !IsWindowVisible(popup.hwnd)) break;
+            const auto depth = static_cast<std::size_t>(popup.depth);
+            if (depth != itemIds.size()) break;
+            std::string parent;
+            if (depth && popup.parentItem >= 0 && static_cast<std::size_t>(popup.parentItem) < itemIds[depth - 1].size())
+                parent = itemIds[depth - 1][static_cast<std::size_t>(popup.parentItem)];
+            if (depth && parent.empty()) break;
+            const auto paneId = depth ? parent + "/submenu" : "menu/" + std::to_string(controlSession_) + "/root";
+            const auto paneKey = depth ? itemKeys[depth - 1][static_cast<std::size_t>(popup.parentItem)] + "/submenu" : "root";
+            ControlSnapshot pane;
+            pane.id = paneId; pane.parent = parent; pane.window = popup.hwnd; pane.pane = true; pane.depth = popup.depth;
+            pane.nativeControlKey = paneKey;
+            pane.name = L"Menu"; pane.bounds = {popup.panelScreenOrigin.x, popup.panelScreenOrigin.y,
+                popup.panelScreenOrigin.x + popup.panelWidth, popup.panelScreenOrigin.y + popup.panelHeight};
+            pane.clip = pane.bounds; result.push_back(std::move(pane));
+            const LONG originX = popup.panelScreenOrigin.x - shadowSize_;
+            const LONG originY = popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset;
+            const RECT viewport{popup.panelScreenOrigin.x, popup.panelScreenOrigin.y + panelPadding_ + popup.scrollTopBand,
+                popup.panelScreenOrigin.x + popup.panelWidth,
+                popup.panelScreenOrigin.y + popup.panelHeight - panelPadding_ - popup.scrollBottomBand};
+            std::vector<std::string> ids(popup.items->size());
+            std::vector<std::string> keys(popup.items->size());
+            std::unordered_map<std::string, unsigned> occurrences;
+            for (std::size_t index = 0; index < popup.items->size() && index < popup.itemRects.size(); ++index)
+            {
+                const auto& item = (*popup.items)[index];
+                if (item.separator) continue;
+                const auto separator = item.label.find(L'\t');
+                const auto label = item.label.substr(0, separator);
+                std::uint64_t labelHash = 14695981039346656037ULL;
+                for (const auto character : label) { labelHash ^= static_cast<std::uint16_t>(character); labelHash *= 1099511628211ULL; }
+                const auto key = item.command ? "command/" + std::to_string(item.command) : "label/" + std::to_string(labelHash);
+                ControlSnapshot control;
+                const auto ordinal = std::to_string(occurrences[key]++);
+                control.id = paneId + "/" + key + "/" + ordinal; ids[index] = control.id;
+                control.nativeControlKey = paneKey + "/" + key + "/" + ordinal; keys[index] = control.nativeControlKey;
+                control.parent = paneId; control.window = popup.hwnd; control.bounds = popup.itemRects[index];
+                OffsetRect(&control.bounds, originX - (item.horizontalScrollAction ? popup.horizontalScrollOffset : 0), originY);
+                control.clip = viewport;
+                if (item.horizontalScrollAction)
+                {
+                    auto horizontal = popup.horizontalScrollRect; OffsetRect(&horizontal, originX, originY);
+                    IntersectRect(&control.clip, &control.clip, &horizontal);
+                }
+                control.name = label;
+                control.value = item.textInput ? item.inputText : separator == std::wstring::npos ? L"" : item.label.substr(separator + 1);
+                control.textInput = item.textInput; control.enabled = item.enabled; control.checked = item.checked;
+                control.hasChildren = !item.children.empty(); control.depth = popup.depth; control.index = index;
+                control.expanded = depth + 1 < popups_.size() && popups_[depth + 1]->parentItem == static_cast<int>(index);
+                control.focused = item.textInput ? IsTextInputFocused(popup, item)
+                    : (popup.depth == activeDepth_ && popup.keyboardItem == static_cast<int>(index));
+                control.selected = popup.hoveredItem == static_cast<int>(index) ||
+                    (popup.depth == activeDepth_ && popup.keyboardItem == static_cast<int>(index));
+                result.push_back(std::move(control));
+            }
+            itemIds.push_back(std::move(ids));
+            itemKeys.push_back(std::move(keys));
+        }
+        return result;
+    }
+
+    bool SetControlValue(std::string_view id, std::wstring_view value)
+    {
+        if (value.size() > 96) return false; // Same UTF-16 limit as normal menu editing.
+        for (const auto& control : Controls())
+        {
+            if (control.id != id || !control.textInput || !control.enabled || control.depth < 0 ||
+                static_cast<std::size_t>(control.depth) >= popups_.size()) continue;
+            auto& popup = *popups_[static_cast<std::size_t>(control.depth)];
+            if (!popup.items || control.index >= popup.items->size()) return false;
+            auto& item = (*popup.items)[control.index];
+            FocusTextInput(popup, static_cast<int>(control.index), item.inputText.size(), false);
+            textInputSelectionAnchor_ = 0;
+            if (ReplaceTextSelection(item, std::wstring(value))) NotifyTextInputChanged(popup, item);
+            else Render(popup);
+            return true;
+        }
+        return false;
     }
 
 private:
@@ -1651,7 +1793,7 @@ private:
     bool HandleAccessKeyMessage(const MSG& message)
     {
         if ((message.message != WM_KEYDOWN && message.message != WM_SYSKEYDOWN) ||
-            !IsPopupWindow(message.hwnd) || (GetKeyState(VK_CONTROL) & 0x8000))
+            !IsPopupWindow(message.hwnd) || (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000))
             return false;
         Popup* popup = ActivePopup();
         if (!popup || (FindFocusedTextInput(*popup) && message.message != WM_SYSKEYDOWN))
@@ -1661,7 +1803,7 @@ private:
         const auto key = message.wParam == VK_PROCESSKEY
             ? ImmGetVirtualKey(message.hwnd) : static_cast<UINT>(message.wParam);
         if ((key >= 'A' && key <= 'Z') ||
-            (key >= '0' && key <= '9' && !(GetKeyState(VK_SHIFT) & 0x8000)))
+            (key >= '0' && key <= '9' && !(snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000)))
             return SelectByAccessKey(static_cast<wchar_t>(key));
         return false;
     }
@@ -1903,7 +2045,7 @@ private:
         textDuplicateImeResult_.clear();
         if(textInputComposing_)return true;
         if (character == L'\b' || character < L' ' || character == 0x7F ||
-            (GetKeyState(VK_CONTROL) & 0x8000) != 0)
+            (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0)
             return true;
         if (character >= 0xd800 && character <= 0xdbff) { textHighSurrogate_ = character; return true; }
         std::wstring replacement;
@@ -2019,8 +2161,8 @@ private:
             }
         }
 
-        const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        const bool control = (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool shift = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
         textInputCursor_ = std::min(textInputCursor_, input->inputText.size());
         textInputSelectionAnchor_ = std::min(
             textInputSelectionAnchor_, input->inputText.size());
@@ -2479,7 +2621,7 @@ private:
     OwnedPopupZOrderSnapshot CaptureOwnedPopupZOrder() const
     {
         OwnedPopupZOrderSnapshot snapshot;
-        snapshot.foreground = GetForegroundWindow();
+        snapshot.foreground = snowdesktop::private_pointer::ForegroundWindow();
         if (popups_.empty() || !popups_.front() ||
             !popups_.front()->hwnd ||
             !IsWindow(popups_.front()->hwnd))
@@ -2548,7 +2690,7 @@ private:
         line << L" root=" << snapshot.root
              << L" focusOwner=" << options_.owner
              << L" focusOwnerRoot=" << (options_.owner ? GetAncestor(options_.owner, GA_ROOT) : nullptr)
-             << L" active=" << GetActiveWindow() << L" focus=" << GetFocus()
+             << L" active=" << GetActiveWindow() << L" focus=" << snowdesktop::private_pointer::FocusWindow()
              << L" zOrderOwner=" << snapshot.zOrderOwner
              << L" rootOwner=" << snapshot.rootOwner
              << L" foreground=" << snapshot.foreground
@@ -2921,6 +3063,7 @@ private:
     }
 
     std::vector<Item> rootItems_;
+    const std::uint64_t controlSession_ = ++gControlSession;
     Options options_;
     Appearance effectiveAppearance_ = Appearance::FollowSystem;
     bool lightTheme_ = true;
@@ -2964,7 +3107,25 @@ private:
 Result Show(const std::vector<Item>& items, const Options& options)
 {
     MenuController controller(items, options);
+    struct ControlScope
+    {
+        MenuController* previous;
+        ~ControlScope() { gControlController = previous; }
+    } scope{std::exchange(gControlController, &controller)};
     return controller.Run();
+}
+
+std::vector<ControlSnapshot> ActiveControls()
+{
+    return gControlController ? gControlController->Controls() : std::vector<ControlSnapshot>{};
+}
+HWND ActiveCompanionWindow()
+{
+    return gControlController ? gControlController->CompanionWindow() : nullptr;
+}
+bool SetControlText(std::string_view id, std::wstring_view value)
+{
+    return gControlController && gControlController->SetControlValue(id, value);
 }
 
 bool IsActive()

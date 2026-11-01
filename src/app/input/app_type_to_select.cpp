@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -22,10 +23,10 @@ bool DesktopApp::TryHandleTypeToSelectChar(wchar_t ch, bool repeated)
         widgetAction_ != WidgetAction::None || largeIconGesture_ ||
         middleButtonWidgetMove_ || marqueeActive_;
     context.commandModifiers =
-        (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VK_MENU) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
-        (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+        (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0 ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0 ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
+        (snowdesktop::private_pointer::AsyncKeyState(VK_RWIN) & 0x8000) != 0;
     if (!AllowsTyping(context))
     {
         typeToSelectSession_.Reset();
@@ -72,7 +73,7 @@ bool DesktopApp::TryHandleTypeToSelectChar(wchar_t ch, bool repeated)
         if (pageId.empty())
         {
             POINT point{};
-            if (GetCursorPos(&point))
+            if (snowdesktop::private_pointer::CursorPosition(&point))
                 for (const auto& page : gridPages_)
                     if (PtInRect(&page.workArea, point)) { pageId = page.id; break; }
         }

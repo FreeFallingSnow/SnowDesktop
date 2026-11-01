@@ -1,9 +1,12 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/input/widget_search_context_menu.h"
 #include "icons/large_icon_steam.h"
 #include "icons/large_icon_preset_rules.h"
 #include "icons/large_icon_edit_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 #include "app/shell/shell_item_action_rules.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
@@ -131,6 +134,12 @@ void DesktopApp::ShowItemContextMenu(
     std::optional<size_t> dockEntryIndex)
 {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) return;
+    if (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000)
+    {
+        ShowShellContextMenu(screenPoint, itemIndex, keepQuickNavigationOpen, dockRenameAnchor, dockMappingEntryIndex);
+        return;
+    }
+    const std::wstring menuItemKey = items_[itemIndex].layoutKey;
     PrepareMenuIconsForPoint(screenPoint);
 
     const bool dockMapping =
@@ -320,7 +329,12 @@ void DesktopApp::ShowItemContextMenu(
     const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
         entitlement.bridgeAvailable, entitlement.registered);
     const auto customIconIdentity = items_[itemIndex].layoutKey;
-    const auto iconPersonalization = selectedCount == 1 && !items_[itemIndex].largeIcon ?
+    POINT clientPoint = screenPoint;
+    ScreenToClient(hwnd_, &clientPoint);
+    const bool searchResultMenu =
+        (keepQuickNavigationOpen && !GetQuickNavigationEffectiveSearchText().empty()) ||
+        snowdesktop::widget_search_context_menu::IsSearchResultAtPoint(containers_, clientPoint);
+    const auto iconPersonalization = !searchResultMenu && selectedCount == 1 && !items_[itemIndex].largeIcon ?
         AppendIconOverrideMenu(nullptr, customIconIdentity) : nullptr;
     if (largeIconMenu)
     {
@@ -404,7 +418,7 @@ void DesktopApp::ShowItemContextMenu(
     {
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(iconPersonalization),_LW("iconLibrary.personalization"));
     }
-    if (selectedCount == 1 && canFile)
+    if (!searchResultMenu && selectedCount == 1 && canFile)
         AppendWebsiteIconMenu(menu, itemPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!namespaceItem)
@@ -560,7 +574,7 @@ void DesktopApp::ShowItemContextMenu(
             snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
     SetMenuItemIcon(iconPersonalization ? iconPersonalization : menu,
         kContextLargeIconCreate, L"\uF0B2");
-    if(iconPersonalization)SetMenuItemIcon(menu,reinterpret_cast<UINT_PTR>(iconPersonalization),L"\uF489",MenuIconFont::FluentRegular);
+    if(iconPersonalization)SetMenuItemIcon(menu,reinterpret_cast<UINT_PTR>(iconPersonalization),snowdesktop::menu_fluent_glyphs::kIconPersonalization,MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
         snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
@@ -620,7 +634,7 @@ void DesktopApp::ShowItemContextMenu(
         IsWindow(quickNavigationHwnd_)
         ? quickNavigationHwnd_
         : hwnd_;
-    SetForegroundWindow(menuOwner);
+    snowdesktop::private_pointer::SetInputForeground(menuOwner);
     const bool placeOutsideDock = dockRenameAnchor.has_value() ||
         dockFrequentItem || dockApplicationItem;
     namespace presets = snowdesktop::large_icon_preset_rules;
@@ -692,7 +706,7 @@ void DesktopApp::ShowItemContextMenu(
     };
     snowdesktop::shell_extensions::Request shellRequest;
     if (canCopyPath) shellRequest.paths = selectedFilePaths;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = 0;
     {
         LargeIconMenuScope titleScope(*this,
@@ -787,7 +801,7 @@ void DesktopApp::ShowItemContextMenu(
         return;
     }
     applyLargeIconCommand(command);
-    if (ExecuteIconOverrideMenu(command, customIconIdentity)) return;
+    if (!searchResultMenu && ExecuteIconOverrideMenu(command, customIconIdentity)) return;
     switch (command)
     {
     case kContextAddFolderMappingWidget:
@@ -934,7 +948,7 @@ void DesktopApp::ShowItemContextMenu(
             ShowPathProperties(itemPath);
         break;
     case kContextFetchWebsiteIconCommand:
-        if (selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
+        if (!searchResultMenu && selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
         break;
     case kContextPopupFan:
         if (dockFolderEntry)
@@ -1022,6 +1036,9 @@ void DesktopApp::ShowItemContextMenu(
         }
         break;
     case kContextRenameCommand:
+        itemIndex = static_cast<int>(FindItemIndexByKey(menuItemKey));
+        if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size()) break;
+        SelectOnly(itemIndex);
         if (keepQuickNavigationOpen)
             BeginQuickNavigationDesktopItemRename(
                 static_cast<size_t>(itemIndex));
@@ -1193,218 +1210,124 @@ void DesktopApp::ShowItemContextMenu(
  * @param screenPoint 菜单弹出的屏幕坐标。
  * @param itemIndex   当前右键点击的项索引（用于确定 PIDL 列表的锚点）。
  */
-void DesktopApp::ShowShellContextMenu(
-    POINT screenPoint, int itemIndex,
-    bool keepQuickNavigationOpen,
-    std::optional<RECT> dockRenameAnchor,
-    std::optional<size_t> dockMappingEntryIndex)
+void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request request, POINT point,
+    const std::wstring& renameKey, bool keepQuickNavigationOpen, std::optional<RECT> renameAnchor,
+    std::optional<size_t> dockMappingEntryIndex, snowdesktop::shell_extensions::NativeMenuSelection selection)
 {
-    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
-    std::vector<LPCITEMIDLIST> pidls;
-    std::vector<std::wstring> invocationPaths;
-    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
-        PWSTR path = nullptr;
-        if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
-                SIGDN_FILESYSPATH, &path)) && path)
-            invocationPaths.emplace_back(path);
-        else
-            invocationPaths.emplace_back();
-        CoTaskMemFree(path);
-    };
-    if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size())
+    const auto paths = request.paths;
+    // Path-only adapters can also originate in Quick Navigation. Preserve the
+    // actual source surface, including its edit/popup deactivation ownership.
+    const POINT navigationPoint{point.x - virtualLeft_, point.y - virtualTop_};
+    keepQuickNavigationOpen = keepQuickNavigationOpen ||
+        (quickNavigationOpen_ && PtInRect(&quickNavigationRect_, navigationPoint));
+    const HWND menuOwner = keepQuickNavigationOpen && quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
+        ? quickNavigationHwnd_ : ShellDialogOwnerHwnd();
+    DismissActiveContextMenuForPopupTransition();
+    try
     {
-        for (const auto& item : items_)
-            if (item.selected)
+        selection.lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+            static_cast<snowdesktop::modern_menu::Appearance>(std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+        request.extended = request.extended || (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
+        auto session = std::make_shared<snowdesktop::shell_extensions::NativeMenuSession>(request, point, menuOwner, std::move(selection));
+        nativeMenuSession_ = session;
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_APPSTARTING));
+        nativeMenuPollToken_ = uiAnimationScheduler_.ScheduleInterval(16,
+            [this, session, paths, renameKey, keepQuickNavigationOpen, renameAnchor, dockMappingEntryIndex, loading = true](snowdesktop::UiScheduleToken token) mutable {
+            if (loading && !session->Preparing())
+            { snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW)); loading = false; }
+            const auto result = session->Poll();
+            if (!result) return;
+            uiAnimationScheduler_.Cancel(token);
+            nativeMenuPollToken_ = 0;
+            nativeMenuSession_.reset();
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+            if (!result->ok)
             {
-                pidls.push_back(reinterpret_cast<LPCITEMIDLIST>(item.childPidl.get()));
-                collectPath(item);
-            }
-        if (pidls.empty())
-        {
-            pidls.push_back(reinterpret_cast<LPCITEMIDLIST>(items_[itemIndex].childPidl.get()));
-            collectPath(items_[itemIndex]);
-        }
-    }
-    if (pidls.empty()) return;
-    // Shell activation/view creation can dispatch STA messages. Both bindings
-    // must retain the same folder and PIDLs even if a refresh replaces items_.
-    const ComPtr<IShellFolder> menuFolder = desktopFolder_;
-    if (!menuFolder) return;
-    std::vector<Pidl> selectionSnapshot;
-    selectionSnapshot.reserve(pidls.size());
-    for (auto& pidl : pidls)
-    {
-        if (!pidl) return;
-        Pidl copy(ILCloneFull(reinterpret_cast<PCIDLIST_ABSOLUTE>(pidl)));
-        if (!copy.get()) return;
-        pidl = copy.get();
-        selectionSnapshot.push_back(std::move(copy));
-    }
-
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    const HWND menuOwner = ShellDialogOwnerHwnd();
-    snowdesktop::ShellContextMenuSite menuSite;
-    ComPtr<IContextMenu> ctxMenu;
-    HMENU menu = CreatePopupMenu();
-    if (!menu) return;
-    constexpr UINT kFirstCmd = 1;
-    constexpr UINT kLastCmd = 0x7FFF;
-    if (FAILED(menuSite.BuildMenu(menuFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
-            [&](HWND bindOwner, IContextMenu** target) {
-                return menuFolder->GetUIObjectOf(bindOwner, static_cast<UINT>(pidls.size()), pidls.data(),
-                    IID_IContextMenu, nullptr, reinterpret_cast<void**>(target));
-            }, ctxMenu.GetAddressOf())))
-        { DestroyMenu(menu); return; }
-
-    ctxMenu.As(&activeContextMenu2_);
-    ctxMenu.As(&activeContextMenu3_);
-
-    if (keepQuickNavigationOpen)
-        SetQuickNavigationTopmost(false);
-    SetForegroundWindow(menuOwner);
-    UINT cmd = 0;
-    {
-        const bool desktopLargeIcon = itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() &&
-            items_[itemIndex].largeIcon && !keepQuickNavigationOpen && !dockRenameAnchor && !dockMappingEntryIndex &&
-            !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
-        LargeIconMenuScope titleScope(*this, desktopLargeIcon ? items_[itemIndex].layoutKey : std::wstring{});
-        cmd = TrackShellPopupMenuWithDesktopPump(
-            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-            screenPoint, menuOwner);
-    }
-    if (keepQuickNavigationOpen)
-        SetQuickNavigationTopmost(true);
-
-    activeContextMenu2_.Reset();
-    activeContextMenu3_.Reset();
-
-    if (cmd != 0)
-    {
-        UINT commandOffset = cmd - kFirstCmd;
-        wchar_t menuText[128]{};
-        bool renameCommand = IsShellRenameCommand(ctxMenu.Get(), commandOffset);
-        bool deleteCommand = IsShellDeleteCommand(
-            ctxMenu.Get(), commandOffset);
-        if (!renameCommand &&
-            GetMenuStringW(menu, cmd, menuText, static_cast<int>(_countof(menuText)), MF_BYCOMMAND) > 0)
-        {
-            renameCommand = StrStrIW(menuText, L"重命名") != nullptr || // l10n-allow: match Chinese Windows shell verb
-                StrStrIW(menuText, L"Rename") != nullptr;
-            deleteCommand = deleteCommand ||
-                StrStrIW(menuText, L"删除") != nullptr || // l10n-allow: match Chinese Windows shell verb
-                StrStrIW(menuText, L"Delete") != nullptr;
-        }
-
-        if (renameCommand)
-        {
-            DestroyMenu(menu);
-            RestoreDesktopWindowLayer();
-            if (!keepQuickNavigationOpen)
-                RestoreInteractionInputFocus();
-            if (keepQuickNavigationOpen)
-                BeginQuickNavigationDesktopItemRename(
-                    static_cast<size_t>(
-                        itemIndex));
-            else
-                BeginRenameSelected(dockRenameAnchor);
-            return;
-        }
-
-        if (deleteCommand &&
-            dockMappingEntryIndex &&
-            RemoveDockMappingAt(
-                *dockMappingEntryIndex))
-        {
-            DestroyMenu(menu);
-            RestoreDesktopWindowLayer();
-            if (!keepQuickNavigationOpen)
-                RestoreInteractionInputFocus();
-            return;
-        }
-
-        if (deleteCommand)
-        {
-            std::vector<std::wstring> deletePaths;
-            for (const auto& item : items_)
-            {
-                if (!item.selected ||
-                    !item.desktopIconClsid.empty())
-                    continue;
-                wchar_t path[MAX_PATH]{};
-                if (SHGetPathFromIDListW(
-                        item.absolutePidl.get(), path))
-                    deletePaths.push_back(path);
-            }
-            if (deletePaths.empty() && itemIndex >= 0 &&
-                static_cast<size_t>(itemIndex) < items_.size())
-            {
-                wchar_t path[MAX_PATH]{};
-                if (SHGetPathFromIDListW(
-                        items_[static_cast<size_t>(itemIndex)].
-                            absolutePidl.get(),
-                        path))
-                    deletePaths.push_back(path);
-            }
-            if (!deletePaths.empty())
-            {
-                DestroyMenu(menu);
-                RestoreDesktopWindowLayer();
-                std::vector<snowdesktop::ShellFileOperationStep> steps;
-                steps.push_back({
-                    FO_DELETE,
-                    std::move(deletePaths),
-                    {},
-                    static_cast<FILEOP_FLAGS>(
-                        FOF_ALLOWUNDO |
-                        FOF_NOCONFIRMATION) });
-                QueueShellFileOperation(
-                    std::move(steps),
-                    [this](bool succeeded) {
-                        if (succeeded)
-                            RequestShellRefresh();
-                    });
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Isolated native menu failed or timed out", DiagnosticLogLevel::Warning);
+                if (controlHwnd_) PostMessageW(controlHwnd_, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);
                 return;
             }
-        }
-
-        CMINVOKECOMMANDINFOEX invoke{};
-        invoke.cbSize = sizeof(invoke);
-        invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
-        invoke.hwnd = ShellDialogOwnerHwnd();
-        invoke.lpVerb = MAKEINTRESOURCEA(commandOffset);
-        invoke.lpVerbW = MAKEINTRESOURCEW(commandOffset);
-        const std::wstring invocationDirectory =
-            snowdesktop::DesktopShellInvocationDirectory();
-        std::string invocationDirectoryA;
-        snowdesktop::SetShellInvocationDirectory(
-            invoke, invocationDirectory, invocationDirectoryA);
-        invoke.nShow = SW_SHOWNORMAL;
-        invoke.ptInvoke = screenPoint;
-        const auto startPin = snowdesktop::shell_start_pin::Route(
-            ctxMenu.Get(), commandOffset, invocationPaths,
-            [&](auto action, const auto& path) {
-                snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
-                    uiAnimationScheduler_, [this]() { FlushPendingCompositionCommit(); });
-                return snowdesktop::shell_start_pin::Invoke(
-                    snowdesktop::deployment::GetTaskbarHookPath(), action,
-                    path, invoke.hwnd, screenPoint);
-            });
-        if (startPin)
+            if (result->verb == "rename" && paths.size() == 1)
+            {
+                // The helper's native loop has ended. Resolve the original
+                // object again instead of trusting a selection cleared by focus.
+                const size_t index = FindItemIndexByKey(renameKey);
+                if (!renameKey.empty() && index < items_.size())
+                {
+                    SelectOnly(static_cast<int>(index));
+                    if (keepQuickNavigationOpen) BeginQuickNavigationDesktopItemRename(index);
+                    else BeginRenameSelected(renameAnchor);
+                    return;
+                }
+                for (size_t i = 0; i < dockFolderPopupWidget_.folderEntries.size(); ++i)
+                    if (dockFolderPopupOpen_ && lstrcmpiW(dockFolderPopupWidget_.folderEntries[i].fullPath.c_str(), paths.front().c_str()) == 0)
+                        { BeginRenameDockFolderPopupEntry(i); return; }
+                for (size_t w = 0; w < widgets_.size(); ++w)
+                    for (size_t i = 0; i < widgets_[w].folderEntries.size(); ++i)
+                        if (lstrcmpiW(widgets_[w].folderEntries[i].fullPath.c_str(), paths.front().c_str()) == 0)
+                            { BeginRenameFolderEntry(w, i); return; }
+                WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Native rename target no longer exists in its original surface", DiagnosticLogLevel::Warning);
+            }
+            else if (result->verb == "delete")
+            {
+                if (dockMappingEntryIndex)
+                {
+                    if (*dockMappingEntryIndex < dockEntries_.size() &&
+                        snowdesktop::desktop_item_reference_migration::KeysEqual(dockEntries_[*dockMappingEntryIndex].reference, renameKey))
+                        RemoveDockMappingAt(*dockMappingEntryIndex);
+                    return;
+                }
+                std::vector<snowdesktop::ShellFileOperationStep> steps;
+                steps.push_back({FO_DELETE, paths, {}, static_cast<FILEOP_FLAGS>(FOF_ALLOWUNDO | FOF_NOCONFIRMATION)});
+                QueueShellFileOperation(std::move(steps), [this](bool succeeded) { if (succeeded) RequestShellRefresh(); });
+            }
+            else if (result->invoked) RequestShellRefresh();
+        });
+        if (!nativeMenuPollToken_)
         {
-            wchar_t message[96]{};
-            swprintf_s(message, L"Shell Start pin command result=0x%08lX",
-                static_cast<unsigned long>(*startPin));
-            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message, FAILED(*startPin) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+            nativeMenuSession_.reset();
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
         }
-        else
-            InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
-        RequestShellRefresh();
     }
-    DestroyMenu(menu);
-    RestoreDesktopWindowLayer();
-    if (!keepQuickNavigationOpen && cmd == 0)
-        RestoreInteractionInputFocus();
+    catch (...)
+    {
+        DismissActiveContextMenuForPopupTransition();
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Cannot start isolated native menu", DiagnosticLogLevel::Warning);
+        if (controlHwnd_) PostMessageW(controlHwnd_, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);
+    }
+}
+
+void DesktopApp::ShowShellContextMenu(
+    POINT screenPoint, int itemIndex, bool keepQuickNavigationOpen,
+    std::optional<RECT> dockRenameAnchor, std::optional<size_t> dockMappingEntryIndex)
+{
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= items_.size() || !desktopFolder_) return;
+    std::vector<PCUITEMID_CHILD> children;
+    snowdesktop::shell_extensions::Request request;
+    const auto append = [&](const DesktopItem& item) {
+        children.push_back(item.childPidl.get());
+        PWSTR name = nullptr;
+        if (FAILED(SHGetNameFromIDList(item.absolutePidl.get(), SIGDN_FILESYSPATH, &name)))
+            SHGetNameFromIDList(item.absolutePidl.get(), SIGDN_DESKTOPABSOLUTEPARSING, &name);
+        request.paths.emplace_back(name ? name : L"");
+        CoTaskMemFree(name);
+    };
+    for (const auto& item : items_) if (item.selected) append(item);
+    if (children.empty()) append(items_[itemIndex]);
+    const std::wstring key = items_[itemIndex].layoutKey;
+    try
+    {
+        auto selection = snowdesktop::shell_extensions::NativeMenuSelection::Capture(
+            desktopFolder_.Get(), static_cast<UINT>(children.size()), children.data());
+        ShowIsolatedShellMenu(std::move(request), screenPoint, key, keepQuickNavigationOpen,
+            dockRenameAnchor, dockMappingEntryIndex, std::move(selection));
+    }
+    catch (...)
+    {
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, L"Cannot capture the native Shell selection", DiagnosticLogLevel::Warning);
+        if (controlHwnd_) PostMessageW(controlHwnd_, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);
+    }
 }
 
 /**

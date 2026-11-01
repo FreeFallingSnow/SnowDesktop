@@ -1,5 +1,7 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "sort_menu.h"
+#include "background_menu_order.h"
 #include "tray_context_menu_placement.h"
 #include "desktop/desktop_input_activation.h"
 #include "shell/shell_extension_menu_presentation.h"
@@ -105,7 +107,7 @@ snowdesktop::MenuQuickIcon ResolveQuickIcon(UINT_PTR command)
 
 bool TryGetTaskbarRectAtPoint(POINT screenPoint, RECT& taskbarRect)
 {
-    HWND window = WindowFromPoint(screenPoint);
+    HWND window = snowdesktop::private_pointer::WindowAtPoint(screenPoint);
     while (window)
     {
         wchar_t className[64]{};
@@ -560,6 +562,8 @@ UINT DesktopApp::ShowModernMenu(
 
     std::vector<snowdesktop::modern_menu::Item> items =
         BuildModernMenuItems(rootMenu);
+    snowdesktop::background_menu_order::Apply(rootMenu, items,
+        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
     snowdesktop::modern_menu::Options options;
     options.owner = owner;
     options.anchor = screenPoint;

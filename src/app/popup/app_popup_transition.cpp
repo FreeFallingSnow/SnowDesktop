@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/dock/dock_folder_popup_read.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -142,7 +143,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             luaWidgetPanelRequest_.widgetId.empty() ? 0 : 1,
             GetOpenPopupWidget() ? 1 : 0,
             mouseDown_ ? 1 : 0,
-            GetCapture());
+            snowdesktop::private_pointer::Capture());
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
     if (widgetIndex >= widgets_.size() ||

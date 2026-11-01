@@ -410,6 +410,7 @@ RECT FolderMapping::GetContentViewportRect() const
 
 void FolderMapping::ApplyMarqueeSelection(const RECT& contentRect)
 {
+    if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
     if (!data_)
         return;
 
@@ -580,7 +581,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
     if (!data) return {};
     RECT content = FolderMappingContentRect(widget);
     const auto layout = FolderMappingLocalLayout(widget);
-    int scroll = std::clamp(data->scrollOffset, 0, FolderMappingMaxScrollOffset(widget));
+    int scroll = widget->GetScrollOffset();
     if (data->dateHeaders && !widget->IsSearchActive())
     {
         widget->EnsureDateLayout();
@@ -631,6 +632,7 @@ static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex)
  */
 Item* FolderMapping::GetSlotItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, false);
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
     if (auto* scene = GetPreviewScene())
     {
@@ -660,6 +662,7 @@ Item* FolderMapping::GetSlotItem(size_t idx) const
  */
 std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
 {
+    if (!IsSingleCellPresentation() && UsesFolderSearch()) return BuildFolderSearchSlots();
     if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
@@ -674,9 +677,7 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
     const RECT content = FolderMappingContentRect(this);
     const int visibleHeight = std::max<int>(
         1, content.bottom - content.top);
-    const int scroll = std::clamp(
-        data_->scrollOffset, 0,
-        FolderMappingMaxScrollOffset(this));
+    const int scroll = GetScrollOffset();
 
     std::vector<size_t> visibleSlotIndices;
     const auto localLayout = FolderMappingLocalLayout(this);
@@ -751,6 +752,7 @@ std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
  */
 Item* FolderMapping::GetMemberItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, true);
     if (!data_ || idx >= data_->folderEntries.size()) return nullptr;
     auto icon = std::make_unique<FolderEntryIcon>(&data_->folderEntries[idx],
         const_cast<FolderMapping*>(this), app_);
@@ -765,6 +767,7 @@ Item* FolderMapping::GetMemberItem(size_t idx) const
  */
 std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedIndices();
     std::vector<size_t> result;
     if (!data_) return result;
     for (size_t i = 0; i < data_->folderEntries.size(); ++i)
@@ -782,6 +785,7 @@ std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
  */
 void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
+    if (UsesFolderSearch()) return;
     if (!data_ || !snowdesktop::folder_member_order::Reorder(*data_, indices, insertBefore)) return;
     InvalidateSlots();
 }
@@ -789,6 +793,18 @@ void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t in
 size_t FolderMapping::GetDropInsertIndex(
     Slot* targetSlot, HitRegion region) const
 {
+    if (UsesFolderSearch())
+    {
+        if (targetSlot && targetSlot->GetItem())
+        {
+            const auto path = targetSlot->GetItem()->GetPath();
+            const auto found = std::find_if(data_->folderEntries.begin(), data_->folderEntries.end(),
+                [&](const auto& entry) { return _wcsicmp(entry.fullPath.c_str(), path.c_str()) == 0; });
+            if (found != data_->folderEntries.end())
+                return static_cast<size_t>(std::distance(data_->folderEntries.begin(), found)) + (region == HitRegion::SortAfter ? 1u : 0u);
+        }
+        return data_->folderEntries.size();
+    }
     const auto& visibleEntries = GetVisibleEntryIndices();
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : visibleEntries.size();
     if (targetSlot && region == HitRegion::SortAfter)
@@ -804,6 +820,7 @@ size_t FolderMapping::GetDropInsertIndex(
  */
 size_t FolderMapping::GetSlotCount() const
 {
+    if (UsesFolderSearch()) return FolderSearchCount();
     return data_ ? GetVisibleEntryIndices().size() : 0;
 }
 
@@ -841,6 +858,7 @@ int FolderMapping::GetMemberColumnCount() const
  */
 int FolderMapping::GetMaxScrollOffset() const
 {
+    if (UsesFolderSearch()) return std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f));
     return FolderMappingMaxScrollOffset(const_cast<FolderMapping*>(this));
 }
 
@@ -850,6 +868,7 @@ int FolderMapping::GetMaxScrollOffset() const
  */
 int FolderMapping::GetTotalContentHeight() const
 {
+    if (UsesFolderSearch()) return FolderSearchContentHeight();
     return FolderMappingContentHeight(const_cast<FolderMapping*>(this),
         data_ ? GetVisibleEntryIndices().size() : 0);
 }
@@ -897,13 +916,14 @@ void FolderMapping::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
  */
 void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
+    if (UsesFolderSearch()) { DrawSearchBox(context); DrawFolderSearch(context); return; }
     if (!data_ || !app_) return;
     (void)body;
     const bool preview = IsPreviewRendering();
     bool privacyActive = data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
-        !PtInRect(&data_->bounds, app_->lastMousePoint_);
+        !PtInRect(&data_->bounds, GetRenderPointer());
     const bool lt = UsesLightContentTheme();
 
     DrawSearchBox(context);
@@ -954,8 +974,8 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                     IsRectEmptyRect(tab))
                     continue;
                 bool active = visibleCategoryIds_[i] == activeCategory;
-                bool hovered = !IsPreviewRendering() &&
-                    PtInRect(&tab, app_->lastMousePoint_) != FALSE;
+                bool hovered = IsPreviewInteractive() &&
+                    PtInRect(&tab, GetRenderPointer()) != FALSE;
                 DrawCategorizedTab(
                     context, tab, layoutTab,
                     FolderMappingTabDisplayText(this, visibleCategoryIds_[i]),
@@ -1006,8 +1026,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             ? GetCuTextFormatWeight(
                 13.0f, DWRITE_FONT_WEIGHT_LIGHT, false)
             : nullptr;
-        int scroll = std::clamp(
-            data_->scrollOffset, 0, FolderMappingMaxScrollOffset(this));
+        int scroll = GetScrollOffset();
         for (const auto& segment : dateLayoutCache_)
         {
             if (!segment.isHeader) continue;
@@ -1053,7 +1072,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !entry.selected && PtInRect(&cell, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                bool hovered = !preview && !entry.selected && PtInRect(&cell, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
                 const auto titleLayers =
                     snowdesktop::item_render_layer_rules::
                         ResolveTitleLayerPlan(entry.selected);
@@ -1081,6 +1100,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
 
 RECT FolderMapping::GetMemberLayoutRect(size_t index) const
 {
+    if (UsesFolderSearch()) return FolderSearchItemRect(index);
     return FolderMappingItemRect(
         const_cast<FolderMapping*>(this), index);
 }
@@ -1097,42 +1117,46 @@ RECT FolderMapping::GetMemberLayoutRect(size_t index) const
  * - 打开文件夹按钮：打开当前映射的磁盘文件夹
  * 按钮使用 Fluent System Icons Regular，并具有悬停高亮效果。
  */
+static RECT FolderMappingFooterRect(const FolderMapping* widget, WidgetHit hit, RECT handle)
+{
+    const float scale = widget->GetBarScale();
+    const int size = widget->Cu(14.f * scale), gap = widget->Cu(4.f * scale);
+    const int index = hit == WidgetHit::OpenFolderBtn ? 0 : hit == WidgetHit::ListToggleBtn ? 1 : 2;
+    const LONG right = handle.right - widget->GetTitleBarResizeReserve() - gap - index * (size + gap);
+    return {right - size, handle.top + (handle.bottom - handle.top - size) / 2,
+        right, handle.top + (handle.bottom - handle.top + size) / 2};
+}
+
+void FolderMapping::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    ScrollingItemWidget::CollectControlRegions(regions);
+    if (!data_) return;
+    const auto handle = GetMoveHandleRect();
+    AddControlRegion(regions, L"view", L"List view", FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handle), WidgetHit::ListToggleBtn, "button", data_->listMode);
+    AddControlRegion(regions, L"date-headers", L"Date headers", FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handle), WidgetHit::DateHeaderToggleBtn, "button", data_->dateHeaders);
+    AddControlRegion(regions, L"open-folder", L"Open source folder", FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handle), WidgetHit::OpenFolderBtn);
+    const auto& categories = GetVisibleCategoryIds();
+    for (size_t index = 0; index < categories.size(); ++index)
+        AddControlRegion(regions, L"category/" + categories[index], FolderMappingTabDisplayText(const_cast<FolderMapping*>(this), categories[index]),
+            FolderMappingTabRect(const_cast<FolderMapping*>(this), index), WidgetHit::CategoryTab, "tab", {}, categories[index] == CachedActiveCategoryId());
+}
+
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
     const bool lt = UsesLightContentTheme();
 
     const float bs = GetBarScale();
-    const int btnSize = Cu(14.0f * bs);
-    const int gap = Cu(4.0f * bs);
-    const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = GetTitleBarResizeReserve();
-    const int h = handleRect.bottom - handleRect.top;
-    RECT toggleBtn = {
-        handleRect.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handleRect.top + (h - btnSize) / 2,
-        handleRect.right - resizeReserve - gap - btnSize - gapBetween,
-        handleRect.top + (h + btnSize) / 2
-    };
-    RECT dateBtn = {
-        toggleBtn.left - gapBetween - btnSize,
-        handleRect.top + (h - btnSize) / 2,
-        toggleBtn.left - gapBetween,
-        handleRect.top + (h + btnSize) / 2
-    };
-    RECT openBtn = {
-        handleRect.right - resizeReserve - gap - btnSize,
-        handleRect.top + (h - btnSize) / 2,
-        handleRect.right - resizeReserve - gap,
-        handleRect.top + (h + btnSize) / 2
-    };
+    const auto toggleBtn = FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handleRect);
+    const auto dateBtn = FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handleRect);
+    const auto openBtn = FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handleRect);
 
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
 
     auto drawFluentButton = [&](RECT rect, const std::wstring& glyph, bool active) {
-        bool hot = !IsPreviewRendering() &&
-            PtInRect(&rect, app_->lastMousePoint_) != FALSE;
+        bool hot = IsPreviewInteractive() &&
+            PtInRect(&rect, GetRenderPointer()) != FALSE;
         app_->DrawD2DText(context, glyph, rect,
             fluentFormat ? fluentFormat :
                 (app_->fluentIconTextFormat_
@@ -1235,6 +1259,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
 
     if (!CategoryIdAtPoint(pt).empty())
         return WidgetHit::CategoryTab;
+    if (FolderSearchMoreAtPoint(pt) != static_cast<size_t>(-1)) return WidgetHit::SearchMoreBtn;
     RECT searchRect = GetSearchBoxRect();
     if (!IsRectEmptyRect(searchRect) && PtInRect(&searchRect, pt))
         return WidgetHit::SearchBox;
@@ -1243,31 +1268,10 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     if (details != WidgetHit::None) return details;
     if (base != WidgetHit::MoveHandle) return base;
 
-    RECT handle = GetMoveHandleRect();
-    const float bs = GetBarScale();
-    const int btnSize = Cu(14.0f * bs);
-    const int gap = Cu(4.0f * bs);
-    const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = GetTitleBarResizeReserve();
-    const int h = handle.bottom - handle.top;
-    RECT toggleBtn = {
-        handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
-        handle.top + (h - btnSize) / 2,
-        handle.right - resizeReserve - gap - btnSize - gapBetween,
-        handle.top + (h + btnSize) / 2
-    };
-    RECT dateBtn = {
-        toggleBtn.left - gapBetween - btnSize,
-        handle.top + (h - btnSize) / 2,
-        toggleBtn.left - gapBetween,
-        handle.top + (h + btnSize) / 2
-    };
-    RECT openBtn = {
-        handle.right - resizeReserve - gap - btnSize,
-        handle.top + (h - btnSize) / 2,
-        handle.right - resizeReserve - gap,
-        handle.top + (h + btnSize) / 2
-    };
+    const auto handle = GetMoveHandleRect();
+    const auto toggleBtn = FolderMappingFooterRect(this, WidgetHit::ListToggleBtn, handle);
+    const auto dateBtn = FolderMappingFooterRect(this, WidgetHit::DateHeaderToggleBtn, handle);
+    const auto openBtn = FolderMappingFooterRect(this, WidgetHit::OpenFolderBtn, handle);
     if (PtInRect(&dateBtn, pt)) return WidgetHit::DateHeaderToggleBtn;
     if (PtInRect(&toggleBtn, pt)) return WidgetHit::ListToggleBtn;
     if (PtInRect(&openBtn, pt)) return WidgetHit::OpenFolderBtn;
@@ -1284,6 +1288,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
  */
 std::vector<Item*> FolderMapping::GetSelectedItems() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedItems();
     dragSourceCache_.clear();
     std::vector<Item*> result;
     if (!data_) return result;

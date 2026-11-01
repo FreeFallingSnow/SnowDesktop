@@ -1,7 +1,9 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
 #include "sort_menu.h"
+#include "background_menu_order.h"
 #include "ui/render/font_weight_rules.h"
 #include "shell/shell_new_menu.h"
 #include "navigation/search_match.h"
@@ -1520,6 +1522,11 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
  */
 void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 {
+    if (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000)
+    {
+        ShowDesktopBackgroundContextMenu(screenPoint);
+        return;
+    }
     lastContextMenuScreenPoint_ = screenPoint;
     PrepareMenuIconsForPoint(screenPoint);
 
@@ -1538,18 +1545,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     // children. Keep the original Shell handler alive through invocation.
     const std::wstring newItemDirectory = snowdesktop::desktop_source::Directory();
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
-    bool newMenuPrepared = false;
-    HMENU newMenuPlaceholder = CreatePopupMenu();
-    if (newMenuPlaceholder)
-    {
-        AppendMenuW(newMenuPlaceholder, MF_STRING | MF_GRAYED, 0, _LW("settings.contextMenu.loading"));
-        AppendMenuW(menu, MF_POPUP | (newItemDirectory.empty() ? MF_GRAYED : 0),
-            reinterpret_cast<UINT_PTR>(newMenuPlaceholder), _LW("app.menu.new"));
-        MENUITEMINFOW newMenuId{sizeof(newMenuId)};
-        newMenuId.fMask = MIIM_ID;
-        newMenuId.wID = kContextNewMenu;
-        SetMenuItemInfoW(menu, GetMenuItemCount(menu) - 1, TRUE, &newMenuId);
-    }
+    AppendShellNewSubmenu(menu, newItemDirectory);
 
     HMENU sortMenu = snowdesktop::sort_menu::Create(
         [](const char* key) { return _LW(key); });
@@ -2142,30 +2138,12 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (!extensionDirectory.empty()) shellRequest.paths.push_back(extensionDirectory);
     shellRequest.background = true;
     shellRequest.context = snowdesktop::shell_extensions::Context::Desktop;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     auto prepareWidgetSubmenu = [&](UINT submenuCommand,
         std::vector<snowdesktop::modern_menu::Item>& children) {
         if (submenuCommand == kContextNewMenu)
         {
-            if (newMenuPrepared) return;
-            newMenuPrepared = true;
-            shellNewMenu = std::make_unique<snowdesktop::ShellNewMenu>();
-            if (FAILED(shellNewMenu->Initialize(newItemDirectory)))
-            {
-                children = {snowdesktop::modern_menu::Item{}};
-                children.front().label = _LW("settings.contextMenu.failed");
-                children.front().enabled = false;
-            }
-            else if (shellNewMenu->CanDraw())
-                children = BuildShellNewMenuItems(shellNewMenu->Menu(), shellNewMenu->Context());
-            else
-            {
-                // Unsupported third-party drawing retains the native handoff.
-                children = {snowdesktop::modern_menu::Item{}};
-                children.front().command = kContextNewMenu;
-                children.front().label = _LW("app.menu.more_options");
-                children.front().glyph = snowdesktop::menu_fluent_glyphs::kMoreOptions;
-            }
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
             return;
         }
         if (!widgetMenu || luaWidgetCatalogueLoaded ||
@@ -2180,6 +2158,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             luaPage, luaSearch, luaFilter, workshopAvailable);
         luaWidgetCatalogueLoaded = true;
     };
+    snowdesktop::background_menu_order::Mark(menu);
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets, &shellRequest,

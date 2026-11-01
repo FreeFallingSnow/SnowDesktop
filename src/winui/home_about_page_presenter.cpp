@@ -138,6 +138,14 @@ struct HomeAboutPagePresenter::Impl
     std::uint32_t logModules = 0;
     Section debugProfileSection;
     controls::SettingRow profileRow;
+    controls::SettingRow environmentRow;
+    muxc::ComboBox environmentPicker{nullptr};
+    muxc::CommandBar environmentCommands{nullptr};
+    muxc::AppBarButton createEnvironmentButton{nullptr}, renameEnvironmentButton{nullptr};
+    std::vector<DebugEnvironmentSummary> environments;
+    std::vector<std::pair<std::wstring, std::wstring>> renderedEnvironmentLabels;
+    std::wstring environmentId;
+    winrt::event_token environmentSelectionToken{}, createEnvironmentToken{}, renameEnvironmentToken{};
     controls::SettingRow desktopDirectoryRow;
     controls::SettingRow clearProfileRow;
     muxc::ToggleSwitch profileToggle{nullptr};
@@ -409,6 +417,23 @@ struct HomeAboutPagePresenter::Impl
         profileToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         profileToggle.UseSystemFocusVisuals(true);
         profileRow.Initialize(profileToggle, 180.0);
+        environmentPicker = muxc::ComboBox{};
+        environmentPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        environmentRow.Initialize(environmentPicker);
+        muxa::AutomationProperties::SetAutomationId(environmentPicker, L"debug.environment");
+        environmentCommands = muxc::CommandBar{};
+        environmentCommands.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        environmentCommands.DefaultLabelPosition(muxc::CommandBarDefaultLabelPosition::Right);
+        environmentCommands.ClosedDisplayMode(muxc::AppBarClosedDisplayMode::Compact);
+        environmentCommands.IsDynamicOverflowEnabled(true);
+        createEnvironmentButton = muxc::AppBarButton{};
+        createEnvironmentButton.Icon(muxc::SymbolIcon(muxc::Symbol::Add));
+        renameEnvironmentButton = muxc::AppBarButton{};
+        renameEnvironmentButton.Icon(muxc::SymbolIcon(muxc::Symbol::Edit));
+        muxa::AutomationProperties::SetAutomationId(createEnvironmentButton, L"debug.environment.create");
+        muxa::AutomationProperties::SetAutomationId(renameEnvironmentButton, L"debug.environment.rename");
+        environmentCommands.PrimaryCommands().Append(createEnvironmentButton);
+        environmentCommands.PrimaryCommands().Append(renameEnvironmentButton);
         profileDataPath = MakeBodyText(0.72);
         profileDataPath.IsTextSelectionEnabled(true);
         chooseDesktopButton = muxc::Button{};
@@ -418,6 +443,8 @@ struct HomeAboutPagePresenter::Impl
         clearProfileButton.UseSystemFocusVisuals(true);
         clearProfileRow.Initialize(clearProfileButton);
         debugProfileSection.content.Children().Append(profileRow.root);
+        debugProfileSection.content.Children().Append(environmentRow.root);
+        debugProfileSection.content.Children().Append(environmentCommands);
         debugProfileSection.content.Children().Append(profileDataPath);
         debugProfileSection.content.Children().Append(desktopDirectoryRow.root);
         debugProfileSection.content.Children().Append(clearProfileRow.root);
@@ -570,6 +597,22 @@ struct HomeAboutPagePresenter::Impl
             actions.setDebugProfileEnabled(generation, profileToggle.IsOn());
             RenderStatus();
         });
+        environmentSelectionToken = environmentPicker.SelectionChanged([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.selectDebugEnvironment) return;
+            const auto selected = environmentPicker.SelectedIndex();
+            if (selected >= 0 && static_cast<std::size_t>(selected) < environments.size() &&
+                environments[static_cast<std::size_t>(selected)].id != environmentId)
+            {
+                actions.selectDebugEnvironment(generation, environments[static_cast<std::size_t>(selected)].id);
+                RenderStatus();
+            }
+        });
+        createEnvironmentToken = createEnvironmentButton.Click([this](const auto&, const auto&) {
+            if (CanInvokeDebug() && actions.createDebugEnvironment) actions.createDebugEnvironment(generation);
+        });
+        renameEnvironmentToken = renameEnvironmentButton.Click([this](const auto&, const auto&) {
+            if (CanInvokeDebug() && actions.renameDebugEnvironment) actions.renameDebugEnvironment(generation);
+        });
         chooseDesktopToken = chooseDesktopButton.Click([this](const auto&, const auto&) {
             if (CanInvokeDebug() && actions.chooseDebugDesktop) actions.chooseDebugDesktop(generation);
         });
@@ -706,6 +749,27 @@ struct HomeAboutPagePresenter::Impl
         updatingControls = true;
         profileToggle.IsOn(profileEnabled);
         profileToggle.IsEnabled(!temporaryInitializationEnabled);
+        environmentPicker.IsEnabled(!temporaryInitializationEnabled && !environments.empty());
+        createEnvironmentButton.IsEnabled(!temporaryInitializationEnabled && environments.size() < 32);
+        renameEnvironmentButton.IsEnabled(!temporaryInitializationEnabled && !environmentId.empty());
+        std::vector<std::pair<std::wstring, std::wstring>> labels;
+        for (const auto& environment : environments)
+            labels.emplace_back(environment.id, environment.name.empty()
+                ? L("settings.debug.profile.defaultName") : environment.name);
+        if (labels != renderedEnvironmentLabels)
+        {
+            environmentPicker.Items().Clear();
+            for (const auto& [id, name] : labels)
+            {
+                (void)id;
+                environmentPicker.Items().Append(winrt::box_value(name));
+            }
+            renderedEnvironmentLabels = std::move(labels);
+        }
+        int selectedEnvironment = -1;
+        for (std::size_t index = 0; index < environments.size(); ++index)
+            if (environments[index].id == environmentId) selectedEnvironment = static_cast<int>(index);
+        environmentPicker.SelectedIndex(selectedEnvironment);
         chooseDesktopButton.IsEnabled(!temporaryInitializationEnabled);
         clearProfileButton.IsEnabled(!temporaryInitializationEnabled);
         initializationToggle.IsEnabled(!profileEnabled);
@@ -819,6 +883,12 @@ struct HomeAboutPagePresenter::Impl
         forceRestartRecorder.SetText(HotkeyText(L("settings.debug.forceRestartHotkey")));
         SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");
         profileRow.SetText(L("settings.debug.profile.enabled"), L("settings.debug.profile.description"));
+        environmentRow.SetText(L("settings.debug.profile.environment"), L("settings.debug.profile.switchHint"));
+        SetAutomation(environmentPicker, environmentRow.label.Text(), environmentRow.help.Text());
+        createEnvironmentButton.Label(L("settings.debug.profile.create"));
+        renameEnvironmentButton.Label(L("settings.debug.profile.rename"));
+        SetAutomation(createEnvironmentButton, L("settings.debug.profile.create"));
+        SetAutomation(renameEnvironmentButton, L("settings.debug.profile.rename"));
         SetAutomation(profileToggle, profileRow.label.Text(), profileRow.help.Text());
         SetButtonText(chooseDesktopButton, "settings.debug.profile.choose", L"Choose folder");
         SetAutomation(chooseDesktopButton, L("settings.debug.profile.desktop"), L("settings.debug.profile.chooseHint"));
@@ -879,6 +949,8 @@ struct HomeAboutPagePresenter::Impl
         profileEnabled = false;
         profileDirectory.clear();
         simulatedDesktop.clear();
+        environments.clear();
+        environmentId.clear();
         animationDiagnosticsStatus.clear();
     }
 
@@ -937,6 +1009,8 @@ struct HomeAboutPagePresenter::Impl
         if (patch.debugProfileEnabled) profileEnabled = *patch.debugProfileEnabled;
         if (patch.debugDataDirectory) profileDirectory = *patch.debugDataDirectory;
         if (patch.debugDesktopDirectory) simulatedDesktop = *patch.debugDesktopDirectory;
+        if (patch.debugEnvironments) environments = *patch.debugEnvironments;
+        if (patch.debugEnvironmentId) environmentId = *patch.debugEnvironmentId;
         if (patch.animationDiagnosticsStatus)
             animationDiagnosticsStatus =
                 *patch.animationDiagnosticsStatus;
@@ -969,6 +1043,9 @@ struct HomeAboutPagePresenter::Impl
             if (focusId == "debug.forceRestartHotkey.hotkey")
                 return forceRestartEnabled ? forceRestartRecorder.FocusTarget() : forceRestartToggle;
             if (focusId == "debug.profile") return profileToggle;
+            if (focusId == "debug.environment") return environmentPicker;
+            if (focusId == "debug.environment.create") return createEnvironmentButton;
+            if (focusId == "debug.environment.rename") return renameEnvironmentButton;
             if (focusId == "debug.desktop") return chooseDesktopButton;
             if (focusId == "debug.clearProfile") return clearProfileButton;
             for (const auto& entry : logEntries)
@@ -1000,6 +1077,9 @@ struct HomeAboutPagePresenter::Impl
             allLogsToggle.Toggled(allLogsToken);
             for (const auto& entry : logEntries) entry.toggle.Toggled(entry.token);
             profileToggle.Toggled(profileToken);
+            environmentPicker.SelectionChanged(environmentSelectionToken);
+            createEnvironmentButton.Click(createEnvironmentToken);
+            renameEnvironmentButton.Click(renameEnvironmentToken);
             chooseDesktopButton.Click(chooseDesktopToken);
             clearProfileButton.Click(clearProfileToken);
             forceRestartToggle.Toggled(forceRestartToken);

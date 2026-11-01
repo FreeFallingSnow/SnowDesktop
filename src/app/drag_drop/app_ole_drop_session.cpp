@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "drag_drop/drop_image_data.h"
 #include "drag_drop/ole_drag_rules.h"
@@ -680,7 +681,7 @@ HRESULT DesktopApp::HandleOleDragOver(
 HRESULT DesktopApp::HandleOleDragLeave()
 {
     POINT popupPoint{};
-    if (hwnd_ && IsWindow(hwnd_) && GetCursorPos(&popupPoint) &&
+    if (hwnd_ && IsWindow(hwnd_) && snowdesktop::private_pointer::CursorPosition(&popupPoint) &&
         ScreenToClient(hwnd_, &popupPoint))
         UpdatePopupCloseOnMouseLeave(popupPoint);
     SetPageNavHotEdgeHover(0);
@@ -2666,7 +2667,7 @@ HRESULT DesktopApp::HandleOleGiveFeedback(DWORD)
         // DragEnter has selected the native hand-back path. Remove OLE's
         // effect-overlay cursor immediately; the custom ghost is still kept
         // hidden until DoDragDrop has returned.
-        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
         return S_OK;
     }
     return DRAGDROP_S_USEDEFAULTCURSORS;

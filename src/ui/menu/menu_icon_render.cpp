@@ -569,7 +569,7 @@ bool DrawOpticallyWeightedFluentGlyph(HDC dc, const wchar_t* glyph,
 }
 
 bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
-    bool disabled, int maximumImageSize)
+    bool disabled, int maximumImageSize, UINT dpi)
 {
     if (!dc || !image || bounds.right <= bounds.left ||
         bounds.bottom <= bounds.top)
@@ -596,10 +596,13 @@ bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
         std::min(boundsWidth, boundsHeight));
     if (maximumImageSize > 0)
         maximum = std::min(maximum, maximumImageSize);
-    const int width = std::max(1,
-        std::min(maximum, static_cast<int>(bitmap.bmWidth)));
-    const int height = std::max(1,
-        std::min(maximum, static_cast<int>(bitmap.bmHeight)));
+    double scale = 1.0;
+    if (bitmap.bmWidth <= 16 && bitmap.bmHeight <= 16)
+        scale = std::max(1.0, static_cast<double>(dpi) / USER_DEFAULT_SCREEN_DPI);
+    scale = std::min(scale, static_cast<double>(maximum) /
+        std::max(bitmap.bmWidth, bitmap.bmHeight));
+    const int width = std::max(1, static_cast<int>(std::lround(bitmap.bmWidth * scale)));
+    const int height = std::max(1, static_cast<int>(std::lround(bitmap.bmHeight * scale)));
     const int left = (bounds.left + bounds.right - width) / 2;
     const int top = (bounds.top + bounds.bottom - height) / 2;
     const BLENDFUNCTION blend{
@@ -824,6 +827,7 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         Scale(18, effectiveDpi),
         Scale(18, effectiveDpi),
     };
+    metrics.dpi = effectiveDpi;
     if (win10Style)
     {
         metrics.rowHeight = Scale(24, effectiveDpi);
@@ -842,91 +846,6 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
     return metrics;
 }
 
-HBITMAP CreateImageBitmap(const ImageSourceView& source, int pixelSize)
-{
-    if (!source.pixels || pixelSize < 1 || pixelSize > 512 ||
-        source.width == 0 || source.height == 0)
-        return nullptr;
-    const std::uint64_t rowBytes =
-        static_cast<std::uint64_t>(source.width) * 4;
-    const std::uint64_t requiredBytes =
-        static_cast<std::uint64_t>(source.height - 1) * source.stride +
-        rowBytes;
-    if (rowBytes > source.stride || requiredBytes > source.bytes)
-        return nullptr;
-
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = pixelSize;
-    info.bmiHeader.biHeight = -pixelSize;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* rawPixels = nullptr;
-    HBITMAP bitmap = CreateDIBSection(nullptr, &info,
-        DIB_RGB_COLORS, &rawPixels, nullptr, 0);
-    if (!bitmap || !rawPixels)
-    {
-        if (bitmap) DeleteObject(bitmap);
-        return nullptr;
-    }
-    auto* target = static_cast<std::uint8_t*>(rawPixels);
-    std::fill_n(target,
-        static_cast<std::size_t>(pixelSize) * pixelSize * 4,
-        std::uint8_t{ 0 });
-
-    const double scale = std::min(
-        static_cast<double>(pixelSize) / source.width,
-        static_cast<double>(pixelSize) / source.height);
-    const int drawWidth = std::clamp(
-        static_cast<int>(std::lround(source.width * scale)), 1, pixelSize);
-    const int drawHeight = std::clamp(
-        static_cast<int>(std::lround(source.height * scale)), 1, pixelSize);
-    const int offsetX = (pixelSize - drawWidth) / 2;
-    const int offsetY = (pixelSize - drawHeight) / 2;
-    for (int y = 0; y < drawHeight; ++y)
-    {
-        const double sampleY = std::clamp(
-            (static_cast<double>(y) + 0.5) * source.height / drawHeight -
-                0.5,
-            0.0, static_cast<double>(source.height - 1));
-        const auto y0 = static_cast<std::uint32_t>(std::floor(sampleY));
-        const auto y1 = std::min(y0 + 1, source.height - 1);
-        const double fy = sampleY - y0;
-        for (int x = 0; x < drawWidth; ++x)
-        {
-            const double sampleX = std::clamp(
-                (static_cast<double>(x) + 0.5) * source.width / drawWidth -
-                    0.5,
-                0.0, static_cast<double>(source.width - 1));
-            const auto x0 = static_cast<std::uint32_t>(std::floor(sampleX));
-            const auto x1 = std::min(x0 + 1, source.width - 1);
-            const double fx = sampleX - x0;
-            const std::uint8_t* p00 = source.pixels +
-                static_cast<std::size_t>(y0) * source.stride + x0 * 4;
-            const std::uint8_t* p10 = source.pixels +
-                static_cast<std::size_t>(y0) * source.stride + x1 * 4;
-            const std::uint8_t* p01 = source.pixels +
-                static_cast<std::size_t>(y1) * source.stride + x0 * 4;
-            const std::uint8_t* p11 = source.pixels +
-                static_cast<std::size_t>(y1) * source.stride + x1 * 4;
-            std::uint8_t* destination = target +
-                (static_cast<std::size_t>(offsetY + y) * pixelSize +
-                    offsetX + x) * 4;
-            for (int channel = 0; channel < 4; ++channel)
-            {
-                const double top = p00[channel] +
-                    (p10[channel] - p00[channel]) * fx;
-                const double bottom = p01[channel] +
-                    (p11[channel] - p01[channel]) * fx;
-                destination[channel] = static_cast<std::uint8_t>(
-                    std::clamp(std::lround(top + (bottom - top) * fy),
-                        0l, 255l));
-            }
-        }
-    }
-    return bitmap;
-}
 
 SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
     const Metrics& metrics)
@@ -1014,7 +933,7 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         iconBounds.top += metrics.outerInset;
         iconBounds.bottom -= metrics.outerInset;
         DrawImageLayer(dc, image, iconBounds, disabled,
-            metrics.maximumImageSize);
+            metrics.maximumImageSize, metrics.dpi);
     }
     else if (item.glyph && *item.glyph)
     {
@@ -1118,7 +1037,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (image)
     {
         DrawImageLayer(dc, image, iconBounds, disabled,
-            metrics.maximumImageSize);
+            metrics.maximumImageSize, metrics.dpi);
     }
     else
     {
@@ -1224,7 +1143,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         imageBounds.top += metrics.outerInset;
         imageBounds.bottom -= metrics.outerInset;
         DrawImageLayer(dc, image, imageBounds, disabled,
-            metrics.maximumImageSize);
+            metrics.maximumImageSize, metrics.dpi);
     }
     else if (hasGlyph)
     {
@@ -1320,7 +1239,7 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
         iconFont ? static_cast<HGDIOBJ>(iconFont)
                  : GetStockObject(DEFAULT_GUI_FONT));
     if (image)
-        DrawImageLayer(dc, image, glyphBounds, false, metrics.maximumImageSize);
+        DrawImageLayer(dc, image, glyphBounds, false, metrics.maximumImageSize, metrics.dpi);
     else
         DrawGlyphLayer(dc, item.glyph, glyphBounds, palette.disabledText, &field);
     if (oldFont) SelectObject(dc, oldFont);

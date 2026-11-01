@@ -258,9 +258,15 @@ DesktopApp::CollectDockWindowPreviewItems(
 void DesktopApp::CloseDockWindowFromPreview(
     HWND window)
 {
-    DismissDockWindowPreviewUntilLeave();
-    RequestTrackedDockWindowClose(window);
-    RefreshDockRunningWindows();
+    if (!RequestTrackedDockWindowClose(window)) return;
+    if (dockWindowPreview_ && dockWindowPreview_->IsVisible())
+        dockWindowPreview_->RemoveWindow(window);
+    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible())
+        DismissDockWindowPreviewUntilLeave();
+    // The card has already been removed locally. Let maintenance reconcile
+    // running membership once, after the asynchronous close notifications.
+    // A full process/window scan here delays the next card's pointer messages.
+    dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void DesktopApp::CloseDockApplicationWindows(
@@ -461,6 +467,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
         }
     }
     dockWindowPreviewKey_ = target.targetToken;
+    dockWindowPreviewIdentity_ = target.identity;
     dockWindowPreviewAnchorScreen_ = target.anchorScreen;
     dockWindowPreview_->Show(
         previewItems, target.anchorScreen, dockSettings_.position,
@@ -470,6 +477,13 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
     if (dockWindowPreview_->IsVisible())
         dockWindowPreviewHover_.MarkPreviewShown(
             target.targetToken);
+}
+
+void DesktopApp::RefreshDockWindowPreviewItems()
+{
+    if (!dockWindowPreview_ || !dockWindowPreview_->IsVisible() ||
+        dockWindowPreviewIdentity_.kind == DockAppIdentityKind::None) return;
+    dockWindowPreview_->UpdateItems(CollectDockWindowPreviewItems(dockWindowPreviewIdentity_));
 }
 
 void DesktopApp::HideDockWindowPreview()
@@ -489,6 +503,7 @@ void DesktopApp::HideDockWindowPreview()
         dockWindowPreview_->Hide();
     dockWindowPreviewHover_.Reset();
     dockWindowPreviewKey_.clear();
+    dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
 }
 
@@ -500,6 +515,7 @@ void DesktopApp::DismissDockWindowPreviewUntilLeave()
     if (dockWindowPreview_)
         dockWindowPreview_->Hide();
     dockWindowPreviewKey_.clear();
+    dockWindowPreviewIdentity_ = {};
     dockWindowPreviewAnchorScreen_ = {};
 }
 

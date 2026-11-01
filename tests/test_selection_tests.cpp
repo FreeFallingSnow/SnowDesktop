@@ -1,6 +1,8 @@
 #include "build_tool_test_support.h"
 #include <algorithm>
 #include <iostream>
+#include <set>
+#include <string_view>
 using namespace build_test;
 namespace {
 void run_tests(const fs::path& repo){
@@ -55,11 +57,76 @@ try{
     request["plan"]["mode"]="selected";request["plan"]["suites"]=Json::array({"selected"});request["plan"]["tests"]=Json::array({"manual-tool"});
     require(probe("plan").at("value").dump()==Json::array({"manual-tool"}).dump(),"Explicit manual tool selection was excluded");
     request["plan"]["tests"]=Json::array({});expectError("plan","zero tests");
+    // Read the unfiltered CTest declarations before exercising mode selection.
+    // The independent oracle below is the documented label contract, never a
+    // Get-TestRunOptions result or the presence of a particular product test.
+    const auto declaredQuery=run({L"ctest",L"--preset",L"all-tests",L"--show-only=json-v1"},repo);
+    require(declaredQuery.code==0,"Cannot read actual CTest declarations: "+declaredQuery.out+declaredQuery.err);
+    const auto declarations=Json::parse(declaredQuery.out).at("tests");
+    require(!declarations.items.empty(),"Actual CTest declarations are empty");
+    struct DeclaredTest {
+        std::string name;
+        bool manual=false,tools=false,core=false,integration=false;
+    };
+    std::vector<DeclaredTest> declared;
+    std::set<std::string> declaredNames,manualNames;
+    for(const auto& test:declarations.items){
+        DeclaredTest entry;entry.name=test.at("name").str();
+        require(!entry.name.empty()&&declaredNames.insert(entry.name).second,
+            "Actual CTest declarations contain an empty or duplicate name");
+        for(const auto& property:test.at("properties").items)
+            if(property.at("name").str()=="LABELS")
+                for(const auto& label:property.at("value").items){
+                    const auto value=label.str();
+                    if(value=="manual")entry.manual=true;
+                    else if(value=="tools")entry.tools=true;
+                    else if(value=="core")entry.core=true;
+                    else if(value=="integration")entry.integration=true;
+                }
+        if(entry.manual)manualNames.insert(entry.name);
+        declared.push_back(std::move(entry));
+    }
+    require(!manualNames.empty(),"Actual declarations must supply a manual entry for explicit-selection integration");
+    const auto manualName=*manualNames.begin();
+    const auto exactNamePattern=[](const std::string& name){
+        std::string pattern="^";
+        for(const char value:name){
+            if(std::string_view(R"(\.^$|()[]{}*+?)").find(value)!=std::string_view::npos)pattern+='\\';
+            pattern+=value;
+        }
+        return pattern+"$";
+    };
+    const auto describe=[](const std::set<std::string>& names){
+        std::string text;
+        for(const auto& name:names){if(!text.empty())text+=",";text+=name;}
+        return text;
+    };
     for(const std::string mode:{"full","core","fast","tools","name","label"}){
-        request["mode"]=mode;request["text"]=mode=="name"?"^shell_file_operation_worker$":"^manual$";auto options=probe("options").at("value");std::vector<std::wstring> args={L"ctest",L"--preset",wide(options.at("TestPreset").str()),L"--show-only=json-v1"};for(const auto& arg:options.at("CTestFilterArguments").items)args.push_back(wide(arg.str()));auto queried=run(args,repo);require(queried.code==0,queried.err);auto inventory=Json::parse(queried.out).at("tests");require(!inventory.items.empty(),"Actual preset selected zero tests");std::vector<std::string> names;size_t manual=0;for(const auto& test:inventory.items){names.push_back(test.at("name").str());for(const auto& property:test.at("properties").items)if(property.at("name").str()=="LABELS")for(const auto& label:property.at("value").items)if(label.str()=="manual")++manual;}
-        auto includes=[&](const std::string& name){return std::find(names.begin(),names.end(),name)!=names.end();};if(mode=="name")require(names.size()==1&&includes("shell_file_operation_worker"),"Explicit manual test excluded");else if(mode=="label")require(includes("shell_file_operation_worker")&&includes("tray_live_integration")&&manual==names.size(),"Manual label selected automatic tests");else{require(manual==0&&!includes("shell_file_operation_worker"),"Automatic mode selected manual Shell test");if(mode=="full"||mode=="fast")require(includes("shell_file_operation_worker_network_preflight"),"Automatic mode lost safe preflight test");}
-        if(mode=="tools")require(includes("build_workflow")&&includes("build_collaboration")&&includes("test_selection")&&!includes("lua_runtime")&&!includes("build_dashboard_browser"),"Tools preset mixed application/manual cases");
-        if(mode=="full"||mode=="core"||mode=="fast")require(!includes("build_workflow")&&!includes("build_plan_execution")&&!includes("build_dashboard")&&!includes("build_wait_retry")&&!includes("build_foreground_wait")&&!includes("build_shared_resources")&&!includes("build_collaboration")&&!includes("powershell_runtime")&&!includes("test_selection"),"Routine preset selected build tooling");
+        std::set<std::string> expected;
+        for(const auto& test:declared){
+            const bool automaticApplication=!test.tools&&!test.manual;
+            const bool selected=mode=="full"?automaticApplication:
+                mode=="core"?automaticApplication&&test.core:
+                mode=="fast"?automaticApplication&&!test.integration:
+                mode=="tools"?test.tools&&!test.manual:
+                mode=="name"?test.name==manualName:test.manual;
+            if(selected)expected.insert(test.name);
+        }
+        require(!expected.empty(),"Declared label contract has zero tests for mode "+mode);
+        request["mode"]=mode;
+        request["text"]=mode=="name"?exactNamePattern(manualName):mode=="label"?"^manual$":"";
+        const auto options=probe("options").at("value");
+        std::vector<std::wstring> args={L"ctest",L"--preset",wide(options.at("TestPreset").str()),L"--show-only=json-v1"};
+        for(const auto& arg:options.at("CTestFilterArguments").items)args.push_back(wide(arg.str()));
+        const auto queried=run(args,repo);
+        require(queried.code==0,"Actual "+mode+" CTest query failed: "+queried.out+queried.err);
+        const auto inventory=Json::parse(queried.out).at("tests");
+        require(!inventory.items.empty(),"Actual preset selected zero tests for mode "+mode);
+        std::set<std::string> observed;
+        for(const auto& test:inventory.items)
+            require(observed.insert(test.at("name").str()).second,"Actual preset repeated a test for mode "+mode);
+        require(observed==expected,"Actual "+mode+" selection differs from declared labels; expected="+
+            describe(expected)+"; observed="+describe(observed));
     }
     for(const auto& mode:{"name","label"}){request["mode"]=mode;request["text"]="";expectError("options","non-empty");}
     request["expected"]=Json::array({"a"});request["xml"]="<testsuite><testcase name='a' status='run'/></testsuite>";require(probe("report").at("error").str().empty(),"Valid report rejected");request["xml"]="<testsuite/>";expectError("report","no executed test cases");for(const std::string status:{"<skipped/>","<failure/>","<error/>"}){request["xml"]="<testsuite><testcase name='a'>"+status+"</testcase></testsuite>";expectError("report","not fully verified");}request["xml"]="<testsuite><testcase name='a' status='notrun'/></testsuite>";expectError("report","not fully verified");for(const auto& xml:{"<testsuite><testcase name='b'/></testsuite>","<testsuite><testcase name='a'/><testcase name='a'/></testsuite>"}){request["xml"]=xml;expectError("report","does not match");}

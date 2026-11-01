@@ -4,11 +4,13 @@
 #pragma once
 
 #include "steam_connection_feedback.h"
+#include "manager_connection_state.h"
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -46,6 +48,9 @@ struct SteamStatus
     std::uint32_t appId = 0;
     std::string steamId;
     std::string diagnostic;
+    ManagerConnectionState connectionState = ManagerConnectionState::Connecting;
+    SteamConnectionProblem connectionProblem = SteamConnectionProblem::None;
+    std::uint64_t connectionRevision = 0;
 };
 
 struct WorkshopEulaStatus
@@ -93,6 +98,8 @@ struct PublishedPage
 enum class PublishStage
 {
     Preparing,
+    PreparingConfig,
+    PreparingContent,
     Created,
     UploadingContent,
     UploadingPreview,
@@ -159,6 +166,15 @@ public:
     SteamWorkshopCore& operator=(const SteamWorkshopCore&) = delete;
 
     bool Initialize(CoreError& error);
+    // Call on the same serial Steam worker as all UGC operations, while idle.
+    // Pump frequently; the implementation samples once per second and retries
+    // transient initialization failures with bounded backoff. Returns whether
+    // the API is initialized; inspect Status().loggedOn for backend connection.
+    bool PollConnection(CoreError& error, bool retry = false);
+    // Same worker, including a UGC progress callback. Samples only: never pumps
+    // callbacks, releases a session, retries initialization or touches UGC.
+    void SampleActiveConnection();
+    void Shutdown();
     SteamStatus Status() const;
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
@@ -171,9 +187,17 @@ public:
     const std::filesystem::path& StagingRoot() const { return stagingRoot_; }
 
 private:
+    struct ConnectionCallbacks;
+    bool CaptureConnection(CoreError& error);
+    void StoreStatus(SteamStatus status);
+    void ShutdownSession();
     std::filesystem::path stagingRoot_;
     mutable std::mutex statusMutex_;
     SteamStatus status_;
+    std::unique_ptr<ConnectionCallbacks> connectionCallbacks_;
+    ManagerConnectionSchedule connectionSchedule_;
+    CoreError connectionError_;
+    bool sessionInitialized_ = false;
 };
 
 std::string PublishStageName(PublishStage stage);

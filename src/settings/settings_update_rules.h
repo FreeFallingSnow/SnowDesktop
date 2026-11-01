@@ -38,12 +38,16 @@ inline bool IsGeneralShortcutOnlyCommit(
             after.pageNavigationNextVirtualKey;
     return shortcutChanged &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
+        before.steamShowRunningStatus == after.steamShowRunningStatus &&
         before.runtimeModules == after.runtimeModules &&
         before.autoStartEnabled == after.autoStartEnabled &&
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
         before.diagnosticLogModules == after.diagnosticLogModules &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
+        before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
+        before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
+        before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
         before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
         before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
         before.contextMenuHideMoreManagement == after.contextMenuHideMoreManagement &&
@@ -73,6 +77,7 @@ inline bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
 {
     return before.diagnosticLogModules != after.diagnosticLogModules &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
+        before.steamShowRunningStatus == after.steamShowRunningStatus &&
         before.runtimeModules == after.runtimeModules &&
         before.autoStartEnabled == after.autoStartEnabled &&
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
@@ -84,6 +89,9 @@ inline bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.forceRestartHotkeyVirtualKey == after.forceRestartHotkeyVirtualKey &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
+        before.desktopIdleHideEnabled == after.desktopIdleHideEnabled &&
+        before.desktopIdleHideDelaySeconds == after.desktopIdleHideDelaySeconds &&
+        before.desktopIdleHidePauseWithWindows == after.desktopIdleHidePauseWithWindows &&
         before.desktopPassthroughHotkeyEnabled == after.desktopPassthroughHotkeyEnabled &&
         before.desktopPassthroughHotkeyModifiers == after.desktopPassthroughHotkeyModifiers &&
         before.desktopPassthroughHotkeyVirtualKey == after.desktopPassthroughHotkeyVirtualKey &&

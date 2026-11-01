@@ -23,7 +23,11 @@ namespace snowdesktop::steam_bridge
 {
 namespace
 {
-constexpr wchar_t kSkillDirectoryName[] = L"snowdesktop-lua-widget";
+const wchar_t* SkillDirectoryName(AgentSkillPackage package)
+{
+    return package == AgentSkillPackage::Control
+        ? L"snowdesktop-control" : L"snowdesktop-lua-widget";
+}
 
 std::filesystem::path EnvironmentPath(const wchar_t* name)
 {
@@ -119,7 +123,8 @@ bool SkillTreeIsSafe(const std::filesystem::path& path,
 }
 
 std::optional<unsigned int> ReadSkillRevision(
-    const std::filesystem::path& directory, std::string& error)
+    const std::filesystem::path& directory, std::string& error,
+    AgentSkillPackage package)
 {
     const auto manifest = directory / L"skill.json";
     if (!std::filesystem::is_regular_file(manifest)) return std::nullopt;
@@ -134,7 +139,9 @@ std::optional<unsigned int> ReadSkillRevision(
     const auto schema = JsonUnsigned(root, "schemaVersion");
     const auto id = JsonString(root, "id");
     const auto revision = JsonUnsigned(root, "revision");
-    if (!schema || *schema != 1 || !id || *id != "snowdesktop-lua-widget" ||
+    const auto expectedId = package == AgentSkillPackage::Control
+        ? "snowdesktop-control" : "snowdesktop-lua-widget";
+    if (!schema || *schema != 1 || !id || *id != expectedId ||
         !revision || *revision == 0 ||
         *revision > static_cast<std::uint64_t>(UINT_MAX))
     {
@@ -235,25 +242,30 @@ std::vector<AgentSkillTarget> DefaultAgentSkillTargets()
 SkillInstallStatus InspectAgentSkill(
     const std::filesystem::path& bundledSkill,
     const std::filesystem::path& bundledCli,
-    AgentSkillTarget target, std::string& error)
+    AgentSkillTarget target, std::string& error, AgentSkillPackage package)
 {
     SkillInstallStatus status;
+    status.package = package;
     status.agent = std::move(target);
     status.source = bundledSkill;
     status.cliSource = bundledCli;
-    status.target = status.agent.skillsRoot / kSkillDirectoryName;
+    status.target = status.agent.skillsRoot / SkillDirectoryName(package);
     error.clear();
     std::error_code filesystemError;
-    if (bundledSkill.empty() || bundledCli.empty() ||
+    if (bundledSkill.empty() ||
         status.agent.skillsRoot.empty() ||
         !std::filesystem::is_directory(bundledSkill, filesystemError) ||
         filesystemError || ContainsExistingReparsePoint(bundledSkill) ||
-        !IsRegularNonReparseFile(bundledCli))
+        (package == AgentSkillPackage::LuaWidget &&
+            !IsRegularNonReparseFile(bundledCli)) ||
+        (package == AgentSkillPackage::Control &&
+            (!IsRegularNonReparseFile(bundledSkill / L"scripts" / L"snowdesktop-control.ps1") ||
+                !IsRegularNonReparseFile(bundledSkill.parent_path().parent_path() / L"SnowDesktop.exe"))))
     {
         error = "the bundled SnowDesktop Skill or CLI is unavailable";
         return status;
     }
-    const auto bundledRevision = ReadSkillRevision(bundledSkill, error);
+    const auto bundledRevision = ReadSkillRevision(bundledSkill, error, package);
     if (!bundledRevision)
     {
         if (error.empty()) error = "the bundled Skill manifest is missing";
@@ -279,11 +291,24 @@ SkillInstallStatus InspectAgentSkill(
     }
     std::string installedError;
     const auto installedRevision =
-        ReadSkillRevision(status.target, installedError);
+        ReadSkillRevision(status.target, installedError, package);
     if (installedRevision) status.installedRevision = *installedRevision;
     status.state = installedRevision &&
         *installedRevision >= *bundledRevision
         ? SkillInstallState::Current : SkillInstallState::UpdateAvailable;
+    if (package == AgentSkillPackage::Control && status.state == SkillInstallState::Current)
+    {
+        const auto bindingPath = status.target / L"connection.json";
+        std::ifstream input(bindingPath, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(input), {}};
+        JsonValue binding;
+        std::string detail;
+        const auto expected = (bundledSkill.parent_path().parent_path() / L"SnowDesktop.exe").u8string();
+        if (!IsRegularNonReparseFile(bindingPath) || !input || !ParseJson(text, binding, detail) ||
+            JsonString(binding, "executablePath") != std::string(expected.begin(), expected.end()) ||
+            !IsRegularNonReparseFile(status.target / L"scripts" / L"snowdesktop-control.ps1"))
+            status.state = SkillInstallState::UpdateAvailable;
+    }
     return status;
 }
 
@@ -292,7 +317,9 @@ bool InstallOrUpdateAgentSkill(const SkillInstallStatus& status,
 {
     error.clear();
     if (status.state == SkillInstallState::Unavailable ||
-        status.source.empty() || status.target.empty())
+        status.source.empty() || status.target.empty() ||
+        ComparablePath(status.target.parent_path()) != ComparablePath(status.agent.skillsRoot) ||
+        ComparablePath(status.target.filename()) != ComparablePath(SkillDirectoryName(status.package)))
     {
         error = "the SnowDesktop Skill cannot be installed from this build";
         return false;
@@ -315,9 +342,9 @@ bool InstallOrUpdateAgentSkill(const SkillInstallStatus& status,
     const std::wstring suffix = std::to_wstring(GetCurrentProcessId()) + L"-" +
         std::to_wstring(GetTickCount64());
     const auto staging = skillsRoot /
-        (std::wstring(L".snowdesktop-lua-widget.install-") + suffix);
+        (L"." + std::wstring(SkillDirectoryName(status.package)) + L".install-" + suffix);
     const auto backup = skillsRoot /
-        (std::wstring(L".snowdesktop-lua-widget.backup-") + suffix);
+        (L"." + std::wstring(SkillDirectoryName(status.package)) + L".backup-" + suffix);
     if (std::filesystem::exists(staging, filesystemError) ||
         std::filesystem::exists(backup, filesystemError))
     {
@@ -329,18 +356,38 @@ bool InstallOrUpdateAgentSkill(const SkillInstallStatus& status,
         std::filesystem::remove_all(staging, filesystemError);
         return false;
     }
-    const auto installedCli = staging / L"bin" / L"snowwidget.exe";
-    std::filesystem::create_directories(
-        installedCli.parent_path(), filesystemError);
-    if (!filesystemError)
-        std::filesystem::copy_file(status.cliSource, installedCli,
-            std::filesystem::copy_options::overwrite_existing,
-            filesystemError);
-    if (filesystemError)
+    if (status.package == AgentSkillPackage::LuaWidget)
     {
-        std::filesystem::remove_all(staging, filesystemError);
-        error = "cannot install the bundled snowwidget CLI";
-        return false;
+        const auto installedCli = staging / L"bin" / L"snowwidget.exe";
+        std::filesystem::create_directories(
+            installedCli.parent_path(), filesystemError);
+        if (!filesystemError)
+            std::filesystem::copy_file(status.cliSource, installedCli,
+                std::filesystem::copy_options::overwrite_existing,
+                filesystemError);
+        if (filesystemError)
+        {
+            std::filesystem::remove_all(staging, filesystemError);
+            error = "cannot install the bundled snowwidget CLI";
+            return false;
+        }
+    }
+    else
+    {
+        const auto host = status.source.parent_path().parent_path() / L"SnowDesktop.exe";
+        auto binding = JsonValue::Object();
+        const auto utf8 = host.u8string();
+        binding.object.emplace("executablePath", JsonValue::String(
+            std::string(utf8.begin(), utf8.end())));
+        std::ofstream output(staging / L"connection.json", std::ios::binary);
+        output << WriteJson(binding);
+        output.close();
+        if (!output)
+        {
+            std::filesystem::remove_all(staging, filesystemError);
+            error = "cannot bind the control Skill to this SnowDesktop installation";
+            return false;
+        }
     }
 
     const bool hadExisting = std::filesystem::exists(status.target,
@@ -384,7 +431,7 @@ bool UninstallAgentSkill(const SkillInstallStatus& status,
         ComparablePath(status.target.parent_path()) !=
             ComparablePath(status.agent.skillsRoot) ||
         ComparablePath(status.target.filename()) !=
-            ComparablePath(kSkillDirectoryName))
+            ComparablePath(SkillDirectoryName(status.package)))
     {
         error = "the Agent Skill uninstall target is invalid";
         return false;
@@ -402,7 +449,7 @@ bool UninstallAgentSkill(const SkillInstallStatus& status,
     }
     if (!SkillTreeIsSafe(status.target, error)) return false;
     std::string manifestError;
-    if (!ReadSkillRevision(status.target, manifestError))
+    if (!ReadSkillRevision(status.target, manifestError, status.package))
     {
         error = "the Agent Skill destination is not managed by SnowDesktop";
         return false;
@@ -411,7 +458,7 @@ bool UninstallAgentSkill(const SkillInstallStatus& status,
     const std::wstring suffix = std::to_wstring(GetCurrentProcessId()) + L"-" +
         std::to_wstring(GetTickCount64());
     const auto removing = status.target.parent_path() /
-        (std::wstring(L".snowdesktop-lua-widget.remove-") + suffix);
+        (L"." + std::wstring(SkillDirectoryName(status.package)) + L".remove-" + suffix);
     if (std::filesystem::exists(removing, filesystemError) || filesystemError)
     {
         error = "a conflicting Skill uninstall transaction already exists";

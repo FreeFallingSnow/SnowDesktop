@@ -166,6 +166,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.auto_start",
         "settings.general.startup.description"},
     {SettingsPage::General, "general.windowSupport", "settings.general.windowSupport.title", "settings.general.windowSupport.disabled"},
+    {SettingsPage::General, "general.steamRunningStatus", "settings.general.steamRunningStatus", ""},
     {SettingsPage::General, "general.advancedFeatures",
         "settings.general.advancedFeatures",
         "settings.general.advancedFeatures.description"},
@@ -174,13 +175,13 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.softwareDesktop.description"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
     {SettingsPage::ContextMenu, "contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions.description"},
+    {SettingsPage::ContextMenu, "contextMenu.expandAllExtensions", "settings.contextMenu.expandAllExtensions", "settings.contextMenu.expandAllExtensions.description"},
     {SettingsPage::ContextMenu, "contextMenu.hidePageManagement", "settings.contextMenu.showPageManagement", "settings.contextMenu.hidePageManagement.description"},
     {SettingsPage::ContextMenu, "contextMenu.hideMoreManagement", "settings.contextMenu.showMoreManagement", ""},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
     {SettingsPage::ContextMenu, "contextMenu.application", "settings.contextMenu.viewApplications", "settings.contextMenu.extensions"},
-    {SettingsPage::ContextMenu, "contextMenu.extension", "settings.contextMenu.viewExtensions", "settings.contextMenu.extensions"},
     {SettingsPage::ContextMenu, "contextMenu.batch", "settings.contextMenu.groupToggle", "settings.contextMenu.groupHint"},
     {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
     {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
@@ -190,6 +191,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Desktop, "desktop.doubleClickHide",
         "settings.general.doubleClickHide",
         "settings.general.doubleClickHide.description"},
+    {SettingsPage::Desktop, "desktop.idleHide", "settings.desktop.idleHide", "settings.desktop.idleHide.description"},
+    {SettingsPage::Desktop, "desktop.idleHide.delay", "settings.desktop.idleHide.delay", "settings.desktop.idleHide"},
+    {SettingsPage::Desktop, "desktop.idleHide.pauseWithWindows", "settings.desktop.idleHide.pauseWithWindows", "settings.desktop.idleHide"},
     {SettingsPage::General, "general.quickNavigation",
         "settings.general.quickNavigation",
         "settings.general.quickNavigation.description"},
@@ -627,6 +631,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::BackupAndData, "backup.clearData",
         "settings.backup.clearData", "settings.backup.clearData.description"},
     {SettingsPage::About, "about.showAdvancedSettings", "modules.showAdvanced", "modules.showAdvancedDescription"},
+    {SettingsPage::AgentOperations, "agentOperations.skill", "settings.agentOperations.skill", "settings.agentOperations.description"},
     {SettingsPage::RuntimeModules, "runtimeModules.taskbar", "modules.taskbar.name", "modules.taskbar.purpose"},
     {SettingsPage::RuntimeModules, "runtimeModules.tray", "modules.tray.name", "modules.tray.purpose"},
     {SettingsPage::RuntimeModules, "runtimeModules.windowMinimize", "modules.windowMinimize.name", "modules.windowMinimize.purpose"},
@@ -707,7 +712,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
 inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
     const std::function<std::wstring(std::string_view)>& L,
     bool advancedFeaturesVisible, bool supportsQuickSettings,
-    int contextMenuStyle = 0, bool mergedBarVisible = false)
+    int contextMenuStyle = 0, bool mergedBarVisible = false, bool steamBridgeAvailable = false)
 {
             const auto pageContext = [&L](SettingsPage page) {
                 const auto title = L(SettingsPageTitleKey(page));
@@ -797,6 +802,7 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                         ? input.developerToolsVisible
                         : input.debugVisible);
                 if (descriptor.focusId == "general.advancedFeatures" && !advancedFeaturesVisible) descriptor.visible = false;
+                if (descriptor.focusId == "general.steamRunningStatus" && !steamBridgeAvailable) descriptor.visible = false;
                 if (!descriptor.label.empty())
                     input.staticSettings.push_back(std::move(descriptor));
             }

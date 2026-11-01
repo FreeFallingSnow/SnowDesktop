@@ -1,7 +1,10 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/menus/sort_menu.h"
+#include "app/menus/background_menu_order.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
+#include "shell/shell_new_menu.h"
 #include "categorized_popup_scope.h"
 
 // Collection/file-group dwell activation and popup tab switching.
@@ -70,11 +73,11 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         dragDropController_.IsTransportActive() ||
         widgetAction_ != WidgetAction::None || largeIconGesture_ ||
         middleButtonWidgetMove_ || detailColumnResizeActive_ ||
-        luaWidgetPanelMouseDown_ || renameController_.IsActive() || GetCapture() ||
+        luaWidgetPanelMouseDown_ || renameController_.IsActive() || snowdesktop::private_pointer::Capture() ||
         HasActiveContextMenuSession() ||
         (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
-        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-            GetAsyncKeyState(VK_MBUTTON)) & 0x8000))
+        ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
+            snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON)) & 0x8000))
     {
         CancelPopupHover(true);
         return;
@@ -361,7 +364,7 @@ void DesktopApp::TraceCollectionPopupDwell(
         message,
         L"Collection dwell trace: %ls point=(%ld,%ld) mouseDown=%d capture=%p",
         signature, point.x, point.y,
-        mouseDown_ ? 1 : 0, GetCapture());
+        mouseDown_ ? 1 : 0, snowdesktop::private_pointer::Capture());
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
 #endif
 }
@@ -926,11 +929,11 @@ bool DesktopApp::TryActivateCollectionGroupTab(
     InvalidateRect(hwnd_, nullptr, FALSE);
 
     int mods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000)
         mods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)
         mods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)
         mods |= MK_SHIFT;
     RefreshDragTargetAt(lastMousePoint_, mods);
     return true;
@@ -982,6 +985,8 @@ ShowDockFolderPopupContextMenu(
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
     HMENU sortMenu = nullptr;
+    const std::wstring newItemDirectory = dockFolderPopupWidget_.sourceFolderPath;
+    std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
 
     if (itemMenu)
     {
@@ -1091,13 +1096,7 @@ ShowDockFolderPopupContextMenu(
                 : MF_STRING | MF_GRAYED,
             kContextPasteCommand,
             _LW("app.menu.paste"));
-        AppendMenuW(
-            menu,
-            dockFolderPopupAvailable_
-                ? MF_STRING
-                : MF_STRING | MF_GRAYED,
-            kContextNewMenu,
-            _LW("app.menu.new"));
+        AppendShellNewSubmenu(menu, newItemDirectory, dockFolderPopupAvailable_);
         AppendMenuW(
             menu,
             dockFolderPopupAvailable_
@@ -1142,7 +1141,6 @@ ShowDockFolderPopupContextMenu(
         MenuIconFont::FluentRegular,
         snowdesktop::menu_icon::BuiltinIcon::NewItem);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
-    SetMenuItemQuickAction(menu, kContextNewMenu);
     SetMenuItemIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions,
         MenuIconFont::FluentRegular);
@@ -1167,12 +1165,27 @@ ShowDockFolderPopupContextMenu(
     else if (dockFolderPopupAvailable_)
         shellRequest.paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
     shellRequest.background = !itemMenu;
-    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    shellRequest.extended = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
+    const auto prepareNewSubmenu = [&](UINT submenuCommand,
+        std::vector<snowdesktop::modern_menu::Item>& children) {
+        if (submenuCommand == kContextNewMenu)
+            PrepareShellNewSubmenu(shellNewMenu, newItemDirectory, children);
+    };
+    if (!itemMenu) snowdesktop::background_menu_order::Mark(menu);
     const UINT command = ShowModernMenu(
-        menu, screenPoint, hwnd_, false, false, nullptr, {}, {}, {}, &shellRequest);
+        menu, screenPoint, hwnd_, false, false, nullptr, {}, {}, {}, &shellRequest,
+        {}, false, 0, 0, prepareNewSubmenu);
     DestroyMenu(menu);
     ClearMenuIcons();
 
+    if (shellNewMenu && shellNewMenu->Contains(command))
+    {
+        InvokeNewMenuCommand(shellNewMenu->Context(), command, newItemDirectory);
+        RequestShellRefresh();
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
     if (!itemMenu && ExecuteDockFolderPopupDisplayCommand(command))
     {
         RestoreDesktopWindowLayer();
@@ -1274,10 +1287,7 @@ ShowDockFolderPopupContextMenu(
                 sourceFolderPath);
         break;
     case kContextNewMenu:
-        ShowNewMenuAndInvoke(
-            screenPoint,
-            dockFolderPopupWidget_.
-                sourceFolderPath);
+        ShowNewMenuAndInvoke(screenPoint, newItemDirectory);
         RequestShellRefresh();
         break;
     default:

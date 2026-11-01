@@ -802,46 +802,59 @@ struct WidgetsPageBackend::Impl final
         return "en-US";
     }
 
-    void CaptureAgentSkillState()
+    std::vector<snowdesktop::steam_bridge::SkillInstallStatus> controlAgentSkillStatuses;
+    std::optional<int> controlAgentSkillSelectionOverride;
+
+    void CaptureAgentSkillState(bool control = false)
     {
-        agentSkillStatuses.clear();
-        state->agentSkills.clear();
-        state->agentSkillStatusError.clear();
+        auto& statuses = control ? controlAgentSkillStatuses : this->agentSkillStatuses;
+        auto& selection = control ? controlAgentSkillSelectionOverride : this->agentSkillSelectionOverride;
+        auto& skills = control ? state->controlAgentSkills : state->agentSkills;
+        auto& statusError = control ? state->controlAgentSkillStatusError : state->agentSkillStatusError;
+        auto& targetMask = control ? state->controlAgentSkillTargetMask : state->agentSkillTargetMask;
+        statuses.clear();
+        skills.clear();
+        statusError.clear();
 
         const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
         const auto bundledSkill =
-            packagePaths.builtin / L"snowdesktop-lua-widget";
+            packagePaths.builtin / (control ? L"snowdesktop-control" : L"snowdesktop-lua-widget");
         const auto bundledCli = bundledSkill / L"bin" / L"snowwidget.exe";
-        std::error_code workspaceError;
-        std::filesystem::create_directories(
-            packagePaths.development, workspaceError);
-        state->developmentWorkspace = packagePaths.development.wstring();
-        state->componentCliPath = bundledCli.wstring();
-        state->developerPublisherAvailable = false;
-        if (options.canPublishDevelopmentPackage)
+        if (!control)
         {
-            try
+            std::error_code workspaceError;
+            std::filesystem::create_directories(
+                packagePaths.development, workspaceError);
+            state->developmentWorkspace = packagePaths.development.wstring();
+            state->componentCliPath = bundledCli.wstring();
+            state->developerPublisherAvailable = false;
+            if (options.canPublishDevelopmentPackage)
             {
-                state->developerPublisherAvailable =
-                    options.canPublishDevelopmentPackage();
+                try
+                {
+                    state->developerPublisherAvailable =
+                        options.canPublishDevelopmentPackage();
+                }
+                catch (...)
+                {
+                }
             }
-            catch (...)
-            {
-            }
-        }
 
+        }
         int detectedTargetMask = 0;
         for (auto target :
             snowdesktop::steam_bridge::DefaultAgentSkillTargets())
         {
             std::string error;
             auto status = snowdesktop::steam_bridge::InspectAgentSkill(
-                bundledSkill, bundledCli, std::move(target), error);
+                bundledSkill, bundledCli, std::move(target), error,
+                control ? snowdesktop::steam_bridge::AgentSkillPackage::Control
+                    : snowdesktop::steam_bridge::AgentSkillPackage::LuaWidget);
             if (!error.empty())
             {
-                if (!state->agentSkillStatusError.empty())
-                    state->agentSkillStatusError += L"\n";
-                state->agentSkillStatusError +=
+                if (!statusError.empty())
+                    statusError += L"\n";
+                statusError +=
                     Utf8ToWide(status.agent.id + ": " + error);
             }
 
@@ -857,17 +870,17 @@ struct WidgetsPageBackend::Impl final
             }
             if (installed)
                 detectedTargetMask |= bit;
-            const bool selected = agentSkillSelectionOverride
-                ? ((*agentSkillSelectionOverride & bit) != 0)
+            const bool selected = selection
+                ? ((*selection & bit) != 0)
                 : installed;
-            state->agentSkills.push_back({
+            skills.push_back({
                 AgentSkillKindFor(status.agent.kind), status.agent.id,
                 status.target.wstring(), AgentSkillStateFor(status.state),
                 status.installedRevision, status.bundledRevision,
                 selected, installed});
-            agentSkillStatuses.push_back(std::move(status));
+            statuses.push_back(std::move(status));
         }
-        state->agentSkillTargetMask = agentSkillSelectionOverride
+        targetMask = selection
             .value_or(detectedTargetMask);
     }
 
@@ -1307,6 +1320,7 @@ struct WidgetsPageBackend::Impl final
                 options.developerOverridesVisible();
             state->workshopAvailable = WorkshopAvailable();
             CaptureAgentSkillState();
+            CaptureAgentSkillState(true);
             std::vector<InstalledWidgetPackageSnapshot> converted;
             const auto groups = GroupPackages(
                 packages, invalidPackages, workshopInstallFailures);
@@ -3128,25 +3142,26 @@ struct WidgetsPageBackend::Impl final
         return succeeded;
     }
 
-    bool RefreshAgentSkills()
+    bool RefreshAgentSkills(bool control = false)
     {
         if (BusyForMutation()) return ReportBusy();
-        CaptureAgentSkillState();
-        state->developerActionStatus = L(
+        CaptureAgentSkillState(control);
+        (control ? state->controlAgentSkillActionStatus : state->developerActionStatus) = L(
             "app.settings.widgets_skill_check_complete",
             L"Agent Skill status refreshed.");
         Publish();
         return true;
     }
 
-    bool SetAgentSkillTargetSelection(const WidgetsPageRequest& request)
+    bool SetAgentSkillTargetSelection(const WidgetsPageRequest& request, bool control = false)
     {
         if (BusyForMutation()) return ReportBusy();
         const int mask = std::clamp(request.agentSkillTargetMask,
             0, kAllAgentSkillTargetsMask);
-        agentSkillSelectionOverride = mask;
-        state->agentSkillTargetMask = mask;
-        for (auto& skill : state->agentSkills)
+        auto& selection = control ? controlAgentSkillSelectionOverride : agentSkillSelectionOverride;
+        selection = mask;
+        (control ? state->controlAgentSkillTargetMask : state->agentSkillTargetMask) = mask;
+        for (auto& skill : (control ? state->controlAgentSkills : state->agentSkills))
         {
             const int bit = 1 << static_cast<int>(skill.kind);
             skill.selected = (mask & bit) != 0;
@@ -3155,19 +3170,19 @@ struct WidgetsPageBackend::Impl final
         return true;
     }
 
-    bool ApplyAgentSkillSelection()
+    bool ApplyAgentSkillSelection(bool control = false)
     {
         if (BusyForMutation()) return ReportBusy();
-        CaptureAgentSkillState();
+        CaptureAgentSkillState(control);
         int installed = 0;
         int removed = 0;
         int failed = 0;
         std::string firstError;
-        for (const auto& status : agentSkillStatuses)
+        for (const auto& status : (control ? controlAgentSkillStatuses : agentSkillStatuses))
         {
             const int bit = AgentSkillTargetBit(status.agent.kind);
             const bool selected =
-                (state->agentSkillTargetMask & bit) != 0;
+                ((control ? state->controlAgentSkillTargetMask : state->agentSkillTargetMask) & bit) != 0;
             using snowdesktop::steam_bridge::SkillInstallState;
             bool targetInstalled =
                 status.state == SkillInstallState::Current ||
@@ -3203,9 +3218,9 @@ struct WidgetsPageBackend::Impl final
                 if (firstError.empty()) firstError = std::move(error);
             }
         }
-        agentSkillSelectionOverride.reset();
-        CaptureAgentSkillState();
-        state->developerActionStatus = FormatAgentSkillCounts(
+        (control ? controlAgentSkillSelectionOverride : agentSkillSelectionOverride).reset();
+        CaptureAgentSkillState(control);
+        (control ? state->controlAgentSkillActionStatus : state->developerActionStatus) = FormatAgentSkillCounts(
             L(failed == 0
                     ? "app.settings.widgets_skill_sync_success"
                     : "app.settings.widgets_skill_sync_partial",
@@ -3217,7 +3232,7 @@ struct WidgetsPageBackend::Impl final
                         L"target(s), and failed on %d target(s)."),
             installed, removed, failed);
         if (!firstError.empty())
-            state->developerActionStatus += L"\n" + Utf8ToWide(firstError);
+            (control ? state->controlAgentSkillActionStatus : state->developerActionStatus) += L"\n" + Utf8ToWide(firstError);
         Publish();
         return failed == 0;
     }
@@ -3765,6 +3780,12 @@ struct WidgetsPageBackend::Impl final
             return SynchronizeSource(request);
         case WidgetsPageCommand::AddPackageToDesktop:
             return AddPackageToDesktop(request);
+        case WidgetsPageCommand::RefreshControlAgentSkills:
+            return RefreshAgentSkills(true);
+        case WidgetsPageCommand::ApplyControlAgentSkillSelection:
+            return ApplyAgentSkillSelection(true);
+        case WidgetsPageCommand::SetControlAgentSkillTargetSelection:
+            return SetAgentSkillTargetSelection(request, true);
         case WidgetsPageCommand::RefreshAgentSkills:
             return RefreshAgentSkills();
         case WidgetsPageCommand::ApplyAgentSkillSelection:

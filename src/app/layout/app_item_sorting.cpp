@@ -2,6 +2,7 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "layout/desktop_item_sort_rules.h"
 #include "shell/item_sort_metadata.h"
+#include "settings/control_native_widget_settings.h"
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
@@ -109,9 +110,20 @@ void DesktopApp::SortIcons(int mode, bool ascending)
  * @param widgetIndex 组件索引。
  * @param mode 排序模式：0 按名称，1 按类型，2 按修改时间，3 按大小。
  */
-void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending)
+void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending, bool persist)
 {
     if (widgetIndex >= widgets_.size()) return;
+    if (persist)
+    {
+        using namespace snowdesktop::control;
+        using namespace snowdesktop::control_settings;
+        const auto state = CaptureNativeWidgetSettings(widgets_[widgetIndex].id);
+        const auto patch = ParseNativeWidgetSettingsPatch(state, Object({
+            {"sortColumn", String(std::string(snowdesktop::list_detail_rules::ToString(ContentSortColumnForMode(mode))))},
+            {"sortAscending", Boolean(ascending)}}));
+        (void)ApplyNativeWidgetSettings(state, patch);
+        return;
+    }
     DesktopWidget& w = widgets_[widgetIndex];
 
     if (w.type == DesktopWidgetType::CollectionGroup)
@@ -130,7 +142,7 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
             widgets_[activeIndex].type ==
                 DesktopWidgetType::Collection)
             SortWidgetContents(
-                activeIndex, mode, ascending);
+                activeIndex, mode, ascending, false);
         return;
     }
 
@@ -145,8 +157,6 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
             w.contentSortColumn = ContentSortColumnForMode(mode);
             w.contentSortAscending = ascending;
             group->InvalidateHostedView();
-            SaveLayoutSlots();
-            InvalidateRect(hwnd_, nullptr, TRUE);
             return;
         }
         std::wstring active = w.activeCategoryId;
@@ -156,7 +166,7 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
             active = w.childWidgetIds.empty() ? L"" : w.childWidgetIds.front();
         const size_t activeIndex = FindWidgetIndexById(active);
         if (activeIndex < widgets_.size())
-            SortWidgetContents(activeIndex, mode, ascending);
+            SortWidgetContents(activeIndex, mode, ascending, false);
         return;
     }
 
@@ -177,13 +187,10 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
         snowdesktop::folder_sort_rules::
             RewriteOrderKeys(
                 w.folderEntries, w.itemKeys);
-        RefreshFolderMappingWidget(widgetIndex);
-        RebuildContainersAndItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
     }
     else if (w.type == DesktopWidgetType::FileCategories || w.type == DesktopWidgetType::Collection)
     {
+        if (mode < 0) return; // Manual order preserves the existing membership order.
         std::vector<std::wstring> keys;
         std::unordered_set<std::wstring> seen;
         for (const auto& rawKey : w.itemKeys)
@@ -207,10 +214,6 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
             });
 
         w.itemKeys = std::move(keys);
-        LayoutItems();
-        RebuildContainersAndItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
     }
 }
 

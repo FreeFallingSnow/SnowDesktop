@@ -278,7 +278,15 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         c.workers.push_back(Json::parse(read(receipt)));return found;
     };
     const auto firstRun=runId(batch);
-    until([&]{return fs::exists(gate.wstring()+L".ready")||view(c,firstRun).at("terminal").boolean;},35);
+    auto await_private_child=[&](const std::string& id){
+        // Capture/materialization is preparation, not the held build child.
+        // A busy machine previously spent 23s of the 35s gate window here.
+        candidate_until(c,id,[&]{const auto state=view(c,id);return state.at("status").str()=="running"||state.at("terminal").boolean;},
+            90,"Candidate batch preparation did not reach execution");
+        candidate_until(c,id,[&]{return fs::exists(gate.wstring()+L".ready")||view(c,id).at("terminal").boolean;},
+            35,"Candidate batch private build child did not reach its gate");
+    };
+    await_private_child(firstRun);
     require(fs::exists(gate.wstring()+L".ready"),"Candidate batch never reached its real private build child");
     const auto editing=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","next","-WaitSeconds","1"});
     require(editing.code==0,"Source capture did not release the editing window while its candidate compiled");
@@ -336,7 +344,7 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         c.plan(task,opened,0,"selected","candidate_rule","tool","src/value.h");
         fs::remove(gate.wstring()+L".ready");write(gate,"hold");ready(task,opened,env);
         const auto id=runId(opened);
-        until([&]{return fs::exists(gate.wstring()+L".ready")||view(c,id).at("terminal").boolean;},35);
+        await_private_child(id);
         require(fs::exists(gate.wstring()+L".ready"),"Lifecycle candidate batch did not reach its owned child");
         const auto child=Json::parse(read(gate.wstring()+L".ready"));
         if(mode=="cancel"){

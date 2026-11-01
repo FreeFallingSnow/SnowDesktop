@@ -636,6 +636,7 @@ RECT FileCategories::GetContentViewportRect() const
 
 void FileCategories::ApplyMarqueeSelection(const RECT& contentRect)
 {
+    if (UsesFolderSearch()) { ApplyFolderSearchMarquee(contentRect); return; }
     if (!data_ || !app_)
         return;
 
@@ -798,7 +799,7 @@ static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex)
     if (!data) return {};
     RECT content = FileCategoryContentRect(widget);
     const auto layout = FileCategoryLocalLayout(widget);
-    int scroll = std::clamp(data->scrollOffset, 0, FileCategoryMaxScrollOffset(widget));
+    int scroll = widget->GetScrollOffset();
 
     if (data->dateHeaders &&
         (!data->showSearchBox || !widget->IsSearchActive()))
@@ -893,6 +894,7 @@ static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIn
  */
 std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 {
+    if (!IsSingleCellPresentation() && UsesFolderSearch()) return BuildFolderSearchSlots();
     if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
@@ -904,7 +906,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 
     RECT content = FileCategoryContentRect(this);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
-    const int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
+    const int scroll = GetScrollOffset();
 
     if (data_->dateHeaders &&
         (!data_->showSearchBox || searchText_.empty()))
@@ -968,6 +970,7 @@ std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
  */
 Item* FileCategories::GetSlotItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, false);
     if (!data_ || !app_) return nullptr;
     const auto& keys = GetSearchResultKeys();
     if (idx >= keys.size()) return nullptr;
@@ -999,6 +1002,7 @@ Item* FileCategories::GetSlotItem(size_t idx) const
  */
 Item* FileCategories::GetMemberItem(size_t idx) const
 {
+    if (UsesFolderSearch()) return FolderSearchItem(idx, true);
     if (!data_ || !app_) return nullptr;
     const auto& keys = GetSearchResultKeys();
     if (idx >= keys.size()) return nullptr;
@@ -1017,6 +1021,7 @@ Item* FileCategories::GetMemberItem(size_t idx) const
  */
 std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedIndices();
     std::vector<size_t> result;
     if (!data_ || !app_) return result;
     const auto& keys = GetSearchResultKeys();
@@ -1037,6 +1042,7 @@ std::vector<size_t> FileCategories::GetSelectedMemberIndices() const
  */
 void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
+    if (UsesFolderSearch()) return;
     if (!data_ || !app_) return;
     if (data_->dateHeaders) return;
 
@@ -1074,6 +1080,7 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
  */
 size_t FileCategories::GetSlotCount() const
 {
+    if (UsesFolderSearch()) return FolderSearchCount();
     if (!data_) return 0;
     return GetSearchResultKeys().size();
 }
@@ -1110,6 +1117,7 @@ int FileCategories::GetMemberColumnCount() const
  */
 int FileCategories::GetMaxScrollOffset() const
 {
+    if (UsesFolderSearch()) return std::max(0, FolderSearchContentHeight() - GetVisibleContentHeight() + Cu(kMinCellHeight / 2.0f));
     return FileCategoryMaxScrollOffset(const_cast<FileCategories*>(this));
 }
 
@@ -1119,6 +1127,7 @@ int FileCategories::GetMaxScrollOffset() const
  */
 int FileCategories::GetTotalContentHeight() const
 {
+    if (UsesFolderSearch()) return FolderSearchContentHeight();
     const auto& keys = GetSearchResultKeys();
     return FileCategoryContentHeight(const_cast<FileCategories*>(this), keys.size());
 }
@@ -1159,6 +1168,17 @@ void FileCategories::OnItemsDropped(const std::vector<Item*>& sourceItems, Conta
  */
 size_t FileCategories::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
 {
+    if (UsesFolderSearch())
+    {
+        if (targetSlot)
+            if (const auto* item = dynamic_cast<const DesktopIcon*>(targetSlot->GetItem()); item && item->GetDesktopItem())
+            {
+                const auto found = std::find(data_->itemKeys.begin(), data_->itemKeys.end(), item->GetDesktopItem()->layoutKey);
+                if (found != data_->itemKeys.end())
+                    return static_cast<size_t>(std::distance(data_->itemKeys.begin(), found)) + (region == HitRegion::SortAfter ? 1u : 0u);
+            }
+        return data_->itemKeys.size();
+    }
     size_t visibleInsert = targetSlot ? targetSlot->GetIndex() : GetSlotCount();
     if (targetSlot && region == HitRegion::SortAfter)
         ++visibleInsert;
@@ -1184,13 +1204,14 @@ bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
  */
 void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
+    if (UsesFolderSearch()) { DrawSearchBox(context); DrawFolderSearch(context); return; }
     if (!data_ || !app_) return;
     (void)body;
     const bool preview = IsPreviewRendering();
     bool privacyActive = data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
-        !PtInRect(&data_->bounds, app_->lastMousePoint_);
+        !PtInRect(&data_->bounds, GetRenderPointer());
     const bool lt = UsesLightContentTheme();
 
     const auto& categoryIds = CachedVisibleCategoryIds();
@@ -1256,7 +1277,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 else
                 {
                     RECT bodyRect = GetBodyRect();
-                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                    bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
                     const auto titleLayers =
                         snowdesktop::item_render_layer_rules::
                             ResolveTitleLayerPlan(di.selected);
@@ -1316,8 +1337,8 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 continue;
 
             bool active = categoryIds[i] == activeCategory;
-            bool hovered = !IsPreviewRendering() &&
-                PtInRect(&hitTab, app_->lastMousePoint_) != FALSE;
+            bool hovered = IsPreviewInteractive() &&
+                PtInRect(&hitTab, GetRenderPointer()) != FALSE;
             std::wstring label = FileCategoryTabDisplayText(this, categoryIds[i]);
             DrawCategorizedTab(
                 context, hitTab, layoutTab, label,
@@ -1349,7 +1370,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         EnsureLayout();
         IDWriteTextFormat* headerFormat = GetCuTextFormat(13.0f, false, false);
         IDWriteTextFormat* lightHeaderFormat = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, false) : nullptr;
-        int scroll = std::clamp(data_->scrollOffset, 0, FileCategoryMaxScrollOffset(this));
+        int scroll = GetScrollOffset();
         for (const auto& seg : layoutCache_)
         {
             if (!seg.isHeader) continue;
@@ -1390,7 +1411,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             else
             {
                 RECT bodyRect = GetBodyRect();
-                bool hovered = !preview && !di.selected && PtInRect(&itemRect, app_->lastMousePoint_) && PtInRect(&bodyRect, app_->lastMousePoint_);
+                bool hovered = !preview && !di.selected && PtInRect(&itemRect, GetRenderPointer()) && PtInRect(&bodyRect, GetRenderPointer());
                 const auto titleLayers =
                     snowdesktop::item_render_layer_rules::
                         ResolveTitleLayerPlan(di.selected);
@@ -1419,6 +1440,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
 RECT FileCategories::GetMemberLayoutRect(size_t index) const
 {
+    if (UsesFolderSearch()) return FolderSearchItemRect(index);
     return FileCategoryItemRect(
         const_cast<FileCategories*>(this), index);
 }
@@ -1435,8 +1457,8 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
     const bool lt = UsesLightContentTheme();
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
-    bool dateHot = !IsPreviewRendering() &&
-        PtInRect(&dateToggle, app_->lastMousePoint_) != FALSE;
+    bool dateHot = IsPreviewInteractive() &&
+        PtInRect(&dateToggle, GetRenderPointer()) != FALSE;
     const float bs = GetBarScale();
     IDWriteTextFormat* fluentFormat =
         GetCuFluentTextFormat(14.0f * bs);
@@ -1457,8 +1479,8 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
                 : (dateHot ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f))));
 
     RECT toggle = FileCategoryToggleRect(this);
-    bool hot = !IsPreviewRendering() &&
-        PtInRect(&toggle, app_->lastMousePoint_) != FALSE;
+    bool hot = IsPreviewInteractive() &&
+        PtInRect(&toggle, GetRenderPointer()) != FALSE;
     app_->DrawD2DText(context,
         data_->listMode ? L"\uF462" : L"\uF4ED", toggle,
         iconFormat,
@@ -1474,6 +1496,19 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
  * @param pt 测试点的屏幕坐标。
  * @return 命中结果，可能为 None、MoveHandle、CategoryTab、ListToggleBtn 等。
  */
+void FileCategories::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    ScrollingItemWidget::CollectControlRegions(regions);
+    if (!data_) return;
+    auto* self = const_cast<FileCategories*>(this);
+    AddControlRegion(regions, L"view", L"List view", FileCategoryToggleRect(self), WidgetHit::ListToggleBtn, "button", data_->listMode);
+    AddControlRegion(regions, L"date-headers", L"Date headers", FileCategoryDateToggleRect(self), WidgetHit::DateHeaderToggleBtn, "button", data_->dateHeaders);
+    const auto& categories = CachedVisibleCategoryIds();
+    for (size_t index = 0; index < categories.size(); ++index)
+        AddControlRegion(regions, L"category/" + categories[index], FileCategoryTabDisplayText(self, categories[index]),
+            FileCategoryTabRect(self, index), WidgetHit::CategoryTab, "tab", {}, categories[index] == CachedActiveCategoryId());
+}
+
 WidgetHit FileCategories::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
@@ -1484,6 +1519,7 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
         !CategoryIdAtPoint(pt).empty())
         return WidgetHit::CategoryTab;
 
+    if (FolderSearchMoreAtPoint(pt) != static_cast<size_t>(-1)) return WidgetHit::SearchMoreBtn;
     RECT searchRect = GetSearchBoxRect();
     if (!IsRectEmptyRect(searchRect) && PtInRect(&searchRect, pt))
         return WidgetHit::SearchBox;
@@ -1599,6 +1635,7 @@ void FileCategories::EnsureCategoryTabVisible(
  */
 std::vector<Item*> FileCategories::GetSelectedItems() const
 {
+    if (UsesFolderSearch()) return FolderSearchSelectedItems();
     dragSourceCache_.clear();
     std::vector<Item*> result;
     if (!data_ || !app_) return result;

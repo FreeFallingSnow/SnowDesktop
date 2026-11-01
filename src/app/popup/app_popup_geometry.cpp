@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/dock/dock_folder_popup_read.h"
 #include "widget/runtime/widget_item_layout.h"
@@ -62,7 +63,7 @@ FolderMapping* DesktopApp::GetDateGroupedPopupView(const RECT& popup) const
     if (!view) return nullptr;
     const RECT frame = GetCategorizedPopupFrame(popup);
     view->SetPopupFrame(&frame);
-    view->GetWidgetData()->scrollOffset = popupScrollOffset_;
+    if (!view->IsSearchActive()) view->GetWidgetData()->scrollOffset = popupScrollOffset_;
     return view;
 }
 
@@ -255,7 +256,8 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 
 bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
 {
-    if (IsGroupWidgetType(widget.type)) return widget.listMode;
+    if (IsGroupWidgetType(widget.type))
+        return ResolveWidgetContentViewData(&widget)->listMode;
     namespace layout = snowdesktop::collection_popup_layout;
     return layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
         widget.listMode, popupFanShowAll_) == layout::View::List;
@@ -422,7 +424,7 @@ void DesktopApp::ShowAllCollectionPopupItems()
     {
         // The Dock's timer also samples physical presses. Consume this handled
         // press before publishing the full view, including the since-last-read bit.
-        const SHORT state = GetAsyncKeyState(VK_LBUTTON);
+        const SHORT state = snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON);
         constexpr UINT leftButtonBit = 1u << 0;
         floatingDockPointerButtonsDown_ =
             (floatingDockPointerButtonsDown_ & ~leftButtonBit) |
@@ -527,7 +529,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         ResolveFixedGridColumnCount(metrics, popupContentWidth);
     const bool listMode = UsesCollectionPopupList(widget);
     int columns = listMode
-        ? snowdesktop::list_detail_rules::ListColumns(widget)
+        ? snowdesktop::list_detail_rules::ListColumns(*ResolveWidgetContentViewData(&widget))
         : snowdesktop::collection_popup_layout::
             PreferredColumnCount(
                 itemCount, maxColumns);
@@ -810,13 +812,14 @@ RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
     const RECT& popup) const
 {
     const DesktopWidget* widget = GetOpenPopupWidget();
+    const auto* contentView = ResolveWidgetContentViewData(widget);
     if (!widget ||
         UsesCollectionPopupFan(*widget) ||
         !snowdesktop::collection_popup_layout::DetailsVisible(
             UsesCollectionPopupList(*widget),
-            widget->detailShowModified,
-            widget->detailShowType,
-            widget->detailShowSize))
+            contentView->detailShowModified,
+            contentView->detailShowType,
+            contentView->detailShowSize))
     {
         return {};
     }
@@ -836,6 +839,7 @@ DesktopApp::HitTestCollectionPopupDetailsDivider(
     POINT point, const RECT& popup) const
 {
     const DesktopWidget* widget = GetOpenPopupWidget();
+    const auto* contentView = ResolveWidgetContentViewData(widget);
     if (!widget) return snowdesktop::list_detail_rules::Column::None;
 
     const RECT header = GetCollectionPopupDetailsHeaderRect(popup);
@@ -845,12 +849,12 @@ DesktopApp::HitTestCollectionPopupDetailsDivider(
     const int width = std::max<int>(1, header.right - header.left);
     const auto columns = snowdesktop::list_detail_rules::BuildColumns(
         width,
-        widget->detailShowModified,
-        widget->detailShowType,
-        widget->detailShowSize,
-        widget->detailModifiedPosition,
-        widget->detailTypePosition,
-        widget->detailSizePosition);
+        contentView->detailShowModified,
+        contentView->detailShowType,
+        contentView->detailShowSize,
+        contentView->detailModifiedPosition,
+        contentView->detailTypePosition,
+        contentView->detailSizePosition);
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     return snowdesktop::list_detail_rules::HitDivider(
         columns,
@@ -889,7 +893,7 @@ int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
 {
     if (const DesktopWidget* widget = GetOpenPopupWidget();
         widget && (UsesCollectionPopupFan(*widget) || UsesCollectionPopupList(*widget)))
-        return UsesCollectionPopupFan(*widget) ? 1 : snowdesktop::list_detail_rules::ListColumns(*widget);
+        return UsesCollectionPopupFan(*widget) ? 1 : snowdesktop::list_detail_rules::ListColumns(*ResolveWidgetContentViewData(widget));
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
     return snowdesktop::collection_popup_layout::ResolveFixedGridColumnCount(
@@ -922,7 +926,7 @@ int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, c
                 snowdesktop::collection_popup_layout::
                     ResolveListRowHeight(
                         metrics, listItemFontSizeCu_),
-                GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(widget));
+                GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*ResolveWidgetContentViewData(&widget)));
         return std::max(
             0,
             snowdesktop::widget_item_layout::ContentHeight(
@@ -1019,6 +1023,7 @@ RECT DesktopApp::GetCollectionPopupItemIconRect(
     const RECT& itemRect) const
 {
     const DesktopWidget* widget = GetOpenPopupWidget();
+    const auto* contentView = ResolveWidgetContentViewData(widget);
     if (widget && UsesCollectionPopupFan(*widget))
     {
         const RECT popup = GetCollectionPopupRect(*widget);
@@ -1040,20 +1045,20 @@ RECT DesktopApp::GetCollectionPopupItemIconRect(
     RECT nameCell = itemRect;
     if (snowdesktop::collection_popup_layout::DetailsVisible(
             UsesCollectionPopupList(*widget),
-            widget->detailShowModified,
-            widget->detailShowType,
-            widget->detailShowSize))
+            contentView->detailShowModified,
+            contentView->detailShowType,
+            contentView->detailShowSize))
     {
         const auto columns = snowdesktop::list_detail_rules::
             BuildColumns(
                 std::max(1, static_cast<int>(
                     itemRect.right - itemRect.left)),
-                widget->detailShowModified,
-                widget->detailShowType,
-                widget->detailShowSize,
-                widget->detailModifiedPosition,
-                widget->detailTypePosition,
-                widget->detailSizePosition);
+                contentView->detailShowModified,
+                contentView->detailShowType,
+                contentView->detailShowSize,
+                contentView->detailModifiedPosition,
+                contentView->detailTypePosition,
+                contentView->detailSizePosition);
         nameCell.right = std::min<LONG>(
             nameCell.right,
             nameCell.left + columns.nameWidth);
@@ -1072,6 +1077,7 @@ RECT DesktopApp::GetCollectionPopupItemTextRect(
     const RECT& itemRect) const
 {
     const DesktopWidget* widget = GetOpenPopupWidget();
+    const auto* contentView = ResolveWidgetContentViewData(widget);
     if (widget && UsesCollectionPopupFan(*widget))
     {
         const RECT popup = GetCollectionPopupRect(*widget);
@@ -1093,20 +1099,20 @@ RECT DesktopApp::GetCollectionPopupItemTextRect(
     RECT nameCell = itemRect;
     if (snowdesktop::collection_popup_layout::DetailsVisible(
             UsesCollectionPopupList(*widget),
-            widget->detailShowModified,
-            widget->detailShowType,
-            widget->detailShowSize))
+            contentView->detailShowModified,
+            contentView->detailShowType,
+            contentView->detailShowSize))
     {
         const auto columns = snowdesktop::list_detail_rules::
             BuildColumns(
                 std::max(1, static_cast<int>(
                     itemRect.right - itemRect.left)),
-                widget->detailShowModified,
-                widget->detailShowType,
-                widget->detailShowSize,
-                widget->detailModifiedPosition,
-                widget->detailTypePosition,
-                widget->detailSizePosition);
+                contentView->detailShowModified,
+                contentView->detailShowType,
+                contentView->detailShowSize,
+                contentView->detailModifiedPosition,
+                contentView->detailTypePosition,
+                contentView->detailSizePosition);
         nameCell.right = std::min<LONG>(
             nameCell.right,
             nameCell.left + columns.nameWidth);

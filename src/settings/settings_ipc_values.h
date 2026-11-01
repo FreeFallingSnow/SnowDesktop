@@ -15,6 +15,7 @@ namespace snowdesktop::settings_ipc
 {
 #define SD_IPC_FIELDS(Type, ...) \
     template<> struct Fields<Type> { \
+        static constexpr std::string_view Names = #__VA_ARGS__; \
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 
@@ -61,7 +62,7 @@ SD_IPC_FIELDS(shell_extensions::Selection, v.provider, v.command, v.label, v.pla
 SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);
 SD_IPC_FIELDS(shell_extensions::Rule, v.id, v.category, v.shown);
 SD_IPC_FIELDS(shell_extensions::LocationOverride, v.id, v.context, v.visibility);
-SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden, v.shown, v.rulesVersion, v.rules, v.overrides);
+SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden, v.shown, v.rulesVersion, v.rules, v.overrides, v.showAll);
 SD_IPC_FIELDS(StatusBarSettings,
     v.enabled, v.position, v.monitorScope, v.scale, v.theme,
     v.clock, v.tray, v.network, v.volume, v.battery, v.controlCenter,
@@ -78,8 +79,9 @@ SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v
 SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
 SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
-    v.showAdvancedSettings, v.runtimeModules,
+    v.showAdvancedSettings, v.steamShowRunningStatus, v.runtimeModules,
     v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
+    v.desktopIdleHideEnabled, v.desktopIdleHideDelaySeconds, v.desktopIdleHidePauseWithWindows,
     v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,
     v.forceRestartHotkeyEnabled, v.forceRestartHotkeyModifiers, v.forceRestartHotkeyVirtualKey,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,

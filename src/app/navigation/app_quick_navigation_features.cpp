@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "quick_navigation_theme.h"
 #include "quick_navigation_helpers.h"
@@ -727,7 +728,7 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
 bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
 {
     if (!quickNavigationOpen_ || snowdesktop::text_input::IsComposing(quickNavigationSearchEdit_) || !quickNavigationSearchCompositionText_.empty()) return false;
-    if (key == 'E' && (GetKeyState(VK_CONTROL) & 0x8000)) { ToggleQuickNavigationCollapsed(); return true; }
+    if (key == 'E' && (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000)) { ToggleQuickNavigationCollapsed(); return true; }
     if (key == VK_ESCAPE)
     {
         if (quickNavigationMenu_ != QuickNavigationMenu::None) { quickNavigationMenu_ = QuickNavigationMenu::None; PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); return true; }
@@ -745,7 +746,7 @@ bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
             SetQuickNavigationSearchScope(scope->type, scope->engine); return true;
         }
     }
-    if (key == VK_TAB && !IsLuaLogicalSlotPickerOpen() && !(GetKeyState(VK_SHIFT) & 0x8000) &&
+    if (key == VK_TAB && !IsLuaLogicalSlotPickerOpen() && !(snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) &&
         quickNavigationMenu_ == QuickNavigationMenu::None && quickNavigationSearchType_ == QuickNavigationSearchType::All)
     {
         const auto rows = BuildQuickNavigationListRows();

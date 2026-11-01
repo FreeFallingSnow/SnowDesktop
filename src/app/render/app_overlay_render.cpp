@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "foreground_paint_region.h"
@@ -18,7 +19,7 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx, const RECT* 
     const std::wstring hint = _LW(lesson.instructions);
     const std::wstring pauseText = _LW("start.pause"), settingsText = _LW("start.returnSettings"),
         openText = _LW("start.openSettings");
-    POINT cursor{}; GetCursorPos(&cursor);
+    POINT cursor{}; snowdesktop::private_pointer::CursorPosition(&cursor);
     // Pick a display once; following the mouse or menus during repaint would
     // move a button out from under the user. Only a deliberate drag follows it.
     const POINT monitorPoint = usageGuidePlacement_.dragOffset ? cursor :
@@ -594,7 +595,7 @@ bool DesktopApp::DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* 
 {
     if (!ctx || !dwriteFactory_ || !message || !*message) return false;
     POINT cursor{};
-    const GridPage* page = GetCursorPos(&cursor) ? GridPageFromScreenPoint(cursor) : nullptr;
+    const GridPage* page = snowdesktop::private_pointer::CursorPosition(&cursor) ? GridPageFromScreenPoint(cursor) : nullptr;
     if (!page) page = GetFirstPageGridPage();
     const RECT work = page ? page->workArea : RECT{0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
     const float scale = page ? static_cast<float>(page->dpiX) / 96.f : 1.f;

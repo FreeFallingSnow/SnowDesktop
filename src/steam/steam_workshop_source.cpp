@@ -323,12 +323,36 @@ bool SteamWorkshopSource::RunBridge(
 
     const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(std::max(1, timeoutSeconds));
+    const auto waitForExit = [&]() {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        const DWORD wait = WaitForSingleObject(processHandle.value,
+            static_cast<DWORD>(std::clamp<std::int64_t>(remaining, 0, MAXDWORD - 1)));
+        if (wait == WAIT_OBJECT_0) return true;
+        if (wait == WAIT_TIMEOUT)
+        {
+            TerminateProcess(processHandle.value, kBridgeTimeoutExitCode);
+            WaitForSingleObject(processHandle.value, 5000);
+            error = "Steam bridge operation timed out";
+        }
+        else error = "cannot wait for Steam bridge exit";
+        return false;
+    };
     while (true)
     {
         DWORD available = 0;
         if (!PeekNamedPipe(readPipe.value, nullptr, 0, nullptr,
             &available, nullptr))
         {
+            const DWORD pipeError = GetLastError();
+            if (pipeError == ERROR_BROKEN_PIPE || pipeError == ERROR_PIPE_NOT_CONNECTED)
+            {
+                // CRT/DLL teardown can close stdout before the process object
+                // is signaled. EOF is normal; preserve the buffered result and
+                // wait within the same deadline for its actual exit code.
+                if (!waitForExit()) return false;
+                break;
+            }
             if (WaitForSingleObject(processHandle.value, 0) == WAIT_OBJECT_0)
                 break;
             error = "cannot read Steam bridge output";
@@ -342,6 +366,12 @@ bool SteamWorkshopSource::RunBridge(
                 std::min<DWORD>(available,
                     static_cast<DWORD>(buffer.size())), &read, nullptr))
             {
+                const DWORD pipeError = GetLastError();
+                if (pipeError == ERROR_BROKEN_PIPE || pipeError == ERROR_PIPE_NOT_CONNECTED)
+                {
+                    if (!waitForExit()) return false;
+                    break;
+                }
                 error = "cannot read Steam bridge output";
                 return false;
             }

@@ -74,20 +74,24 @@ public:
         if (Active() && TargetIsCurrent()) transitions_.Suppress(target_.window);
     }
 
-    bool Begin(HWND target, HWND caller) noexcept
+    bool Begin(HWND target, HWND insertBefore) noexcept
     {
         const auto identity = WindowIdentity::Capture(target);
-        if (!Available() || !identity.IsCurrent() || GetAncestor(target, GA_ROOT) != target)
+        if (!Available() || !identity.IsCurrent() || GetAncestor(target, GA_ROOT) != target ||
+            (insertBefore && !IsWindow(insertBefore)))
             return false;
-        if (target == target_.window && target_.IsCurrent()) return true;
+        if (target == target_.window && target_.IsCurrent() && insertBefore_ == insertBefore) return true;
         const HWND foreground = Active() ? foreground_ : GetForegroundWindow();
-        if (FAILED(api_.activate(TRUE, target, caller, kTaskbarTrigger, nullptr)))
+        // The third native parameter is hWndInsertBefore, not a caller HWND.
+        // A split visual surface must supply its lowest layer as this anchor.
+        if (FAILED(api_.activate(TRUE, target, insertBefore, kTaskbarTrigger, nullptr)))
         {
             // A failed switch must not strand the previous window's Peek.
             Stop();
             return false;
         }
         target_ = identity;
+        insertBefore_ = insertBefore;
         foreground_ = foreground;
         return true;
     }
@@ -100,6 +104,7 @@ public:
         if (!stopped || !released)
             return false; // Keep ownership so the caller's cleanup timer can retry.
         target_ = {};
+        insertBefore_ = nullptr;
         foreground_ = nullptr;
         return true;
     }
@@ -108,6 +113,7 @@ private:
     static constexpr UINT kTaskbarTrigger = 3;
     Api api_;
     WindowIdentity target_;
+    HWND insertBefore_ = nullptr;
     HWND foreground_ = nullptr;
     snowdesktop::ScopedWindowTransitionSuppression transitions_;
 };

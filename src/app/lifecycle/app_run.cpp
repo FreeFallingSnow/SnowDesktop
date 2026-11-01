@@ -3,6 +3,8 @@
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "ui/input/private_pointer.h"
+#include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "ui/menu/modern_menu.h"
 #include "system/controls/system_control_prompt.h"
@@ -405,7 +407,11 @@ void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
-    snowdesktop::operation_feedback::Session operationFeedback;
+    snowdesktop::operation_feedback::Session operationFeedback(
+        &uiAnimationScheduler_, [this] {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
     snowdesktop::text_input::SetMenuHandler([this](HWND window,POINT point,const snowdesktop::text_input::MenuState& state){
         namespace menu=snowdesktop::modern_menu;
         using Command=snowdesktop::text_input::MenuCommand;
@@ -650,10 +656,22 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }, [this] {
                 if (exitRequested_) return;
                 for (const auto& host : persistentDockHosts_)
-                    if (host && host->active) UpdateFloatingDockWindowBounds(*host, false, true);
+                    if (host && host->active)
+                    {
+                        // Keep both layers opaque during Peek. The separate
+                        // insertion-anchor resolver places the target below the pair.
+                        host->backdrop.SetExcludedFromPeek(true);
+                        UpdateFloatingDockWindowBounds(*host, false, true);
+                    }
                 InvalidateDockRects();
             }))
         dockWindowPreview_.reset();
+    if (dockWindowPreview_)
+        dockWindowPreview_->SetPeekAnchorResolver([this](HWND owner) -> HWND {
+            if (auto* host = FindPersistentDockHost(owner))
+                return host->backdrop.PreparePeekInsertBefore(owner);
+            return owner && IsWindow(owner) ? owner : nullptr;
+        });
     if (dockWindowPreview_)
         dockWindowPreview_->SetPeekActivateCallback([this](HWND window) {
             ActivateDockWindowFromPreview(window);
@@ -698,6 +716,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
+    if (snowdesktop::debug_profile::Enabled())
+        SetPropW(controlHwnd_, (L"SnowDesktop.DebugEnvironment." +
+            snowdesktop::debug_profile::Current().configuration.selectedEnvironment).c_str(),
+            reinterpret_cast<HANDLE>(1));
     auto& windowSupport = snowdesktop::window_support::WindowSupport();
     windowSupport.Start();
     windowSupport.SetStatusChangedHandler([this] {
@@ -708,6 +730,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             snowdesktop::SettingsPage::General, "general.windowSupport"));
     });
     windowSupport.SetPointerCallback([this](const snowdesktop::window_support::protocol::PointerEvent& event) {
+        if (snowdesktop::private_pointer::Active()) return;
         floatingDockEdgeSwipeMouseActivity_.store(true, std::memory_order_relaxed);
         // Local events only wake the original live sampler. Replaying their
         // queued positions/buttons can turn a completed gesture into a fresh
@@ -715,7 +738,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         if (snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::PointerObservation).provider ==
             snowdesktop::window_support::Provider::Helper)
+        {
+            if (dockWindowPreview_) dockWindowPreview_->ObserveForwardedPointer(event.message, event.time);
             UpdateFloatingDockEdgeSwipe();
+        }
         const bool down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN ||
             event.message == WM_MBUTTONDOWN || event.message == WM_XBUTTONDOWN;
         if (down && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_) &&
@@ -799,6 +825,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
 
+    filePreview_.Start();
+
     // Timers
     SetTimer(hwnd_, kRecycleBinPollTimerId, kRecycleBinPollIntervalMs, nullptr);
     SetTimer(controlHwnd_, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr);
@@ -816,6 +844,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 GetRuntimeFilePath(L"steam_api64.dll")),
             std::filesystem::path(
                 GetDataFilePath(L"SnowDesktop.entitlement.bin")));
+
+    steamPresenceService_ = std::make_unique<snowdesktop::steam_presence::Service>(
+        executableDirectory / L"SnowDesktopSteamBridge.exe");
+    UpdateSteamPresence();
 
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
     settingsHostOptions.largeIconSettings = [this](auto request) { return EditLargeIcon(std::move(request)); };
@@ -1671,6 +1703,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // are configured. Activation requests received during startup remain
     // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
+    InitializeApplicationControl();
     RefreshTrayNamespaceRegistrations();
     logStartupStage(L"services ready");
     if (customDesktopVisible_)
@@ -1793,6 +1826,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     messageBatchStarted) &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
+            if (!snowdesktop::private_pointer::MessageAllowed(msg.hwnd, msg.message, msg.wParam, msg.lParam))
+            { ++processedMessages; continue; }
             if (msg.message == WM_QUIT)
             {
                 running = false;
@@ -1934,6 +1969,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");
+    applicationControl_.Stop();
+    if (applicationControlRuntime_) applicationControlRuntime_->Stop();
     operationFeedback.Drain();
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();
@@ -1952,7 +1989,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
                 snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
             snowdesktop::StatusBarSupportsSystemQuickSettings(),
             CurrentPersonalization().contextMenuStyle,
-            snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
+            snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
+            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

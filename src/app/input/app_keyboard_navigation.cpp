@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget/runtime/widget_item_layout.h"
 
@@ -15,9 +16,9 @@ void DesktopApp::RefreshDragHintFromKeyboard()
         !dragDropController_.IsTransportActive()) return;
 
     int mods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) mods |= MK_CONTROL;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)    mods |= MK_ALT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)   mods |= MK_SHIFT;
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(
             mods,
@@ -163,7 +164,7 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
         std::wstring mousePageId;
         {
             POINT screenPt{};
-            GetCursorPos(&screenPt);
+            snowdesktop::private_pointer::CursorPosition(&screenPt);
             for (const auto& gp : gridPages_)
             {
                 if (!gp.id.empty() && PtInRect(&gp.workArea, screenPt))
@@ -383,8 +384,9 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
 
     auto applyScroll = [&](int scroll) {
         scroll = std::clamp(scroll, 0, maxScroll);
-        if (scroll == widget.scrollOffset) return;
-        widget.scrollOffset = scroll;
+        if (scroll == wc->GetScrollOffset()) return;
+        auto* search = dynamic_cast<ScrollingItemWidget*>(wc);
+        if (!search || !search->SetFolderSearchScrollOffset(scroll)) widget.scrollOffset = scroll;
         if (auto* group = dynamic_cast<FileGroup*>(wc))
             group->InvalidateHostedView();
         else
@@ -401,18 +403,15 @@ void DesktopApp::ScrollWidgetToMember(size_t widgetIndex, int memberIndex)
     {
         applyScroll(snowdesktop::widget_item_layout::
             ScrollOffsetToReveal(viewport, target,
-                widget.scrollOffset, maxScroll));
+                wc->GetScrollOffset(), maxScroll));
         return;
     }
 
     // Fallback for non-item surfaces that cannot provide member geometry.
     int columns = std::max(1, widget.gridSpan.columns);
-    bool listMode = ((widget.type == DesktopWidgetType::CollectionGroup ||
-                      widget.type == DesktopWidgetType::FileGroup) &&
-                     (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::FileCategories && (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::FolderMapping && (widget.listMode || widget.dateHeaders)) ||
-                    (widget.type == DesktopWidgetType::Collection && widget.listMode);
+    const auto* contentView = wc->GetContentViewData();
+    const bool listMode = contentView && (contentView->listMode ||
+        (contentView->type != DesktopWidgetType::Collection && contentView->dateHeaders));
 
     size_t memberCount = (widget.type == DesktopWidgetType::FolderMapping)
         ? widget.folderEntries.size()
@@ -532,7 +531,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             {
                 widget.activeCategoryId =
                     sourceIds[index];
-                widget.scrollOffset = 0;
+                if (!group->SetFolderSearchScrollOffset(0)) widget.scrollOffset = 0;
                 group->InvalidateHostedView();
             }
             const size_t childIndex =
@@ -551,7 +550,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         };
 
         const bool showCategoryRow =
-            widget.showFileCategories &&
+            group->GetContentViewData()->showFileCategories &&
             !(widget.showSearchBox &&
               !group->GetSearchText().empty());
         const std::vector<std::wstring> categoryIds =
@@ -926,7 +925,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     case DesktopWidgetType::CollectionGroup:
         memberCount = 0;
         columns = memberColumns();
-        if (widget.listMode)
+        if (ResolveWidgetContentViewData(&widget)->listMode)
         {
             isListMode = columns == 1;
         }
@@ -1042,6 +1041,12 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         return;
     }
 
+    const bool folderSearch = categorizedWidget && categorizedWidget->UsesFolderSearch();
+    if (folderSearch)
+    {
+        memberCount = categorizedWidget->FolderSearchCount();
+        visibleKeys.clear(); visibleFolderIndices.clear(); categoryIds.clear();
+    }
     const bool searchAvailable =
         categorizedWidget &&
         !IsRectEmptyRect(
@@ -1095,6 +1100,20 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     auto selectVisibleItem = [&](size_t index) {
         if (index >= memberCount) return;
+        if (folderSearch)
+        {
+            categorizedWidget->SetSearchFocused(false);
+            clearSelectionForKeyboardNavigation();
+            auto* item = categorizedWidget->FolderSearchItem(index, true);
+            if (!item) return;
+            item->SetSelected(true);
+            keyboardNavInsideWidget_ = true; keyboardNavWidgetIndex_ = navigationWidgetIndex;
+            keyboardNavMemberIndex_ = static_cast<int>(index);
+            ScrollWidgetToMember(navigationWidgetIndex, static_cast<int>(index));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
         size_t selectedItemIndex =
             static_cast<size_t>(-1);
         size_t selectedEntryIndex =
@@ -1184,6 +1203,11 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     int currentIdx = keyboardNavMemberIndex_;
     if (currentIdx < 0) currentIdx = 0;
 
+    if (folderSearch)
+    {
+        const auto selected = categorizedWidget->FolderSearchSelectedIndices();
+        if (!selected.empty()) currentIdx = static_cast<int>(selected.front());
+    }
     // FileCategories：基于当前可见选中项确定导航起点
     if (!visibleKeys.empty())
     {
@@ -1321,6 +1345,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     }
 
     if (nextIdx == currentIdx) return;
+
+    if (folderSearch) { selectVisibleItem(static_cast<size_t>(nextIdx)); return; }
 
     // 取消旧成员选中
     if (currentIdx >= 0)

@@ -163,6 +163,7 @@ struct Service::Impl
     std::condition_variable changed;
     std::map<std::string, Demand> demands;
     std::map<std::string, Clock::time_point> due;
+    std::map<std::string, std::uint64_t> scheduleRevisions;
     std::map<std::string, Snapshot> snapshots;
     std::map<std::string, std::vector<Completion>> completed;
     std::set<std::string> changedTopics;
@@ -225,6 +226,7 @@ struct Service::Impl
         {
             std::string source;
             bool release = false;
+            std::uint64_t sampleRevision = 0;
             {
                 std::unique_lock guard(mutex);
                 if (stopping) break;
@@ -261,6 +263,7 @@ struct Service::Impl
                     continue;
                 }
                 if (!release) due[source] = now + sources.at(source);
+                if (!release) sampleRevision = scheduleRevisions[source];
                 busySources.insert(source);
             }
             if (release) backend->Release(source);
@@ -268,6 +271,18 @@ struct Service::Impl
                 Publish(Sample(source, {sampleCanceled, Clock::now() + std::chrono::seconds(5)}));
             {
                 std::lock_guard guard(mutex);
+                // Preserve normal start-to-start cadence for fast samples.
+                // A slow OS call must not turn overdue periodic demand into
+                // uninterrupted work. Explicit invalidation/new demand during
+                // the call retains its immediate refresh instead of being lost.
+                if (!release && scheduleRevisions[source] == sampleRevision)
+                {
+                    const auto sources = Sources();
+                    const auto demand = sources.find(source);
+                    const auto finished = Clock::now();
+                    if (demand != sources.end() && due[source] <= finished)
+                        due[source] = finished + demand->second;
+                }
                 busySources.erase(source);
             }
             changed.notify_all();
@@ -368,6 +383,7 @@ bool Service::Subscribe(std::string consumer, std::string topic, std::chrono::mi
     if (impl_->stopping) return false;
     impl_->demands[topic].consumers[std::move(consumer)] = interval;
     const std::string source(Source(topic));
+    ++impl_->scheduleRevisions[source];
     const auto scheduled = impl_->due.find(source);
     if (scheduled == impl_->due.end()) impl_->due[source] = Clock::now();
     else scheduled->second = (std::min)(scheduled->second, Clock::now() + interval);
@@ -462,7 +478,8 @@ void Service::SetWake(Wake wake) { std::lock_guard guard(impl_->mutex); impl_->w
 void Service::Invalidate(std::string_view source)
 {
     std::lock_guard guard(impl_->mutex);
-    for (auto& [key, time] : impl_->due) if (source.empty() || key == source) time = Clock::now();
+    for (auto& [key, time] : impl_->due) if (source.empty() || key == source)
+    { time = Clock::now(); ++impl_->scheduleRevisions[key]; }
     impl_->changed.notify_all();
 }
 void Service::Shutdown()
@@ -478,7 +495,7 @@ void Service::Shutdown()
     }
     if (impl_->sampler.joinable()) impl_->sampler.join();
     for (auto& executor : impl_->executors) if (executor.joinable()) executor.join();
-    for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power", "media"}) impl_->backend->Release(source);
+    for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power", "media", "hotspot"}) impl_->backend->Release(source);
     impl_->pending.clear(); impl_->active.clear();
 }
 }

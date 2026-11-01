@@ -161,6 +161,20 @@ constexpr DockClickAction ResolveDockClickAction(
     return DockClickAction::Activate;
 }
 
+// An explicit press/preview action owns the command even if the transition
+// changes before dispatch. Only callers without an action toggle an active
+// transition; None leaves them free to resolve the current window state.
+constexpr DockClickAction ResolveDockTransitionClickAction(
+    DockClickAction requestedAction,
+    bool transitionActive,
+    bool transitionRestoring) noexcept
+{
+    if (requestedAction != DockClickAction::None || !transitionActive)
+        return requestedAction;
+    return transitionRestoring
+        ? DockClickAction::Minimize : DockClickAction::Restore;
+}
+
 // Pinned and frequent launchable icons share the launch gesture preference.
 // Running windows keep their immediate activation/minimize/restore actions.
 constexpr bool ShouldWaitForDockLaunchDoubleClick(

@@ -102,7 +102,6 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/widget/tasks/widget_filesystem_task_executor.cpp
     src/widget/tasks/widget_audio_output_task_executor.cpp
     src/widget/tasks/widget_clipboard_task_executor.cpp
-    tests/widget/clipboard_platform_contract_tests.cpp
     src/widget/tasks/widget_media_task_executor.cpp
     src/widget/tasks/widget_app_task_executor.cpp
     src/widget/tasks/widget_native_task_executor.cpp

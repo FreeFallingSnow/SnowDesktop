@@ -48,11 +48,22 @@ struct Catalogue
 constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsigned>(context); }
 // Read-only, intended for the metadata worker. No Shell extension is activated.
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Current package manifest commands only; no file-class scan or COM activation.
+std::vector<Registration> ReadPackagedMenuCommands(HKEY classes = HKEY_CLASSES_ROOT);
+void LoadMenuCommandIcon(Entry& entry, const std::wstring& location);
+// Read display metadata only, never state, children or invocation authority.
+std::optional<Entry> ReadMenuCommandRootIcon(IExplorerCommand* command,
+    IShellItemArray* selection, const std::string& fallbackKey);
 // Background refresh uses fewer workers and expands to the normal limit when
 // a foreground query raises demand. The ordinary reader keeps its full budget.
 class CatalogueForegroundDemand;
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
                                             CatalogueForegroundDemand &foreground);
+// Recover handler registration paths after a runtime cache loss. Enumerates
+// class associations and live handler policy, without static verbs, package
+// discovery, application classification or icons. Routing seeds only: revision
+// and full-scope proofs stay zero; callers must perform an exact source read.
+Catalogue ReadSourceRegistrationInventory(HKEY classes, CatalogueForegroundDemand &foreground);
 // Recheck only exact, already known Verb/Handler registration paths and the
 // extension associations named by those seeds. No class/package enumeration or
 // extension activation. Missing/unsupported registrations are omitted.

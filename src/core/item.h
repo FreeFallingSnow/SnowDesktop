@@ -71,6 +71,8 @@ public:
 
     /** @brief 获取项所属的容器指针，无容器时返回 nullptr */
     virtual Container* GetContainer() const = 0;
+    // Recursive hits reference files; the presenting component does not own them.
+    virtual bool IsSearchResult() const { return false; }
 
     /**
      * @brief 绘制项到指定设备上下文

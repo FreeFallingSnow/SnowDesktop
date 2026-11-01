@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "navigation/quick_navigation_rules.h"
@@ -24,9 +25,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return;
     }
     int currentMods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
+    if (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
     if (dragSession_.IsActive())
         dragSession_.UpdateActionFromMods(
             currentMods,
@@ -190,8 +191,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 group->SetPopupFrame(&frame);
                 if (!group->TryScrollTabs(pt, delta))
                 {
-                    group->GetWidgetData()->scrollOffset = std::clamp(
-                        group->GetScrollOffset() - delta / 2, 0, group->GetMaxScrollOffset());
+                    const int next = std::clamp(group->GetScrollOffset() - delta / 2, 0, group->GetMaxScrollOffset());
+                    if (!group->SetFolderSearchScrollOffset(next)) group->GetWidgetData()->scrollOffset = next;
                     if (auto* files = dynamic_cast<FileGroup*>(group)) files->InvalidateHostedView();
                     else group->InvalidateSlots();
                 }
@@ -202,6 +203,12 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             if (auto* view = GetCategorizedPopupView())
             {
                 CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+                if (view->IsSearchActive() && view->SetFolderSearchScrollOffset(view->GetScrollOffset() - delta / 2))
+                {
+                    (void)refreshDragAfterScroll();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
                 if (view->TryScrollTabs(pt, delta))
                 {
                     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -272,9 +279,10 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         int maxScroll = wc->GetMaxScrollOffset();
         if (maxScroll <= 0) continue;
 
-        const int nextScroll = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
-        if (nextScroll == data->scrollOffset) return;
-        data->scrollOffset = nextScroll;
+        const int nextScroll = std::clamp(wc->GetScrollOffset() - delta / 2, 0, maxScroll);
+        if (nextScroll == wc->GetScrollOffset()) return;
+        auto* search = dynamic_cast<ScrollingItemWidget*>(wc);
+        if (!search || !search->SetFolderSearchScrollOffset(nextScroll)) data->scrollOffset = nextScroll;
         if (auto* group =
                 dynamic_cast<FileGroup*>(wc))
             group->InvalidateHostedView();

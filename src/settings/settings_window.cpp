@@ -296,3 +296,4 @@ bool SettingsWindow::IsHotkeyCaptureActive() const noexcept
 }
 void SettingsWindow::CaptureRegisteredHotkey(UINT modifiers, UINT key) { impl_->Notify("ui.captureHotkey", modifiers, key); }
 const std::wstring& SettingsWindow::LastError() const noexcept { return impl_->lastError; }
+const snowdesktop::winui::SettingsWindowHostOptions& SettingsWindow::HostOptions() const noexcept { return impl_->options; }

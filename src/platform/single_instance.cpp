@@ -204,9 +204,19 @@ InstanceInfo DescribeProcess(
         const auto marker = window ? GetPropW(window, L"SnowDesktop.DebugProfile") : nullptr;
         debug_profile::Configuration configuration;
         std::string error;
-        const bool debug = window ? marker == reinterpret_cast<HANDLE>(1) :
-            debug_profile::Read(paths, configuration, error) && configuration.enabled;
-        if (debug) info.dataDirectory = paths.data.wstring();
+        const bool read = debug_profile::Read(paths, configuration, error);
+        const bool debug = window ? marker == reinterpret_cast<HANDLE>(1) : read && configuration.enabled;
+        if (debug)
+        {
+            std::wstring id = !window && read ? configuration.selectedEnvironment : L"default";
+            // The live window identifies its actual environment, even while the
+            // catalog already points at the target of an in-flight restart.
+            if (window && read)
+                for (const auto& environment : configuration.environments)
+                    if (GetPropW(window, (L"SnowDesktop.DebugEnvironment." + environment.id).c_str()) == reinterpret_cast<HANDLE>(1))
+                    { id = environment.id; break; }
+            info.dataDirectory = debug_profile::ResolvePaths(paths.normalData, id).data.wstring();
+        }
     }
     info.version = knownVersion.empty()
         ? ReadExecutableVersion(info.executablePath)

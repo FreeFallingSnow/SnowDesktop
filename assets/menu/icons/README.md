@@ -1,9 +1,8 @@
 # Context-menu icons
 
-Approved menu preview 06 (2026-09-21), promoted to the desktop background menu
-and the built-in entries of its add-widget submenu. The settings resources are
-independent. These are project-colored Fluent icons, not artwork exported from
-Windows. A subsequent review removes the blue accents from Pin and Add Page.
+Project-colored Fluent icons are used by the desktop background menu and
+built-in entries of its add-widget submenu. Settings resources are independent.
+Pin and Add Page use neutral colors.
 
 All geometry comes from Microsoft Fluent System Icons revision
 `21d5d02f724be2aaf586564775fff73a18a76eb6`, matching the embedded Regular font.

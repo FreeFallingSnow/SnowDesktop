@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "widget/view/widget_title_layout.h"
@@ -229,7 +230,8 @@ void DesktopApp::BeginRenameSelected(
         const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle(
             leftAligned, desktopIconTitle);
         renameInputWindow_ = CreateWindowExW(
-             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+             WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
+                (snowdesktop::private_pointer::Active() ? WS_EX_NOACTIVATE : 0),
             snowdesktop::text_input::WindowClass(),
             widgets_[selectedWidgetIndex].title.c_str(),
             editStyle,
@@ -259,9 +261,10 @@ void DesktopApp::BeginRenameSelected(
             static_cast<float>(renameMargin), 4.0f * renameScale);
         renameEditLayout_.Begin(renameInputWindow_);
         SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+                (snowdesktop::private_pointer::Active() ? SWP_NOACTIVATE : 0));
         SendMessageW(renameInputWindow_, EM_SETSEL, 0, -1);
-        SetFocus(renameInputWindow_);
+        snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
         if (visibilityWidgetIndex < widgets_.size())
         {
             interactionPinnedWidgetId_ =
@@ -378,7 +381,8 @@ void DesktopApp::BeginRenameSelected(
     const DWORD renameStyle =
         snowdesktop::rename_edit_layout::EditStyle(leftAlignedRename, !leftAlignedRename);
     renameInputWindow_ = CreateWindowExW(
-         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+         WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
+            (snowdesktop::private_pointer::Active() ? WS_EX_NOACTIVATE : 0),
         snowdesktop::text_input::WindowClass(),
         items_[selectedIndex].name.c_str(),
         renameStyle,
@@ -409,10 +413,11 @@ void DesktopApp::BeginRenameSelected(
         static_cast<float>(renameMargin), 4.0f * renameScale);
     renameEditLayout_.Begin(renameInputWindow_);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW |
+            (snowdesktop::private_pointer::Active() ? SWP_NOACTIVATE : 0));
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(items_[selectedIndex].name, path, isDirectory));
-    SetFocus(renameInputWindow_);
+    snowdesktop::private_pointer::SetInputFocus(renameInputWindow_);
     if (visibilityWidgetIndex < widgets_.size())
     {
         interactionPinnedWidgetId_ =

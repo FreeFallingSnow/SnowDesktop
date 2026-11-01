@@ -38,6 +38,7 @@ enum class RenameTargetKind
     Widget,
     FolderEntry,
     DockFolderEntry,
+    SearchResult,
 };
 
 /** Keeps rename targets mutually exclusive across every application surface. */
@@ -73,6 +74,15 @@ public:
             entryIndex, InvalidIndex);
     }
 
+    void BeginSearchResult(const std::wstring& path)
+    {
+        Begin(RenameTargetKind::SearchResult, InvalidIndex, InvalidIndex);
+        path_ = path;
+    }
+
+    bool IsSearchResult() const { return kind_ == RenameTargetKind::SearchResult; }
+    const std::wstring& Path() const { return path_; }
+
     void SetQuickNavigationPresentation(bool value)
     {
         quickNavigationPresentation_ =
@@ -81,6 +91,7 @@ public:
 
     void Reset()
     {
+        path_.clear();
         kind_ = RenameTargetKind::None;
         index_ = InvalidIndex;
         ownerIndex_ = InvalidIndex;
@@ -111,7 +122,7 @@ public:
     bool IsFolderEntry() const
     {
         return kind_ == RenameTargetKind::FolderEntry ||
-            kind_ == RenameTargetKind::DockFolderEntry;
+            kind_ == RenameTargetKind::DockFolderEntry || IsSearchResult();
     }
     bool IsDockFolderEntry() const
     {
@@ -135,6 +146,7 @@ private:
         ++sessionId_;
         if (sessionId_ == 0)
             ++sessionId_;
+        path_.clear();
         kind_ = kind;
         index_ = index;
         ownerIndex_ = ownerIndex;
@@ -146,5 +158,6 @@ private:
     std::size_t sessionId_ = 0;
     std::size_t index_ = InvalidIndex;
     std::size_t ownerIndex_ = InvalidIndex;
+    std::wstring path_;
     bool quickNavigationPresentation_ = false;
 };

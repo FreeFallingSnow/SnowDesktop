@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 
 #include <utility>
@@ -10,7 +11,7 @@ void DesktopApp::ReleaseLuaWidgetPanelCaptureIfOwned()
         std::exchange(luaWidgetPanelCaptureHwnd_, nullptr);
     if (snowdesktop::floating_popup_rules::
             ShouldReleaseRecordedPanelCapture(
-                recordedCapture, GetCapture()))
+                recordedCapture, snowdesktop::private_pointer::Capture()))
     {
         ReleaseCapturePreservingPointerState();
     }
@@ -31,6 +32,21 @@ void DesktopApp::OpenLuaWidgetPanel(
 {
     if (request.widgetId.empty())
         return;
+    const auto resolveAnchor = [&]() {
+        POINT anchor = lastMousePoint_;
+        const auto source = std::find_if(widgets_.begin(), widgets_.end(),
+            [&](const DesktopWidget& widget) { return widget.id == request.widgetId; });
+        if (source != widgets_.end())
+        {
+            const RECT frame = GetStandaloneWidgetFrameRect(*source);
+            if (!PtInRect(&frame, anchor))
+                anchor = {(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        }
+        if (request.hasAnchor)
+            anchor = {(request.anchorRect.left + request.anchorRect.right) / 2,
+                (request.anchorRect.top + request.anchorRect.bottom) / 2};
+        return anchor;
+    };
     // A repeated desktop opener is idempotent. Titles distinguish a widget's
     // ordinary panels; stable anchor keys distinguish its titleless popovers.
     // Leave the active scene, focus and animation generation untouched.
@@ -71,6 +87,7 @@ void DesktopApp::OpenLuaWidgetPanel(
                 widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
             AdvanceFloatingPopupContentGeneration();
             luaWidgetPanelRequest_ = request;
+            luaWidgetPanelAnchorPoint_ = resolveAnchor();
             if ((snowdesktop::animation::RuntimePopupEffect() != 0))
             {
                 UpdateFloatingPopupWindowBounds(false);
@@ -102,34 +119,7 @@ void DesktopApp::OpenLuaWidgetPanel(
         widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
     AdvanceFloatingPopupContentGeneration();
     luaWidgetPanelRequest_ = request;
-    luaWidgetPanelAnchorPoint_ =
-        lastMousePoint_;
-    const auto source = std::find_if(
-        widgets_.begin(), widgets_.end(),
-        [&](const DesktopWidget& widget) {
-            return widget.id == request.widgetId;
-        });
-    if (source != widgets_.end())
-    {
-        const RECT sourceRect =
-            GetStandaloneWidgetFrameRect(*source);
-        if (!PtInRect(
-                &sourceRect,
-                luaWidgetPanelAnchorPoint_))
-        {
-            luaWidgetPanelAnchorPoint_ = {
-                (sourceRect.left + sourceRect.right) / 2,
-                (sourceRect.top + sourceRect.bottom) / 2
-            };
-        }
-    }
-    if (request.hasAnchor)
-    {
-        luaWidgetPanelAnchorPoint_ = {
-            (request.anchorRect.left + request.anchorRect.right) / 2,
-            (request.anchorRect.top + request.anchorRect.bottom) / 2
-        };
-    }
+    luaWidgetPanelAnchorPoint_ = resolveAnchor();
     luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelAnimation_.ResetHidden();
@@ -255,8 +245,8 @@ void DesktopApp::CloseLuaWidgetPanel(
             reason ? reason : "",
             floatingPopupMouseHookGeneration_,
             GetOpenPopupWidget() ? 1 : 0,
-            GetCapture(),
-            GetFocus());
+            snowdesktop::private_pointer::Capture(),
+            snowdesktop::private_pointer::FocusWindow());
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Widgets, message);
     }
     const bool panelPressActive =

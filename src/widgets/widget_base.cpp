@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 /**
  * @file widget_base.cpp
@@ -435,7 +436,7 @@ bool Widget::ShouldRegisterBackdrop() const
 
 POINT Widget::GetRenderPointer() const
 {
-    return renderOptions_ ? renderOptions_->pointer : POINT{};
+    return renderOptions_ ? renderOptions_->pointer : (app_ ? app_->lastMousePoint_ : POINT{});
 }
 
 IDWriteTextFormat* Widget::GetCuFluentTextFormat(float value) const
@@ -784,6 +785,58 @@ bool WidgetContainer::HitResizeHandle(POINT pt) const
  * @param pt 屏幕坐标点
  * @return 命中的组件区域类型
  */
+std::vector<WidgetControlRegion> WidgetContainer::GetControlRegions() const
+{
+    std::vector<WidgetControlRegion> regions;
+    CollectControlRegions(regions);
+    return regions;
+}
+
+void WidgetContainer::AddControlRegion(std::vector<WidgetControlRegion>& regions,
+    std::wstring key, std::wstring name, RECT bounds, WidgetHit hit,
+    std::string role, std::optional<bool> checked, bool selected) const
+{
+    RECT clipped{}; const auto frame = GetFrameRect();
+    if (!IntersectRect(&clipped, &bounds, &frame)) return;
+    const POINT center{clipped.left + (clipped.right - clipped.left) / 2,
+        clipped.top + (clipped.bottom - clipped.top) / 2};
+    // The same hit-test used for real input is the final authority, including
+    // collapsed/hosted modes and controls occluded by other widget chrome.
+    if (HitTestWidget(center) != hit) return;
+    regions.push_back({std::move(key), std::move(name), clipped, hit, std::move(role), checked, selected});
+}
+
+void WidgetContainer::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    AddControlRegion(regions, L"collapse", L"Collapse or expand", GetCollapseButtonRect(), WidgetHit::CollapseToggleBtn);
+    AddControlRegion(regions, L"move", L"Move widget", GetTitleRect(), WidgetHit::MoveHandle);
+    AddControlRegion(regions, L"resize", L"Resize widget", GetResizeHandleRect(), WidgetHit::ResizeHandle);
+}
+
+void ScrollingItemWidget::CollectControlRegions(std::vector<WidgetControlRegion>& regions) const
+{
+    WidgetContainer::CollectControlRegions(regions);
+    AddControlRegion(regions, L"search", L"Search", GetSearchBoxRect(), WidgetHit::SearchBox, "edit");
+    const auto header = GetDetailsHeaderRectFromViewport(GetContentViewportRect());
+    if (IsRectEmpty(&header)) return;
+    const auto columns = GetDetailsColumns(header.right - header.left);
+    LONG left = header.left;
+    const auto column = [&](const wchar_t* key, const char* label, int width, WidgetHit hit, WidgetHit divider) {
+        RECT bounds{left, header.top, left + width, header.bottom}; left += width;
+        if (width <= 0) return;
+        AddControlRegion(regions, std::wstring(L"header/") + key, _LW(label), bounds, hit, "columnheader");
+        if (divider != WidgetHit::None)
+        {
+            RECT edge{bounds.left - Cu(4.f), header.top, bounds.left + Cu(4.f) + 1, header.bottom};
+            AddControlRegion(regions, std::wstring(L"divider/") + key, _LW(label), edge, divider, "separator");
+        }
+    };
+    column(L"name", "widget.details.name", columns.nameWidth, WidgetHit::DetailsNameHeader, WidgetHit::None);
+    if (columns.showModified) column(L"modified", "widget.details.modified", columns.modifiedWidth, WidgetHit::DetailsModifiedHeader, WidgetHit::DetailsModifiedDivider);
+    if (columns.showType) column(L"type", "widget.details.type", columns.typeWidth, WidgetHit::DetailsTypeHeader, WidgetHit::DetailsTypeDivider);
+    if (columns.showSize) column(L"size", "widget.details.size", columns.sizeWidth, WidgetHit::DetailsSizeHeader, WidgetHit::DetailsSizeDivider);
+}
+
 WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 {
     if (IsPopupHosted() && IsSingleCellDesktopPoint(pt))
@@ -845,6 +898,8 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
     if (!PtInRect(&frame, pt)) return HitRegion::None;
 
     if (IsSingleCellPresentation()) return HitRegion::SortAfter;
+    if (const auto* search = dynamic_cast<const ScrollingItemWidget*>(this);
+        search && search->FolderSearchMoreAtPoint(pt) != static_cast<size_t>(-1)) return HitRegion::Blocked;
 
     auto& slots = GetSlots();
     const bool verticalBar =
@@ -1060,7 +1115,8 @@ size_t WidgetContainer::GetDropInsertIndex(Slot* targetSlot, HitRegion region) c
  */
 bool ScrollingItemWidget::SingleColumn() const
 {
-    return data_ && data_->listMode;
+    const auto* view = GetContentViewData();
+    return view && view->listMode;
 }
 
 /**
@@ -1069,6 +1125,8 @@ bool ScrollingItemWidget::SingleColumn() const
  */
 int ScrollingItemWidget::GetScrollOffset() const
 {
+    EnsureFolderSearch();
+    if (folderSearch_ && !searchText_.empty()) return GetFolderSearchScrollOffset();
     return data_ ? std::clamp(data_->scrollOffset, 0, GetMaxScrollOffset()) : 0;
 }
 
@@ -1078,7 +1136,8 @@ int ScrollingItemWidget::GetScrollOffset() const
  */
 BarStyle ScrollingItemWidget::GetInsertionStyle() const
 {
-    return data_ && data_->listMode && snowdesktop::list_detail_rules::ListColumns(*data_) == 1
+    const auto* view = GetContentViewData();
+    return view && view->listMode && snowdesktop::list_detail_rules::ListColumns(*view) == 1
         ? BarStyle::HBar : BarStyle::VBar;
 }
 
@@ -1404,6 +1463,7 @@ void ScrollingItemWidget::ReplaceSearchSelection(
     searchCursorPos_ += text.size();
     searchSelectionAnchor_ = searchCursorPos_;
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1417,6 +1477,7 @@ void ScrollingItemWidget::SetSearchText(
     searchSelectionAnchor_ = searchCursorPos_;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1452,6 +1513,7 @@ void ScrollingItemWidget::BackspaceSearchText(bool word)
         searchSelectionAnchor_ = searchCursorPos_;
     }
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1468,6 +1530,7 @@ void ScrollingItemWidget::DeleteSearchText(bool word)
         searchSelectionAnchor_ = searchCursorPos_;
     }
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1482,6 +1545,7 @@ void ScrollingItemWidget::ClearSearchText()
     searchCompositionCursor_ = 0;
     searchFocused_ = false;
     searchPointerSelecting_ = false;
+    if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
 }
 
@@ -1571,16 +1635,21 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
     if(searchComposing_)return true;
 
     const bool control =
-        (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift =
-        (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
     searchHighSurrogate_ = 0;
     if (control && (key == 'Z' || key == 'Y'))
     {
         const bool changed = key == 'Y' || shift
             ? searchHistory_.Redo(searchText_, searchCursorPos_, searchSelectionAnchor_)
             : searchHistory_.Undo(searchText_, searchCursorPos_, searchSelectionAnchor_);
-        if (changed) { ClearSearchComposition(); InvalidateSlots(); }
+        if (changed)
+        {
+            ClearSearchComposition();
+            if (searchText_.empty()) folderSearch_.reset();
+            InvalidateSlots();
+        }
         return true;
     }
     searchCursorPos_ =
@@ -1638,6 +1707,7 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
             const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
             EraseSearchSelection();
             searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
+            if (searchText_.empty()) folderSearch_.reset();
             InvalidateSlots();
         }
         ClearSearchComposition();
@@ -1928,7 +1998,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
 
     const bool light = UsesLightContentTheme();
     const bool hovered =
-        PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
+        IsPreviewInteractive() && PtInRect(&searchRect, GetRenderPointer()) != FALSE;
     const bool keyboardSelected =
         snowdesktop::widget_chrome_rules::
             UsesCategorizedControlAccentOutline(
@@ -2200,11 +2270,12 @@ int ScrollingItemWidget::GetDetailsHeaderHeight() const
 
 bool ScrollingItemWidget::IsDetailsVisible() const
 {
-    return data_ && data_->listMode &&
+    const auto* view = GetContentViewData();
+    return view && view->listMode &&
         snowdesktop::list_detail_rules::HasMetadataColumns(
-            data_->detailShowModified,
-            data_->detailShowType,
-            data_->detailShowSize);
+            view->detailShowModified,
+            view->detailShowType,
+            view->detailShowSize);
 }
 
 RECT ScrollingItemWidget::ApplyDetailsHeaderToViewport(
@@ -2236,16 +2307,17 @@ snowdesktop::list_detail_rules::Columns
 ScrollingItemWidget::GetDetailsColumns(
     int availableWidth) const
 {
+    const auto* view = GetContentViewData();
     return snowdesktop::list_detail_rules::BuildColumns(
         std::max(1, availableWidth),
-        data_ && data_->detailShowModified,
-        data_ && data_->detailShowType,
-        data_ && data_->detailShowSize,
-        data_ ? data_->detailModifiedPosition :
+        view && view->detailShowModified,
+        view && view->detailShowType,
+        view && view->detailShowSize,
+        view ? view->detailModifiedPosition :
             snowdesktop::list_detail_rules::kDefaultModifiedPosition,
-        data_ ? data_->detailTypePosition :
+        view ? view->detailTypePosition :
             snowdesktop::list_detail_rules::kDefaultTypePosition,
-        data_ ? data_->detailSizePosition :
+        view ? view->detailSizePosition :
             snowdesktop::list_detail_rules::kDefaultSizePosition);
 }
 

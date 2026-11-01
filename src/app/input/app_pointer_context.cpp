@@ -1,4 +1,6 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "layout/page_navigation_rules.h"
 #include "ui/menu/right_click_contract.h"
@@ -185,11 +187,11 @@ void DesktopApp::OnRightButtonDown(
     DismissActiveContextMenuForPopupTransition();
     if (DockTrayPopupPointerDown(point, true))
     {
-        SetCapture(handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_);
+        snowdesktop::private_pointer::SetPointerCapture(handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_);
         return;
     }
     POINT cursor{};
-    if (quickNavigationOpen_ && GetCursorPos(&cursor))
+    if (quickNavigationOpen_ && snowdesktop::private_pointer::CursorPosition(&cursor))
     {
         const POINT quickNavigationPoint{cursor.x - virtualLeft_, cursor.y - virtualTop_};
         if (!PtInRect(&quickNavigationRect_, quickNavigationPoint)) CloseQuickNavigation(false);
@@ -238,7 +240,7 @@ void DesktopApp::OnRightButtonDown(
         widgetPreviewCell_ = widgetDragOriginalCell_;
         widgetPreviewSpan_ = widgetDragOriginalSpan_;
         widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[index].bounds, point);
-        SetCapture(hwnd_);
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
     };
     auto* popupGroup = IsPointOccludedByOpenPopup(point) ? GetGroupPopupView() : nullptr;
@@ -369,7 +371,7 @@ void DesktopApp::OnRightButtonDown(
     rightButtonItemDrag_ = true;
     const HWND capture = dockHost ? dockHost->hwnd :
         handlingFloatingPopupInput_ ? floatingPopupHwnd_ : hwnd_;
-    SetCapture(capture);
+    snowdesktop::private_pointer::SetPointerCapture(capture);
     SyncKeyboardNavFromSelection();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -982,7 +984,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                         childIds.begin(), childIt));
         ClearSelection();
         widgets_[groupIndex].activeCategoryId = childId;
-        widgets_[groupIndex].scrollOffset = 0;
+        if (!group->SetFolderSearchScrollOffset(0)) widgets_[groupIndex].scrollOffset = 0;
         widgets_[childIndex].selected = true;
         group->InvalidateHostedView();
         group->EnsureSourceTabVisible(tabIndex);
@@ -1118,6 +1120,30 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             RECT bounds = slot->GetBounds();
             if (!PtInRect(&bounds, pt)) continue;
             if (!PtInRect(&bodyRect, pt)) continue;
+
+            if (auto* search = dynamic_cast<ScrollingItemWidget*>(wc); search && search->UsesFolderSearch() &&
+                slot->GetItem() && snowdesktop::widget_search_context_menu::NeedsPathMenu(*search, *slot->GetItem()))
+            {
+                const size_t parentIndex = FindWidgetIndexById(wc->GetWidgetData()->id);
+                const auto paths = snowdesktop::widget_search_context_menu::Prepare(*search, pt,
+                    [this] { ClearSelection(); },
+                    [this, parentIndex] {
+                        ClearSelectionOutsideWidget(parentIndex);
+                        if (parentIndex < widgets_.size()) widgets_[parentIndex].selected = true;
+                    },
+                    [this](Item* candidate) {
+                        const auto* desktop = dynamic_cast<DesktopIcon*>(candidate);
+                        return !desktop || (desktop->GetDesktopItem() && !IsProtectedDesktopIcon(*desktop->GetDesktopItem()));
+                    });
+                if (paths)
+                {
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    // The sentinel pair denotes a transient search selection,
+                    // whose files are identified by paths instead of members.
+                    ShowFolderEntryContextMenu(screenPt, static_cast<size_t>(-1), static_cast<size_t>(-1));
+                    return;
+                }
+            }
 
             auto* desktopIcon =
                 dynamic_cast<DesktopIcon*>(slot->GetItem());

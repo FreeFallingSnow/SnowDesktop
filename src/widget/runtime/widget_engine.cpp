@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "widget/data/widget_system_control_data.h"
 #include "widget/data/widget_gpu_lua.h"
@@ -16451,8 +16452,18 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
 {
     if (const int index = FindWidget(widgetId); index >= 0)
         return widgets_[index].valid;
-    if (widgetHostFailures_.contains(widgetId))
-        return false;
+    if (const auto failure = widgetHostFailures_.find(widgetId);
+        failure != widgetHostFailures_.end())
+    {
+        // A retained desktop instance may outlive its unsubscribed package.
+        // Missing content is recoverable as soon as it is installed again;
+        // actual script/quota failures still require the normal retry action.
+        if (failure->second.kind !=
+                snowdesktop::widget_runtime::WidgetHostStateKind::PackageMissing ||
+            !IsWidgetPackageInstalled(packageId))
+            return false;
+        widgetHostFailures_.erase(failure);
+    }
     if (const auto package = GetWidgetPackage(packageId))
     {
         const auto grant = snowdesktop::widget::WidgetPermissionBroker::
@@ -16473,6 +16484,9 @@ bool WidgetEngine::EnsureWidgetLoaded(const std::wstring& widgetId, const std::w
     {
         RuntimeRecordError(widgetId,
             "Widget package is missing, disabled, or has not been migrated");
+        if (!IsWidgetPackageInstalled(packageId))
+            widgetHostFailures_[widgetId].kind =
+                snowdesktop::widget_runtime::WidgetHostStateKind::PackageMissing;
         return false;
     }
     if (LoadWidget(path, widgetId))
@@ -17179,7 +17193,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         try
         {
             (void)d2dState_->scriptReadAhead.Track(widgetId, path,
-                (widgets_.back().packageRoot / L"widget.json").wstring());
+                (widgets_.back().packageRoot / L"widget.json").wstring(),
+                GetWidgetPackageManager().Paths().installed.wstring());
         }
         catch (...) { /* Optional path preparation must not fail the VM load. */ }
     }
@@ -30655,9 +30670,9 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         (key == VK_RETURN || key == VK_ESCAPE)) return true;
     focusedHostInput_.pendingHighSurrogate = 0;
 
-    const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    const bool ctrl = (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (snowdesktop::private_pointer::KeyState(VK_MENU) & 0x8000) != 0;
     if (key == VK_TAB && !ctrl && !alt)
     {
         const std::wstring widgetId = focusedHostInput_.widgetId;
@@ -31839,6 +31854,20 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
     request.height = std::clamp(height, 280, 900);
+    const std::string_view sourceSurface = CurrentWidgetSurface(d2dState_);
+    const int index = FindWidget(widgetId);
+    if (trustedGestureState_.Active() && IsPanelSurface(sourceSurface) && index >= 0)
+    {
+        const auto& widget = widgets_[index];
+        float x = 0.0f, y = 0.0f;
+        if (InteractionRegionsForSurface(widget, sourceSurface).LastPointer(x, y))
+        {
+            const LONG left = widget.panelBounds.left + static_cast<LONG>(std::floor(x));
+            const LONG top = widget.panelBounds.top + static_cast<LONG>(std::floor(y));
+            request.hasAnchor = true;
+            request.anchorRect = {left, top, left, top};
+        }
+    }
     openWidgetPanelCallback_(request);
 }
 
@@ -33065,7 +33094,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             else
             {
                 for (const auto& instance : instances)
-                    (void)ReloadWidget(instance);
+                    (void)EnsureWidgetLoaded(instance, Utf8ToWideLocal(action.packageId));
                 result.errors.push_back(action.packageId + ": " + error);
             }
             continue;

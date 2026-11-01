@@ -8,6 +8,7 @@
 #include "icons/icon_control_source.h"
 #include "icons/large_icon_edit_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 
 struct IconLibraryHostState
 {
@@ -82,11 +83,9 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
     for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
     if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
 
-    if (request.action == "begin" &&
-        (request.target == snowdesktop::icon_override::start || request.target == snowdesktop::icon_override::search))
+    if (request.action == "begin" && IsIconOverrideTarget(request.target))
     { state.target = request.target; ++state.session; request.action = "read"; }
-    if (request.action == "restore" &&
-        (request.target == snowdesktop::icon_override::start || request.target == snowdesktop::icon_override::search))
+    if (request.action == "restore" && IsIconOverrideTarget(request.target))
     {
         auto result = state.snapshot; result.succeeded = SetIconOverride(request.target, {});
         result.error = result.succeeded ? "" : "iconLibrary.saveFailed"; return result;
@@ -203,7 +202,7 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(workshopOperation)
                 {
                     auto result=snowdesktop::icon_workshop::Run(*library,request,bridge,data,cancellation.get(),progress.get());
-                    result.workshopAvailable=snowdesktop::icon_workshop::Available(bridge);result.operationId=request.operationId;result.completedAction=request.action;
+                    result.workshopAvailable=request.action=="autoSyncSubscriptions"?previousAvailability:snowdesktop::icon_workshop::Available(bridge);result.operationId=request.operationId;result.completedAction=request.action;
                     return result;
                 }
                 if(request.action=="collectRetired") {auto result=library->CollectRetired(protectedIds);result.workshopAvailable=previousAvailability;return result;}
@@ -490,7 +489,7 @@ HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identit
     if(menu)
     {
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(personal), _LW("iconLibrary.personalization"));
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), L"\uF489", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), snowdesktop::menu_fluent_glyphs::kIconPersonalization, MenuIconFont::FluentRegular);
     }
     if (!recycle) add(personal, change, Target(key));
     else for (int state = 0; state < 2; ++state)

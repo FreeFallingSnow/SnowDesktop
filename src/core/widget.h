@@ -43,6 +43,7 @@ struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
 class WidgetEngine;
+namespace snowdesktop { struct WidgetFolderSearchState; }
 struct GridPage;
 namespace snowdesktop
 {
@@ -69,6 +70,7 @@ enum class WidgetHit {
     SourceTab,          ///< FileGroup：来源组件标签
     CategoryTab,        ///< FileCategories / FolderMapping：分类标签页
     SearchBox,          ///< FileCategories / FolderMapping：搜索框
+    SearchMoreBtn,      ///< 搜索结果区块的按需展开按钮
     CollectionOpenBtn,  ///< Collection：紧凑模式主体 / "全部" 马赛克按钮
     GuideAddWidgetBtn,  ///< Guide：打开“添加组件”菜单
     GuideDetailsBtn,    ///< Guide：展开或收起分页说明
@@ -80,6 +82,18 @@ enum class WidgetHit {
     DetailsTypeDivider, ///< 详细信息：类型列宽分隔线
     DetailsSizeDivider, ///< 详细信息：大小列宽分隔线
     IconTitle,          ///< 单格图标入口的标题及选择区域，不打开弹窗
+};
+
+// Native control identity and geometry, shared by automation and fixed demos.
+// Keys are independent of localized labels and remain scoped to one widget.
+struct WidgetControlRegion
+{
+    std::wstring key, name;
+    RECT bounds{};
+    WidgetHit hit = WidgetHit::None;
+    std::string role = "button";
+    std::optional<bool> checked;
+    bool selected = false;
 };
 
 /**
@@ -118,6 +132,8 @@ public:
     ComPtr<IDataObject> CreateDataObject() override;
 
     DesktopWidget* GetWidgetData() const { return data_; }
+    // Content options belong to the active child; the outer frame keeps its own data.
+    virtual DesktopWidget* GetContentViewData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
     virtual float GetCellScale() const;
     float GetLayoutSpacingScale() const;
@@ -225,6 +241,7 @@ public:
 
     // ── Hit testing ──────────────────────────────────────
     virtual WidgetHit HitTestWidget(POINT pt) const;
+    std::vector<WidgetControlRegion> GetControlRegions() const;
     bool HitResizeHandle(POINT pt) const;
 
     // ── Rendering ────────────────────────────────────────
@@ -277,6 +294,10 @@ public:
     bool IsPopupHosted() const { return popupFrameActive_; }
 
 protected:
+    virtual void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const;
+    void AddControlRegion(std::vector<WidgetControlRegion>& regions,
+        std::wstring key, std::wstring name, RECT bounds, WidgetHit hit,
+        std::string role = "button", std::optional<bool> checked = {}, bool selected = false) const;
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
 
@@ -315,8 +336,21 @@ struct ListItemDetails
 
 class ScrollingItemWidget : public WidgetContainer
 {
+    friend struct NativeDragIntegrationAccess;
+    friend class DesktopApp;
 public:
-    using WidgetContainer::WidgetContainer;
+    ScrollingItemWidget(DesktopWidget* data, DesktopApp* app);
+    struct SearchPresentation
+    {
+        std::wstring widgetId;
+        std::wstring text;
+        size_t cursor = 0;
+        size_t anchor = 0;
+        bool focused = false;
+        std::shared_ptr<snowdesktop::WidgetFolderSearchState> results;
+    };
+    SearchPresentation CaptureSearchPresentation() const;
+    void RestoreSearchPresentation(const SearchPresentation& state);
 
     bool SingleColumn() const override;
     int GetScrollOffset() const override;
@@ -404,6 +438,26 @@ public:
     bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
+    // Runtime-only search results; never added to persisted folder contents.
+    bool UsesFolderSearch() const;
+    void EnsureFolderSearch() const;
+    void RefreshFolderSearch();
+    size_t FolderSearchCount() const;
+    RECT FolderSearchItemRect(size_t index) const;
+    int FolderSearchContentHeight() const;
+    int GetFolderSearchScrollOffset() const;
+    bool SetFolderSearchScrollOffset(int offset);
+    std::vector<std::unique_ptr<Slot>> BuildFolderSearchSlots();
+    Item* FolderSearchItem(size_t index, bool dragCache) const;
+    std::vector<size_t> FolderSearchSelectedIndices() const;
+    std::vector<Item*> FolderSearchSelectedItems() const;
+    void ApplyFolderSearchMarquee(const RECT& contentRect);
+    void DrawFolderSearch(ID2D1DeviceContext* context);
+    std::wstring FolderSearchSourceId(const Item* item) const;
+    RECT GetFolderSearchMoreRect(size_t sectionIndex) const;
+    size_t FolderSearchMoreAtPoint(POINT point) const;
+    bool ExpandFolderSearchAtPoint(POINT point);
+    std::wstring FolderSearchNotice() const;
     void DrawSearchBox(ID2D1DeviceContext* context);
     /** @brief 分类滚动组件共用的搜索框布局。 */
     RECT GetCategorizedSearchBoxRect(bool visible) const;
@@ -469,6 +523,9 @@ public:
     BarStyle GetInsertionStyle() const override;
 
 protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
+    std::wstring searchPresentationId_;
+    mutable std::shared_ptr<snowdesktop::WidgetFolderSearchState> folderSearch_;
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     snowdesktop::ScrollContentFadeCache tabContentFadeCache_;
     std::wstring searchText_;
@@ -529,6 +586,8 @@ private:
  */
 class Collection : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -601,6 +660,8 @@ private:
  */
 class FileCategories : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -712,6 +773,8 @@ private:
  */
 class FolderMapping : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -827,6 +890,8 @@ private:
  */
 class CollectionGroup : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -867,6 +932,7 @@ public:
     RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    DesktopWidget* GetContentViewData() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
@@ -923,6 +989,8 @@ private:
  */
 class FileGroup : public ScrollingItemWidget
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using ScrollingItemWidget::ScrollingItemWidget;
     snowdesktop::slot_contract::SlotSurfaceKind
@@ -968,6 +1036,7 @@ public:
     RECT GetMemberLayoutRect(size_t index) const override;
     RECT GetContentViewportRect() const override;
     RECT GetSearchBoxRect() const override;
+    DesktopWidget* GetContentViewData() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
@@ -1007,6 +1076,7 @@ private:
     // Desktop selection uses the complete filtered list, including rows that
     // have no materialized Slot while outside the scrolling viewport.
     friend class DesktopApp;
+    friend class ScrollingItemWidget;
 
     const std::vector<SearchResultRef>&
         GetGroupSearchResults() const;
@@ -1041,6 +1111,8 @@ private:
  */
 class GuideWidget : public WidgetContainer
 {
+protected:
+    void CollectControlRegions(std::vector<WidgetControlRegion>& regions) const override;
 public:
     using WidgetContainer::WidgetContainer;
 
@@ -1061,10 +1133,11 @@ public:
     void OnItemsDropped(const std::vector<Item*>&, Container*, Slot*, HitRegion, int) override {}
     std::vector<Item*> GetSelectedItems() const override { return {}; }
     void ToggleDetails() { detailsExpanded_ = !detailsExpanded_; }
-
-private:
+    // Shared drawing, hit testing and internal automation geometry.
     RECT GetPrimaryButtonRect(RECT body) const;
     RECT GetSecondaryButtonRect(RECT body) const;
+
+private:
     bool detailsExpanded_ = false;
 };
 

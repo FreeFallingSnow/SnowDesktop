@@ -489,10 +489,11 @@ struct SystemPanel::Impl
         // covered by the overflow panel even after its focus is retained. A
         // confirmed native menu can also outlive the short SHOW-event hook.
         const bool topmost=placement.preserveOrder?(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0:
-            !above||(GetWindowLongPtrW(above,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
+            !above;
         bool positioned=false;
         if(placement.preserveOrder)backdrop.Reattach(window);
-        else positioned=backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
+        else if(above)positioned=PlaceSystemPanelBelowTrayMenu(backdrop,window,above);
+        else positioned=backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);
         if(trace)
         {
             bool menuAboveAfter=false;

@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "navigation/quick_navigation_rules.h"
@@ -11,6 +12,8 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    if (nativeMenuSession_)
+        DismissActiveContextMenuForPopupTransition();
     typeToSelectSession_.Reset();
     // Outside presses dismiss the shared menu before dispatch, but its drop
     // context stays alive until the menu loop returns. Do not replace it.
@@ -36,7 +39,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         mouseDownPoint_ = pt;
         mouseDownHit_ = nullptr;
         HWND capture = handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_;
-        SetCapture(capture);
+        snowdesktop::private_pointer::SetPointerCapture(capture);
         return;
     }
     // The normal collection popup's outside-click branch uses a saved widget
@@ -65,16 +68,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         const RECT panel = GetLuaWidgetPanelRect();
         if (!PtInRect(&panel, pt))
         {
-            // Keep a nonmodal surface alive while its owning widget handles
-            // the click. Its opener can then reuse the current surface, or a
-            // different control can request a different panel without a
-            // close/reopen cycle caused by this same press.
-            const size_t owner = HitTestStandaloneWidgetIndex(pt);
-            const bool onOwnerContent = !luaWidgetPanelRequest_.modal &&
-                owner < widgets_.size() &&
-                widgets_[owner].id == luaWidgetPanelRequest_.widgetId &&
-                HitTestStandaloneWidget(owner, pt) == WidgetHit::Content;
-            if (luaWidgetPanelRequest_.dismissOnOutside && !onOwnerContent)
+            if (luaWidgetPanelRequest_.dismissOnOutside)
                 CloseLuaWidgetPanel(
                     luaWidgetPanelRequest_.widgetId,
                     "outside");
@@ -127,8 +121,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 ? floatingPopupHwnd_
                 : hwnd_;
             luaWidgetPanelCaptureHwnd_ = nullptr;
-            SetCapture(panelCaptureHost);
-            if (GetCapture() == panelCaptureHost)
+            snowdesktop::private_pointer::SetPointerCapture(panelCaptureHost);
+            if (snowdesktop::private_pointer::Capture() == panelCaptureHost)
                 luaWidgetPanelCaptureHwnd_ = panelCaptureHost;
             if (!gutterHandled && (!widgetEngine_ ||
                 !widgetEngine_->HandleHostUiPointer(
@@ -275,7 +269,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 view->BeginSearchPointerSelection(pt, (wp & MK_SHIFT) != 0);
                 FocusDesktopInputWindow();
                 mouseDownHit_ = nullptr;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
@@ -288,7 +282,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
                 else if (auto* folder = dynamic_cast<FolderMapping*>(view)) folder->InvalidateFilterCache();
                 mouseDownHit_ = nullptr;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 ResetCollectionPopupAnimationCache();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
@@ -383,19 +377,22 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
                 *popupWidget, popup);
+            auto* searchPopup = GetCategorizedPopupView();
+            const int scroll = searchPopup && searchPopup->IsSearchActive()
+                ? searchPopup->GetScrollOffset() : popupScrollOffset_;
             const auto geometry = snowdesktop::widget_scroll_rules::
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollOffset_, scrollbarScale);
+                    scroll, scrollbarScale);
             if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
                     geometry, pt.y, pt.x, viewport.right, scrollbarScale))
             {
                 popupScrollbarDragging_ = true;
                 popupScrollbarDragStartY_ = pt.y;
-                popupScrollbarDragStartOffset_ = popupScrollOffset_;
+                popupScrollbarDragStartOffset_ = scroll;
                 mouseDownHit_ = nullptr;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, &popup, FALSE);
                 return;
             }
@@ -452,8 +449,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                                 detailsHeader.left);
                     mouseDownWidgetIndex_ =
                         static_cast<size_t>(-1);
-                    SetCapture(interactionCaptureHwnd);
-                    SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+                    snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
+                    snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
                 }
                 else
                 {
@@ -553,7 +550,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 popupScrollOffset_;
             mouseDownWidgetIndex_ =
                 static_cast<size_t>(-1);
-            SetCapture(interactionCaptureHwnd);
+            snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -591,8 +588,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             detailsHeader.left);
                 mouseDownWidgetIndex_ =
                     static_cast<size_t>(-1);
-                SetCapture(interactionCaptureHwnd);
-                SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
             }
             else
             {
@@ -658,7 +655,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         marqueeWidgetIndex_ = popupWidgetIndex_;
         marqueeInitialScrollOffset_ = popupScrollOffset_;
         mouseDownWidgetIndex_ = popupWidgetIndex_;
-        SetCapture(interactionCaptureHwnd);
+        snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
         InvalidateRect(hwnd_, nullptr, FALSE);
         SyncKeyboardNavFromSelection();
         return;
@@ -685,7 +682,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
-                if (IsOwnedPointerCaptureWindow(GetCapture()))
+                if (IsOwnedPointerCaptureWindow(snowdesktop::private_pointer::Capture()))
                 {
                     WriteDiagnosticLogEntry(L"[DockStartMenu] releasing owned pointer capture before Start action");
                     ReleaseCapturePreservingPointerState();
@@ -697,7 +694,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (dock->IsSearchPoint(pt))
             {
                 mouseDown_ = false;
-                if (IsOwnedPointerCaptureWindow(GetCapture()))
+                if (IsOwnedPointerCaptureWindow(snowdesktop::private_pointer::Capture()))
                     ReleaseCapturePreservingPointerState();
                 if (snowdesktop::quick_navigation_rules::
                         ShouldOpenFromDockSearchPress(
@@ -755,7 +752,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     }
                 }
                 mouseDownHit_ = dockItem;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -789,7 +786,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             running->window;
                 }
                 mouseDownHit_ = runningItem;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -819,7 +816,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             running->second.window;
                 }
                 mouseDownHit_ = frequentItem;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -886,7 +883,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -903,7 +900,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -930,7 +927,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             SelectWidgetOnly(wi);
         mouseDownWidgetIndex_ = wi;
         mouseDownHit_ = nullptr;
-        SetCapture(hwnd_);
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
         if (widgetEngine_ && widgets_[wi].type == DesktopWidgetType::LuaScript)
         {
             if (IsRectEmptyRect(luaFrame))
@@ -998,7 +995,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             mouseDownHit_ = wc;
             mouseDownWidgetIndex_ = wi;
             SyncKeyboardNavFromSelection();
-            SetCapture(hwnd_);
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1026,7 +1023,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     wc->GetScrollOffset();
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, popupGroup ? &popupGroupFrame : &widgets_[wi].bounds, FALSE);
                 return;
             }
@@ -1043,7 +1040,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1059,18 +1056,18 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
-        else if (wh == WidgetHit::CollapseToggleBtn ||
+        else if (wh == WidgetHit::SearchMoreBtn || wh == WidgetHit::CollapseToggleBtn ||
                  wh == WidgetHit::GuideAddWidgetBtn ||
                  wh == WidgetHit::GuideDetailsBtn)
         {
             pendingWidgetButtonAction_ = wh;
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
             InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
             return;
         }
@@ -1105,8 +1102,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 1, header.right - header.left);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
-            SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+            snowdesktop::private_pointer::SetPointerCapture(hwnd_);
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_SIZEWE));
             return;
         }
         else if (wh == WidgetHit::DetailsNameHeader ||
@@ -1188,7 +1185,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     selectionController_.RememberAnchor(selectionScope, selectionKey);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = memberItem;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 SyncKeyboardNavFromSelection();
                 return;
@@ -1201,7 +1198,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             marqueeWidgetIndex_ = wi;
             marqueeInitialScrollOffset_ = wc->GetScrollOffset();
             mouseDownHit_ = nullptr;
-            SetCapture(interactionCaptureHwnd);
+            snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1225,7 +1222,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgets_[wi].type == DesktopWidgetType::CollectionGroup ||
                 widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
-                widgets_[wi].listMode = !widgets_[wi].listMode;
+                auto* view = wc->GetContentViewData();
+                if (!view) return;
+                view->listMode = !view->listMode;
                 if (auto* group =
                         dynamic_cast<FileGroup*>(wc))
                     group->InvalidateHostedView();
@@ -1242,7 +1241,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 widgets_[wi].type == DesktopWidgetType::FolderMapping ||
                 widgets_[wi].type == DesktopWidgetType::FileGroup)
             {
-                widgets_[wi].dateHeaders = !widgets_[wi].dateHeaders;
+                auto* view = wc->GetContentViewData();
+                if (!view) return;
+                view->dateHeaders = !view->dateHeaders;
+                view->scrollOffset = 0;
                 widgets_[wi].scrollOffset = 0;
                 if (auto* mapping = dynamic_cast<FolderMapping*>(wc))
                     mapping->InvalidateFilterCache();
@@ -1285,7 +1287,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (!id.empty())
             {
                 widgets_[wi].activeCategoryId = id;
-                widgets_[wi].scrollOffset = 0;
+                if (!group->SetFolderSearchScrollOffset(0)) widgets_[wi].scrollOffset = 0;
                 group->InvalidateHostedView();
                 ClearSelection();
                 const size_t childIndex =
@@ -1297,7 +1299,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     group->GetSourceTabItemAtPoint(pt);
                 if (mouseDownHit_)
                 {
-                    SetCapture(interactionCaptureHwnd);
+                    snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                     SyncKeyboardNavFromSelection();
                 }
                 SaveLayoutSlots();
@@ -1322,7 +1324,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     {
                         mouseDownWidgetIndex_ = wi;
                         mouseDownHit_ = nullptr;
-                        SetCapture(interactionCaptureHwnd);
+                        snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                     }
                     DesktopWidget* categorizedData =
                         &widgets_[wi];
@@ -1352,7 +1354,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             group->GetTabItemAtPoint(pt);
                         if (mouseDownHit_)
                         {
-                            SetCapture(interactionCaptureHwnd);
+                            snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                             SyncKeyboardNavFromSelection();
                         }
                     }
@@ -1392,7 +1394,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     pt, (wp & MK_SHIFT) != 0);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
-                SetCapture(interactionCaptureHwnd);
+                snowdesktop::private_pointer::SetPointerCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
             }
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1461,7 +1463,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     else if (!ctrl)
         ClearSelection();
 
-    SetCapture(hwnd_);
+    snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
     SyncKeyboardNavFromSelection();
 }

@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget_package_source_capture.h"
 #include "desktop/folder_mapping_visibility_rules.h"
@@ -16,6 +17,24 @@
 #include <thread>
 
 // Widget creation, collection/file-group membership and release operations.
+
+DesktopWidget* DesktopApp::ResolveWidgetContentViewData(DesktopWidget* widget) const
+{
+    if (!widget || !IsGroupWidgetType(widget->type)) return widget;
+    for (const auto& container : containers_)
+        if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+            view && view->GetWidgetData() == widget)
+            return view->GetContentViewData();
+    // Icon/Dock menus may be opened before a content container exists.
+    if (widget->type == DesktopWidgetType::CollectionGroup)
+    {
+        CollectionGroup view(widget, const_cast<DesktopApp*>(this));
+        return view.GetContentViewData();
+    }
+    FileGroup view(widget, const_cast<DesktopApp*>(this));
+    return view.GetContentViewData();
+}
+
 
 namespace
 {
@@ -173,7 +192,7 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         ShowWindow(dialogWindow, SW_SHOWNORMAL);
         SetWindowPos(dialogWindow, HWND_TOPMOST, x, y, 0, 0,
             positionFlags);
-        SetForegroundWindow(dialogWindow);
+        snowdesktop::private_pointer::SetInputForeground(dialogWindow);
         return S_OK;
     };
     std::vector<TASKDIALOG_BUTTON> buttons;
@@ -1699,7 +1718,7 @@ void DesktopApp::BeginLuaWidgetConsent(POINT screenPoint,
             ShowWindow(dialogWindow, SW_SHOWNORMAL);
             SetWindowPos(dialogWindow, HWND_TOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-            SetForegroundWindow(dialogWindow);
+            snowdesktop::private_pointer::SetInputForeground(dialogWindow);
             return;
         }
         if (sessionAction == snowdesktop::widget_runtime::

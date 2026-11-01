@@ -515,6 +515,14 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    // A create notification begins a new HWND lifetime, including a recycled
+    // handle whose previous window had an accepted close request.
+    if (event == EVENT_OBJECT_CREATE) dockPendingCloseWindows_.erase(window);
+    // Read before any collector prunes destroyed HWNDs from the pending set.
+    // The accepted close already retired this card; its hide/destroy burst
+    // must not repeat global discovery before the remaining cards get input.
+    const bool closePending = dockPendingCloseWindows_.contains(window);
+    const bool windowRemoved = event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY;
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
     if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
@@ -533,6 +541,11 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
         previewOrder.Forget(window);
     else
         previewOrder.Observe(window);
+    if (!closePending &&
+        (!windowRemoved || (dockWindowPreview_ && dockWindowPreview_->IsShowingWindow(window))) &&
+        (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_DESTROY ||
+         event == EVENT_OBJECT_SHOW || event == EVENT_OBJECT_HIDE))
+        RefreshDockWindowPreviewItems();
     if (dockWindowTransition_)
     {
         if (event == EVENT_SYSTEM_MINIMIZESTART)
@@ -542,6 +555,12 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     }
     if (event == EVENT_OBJECT_DESTROY && dockWindowAttention_.Remove(window))
         InvalidateDockRects();
+    if (closePending)
+    {
+        dockWindowAppIds_.Invalidate(window);
+        dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     const auto tracks = [window](const auto& state) {
         return state.window == window ||
             std::find(state.trackedWindows.begin(), state.trackedWindows.end(), window) !=
@@ -576,7 +595,10 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     }
     dockWindowAppIds_.Invalidate(window);
     dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
-    RefreshDockRunningWindows();
+    // Foreground feedback may already have pruned the accepted-close entry.
+    // A hide/destroy still only dirties membership; maintenance coalesces the
+    // burst even in that order. A displayed source was reconciled above.
+    if (!windowRemoved) RefreshDockRunningWindows();
 }
 
 void DesktopApp::RefreshDockRunningWindows(
@@ -1138,6 +1160,7 @@ void DesktopApp::RefreshDockRunningWindows(
     dockRunningWindowsStateTick_ = observedWindowStateTick;
     dockRunningWindowsRefreshTick_ = GetTickCount();
     UpdateDockExternalMinimizeTargets();
+    RefreshDockWindowPreviewItems();
 }
 
 bool DesktopApp::ActivateOrToggleDockItem(
@@ -1224,14 +1247,6 @@ bool DesktopApp::ActivateOrToggleDockItem(
     }
     found->second.window = target;
     found->second.minimized = IsIconic(target) != FALSE;
-    if (action == DockClickAction::None)
-    {
-        action =
-            snowdesktop::dock_window_rules::ResolveDockClickAction(
-                found->second.running,
-                found->second.minimized,
-                found->second.foreground);
-    }
     const bool transitionActiveForTarget =
         dockWindowTransition_ &&
         dockWindowTransition_->IsActiveFor(
@@ -1240,12 +1255,16 @@ bool DesktopApp::ActivateOrToggleDockItem(
         transitionActiveForTarget
         ? dockWindowTransition_->GetDirection()
         : DockWindowTransitionDirection::Minimize;
-    if (transitionActiveForTarget)
+    action = snowdesktop::dock_window_rules::ResolveDockTransitionClickAction(
+        action, transitionActiveForTarget,
+        activeTransitionDirection == DockWindowTransitionDirection::Restore);
+    if (action == DockClickAction::None)
     {
-        action = activeTransitionDirection ==
-                DockWindowTransitionDirection::Minimize
-            ? DockClickAction::Restore
-            : DockClickAction::Minimize;
+        action =
+            snowdesktop::dock_window_rules::ResolveDockClickAction(
+                found->second.running,
+                found->second.minimized,
+                found->second.foreground);
     }
     if (pressedAnchorScreen &&
         (action == DockClickAction::Restore ||
@@ -1360,6 +1379,17 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     const bool minimized = IsIconic(target) != FALSE;
     DockClickAction action =
         pressedAction.value_or(DockClickAction::None);
+    const bool transitionActiveForTarget =
+        dockWindowTransition_ &&
+        dockWindowTransition_->IsActiveFor(
+            target);
+    const auto activeTransitionDirection =
+        transitionActiveForTarget
+        ? dockWindowTransition_->GetDirection()
+        : DockWindowTransitionDirection::Minimize;
+    action = snowdesktop::dock_window_rules::ResolveDockTransitionClickAction(
+        action, transitionActiveForTarget,
+        activeTransitionDirection == DockWindowTransitionDirection::Restore);
     if (action == DockClickAction::None)
     {
         const HWND foreground =
@@ -1369,21 +1399,6 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                 true, minimized,
                 DockWindowsShareApplicationIdentity(
                     target, foreground));
-    }
-    const bool transitionActiveForTarget =
-        dockWindowTransition_ &&
-        dockWindowTransition_->IsActiveFor(
-            target);
-    const auto activeTransitionDirection =
-        transitionActiveForTarget
-        ? dockWindowTransition_->GetDirection()
-        : DockWindowTransitionDirection::Minimize;
-    if (transitionActiveForTarget)
-    {
-        action = activeTransitionDirection ==
-                DockWindowTransitionDirection::Minimize
-            ? DockClickAction::Restore
-            : DockClickAction::Minimize;
     }
     if (pressedAnchorScreen &&
         (action == DockClickAction::Restore ||

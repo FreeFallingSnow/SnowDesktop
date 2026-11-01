@@ -790,111 +790,321 @@ local function buildCards()
     return cards, palette
 end
 
+local function horizontalGrid()
+    return cardPreferences.orientation(storage.get("layout")) == "horizontal" and
+        widget.hasFeature("interaction.scroll.orientation")
+end
+
+local function canDragCards()
+    return widget.hasFeature("interaction.pointerCapture")
+end
+
+local function cancelDrag(model)
+    if model.dragScrolling and widget.hasFeature("schedule.basic") then
+        schedule.cancel("system.dragScroll")
+    end
+    model.drag = nil
+    model.scrollStep = nil
+    model.dragScrolling = nil
+end
+
+local function dragEvents(id)
+    return {
+        pointerDown = { id = "system.dragStart", value = id },
+        pointerMove = { id = "system.dragMove", value = id },
+        pointerUp = { id = "system.dragEnd", value = id },
+        contextMenu = { id = "system.menu", scope = "component",
+            value = { cardId = id } },
+    }
+end
+
+local function containsPoint(shape, x, y)
+    return shape and type(x) == "number" and type(y) == "number" and
+        x >= shape.x and x <= shape.x + shape.width and
+        y >= shape.y and y <= shape.y + shape.height
+end
+
+local function updateDrag(model, value)
+    local drag = model.drag
+    if not drag or type(value.x) ~= "number" or type(value.y) ~= "number" then
+        return
+    end
+    drag.x, drag.y = value.x, value.y
+    if drag.active or math.max(math.abs(drag.x - drag.startX),
+        math.abs(drag.y - drag.startY)) < (model.dragThreshold or 4) then
+        return
+    end
+    drag.active = true
+    if widget.hasFeature("schedule.basic") then
+        model.dragScrolling = true
+        schedule.every("system.dragScroll", 100, { whenHidden = "pause" })
+    end
+end
+
 local function render(_context, model)
     mainScale = cardPreferences.fontScale(storage.get("main_font_scale"))
+    if model.drag and (not canDragCards() or
+        not interaction.isPressed("system.card." .. model.drag.id)) then
+        cancelDrag(model)
+    end
     local width = layout.contentWidth()
     local height = layout.contentHeight()
-    local viewportHeight = math.max(1, height)
+    -- Use the same rounded viewport the scroll host will hit-test.
+    local viewportWidth = cardLayout.hostExtent(width)
+    local viewportHeight = cardLayout.hostExtent(height)
     local cards, palette = buildCards()
     local savedOrder = storage.get("card_order")
     cards = cardPreferences.arrange(cards, savedOrder)
     local columns = math.max(1, layout.columns())
     local visibleRows = math.max(1, layout.rows())
-    local cells, rows, signature = cardLayout.pack(cards, columns,
-        function(id) return storage.get("size_" .. id) end,
-        cardPreferences.customOrder(savedOrder))
-    -- A tall card crossing the viewport edge needs a continuous grid;
-    -- otherwise preserve the existing clean break before an overflow row.
-    local continuous = cardLayout.crossesViewport(cells, visibleRows)
+    local horizontal = horizontalGrid()
+    local sizeFor = function(id) return storage.get("size_" .. id) end
     local inset = layout.cu(4)
     local horizontalGap = layout.cu(4)
     local verticalGap = layout.cu(4)
-    local availableWidth = width - inset * 2
-    local cardWidth = math.floor((availableWidth -
-        horizontalGap * (columns - 1)) / columns)
-    local cardHeight = cardLayout.cardHeight(rows, visibleRows,
-        layout.cellHeight(), viewportHeight, verticalGap, inset)
-    -- The trailing inset makes the native maximum scroll offset place the
-    -- final row at the same inset from the viewport bottom.
-    local contentHeight = cardLayout.contentHeight(
-        rows, visibleRows, cardHeight, verticalGap, inset,
-        viewportHeight, continuous)
+    local availableWidth = math.max(1, viewportWidth - inset * 2)
+    local cardWidth = math.max(1, math.floor((availableWidth -
+        horizontalGap * (columns - 1)) / columns))
+    local function layoutCards(cardList, ordered)
+        local cells, packed, signature
+        if horizontal then
+            cells, packed, signature = cardLayout.pack(cardList, visibleRows,
+                function(id) return cardLayout.swapSize(sizeFor(id)) end, ordered)
+            cells, packed = cardLayout.transpose(cells)
+        else
+            cells, packed, signature = cardLayout.pack(cardList, columns,
+                sizeFor, ordered)
+        end
+        local occupiedRows = 0
+        for _, cell in ipairs(cells) do
+            occupiedRows = math.max(occupiedRows, cell.row + cell.rows)
+        end
+        local cardHeight = cardLayout.cardHeight(math.max(occupiedRows, #cells > 0 and 1 or 0),
+            visibleRows, layout.cellHeight(), viewportHeight, verticalGap, inset)
+        local visibleMain = horizontal and columns or visibleRows
+        local unit = horizontal and cardWidth or cardHeight
+        local gap = horizontal and horizontalGap or verticalGap
+        local viewportMain = horizontal and viewportWidth or viewportHeight
+        -- A card crossing the viewport edge needs a continuous grid;
+        -- otherwise preserve the existing clean break before the overflow.
+        local continuous = cardLayout.crossesViewport(cells, visibleMain, horizontal)
+        local contentMain = cardLayout.contentHeight(packed, visibleMain, unit,
+            gap, inset, viewportMain, continuous)
+        local frames = {}
+        for index, cell in ipairs(cells) do
+            local x, y, w, h = cardLayout.gridFrame(cell, cardWidth, cardHeight,
+                horizontalGap, verticalGap, inset, visibleMain, viewportMain,
+                continuous, horizontal)
+            frames[index] = { id = cardList[index].id, x = x, y = y, w = w, h = h,
+                columns = cell.columns, rows = cell.rows }
+        end
+        return frames, packed, signature, contentMain, cardHeight
+    end
+    local ordered = cardPreferences.customOrder(savedOrder)
+    local restingFrames, rows, signature, contentMain, cardHeight =
+        layoutCards(cards, ordered)
+    local drawCards, frames = cards, restingFrames
+    local draggingId = model.drag and model.drag.active and model.drag.id
+    if draggingId and containsPoint({ x = 0, y = 0, width = viewportWidth,
+        height = viewportHeight }, model.drag.x, model.drag.y) then
+        local previousOffset = model.scrollOffset or 0
+        local target = cardLayout.dropTarget(restingFrames, draggingId,
+            model.drag.x + (horizontal and previousOffset or 0),
+            model.drag.y + (horizontal and 0 or previousOffset), horizontal)
+        local previewCards = cardPreferences.preview(cards, draggingId, target)
+        if previewCards ~= cards then
+            frames, rows, _, contentMain, cardHeight = layoutCards(previewCards, true)
+            drawCards = previewCards
+        end
+    end
 
-    local layoutKey = signature .. ":" .. columns .. ":" .. visibleRows ..
-        ":" .. width .. ":" .. height
+    local layoutKey = (horizontal and "h" or "v") .. ":" .. signature ..
+        ":" .. columns .. ":" .. visibleRows .. ":" .. viewportWidth ..
+        ":" .. viewportHeight
     local resetScroll = layoutKey ~= model.previousLayout
     model.previousLayout = layoutKey
-    local scroll = interaction.scroll({
-        key = "system.cards",
-        shape = {
-            type = "rect",
-            x = 0,
-            y = 0,
-            width = width,
-            height = viewportHeight,
-        },
-        contentHeight = contentHeight,
-    })
+    local viewportShape = { type = "rect", x = 0, y = 0,
+        width = viewportWidth, height = viewportHeight }
+    local scrollSpec = { key = "system.cards", shape = viewportShape }
+    if horizontal then
+        scrollSpec.orientation = "horizontal"
+        scrollSpec.contentWidth = contentMain
+    else
+        scrollSpec.contentHeight = contentMain
+    end
+    local scroll = interaction.scroll(scrollSpec)
     if resetScroll then
         scroll.offset = interaction.setScrollOffset("system.cards", 0)
     end
+    if scroll.offset > scroll.maximum then
+        scroll.offset = interaction.setScrollOffset("system.cards", scroll.maximum)
+    end
+    if model.drag and model.drag.active and model.scrollStep then
+        scroll.offset = interaction.setScrollOffset("system.cards",
+            math.max(0, math.min(scroll.maximum, math.floor(
+                scroll.offset + model.scrollStep + 0.5))))
+        model.scrollStep = nil
+    end
+    model.frames = restingFrames
+    model.horizontal = horizontal
+    model.viewport = viewportShape
+    model.scrollOffset = scroll.offset
+    model.scrollMaximum = scroll.maximum
+    model.dragThreshold = math.max(4, layout.cu(4))
+    model.scrollAmount = (horizontal and cardWidth or cardHeight) +
+        (horizontal and horizontalGap or verticalGap)
     interaction.region({
         key = "system.surface",
-        shape = { type = "rect", x = 0, y = 0,
-            width = width, height = viewportHeight },
+        shape = viewportShape,
         events = { contextMenu = { id = "system.menu", scope = "component" } },
         accessibility = { role = "group",
             label = l10n.tr("lua_widget.system_monitor.name") },
     })
-    draw.pushClip(0, 0, width, viewportHeight)
+    draw.pushClip(0, 0, viewportWidth, viewportHeight)
     if rows == 0 then
         local emptyText = l10n.tr(
             "lua_widget.system_monitor.no_visible_cards")
         local emptyFont = layout.fontCu(14)
         local emptyMetrics = draw.measureText(
             emptyText, emptyFont, 0, true)
-        local emptyWidth = math.min(width, emptyMetrics.width)
-        draw.text(math.max(0, (width - emptyWidth) / 2),
+        local emptyWidth = math.min(viewportWidth, emptyMetrics.width)
+        draw.text(math.max(0, (viewportWidth - emptyWidth) / 2),
             math.max(0, (viewportHeight - emptyMetrics.height) / 2),
             emptyText, emptyFont, palette.cardSub,
             math.max(1, emptyWidth + layout.cu(1)), true, true,
             0, 0.78)
     else
-        for index, card in ipairs(cards) do
-            local cell = cells[index]
-            local x = inset + cell.column * (cardWidth + horizontalGap)
-            local y = cardLayout.rowTop(cell.row, visibleRows, cardHeight,
-                verticalGap, inset, viewportHeight, continuous) - scroll.offset
-            local w = cell.columns * cardWidth + (cell.columns - 1) * horizontalGap
-            local h = cell.rows * cardHeight + (cell.rows - 1) * verticalGap
-            if y + h > 0 and y < viewportHeight then
-                drawCard(x, y, w, h,
-                    card, palette, cell.columns, cell.rows)
-                local top = math.max(0, y)
-                interaction.region({
-                    key = "system.card." .. card.id,
-                    shape = { type = "rect", x = x, y = top, width = w,
-                        height = math.min(viewportHeight, y + h) - top },
-                    events = { contextMenu = { id = "system.menu",
-                        scope = "component", value = { cardId = card.id } } },
-                    accessibility = { role = "group", label = card.title },
-                })
+        for index, card in ipairs(drawCards) do
+            local frame = frames[index]
+            local x = frame.x - (horizontal and scroll.offset or 0)
+            local y = frame.y - (horizontal and 0 or scroll.offset)
+            local w, h = frame.w, frame.h
+            if x + w > 0 and x < viewportWidth and
+                y + h > 0 and y < viewportHeight then
+                drawCard(x, y, w, h, card, palette, frame.columns, frame.rows)
+                if draggingId == card.id then
+                    draw.strokeRect(x, y, w, h, palette.cardText,
+                        layout.cu(10), layout.cu(1.5), 0.85)
+                else
+                    local left = math.max(0, x)
+                    local top = math.max(0, y)
+                    local right = math.min(viewportWidth, x + w)
+                    local bottom = math.min(viewportHeight, y + h)
+                    local region = {
+                        key = "system.card." .. card.id,
+                        shape = { type = "rect", x = left, y = top,
+                            width = right - left, height = bottom - top },
+                        events = canDragCards() and dragEvents(card.id) or {
+                            contextMenu = { id = "system.menu",
+                                scope = "component",
+                                value = { cardId = card.id } },
+                        },
+                        accessibility = { role = "group", label = card.title },
+                    }
+                    if canDragCards() then
+                        region.cursor = "hand"
+                        region.capturePointer = true
+                    end
+                    interaction.region(region)
+                end
             end
+        end
+        if draggingId and cardTitles[draggingId] then
+            interaction.region({
+                key = "system.card." .. draggingId,
+                shape = viewportShape,
+                cursor = "hand",
+                capturePointer = true,
+                events = dragEvents(draggingId),
+                accessibility = { role = "group",
+                    label = cardTitles[draggingId] },
+            })
         end
     end
     draw.popClip()
 
 end
 
-local function event(_context, _model, value)
+local function event(_context, model, value)
     persistGpuSelection()
+    if value.kind == "resize" or
+        (value.kind == "visibility" and not value.visible) then
+        cancelDrag(model)
+        return
+    end
+    if value.kind == "schedule" and value.id == "system.dragScroll" then
+        local drag, viewport = model.drag, model.viewport
+        model.scrollStep = nil
+        if drag and drag.active and containsPoint(viewport, drag.x, drag.y) then
+            local span = model.scrollAmount or 24
+            local leading = model.horizontal and drag.x or drag.y
+            local origin = model.horizontal and viewport.x or viewport.y
+            local extent = model.horizontal and viewport.width or viewport.height
+            local edge = math.min(span, extent / 4)
+            if leading < origin + edge and model.scrollOffset > 0 then
+                model.scrollStep = -span / 2
+            elseif leading > origin + extent - edge and
+                model.scrollOffset < model.scrollMaximum then
+                model.scrollStep = span / 2
+            end
+        end
+        if model.scrollStep then widget.invalidate() end
+        return
+    end
     if value.kind == "settings.changed" or value.kind == "environment" then
+        cancelDrag(model)
         reconcileSubscriptions()
         widget.invalidate()
         return
     end
     if value.kind ~= "action" then return end
-    if value.id == "system.refresh" then
+    local cardId = value.value
+    if type(cardId) ~= "string" then cardId = nil end
+    if value.id == "system.dragStart" and cardId and value.button == 1 and
+        canDragCards() and cardTitles[cardId] then
+        cancelDrag(model)
+        if containsPoint(model.viewport, value.x, value.y) then
+            model.drag = { id = cardId, startX = value.x, startY = value.y,
+                x = value.x, y = value.y }
+        end
+        return
+    end
+    if value.id == "system.dragMove" and model.drag and model.drag.id == cardId then
+        if interaction.isPressed("system.card." .. cardId) then
+            updateDrag(model, value)
+            if model.drag and model.drag.active then widget.invalidate() end
+        else
+            cancelDrag(model)
+        end
+        return
+    end
+    if value.id == "system.dragEnd" and model.drag and model.drag.id == cardId then
+        updateDrag(model, value)
+        local drag = model.drag
+        if drag.active and value.button == 1 and not value.cancelled and
+            containsPoint(model.viewport, value.x, value.y) and model.frames then
+            local target = cardLayout.dropTarget(model.frames, cardId,
+                value.x + (model.horizontal and model.scrollOffset or 0),
+                value.y + (model.horizontal and 0 or model.scrollOffset),
+                model.horizontal)
+            local saved = cardPreferences.moveTo(storage.get("card_order"),
+                cardId, target, showCard)
+            if saved then storage.set("card_order", saved) end
+        end
+        cancelDrag(model)
+        widget.invalidate()
+        return
+    end
+    if value.id == "system.orientation.vertical" or
+        value.id == "system.orientation.horizontal" then
+        local nextMode = value.id == "system.orientation.horizontal" and
+            "horizontal" or "vertical"
+        if cardPreferences.orientation(storage.get("layout")) ~= nextMode then
+            cancelDrag(model)
+            storage.set("layout", nextMode)
+            widget.invalidate()
+        end
+    elseif value.id == "system.refresh" then
         widget.invalidate()
     elseif value.id == "system.order.reset" then
         storage.remove("card_order")
@@ -967,6 +1177,26 @@ local function menu(_context, _model, request)
         end
         items[#items + 1] = { type = "separator" }
     end
+    if widget.hasFeature("interaction.scroll.orientation") then
+        local orientation = cardPreferences.orientation(storage.get("layout"))
+        local directions = {
+            { id = "system.orientation.vertical",
+                label = l10n.tr("lua_widget.system_monitor.orientation_vertical"),
+                checked = orientation == "vertical" },
+            { id = "system.orientation.horizontal",
+                label = l10n.tr("lua_widget.system_monitor.orientation_horizontal"),
+                checked = orientation == "horizontal" },
+        }
+        local heading = l10n.tr("lua_widget.system_monitor.orientation")
+        if widget.hasFeature("interaction.contextMenu.submenu") then
+            items[#items + 1] = { label = heading, children = directions }
+        else
+            items[#items + 1] = { id = "system.orientation.heading",
+                label = heading, enabled = false }
+            for _, item in ipairs(directions) do items[#items + 1] = item end
+        end
+        items[#items + 1] = { type = "separator" }
+    end
     items[#items + 1] = { id = "system.order.reset",
         label = l10n.tr("lua_widget.system_monitor.order_reset"),
         enabled = cardPreferences.customOrder(storage.get("card_order")) }
@@ -1033,7 +1263,8 @@ local function menu(_context, _model, request)
     return ui.menu(items)
 end
 
-local function dispose(_context, _model)
+local function dispose(_context, model)
+    if model then cancelDrag(model) end
     persistGpuSelection()
     for _, handle in pairs(subscriptions) do
         handle:unsubscribe()

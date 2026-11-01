@@ -242,6 +242,9 @@ public:
         ApplyDesktopStyleAnimations,
         GetDockRunningApplications,
         GetDockTrayApplications,
+        CreateDebugEnvironment,
+        SelectDebugEnvironment,
+        RenameDebugEnvironment,
     };
 
     struct Request

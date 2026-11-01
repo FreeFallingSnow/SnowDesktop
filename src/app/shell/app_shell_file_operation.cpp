@@ -559,6 +559,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     {
         auto* widget = dynamic_cast<WidgetContainer*>(container.get());
         if (!widget || !widget->GetWidgetData()) continue;
+        if (auto* search = dynamic_cast<ScrollingItemWidget*>(widget)) search->RefreshFolderSearch();
         if (auto* mapping = dynamic_cast<FolderMapping*>(widget);
             mapping && changed.contains(widget->GetWidgetData()->id))
             mapping->InvalidateFilterCache();
@@ -652,6 +653,10 @@ void DesktopApp::RefreshShellItemsAsync()
                 });
         if (contentOnly)
         {
+            // Nested changes do not alter desktop membership, but can change
+            // recursive matches. Refresh queries without replacing their state.
+            for (auto& container : containers_)
+                if (auto* search = dynamic_cast<ScrollingItemWidget*>(container.get())) search->RefreshFolderSearch();
             shellReloadPending_ = false;
             shellRefreshScope_.Full();
             InvalidateDragStaticScene();

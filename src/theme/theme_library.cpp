@@ -588,7 +588,7 @@ std::string EncodeLibrary(const Library& library, std::string& error)
     out += "},\"workshop\":{"; first = true;
     for (const auto& [item, origin] : library.workshop)
     {
-        if (!Text(item, 32) || !Text(origin.owner, 32) || origin.sha256.size() != 64) return {};
+        if (!Text(item, 32) || (!origin.owner.empty() && !Text(origin.owner, 32)) || origin.sha256.size() != 64) return {};
         if (!first) out += ','; first = false;
         out += Quote(item) + ":{\"owner\":" + Quote(origin.owner) + ",\"sha256\":" + Quote(origin.sha256) + ",\"accounts\":[";
         bool comma = false;
@@ -672,7 +672,7 @@ bool DecodeLibrary(std::string_view text, Library& library, std::string& error)
         for (const auto& [item, value] : origins->object)
         {
             Library::WorkshopOrigin origin;
-            if (!digit(item) || !String(value, "owner", origin.owner) || !digit(origin.owner) ||
+            if (!digit(item) || !String(value, "owner", origin.owner) || (!origin.owner.empty() && !digit(origin.owner)) ||
                 !String(value, "sha256", origin.sha256) || origin.sha256.size() != 64 ||
                 !std::all_of(origin.sha256.begin(), origin.sha256.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }) ||
                 !readSet(value.Find("accounts"), origin.accounts, false) || !readSet(value.Find("ids"), origin.ids, true))

@@ -2164,13 +2164,109 @@ void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, s
         boundary = slots[end - 1]->GetBounds();
         after = true;
     }
+    else if (folderSource && begin == end)
+    {
+        // Files occupy the trailing lane. Its first component belongs before
+        // Search/Trash, whose real paint is outside the scrolling clip.
+        const size_t count = entries_ ? entries_->size() : 0;
+        if (IsRectEmpty(&boundary) && count > 0 && app_->IsRecycleBinDockEntry(entries_->back()))
+            boundary = slots[count - 1]->GetBounds();
+        if (!IsRectEmpty(&boundary))
+        {
+            const RECT visual = GetElementVisualRect(boundary, pointer);
+            DrawDockInsertionIndicator(context, boundary, visual,
+                static_cast<float>(IsVertical() ? visual.top : visual.left), IsVertical(), ItemIconSize());
+            return;
+        }
+        if (IsEdgeAttached())
+        {
+            // An empty attached file lane remains at the opposite end even
+            // when every trailing control is hidden. Do not borrow the last
+            // main/running item, which may be on the far side of the screen.
+            const float axis = static_cast<float>((IsVertical() ? bounds.bottom : bounds.right) - ScaledSpacing() / 2);
+            DrawDockInsertionIndicator(context, bounds, bounds, axis, IsVertical(), ItemIconSize());
+            return;
+        }
+        const size_t generated = runningItems_.size() + frequentItems_.size();
+        if (generated > 0 && count + generated <= slots.size())
+            boundary = slots[count + generated - 1]->GetBounds();
+        else if (begin > 0 && begin <= slots.size())
+            boundary = slots[begin - 1]->GetBounds();
+        else
+        {
+            const RECT start = GetWindowsButtonRect();
+            const RECT base = IsRectEmpty(&start) ? bounds : start;
+            const RECT visual = IsRectEmpty(&start) ? base : GetElementVisualRect(start, pointer);
+            const float axis = static_cast<float>(IsRectEmpty(&start)
+                ? (IsVertical() ? bounds.bottom : bounds.right) - ScaledSpacing() / 2
+                : (IsVertical() ? visual.bottom : visual.right));
+            DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
+            return;
+        }
+        after = true;
+    }
+    else if (!folderSource && begin == end)
+    {
+        // An empty fixed group belongs before generated running/frequent
+        // entries, not at the trailing Search control. Use that leading
+        // neighbour's real animated edge, just as a nonempty group does.
+        const size_t count = entries_ ? entries_->size() : 0;
+        const size_t generated = runningItems_.size() + frequentItems_.size();
+        if (generated > 0 && count < slots.size() && slots[count])
+            boundary = slots[count]->GetBounds();
+        else if (!IsEdgeAttached())
+        {
+            if (FolderEntryCount() > 0 && begin < slots.size() && slots[begin])
+                boundary = slots[begin]->GetBounds();
+            else
+            {
+                // With only utility controls, the scrollable group has zero
+                // length. Its base viewport must not clamp away the real
+                // Search/Trash/Start animation of the adjacent boundary.
+                if (IsRectEmpty(&boundary) && count > 0 && app_->IsRecycleBinDockEntry(entries_->back()))
+                    boundary = slots[count - 1]->GetBounds();
+                if (IsRectEmpty(&boundary))
+                {
+                    const RECT start = GetWindowsButtonRect();
+                    if (!IsRectEmpty(&start)) { boundary = start; after = true; }
+                }
+                const RECT base = IsRectEmpty(&boundary) ? bounds : boundary;
+                const RECT visual = GetElementVisualRect(base, pointer);
+                const RECT edge = IsRectEmpty(&boundary) ? boundary : visual;
+                const float axis = static_cast<float>(IsVertical()
+                    ? (after ? edge.bottom : edge.top) : (after ? edge.right : edge.left));
+                DrawDockInsertionIndicator(context, base, visual, axis, IsVertical(), ItemIconSize());
+                return;
+            }
+        }
+        else
+        {
+            // Edge-attached file entries remain at the opposite end. With
+            // no leading neighbour, retain the fixed section's own viewport
+            // boundary rather than borrowing those trailing controls.
+            const RECT viewport = GetVisualScrollViewport(pointer);
+            RECT base = GetWindowsButtonRect();
+            const bool hasStart = !IsRectEmpty(&base);
+            if (!hasStart) base = bounds;
+            const RECT visual = hasStart ? GetElementVisualRect(base, pointer) : GetVisualPanelBounds(pointer);
+            const LONG startShift = hasStart && GetMaxScrollOffset(bounds) <= 0
+                ? (IsVertical() ? visual.bottom - base.bottom : visual.right - base.right) : 0;
+            const float axis = static_cast<float>((IsVertical() ? viewport.top : viewport.left) + startShift);
+            DrawDockInsertionIndicator(context, base, visual,
+                axis, IsVertical(), ItemIconSize());
+            return;
+        }
+    }
     RECT base = IsRectEmpty(&boundary) ? bounds : boundary;
     RECT visual = GetElementVisualRect(base, pointer);
     if (!IsRectEmpty(&boundary)) boundary = visual;
     float axis = static_cast<float>(IsVertical()
         ? (after ? boundary.bottom : boundary.top)
         : (after ? boundary.right : boundary.left));
-    if (!folderSource || !IsEdgeAttached())
+    // Match DrawContents: animated cells may extend beyond their base lane
+    // while it fits. Only an actually scrolling lane owns a viewport clip;
+    // attached file items are fixed outside that clip in either case.
+    if (GetMaxScrollOffset(bounds) > 0 && (!folderSource || !IsEdgeAttached()))
     {
         const RECT viewport = GetVisualScrollViewport(pointer);
         axis = IsVertical()
@@ -2270,6 +2366,12 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             }
         }
     }
+    // The reflection belongs to the panel material. Paint it before contents
+    // so magnified icons can cross the panel boundary without a rim over them.
+    // Edge-attached Docks retain only their flat single boundary.
+    if (app_ && !IsEdgeAttached())
+        (void)app_->DrawWidgetPanelEdgeHighlight(
+            context, bounds, panelRadius, fill, &p);
 }
 
 void DockContainer::ClearTitleTooltipBackdrop()
@@ -2708,32 +2810,6 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (searchHovered && !IsMagnificationSuppressed())
         {
             hoveredTitle = _LW("app.dock.quick_search");
-        }
-    }
-
-    // Keep the floating-panel reflection above icons and Dock controls. The
-    // edge-attached Dock intentionally retains only its flat single boundary.
-    if (!IsEdgeAttached())
-    {
-        PersonalizationSettings p = PersonalizationSettings::DarkPreset();
-        if (app_->renderingFloatingDock_)
-            p = app_->floatingDockPersonalization_;
-        else
-            p = app_->CurrentDockAppearance();
-        if (p.widgetEdgeHighlightEnabled &&
-            p.widgetEdgeHighlightStrength > 0.0005f)
-        {
-            const RECT panelBounds =
-                GetVisualPanelBounds(app_->lastMousePoint_);
-            const float edgeWidth = std::clamp(
-                p.widgetEdgeHighlightWidth,
-                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-            const D2D1_COLOR_F fill = D2D1::ColorF(
-                p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
-            (void)app_->DrawEdgeHighlight(
-                context, panelBounds, p.cornerRadius, fill, edgeWidth,
-                p.widgetEdgeHighlightStrength,
-                p.edgeLight);
         }
     }
 

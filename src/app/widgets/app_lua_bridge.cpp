@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "widget_reference_picker.h"
@@ -613,7 +614,7 @@ void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
     else
         SendMessageW(luaInlineEdit_, EM_SETSEL,
             static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
-    SetFocus(luaInlineEdit_);
+    snowdesktop::private_pointer::SetInputFocus(luaInlineEdit_);
 }
 
 /**
@@ -706,7 +707,7 @@ LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
         if (wParam == VK_ESCAPE) { app->CommitLuaInlineTextEdit(true); return 0; }
         if (wParam == VK_RETURN)
         {
-            bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            bool ctrl = (snowdesktop::private_pointer::KeyState(VK_CONTROL) & 0x8000) != 0;
             if (!app->luaInlineEditMultiline_ || ctrl)
             {
                 app->CommitLuaInlineTextEdit(false);
@@ -714,7 +715,7 @@ LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
             }
         }
         if ((wParam == VK_DELETE || wParam == VK_BACK ||
-            ((GetKeyState(VK_CONTROL)&0x8000)&&(wParam=='Z'||wParam=='Y'||wParam=='X'||wParam=='V')))
+            ((snowdesktop::private_pointer::KeyState(VK_CONTROL)&0x8000)&&(wParam=='Z'||wParam=='Y'||wParam=='X'||wParam=='V')))
             && app->luaInlineEditLiveUpdate_)
         {
             LRESULT result = DefSubclassProc(hwnd, message, wParam, lParam);

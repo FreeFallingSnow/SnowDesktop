@@ -7,6 +7,7 @@
 #include <dwmapi.h>
 #include <windows.h>
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -54,6 +55,7 @@ bool IsPointInDockPreviewTransitionRegion(
     const RECT& anchorScreen,
     const RECT& previewScreen, DockPosition dockPosition,
     int tolerance);
+bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance);
 
 struct DockPreviewHoverTransition
 {
@@ -123,6 +125,7 @@ public:
         HWND dockLayerOwner = nullptr);
     void UpdateAnchor(RECT anchorScreen, DockPosition dockPosition);
     void SetPinBorderAppearance(const PersonalizationSettings& settings) { windowPins_.SetAppearance(settings); }
+    void SetPeekAnchorResolver(std::function<HWND(HWND)> resolver) { peekAnchorResolver_ = std::move(resolver); }
     void SetPeekActivateCallback(ActivateCallback callback)
     {
         if (!callback) { peekActivateCallback_ = {}; return; }
@@ -132,6 +135,14 @@ public:
         };
     }
     void Hide();
+    void RemoveWindow(HWND window);
+    void UpdateItems(const std::vector<DockWindowPreviewItem>& items);
+    // One-shot input provenance survives card reflow and final-card Hide.
+    HMONITOR TakePointerInteractionMonitor() { return std::exchange(pointerInteractionMonitor_, nullptr); }
+    void ObserveForwardedPointer(UINT message, DWORD time);
+    bool RetainsCloseForeground(HWND foreground);
+    void ReleaseCloseRetention() { closeRetentionUntil_ = 0; }
+    bool IsAwaitingPointerEntry() const { return IsVisible() && pointerSession_ == PointerSession::AwaitingEntry; }
     void ScheduleHide();
     void KeepVisible();
     bool IsVisible() const;
@@ -147,13 +158,14 @@ private:
     static constexpr UINT_PTR kPeekTimerId = 2;
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
+    static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
 
     static LRESULT CALLBACK WindowProc(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
     bool EnsureWindow();
     bool EnsureWindows(size_t count);
-    void Layout(RECT monitorWorkArea, UINT dpi);
+    void Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbnails = false);
     void RegisterThumbnails();
     void UnregisterThumbnails();
     void Paint(HWND window);
@@ -163,11 +175,17 @@ private:
     void OnMouseLeave(HWND window);
     void OnLeftButtonUp(POINT point);
     void OnMiddleButtonUp(POINT point);
+    void CloseWindowAtIndex(int index);
+    void RecordPointerInteraction(UINT message);
+    void RefreshPointerTracking(bool layoutChanged = false);
+    HWND PointerWindowAt(POINT screenPoint) const;
+    void ArmPointerTracking(HWND window, POINT screenPoint);
     void UpdatePeekTarget(HWND target);
     void OnPeekTimer();
     void CancelPeek(bool suppressUntilLeave = false);
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
+    bool IsPointerInEntryRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
     int CloseButtonIndexAtPoint(POINT point) const;
     int PinButtonIndexAtPoint(POINT point) const;
@@ -182,6 +200,7 @@ private:
     snowdesktop::dock_peek::Session windowPeek_;
     snowdesktop::dock_peek::WindowIdentity peekCandidate_;
     HWND peekOwner_ = nullptr;
+    std::function<HWND(HWND)> peekAnchorResolver_;
     HWND peekTimerWindow_ = nullptr;
     HWND peekSuppressedWindow_ = nullptr;
     HWND peekPendingForeground_ = nullptr;
@@ -189,6 +208,7 @@ private:
     ULONGLONG peekLeaveDue_ = 0;
     bool peekSurfacesReady_ = false;
     bool peekCommitting_ = false;
+    bool peekUpdating_ = false;
     ULONGLONG peekCommitDeadline_ = 0;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
@@ -198,10 +218,32 @@ private:
     std::vector<HTHUMBNAIL> measuredThumbnails_;
     SIZE panelSize_{};
     RECT anchorScreen_{};
+    HMONITOR pointerInteractionMonitor_ = nullptr;
+    struct PointerReceipt
+    {
+        UINT message = 0;
+        DWORD time = 0;
+        HMONITOR monitor = nullptr;
+        ULONGLONG recordedAt = 0;
+    };
+    std::array<PointerReceipt, 8> pointerReceipts_{};
+    size_t nextPointerReceipt_ = 0;
+    snowdesktop::dock_peek::WindowIdentity closingWindow_;
+    HWND closeForeground_ = nullptr;
+    HWND closeSuccessor_ = nullptr;
+    ULONGLONG closeRetentionUntil_ = 0;
+    enum class PointerSession { AwaitingEntry, Entered };
+    PointerSession pointerSession_ = PointerSession::AwaitingEntry;
+    POINT entryOriginScreen_{};
+    bool entryOriginKnown_ = false;
     DockPosition dockPosition_ = DockPosition::Bottom;
     bool lightTheme_ = false;
     bool trackingMouse_ = false;
     HWND trackingWindow_ = nullptr;
+    HWND retainedLeaveWindow_ = nullptr;
+    POINT retainedLeavePoint_{};
+    bool retainedLeaveRearmed_ = false;
+    bool pointerReconcilePending_ = false;
     int hoveredIndex_ = -1;
     int hoveredCloseIndex_ = -1;
     int hoveredPinIndex_ = -1;

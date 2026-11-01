@@ -63,6 +63,8 @@ public:
     void SetVisible(bool visible);
     /** @brief 在一个延迟窗口事务中同时显示 popup 内容与 backdrop。 */
     void ShowPopupWindowPair(HWND contentWindow);
+    bool SetExcludedFromPeek(bool excluded);
+    HWND PreparePeekInsertBefore(HWND contentWindow);
     /**
      * @brief 在一个延迟窗口事务中同时隐藏 popup 内容窗口和 backdrop。
      *
@@ -181,4 +183,5 @@ private:
         bool initiallyVisible = true);
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    bool excludedFromPeek_ = false;
 };

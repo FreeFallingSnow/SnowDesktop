@@ -1,3 +1,4 @@
+#include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
@@ -490,7 +491,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
 {
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
-    if (host.updatingMergedPresentation) return;
+    if (host.updatingMergedPresentation || host.revealPending) return;
     struct PromotionInputScope
     {
         DesktopApp& app; HWND window;
@@ -541,7 +542,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
             else host.mergedAnimation.Close(now);
             host.mergedPresentation.inputEnabled = false;
             host.tooltipRect = {};
-            if (GetCapture() == host.hwnd) ReleaseCapture();
+            if (snowdesktop::private_pointer::Capture() == host.hwnd) snowdesktop::private_pointer::ReleasePointerCapture();
             if (rightButtonDownDockHost_ == &host) rightButtonDownDockHost_ = nullptr;
             if (floatingDockHost_ == &host)
             {
@@ -754,7 +755,7 @@ DockContainer*
 DesktopApp::SelectFloatingDockContainerAtCursor() const
 {
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    snowdesktop::private_pointer::CursorPosition(&cursorScreen);
     const HMONITOR cursorMonitor =
         MonitorFromPoint(cursorScreen, MONITOR_DEFAULTTONEAREST);
     return SelectFloatingDockContainerForMonitor(
@@ -1048,9 +1049,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         return;
     }
 
-    const bool firstReveal =
-        floatingDockRevealPending_ ||
-        !IsWindowVisible(dockHostHwnd);
+    const bool firstReveal = !IsWindowVisible(dockHostHwnd);
     if (firstReveal)
     {
         // Create the hidden host in its eventual Z-order band. Desktop mode
@@ -1081,7 +1080,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             SWP_NOZORDER | SWP_NOACTIVATE);
     }
     bool renderedResizeFrame = false;
-    if (!firstReveal && sourceRectChanged)
+    if (!firstReveal && sourceRectChanged && !floatingDockRevealPending_)
     {
         // The host is now resized to the expanded source rect. Submit the
         // replacement frame synchronously so the new region never presents

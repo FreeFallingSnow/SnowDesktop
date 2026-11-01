@@ -15,6 +15,13 @@ struct DemandPlan
 inline const Registration *DemandSource(const Catalogue &catalogue, const Catalogue &observed,
                                          const std::string &id, unsigned contexts)
 {
+    // An explicit extension switch names the source directly. It does not need
+    // fabricated menu samples or prior command attribution to become usable.
+    const auto direct = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto& row) {
+        return row.id == id && row.kind == RegistrationKind::Handler && row.systemEnabled &&
+            (row.contexts & contexts) == contexts && row.verbs.size() == 1;
+    });
+    if (direct != catalogue.rows.end()) return &*direct;
     std::set<std::string> ids;
     for (const auto &item : observed.rows)
         if (item.id == id && (item.contexts & contexts) == contexts &&
@@ -77,6 +84,15 @@ inline std::wstring DemandSourceKey(const Registration &source, const Request &r
             (contexts == ContextBit(Context::File) && lower == L"*") ||
             (contexts == ContextBit(Context::Folder) && (lower == L"directory" || lower == L"folder"))) return key;
     }
+    if (!request.background && contexts == ContextBit(Context::File) && !source.types.empty() &&
+        std::find(source.types.begin(), source.types.end(), L"*") == source.types.end() && Applies(source, request))
+    {
+        std::set<std::wstring> keys;
+        for (const auto& path : source.sources)
+            if (const auto marker = path.find(L"\\shellex\\ContextMenuHandlers\\"); marker != std::wstring::npos)
+                keys.insert(path.substr(0, marker));
+        if (keys.size() == 1) return *keys.begin();
+    }
     return {};
 }
 
@@ -84,7 +100,7 @@ inline DemandPlan PlanDemandQueries(const Catalogue &catalogue, const Catalogue 
                                     const Preferences &prefs, const Request &request, unsigned contexts)
 {
     DemandPlan plan;
-    if (!catalogue.revision || !contexts || request.paths.empty() || !request.sourceClsid.empty() ||
+    if ((!catalogue.revision && catalogue.rows.empty()) || !contexts || request.paths.empty() || !request.sourceClsid.empty() ||
         request.startPinOnly || request.originalShortcutOnly || request.extended) return plan;
     if (!request.background && std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
         const auto target = std::filesystem::path(path).lexically_normal();
@@ -102,6 +118,7 @@ inline DemandPlan PlanDemandQueries(const Catalogue &catalogue, const Catalogue 
         if (!visible) continue;
         if (StateVisibilityId(id) == "state:start-pin" && !request.background && request.paths.size() == 1) continue;
         const auto *source = StatePairForId(id) ? nullptr : DemandSource(catalogue, observed, id, contexts);
+        if (source && source->id == id && !Applies(*source, request)) continue;
         const auto key = source ? DemandSourceKey(*source, request, contexts) : std::wstring{};
         if (key.empty()) { plan.full = true; continue; }
         auto query = request;

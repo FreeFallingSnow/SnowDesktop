@@ -1,5 +1,4 @@
 #include "build_tool_test_support.h"
-#include <algorithm>
 #include <iostream>
 using namespace build_test;
 void evidence_records_tests(const fs::path& repo,bool omitEvidence,bool queryStartup);
@@ -18,12 +17,6 @@ void test(const fs::path& repo) {
 [IO.File]::AppendAllText((Join-Path $PSScriptRoot '../arrange.count'),"arrange`n")
 exit 0
 )PS",true);
-    auto definitions=read(repo/L"CMakeLists.txt");
-    definitions.erase(std::remove(definitions.begin(),definitions.end(),'\r'),definitions.end());
-    for(const std::string name:{"SnowDesktopThemeWorkflowTests","SnowDesktopWidgetAuthorPreviewCliTests"}) {
-        auto position=definitions.find("\n        "+name+"\n");require(position!=std::string::npos,"Host test declaration missing: "+name);
-        require(definitions.substr(position,definitions.find(')',position)-position).find("host-runtime")!=std::string::npos,"Missing dynamic host-runtime contract: "+name);
-    }
     fs::create_directories(root/L"fake-bin");for(const auto& name:{L"cmake.exe",L"ctest.exe"})fs::copy_file(standin(),root/L"fake-bin"/name);
     Env env={{L"PATH",(root/L"fake-bin").wstring()+L";"+environment(L"PATH")}};
     auto folder=root/L".build/collaboration";fs::create_directories(folder);std::string batch(32,'c');

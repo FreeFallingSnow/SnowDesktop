@@ -4,6 +4,25 @@
 
 namespace snowdesktop::shell_extensions
 {
+// Static registrations/package roots already name an individual command.
+// Preserve their established authority; dynamic CLSID groups allow exceptions
+// for each generated root without changing unrelated legacy alias scopes.
+inline std::string MenuEntryVisibilityId(const Preferences& prefs, const Entry& entry, Context context)
+{
+    if (const auto* pair = StatePairForVerb(entry.key)) return std::string(pair->id);
+    if (!entry.registration.empty() && !entry.registration.starts_with("clsid:") &&
+        HasVisibilityRule(prefs, entry.registration, context)) return entry.registration;
+    return EntryVisibilityId(prefs, entry, context);
+}
+
+// Popup projection is independent of selected object type. Metadata and
+// management queries never publish provisional user-menu headers.
+inline bool CanPreviewPopupRoots(const Request& request, int depth)
+{
+    return depth == 0 && request.visibleMenuProviders && !request.visibleMenuProviders->empty() &&
+        !request.catalogueOnly && !request.rootMetadataOnly && !request.startPinOnly && request.sourceClsid.empty() && request.sourceKey.empty();
+}
+
 // Build only from persisted command IDs and registration evidence. Unknown
 // registration ownership retains the complete read rather than guessing by app.
 inline std::vector<std::string> MenuReadPolicy(const Preferences &prefs, Category category)
@@ -68,5 +87,19 @@ inline bool ReadMenuRootDetails(const Request &request, const std::string &canon
         if (id == "*" || (!canonicalProvider.empty() && id == canonicalProvider) ||
             (!legacyPrefix.empty() && id.starts_with(legacyPrefix))) return true;
     return false;
+}
+
+inline bool NeedsSynchronousCascades(const Request& request)
+{
+    // Send To can expose a readable but incomplete asynchronous subtree.
+    // Preserve Shell's completion guarantee whenever that subtree is read;
+    // selective popups can initialize their other cascades after the headers.
+    return !CanPreviewPopupRoots(request, 0) ||
+        ReadMenuRootDetails(request, "verb:sendto", "menu:send to:") ||
+        std::any_of(request.visibleMenuProviders->begin(), request.visibleMenuProviders->end(), [](const auto& id) {
+            // Unknown caption identities can include a localized Send To.
+            // WinRAR's observed cascade has the explicit initialization path.
+            return id.starts_with("menu:") && !id.starts_with("menu:winrar:");
+        });
 }
 }

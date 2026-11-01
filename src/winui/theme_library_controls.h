@@ -250,6 +250,16 @@ public:
         if (found != boundSources_.end()) return found->second;
         if (const auto selected = Selected())
         {
+            // A source switch can update a current global binding without
+            // rewriting the authored parent's package. Show that exact applied
+            // snapshot, including its selected child identities.
+            if (!editing_ && current_)
+            {
+                EditSource applied; applied.Begin(library_, target_);
+                if (applied.theme && applied.theme->id == selected->id &&
+                    themes::AppliedAppearanceMatches(applied.theme->appearance, current_->appearance))
+                    return applied.Bound(kind);
+            }
             EditSource parent; parent.theme = *selected; std::string error;
             if (themes::Export(library_, selected->id, parent.snapshot, error)) return parent.Bound(kind);
         }
@@ -710,7 +720,12 @@ private:
                 const auto token = version.SelectionChanged([this, version, local, remote](const auto&, const auto&) {
                     if (syncing_ || busy_ || closed_) return;
                     const auto index = version.SelectedIndex();
-                    if (index >= 0) Run(ThemeLibraryCommand::Apply, index == 0 ? local : remote);
+                    if (index < 0) return;
+                    const auto desired = index == 0 ? local : remote;
+                    managementVersions_[local] = desired;
+                    // replacement makes this a conditional source switch. The
+                    // host rechecks fresh settings and never applies an idle card.
+                    Run(ThemeLibraryCommand::Apply, desired, index == 0 ? remote : local);
                 });
                 cardRevoke_.push_back([version, token] { version.SelectionChanged(token); });
             }
@@ -1015,7 +1030,8 @@ private:
         if (result.succeeded)
         {
             library_ = result.library; sharing_ = result.sharingAvailable; workshop_ = result.workshopAvailable; publishedUrls_ = result.publishedUrls;
-            if (command == ThemeLibraryCommand::Apply)
+            if (command == ThemeLibraryCommand::Apply &&
+                (request.replacement.empty() || !result.updatedIds.empty()))
             {
                 if (auto applied = themes::Resolve(library_.themes, request.id))
                 {
