@@ -13,10 +13,7 @@
 #include "drag_drop/desktop_file_materialization.h"
 #include "drag_drop/file_drop_execution.h"
 #include "drag_drop/drop_pipeline.h"
-#include "drag_drop/external_transfer_observation.h"
-#include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "drag_drop/internal_desktop_drop.h"
-#include "ui/input/private_pointer.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -31,8 +28,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     const DropPreviewList& requestedPreview,
     FileOperationCompletion completion,
     bool executeSynchronously,
-    std::shared_ptr<snowdesktop::ShellFileOperationResult> result,
-    std::uint64_t observationBatch)
+    std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::drop_pipeline::Services services;
     services.runtimeLive = [this](Container* candidate) {
@@ -135,14 +131,9 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     services.dockChanged = [this] {
         RequestLayoutSave(); LayoutItems(); InvalidateRect(hwnd_, nullptr, FALSE);
     };
-    if (observationBatch)
-        services.files = [this, observationBatch](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
-            return ExecuteFileBackedDropPlan(sources, preview, std::move(done), sync, std::move(outputs), observationBatch);
-        };
-    else
-        services.files = [this](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
-            return ExecuteFileBackedDropPlan(sources, preview, std::move(done), sync, std::move(outputs));
-        };
+    services.files = [this](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
+        return ExecuteFileBackedDropPlan(sources, preview, std::move(done), sync, std::move(outputs));
+    };
     services.internal = [this](const auto& sources, const auto& preview) { return ExecuteInternalDropPlan(sources, preview); };
     services.collectionTitle = _LW("widget.collection");
     services.filesTitle = _LW("widget.desktop_files");
@@ -180,63 +171,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 });
         }
         snowdesktop::internal_desktop_drop::Services services;
-        namespace diagnostic = snowdesktop::external_transfer_observation;
-        std::uint64_t categoryCommit = 0;
-        if (diagnostic::Enabled())
-        {
-            const DWORD saved = GetLastError();
-            // Check the base pointer against live owners before inspecting its
-            // type; a captured origin is not itself a lifetime guarantee.
-            for (const auto& container : containers_)
-                if (container.get() == sourceList.origin)
-                {
-                    if (dynamic_cast<FileCategories*>(container.get())) categoryCommit = diagnostic::NewTask();
-                    break;
-                }
-            SetLastError(saved);
-        }
-        const auto observeCategory = [&](diagnostic::Phase phase, std::uintptr_t object, std::int64_t value) noexcept {
-            if (!categoryCommit) return;
-            const DWORD saved = GetLastError();
-            const auto native = snowdesktop::private_pointer::CurrentDeliveryIdentity();
-            const diagnostic::NativeScopeIdentity scope{native.session, native.event, native.delivery,
-                native.forward, native.ownerThread, native.forwarded, native.queuedEvent};
-            diagnostic::RecordAny(0, phase, object, value, categoryCommit, {}, scope);
-            SetLastError(saved);
-        };
         services.removeKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
-        if (categoryCommit)
-        {
-            observeCategory(diagnostic::Phase::category_desktop_commit_enter, reinterpret_cast<std::uintptr_t>(this), 0);
-            observeCategory(diagnostic::Phase::category_desktop_commit_origin,
-                reinterpret_cast<std::uintptr_t>(sourceList.origin), diagnostic::ObservedSize(sourceList.entries.size()));
-            const DWORD saved = GetLastError();
-            try { services.removeKeys = [this, &observeCategory, &categoryCommit](const auto& keys) {
-                if (!categoryCommit) { RemoveDesktopKeysFromWidgets(keys); return; }
-                observeCategory(diagnostic::Phase::category_desktop_remove_enter,
-                    reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(keys.size()));
-                const std::size_t limit = diagnostic::EventLimit() / 2;
-                for (std::size_t i = 0; i < (std::min)(keys.size(), limit); ++i)
-                {
-                    observeCategory(diagnostic::Phase::category_desktop_remove_index,
-                        reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(i));
-                    const DWORD saved = GetLastError();
-                    const auto& key = keys[i];
-                    const auto bytes = key.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                        ? diagnostic::BlobLimit() + 1 : key.size() * sizeof(wchar_t);
-                    diagnostic::RecordBlob(diagnostic::Phase::category_desktop_remove_key,
-                        reinterpret_cast<std::uintptr_t>(this), categoryCommit, {}, key.data(), bytes);
-                    SetLastError(saved);
-                }
-                if (keys.size() > limit)
-                    observeCategory(diagnostic::Phase::category_desktop_remove_truncated,
-                        reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(keys.size()));
-                RemoveDesktopKeysFromWidgets(keys);
-                observeCategory(diagnostic::Phase::category_desktop_remove_return, reinterpret_cast<std::uintptr_t>(this), 0);
-            }; }
-            catch (...) { categoryCommit = 0; }
-            SetLastError(saved);
-        }
         services.findWidget = [this](const auto& id) { return FindWidgetIndexById(id); };
         services.findItem = [this](const auto& key) { return FindItemIndexByKey(key); };
         services.slot = [this](const auto& cell) { return SlotFromCell(gridPages_, cell); };
@@ -252,23 +187,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             RequestLayoutSave();
             InvalidateRect(hwnd_, nullptr, TRUE);
         };
-        if (categoryCommit)
-        {
-            const DWORD saved = GetLastError();
-            try { services.committed = [this, &observeCategory] {
-                observeCategory(diagnostic::Phase::category_desktop_commit_callback_enter, reinterpret_cast<std::uintptr_t>(this), 0);
-                LayoutItems();
-                RequestLayoutSave();
-                InvalidateRect(hwnd_, nullptr, TRUE);
-                observeCategory(diagnostic::Phase::category_desktop_commit_callback_return, reinterpret_cast<std::uintptr_t>(this), 0);
-            }; }
-            catch (...) { categoryCommit = 0; }
-            SetLastError(saved);
-        }
-        const bool applied = snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_,
+        return snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_,
             {savedPageIds_, savedPageColumns_, savedPageRows_}, services);
-        observeCategory(diagnostic::Phase::category_desktop_commit_return, reinterpret_cast<std::uintptr_t>(this), applied ? 1 : 0);
-        return applied;
     }
 
     if (preview.targetKind == DropTargetKind::KeyedWidget && preview.targetWidget)
@@ -478,69 +398,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             else indices = sourceMemberIndices();
             if (indices.empty())
                 indices = targetWidget->GetSelectedMemberIndices();
-            // Capture only the real same-Collection reorder inputs and the
-            // existing model values. No slot is dereferenced by diagnostics.
-            namespace diagnostic = snowdesktop::external_transfer_observation;
-            std::uint64_t reorderObservation = 0;
-            const auto observeReorder = [&](bool after) noexcept {
-                if (!reorderObservation) return;
-                const DWORD saved = GetLastError();
-                const auto native = snowdesktop::private_pointer::CurrentDeliveryIdentity();
-                const diagnostic::NativeScopeIdentity scope{native.session, native.event, native.delivery,
-                    native.forward, native.ownerThread, native.forwarded, native.queuedEvent};
-                const auto& keys = preview.targetWidget->itemKeys;
-                const std::size_t limit = diagnostic::EventLimit() / 2;
-                if (!after)
-                {
-                    diagnostic::RecordAny(0, diagnostic::Phase::collection_reorder_enter,
-                        reinterpret_cast<std::uintptr_t>(targetWidget), diagnostic::ObservedSize(preview.insertIndex),
-                        reorderObservation, {}, scope);
-                    diagnostic::RecordAny(0, diagnostic::Phase::collection_reorder_origin,
-                        reinterpret_cast<std::uintptr_t>(sourceList.origin), diagnostic::ObservedSize(indices.size()),
-                        reorderObservation, {}, scope);
-                    // Preserve both base-pointer observations above and the
-                    // complete Collection address. The enclosing production
-                    // branch has already checked origin == targetWidget.
-                    diagnostic::RecordAny(0, diagnostic::Phase::collection_reorder_collection,
-                        reinterpret_cast<std::uintptr_t>(dynamic_cast<Collection*>(targetWidget)),
-                        sourceList.origin == targetWidget ? 1 : 0, reorderObservation, {}, scope);
-                    for (std::size_t i = 0; i < (std::min)(indices.size(), limit); ++i)
-                        diagnostic::RecordAny(0, diagnostic::Phase::collection_reorder_source_index,
-                            reinterpret_cast<std::uintptr_t>(targetWidget), diagnostic::ObservedSize(indices[i]),
-                            reorderObservation, {}, scope);
-                }
-                for (std::size_t i = 0; i < (std::min)(keys.size(), limit); ++i)
-                {
-                    const auto& key = keys[i];
-                    const auto bytes = key.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                        ? diagnostic::BlobLimit() + 1 : key.size() * sizeof(wchar_t);
-                    diagnostic::RecordAny(0, after ? diagnostic::Phase::collection_reorder_after_index :
-                        diagnostic::Phase::collection_reorder_before_index, reinterpret_cast<std::uintptr_t>(targetWidget),
-                        diagnostic::ObservedSize(i), reorderObservation, {}, scope);
-                    diagnostic::RecordBlob(after ? diagnostic::Phase::collection_reorder_after_key :
-                        diagnostic::Phase::collection_reorder_before_key, reinterpret_cast<std::uintptr_t>(targetWidget),
-                        reorderObservation, {}, key.data(), bytes);
-                }
-                if (keys.size() > limit || (!after && indices.size() > limit))
-                    diagnostic::RecordAny(0, diagnostic::Phase::collection_reorder_truncated,
-                        reinterpret_cast<std::uintptr_t>(targetWidget), after ? 1 : 0, reorderObservation, {}, scope);
-                if (after)
-                    diagnostic::RecordAny(0, diagnostic::Phase::collection_reorder_return,
-                        reinterpret_cast<std::uintptr_t>(targetWidget), diagnostic::ObservedSize(keys.size()),
-                        reorderObservation, {}, scope);
-                SetLastError(saved);
-            };
-            if (diagnostic::Enabled() && sourceList.origin == targetWidget &&
-                preview.targetWidget->type == DesktopWidgetType::Collection &&
-                targetWidget->GetWidgetData() == preview.targetWidget)
-            {
-                const DWORD saved = GetLastError();
-                reorderObservation = diagnostic::NewTask();
-                SetLastError(saved);
-                observeReorder(false);
-            }
             targetWidget->ReorderMembers(indices, preview.insertIndex);
-            observeReorder(true);
             if (targetWidget ==
                 dockFolderPopupContainer_.get())
                 CommitDockFolderPopupStateToSource();
@@ -721,11 +579,9 @@ void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement
 bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     const DropPreviewList& preview, FileOperationCompletion completion,
     bool executeSynchronously,
-    std::shared_ptr<snowdesktop::ShellFileOperationResult> result,
-    std::uint64_t observationBatch)
+    std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     snowdesktop::file_drop_execution::Services services;
-    services.observationBatch = observationBatch;
     services.snapshotDesktopKeys = [this] { return SnapshotDesktopKeys(); };
     services.folderPlacement = [this](const auto& widget, size_t index, const DragSourceList* sources) {
         return BuildPendingFolderPlacement(widget, index, sources);
@@ -743,25 +599,7 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
     services.pin = [this](const auto& paths, size_t index) { return AddMaterializedItemsToDock(paths, index); };
     services.savePins = [this] { RequestLayoutSave(); };
     services.forgetMovedKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
-    if (observationBatch)
-        services.refresh = [this, observationBatch] {
-            namespace diagnostic = snowdesktop::external_transfer_observation;
-            const auto mark = [this, observationBatch](diagnostic::Phase phase) noexcept {
-                const DWORD saved = GetLastError();
-                diagnostic::AdapterScopeIdentity scope{};
-                snowdesktop::ole_adapter_observation::Event current;
-                if (snowdesktop::ole_adapter_observation::Current(current))
-                    scope = {current.session, current.call, current.parent, current.adapter, current.thread,
-                        current.depth, static_cast<unsigned>(current.kind), true};
-                diagnostic::Record(observationBatch, phase, reinterpret_cast<std::uintptr_t>(this), 0, 0, scope);
-                SetLastError(saved);
-            };
-            mark(diagnostic::Phase::virtual_refresh_link_enter);
-            RequestShellRefresh();
-            mark(diagnostic::Phase::virtual_refresh_link_return);
-        };
-    else
-        services.refresh = [this] { RequestShellRefresh(); };
+    services.refresh = [this] { RequestShellRefresh(); };
     return snowdesktop::file_drop_execution::Execute(sourceList, preview, pendingLandingCaches_,
         std::move(services), std::move(completion), executeSynchronously, std::move(result));
 }

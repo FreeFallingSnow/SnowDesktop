@@ -14,7 +14,6 @@
 #include "desktop/desktop_membership_recovery.h"
 #include "platform/user_object_recovery.h"
 #include "diagnostics/performance_trace.h"
-#include "drag_drop/external_transfer_observation.h"
 
 namespace
 {
@@ -436,20 +435,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
     snowdesktop::performance::Scope timerTrace("timer.callback", HostTimerPhase(timerId));
     if (timerId == kLayoutScrollSaveTimerId)
     {
-        namespace diagnostic = snowdesktop::external_transfer_observation;
-        const auto observe = [&](diagnostic::Phase phase) noexcept {
-            if (!diagnostic::Enabled()) return;
-            const DWORD saved = GetLastError();
-            const std::int64_t flags = (layoutSavePending_ ? 1 : 0) | (layoutScrollSave_.Pending() ? 2 : 0) |
-                (dragSession_.HasContext() ? 4 : 0) | (dragDropController_.IsTransportActive() ? 8 : 0);
-            diagnostic::RecordAny(0, phase, reinterpret_cast<std::uintptr_t>(this), flags, layoutSaveRevision_, {}, {}, layoutSaveRevision_);
-            SetLastError(saved);
-        };
-        observe(diagnostic::Phase::layout_timer_enter);
-        struct ObserveExit final {
-            decltype(observe)& record;
-            ~ObserveExit() { record(diagnostic::Phase::layout_timer_scope_exit); }
-        } observeExit{observe};
         if (controlHwnd_) KillTimer(controlHwnd_, kLayoutScrollSaveTimerId);
         if (!layoutScrollSave_.Pending()) return;
         const auto now = snowdesktop::LayoutScrollSave::Clock::now();

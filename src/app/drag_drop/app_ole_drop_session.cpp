@@ -8,8 +8,6 @@
 #include "drag_drop/delayed_desktop_file_drop.h"
 #include "drag_drop/default_file_drop_action.h"
 #include "drag_drop/pending_drop_completion.h"
-#include "drag_drop/external_transfer_observation.h"
-#include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "layout/item_location.h"
 #include "widgets/lua_logical_slot.h"
 
@@ -18,21 +16,6 @@
 namespace
 {
 using DirectoryPathSet = std::unordered_set<std::wstring>;
-
-void ObserveVirtualPipeline(std::uint64_t batch, snowdesktop::external_transfer_observation::Phase phase,
-    std::uintptr_t source, std::int64_t value, std::uint64_t extra = 0) noexcept
-{
-    namespace diagnostic = snowdesktop::external_transfer_observation;
-    if (!batch) return;
-    const DWORD saved = GetLastError();
-    diagnostic::AdapterScopeIdentity scope{};
-    snowdesktop::ole_adapter_observation::Event current;
-    if (snowdesktop::ole_adapter_observation::Current(current))
-        scope = {current.session, current.call, current.parent, current.adapter, current.thread,
-            current.depth, static_cast<unsigned>(current.kind), true};
-    diagnostic::Record(batch, phase, source, value, extra, scope);
-    SetLastError(saved);
-}
 
 bool OffersNativeFilePaths(IDataObject* source)
 {
@@ -323,11 +306,6 @@ std::optional<DWORD> DesktopApp::TryDropShellNamespaceFiles(
 
 void DesktopApp::CancelPendingExternalOleDragLeave()
 {
-    ObserveVirtualPipeline(externalOleLeaveObservation_,
-        snowdesktop::external_transfer_observation::Phase::ole_leave_cancel,
-        reinterpret_cast<std::uintptr_t>(this), externalOleDragLeavePending_ ? 1 : 0,
-        externalOleDragLeaveDeadline_);
-    externalOleLeaveObservation_ = 0;
     externalOleDragLeavePending_ = false;
     externalOleDragLeaveDeadline_ = 0;
     if (hwnd_ && IsWindow(hwnd_))
@@ -336,28 +314,18 @@ void DesktopApp::CancelPendingExternalOleDragLeave()
 
 void DesktopApp::FinalizePendingExternalOleDragLeave()
 {
-    const auto observation = externalOleLeaveObservation_;
-    const auto appIdentity = reinterpret_cast<std::uintptr_t>(this);
-    ObserveVirtualPipeline(observation, snowdesktop::external_transfer_observation::Phase::ole_leave_finalize_enter,
-        appIdentity, externalOleDragLeavePending_ ? 1 : 0, externalOleDragLeaveDeadline_);
     if (!externalOleDragLeavePending_)
         return;
 
     if (!dragDropController_.IsExternalDragActive())
     {
-        ObserveVirtualPipeline(observation, snowdesktop::external_transfer_observation::Phase::ole_leave_finalize_inactive,
-            appIdentity, 0);
         CancelPendingExternalOleDragLeave();
         return;
     }
     // KillTimer leaves already-queued WM_TIMER messages intact. A completion
     // from an older leave must respect the currently armed grace interval.
     if (externalOleDragLeaveDeadline_ != 0 && GetTickCount64() < externalOleDragLeaveDeadline_)
-    {
-        ObserveVirtualPipeline(observation, snowdesktop::external_transfer_observation::Phase::ole_leave_finalize_deferred,
-            appIdentity, 0, externalOleDragLeaveDeadline_);
         return;
-    }
 
     CancelPendingExternalOleDragLeave();
 
@@ -365,8 +333,6 @@ void DesktopApp::FinalizePendingExternalOleDragLeave()
     EndDragSession();
     HideDragHintWindow();
     PresentOleDragInteractionFrame();
-    ObserveVirtualPipeline(observation, snowdesktop::external_transfer_observation::Phase::ole_leave_finalize_return,
-        appIdentity, 0);
 }
 
 HRESULT DesktopApp::HandleOleDragEnter(
@@ -748,12 +714,6 @@ HRESULT DesktopApp::HandleOleDragLeave()
 
 HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
 {
-    namespace diagnostic = snowdesktop::external_transfer_observation;
-    const DWORD observationError = GetLastError();
-    externalOleLeaveObservation_ = diagnostic::Enabled() ? diagnostic::NewTask() : 0;
-    SetLastError(observationError);
-    ObserveVirtualPipeline(externalOleLeaveObservation_, diagnostic::Phase::ole_leave_begin,
-        reinterpret_cast<std::uintptr_t>(this), pointerOnDesktopSurface ? 1 : 0);
     if (dragDropController_.IsExternalDragActive() &&
         pointerOnDesktopSurface &&
         hwnd_ && IsWindow(hwnd_))
@@ -765,16 +725,12 @@ HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
         if (externalOleDragLeavePending_)
         {
             externalOleDragLeaveDeadline_ = GetTickCount64() + kExternalOleDragLeaveGraceMs;
-            ObserveVirtualPipeline(externalOleLeaveObservation_, diagnostic::Phase::ole_leave_armed,
-                reinterpret_cast<std::uintptr_t>(this), 1, externalOleDragLeaveDeadline_);
             return S_OK;
         }
     }
 
     externalOleDragLeavePending_ = true;
     externalOleDragLeaveDeadline_ = 0;
-    ObserveVirtualPipeline(externalOleLeaveObservation_, diagnostic::Phase::ole_leave_armed,
-        reinterpret_cast<std::uintptr_t>(this), 0);
     FinalizePendingExternalOleDragLeave();
     return S_OK;
 }
@@ -1253,7 +1209,6 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         dataObject && !sourceUsesAsyncMode
             ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     bool forceCopyDrop = false;
-    std::uint64_t virtualObservationBatch = 0;
     std::shared_ptr<StagedDropPathLease> stagedDropPathLease;
     const auto adoptStagedDropPaths =
         [&dropPaths, &stagedDropPathLease](
@@ -1312,30 +1267,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             destination->preview.action = DropAction::Copy;
             destination->volumeDefault = false;
         }
-        namespace diagnostic = snowdesktop::external_transfer_observation;
-        std::uint64_t callsite = 0;
-        diagnostic::AdapterScopeIdentity scope{};
-        if (diagnostic::Enabled())
-        {
-            const DWORD saved = GetLastError();
-            callsite = diagnostic::NewTask();
-            snowdesktop::ole_adapter_observation::Event actual;
-            if (snowdesktop::ole_adapter_observation::Current(actual))
-                scope = {actual.session, actual.call, actual.parent, actual.adapter, actual.thread,
-                    actual.depth, static_cast<unsigned>(actual.kind), true};
-            if (callsite) diagnostic::RecordAny(0, diagnostic::Phase::group_slot_callsite_enter,
-                reinterpret_cast<std::uintptr_t>(dataObject), 0, callsite, scope);
-            SetLastError(saved);
-        }
         *effect = DropExternalSlotContent(dataObject, *destination, *effect,
-            sourceUsesAsyncMode, dropPaths, callsite);
-        if (callsite)
-        {
-            const DWORD saved = GetLastError();
-            diagnostic::RecordAny(0, diagnostic::Phase::group_slot_callsite_return,
-                reinterpret_cast<std::uintptr_t>(dataObject), static_cast<std::int64_t>(*effect), callsite, scope);
-            SetLastError(saved);
-        }
+            sourceUsesAsyncMode, dropPaths);
         EndDragSession();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return S_OK;
@@ -1781,24 +1714,8 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             destination.volumeDefault = snowdesktop::default_file_drop_action::Requested(keyState, *effect);
             destination.preview.action = DropActionFromMods(static_cast<int>(
                 snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect)));
-            namespace observation = snowdesktop::external_transfer_observation;
-            std::uint64_t callsite = 0;
-            observation::AdapterScopeIdentity scope;
-            if (observation::Enabled())
-            {
-                callsite = observation::NewTask();
-                snowdesktop::ole_adapter_observation::Event event;
-                if (snowdesktop::ole_adapter_observation::Current(event))
-                    scope = {event.session, event.call, event.parent, event.adapter, event.thread,
-                        event.depth, static_cast<unsigned>(event.kind), true};
-                if (callsite) observation::RecordAny(0, observation::Phase::desktop_file_callsite_enter,
-                    reinterpret_cast<std::uintptr_t>(dataObject), 0, callsite, scope);
-            }
-            const DWORD accepted = DropExternalSlotContent(dataObject, destination,
-                destination.volumeDefault ? *effect : selectedEffect, true, {}, callsite);
-            if (callsite) observation::RecordAny(0, observation::Phase::desktop_file_callsite_return,
-                reinterpret_cast<std::uintptr_t>(dataObject), static_cast<std::int64_t>(accepted), callsite, scope);
-            return accepted;
+            return DropExternalSlotContent(dataObject, destination,
+                destination.volumeDefault ? *effect : selectedEffect, true, {});
         });
     if (delayedDesktopDrop)
     {
@@ -1848,7 +1765,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         auto stagedVirtualPaths =
             TryMaterializeVirtualFilesFromDataObject(
             dataObject, delayedFileDescriptors,
-            &allVirtualFilesMaterialized, &virtualObservationBatch);
+            &allVirtualFilesMaterialized);
         if (!allVirtualFilesMaterialized)
         {
             for (const auto& stagedPath : stagedVirtualPaths)
@@ -2686,62 +2603,12 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
                 {}, asyncCompletion);
         if (!sourceSupportsAsync)
             DwmFlush();
-        namespace diagnostic = snowdesktop::external_transfer_observation;
-        const auto virtualSourceIdentity = reinterpret_cast<std::uintptr_t>(dataObject);
-        if (virtualObservationBatch)
-        {
-            for (std::size_t i = 0; i < dropPaths.size(); ++i)
-            {
-                const auto& path = dropPaths[i];
-                const auto size = path.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                    ? diagnostic::BlobLimit() + 1 : path.size() * sizeof(wchar_t);
-                diagnostic::RecordTaskBlob(virtualObservationBatch, diagnostic::Phase::virtual_pipeline_path,
-                    virtualSourceIdentity, static_cast<std::uint64_t>(i), path.data(), size);
-            }
-            ObserveVirtualPipeline(virtualObservationBatch, diagnostic::Phase::virtual_pipeline_enter,
-                virtualSourceIdentity, diagnostic::ObservedSize(dropPaths.size()));
-        }
-        bool executed = false;
-        if (virtualObservationBatch)
-        {
-            const auto runPipeline = [&] {
-                return ExecuteDropPipeline(
-                    sourceList, preview,
-                    [lease = stagedDropPathLease, completion = std::move(asyncCompletion),
-                        batch = virtualObservationBatch, sourceIdentity = virtualSourceIdentity](bool succeeded) {
-                        ObserveVirtualPipeline(batch, diagnostic::Phase::virtual_completion_enter, sourceIdentity, succeeded ? 1 : 0);
-                        if (completion) completion(succeeded);
-                        ObserveVirtualPipeline(batch, diagnostic::Phase::virtual_completion_return, sourceIdentity, succeeded ? 1 : 0);
-                    },
-                    !sourceSupportsAsync, {}, virtualObservationBatch);
-            };
-            std::uint64_t synchronousWork = 0;
-            if (!sourceSupportsAsync)
-            {
-                const DWORD saved = GetLastError(); synchronousWork = diagnostic::NewTask(); SetLastError(saved);
-            }
-            if (synchronousWork)
-            {
-                diagnostic::Scope scope(virtualObservationBatch, synchronousWork);
-                diagnostic::Record(virtualObservationBatch, diagnostic::Phase::virtual_sync_file_scope_enter,
-                    virtualSourceIdentity, 0, synchronousWork);
-                executed = runPipeline();
-                diagnostic::Record(virtualObservationBatch, diagnostic::Phase::virtual_sync_file_scope_return,
-                    virtualSourceIdentity, executed ? 1 : 0, synchronousWork);
-            }
-            else executed = runPipeline();
-            ObserveVirtualPipeline(virtualObservationBatch, diagnostic::Phase::virtual_pipeline_return,
-                virtualSourceIdentity, executed ? 1 : 0);
-        }
-        else
-        {
-            executed = ExecuteDropPipeline(
-                sourceList, preview,
-                [lease = stagedDropPathLease, completion = std::move(asyncCompletion)](bool succeeded) {
-                    if (completion) completion(succeeded);
-                },
-                !sourceSupportsAsync);
-        }
+        bool executed = ExecuteDropPipeline(
+            sourceList, preview,
+            [lease = stagedDropPathLease, completion = std::move(asyncCompletion)](bool succeeded) {
+                if (completion) completion(succeeded);
+            },
+            !sourceSupportsAsync);
         if (executed)
         {
             if (dockFolderPopupTarget)

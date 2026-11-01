@@ -13,7 +13,6 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
-#include "common/background_work_observation.h"
 
 namespace snowdesktop
 {
@@ -32,25 +31,14 @@ public:
     BackgroundWork& operator=(const BackgroundWork&) = delete;
 
     template<class Work, class Apply>
-    bool Submit(std::wstring key, Work work, Apply apply, HWND window, UINT message,
-        std::uintptr_t observationContext = 0)
+    bool Submit(std::wstring key, Work work, Apply apply, HWND window, UINT message)
     {
         std::lock_guard lock(state_->mutex);
         if (state_->stopped) return false;
         state_->window = window;
         state_->message = message;
-        if (const auto existing = state_->live.find(key); existing != state_->live.end())
-        {
-            background_work_observation::Record(background_work_observation::Phase::coalesced,
-                state_.get(), observationContext, existing->second, window, message);
-            return true;
-        }
-        if (state_->live.size() >= capacity_)
-        {
-            background_work_observation::Record(background_work_observation::Phase::queue_full,
-                state_.get(), observationContext, 0, window, message);
-            return false;
-        }
+        if (state_->live.contains(key)) return true;
+        if (state_->live.size() >= capacity_) return false;
         while (started_ < workers_)
         {
             try { std::thread([state = state_] { Run(state); }).detach(); }
@@ -64,10 +52,8 @@ public:
                 auto result = std::make_shared<Result>();
                 try { *result = work(); } catch (...) { /* deliver an empty failure */ }
                 return [result, apply = std::move(apply)]() mutable { apply(std::move(*result)); };
-            }, observationContext});
+            }});
         state_->live.emplace(std::move(key), id);
-        background_work_observation::Record(background_work_observation::Phase::queued,
-            state_.get(), observationContext, id, window, message);
         state_->changed.notify_one();
         return true;
     }
@@ -108,8 +94,6 @@ public:
         for (unsigned count = 0; count < 32; ++count)
         {
             Completion apply;
-            std::uintptr_t observationContext = 0;
-            unsigned long long observationSerial = 0;
             {
                 std::lock_guard lock(state_->mutex);
                 if (state_->stopped || state_->ready.empty()) break;
@@ -119,25 +103,11 @@ public:
                 auto result = std::move(*ready);
                 state_->ready.erase(ready);
                 const auto live = state_->live.find(result.key);
-                if (live == state_->live.end() || live->second != result.id)
-                {
-                    background_work_observation::Record(background_work_observation::Phase::discarded,
-                        state_.get(), result.observationContext, result.id);
-                    continue;
-                }
+                if (live == state_->live.end() || live->second != result.id) continue;
                 state_->live.erase(live);
-                observationContext = result.observationContext;
-                observationSerial = result.id;
                 apply = std::move(result.apply);
             }
-            if (apply)
-            {
-                background_work_observation::Record(background_work_observation::Phase::apply_enter,
-                    state_.get(), observationContext, observationSerial);
-                apply();
-                background_work_observation::Record(background_work_observation::Phase::apply_return,
-                    state_.get(), observationContext, observationSerial);
-            }
+            if (apply) apply();
             if (std::chrono::steady_clock::now() >= deadline) break;
         }
         std::lock_guard lock(state_->mutex);
@@ -149,8 +119,8 @@ public:
     }
 
 private:
-    struct Job { std::wstring key; unsigned long long id; std::function<Completion()> run; std::uintptr_t observationContext = 0; };
-    struct Ready { std::wstring key; unsigned long long id; Completion apply; std::uintptr_t observationContext = 0; };
+    struct Job { std::wstring key; unsigned long long id; std::function<Completion()> run; };
+    struct Ready { std::wstring key; unsigned long long id; Completion apply; };
     struct State
     {
         std::mutex mutex;
@@ -177,28 +147,12 @@ private:
                 job = std::move(state->queue.front());
                 state->queue.pop_front();
             }
-            background_work_observation::Record(background_work_observation::Phase::worker_enter,
-                state.get(), job.observationContext, job.id);
             auto completion = job.run();
-            background_work_observation::Record(background_work_observation::Phase::worker_return,
-                state.get(), job.observationContext, job.id);
             std::unique_lock lock(state->mutex);
             const auto live = state->live.find(job.key);
-            if (state->stopped || live == state->live.end() || live->second != job.id)
-            {
-                background_work_observation::Record(background_work_observation::Phase::discarded,
-                    state.get(), job.observationContext, job.id);
-                continue;
-            }
-            state->ready.push_back({std::move(job.key), job.id, std::move(completion), job.observationContext});
-            background_work_observation::Record(background_work_observation::Phase::ready,
-                state.get(), job.observationContext, job.id, state->window, state->message);
-            if (state->window)
-            {
-                const BOOL posted = PostMessageW(state->window, state->message, 0, 0);
-                background_work_observation::Record(background_work_observation::Phase::post_result,
-                    state.get(), job.observationContext, job.id, state->window, state->message, posted != FALSE);
-            }
+            if (state->stopped || live == state->live.end() || live->second != job.id) continue;
+            state->ready.push_back({std::move(job.key), job.id, std::move(completion)});
+            if (state->window) PostMessageW(state->window, state->message, 0, 0);
             auto notify = state->onReady;
             lock.unlock();
             if (notify)

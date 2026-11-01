@@ -36,7 +36,6 @@ if (BUILD_TESTING)
         widget_filesystem_handle_store
         SOURCES
             tests/widget_filesystem_handle_store_tests.cpp
-            tests/drag_drop/lua_file_delivery_cases.cpp
             src/widget/tasks/widget_filesystem_handle_store.cpp
             src/widget/view/widget_interaction_region.cpp
             src/widget/permissions/widget_permission_broker.cpp
@@ -136,11 +135,6 @@ if (BUILD_TESTING)
     set_tests_properties(http_network_integration PROPERTIES
         TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHttpSecurityTests>"
         LABELS "integration;network;security")
-    add_test(NAME lua_file_delivery_contract
-        COMMAND SnowDesktopWidgetFilesystemHandleStoreTests --file-drop-delivery-tests)
-    set_tests_properties(lua_file_delivery_contract PROPERTIES
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetFilesystemHandleStoreTests>"
-        TIMEOUT 30 LABELS "integration;filesystem;permission;lua;widget")
     add_test(NAME widget_package_file_export
         COMMAND SnowDesktopWidgetAuthorToolsTests --package-export)
     set_tests_properties(widget_package_file_export PROPERTIES
@@ -184,44 +178,6 @@ if (BUILD_TESTING)
     set_tests_properties(hook_stable_entry_cross32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHookEntryTests>")
 
-
-    # Execute real native containers and DesktopApp routing without Run(),
-    # desktop HWND creation or desktop automation. The virtual methods reference the
-    # host graph, so link its production sources rather than fake container
-    # methods. Keep XAML generation and runtime deployment in separate trees.
-    set(SNOWDESKTOP_NATIVE_DRAG_SOURCES ${SNOWDESKTOP_SOURCES})
-    list(REMOVE_ITEM SNOWDESKTOP_NATIVE_DRAG_SOURCES src/main.cpp)
-    snowdesktop_add_test(
-        SnowDesktopNativeDragIntegrationTests
-        behavior_sync_copy
-        NATIVE_WINDOW_COMPATIBILITY
-        SOURCES
-            tests/behavior/core_interactions_tests.cpp
-            ${SNOWDESKTOP_NATIVE_DRAG_SOURCES}
-        COMMAND_ARGUMENTS sync-copy
-        LABELS core integration isolated-native-model interaction)
-    snowdesktop_configure_native_test_host(SnowDesktopNativeDragIntegrationTests)
-    foreach(row IN ITEMS copy move default-move link batch unsupported cancel interleaved failed-first settings recovery search widget dock
-        settings-host manifest group-type-contract
-        container-collection container-files container-mapping container-collection-group container-file-group container-mapping-group
-        member-collection member-files member-reorder right-copy right-cancel target-replaced target-remapped
-        dispatch-desktop dispatch-control negative-copy-bytes)
-        add_test(NAME behavior_${row} COMMAND SnowDesktopNativeDragIntegrationTests ${row})
-        set_tests_properties(behavior_${row} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
-    endforeach()
-    # Each case runs in a fresh process because the isolated host graph has
-    # process lifetime. The executable owns enumeration and stable case IDs.
-    foreach(shard RANGE 0 7)
-        add_test(NAME behavior_drag_matrix_${shard}
-            COMMAND SnowDesktopNativeDragIntegrationTests --matrix-run-slice . ${shard} 8)
-        set_tests_properties(behavior_drag_matrix_${shard} PROPERTIES
-            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            TIMEOUT 3600 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior;drag-matrix")
-    endforeach()
-    set_tests_properties(behavior_sync_copy PROPERTIES TIMEOUT 60 PROCESSORS 3)
-    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
 
     include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
     snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts

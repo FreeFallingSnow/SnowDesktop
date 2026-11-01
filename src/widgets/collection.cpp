@@ -17,8 +17,6 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "core/drop_model.h"
-#include "drag_drop/external_transfer_observation.h"
-#include "ui/input/private_pointer.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "layout/item_render_layer_rules.h"
 #include "layout/collection_titleless_rules.h"
@@ -1244,30 +1242,6 @@ void Collection::OnItemsDropped(const std::vector<Item*>& sourceItems, Container
 size_t Collection::GetDropInsertIndex(Slot* targetSlot, HitRegion region) const
 {
     size_t insertAt = targetSlot ? targetSlot->GetIndex() : (data_ ? data_->itemKeys.size() : 0);
-    // Observe the slot index already used by this production calculation.
-    // The indexed model key is a value snapshot, not proof of the slot's Item.
-    namespace diagnostic = snowdesktop::external_transfer_observation;
-    if (diagnostic::Enabled())
-    {
-        const DWORD saved = GetLastError();
-        const auto id = diagnostic::NewTask();
-        const auto native = snowdesktop::private_pointer::CurrentDeliveryIdentity();
-        const diagnostic::NativeScopeIdentity scope{native.session, native.event, native.delivery,
-            native.forward, native.ownerThread, native.forwarded, native.queuedEvent};
-        diagnostic::RecordAny(0, diagnostic::Phase::collection_preview_slot,
-            reinterpret_cast<std::uintptr_t>(targetSlot), targetSlot ? diagnostic::ObservedSize(insertAt) : -1, id, {}, scope);
-        diagnostic::RecordAny(0, diagnostic::Phase::collection_preview_boundary,
-            reinterpret_cast<std::uintptr_t>(this), static_cast<std::int64_t>(region), id, {}, scope);
-        if (targetSlot && data_ && insertAt < data_->itemKeys.size())
-        {
-            const auto& key = data_->itemKeys[insertAt];
-            const auto bytes = key.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                ? diagnostic::BlobLimit() + 1 : key.size() * sizeof(wchar_t);
-            diagnostic::RecordBlob(diagnostic::Phase::collection_preview_index_key,
-                reinterpret_cast<std::uintptr_t>(this), id, {}, key.data(), bytes);
-        }
-        SetLastError(saved);
-    }
     if (targetSlot && region == HitRegion::SortAfter)
         ++insertAt;
     return data_ ? std::min(insertAt, data_->itemKeys.size()) : insertAt;

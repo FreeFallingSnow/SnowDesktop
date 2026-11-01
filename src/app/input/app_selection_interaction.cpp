@@ -3,8 +3,6 @@
 #include "shell/shell_extension_service.h"
 #include "drag_drop/drag_input_rules.h"
 #include "widgets/single_cell_widget_rules.h"
-#include "drag_drop/external_transfer_observation.h"
-#include "ui/input/private_pointer.h"
 
 // Selection projection, keyboard focus sync and marquee selection.
 
@@ -844,25 +842,6 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
     else
     {
         marqueeRect_ = NormalizeRect(marqueeAnchorPoint_, current);
-        namespace diagnostic = snowdesktop::external_transfer_observation;
-        std::uint64_t observation = 0;
-        std::size_t observedCount = 0;
-        std::size_t observationLimit = 0;
-        diagnostic::NativeScopeIdentity scope{};
-        if (diagnostic::Enabled())
-        {
-            const DWORD saved = GetLastError();
-            observation = diagnostic::NewTask();
-            observationLimit = diagnostic::EventLimit() / 2;
-            const auto native = snowdesktop::private_pointer::CurrentDeliveryIdentity();
-            scope = {native.session, native.event, native.delivery, native.forward,
-                native.ownerThread, native.forwarded, native.queuedEvent};
-            diagnostic::RecordAny(0, diagnostic::Phase::desktop_marquee_enter,
-                reinterpret_cast<std::uintptr_t>(this), 0, observation, {}, scope);
-            diagnostic::RecordBlob(diagnostic::Phase::desktop_marquee_rect,
-                reinterpret_cast<std::uintptr_t>(this), observation, {}, &marqueeRect_, sizeof(marqueeRect_));
-            SetLastError(saved);
-        }
         for (auto& itemObject : items_oo_)
         {
             auto* icon = dynamic_cast<DesktopIcon*>(itemObject.get());
@@ -874,22 +853,6 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             RECT selectionRect = item->largeIcon ? GetLargeIconFrameRect(*item)
                 : GetItemSelectionRect(item->bounds, false);
             item->selected = RectsIntersect(selectionRect, marqueeRect_);
-            if (observation)
-            {
-                const DWORD saved = GetLastError();
-                if (observedCount < observationLimit)
-                {
-                    const auto& key = item->layoutKey;
-                    const auto bytes = key.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                        ? diagnostic::BlobLimit() + 1 : key.size() * sizeof(wchar_t);
-                    diagnostic::RecordAny(0, diagnostic::Phase::desktop_marquee_item_state,
-                        reinterpret_cast<std::uintptr_t>(item), item->selected ? 1 : 0, observation, {}, scope);
-                    diagnostic::RecordBlob(diagnostic::Phase::desktop_marquee_item_key,
-                        reinterpret_cast<std::uintptr_t>(item), observation, {}, key.data(), bytes);
-                }
-                ++observedCount;
-                SetLastError(saved);
-            }
         }
         for (auto& widget : widgets_)
         {
@@ -900,32 +863,6 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
                 continue;
             widget.selected = RectsIntersect(
                 GetItemSelectionRect(widget.bounds, false), marqueeRect_);
-            if (observation)
-            {
-                const DWORD saved = GetLastError();
-                if (observedCount < observationLimit)
-                {
-                    const auto& key = widget.id;
-                    const auto bytes = key.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                        ? diagnostic::BlobLimit() + 1 : key.size() * sizeof(wchar_t);
-                    diagnostic::RecordAny(0, diagnostic::Phase::desktop_marquee_widget_state,
-                        reinterpret_cast<std::uintptr_t>(&widget), widget.selected ? 1 : 0, observation, {}, scope);
-                    diagnostic::RecordBlob(diagnostic::Phase::desktop_marquee_widget_id,
-                        reinterpret_cast<std::uintptr_t>(&widget), observation, {}, key.data(), bytes);
-                }
-                ++observedCount;
-                SetLastError(saved);
-            }
-        }
-        if (observation)
-        {
-            const DWORD saved = GetLastError();
-            if (observedCount > observationLimit)
-                diagnostic::RecordAny(0, diagnostic::Phase::desktop_marquee_truncated,
-                    reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(observedCount), observation, {}, scope);
-            diagnostic::RecordAny(0, diagnostic::Phase::desktop_marquee_return,
-                reinterpret_cast<std::uintptr_t>(this), diagnostic::ObservedSize(observedCount), observation, {}, scope);
-            SetLastError(saved);
         }
     }
 }

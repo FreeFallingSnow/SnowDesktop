@@ -1,7 +1,6 @@
 #pragma once
 
 #include "pending_drop_completion.h"
-#include "external_transfer_observation.h"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -23,7 +22,6 @@ struct Services
     std::function<void()> savePins;
     std::function<void(const std::vector<std::wstring>&)> forgetMovedKeys;
     std::function<void()> refresh;
-    std::uint64_t observationBatch = 0;
 };
 
 // One production transaction owns the captured placement, actual file outputs,
@@ -47,26 +45,6 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
         pinToDock = preview.pinMaterializedItemsToDock, dockInsertIndex = preview.dockInsertIndex,
         completion = std::move(completion)](bool succeeded) mutable {
         if (completed->exchange(true)) return;
-        if (services.observationBatch)
-        {
-            namespace diagnostic = external_transfer_observation;
-            const auto identity = reinterpret_cast<std::uintptr_t>(result.get());
-            diagnostic::Record(services.observationBatch, diagnostic::Phase::virtual_result_outputs,
-                identity, diagnostic::ObservedSize(result->outputs.size()));
-            for (std::size_t i = 0; i < result->outputs.size(); ++i)
-            {
-                const auto observePath = [&](diagnostic::Phase phase, const std::wstring& path) noexcept {
-                    const auto size = path.size() > diagnostic::BlobLimit() / sizeof(wchar_t)
-                        ? diagnostic::BlobLimit() + 1 : path.size() * sizeof(wchar_t);
-                    diagnostic::RecordTaskBlob(services.observationBatch, phase, identity,
-                        static_cast<std::uint64_t>(i), path.data(), size);
-                };
-                observePath(diagnostic::Phase::virtual_result_source, result->outputs[i].source);
-                observePath(diagnostic::Phase::virtual_result_destination, result->outputs[i].destination);
-                diagnostic::Record(services.observationBatch, diagnostic::Phase::virtual_result_output_flags,
-                    identity, result->outputs[i].referencesSource ? 1 : 0, static_cast<std::uint64_t>(i));
-            }
-        }
         if (!result->outputs.empty())
         {
             if (pinToDock)
