@@ -340,6 +340,22 @@ void DesktopApp::DrawDynamicOverlays(
             return;
         ctx->SetTransform(previousTransform);
     };
+    auto dockPreviewBelongsToCurrentSurface =
+        [&](const DockContainer* targetDock) {
+        const bool targetHostedByDockHost =
+            targetDock && IsDockHostedByPersistentHost(targetDock);
+        const bool targetIsCurrentDock =
+            targetHostedByDockHost &&
+            (!renderingFloatingDock_ ||
+                (renderingPersistentDockHost_ &&
+                    targetDock == renderingPersistentDockHost_->container));
+        // Drawing hosted Dock guidance on the desktop as well leaves a
+        // duplicate under the glass, where it is sampled into a blue halo.
+        return snowdesktop::drag_visual_rules::
+            DropPreviewBelongsToRenderSurface(
+                renderingFloatingDock_, targetHostedByDockHost,
+                targetIsCurrentDock);
+    };
 
     // Both handle drags and Dock item drags share the pair target overlay.
     const bool pairActive = (widgetAction_ == WidgetAction::Move || dragSession_.IsActive()) &&
@@ -383,7 +399,8 @@ void DesktopApp::DrawDynamicOverlays(
                 ScaleWidgetCu(3.0f, cellScale);
             InflateRect(
                 &target, targetPadding, targetPadding);
-            if ((pairActive || widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1)) &&
+            if (!renderingFloatingDock_ &&
+                (pairActive || widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1)) &&
                 snowdesktop::foreground_paint_region::Intersects(
                     updateRect, target, ScaleWidgetCu(2.5f, cellScale) + 2))
                 DrawD2DRoundedRectangle(
@@ -397,11 +414,12 @@ void DesktopApp::DrawDynamicOverlays(
         }
         else if (widgetDockTarget_)
         {
-            if (widgetDockTargetContainer_)
+            if (widgetDockTargetContainer_ &&
+                dockPreviewBelongsToCurrentSurface(widgetDockTargetContainer_))
                 widgetDockTargetContainer_->DrawInsertionPreview(
                     ctx, widgetDockInsertIndex_);
         }
-        else
+        else if (!renderingFloatingDock_)
         {
         GridCell cell = widgetPreviewCell_;
         GridSpan span = widgetPreviewSpan_;
@@ -459,23 +477,7 @@ void DesktopApp::DrawDynamicOverlays(
             const auto* targetDock =
                 dynamic_cast<const DockContainer*>(
                     targetContainer);
-            const bool targetHostedByDockHost =
-                targetDock &&
-                IsDockHostedByPersistentHost(targetDock);
-            const bool targetIsFloatingDock =
-                targetHostedByDockHost &&
-                (!renderingFloatingDock_ ||
-                    (renderingPersistentDockHost_ &&
-                        targetContainer ==
-                            renderingPersistentDockHost_->container));
-            // The desktop pass has no current Dock host. It must still
-            // recognize a hosted target and leave its guidance to that host;
-            // a duplicate below the Dock is blurred into a colored halo.
-            if (!snowdesktop::drag_visual_rules::
-                    DropPreviewBelongsToRenderSurface(
-                        renderingFloatingDock_,
-                        targetHostedByDockHost,
-                        targetIsFloatingDock))
+            if (!dockPreviewBelongsToCurrentSurface(targetDock))
             {
                 return;
             }
@@ -491,6 +493,12 @@ void DesktopApp::DrawDynamicOverlays(
             wc->GetWidgetData() == openPopupWidget &&
             IsPointOccludedByOpenPopup(dragSession_.CurrentPoint()) &&
             (wc == GetGroupPopupView() || targetSlot == popupDragTarget_.Get());
+        // These popup views draw their feedback with their own content clip
+        // and animation. A generic pass would blend the same indicator again.
+        if (popupTarget &&
+            (wc == GetGroupPopupView() ||
+                wc == GetDateGroupedPopupView(GetCollectionPopupRect(*openPopupWidget))))
+            return;
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
                 ResolveDropPreviewLayer(popupTarget) ==
