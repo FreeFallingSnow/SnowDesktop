@@ -87,7 +87,7 @@ void SettingsHostCommit()
 }
 void GroupTypeContract()
 {
-    HostProfile profile;
+    HostProfile profile(true);
     const auto desktopFile = profile.desktop / L"A.needle.txt";
     const auto desktopFolder = profile.desktop / L"Z.needle";
     const auto mapped = profile.root / L"mapped";

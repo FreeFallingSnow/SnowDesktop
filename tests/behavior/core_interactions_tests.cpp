@@ -37,7 +37,6 @@ struct NativeDragIntegrationAccess
     static void BindAsync(DesktopApp& app)
     {
         if (asyncOwner || app.hwnd_ != completionWindow || !IsWindow(completionWindow)) throw std::runtime_error("invalid fixture window");
-        app.iconWork_.Stop();
         for (const auto* clsid : {kDesktopIconClsidThisPC, kDesktopIconClsidUserFiles, kDesktopIconClsidNetwork, kDesktopIconClsidControlPanel, kDesktopIconClsidRecycleBin, kDesktopIconClsidApplications}) app.settingsIconVisibility_[ToUpperInvariant(clsid)] = false;
         for (const auto& entry : snowdesktop::LoadDesktopNamespaceRegistrations()) app.settingsIconVisibility_[ToUpperInvariant(entry.clsid)] = false;
         asyncException = {}; asyncReadMessages = 0;
@@ -67,13 +66,13 @@ struct NativeDragIntegrationAccess
             " completionMessages=" + std::to_string(asyncReadMessages);
     }
     static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
-    static DesktopApp& Scene(bool secondary)
+    static DesktopApp& Scene()
     {
         auto& app = *new DesktopApp;
         GridPage page;
         page.id = L"native-page";
         page.monitorId = L"native-monitor";
-        page.bounds = secondary ? RECT{-800, 0, -400, 300} : RECT{0, 0, 400, 300};
+        page.bounds = RECT{0, 0, 400, 300};
         page.workArea = page.visualWorkArea = page.bounds;
         page.columns = 4; page.rows = 3;
         page.cellWidth = page.cellHeight = 80;
@@ -81,26 +80,13 @@ struct NativeDragIntegrationAccess
         page.gapX = page.gapY = 20;
         page.marginX = page.marginY = 10;
         app.gridPages_.push_back(page);
-        for (int i = 0; i < 2; ++i)
-        {
-            DesktopItem item;
-            item.name = i ? L"B" : L"A";
-            item.layoutKey = item.parsingName = item.name;
-            item.gridCell = {page.id, i * 2, 0};
-            item.gridSpan = {1, 1};
-            item.selected = true;
-            item.bounds = {page.bounds.left + 10 + i * 200, 10,
-                page.bounds.left + 90 + i * 200, 90};
-            app.items_.push_back(std::move(item));
-        }
-        app.containers_.push_back(std::make_unique<DesktopGrid>(&app.gridPages_, &app.items_, &app));
-        for (auto& item : app.items_)
-            app.items_oo_.push_back(std::make_unique<DesktopIcon>(&item, app.containers_.front().get(), &app));
         return app;
     }
     static void ConfigureModel(DesktopApp& app, const std::filesystem::path& layout)
     {
         app.items_oo_.clear(); app.containers_.clear(); app.items_.clear();
+        app.iconWork_.Stop();
+        app.desktopItemsReady_ = true;
         app.hwnd_ = completionWindow;
         app.initializationExperimentDirectory_ = layout;
         app.generalSettings_.dockEnabled = false;
@@ -120,10 +106,6 @@ struct NativeDragIntegrationAccess
         item.parsingName = path.wstring();
         item.layoutKey = ToUpperInvariant(path.wstring());
         item.gridSpan = {1, 1};
-        item.iconBitmap = CreateBitmap(512, 512, 1, 32, nullptr);
-        if (!item.iconBitmap) throw std::runtime_error("native fixture bitmap allocation failed");
-        item.iconBitmapSize = {512, 512};
-        item.iconState = IconState::FullQuality;
         return item;
     }
     static void PopulateModel(DesktopApp& app, const std::vector<std::filesystem::path>& files, int source)
@@ -230,7 +212,7 @@ struct HostProfile : Profile
     Apartment apartment;
     WindowOwner window;
     DesktopApp* app = nullptr;
-    HostProfile()
+    explicit HostProfile(bool refresh = false)
     {
         try {
             window.handle = CreateWindowExW(0, L"STATIC", L"Behavior completion", 0,
@@ -238,13 +220,12 @@ struct HostProfile : Profile
             Require(window.handle != nullptr, "create owned message-only window");
             Access::completionWindow = window.handle;
             // No Run(): no desktop window, hooks, Explorer or user's files are involved.
-            app = &Access::Scene(false);
+            app = &Access::Scene();
             fs::create_directories(root / L"layout");
             Access::ConfigureModel(*app, root / L"layout");
-            Write(desktop / L"Sentinel.txt", "untouched");
-            Access::PopulateModel(*app, {desktop / L"Sentinel.txt"}, 0);
-            Access::PrepareReload(*app); Access::BindAsync(*app);
-            Require(Access::Save(*app), "persist starting layout");
+            // Search/settings use the real host model/controller but do not
+            // need Shell refresh dispatch, a timer or an initial layout write.
+            if (refresh) { Access::PrepareReload(*app); Access::BindAsync(*app); }
         } catch (...) { Stop(); throw; }
     }
     ~HostProfile() { Stop(); }

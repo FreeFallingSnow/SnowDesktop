@@ -159,4 +159,5 @@ function(snowdesktop_configure_native_test_host target)
         PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host")
     target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/tests")
+    snowdesktop_use_host_objects(${target})
 endfunction()
