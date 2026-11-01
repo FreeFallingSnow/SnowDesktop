@@ -176,7 +176,11 @@ if (request.component == "demo-scene")
             const auto frame = demo::Evaluate(scene, scene.FrameMilliseconds(frameIndex));
             lastMousePoint_ = {static_cast<LONG>(frame.cursor.x), static_cast<LONG>(frame.cursor.y)};
             context->SetTarget(target.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
-            context->BeginDraw(); context->DrawBitmap(background.Get());
+            context->BeginDraw();
+            if (request.transparent || request.contentOnly)
+                context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+            else
+                context->DrawBitmap(background.Get());
             brushCache_.clear(); brushCacheContext_ = context.Get();
             for (const auto& presentation : frame.surfaces)
             {
