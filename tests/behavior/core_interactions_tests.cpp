@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "widgets/widget_folder_search.h"
 #include "ui/input/private_pointer.h"
 #include "layout/folder_sort_rules.h"
@@ -16,13 +17,20 @@ struct NativeDragIntegrationAccess
     static inline WNDPROC previousWindowProc = nullptr;
     static inline std::exception_ptr asyncException;
     static inline std::uint64_t asyncReadMessages = 0;
+    static inline std::uint64_t fileCompletionMessages = 0;
+    static inline bool fileDispatch = false;
+    static inline LONG_PTR previousWindowData = 0;
     static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
         if (asyncOwner && window == completionWindow &&
-            (message == kBackgroundShellReadyMessage ||
+            (message == kBackgroundShellReadyMessage || (fileDispatch && message == kShellFileOperationCompletedMessage) ||
                 (message == WM_TIMER && (wp == kDesktopHostWatchTimerId || wp == kShellChangeTimerId))))
         {
             try {
+                if (message == kShellFileOperationCompletedMessage) {
+                    ++fileCompletionMessages;
+                    return DesktopApp::WndProc(window, message, wp, lp);
+                }
                 if (message == WM_TIMER && wp == kShellChangeTimerId) {
                     // The production refresh callback schedules this timer to
                     // apply its completed snapshot and any pending disk reload.
@@ -39,7 +47,7 @@ struct NativeDragIntegrationAccess
         if (asyncOwner || app.hwnd_ != completionWindow || !IsWindow(completionWindow)) throw std::runtime_error("invalid fixture window");
         for (const auto* clsid : {kDesktopIconClsidThisPC, kDesktopIconClsidUserFiles, kDesktopIconClsidNetwork, kDesktopIconClsidControlPanel, kDesktopIconClsidRecycleBin, kDesktopIconClsidApplications}) app.settingsIconVisibility_[ToUpperInvariant(clsid)] = false;
         for (const auto& entry : snowdesktop::LoadDesktopNamespaceRegistrations()) app.settingsIconVisibility_[ToUpperInvariant(entry.clsid)] = false;
-        asyncException = {}; asyncReadMessages = 0;
+        asyncException = {}; asyncReadMessages = 0; fileCompletionMessages = 0;
         previousWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&AsyncWindowProc)));
         if (!previousWindowProc) throw std::runtime_error("install fixture dispatcher");
         asyncOwner = &app;
@@ -49,6 +57,9 @@ struct NativeDragIntegrationAccess
     {
         if (asyncOwner != &app) return;
         KillTimer(completionWindow, kShellChangeTimerId); KillTimer(completionWindow, kDesktopHostWatchTimerId);
+        KillTimer(completionWindow, kExternalOleDragLeaveGraceTimerId);
+        if (fileDispatch) SetWindowLongPtrW(completionWindow, GWLP_USERDATA, previousWindowData);
+        fileDispatch = false; previousWindowData = 0;
         SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWindowProc));
         previousWindowProc = nullptr; asyncOwner = nullptr;
     }
@@ -186,6 +197,7 @@ struct NativeDragIntegrationAccess
     }
     static const auto& Widgets(const DesktopApp& app) { return app.widgets_; }
 #include "module_access.inc"
+#include "drag_access.inc"
 };
 namespace behavior
 {
@@ -240,6 +252,7 @@ struct HostProfile : Profile
 };
 }
 #include "host_contracts.inc"
+#include "drag_contracts.inc"
 int main(int argc, char** argv)
 {
     try {
@@ -248,6 +261,11 @@ int main(int argc, char** argv)
         if (behavior::scene == "settings-host") behavior::SettingsHostCommit();
         else if (behavior::scene == "group-type-contract") behavior::GroupTypeContract();
         else if (behavior::scene == "search") behavior::Search();
+        else if (behavior::scene == "drag-source") behavior::DragSource();
+        else if (behavior::scene == "drag-files") behavior::DragFiles();
+        else if (behavior::scene == "drag-batches") behavior::DragBatches();
+        else if (behavior::scene == "drag-partial") behavior::DragPartial();
+        else if (behavior::scene == "drag-release") behavior::DragRelease();
         else throw std::runtime_error("unknown behavior");
         std::cout << "PASS " << behavior::scene << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
