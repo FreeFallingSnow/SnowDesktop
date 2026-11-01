@@ -34,10 +34,22 @@ static void SeedGroupTypeSources(DesktopApp& app,
     first.id = L"type-desktop"; first.type = DesktopWidgetType::FileCategories;
     first.title = first.customTitle = L"Desktop source";
     first.gridCell = {L"__page:1",0,0}; first.gridSpan = {4,3}; first.autoCollect = false;
+    // Use the same Shell-produced identities as the subsequent real refresh.
+    // A path spelling (for example TMP's 8.3 alias) is not a desktop item key.
+    snowdesktop::shell_refresh::Request request;
+    request.iconVisibility = app.settingsIconVisibility_;
+    snowdesktop::shell_refresh::Snapshot snapshot;
+    if (!snowdesktop::shell_refresh::ReadLocalDesktop(request, snapshot, false))
+        throw std::runtime_error("enumerate the isolated desktop through the production reader");
+    app.items_ = std::move(snapshot.desktopItems);
     for (const auto& path : desktop)
     {
-        auto item = FileItem(path);
-        first.itemKeys.push_back(item.layoutKey); app.items_.push_back(std::move(item));
+        const auto found = std::find_if(app.items_.begin(), app.items_.end(), [&](const auto& item) {
+            return std::filesystem::equivalent(item.parsingName, path);
+        });
+        if (found == app.items_.end())
+            throw std::runtime_error("production desktop enumeration must contain every seeded source item");
+        first.itemKeys.push_back(found->layoutKey);
     }
     DesktopWidget second;
     second.id = L"type-mapped"; second.type = DesktopWidgetType::FolderMapping;

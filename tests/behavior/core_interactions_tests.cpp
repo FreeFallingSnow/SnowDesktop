@@ -248,7 +248,9 @@ struct Profile
 {
     snowdesktop::test::TemporaryDirectory temporary;
     snowdesktop::debug_profile::Session previousSession = snowdesktop::debug_profile::Current();
-    fs::path root = temporary.path, desktop;
+    // Shell enumeration publishes long/canonical paths as item identities.
+    // TMP can contain an 8.3 alias even when .NET displays its long spelling.
+    fs::path root = fs::weakly_canonical(temporary.path), desktop;
     Profile()
     {
         namespace debug = snowdesktop::debug_profile;
