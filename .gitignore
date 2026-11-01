@@ -47,5 +47,7 @@ steam_api64.dll
 steam_appid.txt
 CMakeUserPresets.json
 SnowDesktop_SteamAssets/
+/SnowDesktop_Marketing/
+/SnowDesktop_Website/
 /SnowDesktop-Marketing/
 assets/icon/concepts/

@@ -5,8 +5,8 @@
 ## Pull Request 与独立仓库
 
 - 主项目维护者变更整合到当前 `release/vA.B.C.D`；没有合适版本分支时根据下一版本创建。外部 PR 若以 `main` 为目标，优先协助改目标；已经整合进版本分支时可按授权关闭原 PR 并说明整合位置，提醒后续不直接面向 `main`。不为规范改写贡献者原提交，补充修正独立提交。
-- `website/` 与 `SnowDesktop_SteamAssets/` 只保留各自 `main`，日常内容/资产直接在其 `main` 整理提交，不留下 `release/*`、`codex/*` 等分支。清分支前核对远端、工作区和提交包含关系，确认要保留的提交均在 `main` 后才删本地与远端分支。
-- 独立仓库推送前读取最新远端 `main`，优先正常推送；确需改写时确认不会覆盖他人新提交且保留内容已纳入，仅用 `--force-with-lease`，禁止盲目 `--force`。网站部署还须按 `website/AGENTS.md` 完成备份、构建、部署、线上核对；商店文案另行导入 Steamworks。
+- `SnowDesktop_Website/` 与 `SnowDesktop_SteamAssets/` 只保留各自 `main`，日常内容/资产直接在其 `main` 整理提交，不留下 `release/*`、`codex/*` 等分支。清分支前核对远端、工作区和提交包含关系，确认要保留的提交均在 `main` 后才删本地与远端分支。
+- 独立仓库推送前读取最新远端 `main`，优先正常推送；确需改写时确认不会覆盖他人新提交且保留内容已纳入，仅用 `--force-with-lease`，禁止盲目 `--force`。网站部署还须按 `SnowDesktop_Website/AGENTS.md` 完成备份、构建、部署、线上核对；商店文案另行导入 Steamworks。
 
 ## 提交规范
 

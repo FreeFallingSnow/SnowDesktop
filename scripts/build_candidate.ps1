@@ -37,7 +37,7 @@ function Resolve-CandidatePath([string]$Base,[string]$Relative) {
 }
 function Test-CandidateSourcePath([string]$Relative) {
     return $Relative.Replace('\','/').Split('/')[0] -notin '.git','.build','.build_debug','.codex-probes','.codex-remote-attachments',
-        '.tmp','.vs','.vscode','.remotion','artifacts','out','build','bin','obj','release','TestResults','website','SnowDesktop_SteamAssets'
+        '.tmp','.vs','.vscode','.remotion','artifacts','out','build','bin','obj','release','TestResults','website','SnowDesktop_SteamAssets','SnowDesktop_Website','SnowDesktop_Marketing','SnowDesktop-Marketing'
 }
 function Get-CandidateStore([string]$Root,[switch]$Create) {
     $query=Invoke-InputGit $Root 'rev-parse --path-format=absolute --git-common-dir'

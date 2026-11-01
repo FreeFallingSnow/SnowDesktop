@@ -46,7 +46,7 @@
 - 编译成功但目标场景未验证的代码尝试，在下一轮修改前独立保存为 `try`，首行同时含“编译通过，待验证”和 `build passed, validation pending`；编译失败中间状态不提交。纯组件更新使用组件验证措辞，详见提交规则。
 - `fix/feat/perf` 只描述提交前已实际验证的结果；后续验证用独立 `verify` 记录，不改写已有 `try` 的验证历史。缺陷关联使用 `Refs #编号`，满足实际交付条件前不使用自动关闭指令。
 - 主项目现阶段不合并外部 PR；引导通过 Issues、QQ群和 Steam 测试版反馈，入口见 [CONTRIBUTING.md](CONTRIBUTING.md)。已有贡献者提交与作者信息保留，补充修改另行提交。
-- `website/` 与 `SnowDesktop_SteamAssets/` 是独立仓库，只使用各自 `main`；网站部署按 `website/AGENTS.md`，商店文案另行导入 Steamworks。分支清理及推送前的核对见发布说明。
+- `SnowDesktop_Website/` 与 `SnowDesktop_SteamAssets/` 是独立仓库，只使用各自 `main`；网站部署按 `SnowDesktop_Website/AGENTS.md`，商店文案另行导入 Steamworks。分支清理及推送前的核对见发布说明。
 
 ## 开发与验证默认值
 
