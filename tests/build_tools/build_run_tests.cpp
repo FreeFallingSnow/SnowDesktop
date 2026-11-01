@@ -334,7 +334,16 @@ void test_plans(const fs::path& repo) {
             c.call({"plan","testing","-Batch",batch,"-Revision","0","-Scope","test","-Suites",suite,"-Inputs","tests/fixture.cpp","-Reason","boundary check"},2);
         c.plan("testing",batch,0,"selected","Alpha","test","tests/fixture.cpp");
         c.begin("product");c.plan("product",batch,0,"selected","Beta","module","src/a.txt");
-        c.finish("testing",batch);c.finish("product",batch);
+        auto testing=c.start(c.bound("finish","testing",batch));
+        until([&]{
+            const auto snapshot=c.state();
+            for(const auto& member:snapshot.at("current").at("participants").items)
+                if(member.at("id").str()=="testing")return member.at("state").str()=="finished";
+            return false;
+        });
+        c.finish("product",batch);
+        const auto observed=testing->wait();
+        require(observed.code==0,"Mixed-plan observer failed: "+observed.out+observed.err);
         require(c.result(batch).at("testingPlan").at("buildRequired").boolean&&read(c.root/L"calls.txt")=="build\ntest\n",
             "A test-only participant suppressed another participant's product build");
         std::cout<<"PASS test-only input/suite boundaries and mixed product requirement\n";

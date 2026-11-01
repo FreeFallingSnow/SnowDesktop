@@ -242,6 +242,14 @@ if(BUILD_TESTING AND WIN32)
     endforeach()
     add_test(NAME build_candidate_batches COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --batches)
     add_test(NAME build_candidate_tool_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --tool-verification)
+    # The same existing controls, with their own complete preparation and
+    # failure report. No new native program or business scenario is added.
+    add_test(NAME build_candidate_batches_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --batches-control)
+    add_test(NAME build_candidate_tool_verification_control COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --tool-verification-control)
+    set_tests_properties(build_candidate_batches_control build_candidate_tool_verification_control PROPERTIES
+        TIMEOUT 120 LABELS "tools;integration" PROCESSORS 4
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildCandidateExecutionTests>")
     add_dependencies(SnowDesktopBuildCandidateExecutionTests SnowDesktopTestRuntimeObserver)
     add_test(NAME build_completed_verification COMMAND SnowDesktopBuildCandidateExecutionTests "${CMAKE_CURRENT_SOURCE_DIR}" --completed-verification)
     set_tests_properties(build_completed_verification PROPERTIES TIMEOUT 240 LABELS "tools;integration" PROCESSORS 4

@@ -8,6 +8,8 @@
 
 本目录统一保存开发、测试和发布入口及其实现：
 
+`build_plan_execution` 在同一 PowerShell 宿主内持有真实执行租约，直接检查选择、覆盖和输出契约；持久 Run 的启动与进程归属由专门场景验证。`build_candidate_batches_control`、`build_candidate_tool_verification_control` 分别保存已有的冻结窗口及默认预设负向对照，与各自正向场景独立选择和报告，仍共用同一原生驱动。
+
 `build_candidate_execution` 验证候选生命周期与隔离；`build_candidate_weighted` 单独验证真实加权准入及 Job 硬限制，
 二者共用原生驱动，`--all` 保留完整诊断入口。资源场景在有界观察返回非终态时继续等待同一存活 Run，
 达到场景期限仍未执行则失败并保留排队原因；不重新提交、不关闭内存保护，也不将未执行算作通过。

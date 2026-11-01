@@ -25,6 +25,21 @@ exit 0
     auto plan=Json::object({{"schemaVersion",1},{"batchId",batch},{"configuration","Release"},{"mode","selected"},{"suites",Json::array({"selected"})},{"tests",Json::array({"Alpha","Beta"})},{"tasks",Json::array({Json::object({{"participant","a"},{"requirement",request}}),Json::object({{"participant","b"},{"requirement",second}})})}});
     copy_persistent_entry(repo,root);copy(repo,root,{"scripts/powershell_runtime.bat"});write(root/L".gitignore","/*\n!/scripts/\n!/.gitignore\n");init_git(root);
     Bridge bridge(repo,root,false,true);
+    // Selection/coverage checks share one real leased PowerShell host. Run
+    // startup and persistence are covered by their own lifecycle scenarios.
+    // The bridge owns this handle, including cleanup when an assertion fails.
+    const auto leaseScript=root/L"scripts/plan_fixture_lease.ps1";
+    write(leaseScript,R"PS(param([switch]$Release)
+. (Join-Path $PSScriptRoot 'build_entry.ps1')
+if($Release){Exit-BuildEntry $global:planFixtureLease;$global:planFixtureLease=$null}
+else{
+ $fixtureRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+ $global:planFixtureLease=Enter-BuildEntry $fixtureRoot
+ Assert-EntryExecutionOwner $fixtureRoot
+}
+)PS",true);
+    const auto leased=bridge.invoke(leaseScript);
+    require(leased.code==0,"Cannot lease the plan fixture host: "+leased.out+leased.err);
     auto invoke=[&](const std::string& mode,bool success) {
         write(root/L"behavior",mode);write(folder/wide(batch+".plan.json"),plan.dump());
         auto result=bridge.invoke(root/L"scripts/test_manager.ps1",{"-Mode","plan","-PlanBatch",batch},env,20);
@@ -32,6 +47,9 @@ exit 0
         return Json::parse(read(folder/wide(batch+".coverage.json")));
     };
     auto coverage=invoke("pass",true);require(coverage.at("status").str()=="passed"&&coverage.at("tasks").items.size()==2,"Coverage tasks not passed");
+    const auto runs=root/L".build/collaboration/runs";
+    if(fs::exists(runs))for(const auto& file:fs::directory_iterator(runs))
+        require(!file.path().filename().wstring().ends_with(L".request.json"),"Plan fixture unexpectedly launched a nested persistent Run");
     for(const auto& item:coverage.at("tasks").items)require(item.at("status").str()=="passed","Per-task pass missing");
     require(coverage.at("testExecutablesBeforeRun").items.size()==2,"Fingerprint inventory incomplete");for(const auto& item:coverage.at("testExecutablesBeforeRun").items)require(item.at("sha256").str().size()==64,"Fingerprint missing");
     require(coverage.at("testDefinitionsBeforeRun").items.size()==2&&coverage.at("executionContext").at("digest").str().size()==64&&!coverage.at("executionContext").at("externalDependenciesClosed").boolean,"Actual test invocation/environment identity was lost or external dependencies were inferred closed");
@@ -55,6 +73,8 @@ exit 0
     coverage=invoke("pass",true);require(coverage.at("postChecks").at("outputIsolation").at("status").str()=="passed","Full output checkpoint missing");
     coverage=invoke("failed",false);require(coverage.at("postChecks").at("outputIsolation").at("status").str()=="not-run","Failed tests ran pass checkpoint");
     write(root/L".build/Release/escaped.dll","controlled output violation");coverage=invoke("pass",false);require(coverage.at("postChecks").at("outputIsolation").at("status").str()=="failed"&&coverage.at("tasks").items[0].at("status").str()=="failed","Output escape passed full suite");
+    const auto released=bridge.invoke(leaseScript,{"-Release"});
+    require(released.code==0,"Cannot release the plan fixture host: "+released.out+released.err);
     std::cout<<"PASS real test manager selection, fingerprints, task coverage, explicit unavailable/zero/skipped failure, cold/legacy host guards, arrangement and full output checkpoints"<<std::endl;
 }
 }

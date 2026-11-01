@@ -325,10 +325,7 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         verified.at("record").at("evidence").at("tests").items.front().at("attempts").items.front().at("report").str()!=result.at("coverage").at("report").str(),
         "Candidate verification reused an old report instead of executing the selected test");
     if(verificationOnly){
-        const auto control=run({executable().wstring(),repo.wstring(),L"--tool-verification-old-preset"},c.root,100,{},true);
-        require(control.code==1&&control.err.find("No-build candidate verification did not execute its selected tooling test")!=std::string::npos,
-            "Default-preset control did not reach the tooling execution assertion: "+control.out+control.err);
-        std::cout<<"PASS tool-labeled candidate no-build verification, unchanged binary, actual fresh report and default-preset control\n";return;
+        std::cout<<"PASS tool-labeled candidate no-build verification, unchanged binary and actual fresh report\n";return;
     }
     auto revision=[&](){const auto tasks=c.call({"task-list"});for(const auto& task:tasks.at("tasks").items)if(task.at("id").str()=="candidate")return std::to_string(task.at("revision").integer());throw std::runtime_error("Missing candidate task");};
     const auto acceptance=c.call({"acceptance-start","candidate","-Batch",batch,"-Revision","0","-TaskRevision",revision(),
@@ -369,10 +366,18 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         }
         until([&]{return !owner_alive(child);});require(unrelated.running(),"Candidate cleanup terminated an unrelated process");fs::remove(gate);
     }
-    const auto control=run({executable().wstring(),repo.wstring(),L"--batches-held-window"},c.root,80,{},true);
-    require(control.code==1&&control.err.find("Source capture did not release the editing window while its candidate compiled")!=std::string::npos,
-        "Frozen-window control did not reach the original editing-blocked assertion: "+control.out+control.err);
-    std::cout<<"PASS v4 cohort sealing, source capture, editing/build overlap, isolated result retirement, saved batch acceptance, failed next inputs and held-window control\n";
+    std::cout<<"PASS v4 cohort sealing, source capture, editing/build overlap, isolated result retirement, saved batch acceptance and failed next inputs\n";
+}
+// Negative controls perform their own complete candidate preparation. Keep
+// them independently selectable instead of recursively repeating that work
+// inside the positive scenario's process deadline.
+void candidate_batch_control(const fs::path& repo,bool verification) {
+    const auto root=temporary(verification?"candidate-tool-verification-control":"candidate-batches-control");
+    const auto control=run({executable().wstring(),repo.wstring(),verification?L"--tool-verification-old-preset":L"--batches-held-window"},root,verification?100:80,{},true);
+    const std::string expected=verification?"No-build candidate verification did not execute its selected tooling test":"Source capture did not release the editing window while its candidate compiled";
+    require(control.code==1&&control.err.find(expected)!=std::string::npos,
+        (verification?"Default-preset control did not reach the tooling execution assertion: ":"Frozen-window control did not reach the original editing-blocked assertion: ")+control.out+control.err);
+    std::cout<<"PASS "<<(verification?"default-preset":"frozen-window")<<" negative control reaches its original assertion\n";
 }
 void artifacts(const fs::path& repo,bool slotReference,bool inputDenied=false) {
     Coordinator c(repo,"candidate-artifacts",true,fixture_parent(repo));
@@ -953,6 +958,8 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
             "Completed reference control failed outside the duplicate-execution assertion: "+negative.out+negative.err);
         std::cout<<"PASS disabled completed-reference path fails the actual duplicate-execution assertion\n";
     }
+    else if(mode=="--tool-verification-control")candidate_batch_control(repo,true);
+    else if(mode=="--batches-control")candidate_batch_control(repo,false);
     else if(mode=="--tool-verification"||mode=="--tool-verification-old-preset")candidate_batches(repo,false,true,mode=="--tool-verification-old-preset");
     else if(mode=="--batches"||mode=="--batches-held-window")candidate_batches(repo,mode=="--batches-held-window");
     else if(mode=="--artifacts"||mode=="--artifacts-slot-reference"||mode=="--artifacts-input-denied")artifacts(repo,mode=="--artifacts-slot-reference",mode=="--artifacts-input-denied");
