@@ -141,14 +141,16 @@ void Pump()
     { TranslateMessage(&message); DispatchMessageW(&message); }
 }
 void RequireClientReady(std::future<std::string>& future, Server& server,
-    std::chrono::seconds timeout, const char* condition)
+    std::chrono::seconds timeout, const char* condition,
+    std::chrono::seconds priorBudget = std::chrono::seconds(0))
 {
     if (future.wait_for(timeout) == std::future_status::ready) return;
     // An async future waits for its worker in its destructor. Close the owned
     // endpoint before throwing, so a blocked pipe client can unwind too.
     server.Stop();
     throw std::runtime_error(std::string("client timeout waiting for ") + condition +
-        " after " + std::to_string(timeout.count()) + "s; fixture endpoint stopped");
+        " (total budget " + std::to_string((timeout + priorBudget).count()) +
+        "s); fixture endpoint stopped");
 }
 std::string Complete(std::future<std::string>& future, Server& server)
 {
@@ -158,7 +160,7 @@ std::string Complete(std::future<std::string>& future, Server& server)
         Pump();
         MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
     }
-    RequireClientReady(future, server, std::chrono::seconds(0), "UI-dispatched pipe response (5s deadline)");
+    RequireClientReady(future, server, std::chrono::seconds(0), "UI-dispatched pipe response", std::chrono::seconds(5));
     return future.get();
 }
 

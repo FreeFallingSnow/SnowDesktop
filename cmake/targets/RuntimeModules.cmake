@@ -12,7 +12,10 @@ function(snowdesktop_add_runtime_module target)
     if(MSVC)
         set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY
             "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /utf-8)
+        # Preserve the host's Release crash/debug symbols in the shared objects.
+        # Debug keeps CMake's own information format without overriding /Zi.
+        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /utf-8
+            $<$<CONFIG:Release>:/Z7>)
         target_compile_definitions(${target} PRIVATE
             _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     else()

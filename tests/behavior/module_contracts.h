@@ -266,14 +266,31 @@ void GroupTypeContract()
     // Each source starts file-before-folder, so both must actually reorder.
     Access::SeedGroupTypeSources(*profile.app,{desktopFile,desktopFolder},mapped);
     const std::vector<fs::path> expected{desktopFolder,desktopFile,mappedFolder,mappedFile};
-    const auto check = [&] {
+    const auto check = [&](const char* phase) {
         const auto ordered = Access::GroupTypeOrder(*profile.app);
-        Require(ordered.size() == expected.size() &&
+        const bool correctOrder = ordered.size() == expected.size() &&
             std::equal(ordered.begin(),ordered.end(),expected.begin(),expected.end(),
-                [](const auto& a,const auto& b) { return fs::equivalent(a,b); }),
-            "user contract: retain source sections and place folders before files inside each section");
+                [](const auto& a,const auto& b) { return fs::equivalent(a,b); });
         const auto& widgets = Access::Widgets(*profile.app);
         const auto group = std::find_if(widgets.begin(),widgets.end(),[](const auto& value) { return value.id==L"type-group"; });
+        if (!correctOrder)
+        {
+            const auto print = [&](const char* label, const auto& paths) {
+                std::cerr << label;
+                for (const auto& path : paths)
+                    std::cerr << ' ' << path.lexically_relative(profile.root).generic_string();
+                std::cerr << '\n';
+            };
+            std::cerr << "group ordering phase=" << phase << '\n';
+            print("expected:", expected); print("observed:", ordered);
+            if (group != widgets.end())
+                std::cerr << "sort=" << static_cast<int>(group->contentSortColumn) <<
+                    " ascending=" << group->contentSortAscending <<
+                    " active=" << WideToUtf8(group->activeCategoryId) << '\n';
+            std::cerr << Access::AsyncState(*profile.app) << '\n';
+        }
+        Require(correctOrder, std::string(phase) +
+            ": user contract: retain source sections and place folders before files inside each section");
         Require(group!=widgets.end() && group->activeCategoryId==L"type-desktop" &&
             group->childWidgetIds==std::vector<std::wstring>{L"type-desktop",L"type-mapped"},
             "sorting preserves original source order and active source");
@@ -281,7 +298,7 @@ void GroupTypeContract()
             fs::is_empty(desktopFolder) && fs::is_empty(mappedFolder),
             "sorting and reload cannot change either source's files");
     };
-    (void)Access::GroupTypeOrder(*profile.app,true); check();
+    (void)Access::GroupTypeOrder(*profile.app,true); check("after sort");
     Require(Access::Save(*profile.app),"persist accepted grouped Type sort");
     const auto refresh = [&](bool disk) {
         const auto delivered = Access::asyncReadMessages;
@@ -290,9 +307,9 @@ void GroupTypeContract()
             disk ? "disk reload applied and background idle" : "refresh applied and background idle",
             [&] { return Access::AsyncState(*profile.app); });
     };
-    refresh(false); check();
+    refresh(false); check("after refresh");
     Access::DiscardGroupTypeRuntimeState(*profile.app);
-    refresh(true); check();
+    refresh(true); check("after disk reload");
 }
 std::string ManifestString(const JsonValue& object, std::string_view key)
 {
