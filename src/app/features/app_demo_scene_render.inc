@@ -244,13 +244,24 @@ if (request.component == "demo-scene")
                     if (surface.kind == "popup" || surface.popup)
                     {
                         popupWidgetIndex_ = indices.at(surface.id); popupHasAnchor_ = popupAnchoredToDock_ = false;
+                        // Mapping popups use the same dedicated snapshot/view as
+                        // live mapping popups; their renderer reads that source.
+                        if (widget.type == DesktopWidgetType::FolderMapping)
+                        {
+                            dockFolderPopupWidget_ = widget;
+                            dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&dockFolderPopupWidget_, this);
+                            dockFolderPopupOpen_ = true;
+                            popupWidgetIndex_ = static_cast<std::size_t>(-1);
+                        }
                         collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light; collectionPopupGlassTheme_ = appearance.glassEnabled;
-                        const auto native = GetCollectionPopupRect(widget); const auto fitted = fitRect(native, rect);
+                        const auto native = GetCollectionPopupRect(*GetOpenPopupWidget()); const auto fitted = fitRect(native, rect);
                         const float scale = static_cast<float>(fitted.right - fitted.left) / (native.right - native.left);
                         material(fitted, 18.f * scale);
                         const auto mapped = mapRect(native, fitted) * transform; lastMousePoint_ = pointerIn(mapped, frame.cursor);
                         context->SetTransform(mapped); DrawCollectionPopup(context.Get(), false);
                         popupWidgetIndex_ = static_cast<std::size_t>(-1);
+                        dockFolderPopupOpen_ = false;
+                        dockFolderPopupContainer_.reset();
                     }
                     else
                     {
