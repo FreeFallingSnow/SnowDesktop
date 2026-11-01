@@ -36,23 +36,24 @@ void test(const fs::path& repo) {
             Json::object({{"id","captured-result"},{"state","finished"},{"editRevision",1}}),
             Json::object({{"id","captured-peers"},{"state","finished"},{"editRevision",1}})})}});
         state["current"]=Json{};state["activeCandidates"]=Json::array({unrelated,captured});save();
-        auto [capturedResult,crt]=begin("captured-result",{"--condition","result","--batch",batch,"--revision","1"});
-        auto [capturedPeers,cpt]=begin("captured-peers",{"--condition","peers","--batch",batch,"--revision","1"});
-        auto observed=[&](const Json& ticket,int minimum){
-            const auto value=Json::parse(read(folder/wide(ticket.at("id").str()+".wait.json")));
-            require(value.at("status").str()=="waiting","Captured build was not observed: "+value.dump());
-            return value.at("observations").integer()>=minimum&&value.at("reason").str()=="Frozen build is running.";
-        };
-        until([&]{return observed(crt,1)&&observed(cpt,1);},8,"captured result/peer observers reach the running build");
-        const auto observations=Json::parse(read(folder/wide(crt.at("id").str()+".wait.json"))).at("observations").integer();
+        // Use terminal receipts, not observations persisted on the 15s heartbeat.
+        auto [capturedResult,crt]=begin("captured-result",{"--condition","result","--batch",batch,"--revision","1","--timeout","3"});
+        require(output(*capturedResult,"timed-out",2).at("observations").integer()>=2,
+            "Captured result wait did not observe the running build before its deadline");
         state["current"]=Json::object({{"id",std::string(32,'c')},{"phase","editing"},{"participants",Json::array({
             Json::object({{"id","unrelated-editor"},{"state","finished"},{"check",Json::object({{"status","failed"}})}})})}});save();
-        until([&]{return observed(crt,observations+2)&&observed(cpt,1);},8,"captured build stays selected after another edit window opens");
+        auto [capturedPeers,cpt]=begin("captured-peers",{"--condition","peers","--batch",batch,"--revision","1","--timeout","3"});
+        require(output(*capturedPeers,"timed-out",2).at("observations").integer()>=2,
+            "Captured peer wait did not observe the running build beside the edit window");
         const auto capturedResultValue=Json::object({{"batchId",batch},{"outcome","passed"},{"participants",captured.at("participants")}});
         lock=CreateFileW((folder/L"state.lock").c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,0,nullptr);require(lock!=INVALID_HANDLE_VALUE,"Captured retirement lease unavailable");
         try{atomic(folder/wide(batch+".json"),capturedResultValue.dump());state["activeCandidates"]=Json::array({unrelated});save();}catch(...){CloseHandle(lock);throw;}CloseHandle(lock);
-        require(output(*capturedResult,"completed").at("result").dump()==capturedResultValue.dump()&&
-            output(*capturedPeers,"completed").at("result").dump()==capturedResultValue.dump(),"Captured common result changed");
+        for(const auto* ticket:{&crt,&cpt}){
+            const auto resumedTicket=cli({"resume","--ticket",ticket->at("id").str(),"--timeout","20","--reason","Captured fixture result is now durable"});
+            owners.push_back(resumedTicket.at("owner"));
+            auto reconnected=begin("",{"--ticket",ticket->at("id").str()});
+            require(output(*reconnected.first,"completed").at("result").dump()==capturedResultValue.dump(),"Captured common result changed");
+        }
         fs::remove(folder/wide(batch+".json"));
         captured["owner"]=stoppedOwner;captured["participants"]=Json::array({Json::object({{"id","captured-stopped"},{"state","finished"},{"editRevision",1}})});
         state["activeCandidates"]=Json::array({unrelated,captured});save();
