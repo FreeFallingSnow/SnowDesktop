@@ -12,7 +12,8 @@ fs::path fixture_parent(const fs::path& repo) {
 }
 void prepare(Coordinator& c,const fs::path& repo,const std::string& control) {
     copy(repo,c.root,{"cmake/SnowDesktop.ProductBuild.cmake","cmake/SnowDesktop.SharedBuildGuard.cmake",
-        "cmake/SnowDesktop.PowerShell.cmake","scripts/arrange_build_output.ps1","scripts/deployment_payload.psm1","version.json"});
+        "cmake/SnowDesktop.PowerShell.cmake","scripts/arrange_build_output.ps1","scripts/deployment_payload.psm1","version.json",
+        "scripts/test_manager.ps1","scripts/test_output.ps1","scripts/build_batch_tests.ps1"});
     write(c.scripts/L"build_runtime.ps1",read(c.scripts/L"build_runtime.ps1")+
         "\nfunction Get-BuildPython {[pscustomobject]@{available=$false;reason='Native output fixture has no optional dashboard'}}\n",true);
     write(c.root/L".gitignore",read(c.root/L".gitignore")+"!/cmake/\n!/CMakeLists.txt\n!/version.json\n!/fixture.ps1\n!/fixture.manifest\n!/fixture.rc\n");
@@ -42,6 +43,7 @@ ExternalProject_Add(NestedBuild SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/child"
  BINARY_DIR "${CMAKE_BINARY_DIR}/child" CMAKE_GENERATOR "${CMAKE_GENERATOR}"
  CMAKE_GENERATOR_PLATFORM x64 BUILD_COMMAND ${child_command} BUILD_ALWAYS TRUE INSTALL_COMMAND "")
 add_library(SnowDesktopHookEntry SHARED src/dll.cpp)
+target_compile_definitions(SnowDesktopHookEntry PRIVATE FIXTURE_TESTING=$<BOOL:${BUILD_TESTING}>)
 snowdesktop_private_runtime_target(SnowDesktopHookEntry "${CMAKE_BINARY_DIR}/$<CONFIG>")
 add_executable(SnowDesktop src/main.cpp fixture.rc)
 target_link_options(SnowDesktop PRIVATE /MANIFEST:NO)
@@ -50,6 +52,14 @@ foreach(target SnowDesktopLauncher SnowDesktopSteamBridge SnowDesktopWorkshopMan
  add_executable(${target} src/tool.cpp)
 endforeach()
 add_dependencies(SnowDesktop SnowDesktopSteamBridge snowwidget)
+if(BUILD_TESTING)
+ enable_testing()
+ add_executable(SnowDesktopProductDependencyTests src/dependency-test.cpp)
+ add_dependencies(SnowDesktopProductDependencyTests SnowDesktop)
+ set_target_properties(SnowDesktopProductDependencyTests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+ add_test(NAME product_dependency COMMAND SnowDesktopProductDependencyTests)
+ set_tests_properties(product_dependency PROPERTIES REQUIRED_FILES "$<TARGET_FILE:SnowDesktopProductDependencyTests>")
+endif()
 foreach(target SnowDesktop SnowDesktopHookEntry SnowDesktopLauncher SnowDesktopSteamBridge SnowDesktopWorkshopManager snowwidget)
  target_compile_features(${target} PRIVATE cxx_std_20)
  target_compile_options(${target} PRIVATE /W4 /WX /Z7)
@@ -74,6 +84,7 @@ target_compile_options(ChildLibrary PRIVATE /W4 /WX)
     write(c.root/L"src/common.h","#pragma once\ninline constexpr int value=7;\n");
     write(c.root/L"src/dll.cpp","#include \"common.h\"\nextern \"C\" __declspec(dllexport) int fixture_value(){return value;}\n");
     write(c.root/L"src/tool.cpp","#include \"common.h\"\nint main(){return value;}\n");
+    write(c.root/L"src/dependency-test.cpp","int main(){return 0;}\n");
     write(c.root/L"src/main.cpp",R"CPP(#include <windows.h>
 #include <cstring>
 int main(){
@@ -172,7 +183,45 @@ void program(const fs::path& output,int expected) {
     const auto result=run({(output/L"SnowDesktop.exe").wstring()},output);
     require(result.code==expected,"Arranged runtime returned stale/invalid code: "+std::to_string(result.code));
 }
+void configuration_scenario(const fs::path& repo,bool formerBehavior) {
+    Coordinator c(repo,"nc",true,fixture_parent(repo));prepare(c,repo,"");
+    if(formerBehavior){
+        auto command=read(c.scripts/L"build_command.ps1");
+        replace(command,"if($plan.mode -ne 'skipped'){$arguments+=@('-DBUILD_TESTING:BOOL=ON')}",
+            "if($false){$arguments+=@('-DBUILD_TESTING:BOOL=ON')}");
+        write(c.scripts/L"build_command.ps1",command,true);
+    }
+    // Use the production leased command and test runner. The tiny product's
+    // compile option models a configuration-sensitive native dependency;
+    // no WinUI runtime or product behavior is replaced by this assertion.
+    write(c.scripts/L"build.bat","@echo off\r\n\"%SNOWDESKTOP_ENTRY_POWERSHELL%\" -NoProfile -File \"%~dp0product.ps1\"\r\nexit /b %ERRORLEVEL%\r\n");
+    write(c.scripts/L"product.ps1",R"PS($ErrorActionPreference='Stop'
+& (Join-Path $PSScriptRoot 'build_command.ps1') -Operation configure -Preset release
+if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+& (Join-Path $PSScriptRoot 'build_command.ps1') -Operation build -Preset release
+if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+$root=Split-Path $PSScriptRoot -Parent
+[IO.File]::WriteAllText((Join-Path $root 'product-time.txt'),[IO.File]::GetLastWriteTimeUtc((Join-Path $root '.build/Release/SnowDesktop.Runtime/SnowDesktopHookEntry.dll')).ToFileTimeUtc().ToString())
+)PS",true);
+    const auto opened=c.begin("noop");const auto batch=opened.at("batchId").str();
+    c.plan("noop",batch,0,"selected","product_dependency","module","src,CMakePresets.json");
+    c.ready("noop",batch,0);
+    until([&]{return fs::exists(c.stateRoot/wide(batch+".json"));},100,"Combined native product/test batch did not complete");
+    const auto result=c.result(batch);
+    require(result.at("outcome").str()=="passed","Combined native product/test batch failed: "+result.dump());
+    const auto output=c.root/L".build/Release";program(output,7);
+    const auto library=output/L"SnowDesktop.Runtime/SnowDesktopHookEntry.dll";
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    require(GetFileAttributesExW(library.c_str(),GetFileExInfoStandard,&data)!=0,"Cannot observe completed native dependency");
+    const auto stamp=(static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime)<<32)|data.ftLastWriteTime.dwLowDateTime;
+    require(read(c.root/L"product-time.txt")==std::to_string(stamp),
+        "Test configuration rebuilt an already completed product dependency");
+    const auto coverage=Json::parse(read(c.stateRoot/wide(batch+".coverage.json")));
+    require(coverage.at("completed").items.size()==1&&coverage.at("completed").items[0].at("name").str()=="product_dependency",
+        "Product/test configuration changed the executed selection");
+}
 void scenario(const fs::path& repo,const std::string& control) {
+    if(control=="configuration"){configuration_scenario(repo,true);return;}
     Coordinator c(repo,"n",false,fixture_parent(repo));prepare(c,repo,control);
     const auto output=c.root/L".build/Release";
     observations(build(c),7);program(output,7);
@@ -196,7 +245,11 @@ void scenario(const fs::path& repo,const std::string& control) {
         const auto result=run({executable().wstring(),repo.wstring(),wide("--"+mutation.first)},c.root,80,{},true);
         require(result.code==1&&result.err.find(mutation.second)!=std::string::npos,"Negative control missed its business assertion: "+result.out+result.err);
     }
-    std::cout<<"PASS arranged Release/Debug no-op output preservation, linker state, source/header invalidation, missing-DLL repair, grouped graph and nested telemetry; both legacy controls fail\n";
+    configuration_scenario(repo,false);
+    const auto configuration=run({executable().wstring(),repo.wstring(),L"--configuration"},repo,100,{},true);
+    require(configuration.code==1&&configuration.err.find("Test configuration rebuilt an already completed product dependency")!=std::string::npos,
+        "Configuration negative control missed its native output assertion: "+configuration.out+configuration.err);
+    std::cout<<"PASS arranged Release/Debug no-op output preservation, linker state, source/header invalidation, missing-DLL repair, grouped graph, nested telemetry and combined product/test configuration; all three controls fail\n";
 }
 }
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){scenario(repo,argc>2?std::string(argv[2]).substr(2):"");});}

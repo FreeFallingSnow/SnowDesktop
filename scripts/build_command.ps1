@@ -12,6 +12,23 @@ $reset=$null;$resetPath=$null;$configureKey=$null
 if($Operation -eq 'configure'){
     if($Preset){$arguments=@('--preset',$Preset)}
     else{$arguments=@('-B',$Directory,'-S',$Source,'-A',$Architecture,('-DSNOWDESKTOP_OUTPUT_DIR='+$Output))}
+    # A product+test Run must not turn BUILD_TESTING off and back on between
+    # its two builds: regenerating the native project invalidates WinUI inputs.
+    # Only the live Run's hash-bound plan can opt the Release configure in.
+    $runId=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
+    if($Preset -eq 'release' -and $runId){
+        $runRoot=Get-EntryRunRoot $root
+        $request=Read-EntryJson (Join-Path $runRoot ('.build/collaboration/runs/'+$runId+'.request.json'))
+        if($request -and $request.action -eq 'batch'){
+            if($request.batch -notmatch '^[a-f0-9]{32}$'){throw 'Invalid batch configure identity.'}
+            $planPath=Join-Path $runRoot ('.build/collaboration/'+$request.batch+'.plan.json')
+            if((Get-FileHash -LiteralPath $planPath -Algorithm SHA256).Hash -ne $request.planHash){throw 'Frozen configure plan changed.'}
+            $plan=Read-EntryJson $planPath
+            if($plan.schemaVersion -ne 1 -or $plan.batchId -ne $request.batch -or $plan.configuration -ne 'Release' -or
+                $plan.mode -notin 'selected','full','skipped'){throw 'Invalid batch configure plan.'}
+            if($plan.mode -ne 'skipped'){$arguments+=@('-DBUILD_TESTING:BOOL=ON')}
+        }
+    }
     $context=Get-CandidateEntryContext $root
     if($context){
         . (Join-Path $PSScriptRoot 'build_candidate.ps1')
