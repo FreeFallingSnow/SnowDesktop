@@ -5,6 +5,9 @@ static void EnableFileDispatch(DesktopApp& app)
     SetLastError(ERROR_SUCCESS);
     previousWindowData = SetWindowLongPtrW(completionWindow, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&app));
     if (!previousWindowData && GetLastError() != ERROR_SUCCESS) throw std::runtime_error("bind file completion host");
+    // Real deferred layout saves need the control-window timer and completion
+    // services too. Both procedures use this fixture-owned userdata/window.
+    app.controlHwnd_ = completionWindow;
     fileDispatch = true;
 }
 static void AddCollection(DesktopApp& app, const std::wstring& id, int column,
@@ -99,6 +102,7 @@ static bool SubmitFiles(DesktopApp& app, const std::vector<std::filesystem::path
 }
 static std::size_t PendingBatches(const DesktopApp& app) { return app.pendingLandingCaches_.size(); }
 static bool FileOperationsIdle(const DesktopApp& app) { return app.shellFileOperationInFlight_ == 0; }
+static bool LayoutSaved(const DesktopApp& app) { return !app.layoutSavePending_; }
 static bool QueuePartial(DesktopApp& app, snowdesktop::ShellFileOperationRequest request,
     DesktopApp::FileOperationCompletion done)
 { return app.QueueShellFileOperation(std::move(request),std::move(done)); }

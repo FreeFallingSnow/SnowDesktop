@@ -128,20 +128,20 @@ void DragFiles()
     RequirePaths(Access::CollectionPaths(*profile.app,L"receive"),{copied},"OLE completion actually commits into the target collection");
     Require(Access::fileCompletionMessages>0,"file completion traversed the production window procedure");
 
-    // An extended spelling gives a deterministic alias without requiring 8.3
-    // names to be enabled on the test volume. The original bug compared strings.
+    // A normal dot-component spelling is a valid Shell alias without requiring
+    // 8.3 names. Win32 extended prefixes are not accepted by this Shell parser.
     const auto moveInput = profile.root/L"source"/L"move.txt";
     Write(moveInput,"moved bytes");
-    auto native = moveInput; native.make_preferred();
-    const fs::path alias(L"\\\\?\\"+native.wstring());
+    const fs::path alias=moveInput.parent_path()/L"."/moveInput.filename();
+    Microsoft::WRL::ComPtr<IShellItem> aliasItem;
+    const HRESULT parsedAlias=SHCreateItemFromParsingName(alias.c_str(),nullptr,IID_PPV_ARGS(&aliasItem));
+    Require(SUCCEEDED(parsedAlias) && fs::equivalent(alias,moveInput),"fixture alias is a real Shell-resolvable source");
     auto outputs = std::make_shared<snowdesktop::ShellFileOperationResult>();
     bool done=false, succeeded=false;
     const bool queued = Access::SubmitFiles(*profile.app,{alias},L"",{260,250},MK_SHIFT,
         [&](bool ok){succeeded=ok;done=true;},outputs);
     Wait([&]{return done && Access::BackgroundIdle(*profile.app);},"aliased move result delivered and reloaded",[&]{return Access::AsyncState(*profile.app);});
     const auto moved = profile.desktop/moveInput.filename();
-    Microsoft::WRL::ComPtr<IShellItem> aliasItem;
-    const HRESULT parsedAlias=SHCreateItemFromParsingName(alias.c_str(),nullptr,IID_PPV_ARGS(&aliasItem));
     Require(queued && succeeded,"a completed aliased move is not falsely reported as failure; queued="+
         std::to_string(queued)+" completed="+std::to_string(succeeded)+
         " sourceExists="+std::to_string(fs::exists(moveInput))+" targetExists="+std::to_string(fs::exists(moved))+
@@ -201,7 +201,7 @@ void DragPartial()
 void DragRelease()
 {
     // 66421876: require the actual release, commit, save and reload boundary.
-    HostProfile profile(true); DragInput input;
+    HostProfile profile(true); DragInput input; Access::EnableFileDispatch(*profile.app);
     const auto file=profile.desktop/L"release.txt"; Write(file,"original release bytes");
     Access::PopulateModel(*profile.app,{file},0);
     Require(Access::Save(*profile.app),"seed the old persisted position");
@@ -209,6 +209,7 @@ void DragRelease()
     input.Move({260,160}); Access::ReleaseDrag(*profile.app,{260,160});
     const GridCell expected{L"__page:1",2,1};
     Require(!Access::HasDrag(*profile.app) && SameCell(Access::Cell(*profile.app,file),expected),"release commits the requested final cell and ends the session");
+    Wait([&]{return Access::LayoutSaved(*profile.app);},"production deferred layout save completed",[&]{return Access::AsyncState(*profile.app);});
     Access::PerturbCell(*profile.app); Access::RequestAsync(*profile.app,true);
     WaitForHost(profile,"actual disk layout and Shell snapshot applied after release");
     Require(SameCell(Access::Cell(*profile.app,file),expected),"real layout reload restores the released position");

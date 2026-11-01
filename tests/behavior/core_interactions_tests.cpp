@@ -24,9 +24,12 @@ struct NativeDragIntegrationAccess
     {
         if (asyncOwner && window == completionWindow &&
             (message == kBackgroundShellReadyMessage || (fileDispatch && message == kShellFileOperationCompletedMessage) ||
-                (message == WM_TIMER && (wp == kDesktopHostWatchTimerId || wp == kShellChangeTimerId))))
+                (message == WM_TIMER && (wp == kDesktopHostWatchTimerId || wp == kShellChangeTimerId ||
+                    (fileDispatch && wp == kLayoutScrollSaveTimerId)))))
         {
             try {
+                if (message == WM_TIMER && wp == kLayoutScrollSaveTimerId)
+                    return DesktopApp::ControlWndProc(window, message, wp, lp);
                 if (message == kShellFileOperationCompletedMessage) {
                     ++fileCompletionMessages;
                     return DesktopApp::WndProc(window, message, wp, lp);
@@ -58,6 +61,7 @@ struct NativeDragIntegrationAccess
         if (asyncOwner != &app) return;
         KillTimer(completionWindow, kShellChangeTimerId); KillTimer(completionWindow, kDesktopHostWatchTimerId);
         KillTimer(completionWindow, kExternalOleDragLeaveGraceTimerId);
+        KillTimer(completionWindow, kLayoutScrollSaveTimerId);
         if (fileDispatch) SetWindowLongPtrW(completionWindow, GWLP_USERDATA, previousWindowData);
         fileDispatch = false; previousWindowData = 0;
         SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWindowProc));
