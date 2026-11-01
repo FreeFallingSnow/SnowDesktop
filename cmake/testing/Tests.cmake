@@ -183,23 +183,54 @@ if (BUILD_TESTING)
         PROPERTIES RESOURCE_LOCK snowdesktop_hook_entry_cache)
 
 
-    # Existing host behavior scenarios unrelated to drag tests.
+    # Four module contracts need native services, not DesktopApp/WinUI. Their
+    # driver links the same production owners as the application; selecting one
+    # cannot bring in the host executable or its XAML compilation.
+    snowdesktop_add_test(SnowDesktopModuleBehaviorTests behavior_settings
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/behavior/module_contracts_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopSettingsPersistence SnowDesktopLayoutStorage
+            SnowDesktopWidgetTasks SnowDesktopWidgetPermissions
+            SnowDesktopWidgetApiRegistry SnowDesktopDockWindowPin
+        COMMAND_ARGUMENTS settings
+        LABELS core integration behavior)
+    foreach(row IN ITEMS recovery widget dock)
+        add_test(NAME behavior_${row} COMMAND SnowDesktopModuleBehaviorTests ${row})
+        set_tests_properties(behavior_${row} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopModuleBehaviorTests>"
+            TIMEOUT 60 LABELS "core;integration;behavior")
+    endforeach()
+    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+
+    # Preserve the real host graph only for routing, commit and refresh paths.
     set(SNOWDESKTOP_BEHAVIOR_SOURCES ${SNOWDESKTOP_SOURCES})
     list(REMOVE_ITEM SNOWDESKTOP_BEHAVIOR_SOURCES src/main.cpp)
-    snowdesktop_add_test(SnowDesktopBehaviorTests behavior_settings
+    snowdesktop_add_test(SnowDesktopBehaviorTests behavior_search
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/behavior/core_interactions_tests.cpp ${SNOWDESKTOP_BEHAVIOR_SOURCES}
-        COMMAND_ARGUMENTS settings
+        COMMAND_ARGUMENTS search
         LABELS core integration isolated-native-model interaction)
     snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
-    foreach(row IN ITEMS recovery search widget dock settings-host manifest group-type-contract)
+    foreach(row IN ITEMS settings-host group-type-contract)
         add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBehaviorTests>"
             TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
     endforeach()
-    set_tests_properties(behavior_settings PROPERTIES TIMEOUT 60 PROCESSORS 3)
-    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+    set_tests_properties(behavior_search PROPERTIES TIMEOUT 60 PROCESSORS 3)
+
+    # Deployment is a product integration contract. Its explicit output input
+    # and dependency stay on this driver, outside the four module scenarios.
+    snowdesktop_add_test(SnowDesktopDeploymentManifestTests behavior_manifest
+        SOURCES tests/behavior/deployment_manifest_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopWidgetPackages
+        COMMAND_ARGUMENTS "$<TARGET_FILE_DIR:SnowDesktop>"
+        LABELS core integration deployment behavior)
+    add_dependencies(SnowDesktopDeploymentManifestTests SnowDesktop)
+    set_property(TEST behavior_manifest APPEND PROPERTY REQUIRED_FILES
+        "$<TARGET_FILE_DIR:SnowDesktop>/SnowDesktop.deployment.json")
 
     include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
     snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts
