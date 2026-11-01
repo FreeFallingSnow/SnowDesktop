@@ -11,7 +11,7 @@ param(
     [switch]$CloseApplication,
     [string]$Reason,
     [long]$Revision = -1,
-    [ValidateSet('unknown','module','docs','component','tool','public','infrastructure')][string]$Scope = 'unknown',
+    [ValidateSet('unknown','module','docs','component','tool','test','public','infrastructure')][string]$Scope = 'unknown',
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
     [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',

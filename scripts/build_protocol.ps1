@@ -118,7 +118,7 @@ function Get-EffectiveTaskPlan($Entry) {
     $plan.suites=@($requirements|ForEach-Object {$_.suites}|Sort-Object -Unique)
     if($plan.suites.Count -gt 1){$plan.suites=@($plan.suites|Where-Object {$_ -ne 'none'})}
     $plan.inputs=@(if(-not @($requirements|Where-Object {@($_.inputs).Count -eq 0}).Count){$requirements|ForEach-Object {$_.inputs}|Sort-Object -Unique})
-    $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}else{'component'}
+    $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool','test'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}elseif(@($requirements|Where-Object scope -eq 'test').Count){'test'}else{'component'}
     $plan.source='repair-carried';$plan.requiredFull=$plan.suites -contains 'full'
     Set-Field $plan 'mergedRepairRequirements' $extra
     $resources=@($requirements|Where-Object {$_.suites -notcontains 'none'}|ForEach-Object {Get-Field $_ 'projectResources'}|Where-Object {$_})
@@ -175,6 +175,17 @@ function Add-RepairSource($Current,$Result,[string]$Parent,[string]$Requester,[s
         Set-Field $Current 'attempt' $source.attempt;Set-Field $Current 'repairReason' $Reason
     }
 }
+function Assert-TestOnlyPlan($Plan) {
+    if((Get-Field $Plan 'scope' 'unknown') -ne 'test'){return}
+    $suites=@(Get-Field $Plan 'suites' @())
+    $inputs=@(Get-Field $Plan 'inputs' @())
+    if($suites.Count -ne 1 -or $suites[0] -ne 'selected' -or -not @(Get-Field $Plan 'tests' @()).Count){
+        throw 'Test-only plans require an explicit nonempty selected test set.'
+    }
+    if(-not $inputs.Count -or @($inputs|Where-Object {$_ -cne 'tests' -and -not $_.StartsWith('tests/',[StringComparison]::Ordinal)}).Count){
+        throw 'Test-only plans require reviewed inputs within tests/; product or build input changes keep their normal scope.'
+    }
+}
 function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason) {
     $suiteList = @($Suites.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
     if ($suiteList.Count -eq 0 -or @($suiteList | Where-Object { $_ -notin 'full','core','fast','tools','selected','none' }).Count) { throw 'Suites must be full/core/fast/tools/selected/none.' }
@@ -191,9 +202,11 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     # Whole-product coverage must be requested explicitly with its necessity
     # reviewed in Reason; unknown impact is resolved before declaring a plan.
     $requiredFull = $suiteList -contains 'full'
-    return [pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
+    $plan=[pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
         reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; lightChecks=@('builtin-basic'); requiredFull=$requiredFull;
         escalationReason=$(if($requiredFull){$Reason}else{''}); inputIdentity=$null }
+    Assert-TestOnlyPlan $plan
+    return $plan
 }
 function Default-TaskPlan($Entry) {
     throw "Missing test plan for $($Entry.id); declare inputs, impact and selected tests with plan before ready/finish. No build or full suite was started."
@@ -264,6 +277,11 @@ function New-FrozenPlan($Current) {
     $tasks=@(); $full=$false; $build=$false; $testing=$false;$resources=@();$exclusive=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
+        # Recheck original obligations, not the merged repair input union:
+        # docs/tool exemptions can join a test-only repair, while any product
+        # obligation must still require its normal complete product build.
+        $declared=@((Get-Field $entry 'testPlan'))+@(Get-Field $entry 'repairRequirements' @()|ForEach-Object {$_.requirement})
+        foreach($requirement in $declared){Assert-TestOnlyPlan $requirement}
         $plan=Get-EffectiveTaskPlan $entry
         if ($plan.editRevision -ne (Get-EditRevision $entry)) { throw "Plan is stale for $($entry.id); reopen/update plan before ready." }
         if ($plan.source -eq 'task-declared' -and $plan.inputIdentity -and (Get-TaskIdentity $plan).digest -ne $plan.inputIdentity.digest) { throw "Declared inputs changed after ready for $($entry.id); reopen and update plan." }
@@ -279,7 +297,7 @@ function New-FrozenPlan($Current) {
             if($request){$resources+=@($request)}else{$exclusive=$true}
             # Test selection and a complete host build are distinct needs.
             # Targeted test builds still use the inventory's real dependencies.
-            if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}
+            if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool','test'){$build=$true}
         }
         $tasks += [pscustomobject]@{ participant=$entry.id; editRevision=(Get-EditRevision $entry); requirement=$plan }
     }

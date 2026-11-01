@@ -225,20 +225,27 @@ void old_entry_edit_control(const fs::path& repo){
     const auto attempted=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"begin","pending-editor"});
     require(attempted.code==2,"Active ordinary Run allowed a source-edit grant; exit="+std::to_string(attempted.code)+" "+attempted.out+attempted.err);
 }
-void tool_plan(const fs::path& repo,bool oldBehavior=false){
-    Coordinator c(repo,oldBehavior?"old-tool-plan":"tool-plan-no-host",true);
+void scoped_test_plan(const fs::path& repo,const std::string& scope,bool oldBehavior=false){
+    const bool testOnly=scope=="test";
+    const std::string label=testOnly?"Test":"Tool";
+    Coordinator c(repo,(oldBehavior?"old-":"")+scope+"-plan-no-host",true);
+    if(testOnly){
+        write(c.root/L"tests/fixture.cpp","// isolated test-only input\n");
+        write(c.root/L".gitignore",read(c.root/L".gitignore")+"\n!/tests/\n");
+    }
     if(oldBehavior){
         auto source=read(c.scripts/L"build_protocol.ps1");
-        replace(source,"if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}","$build=$true");
+        replace(source,"if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool','test'){$build=$true}","$build=$true");
         write(c.scripts/L"build_protocol.ps1",source,true);
     }
-    const auto batch=c.begin("tool").at("batchId").str();c.plan("tool",batch,0,"selected","Alpha","tool");
+    const auto batch=c.begin("tool").at("batchId").str();
+    c.plan("tool",batch,0,"selected","Alpha",scope,testOnly?"tests/fixture.cpp":"src/a.txt");
     write(c.root/L"finish.ps1","& "+ps_literal(c.scripts/L"build_manager.ps1")+" ready-and-wait tool -Batch "+batch+" -Revision 0\nexit $LASTEXITCODE\n",true);
     ParentJob parent(c.root/L"finish.ps1",c.root,true);
-    require(parent.wait()==0,"Tool-only durable batch failed: "+read(c.root/L"native-launcher.err"));
-    require(c.calls()==1&&read(c.root/L"calls.txt")=="test\n"&&!fs::exists(c.root/L"build-started"),"Tool plan invoked unnecessary host compilation");
+    require(parent.wait()==0,label+"-only durable batch failed: "+read(c.root/L"native-launcher.err"));
+    require(c.calls()==1&&read(c.root/L"calls.txt")=="test\n"&&!fs::exists(c.root/L"build-started"),label+" plan invoked unnecessary host compilation");
     const auto result=c.result(batch);
-    require(result.at("outcome").str()=="passed"&&!result.at("testingPlan").at("buildRequired").boolean&&result.at("testingPlan").at("mode").str()=="selected","Tool tests were skipped or escalated to a host build");
+    require(result.at("outcome").str()=="passed"&&!result.at("testingPlan").at("buildRequired").boolean&&result.at("testingPlan").at("mode").str()=="selected",label+" tests were skipped or escalated to a host build");
 }
 
 void durable_cancel(const fs::path& repo,bool oldObservation=false,bool oldPublication=false) {
@@ -308,12 +315,29 @@ void test_durable(const fs::path& repo) {
     }
 }
 void test_plans(const fs::path& repo) {
-    {
-        tool_plan(repo);
+    for(const std::string scope:{"tool","test"}){
+        scoped_test_plan(repo,scope);
         const auto controlRoot=temporary("old-host-plan-control");
-        const auto control=run({executable().wstring(),repo.wstring(),L"--old-host-plan"},controlRoot,30);
-        require(control.code==1&&control.err.find("Tool plan invoked unnecessary host compilation")!=std::string::npos,"Restored host-build coupling was not caught by its actual invocation assertion: "+control.out+control.err);
-        std::cout<<"PASS tool-only batch avoids host compilation and rejects restored old behavior\n";
+        const auto control=run({executable().wstring(),repo.wstring(),scope=="test"?L"--old-test-plan":L"--old-host-plan"},controlRoot,30);
+        const std::string expected=(scope=="test"?"Test":"Tool")+std::string(" plan invoked unnecessary host compilation");
+        require(control.code==1&&control.err.find(expected)!=std::string::npos,"Restored host-build coupling was not caught by its actual invocation assertion: "+control.out+control.err);
+        std::cout<<"PASS "<<scope<<"-only batch avoids host compilation and rejects restored old behavior\n";
+    }
+    {
+        Coordinator c(repo,"test-plan-boundaries");
+        write(c.root/L"tests/fixture.cpp","// test-only input\n");
+        write(c.root/L".gitignore",read(c.root/L".gitignore")+"\n!/tests/\n");
+        const auto batch=c.begin("testing").at("batchId").str();
+        for(const std::string input:{"src/a.txt","CMakeLists.txt","tests/fixture.cpp,src/a.txt"})
+            c.call({"plan","testing","-Batch",batch,"-Revision","0","-Scope","test","-Suites","selected","-Tests","Alpha","-Inputs",input,"-Reason","boundary check"},2);
+        for(const std::string suite:{"full","core","none"})
+            c.call({"plan","testing","-Batch",batch,"-Revision","0","-Scope","test","-Suites",suite,"-Inputs","tests/fixture.cpp","-Reason","boundary check"},2);
+        c.plan("testing",batch,0,"selected","Alpha","test","tests/fixture.cpp");
+        c.begin("product");c.plan("product",batch,0,"selected","Beta","module","src/a.txt");
+        c.finish("testing",batch);c.finish("product",batch);
+        require(c.result(batch).at("testingPlan").at("buildRequired").boolean&&read(c.root/L"calls.txt")=="build\ntest\n",
+            "A test-only participant suppressed another participant's product build");
+        std::cout<<"PASS test-only input/suite boundaries and mixed product requirement\n";
     }
 }
 void test_batch_lifetime(const fs::path& repo) {
@@ -446,7 +470,8 @@ int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& re
     else if(mode=="--request-publication")request_publication(repo);
     else if(mode=="--old-request-publication")request_publication(repo,true);
     else if(mode=="--old-entry-edit")old_entry_edit_control(repo);
-    else if(mode=="--old-host-plan")tool_plan(repo,true);
+    else if(mode=="--old-host-plan")scoped_test_plan(repo,"tool",true);
+    else if(mode=="--old-test-plan")scoped_test_plan(repo,"test",true);
     else if(mode=="--early-result-control")durable_cancel(repo,true);
     else if(mode=="--old-cancel-publication")durable_cancel(repo,false,true);
     else if(mode.empty())test_durable(repo);

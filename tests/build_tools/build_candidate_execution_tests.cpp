@@ -244,6 +244,11 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         c.git({L"add",L"--",L"CMakeLists.txt",L"CMakePresets.json"});
         c.git({L"commit",L"-m",L"Tool-filtered verification fixture baseline"});
     }
+    const bool testOnly=!heldWindow&&!verificationOnly&&!oldPreset;
+    if(testOnly){
+        write(c.root/L"tests/plan-input.txt","Reviewed test-only candidate input\n");
+        write(c.root/L".gitignore",read(c.root/L".gitignore")+"\n!/tests/\n");
+    }
     auto begin=[&](const std::string& task){return c.bridge->call(c.scripts/L"build_manager.ps1",{"begin",task});};
     const auto empty=begin("empty-requirement").at("batchId").str();
     c.plan("empty-requirement",empty,0,"none","","docs","src/value.h");
@@ -252,7 +257,7 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         "Explicit empty requirements captured or launched an unnecessary candidate");
     const auto first=begin("candidate"),peer=begin("peer");const auto batch=first.at("batchId").str();
     require(peer.at("batchId").str()==batch&&c.state().at("current").at("protocolVersion").integer()==4,"New batch did not use the candidate protocol");
-    c.plan("candidate",batch,0,"selected","candidate_rule","tool","src/value.h");
+    c.plan("candidate",batch,0,"selected","candidate_rule",testOnly?"test":"tool",testOnly?"tests/plan-input.txt":"src/value.h");
     c.plan("peer",batch,0,"none","","docs","src/value.h");
     auto ready=[&](const std::string& task,const std::string& id,const Env& env={}){
         const auto result=c.bridge->invoke(c.scripts/L"build_manager.ps1",{"ready-and-wait",task,"-Batch",id,"-Revision","0","-WaitSeconds","1"},env,15);
@@ -300,6 +305,8 @@ void candidate_batches(const fs::path& repo,bool heldWindow,bool verificationOnl
         "An old candidate result retired the newer editing window");
     require(result.at("outcome").str()=="passed"&&result.at("inputCheck").str()=="stable"&&result.at("candidateBinding").at("runId").str()==firstRun,
         "Original checkout edits invalidated or rebound the frozen batch result");
+    require(!result.at("testingPlan").at("buildRequired").boolean&&result.at("productBuild").kind==Json::Kind::Null,
+        "The selected candidate tests invoked or claimed an unrelated standard product build");
     const auto saved=fs::path(wide(result.at("artifact").at("runtime").str()))/L"tests/SnowDesktopCandidateFixtureTests.exe";
     require(run({saved.wstring()},c.root).code==7,"Candidate batch did not preserve its passing program");
     const auto candidateOutput=fs::path(wide(result.at("candidateExecution").at("output").str()));
