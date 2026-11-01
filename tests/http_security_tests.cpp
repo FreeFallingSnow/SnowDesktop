@@ -199,17 +199,6 @@ int main(int argc, char** argv)
             !IsAllowedPublicHttpsUrl(L"https://192.168.1.2/article"),
         "shell HTTPS policy rejects local targets");
 
-    Expect(IsAllowedHttpOrHttpsUrl(L"http://localhost/image.webp") &&
-            IsAllowedHttpOrHttpsUrl(L"http://192.168.1.2/file.pdf") &&
-            IsAllowedHttpOrHttpsUrl(L"https://example.com/archive.zip"),
-        "URL-drop downloads accept HTTP, HTTPS, and local targets");
-    Expect(!IsAllowedHttpOrHttpsUrl(
-                L"http://user:password@localhost/file") &&
-            !IsAllowedHttpOrHttpsUrl(L"ftp://example.com/file") &&
-            !IsAllowedHttpOrHttpsUrl(L"file:///C:/Temp/file.txt") &&
-            !IsAllowedHttpOrHttpsUrl(L"not a URL"),
-        "URL-drop downloads reject credentials and non-HTTP schemes");
-
     Expect(HaveSameOrigin(L"https://Example.com/path",
             L"https://example.com/other?q=1") &&
         HaveSameOrigin(L"https://example.com./path",

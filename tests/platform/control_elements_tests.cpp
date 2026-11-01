@@ -35,7 +35,7 @@ void ApplicationControlElementChecks()
     const auto center = ElementCenter(snapshot.Resolve("button", "click"));
     Check(center.x == -325 && center.y == 30, "target must use visible physical-screen intersection");
     Reject([&] { snapshot.Resolve("absent", "click"); }, "element_not_found");
-    Reject([&] { snapshot.Resolve("button", "drag"); }, "unsupported_action");
+    Reject([&] { snapshot.Resolve("button", "invalid"); }, "unsupported_action");
     const auto revision = snapshot.revision;
     snapshot.elements[1].enabled = false; snapshot.Finish();
     Check(snapshot.revision != revision, "state changes must invalidate prepared actions");

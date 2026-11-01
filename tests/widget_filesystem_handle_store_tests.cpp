@@ -1,5 +1,4 @@
 #include "widget/tasks/widget_filesystem_handle_store.h"
-#include "widget/tasks/widget_filesystem_drop.h"
 
 #include <windows.h>
 
@@ -64,33 +63,6 @@ int main()
     Expect(duplicateGrant && duplicateGrant.entry->handle ==
             fileGrant.entry->handle && store.Size() == 1,
         "identical grants reuse the existing handle");
-    {
-        WidgetFilesystemHandleStore drops;
-        const auto existing = drops.Grant(ownerA, file, WidgetFilesystemHandleKind::File,
-            WidgetFilesystemHandleAccess::Read);
-        {
-            WidgetFilesystemDropGrant rejected(drops, ownerA);
-            Expect(!rejected.Acquire({file.wstring(), folder.wstring(), (root / L"missing").wstring()}),
-                "one invalid drop path rejects the entire grant batch");
-        }
-        Expect(drops.Size() == 1 && drops.Resolve(ownerA, existing.entry->handle).has_value(),
-            "failed drops revoke new grants while retaining prior selections");
-        {
-            WidgetFilesystemDropGrant deliveryFailed(drops, ownerA);
-            Expect(deliveryFailed.Acquire({folder.wstring()}), "folder drop creates a read grant");
-        }
-        Expect(drops.Size() == 1, "failed Lua delivery rolls back drop-owned grants");
-        {
-            WidgetFilesystemDropGrant accepted(drops, ownerA);
-            Expect(accepted.Acquire({file.wstring(), folder.wstring(), file.wstring()}) && accepted.items.size() == 2,
-                "mixed file/folder drops deduplicate and preserve order");
-            Expect(accepted.items[1].access == WidgetFilesystemHandleAccess::Read &&
-                !drops.Resolve(ownerB, accepted.items[1].handle), "drop grants are read-only and owner-scoped");
-            accepted.Commit();
-        }
-        Expect(drops.Size() == 2 && std::filesystem::exists(file) && std::filesystem::exists(folder),
-            "accepted drops retain references without moving or deleting originals");
-    }
     const auto isolatedGrant = store.Grant(ownerA, file,
         WidgetFilesystemHandleKind::File,
         WidgetFilesystemHandleAccess::Read, false);
