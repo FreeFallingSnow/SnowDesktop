@@ -19,9 +19,9 @@ struct Surface
 {
     std::string id, kind, title, search, category = "all";
     RECT bounds{};
-    std::vector<std::string> items;
+    std::vector<std::string> items, children;
     bool visible = true, listMode = false, showSearch = true, showCategories = true;
-    bool scrollContainer = true;
+    bool scrollContainer = true, popup = false;
 };
 struct Step
 {

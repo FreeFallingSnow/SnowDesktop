@@ -51,12 +51,16 @@ if (request.component == "demo-scene")
             if (surface.kind == "dock" || surface.kind == "status-bar" || surface.kind == "navigation") continue;
             DesktopWidget widget; widget.id = L"__demo_surface_" + demo::Wide(surface.id);
             widget.type = surface.kind == "files" ? DesktopWidgetType::FileCategories :
-                surface.kind == "mapping" ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection;
+                surface.kind == "mapping" ? DesktopWidgetType::FolderMapping :
+                surface.kind == "collection-group" ? DesktopWidgetType::CollectionGroup :
+                surface.kind == "file-group" ? DesktopWidgetType::FileGroup : DesktopWidgetType::Collection;
             widget.title = demo::Wide(surface.title); widget.bounds = surface.bounds; widget.gridCell.pageId = page.id;
             widget.cellScale = 1; widget.gridSpan = {std::max(2, static_cast<int>((surface.bounds.right - surface.bounds.left) / kCellWidth)),
                 std::max(2, static_cast<int>((surface.bounds.bottom - surface.bounds.top) / kMinCellHeight))};
             widget.showTitle = true; widget.showSearchBox = surface.showSearch; widget.showFileCategories = surface.showCategories;
             widget.listMode = surface.listMode; widget.scrollContainerMode = surface.scrollContainer; widget.activeCategoryId = L"all";
+            for (const auto& child : surface.children) widget.childWidgetIds.push_back(L"__demo_surface_" + demo::Wide(child));
+            if (!widget.childWidgetIds.empty()) widget.activeCategoryId = widget.childWidgetIds.front();
             for (const auto& id : surface.items)
             {
                 const auto key = L"__demo_item_" + demo::Wide(id); widget.itemKeys.push_back(key);
@@ -237,7 +241,7 @@ if (request.component == "demo-scene")
                     auto& widget = widgets_[indices.at(surface.id)]; widget.bounds = rect;
                     widget.listMode = surface.listMode; widget.activeCategoryId = demo::Wide(surface.category);
                     widget.gridSpan = {std::max(2, static_cast<int>((rect.right - rect.left) / kCellWidth)), std::max(2, static_cast<int>((rect.bottom - rect.top) / kMinCellHeight))};
-                    if (surface.kind == "popup")
+                    if (surface.kind == "popup" || surface.popup)
                     {
                         popupWidgetIndex_ = indices.at(surface.id); popupHasAnchor_ = popupAnchoredToDock_ = false;
                         collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light; collectionPopupGlassTheme_ = appearance.glassEnabled;
