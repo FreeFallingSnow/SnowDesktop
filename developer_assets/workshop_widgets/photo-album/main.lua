@@ -1,5 +1,11 @@
 local album = module.require("modules/album.lua")
 local sample = resource.image("sample")
+local fluent={
+    fill=utf8.char(0xE42B), -- crop_20_regular
+    remove=utf8.char(0xF369), -- dismiss_20_regular
+    clear=utf8.char(0xF34C), -- delete_20_regular
+    manage=utf8.char(0xE725), -- image_multiple_20_regular
+}
 
 local function copy()
     return {
@@ -312,10 +318,10 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         if request.id~="album.menu" then return nil end
         local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
         m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
-        return ui.menu({{id="fill",label=l10n.tr("album.fill"),checked=enabled("fill",true)},
-            {id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
-            {id="clear",label=copy().clearAll,enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
-            {id="manage",label=copy().manage}})
+        return ui.menu({{id="fill",label=l10n.tr("album.fill"),icon=fluent.fill,iconFont="fluent",checked=enabled("fill",true)},
+            {id="removePhoto",label=copy().removePhoto,icon=fluent.remove,iconFont="fluent",enabled=photo~=nil and not m.preview},
+            {id="clear",label=copy().clearAll,icon=fluent.clear,iconFont="fluent",enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
+            {id="manage",label=copy().manage,icon=fluent.manage,iconFont="fluent"}})
     end,
     -- The host retires this VM's timers. A named cancel here can target the
     -- replacement VM, which is already set up when hotReload disposes us.

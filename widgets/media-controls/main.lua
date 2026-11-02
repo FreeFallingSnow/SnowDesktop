@@ -5,6 +5,7 @@ local launcherBinding
 
 local fluent = {
     settings = utf8.char(0xF6A9),
+    clear = utf8.char(0xF369), -- dismiss_20_regular
 }
 
 local fontAwesome = {
@@ -502,6 +503,8 @@ local function menu(_context, _model, request)
         items[#items + 1] = {
             id = "launcher.clear",
             label = l10n.tr("lua_widget.media_control.clear_launcher"),
+            icon = fluent.clear,
+            iconFont = "fluent",
         }
     end
     return ui.menu(items)

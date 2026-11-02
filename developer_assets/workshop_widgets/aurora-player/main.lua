@@ -24,6 +24,18 @@ local glyphs = {
     sound = utf8.char(0xF028),
 }
 
+-- Fluent System Icons Regular, matching the host's embedded font.
+local fluent = {
+    settings = utf8.char(0xF6A9), -- settings_20_regular
+    clear = utf8.char(0xF369), -- dismiss_20_regular
+    stop = utf8.char(0xF72A), -- stop_20_regular
+    back10 = utf8.char(0xEAFB), -- skip_back_10_20_regular
+    forward10 = utf8.char(0xEB00), -- skip_forward_10_20_regular
+    speed = utf8.char(0xED9B), -- top_speed_20_regular
+    shuffle = utf8.char(0xEF36), -- arrow_shuffle_20_regular
+    repeatAll = utf8.char(0xF171), -- arrow_repeat_all_20_regular
+}
+
 local function settingEnabled(key, defaultValue)
     local value = storage.get(key)
     if value == nil then return defaultValue == true end
@@ -1111,6 +1123,7 @@ local function menu(_context, model, request)
         {
             id = "launcher.configure",
             label = l10n.tr("workshop.aurora_player.configure_launcher"),
+            icon = fluent.settings, iconFont = "fluent",
         },
         { type = "separator" },
         {
@@ -1130,6 +1143,7 @@ local function menu(_context, model, request)
         items[#items + 1] = {
             id = "launcher.clear",
             label = l10n.tr("workshop.aurora_player.clear_launcher"),
+            icon = fluent.clear, iconFont = "fluent",
         }
     end
     items[#items + 1] = { type = "separator" }
@@ -1137,26 +1151,31 @@ local function menu(_context, model, request)
         {
             id = "media.stop",
             label = l10n.tr("workshop.aurora_player.stop"),
+            icon = fluent.stop, iconFont = "fluent",
             enabled = allowed("canStop"),
         },
         { type = "separator" },
         {
             id = "media.back10",
             label = l10n.tr("workshop.aurora_player.back10"),
+            icon = fluent.back10, iconFont = "fluent",
             enabled = allowed("canSeek"),
         },
         {
             id = "media.forward10",
             label = l10n.tr("workshop.aurora_player.forward10"),
+            icon = fluent.forward10, iconFont = "fluent",
             enabled = allowed("canSeek"),
         },
         { type = "separator" },
         {
             label = l10n.tr("workshop.aurora_player.speed"),
+            icon = fluent.speed, iconFont = "fluent",
             children = rateItems,
         },
         {
             label = l10n.tr("workshop.aurora_player.shuffle"),
+            icon = fluent.shuffle, iconFont = "fluent",
             children = {
                 {
                     id = "media.shuffle.on",
@@ -1174,6 +1193,7 @@ local function menu(_context, model, request)
         },
         {
             label = l10n.tr("workshop.aurora_player.repeat"),
+            icon = fluent.repeatAll, iconFont = "fluent",
             children = {
                 {
                     id = "media.repeat.none",

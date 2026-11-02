@@ -2,6 +2,19 @@ local player = module.require("modules/local_queue.lua")
 local panel=module.require("modules/panel_ui.lua")
 local playbackOptions=module.require("modules/playback_options.lua")
 local M = {}
+-- Fluent System Icons Regular, matching the host's embedded font.
+local fluent = {
+    play = utf8.char(0xF605), -- play_20_regular
+    remove = utf8.char(0xF369), -- dismiss_20_regular
+    first = utf8.char(0xE32D), -- chevron_double_up_20_regular
+    last = utf8.char(0xE329), -- chevron_double_down_20_regular
+    source = utf8.char(0xE854), -- music_note_2_20_regular
+    files = utf8.char(0xECD5), -- text_bullet_list_add_20_regular
+    folder = utf8.char(0xF41C), -- folder_add_20_regular
+    playlist = utf8.char(0xECE2), -- text_bullet_list_square_20_regular
+    audio = utf8.char(0xEB42), -- speaker_2_20_regular
+    options = utf8.char(0xF587), -- options_20_regular
+}
 local function readChunks(prefix)
     local count = tonumber(storage.get(prefix.."Count"))
     if not count then return nil end
@@ -428,21 +441,21 @@ end
 
 function M.menu(_context,model,request)
     if request.id~="local.track.menu" then return nil end
-    return ui.menu({{id="local.track",label=l10n.tr("music.play")},
-        {id="local.track.remove",label=l10n.tr("music.remove")},{type="separator"},
-        {id="local.track.top",label=l10n.tr("music.move_top")},
-        {id="local.track.bottom",label=l10n.tr("music.move_bottom")}})
+    return ui.menu({{id="local.track",label=l10n.tr("music.play"),icon=fluent.play,iconFont="fluent"},
+        {id="local.track.remove",label=l10n.tr("music.remove"),icon=fluent.remove,iconFont="fluent"},{type="separator"},
+        {id="local.track.top",label=l10n.tr("music.move_top"),icon=fluent.first,iconFont="fluent"},
+        {id="local.track.bottom",label=l10n.tr("music.move_bottom"),icon=fluent.last,iconFont="fluent"}})
 end
 
 function M.menuItems(model)
-    return {{label=l10n.tr("workshop.aurora_player.source"),children={
+    return {{label=l10n.tr("workshop.aurora_player.source"),icon=fluent.source,iconFont="fluent",children={
         {id="local.source.system",label=l10n.tr("workshop.aurora_player.source_system"),checked=model.source=="system"},
         {id="local.source.local",label=l10n.tr("workshop.aurora_player.source_local"),checked=model.source=="local",enabled=M.available()},
-    }},{id="local.files",label=l10n.tr("music.files"),enabled=M.available()},
-        {id="local.folder",label=l10n.tr("music.folder"),enabled=M.available()},
-        {id="local.playlist",label=l10n.tr("music.playlist"),enabled=M.available()},
-        {id="system.audio.menu",label=l10n.tr("shared.audio"),enabled=widget.hasFeature("widget.panel")},
-        {id="local.options",label=l10n.tr("music.options"),enabled=widget.hasFeature("widget.panel")}}
+    }},{id="local.files",label=l10n.tr("music.files"),icon=fluent.files,iconFont="fluent",enabled=M.available()},
+        {id="local.folder",label=l10n.tr("music.folder"),icon=fluent.folder,iconFont="fluent",enabled=M.available()},
+        {id="local.playlist",label=l10n.tr("music.playlist"),icon=fluent.playlist,iconFont="fluent",enabled=M.available()},
+        {id="system.audio.menu",label=l10n.tr("shared.audio"),icon=fluent.audio,iconFont="fluent",enabled=widget.hasFeature("widget.panel")},
+        {id="local.options",label=l10n.tr("music.options"),icon=fluent.options,iconFont="fluent",enabled=widget.hasFeature("widget.panel")}}
 end
 
 return M

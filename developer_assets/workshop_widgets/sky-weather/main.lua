@@ -1,6 +1,11 @@
 local weather=module.require("modules/weather.lua")
 local json=module.require("modules/json.lua")
 local cities=module.require("modules/cities.lua")
+local fluent={
+    city=utf8.char(0xF4F8), -- location_20_regular
+    refresh=utf8.char(0xF13D), -- arrow_clockwise_20_regular
+    settings=utf8.char(0xF6A9), -- settings_20_regular
+}
 -- Reserve the fixed controls plus three complete city results in the panel.
 local cityPanelRows=16
 local lazyImages=widget.hasFeature("resource.image.lazy")
@@ -504,8 +509,9 @@ local function dispose(_context,m)
 end
 return widget.define({name=l10n.tr("lua_widget.sky_weather.name"),useCustomStyle=true,followPersonalizationDefault=true,showTitle=false,
     backgroundLayer={render=background,blurRadius=0},render=render,panel=panel,setup=setup,event=event,dispose=dispose,
-    menu=function() return ui.menu({{id="cities",label=l10n.tr("lua_widget.sky_weather.choose_city")},
-        {id="refresh",label=l10n.tr("lua_widget.sky_weather.refresh")},{id="settings",label=l10n.tr("lua_widget.sky_weather.settings")}}) end,
+    menu=function() return ui.menu({{id="cities",label=l10n.tr("lua_widget.sky_weather.choose_city"),icon=fluent.city,iconFont="fluent"},
+        {id="refresh",label=l10n.tr("lua_widget.sky_weather.refresh"),icon=fluent.refresh,iconFont="fluent"},
+        {id="settings",label=l10n.tr("lua_widget.sky_weather.settings"),icon=fluent.settings,iconFont="fluent"}}) end,
     settings={fields={{key="unit",type="select",label=l10n.tr("lua_widget.sky_weather.unit"),default="c",options={"c","f"},
         optionLabels={l10n.tr("lua_widget.sky_weather.celsius"),l10n.tr("lua_widget.sky_weather.fahrenheit")}},
         {key="interval",type="duration",label=l10n.tr("lua_widget.sky_weather.interval"),default=1800,min=600,max=21600},
