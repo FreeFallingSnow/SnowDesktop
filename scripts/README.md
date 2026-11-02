@@ -549,6 +549,14 @@ scripts\build.bat issue task-b -Batch <batchId> -IssueId <issueId> -IssueState d
 看板由协作入口自动启动，地址和手动停启详见 [本地看板](../tools/build-dashboard/README.md)。
 
 
+### 独立子仓库提交
+
+当前 `commit` 和 `task-list.sourceChanges` 的 Git 根固定为主仓库；后者不枚举被忽略的独立子仓库，`pending: []` 不能证明这些仓库已提交。涉及独立子仓库时继续以主仓库相对路径 `claim`，并在该子仓库单独核对分支、远程、差异、未跟踪文件与暂存区。
+
+子仓库的本地提交复用 `build_ownership.ps1` 中的 `Invoke-OwnedCommit`：持有主协调器 `.build/collaboration/git.lock` 排他租约，核对当前任务、批次、修订与路径归属，将已认领的子仓库前缀映射为仓库内相对路径，再在实际 Git 根调用该函数并提供 UTF-8 消息文件。该调用使用 `git commit --only` 保留其他暂存项，回执另存任务目录；冻结后的内容须先通过原 `Assert-CommitIdentity`，不改写协调器的仓库根或既有状态。租约占用、归属变化和输入变化时等待或重开，不删除锁、不接管其他任务。
+
+子仓库提交后核对实际提交文件、HEAD 和剩余差异；收尾逐仓审计，不以主仓库的关闭回执替代子仓库结果。本地保存及远端动作的授权边界见[提交规范](../.agents/rules/delivery.md#提交规范)。
+
 ### 本地等待、有限重试与失败续修
 
 完成自身编辑后默认 `ready-and-wait`，前台按声明计划中的 `lightChecks: ["builtin-basic"]` 执行一次只读检查并等待屏障。
