@@ -2,6 +2,7 @@
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_attribution.h"
 #include "shell_extension_demand.h"
+#include "shell_extension_menu_rows.h"
 #include "shell_menu_read_projection.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
@@ -1199,6 +1200,36 @@ struct MenuService::Impl
         }
         return owners;
     }
+    void FillDisplayIcons(std::vector<Entry>& entries, unsigned contexts, const Registration* inherited = nullptr) const
+    {
+        for (auto& entry : entries)
+        {
+            if (entry.separator) continue;
+            const Registration* owner = nullptr;
+            for (const auto* source : {&catalogue, &available})
+            {
+                const auto known = std::find_if(source->rows.begin(), source->rows.end(), [&](const auto& item) {
+                    return contexts && (item.contexts & contexts) == contexts && item.systemEnabled &&
+                        ((!entry.registration.empty() && item.id == entry.registration) ||
+                         (item.id == entry.provider && item.display.key == entry.key));
+                });
+                if (known != source->rows.end()) { owner = &*known; break; }
+            }
+            if (!owner) owner = inherited;
+            if (entry.pixels.empty() && !presentation_detail::CommandGlyph(entry.key) && owner)
+            {
+                const Entry* image = &owner->display;
+                if (image->pixels.empty() && !owner->application.id.empty())
+                    for (const auto& item : catalogue.rows)
+                        if (item.systemEnabled && item.application.id == owner->application.id && !item.display.pixels.empty())
+                        { image = &item.display; break; }
+                entry.width = image->width; entry.height = image->height; entry.pixels = image->pixels;
+                entry.imageLogicalSize = image->imageLogicalSize ? image->imageLogicalSize : 16;
+            }
+            // Only a proven application can supply artwork for unnamed descendants.
+            FillDisplayIcons(entry.children, contexts, owner && !owner->application.id.empty() ? owner : nullptr);
+        }
+    }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
         Request request;
@@ -2187,6 +2218,9 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
             if (!ambiguous && associatedContexts == view.contexts) entry.registration = std::move(registration);
         }
         reply.entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, reply, view.contexts);
+        // Reuse the same command/application artwork already shown by settings.
+        // This is a memory-only display copy; stored snapshots and commands stay unchanged.
+        impl_->FillDisplayIcons(reply.entries, view.contexts);
     };
     if (view.snapshot) project(*view.snapshot);
     if (view.roots) project(*view.roots);

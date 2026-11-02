@@ -837,6 +837,10 @@ struct Host
                 Bitmap(entry, entry.checked && item.hbmpChecked ? item.hbmpChecked : item.hbmpUnchecked);
             if (entry.pixels.empty() && !(item.fType & MFT_OWNERDRAW))
                 CallbackBitmap(entry, source, menu, item);
+            // Fill resource-backed artwork before publishing root headers.
+            // The same helper/cache serves previews and complete menus.
+            if (depth == 0 && request && !request->startPinOnly)
+                RegisteredBitmap(entry, *request);
             if (depth == 0 && prepareRootIcon) prepareRootIcon(entry);
             omitted.push_back(false); entries.push_back(std::move(entry));
         }
@@ -1132,7 +1136,6 @@ struct Host
         IdentifyEntries(reply.entries);
         menus.push_back(std::move(actual));
 
-        for (auto& entry : reply.entries) RegisteredBitmap(entry, request);
         if (count >= kMaximumEntries) return {};
         IdentifyEntries(reply.entries); reply.ok = true;
         return reply;
@@ -1399,8 +1402,6 @@ struct Host
                 const auto *pair = StatePairForVerb(entry.key);
                 return !pair || pair->id != "state:start-pin";
             });
-        if (!request.startPinOnly)
-            for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
         NvidiaCompatibility(request, reply);
         AppendPackagedCommands(request, native->folder.Get(), raw, packages, reply);
         if (count >= kMaximumEntries)

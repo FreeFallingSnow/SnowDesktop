@@ -427,26 +427,33 @@ class Presentation
                     {
                         images_.push_back(image); item.image = image;
                     }
-                    result.push_back(std::move(item));
-                    continue;
                 }
-                BITMAPINFO info{};
-                info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-                info.bmiHeader.biWidth = e.width;
-                info.bmiHeader.biHeight = -e.height;
-                info.bmiHeader.biPlanes = 1;
-                info.bmiHeader.biBitCount = 32;
-                info.bmiHeader.biCompression = BI_RGB;
-                void *pixels = nullptr;
-                HBITMAP image = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
-                if (image && pixels)
+                else
                 {
-                    memcpy(pixels, e.pixels.data(), e.pixels.size());
-                    images_.push_back(image);
-                    item.image = image;
+                    BITMAPINFO info{};
+                    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                    info.bmiHeader.biWidth = e.width;
+                    info.bmiHeader.biHeight = -e.height;
+                    info.bmiHeader.biPlanes = 1;
+                    info.bmiHeader.biBitCount = 32;
+                    info.bmiHeader.biCompression = BI_RGB;
+                    void *pixels = nullptr;
+                    HBITMAP image = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+                    if (image && pixels)
+                    {
+                        memcpy(pixels, e.pixels.data(), e.pixels.size());
+                        images_.push_back(image);
+                        item.image = image;
+                    }
+                    else if (image)
+                        DeleteObject(image);
                 }
-                else if (image)
-                    DeleteObject(image);
+            }
+            if (!item.image && !e.separator)
+            {
+                const auto glyph = presentation_detail::CommandGlyph(e.key);
+                item.glyph = glyph ? glyph : L"\uE9E9";
+                if (StatePairForVerb(e.key)) item.builtinIcon = menu_icon::BuiltinIcon::Pin;
             }
             result.push_back(std::move(item));
         }
