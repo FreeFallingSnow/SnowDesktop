@@ -97,9 +97,14 @@ struct ToolbarLayer
         if (!enabled || !IsWindowVisible(owner) || !GetClientRect(owner, &client) || client.right != size.cx)
         { ShowWindow(window, SW_HIDE); return; }
         POINT position{0, client.bottom - size.cy}; ClientToScreen(owner, &position);
+        // A card raised with SWP_NOOWNERZORDER can pass its existing owned
+        // surface on reopen. Restore the surface immediately above the card,
+        // preserving the Dock owner's position and the card's current Z band.
+        const HWND preceding = GetWindow(owner, GW_HWNDPREV);
+        const UINT order = preceding == window ? SWP_NOZORDER : 0;
         SetLastError(ERROR_SUCCESS);
-        const BOOL shown = SetWindowPos(window, nullptr, position.x, position.y, 0, 0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        const BOOL shown = SetWindowPos(window, preceding, position.x, position.y, 0, 0,
+            SWP_NOSIZE | order | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         const DWORD error = shown ? ERROR_SUCCESS : GetLastError();
         if (error && error != syncError) { syncError = error; Audit(L"position-failed", DiagnosticLogLevel::Warning); }
         syncError = error;
