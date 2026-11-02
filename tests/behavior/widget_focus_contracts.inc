@@ -126,6 +126,11 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
     Require(WidgetEngine::InstallWidgetPackage((sourceRoot /
         L"developer_assets/workshop_widgets/single-monitor/widget.json").wstring(), error),
         "install actual single-monitor package");
+    std::string permissionError;
+    Require(WidgetEngine::SetWidgetPermissionDecision(L"b6a2874c-97b4-4f5d-a02b-d08a077c7efe",
+        snowdesktop::widget::PermissionDecisionState::Granted,
+        {"system.performance.read", "system.power.read", "system.network.read", "system.storage.read"},
+        {}, permissionError), "approve installed monitor in the private profile");
     for (const std::string mode : {"cpu", "gpu", "memory", "vram", "battery", "disk", "network"})
     {
         const std::wstring instance = L"monitor-" + std::wstring(mode.begin(), mode.end());
@@ -188,11 +193,10 @@ end,render=function() end})
     Write(package / L"widget.json", R"({"schemaVersion":2,"apiVersion":2,
         "dataVersion":1,"id":"57aeb6ac-104b-43fb-af95-10d7ce082f56",
         "slug":"focus-contract","version":"1.0.1","entry":"main.lua",
-        "name":"History Contract","permissions":["system.performance.read","system.network.read"],
+        "name":"History Contract","permissions":[],"optionalPermissions":["system.performance.read","system.network.read"],
         "requiredFeatures":["data.subscribe","data.system.cpu","data.system.network.traffic","data.subscription.history"]})");
     Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error),
         "install actual history subscription fixture");
-    std::string permissionError;
     Require(WidgetEngine::SetWidgetPermissionDecision(L"57aeb6ac-104b-43fb-af95-10d7ce082f56",
         snowdesktop::widget::PermissionDecisionState::Granted,
         {"system.performance.read", "system.network.read"}, {}, permissionError), "grant private fixture permissions");
@@ -215,7 +219,7 @@ end,render=function() end})
     Write(package / L"widget.json", deniedManifest);
     Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error), "update denied fixture");
     Require(WidgetEngine::SetWidgetPermissionDecision(L"57aeb6ac-104b-43fb-af95-10d7ce082f56",
-        snowdesktop::widget::PermissionDecisionState::Denied, {}, {}, permissionError), "deny private fixture permissions");
+        snowdesktop::widget::PermissionDecisionState::Granted, {}, {}, permissionError), "approve package without granting the optional topic");
     Require(engine.EnsureWidgetLoaded(L"history-denied", L"57aeb6ac-104b-43fb-af95-10d7ce082f56"),
         "load denied history subscription: " + diagnostics());
     Require(engine.GetWidgetErrors().empty(), "history must respect permission: " + diagnostics());
