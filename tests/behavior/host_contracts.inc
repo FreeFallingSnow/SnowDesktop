@@ -279,8 +279,11 @@ void SettingsHostCommit()
         engine.RuntimeGetStorageValue(created, "started").empty(),
         "denial preserves an unexecuted permission placeholder");
     Require(engine.ApplyWidgetPermissionDecision(packageId, widget::PermissionDecisionState::Granted,
-        {"network.internet"}, {}, permissionError) && engine.RetryWidget(created, packageId),
-        "explicit consent loads the same previously blocked instance");
+        {"network.internet"}, {}, permissionError),
+        "save explicit consent in the private profile: " + permissionError);
+    const bool retried = engine.RetryWidget(created, packageId);
+    Require(retried, "explicit consent loads the same previously blocked instance: " +
+        engine.RuntimeGetStorageValue(created, "lastError"));
     Require(engine.GetWidgetHostState(created, packageId).kind == WidgetHostStateKind::Ready &&
         engine.RuntimeGetStorageValue(created, "started") == "1",
         "Lua setup executes after consent on the original desktop instance");
