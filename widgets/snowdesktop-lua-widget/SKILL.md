@@ -117,8 +117,11 @@ Choose the sizing model before writing geometry:
   the same row unit. The host keeps the row unit at the page baseline
   for one- and two-row widgets, then grows it slowly with vertical span. All
   component-derived metrics grow with it. Horizontal span never changes them,
-  so components with the same row span stay aligned. Use `layout.rpxX()` and
-  `layout.rpxY()` only for component-specific axis geometry, and never derive
+  so components with the same row span stay aligned.
+  `panel`, `dialog` and `popover` callbacks use the page baseline row unit
+  without desktop-span growth; their controls must not grow with the source
+  widget. Page row settings and system text scaling still apply. Use
+  `layout.rpxX()` and `layout.rpxY()` only for component-specific axis geometry, and never derive
   vertical controls or rows from width. Require `ui.semanticMetrics.rowUnit`
   and use `layoutRowHeight`. Use `layout.rpx()` or `vmin` for isotropic
   decoration.

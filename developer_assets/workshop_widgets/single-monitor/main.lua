@@ -181,7 +181,8 @@ local function popover(_context,m)
     -- Rotate the same cyclic traversal order so the first committed scene
     -- focuses the current metric, before any opening-animation cache exists.
     for i,item in ipairs(children) do item.tabIndex=(i-initial+#children)%#children+1 end
-    return view.column({key="selector.root",width="fill",height="fill",padding=r*0.2,gap=r*0.13,children=children})
+    return view.scroll({key="selector.scroll",width="fill",height="fill",children={
+        view.column({key="selector.root",width="fill",height="auto",padding=r*0.2,gap=r*0.13,children=children})}})
 end
 local function panel(_context,m)
     local c,r,children=copy(),ui.metrics().layoutRowHeight,{}
@@ -230,10 +231,9 @@ local function event(context,m,value)
             (value.kind=="visibility" and value.visible) then reconcile(m);sample(m)
     elseif value.kind=="action" then
         if value.id=="selector.open" then
-            local r=ui.metrics().layoutRowHeight
             local rows=(m.mode=="gpu" or m.mode=="vram" or m.mode=="disk") and 8 or 7
-            widget.openPopover({anchorKey="monitor.selector",width=math.ceil(r*10),
-                height=math.ceil(r*(rows*1.13+0.8)),placement="bottomEnd"})
+            widget.openPopover({anchorKey="monitor.selector",width=320,
+                height=rows*32+40,placement="bottomEnd"})
         elseif value.id:sub(1,5)=="mode." then chooseMode(m,value.id:sub(6))
         elseif value.id=="device.open" then
             widget.closePopover();widget.openPanel({title=copy().device,width=440,height=360})

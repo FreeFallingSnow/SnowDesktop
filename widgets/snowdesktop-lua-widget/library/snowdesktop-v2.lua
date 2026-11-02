@@ -2705,6 +2705,7 @@ function control.blur(key) end
 
 ---@class SnowUiMetrics
 ---@field layoutRowHeight number Visible content height for a search field, input, ordinary button or single-line item. Exterior insets and row gaps are excluded.
+---Auxiliary panel/dialog/popover callbacks use the page baseline without desktop-span growth; page row settings and system text scaling still apply.
 
 ---@class snow.ui
 ui = {}

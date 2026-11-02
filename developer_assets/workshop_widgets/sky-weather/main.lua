@@ -7,7 +7,7 @@ local fluent={
     settings=utf8.char(0xF6A9), -- settings_20_regular
 }
 -- Reserve the fixed controls plus three complete city results in the panel.
-local cityPanelRows=16
+local cityPanelRows=14
 local lazyImages=widget.hasFeature("resource.image.lazy")
 local function skyImage(name)
     if lazyImages then return resource.image(name,{lazy=true}) end
@@ -336,8 +336,8 @@ local function panel(_context,m)
     local selected=storage.get("citySelection")
     local function cityButton(key,p)
         local active=cities.valid(selected) and math.abs(selected.lat-p.lat)<0.001 and math.abs(selected.lon-p.lon)<0.001
-        return view.button({key=key,label=p.label or p.name,width="fill",height=row*2.1,
-            flexShrink=0,fontSize=row*0.54,textAlign="start",padding={left=row*0.32,right=row*0.32,top=row*0.22,bottom=row*0.22},textWrap="wrap",maxLines=2,
+        return view.button({key=key,label=p.label or p.name,width="fill",height=row*1.65,
+            flexShrink=0,fontSize=row*0.46,textAlign="start",padding={horizontal=row*0.32,vertical=row*0.16},textWrap="wrap",maxLines=2,
             accessibility={label=p.label or p.name},events={click={id="choose",value=p}},
             style={foreground="textPrimary",background=active and colors.selected or colors.field,
                 borderColor=active and colors.accent or colors.border,borderWidth=active and 1.3 or 1,cornerRadius=row*0.20},
@@ -347,7 +347,7 @@ local function panel(_context,m)
     if m.query=="" then
         local recent=cities.recent(storage.get("recentCities"))
         if #recent>0 then
-            items[#items+1]=label("recent.title",l10n.tr("lua_widget.sky_weather.recent"),row*0.50,row*0.82,true,true)
+            items[#items+1]=label("recent.title",l10n.tr("lua_widget.sky_weather.recent"),row*0.43,row*0.82,true,true)
             for i,p in ipairs(recent) do items[#items+1]=cityButton("recent."..i,p) end
         end
         if #recent==0 then
@@ -371,21 +371,21 @@ local function panel(_context,m)
     local enabled=not m.locating and widget.hasPermission("location.read")
     local info=m.locationInfo or savedInfo or (not widget.hasPermission("location.read") and
         l10n.tr("lua_widget.sky_weather.location_permission_short") or l10n.tr("lua_widget.sky_weather.location_idle"))
-    local hint=label("location.info",info,row*0.46,row*1.20,true);hint.textWrap="wrap";hint.maxLines=2
+    local hint=label("location.info",info,row*0.40,row*0.90,true);hint.textWrap="wrap";hint.maxLines=2
     local children={
-        view.text({key="picker.subtitle",text=l10n.tr("lua_widget.sky_weather.picker_subtitle"),width="fill",height=row*1.2,flexShrink=0,fontSize=row*0.48,
+        view.text({key="picker.subtitle",text=l10n.tr("lua_widget.sky_weather.picker_subtitle"),width="fill",height=row,flexShrink=0,fontSize=row*0.43,
             textWrap="wrap",maxLines=2,verticalAlign="start",style={foreground="textSecondary"}}),
         view.searchBox({key="city.search",value=m.query,placeholder=l10n.tr("lua_widget.sky_weather.search_hint"),
-            width="fill",height=row*1.3,flexShrink=0,fontSize=row*0.54,maxBytes=256,padding=row*0.28,
+            width="fill",height=row,flexShrink=0,fontSize=row*0.46,maxBytes=256,padding={horizontal=row*0.28},
             accessibility={label=l10n.tr("lua_widget.sky_weather.search_hint")},
             style={foreground="textPrimary",background=colors.field,borderColor=colors.border,borderWidth=1,cornerRadius=row*0.22},
             events={change={id="query"},submit={id="search"}}}),
-        view.row({key="location.card",width="fill",height=row*2.35,flexShrink=0,padding={left=0,right=0,top=row*0.20,bottom=row*0.20},gap=row*0.36,alignItems="center",
+        view.row({key="location.card",width="fill",height=row*2,flexShrink=0,padding={vertical=row*0.15},gap=row*0.36,alignItems="center",
             children={
                 view.column({key="location.copy",width="fill",height="auto",gap=row*0.10,children={
-                    label("location.title",l10n.tr("lua_widget.sky_weather.use_location"),row*0.54,row*0.72,false,true),hint}}),
+                    label("location.title",l10n.tr("lua_widget.sky_weather.use_location"),row*0.46,row*0.65,false,true),hint}}),
                 view.button({key="location",label=m.locating and l10n.tr("lua_widget.sky_weather.locating_short") or l10n.tr("lua_widget.sky_weather.locate_short"),
-                    width=row*2.6,height=row*1.3,flexShrink=0,fontSize=row*0.50,enabled=enabled,textAlign="center",verticalAlign="center",
+                    width=row*2.6,height=row,flexShrink=0,fontSize=row*0.46,enabled=enabled,textAlign="center",verticalAlign="center",
                     padding={left=row*0.18,right=row*0.18,top=0,bottom=0},
                     accessibility={label=l10n.tr("lua_widget.sky_weather.use_location")},events={click={id="locate"}},
                     style={foreground=enabled and colors.accent or "textDisabled",background=colors.field,
@@ -393,9 +393,9 @@ local function panel(_context,m)
             }}),
         view.scroll({key="city.scroll",width="fill",height="fill",children={view.column({key="city.items",width="fill",height="auto",
             padding={horizontal=row*0.2,vertical=row*0.14},gap=row*0.22,children=items})}}),
-        view.row({key="picker.footer",width="fill",height=row*1.2,flexShrink=0,gap=row*0.2,alignItems="center",children={
-            label("picker.source","Open-Meteo · GeoNames",row*0.43,row*1.2,true),
-            view.button({key="panel.settings",label=l10n.tr("lua_widget.sky_weather.settings"),width="auto",height=row*1.2,flexShrink=0,
+        view.row({key="picker.footer",width="fill",height=row,flexShrink=0,gap=row*0.2,alignItems="center",children={
+            label("picker.source","Open-Meteo · GeoNames",row*0.36,row,true),
+            view.button({key="panel.settings",label=l10n.tr("lua_widget.sky_weather.settings"),width="auto",height=row,flexShrink=0,
                 fontSize=row*0.46,padding=row*0.20,textAlign="center",verticalAlign="center",accessibility={label=l10n.tr("lua_widget.sky_weather.settings")},events={click={id="settings"}},
                 style={foreground=colors.accent,borderWidth=0,cornerRadius=row*0.16},hoverStyle={background=colors.selected}})
             }})
@@ -484,9 +484,7 @@ local function event(_context,m,e)
         local id=e.id
         if id=="keyboard" then if e.key~="Enter" and e.key~="Space" then return end;id=e.value end
         if id=="cities" or id=="cities.empty" then
-            local row=ui.metrics().layoutRowHeight
-            widget.openPanel({title=l10n.tr("lua_widget.sky_weather.choose_city"),
-                width=math.max(440,math.ceil(row*10+36)),height=math.max(520,math.ceil(row*cityPanelRows+74))})
+            widget.openPanel({title=l10n.tr("lua_widget.sky_weather.choose_city"),width=440,height=520})
         elseif id=="refresh" and not m.preview then m.weather:refresh(true)
         elseif id=="settings" then widget.openSettings()
         elseif id=="choose" and not m.preview then choose(m,e.value)

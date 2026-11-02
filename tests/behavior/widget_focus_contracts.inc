@@ -2,6 +2,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <wrl/client.h>
+#include <cmath>
 #include <utility>
 
 namespace behavior
@@ -46,13 +47,15 @@ void WidgetAuxiliaryFocus()
         "slug":"focus-contract","version":"1.0.0","entry":"main.lua",
         "name":"Focus Contract","permissions":[],"requiredFeatures":[
         "view.tree.core","view.surface.panel","view.surface.dialog",
-        "view.surface.popover","control.focus","control.blur","view.focus.request"]})");
+        "view.surface.popover","control.focus","control.blur","view.focus.request",
+        "ui.semanticMetrics.rowUnit"]})");
     Write(package / L"main.lua", R"(
 local function tree()
+    local row=ui.metrics().layoutRowHeight
     return view.column({key="metrics",width="fill",height="fill",children={
-        view.button({key="mode.cpu",label="CPU",width="fill",height=28}),
-        view.button({key="mode.gpu",label="GPU",width="fill",height=28}),
-        view.button({key="mode.battery",label="Battery",width="fill",height=28})}})
+        view.button({key="mode.cpu",label="CPU",width="fill",height=row,flexShrink=0}),
+        view.button({key="mode.gpu",label="GPU",width="fill",height=row,flexShrink=0}),
+        view.button({key="mode.battery",label="Battery",width="fill",height=row,flexShrink=0})}})
 end
 return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
     event=function(context,model,event)
@@ -106,6 +109,22 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
                 (renderBeforeOpened ? L"-cached" : L"-first");
             Require(engine.EnsureWidgetLoaded(instance,
                 L"57aeb6ac-104b-43fb-af95-10d7ce082f56"), "load real non-preview instance");
+            // Exercise the actual Lua API and desktop/auxiliary surface routing.
+            // A tall source must not inflate a panel until its list disappears.
+            const auto desktopRow = [&](int rows) {
+                engine.SetWidgetLayoutMetrics(instance, 2, rows, 92, 116, 8, 24,
+                    DWRITE_FONT_WEIGHT_NORMAL, 1.0f, {});
+                context->BeginDraw();
+                engine.RenderWidget(instance, (package / L"main.lua").wstring(),
+                    context.Get(), RECT{0, 0, 320, 360}, 2, rows);
+                Require(SUCCEEDED(context->EndDraw()) && engine.GetWidgetErrors().empty(),
+                    "render desktop metrics: " + diagnostics());
+                Require(static_cast<bool>(engine.GetWidgets().front().viewTree), "commit desktop metrics tree");
+                return engine.GetWidgets().front().viewTree->children.front().frame.height;
+            };
+            const float baselineRow = desktopRow(2);
+            Require(baselineRow > 0.0f && desktopRow(8) > baselineRow * 1.9f,
+                "desktop row unit retains growth with vertical span");
             engine.PrepareWidgetPanelFocus(instance);
             const auto render = [&] {
                 context->BeginDraw();
@@ -113,6 +132,9 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
                     RECT{0, 0, 320, 360}, surface);
                 const HRESULT drawn = context->EndDraw();
                 Require(rendered && SUCCEEDED(drawn), "render " + surface + ": " + diagnostics());
+                Require(engine.GetWidgets().front().panelViewTree &&
+                    std::abs(engine.GetWidgets().front().panelViewTree->children.front().frame.height - baselineRow) < 0.05f,
+                    surface + " uses the same baseline row as a two-row desktop widget");
             };
             if (renderBeforeOpened)
             {

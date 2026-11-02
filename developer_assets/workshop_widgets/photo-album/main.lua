@@ -241,16 +241,28 @@ local function panel(context,m)
             button("page.previous",c.previous,row,page>1),text("page",tostring(page).." / "..math.ceil(total/pageSize),row),
             button("page.next",c.next,row,page*pageSize<total)}})
     end
+    local footer={button("settings",c.settings,row,true)}
+    if #a.sources>0 or a.importing or a.picking then footer[#footer+1]=button("clear",c.clearAll,row,not m.preview) end
+    local footerRow=view.row({key="footer",width="fill",height=row,flexShrink=0,gap=row*0.25,children=footer})
+    local list=view.column({key="items",width="fill",height="auto",gap=row*0.25,children=items})
+    -- A work-area constraint or large text can leave no room for a fixed list.
+    -- Scroll the whole form instead of committing a zero-height inner viewport.
+    local fixedRows=#header+1
+    if layout.contentHeight()<row*(fixedRows*1.4+2.4) then
+        header[#header+1]=list
+        header[#header+1]=footerRow
+        return view.scroll({key="album.panel.scroll."..m.tab..":"..m.page,width="fill",height="fill",children={
+            view.column({key="album.panel.body",width="fill",height="auto",padding=row*0.2,gap=row*0.4,children=header})}})
+    end
     -- Keep fixed controls inset, while the viewport reaches the host gutter.
     for i,control in ipairs(header) do
         header[i]=view.column({key=control.key..".inset",width="fill",height="auto",flexShrink=0,
             padding={horizontal=row*0.2},children={control}})
     end
-    header[#header+1]=view.scroll({key="list."..m.tab..":"..m.page,width="fill",height="fill",children={
-        view.column({key="items",width="fill",height="auto",padding={horizontal=row*0.2},gap=row*0.25,children=items})}})
-    local footer={button("settings",c.settings,row,true)}
-    if #a.sources>0 or a.importing or a.picking then footer[#footer+1]=button("clear",c.clearAll,row,not m.preview) end
-    header[#header+1]=view.row({key="footer",width="fill",height=row,flexShrink=0,padding={horizontal=row*0.2},gap=row*0.25,children=footer})
+    list.padding={horizontal=row*0.2}
+    header[#header+1]=view.scroll({key="list."..m.tab..":"..m.page,width="fill",height="fill",children={list}})
+    footerRow.padding={horizontal=row*0.2}
+    header[#header+1]=footerRow
     return view.column({key="album.panel",width="fill",height="fill",padding={vertical=row*0.2},gap=row*0.4,children=header})
 end
 

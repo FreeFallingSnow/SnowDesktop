@@ -8975,8 +8975,9 @@ static int lua_UiMetrics(lua_State* L)
                 snowdesktop::widget_runtime::SemanticUiMetricTokens{},
             d2d ? d2d->semanticCuScale : 1.0f,
             static_cast<float>(system.textScale),
-            snowdesktop::widget_runtime::ResolveSemanticRowScale(
-                d2d ? d2d->gridRows : 2));
+            IsPanelSurface(CurrentWidgetSurface(d2d)) ? 1.0f :
+                snowdesktop::widget_runtime::ResolveSemanticRowScale(
+                    d2d ? d2d->gridRows : 2));
 
     lua_createtable(L, 0, 1);
     SetNumberField(L, "layoutRowHeight", metrics.layoutRowHeight);
