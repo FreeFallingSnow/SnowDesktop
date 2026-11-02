@@ -1756,6 +1756,7 @@ bool WidgetPackageValidator::ReadManifest(
                     const bool validGrid = size->Find("aspectRatio") ||
                         (c && r && c->IsNumber() && r->IsNumber() &&
                          std::isfinite(c->number) && std::isfinite(r->number) &&
+                         c->number >= 1 && c->number <= 8 && r->number >= 1 && r->number <= 8 &&
                          c->number == std::floor(c->number) && r->number == std::floor(r->number));
                     if (!size->IsObject() || !ReadAspectGridSize(size, definition.columns,
                             definition.rows, definition.aspect, sizeError) ||

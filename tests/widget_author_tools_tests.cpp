@@ -205,7 +205,8 @@ void TestAspectGridSizes()
     const auto source = temporary.path / L"component";
     std::filesystem::create_directory(source);
     { std::ofstream file(source / L"main.lua"); file << "return widget.define({})"; }
-    const auto write = [&](const std::string& size, bool feature) {
+    const auto write = [&](const std::string& size, bool feature,
+        const std::string& presetSize = R"({"rows":2,"aspectRatio":1})") {
         std::ofstream file(source / L"widget.json", std::ios::binary | std::ios::trunc);
         file << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
             "id":"3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23","slug":"aspect-test",
@@ -215,7 +216,7 @@ void TestAspectGridSizes()
             << (feature ? ",\"widget.size.aspectRatio\"" : "") << R"(],
             "previewData":{"variants":[{"id":"wide","title":"Wide","size":{"columns":3,"aspectRatio":2}}]},
             "creationPresets":[{"id":"cpu","title":"CPU","values":{"metric":"cpu"},
-            "size":{"rows":2,"aspectRatio":1}}]})";
+            "size":)" << presetSize << "}]}";
     };
     write(R"({"rows":2,"aspectRatio":1})", true);
     PackageManifest manifest;
@@ -255,6 +256,13 @@ void TestAspectGridSizes()
     }
     Check(snowdesktop::widget_api::SupportsFeature("widget.size.aspectRatio"),
         "host advertises aspect-ratio grid sizing");
+    for (const std::string invalid : {R"({"columns":1e100,"rows":2})",
+        R"({"columns":2,"rows":1e100})", R"({"columns":1.5,"rows":2})"})
+    {
+        write(R"({"rows":2,"aspectRatio":1})", true, invalid); report = {};
+        Check(!validator.ReadManifest(source / L"widget.json", manifest, report),
+            "invalid grid preset axes cannot silently become default dimensions");
+    }
 }
 
 void TestStandalonePackageExport()
