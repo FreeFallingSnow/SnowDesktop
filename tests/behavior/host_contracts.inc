@@ -237,6 +237,71 @@ void SettingsHostCommit()
     Require(CreateNativeSettingsStore()->Load(disk).Succeeded() &&
         disk.general.diagnosticLogModules == draft.diagnosticLogModules,
         "real host commit persists the applied preference");
+
+    // The real creation path must retain an unexecuted permission placeholder,
+    // so first-time Add can proceed to consent. No dialog or network is needed.
+    struct WidgetRuntimeLifetime
+    {
+        DesktopApp& app;
+        ~WidgetRuntimeLifetime() { Access::ReleaseWidgetRuntime(app); }
+    } widgetRuntimeLifetime{*profile.app};
+    auto& engine = Access::InitializeWidgetRuntime(*profile.app);
+    const auto package = profile.root / L"permission-package";
+    Write(package / L"widget.json", R"({"schemaVersion":2,"apiVersion":2,
+        "dataVersion":1,"id":"12345678-1234-5678-1234-567812345678",
+        "slug":"creation-consent","version":"1.0.0","entry":"main.lua",
+        "name":"Creation consent","permissions":["network.internet"]})");
+    Write(package / L"main.lua", R"(return widget.define({
+        setup=function() storage.set("started", "1") end,
+        view=function() return {type="text",key="body",text="Ready"} end})");
+    const std::wstring packageId = L"12345678-1234-5678-1234-567812345678";
+    std::wstring installError;
+    Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), installError),
+        "install private package requiring network consent");
+    const auto installed = WidgetEngine::GetWidgetPackage(packageId);
+    Require(installed && installed->permissionState == widget::PermissionDecisionState::Pending,
+        "newly installed sensitive package starts with pending consent");
+    const auto created = Access::CreateLuaWidget(*profile.app, packageId);
+    Require(!created.empty(),
+        "first Add must create a permission placeholder before requesting consent");
+    Require(std::any_of(Access::Widgets(*profile.app).begin(), Access::Widgets(*profile.app).end(),
+        [&](const auto& value) { return value.id == created && value.packageId == packageId; }),
+        "permission placeholder is committed to the real desktop model");
+    using widget_runtime::WidgetHostStateKind;
+    Require(engine.GetWidgetHostState(created, packageId).kind == WidgetHostStateKind::PermissionPending &&
+        engine.GetWidgets().empty() && engine.RuntimeGetStorageValue(created, "started").empty(),
+        "pending consent cannot execute Lua or write widget storage");
+    std::string permissionError;
+    Require(engine.ApplyWidgetPermissionDecision(packageId, widget::PermissionDecisionState::Denied,
+        {}, {}, permissionError), "record explicit denial in the private profile");
+    Require(!engine.EnsureWidgetLoaded(created, packageId) &&
+        engine.GetWidgetHostState(created, packageId).kind == WidgetHostStateKind::PermissionDenied &&
+        engine.RuntimeGetStorageValue(created, "started").empty(),
+        "denial preserves an unexecuted permission placeholder");
+    Require(engine.ApplyWidgetPermissionDecision(packageId, widget::PermissionDecisionState::Granted,
+        {"network.internet"}, {}, permissionError) && engine.RetryWidget(created, packageId),
+        "explicit consent loads the same previously blocked instance");
+    Require(engine.GetWidgetHostState(created, packageId).kind == WidgetHostStateKind::Ready &&
+        engine.RuntimeGetStorageValue(created, "started") == "1",
+        "Lua setup executes after consent on the original desktop instance");
+    const auto authorized = Access::CreateLuaWidget(*profile.app, packageId);
+    Require(!authorized.empty() && authorized != created &&
+        engine.GetWidgetHostState(authorized, packageId).kind == WidgetHostStateKind::Ready,
+        "already authorized packages continue to create ready instances");
+
+    const auto broken = profile.root / L"broken-package";
+    Write(broken / L"widget.json", R"({"schemaVersion":2,"apiVersion":2,
+        "dataVersion":1,"id":"64b52de4-173c-4c19-a878-9e2c0c68eb36",
+        "slug":"creation-error","version":"1.0.0","entry":"main.lua",
+        "name":"Creation error","permissions":[]})");
+    Write(broken / L"main.lua", "error('controlled component load failure')");
+    Require(WidgetEngine::InstallWidgetPackage((broken / L"widget.json").wstring(), installError),
+        "install isolated runtime-error fixture");
+    const std::wstring brokenId = L"64b52de4-173c-4c19-a878-9e2c0c68eb36";
+    const auto failed = Access::CreateLuaWidget(*profile.app, brokenId);
+    Require(!failed.empty() &&
+        engine.GetWidgetHostState(failed, brokenId).kind == WidgetHostStateKind::LoadFailed,
+        "ordinary Add retains the recoverable error placeholder for a failed script");
 }
 void GroupTypeContract()
 {

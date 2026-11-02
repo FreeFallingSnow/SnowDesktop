@@ -536,7 +536,10 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         widget.bottomBarHover = true;
         if (widgetEngine_)
         {
-            if (!widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId)) return {};
+            // Ordinary adds retain permission/error placeholders without a Lua
+            // runtime. Only a creation preset requires a live settings model.
+            if (!widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId) &&
+                !settings.creationPresetId.empty()) return {};
             if (!settings.creationPresetId.empty())
             {
                 const auto manifest = WidgetEngine::GetWidgetManifest(settings.packageId);

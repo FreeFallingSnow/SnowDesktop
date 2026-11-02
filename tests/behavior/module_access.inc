@@ -23,6 +23,25 @@ static snowdesktop::SettingsController& HostSettings(DesktopApp& app)
 }
 static std::uint32_t AppliedLogModules(const DesktopApp& app)
 { return app.generalSettings_.diagnosticLogModules; }
+static WidgetEngine& InitializeWidgetRuntime(DesktopApp& app)
+{
+    app.widgetEngine_ = std::make_unique<WidgetEngine>();
+    if (!app.widgetEngine_->Init(nullptr, nullptr))
+        throw std::runtime_error("initialize isolated widget runtime without rendering");
+    return *app.widgetEngine_;
+}
+static void ReleaseWidgetRuntime(DesktopApp& app)
+{
+    app.containers_.clear();
+    app.widgetEngine_.reset();
+}
+static std::wstring CreateLuaWidget(DesktopApp& app, const std::wstring& packageId)
+{
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind = snowdesktop::component_preview::ApplyKind::LuaScript;
+    settings.packageId = packageId;
+    return app.ApplyWidgetPreviewSettings(POINT{100, 100}, settings);
+}
 // User decision (2026-10-31): retain each source section and sort within it.
 // Only the external SDK answer is supplied (no additional recursive matches);
 // local identities, sorting and source-section projection execute production.
