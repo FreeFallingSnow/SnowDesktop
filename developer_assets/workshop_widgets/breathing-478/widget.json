@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "4-7-8 Breathing",
   "nameKey": "workshop.breathing_478.name",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Guides you through 4-7-8 breathing with a calmly expanding circle, round tracking, and an adjustable session length.",
   "descriptionKey": "workshop.breathing_478.description",
   "preview": "workshop-preview.png",
@@ -297,8 +297,8 @@
     }
   },
   "defaultSize": {
-    "rows": 2,
-    "aspectRatio": 1
+    "columns": 2,
+    "aspectRatio": 0.75
   },
   "minSize": {
     "columns": 2,

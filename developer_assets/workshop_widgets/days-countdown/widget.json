@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Days Countdown",
   "nameKey": "countdown.name",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Count days to or since a linked calendar event.",
   "descriptionKey": "countdown.description",
   "locales": {
@@ -44,7 +44,9 @@
       "countdown.previous": "上个月",
       "countdown.next": "下个月",
       "countdown.page_previous": "上一页",
-      "countdown.page_next": "下一页"
+      "countdown.page_next": "下一页",
+      "countdown.layout_horizontal": "横向",
+      "countdown.layout_square": "方形"
     },
     "zh-TW": {
       "countdown.name": "倒數日",
@@ -76,7 +78,9 @@
       "countdown.previous": "上個月",
       "countdown.next": "下個月",
       "countdown.page_previous": "上一頁",
-      "countdown.page_next": "下一頁"
+      "countdown.page_next": "下一頁",
+      "countdown.layout_horizontal": "橫向",
+      "countdown.layout_square": "方形"
     },
     "en-US": {
       "countdown.name": "Days Countdown",
@@ -108,7 +112,9 @@
       "countdown.previous": "Previous",
       "countdown.next": "Next",
       "countdown.page_previous": "Previous page",
-      "countdown.page_next": "Next page"
+      "countdown.page_next": "Next page",
+      "countdown.layout_horizontal": "Horizontal",
+      "countdown.layout_square": "Square"
     },
     "ja-JP": {
       "countdown.name": "カウントダウン",
@@ -140,7 +146,9 @@
       "countdown.previous": "前月",
       "countdown.next": "翌月",
       "countdown.page_previous": "前のページ",
-      "countdown.page_next": "次のページ"
+      "countdown.page_next": "次のページ",
+      "countdown.layout_horizontal": "横向き",
+      "countdown.layout_square": "正方形"
     },
     "ko-KR": {
       "countdown.name": "디데이",
@@ -172,7 +180,9 @@
       "countdown.previous": "이전 달",
       "countdown.next": "다음 달",
       "countdown.page_previous": "이전 페이지",
-      "countdown.page_next": "다음 페이지"
+      "countdown.page_next": "다음 페이지",
+      "countdown.layout_horizontal": "가로",
+      "countdown.layout_square": "정사각형"
     },
     "de-DE": {
       "countdown.name": "Tage zählen",
@@ -204,7 +214,9 @@
       "countdown.previous": "Zurück",
       "countdown.next": "Weiter",
       "countdown.page_previous": "Vorherige Seite",
-      "countdown.page_next": "Nächste Seite"
+      "countdown.page_next": "Nächste Seite",
+      "countdown.layout_horizontal": "Querformat",
+      "countdown.layout_square": "Quadratisch"
     },
     "fr-FR": {
       "countdown.name": "Compte à rebours",
@@ -236,7 +248,9 @@
       "countdown.previous": "Précédent",
       "countdown.next": "Suivant",
       "countdown.page_previous": "Page précédente",
-      "countdown.page_next": "Page suivante"
+      "countdown.page_next": "Page suivante",
+      "countdown.layout_horizontal": "Horizontal",
+      "countdown.layout_square": "Carré"
     },
     "es-ES": {
       "countdown.name": "Cuenta atrás",
@@ -268,7 +282,9 @@
       "countdown.previous": "Anterior",
       "countdown.next": "Siguiente",
       "countdown.page_previous": "Página anterior",
-      "countdown.page_next": "Página siguiente"
+      "countdown.page_next": "Página siguiente",
+      "countdown.layout_horizontal": "Horizontal",
+      "countdown.layout_square": "Cuadrado"
     },
     "es-419": {
       "countdown.name": "Cuenta regresiva",
@@ -300,7 +316,9 @@
       "countdown.previous": "Anterior",
       "countdown.next": "Siguiente",
       "countdown.page_previous": "Página anterior",
-      "countdown.page_next": "Página siguiente"
+      "countdown.page_next": "Página siguiente",
+      "countdown.layout_horizontal": "Horizontal",
+      "countdown.layout_square": "Cuadrado"
     },
     "pt-BR": {
       "countdown.name": "Contagem de dias",
@@ -332,7 +350,9 @@
       "countdown.previous": "Anterior",
       "countdown.next": "Próximo",
       "countdown.page_previous": "Página anterior",
-      "countdown.page_next": "Próxima página"
+      "countdown.page_next": "Próxima página",
+      "countdown.layout_horizontal": "Horizontal",
+      "countdown.layout_square": "Quadrado"
     }
   },
   "defaultSize": {
@@ -346,19 +366,21 @@
     "variants": [
       {
         "id": "wide",
-        "title": "2:1",
+        "title": "Horizontal",
         "size": {
           "rows": 1,
           "aspectRatio": 2
-        }
+        },
+        "titleKey": "countdown.layout_horizontal"
       },
       {
         "id": "square",
-        "title": "1:1",
+        "title": "Square",
         "size": {
           "rows": 2,
           "aspectRatio": 1
-        }
+        },
+        "titleKey": "countdown.layout_square"
       }
     ]
   },
