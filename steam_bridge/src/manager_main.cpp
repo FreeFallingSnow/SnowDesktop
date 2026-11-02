@@ -25,6 +25,8 @@
 #include "manager_package_export.h"
 #include "manager_workspace_state.h"
 #include "manager_workshop_item.h"
+#include "manager_preview_gallery.h"
+#include "workshop_upload_validation.h"
 #include "package_tool.h"
 #include "preview_cache.h"
 #include "steam_app_identity.h"
@@ -407,7 +409,8 @@ bool OpenFileLocation(const std::filesystem::path& path)
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
-std::optional<std::filesystem::path> PickPath(HWND owner, bool folder)
+std::optional<std::filesystem::path> PickPath(HWND owner, bool folder,
+    std::vector<std::filesystem::path>* selection = nullptr)
 {
     ComPtr<IFileOpenDialog> dialog;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
@@ -428,9 +431,24 @@ std::optional<std::filesystem::path> PickPath(HWND owner, bool folder)
         };
         dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
         dialog->SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
-            FOS_PATHMUSTEXIST);
+            FOS_PATHMUSTEXIST | (selection ? FOS_ALLOWMULTISELECT : 0));
     }
     if (FAILED(dialog->Show(owner))) return std::nullopt;
+    if (selection)
+    {
+        ComPtr<IShellItemArray> items;
+        DWORD count = 0;
+        if (FAILED(dialog->GetResults(&items)) || FAILED(items->GetCount(&count))) return std::nullopt;
+        for (DWORD index = 0; index < count; ++index)
+        {
+            ComPtr<IShellItem> selected;
+            PWSTR path = nullptr;
+            if (SUCCEEDED(items->GetItemAt(index, &selected)) &&
+                SUCCEEDED(selected->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+            { selection->emplace_back(path); CoTaskMemFree(path); }
+        }
+        return selection->empty() ? std::nullopt : std::optional(selection->front());
+    }
     ComPtr<IShellItem> item;
     if (FAILED(dialog->GetResult(&item))) return std::nullopt;
     PWSTR path = nullptr;
@@ -705,7 +723,7 @@ public:
         switch (activePage_)
         {
         case 0: RenderLocalProjects(window); break;
-        case 1: RenderWorkshop(); break;
+        case 1: RenderWorkshop(window); break;
         default: activePage_ = 0; break;
         }
         ImGui::EndChild();
@@ -745,11 +763,13 @@ public:
         }
         ImGui::EndChild();
         }
+        RenderImageViewer();
         ImGui::End();
     }
 
     void PollMainSettings(HWND window)
     {
+        previewCache_.RefreshLocal();
         RefreshLanguageFromMainSettings(window);
         {
             std::lock_guard lock(mutex_);
@@ -811,7 +831,7 @@ private:
         SetMessageUnlocked(success, std::move(value));
     }
 
-    enum class WorkKind { Local, TextPreview, Prepare, Publish, Published, Binding };
+    enum class WorkKind { Local, TextPreview, Prepare, Publish, Published, Binding, PreviewUpdate };
     struct WorkTarget
     {
         WorkKind kind = WorkKind::Local;
@@ -876,8 +896,8 @@ private:
             auto task = std::make_shared<std::decay_t<Work>>(
                 std::forward<Work>(work));
             pendingWork_ = [task] { (*task)(); };
-            runningWork_ = {kind, (kind == WorkKind::Published || kind == WorkKind::Binding) ? 1 : 0,
-                kind == WorkKind::Published ? std::string{} :
+            runningWork_ = {kind, (kind == WorkKind::Published || kind == WorkKind::Binding || kind == WorkKind::PreviewUpdate) ? 1 : 0,
+                (kind == WorkKind::Published || kind == WorkKind::PreviewUpdate) ? std::string{} :
                     (localId.empty() ? selectedLocalId_ : std::move(localId))};
         }
         workChanged_.notify_all();
@@ -921,6 +941,7 @@ private:
                         publishInProgress_.store(false);
                     }
                     if (kind == WorkKind::TextPreview) localizationPreviewLoading_ = false;
+                    if (kind == WorkKind::PreviewUpdate) publishInProgress_.store(false);
                     SetMessageUnlocked(false, error.what());
                 }
                 busy_.store(false);
@@ -940,6 +961,7 @@ private:
                 if (accountChanged)
                 {
                     publishedPages_.ResetForAccount(status.steamId);
+                    remotePreviewDrafts_.clear();
                     bindingTargetId_.clear();
                     feedback_.erase({1, {}});
                     InvalidatePreparedPublishUnlocked();
@@ -1499,30 +1521,215 @@ private:
         RequestManagerFrame();
     }
 
-    void RenderProjectPreviewUnlocked(const WorkshopProject& project)
+    struct DisplayPreview
     {
-        if (!project.primaryPreview.empty())
+        std::filesystem::path path;
+        std::string url;
+        std::string title;
+    };
+
+    PreviewTexture ImageTexture(const DisplayPreview& image)
+    {
+        const auto key = StableKey(image.path.empty() ? "remote:" + image.url :
+            "local:" + WideToUtf8(image.path.wstring()));
+        if (image.path.empty()) previewCache_.Request(key, image.url);
+        else previewCache_.RequestLocal(key, image.path);
+        return previewCache_.Get(key);
+    }
+
+    void RenderImage(const std::vector<DisplayPreview>& images, std::size_t index,
+        float maximumWidth = 180.0f, float maximumHeight = 140.0f)
+    {
+        const auto& image = images[index];
+        const auto texture = ImageTexture(image);
+        if (texture.view)
         {
-            const std::uint64_t previewKey = StableKey(project.localId);
-            previewCache_.RequestLocal(previewKey, project.primaryPreview);
-            const PreviewTexture texture = previewCache_.Get(previewKey);
-            if (texture.view)
+            const float scale = std::min(std::min(maximumWidth * gDpiScale,
+                ImGui::GetContentRegionAvail().x) / texture.width,
+                maximumHeight * gDpiScale / texture.height);
+            ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(texture.view))),
+                ImVec2(texture.width * scale, texture.height * scale));
+            if (ImGui::IsItemClicked())
+            { viewerImages_ = images; viewerIndex_ = index; openImageViewer_ = true; }
+        }
+        else
+        {
+            ImGui::TextDisabled("%s", T("预览图片", "Preview images"));
+            if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
+            else ImGui::TextDisabled("...");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", image.title.c_str());
+    }
+
+    void RenderImageViewer()
+    {
+        const std::string viewerTitle = std::string(T("预览图片", "Preview images")) + "###image-viewer";
+        if (openImageViewer_)
+        { ImGui::OpenPopup(viewerTitle.c_str()); openImageViewer_ = false; }
+        ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x * 0.88f,
+            ImGui::GetIO().DisplaySize.y * 0.88f), ImGuiCond_Appearing);
+        bool open = true;
+        if (ImGui::BeginPopupModal(viewerTitle.c_str(), &open, ImGuiWindowFlags_NoSavedSettings))
+        {
+            if (!viewerImages_.empty())
             {
-                const float scale = std::min(
-                    std::min(220.0f * gDpiScale,
-                        ImGui::GetContentRegionAvail().x) / texture.width,
-                    (220.0f * gDpiScale) / texture.height);
-                ImGui::Image(ImTextureRef(static_cast<ImTextureID>(
-                    reinterpret_cast<std::uintptr_t>(texture.view))),
-                    ImVec2(texture.width * scale, texture.height * scale));
+                viewerIndex_ = std::min(viewerIndex_, viewerImages_.size() - 1);
+                ImGui::Text("%s  %zu / %zu", T("预览图片", "Preview images"), viewerIndex_ + 1, viewerImages_.size());
+                ImGui::BeginDisabled(viewerIndex_ == 0);
+                if (SecondaryButton(T("上一张", "Previous image")) ||
+                    (viewerIndex_ > 0 && ImGui::IsKeyPressed(ImGuiKey_LeftArrow))) --viewerIndex_;
+                ImGui::EndDisabled();
+                ContinueButtonRow(T("下一张", "Next image"));
+                ImGui::BeginDisabled(viewerIndex_ + 1 == viewerImages_.size());
+                if (SecondaryButton(T("下一张", "Next image")) ||
+                    (viewerIndex_ + 1 < viewerImages_.size() && ImGui::IsKeyPressed(ImGuiKey_RightArrow))) ++viewerIndex_;
+                ImGui::EndDisabled();
+                ContinueButtonRow(T("关闭", "Close"));
+                if (SecondaryButton(T("关闭", "Close")) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                const auto& image = viewerImages_[viewerIndex_];
+                ImGui::TextWrapped("%s", image.title.c_str());
+                const auto texture = ImageTexture(image);
+                if (texture.view)
+                {
+                    const float scale = std::min(ImGui::GetContentRegionAvail().x / texture.width,
+                        std::max(1.0f, ImGui::GetContentRegionAvail().y) / texture.height);
+                    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(texture.view))),
+                        ImVec2(texture.width * scale, texture.height * scale));
+                }
+                else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
+                else ImGui::TextDisabled("...");
             }
-            else if (!texture.error.empty())
+            ImGui::EndPopup();
+        }
+    }
+
+    ManagerLocalPreviews& LocalPreviews(const WorkshopProject& project)
+    {
+        auto [entry, inserted] = localPreviews_.try_emplace(project.localId);
+        if (inserted) entry->second = ReadManagerLocalPreviews(project);
+        return entry->second;
+    }
+
+    std::vector<DisplayPreview> ProjectImages(const WorkshopProject& project)
+    {
+        const auto& source = LocalPreviews(project);
+        std::vector<DisplayPreview> images;
+        const auto primary = project.primaryPreview.empty() ? source.primary : project.primaryPreview;
+        if (!primary.empty()) images.push_back({primary, {}, T("主预览", "Primary preview")});
+        const auto& gallery = project.previewGallery ? project.previewGallery : source.gallery;
+        if (gallery) for (const auto& path : *gallery)
+            images.push_back({path, {}, WideToUtf8(path.filename().wstring())});
+        return images;
+    }
+
+    bool SaveProjectPreviewsUnlocked(WorkshopProject& project, WorkshopProject candidate)
+    {
+        auto previous = project;
+        project = std::move(candidate);
+        std::string error;
+        if (!store_.Save(error))
+        { project = std::move(previous); SetMessageUnlocked(false, error); return false; }
+        InvalidatePreparedPublishUnlocked();
+        SetMessageUnlocked(true, T("已保存预览图片设置", "Preview image settings saved"));
+        return true;
+    }
+
+    bool CheckPreviewFiles(const std::vector<std::filesystem::path>& paths)
+    {
+        CoreError error;
+        for (const auto& path : paths)
+            if (!ValidateWorkshopUploadFile(path, true, WorkshopContentKind::Widget, error))
+            { SetMessageUnlocked(false, error.message); return false; }
+        return true;
+    }
+
+    void RenderLocalPreviewManager(HWND window, WorkshopProject& project)
+    {
+        auto& source = LocalPreviews(project);
+        ImGui::TextUnformatted(T("预览图片", "Preview images"));
+        if (SecondaryButton(T("刷新图片", "Refresh images")))
+        {
+            source = ReadManagerLocalPreviews(project);
+            previewCache_.RefreshLocal(true);
+        }
+        ContinueButtonRow(T("使用组件图片", "Use component images"));
+        if (SecondaryButton(T("使用组件图片", "Use component images")))
+        {
+            source = ReadManagerLocalPreviews(project);
+            if (source.error.empty())
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.4f, 1.0f));
-                ImGui::TextWrapped("%s", texture.error.c_str());
-                ImGui::PopStyleColor();
+                auto candidate = project;
+                candidate.primaryPreview.clear(); candidate.previewGallery.reset();
+                SaveProjectPreviewsUnlocked(project, std::move(candidate));
             }
         }
+        if (!source.error.empty()) ImGui::TextWrapped("%s", source.error.c_str());
+        BeginSettingRow(T("主预览", "Primary preview"), ButtonWidth(T("选择主预览", "Choose primary preview")));
+        if (SecondaryButton(T("选择主预览", "Choose primary preview")))
+            if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
+            { auto candidate = project; candidate.primaryPreview = *path; SaveProjectPreviewsUnlocked(project, std::move(candidate)); }
+        auto images = ProjectImages(project);
+        const std::size_t coverCount = (!project.primaryPreview.empty() || !source.primary.empty()) ? 1 : 0;
+        if (coverCount) RenderImage(images, 0);
+        const auto gallery = project.previewGallery ? *project.previewGallery : source.gallery.value_or(std::vector<std::filesystem::path>{});
+        ImGui::Text(T("附加预览（%zu）", "Additional previews (%zu)"), gallery.size());
+        ImGui::BeginDisabled(gallery.size() >= 7);
+        if (SecondaryButton(T("添加图片", "Add images")))
+        {
+            std::vector<std::filesystem::path> paths;
+            if (PickPath(window, false, &paths))
+            {
+                if (gallery.size() + paths.size() > 7)
+                    SetMessageUnlocked(false, T("最多可添加 7 张附加预览图", "Up to 7 additional preview images are allowed"));
+                else if (CheckPreviewFiles(paths))
+                {
+                    auto candidate = project; candidate.previewGallery = gallery;
+                    candidate.previewGallery->insert(candidate.previewGallery->end(), paths.begin(), paths.end());
+                    SaveProjectPreviewsUnlocked(project, std::move(candidate));
+                }
+            }
+        }
+        ImGui::EndDisabled();
+        std::optional<WorkshopProject> changed;
+        const int columns = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (220.0f * gDpiScale)), 1, 3);
+        if (!gallery.empty() && ImGui::BeginTable("local-preview-gallery", columns, ImGuiTableFlags_NoSavedSettings))
+        {
+            for (std::size_t index = 0; index < gallery.size(); ++index)
+            {
+                ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(index));
+                ImGui::Text("%zu", index + 1);
+                RenderImage(images, index + coverCount);
+                ImGui::TextWrapped("%s", WideToUtf8(gallery[index].filename().wstring()).c_str());
+                auto candidate = project; candidate.previewGallery = gallery;
+                if (SecondaryButton(T("替换图片", "Replace image")))
+                    if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
+                    { (*candidate.previewGallery)[index] = *path; changed = std::move(candidate); }
+                ContinueButtonRow(T("移除图片", "Remove image"));
+                if (SecondaryButton(T("移除图片", "Remove image")))
+                { candidate.previewGallery->erase(candidate.previewGallery->begin() + index); changed = std::move(candidate); }
+                if (SecondaryButton(T("设为主预览", "Use as primary preview")))
+                { candidate.primaryPreview = gallery[index]; changed = std::move(candidate); }
+                ImGui::BeginDisabled(index == 0);
+                if (SecondaryButton(T("前移", "Move earlier")))
+                { std::swap((*candidate.previewGallery)[index], (*candidate.previewGallery)[index - 1]); changed = std::move(candidate); }
+                ImGui::EndDisabled(); ContinueButtonRow(T("后移", "Move later"));
+                ImGui::BeginDisabled(index + 1 == gallery.size());
+                if (SecondaryButton(T("后移", "Move later")))
+                { std::swap((*candidate.previewGallery)[index], (*candidate.previewGallery)[index + 1]); changed = std::move(candidate); }
+                ImGui::EndDisabled(); ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (changed) SaveProjectPreviewsUnlocked(project, std::move(*changed));
+        ImGui::Separator();
+    }
+
+    void RenderProjectPreviewUnlocked(const WorkshopProject& project)
+    {
+        const auto images = ProjectImages(project);
+        if (images.empty()) return;
+        RenderImage(images, 0, 220.0f, 220.0f);
+        if (images.size() > 1) ImGui::Text("%zu", images.size());
     }
 
     void RenderProjectOverviewUnlocked(WorkshopProject& project)
@@ -1574,7 +1781,7 @@ private:
             RenderOperationFeedbackUnlocked();
         };
         const float previewWidth = 220.0f * gDpiScale;
-        const bool columns = !project.primaryPreview.empty() &&
+        const bool columns = !ProjectImages(project).empty() &&
             ImGui::GetContentRegionAvail().x >= previewWidth + 280.0f * gDpiScale +
                 ImGui::GetStyle().CellPadding.x * 4.0f;
         if (columns && ImGui::BeginTable("project-overview", 2,
@@ -1688,23 +1895,7 @@ private:
             ImGui::BeginChild("publishing-body", ImVec2(0, 0));
             ImGui::BeginDisabled(busy_.load());
             ImGui::Spacing();
-            BeginSettingRow(T("主预览", "Primary preview"),
-                ButtonWidth(T("选择主预览", "Choose primary preview")));
-            if (SecondaryButton(T("选择主预览", "Choose primary preview")))
-            {
-                if (const auto path = PickPath(window, false))
-                {
-                    InvalidatePreparedPublishUnlocked();
-                    project.primaryPreview = *path;
-                    std::string error;
-                    if (!store_.Save(error)) SetMessageUnlocked(false, error);
-                    else SetMessageUnlocked(true,
-                        T("已保存主预览", "Primary preview saved"));
-                }
-            }
-            if (ImGui::IsItemHovered() && !project.primaryPreview.empty())
-                ImGui::SetTooltip("%s", WideToUtf8(project.primaryPreview.wstring()).c_str());
-            RenderProjectPreviewUnlocked(project);
+            RenderLocalPreviewManager(window, project);
             std::array<char, 1024> tags{};
             std::copy_n(tagsBuffer_.c_str(),
                 std::min(tagsBuffer_.size(), tags.size() - 1), tags.data());
@@ -2029,43 +2220,22 @@ private:
                 ImGui::TextWrapped("%s: %s", T("主预览", "Primary preview"),
                     plan.preview ? T("使用本地预览", "Use local preview") :
                         T("保留 Steam 当前预览", "Preserve Steam preview"));
-                if (plan.preview)
-                {
-                    const auto key = StableKey(WideToUtf8(plan.preview->wstring()));
-                    previewCache_.RequestLocal(key, *plan.preview);
-                    const auto texture = previewCache_.Get(key);
-                    if (texture.view)
-                    {
-                        const float scale = std::min(140.0f * gDpiScale / texture.width,
-                            140.0f * gDpiScale / texture.height);
-                        ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(texture.view))),
-                            ImVec2(texture.width * scale, texture.height * scale));
-                    }
-                    else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
-                }
+                std::vector<DisplayPreview> plannedImages;
+                if (plan.preview) plannedImages.push_back({*plan.preview, {}, T("主预览", "Primary preview")});
+                if (plan.previewGallery)
+                    for (const auto& image : *plan.previewGallery)
+                        plannedImages.push_back({image.path, {}, WideToUtf8(image.source.filename().wstring())});
+                if (plan.preview) RenderImage(plannedImages, 0, 220.0f, 220.0f);
                 if (plan.previewGallery)
                 {
                     ImGui::Text(T("附加预览（%zu）", "Additional previews (%zu)"), plan.previewGallery->size());
                     if (plan.previewGallery->empty())
                         ImGui::TextWrapped("%s", T("清除本工具上传的附加预览", "Remove additional previews uploaded by this tool"));
-                    const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / (152.0f * gDpiScale)));
+                    const int columns = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (152.0f * gDpiScale)), 1, 4);
                     if (!plan.previewGallery->empty() && ImGui::BeginTable("planned-gallery", columns))
                     {
-                        for (const auto& image : *plan.previewGallery)
-                        {
-                            ImGui::TableNextColumn();
-                            const auto key = StableKey(WideToUtf8(image.path.wstring()));
-                            previewCache_.RequestLocal(key, image.path);
-                            const auto texture = previewCache_.Get(key);
-                            if (texture.view)
-                            {
-                                const float scale = std::min(140.0f * gDpiScale / texture.width,
-                                    140.0f * gDpiScale / texture.height);
-                                ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(texture.view))),
-                                    ImVec2(texture.width * scale, texture.height * scale));
-                            }
-                            else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
-                        }
+                        for (std::size_t index = plan.preview ? 1 : 0; index < plannedImages.size(); ++index)
+                        { ImGui::TableNextColumn(); RenderImage(plannedImages, index, 140.0f, 140.0f); }
                         ImGui::EndTable();
                     }
                 }
@@ -2156,8 +2326,6 @@ private:
             {
                 InvalidatePreparedPublishUnlocked();
                 project->packageId = inspection.packageId;
-                if (project->primaryPreview.empty())
-                    project->primaryPreview = inspection.preview;
                 if (!store_.Save(error)) SetMessageUnlocked(false, error, exported);
                 else SetMessageUnlocked(true, std::move(success), exported, true);
             }
@@ -2555,7 +2723,133 @@ private:
         }
     }
 
-    void RenderWorkshop()
+    static bool HasPreviewChanges(const WorkshopPreviewUpdate& draft)
+    {
+        return draft.primary || !draft.edits.empty() || !draft.additions.empty();
+    }
+
+    void StartPreviewUpdate(WorkshopPreviewUpdate draft)
+    {
+        publishInProgress_.store(true);
+        if (!StartWork([this, draft = std::move(draft)]
+        {
+            CoreError error;
+            const bool success = steam_.UpdatePreviews(draft, {}, error);
+            publishInProgress_.store(false);
+            if (success)
+            {
+                std::lock_guard lock(mutex_);
+                remotePreviewDrafts_.erase(draft.expected.publishedFileId);
+                publishedRefreshRequested_.store(true);
+                SetMessageUnlocked(true, T("预览图片已上传", "Preview images uploaded"));
+            }
+            else if (!ShowSteamRecovery(error)) SetMessage(false, error.code + ": " + error.message);
+        }, WorkKind::PreviewUpdate)) publishInProgress_.store(false);
+    }
+
+    void RenderRemotePreviewManager(HWND window, const PublishedItem& item)
+    {
+        auto [entry, inserted] = remotePreviewDrafts_.try_emplace(item.publishedFileId);
+        auto& draft = entry->second;
+        if (inserted) draft.expected = item;
+        const auto& expected = draft.expected;
+        std::vector<DisplayPreview> images;
+        if (draft.primary) images.push_back({*draft.primary, {}, T("主预览", "Primary preview")});
+        else if (!expected.previewUrl.empty()) images.push_back({{}, expected.previewUrl, T("主预览", "Primary preview")});
+        const std::size_t primaryCount = images.size();
+        std::vector<std::size_t> imageIndices(expected.additionalPreviews.size(), static_cast<std::size_t>(-1));
+        for (std::size_t index = 0; index < expected.additionalPreviews.size(); ++index)
+        {
+            const auto& preview = expected.additionalPreviews[index];
+            if (preview.type != 0) continue;
+            const auto edit = std::find_if(draft.edits.begin(), draft.edits.end(),
+                [index](const auto& value) { return value.index == index; });
+            if (edit != draft.edits.end() && edit->replacement.empty()) continue;
+            imageIndices[index] = images.size();
+            images.push_back({edit == draft.edits.end() ? std::filesystem::path{} : edit->replacement,
+                preview.url, preview.filename});
+        }
+        const std::size_t additionsBegin = images.size();
+        for (const auto& image : draft.additions) images.push_back({image, {}, WideToUtf8(image.filename().wstring())});
+        ImGui::Separator();
+        ImGui::Text("%s (%zu)", T("预览图片", "Preview images"), images.size());
+        const auto status = steam_.Status();
+        const bool editable = !busy_.load() && status.loggedOn && !item.banned &&
+            item.ownerSteamId == ParseItemId(status.steamId).value_or(0) && item.consumerAppId == status.appId;
+        ImGui::BeginDisabled(!editable);
+        if (SecondaryButton(T("选择主预览", "Choose primary preview")))
+            if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
+            { draft.primary = *path; RequestManagerFrame(); }
+        ContinueButtonRow(T("添加图片", "Add images"));
+        if (SecondaryButton(T("添加图片", "Add images")))
+        {
+            std::vector<std::filesystem::path> paths;
+            if (PickPath(window, false, &paths) && CheckPreviewFiles(paths))
+            {
+                draft.additions.insert(draft.additions.end(), paths.begin(), paths.end());
+                RequestManagerFrame();
+            }
+        }
+        ImGui::EndDisabled();
+        if (primaryCount) RenderImage(images, 0);
+        const int columns = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (220.0f * gDpiScale)), 1, 3);
+        if ((!expected.additionalPreviews.empty() || !draft.additions.empty()) &&
+            ImGui::BeginTable("remote-preview-gallery", columns, ImGuiTableFlags_NoSavedSettings))
+        {
+            for (std::size_t index = 0; index < expected.additionalPreviews.size(); ++index)
+            {
+                ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(index));
+                const auto& image = expected.additionalPreviews[index];
+                ImGui::Text("%zu", index + 1);
+                if (image.type == 0)
+                {
+                    if (imageIndices[index] != static_cast<std::size_t>(-1)) RenderImage(images, imageIndices[index]);
+                    else ImGui::TextDisabled("%s", T("待移除", "Pending removal"));
+                    ImGui::TextWrapped("%s", image.filename.c_str());
+                    const auto change = [&](std::filesystem::path replacement) {
+                        auto edit = std::find_if(draft.edits.begin(), draft.edits.end(),
+                            [index](const auto& value) { return value.index == index; });
+                        if (edit == draft.edits.end()) draft.edits.push_back({static_cast<std::uint32_t>(index), std::move(replacement)});
+                        else edit->replacement = std::move(replacement);
+                        RequestManagerFrame();
+                    };
+                    ImGui::BeginDisabled(!editable);
+                    if (SecondaryButton(T("替换图片", "Replace image")))
+                        if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path})) change(*path);
+                    ContinueButtonRow(T("移除图片", "Remove image"));
+                    if (SecondaryButton(T("移除图片", "Remove image"))) change({});
+                    ImGui::EndDisabled();
+                }
+                else ImGui::TextWrapped("%s", T("视频或其他媒体", "Video or other media"));
+                ImGui::PopID();
+            }
+            std::optional<std::size_t> removeAddition;
+            for (std::size_t index = 0; index < draft.additions.size() && additionsBegin + index < images.size(); ++index)
+            {
+                ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(expected.additionalPreviews.size() + index));
+                RenderImage(images, additionsBegin + index);
+                ImGui::TextWrapped("%s", images[additionsBegin + index].title.c_str());
+                ImGui::BeginDisabled(!editable);
+                if (SecondaryButton(T("移除图片", "Remove image"))) removeAddition = index;
+                ImGui::EndDisabled(); ImGui::PopID();
+            }
+            if (removeAddition)
+            { draft.additions.erase(draft.additions.begin() + *removeAddition); RequestManagerFrame(); }
+            ImGui::EndTable();
+        }
+        if (HasPreviewChanges(draft))
+        {
+            ImGui::TextWrapped("%s", T("保存后才会将图片改动上传到 Steam。", "Image changes are uploaded to Steam when you save."));
+            ImGui::BeginDisabled(!editable);
+            if (BlueButton(T("保存图片改动", "Save image changes"))) StartPreviewUpdate(draft);
+            ContinueButtonRow(T("放弃图片改动", "Discard image changes"));
+            if (SecondaryButton(T("放弃图片改动", "Discard image changes")))
+            { remotePreviewDrafts_.erase(item.publishedFileId); publishedRefreshRequested_.store(true); }
+            ImGui::EndDisabled();
+        }
+    }
+
+    void RenderWorkshop(HWND window)
     {
         std::lock_guard lock(mutex_);
         const auto& page = publishedPages_.Snapshot();
@@ -2578,22 +2872,6 @@ private:
         if (page.error || (!steam_.Status().loggedOn && page.loaded))
             ImGui::TextDisabled("%s", T("正在显示之前加载的项目", "Showing previously loaded items"));
         const auto descriptor = DescribeManagerWorkshopItem(item->metadata);
-        const auto preview = [&]
-        {
-            if (item->previewUrl.empty()) return;
-            previewCache_.Request(item->publishedFileId, item->previewUrl);
-            const PreviewTexture texture = previewCache_.Get(item->publishedFileId);
-            if (texture.view)
-            {
-                const float scale = std::min(std::min(220.0f * gDpiScale,
-                    ImGui::GetContentRegionAvail().x) / texture.width,
-                    220.0f * gDpiScale / texture.height);
-                ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(texture.view))),
-                    ImVec2(texture.width * scale, texture.height * scale));
-            }
-            else if (texture.loading) ImGui::TextDisabled("%s", T("正在下载主预览…", "Downloading primary preview…"));
-            else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
-        };
         const auto details = [&]
         {
             if (ImGui::BeginTable("workshop-facts", 2, ImGuiTableFlags_SizingFixedFit |
@@ -2631,16 +2909,8 @@ private:
             RenderWorkshopBindingUnlocked(*item, descriptor);
             RenderOperationFeedbackUnlocked();
         };
-        if (!item->previewUrl.empty() && ImGui::GetContentRegionAvail().x >= 540.0f * gDpiScale &&
-            ImGui::BeginTable("workshop-overview", 2, ImGuiTableFlags_SizingFixedFit |
-                ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX))
-        {
-            ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthFixed, 220.0f * gDpiScale);
-            ImGui::TableSetupColumn("details", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0); preview();
-            ImGui::TableSetColumnIndex(1); details(); ImGui::EndTable();
-        }
-        else { preview(); ImGui::Spacing(); details(); }
+        details();
+        RenderRemotePreviewManager(window, *item);
         ImGui::EndChild();
         ImGui::PopID();
     }
@@ -2686,6 +2956,11 @@ private:
                         request = publishedPages_.BeginRequest(status.steamId, applied.retryPage);
                     else if (applied.kind == ManagerPublishedPageApplyKind::Applied)
                     {
+                        for (auto entry = remotePreviewDrafts_.begin(); entry != remotePreviewDrafts_.end();)
+                        {
+                            if (!HasPreviewChanges(entry->second)) entry = remotePreviewDrafts_.erase(entry);
+                            else ++entry;
+                        }
                         steamConnectionProblem_ = SteamConnectionProblem::None;
                         feedback_.erase({1, {}});
                         if (previousSelection != publishedPages_.Snapshot().selectedId) bindingTargetId_.clear();
@@ -2740,6 +3015,11 @@ private:
     std::string selectedLocalId_;
     ManagerPublishedPages publishedPages_;
     ManagerProjectDrafts drafts_;
+    std::map<std::string, ManagerLocalPreviews> localPreviews_;
+    std::map<std::uint64_t, WorkshopPreviewUpdate> remotePreviewDrafts_;
+    std::vector<DisplayPreview> viewerImages_;
+    std::size_t viewerIndex_ = 0;
+    bool openImageViewer_ = false;
     std::string bindingTargetId_;
     char localSearch_[256]{};
     char publishedSearch_[256]{};

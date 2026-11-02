@@ -62,6 +62,14 @@ struct WorkshopEulaStatus
     std::uint32_t actionTime = 0;
 };
 
+struct PublishedPreview
+{
+    std::string url;
+    std::string filename;
+    int type = 0; // Steam EItemPreviewType; zero is an image.
+    bool operator==(const PublishedPreview&) const = default;
+};
+
 struct PublishedItem
 {
     std::uint64_t publishedFileId = 0;
@@ -79,6 +87,7 @@ struct PublishedItem
     std::string previewUrl;
     std::vector<std::string> tags;
     std::vector<std::string> additionalPreviewFilenames;
+    std::vector<PublishedPreview> additionalPreviews;
     std::uint64_t subscriptions = 0;
     std::uint64_t favorites = 0;
     std::uint64_t views = 0;
@@ -156,6 +165,20 @@ struct PublishResult
     std::string communityUrl;
 };
 
+struct WorkshopPreviewEdit
+{
+    std::uint32_t index = 0;
+    std::filesystem::path replacement; // Empty removes this image.
+};
+
+struct WorkshopPreviewUpdate
+{
+    PublishedItem expected;
+    std::optional<std::filesystem::path> primary;
+    std::vector<WorkshopPreviewEdit> edits;
+    std::vector<std::filesystem::path> additions;
+};
+
 using PublishProgressCallback = std::function<void(const PublishProgress&)>;
 
 class SteamWorkshopCore
@@ -180,6 +203,8 @@ public:
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
     std::optional<PublishedItem> FindItem(std::uint64_t id, CoreError& error);
+    bool UpdatePreviews(const WorkshopPreviewUpdate& request,
+        const PublishProgressCallback& progress, CoreError& error);
     std::optional<WorkshopEulaStatus> GetEulaStatus(CoreError& error);
     bool SetSubscribed(std::uint64_t publishedFileId, bool subscribed,
         std::chrono::seconds timeout, CoreError& error);

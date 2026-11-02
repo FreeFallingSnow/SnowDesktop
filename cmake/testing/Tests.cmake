@@ -111,9 +111,9 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopComponentPublishGalleryTests
         component_publish_gallery
-        SOURCES tests/steam/component_publish_gallery_tests.cpp
+        SOURCES tests/steam/component_publish_gallery_tests.cpp steam_bridge/src/preview_cache.cpp
         INCLUDE_DIRECTORIES tests steam_bridge/src
-        LINK_LIBRARIES SnowDesktopSteamWorkshopCore SnowDesktopWorkshopManagerSupport
+        LINK_LIBRARIES SnowDesktopSteamWorkshopCore SnowDesktopWorkshopManagerSupport d3d11 winhttp
         COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/single-monitor/workshop-preview.png"
         LABELS contract publishing widget)
     if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)

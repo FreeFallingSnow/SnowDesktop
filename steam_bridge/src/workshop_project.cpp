@@ -216,6 +216,14 @@ JsonValue ProjectToJson(const WorkshopProject& project)
         WideToUtf8(project.sourceDirectory.wstring()));
     value.object["primaryPreview"] = JsonValue::String(
         WideToUtf8(project.primaryPreview.wstring()));
+    JsonValue gallery;
+    if (project.previewGallery)
+    {
+        gallery = JsonValue::Array();
+        for (const auto& image : *project.previewGallery)
+            gallery.array.push_back(JsonValue::String(WideToUtf8(image.wstring())));
+    }
+    value.object["previewGallery"] = std::move(gallery);
     JsonValue tags = JsonValue::Array();
     for (const auto& tag : project.tags)
         tags.array.push_back(JsonValue::String(tag));
@@ -285,6 +293,18 @@ bool ProjectFromJson(const JsonValue& value, std::uint64_t schemaVersion,
         return false;
     project.sourceDirectory = Utf8ToWide(source);
     project.primaryPreview = Utf8ToWide(preview);
+    if (const auto* gallery = value.Find("previewGallery"); gallery && !gallery->IsNull())
+    {
+        if (!gallery->IsArray() || gallery->array.size() > 7)
+        { error = "project previewGallery must contain at most seven images"; return false; }
+        project.previewGallery.emplace();
+        for (const auto& image : gallery->array)
+        {
+            const auto path = image.IsString() ? Utf8ToWide(image.string) : std::wstring{};
+            if (path.empty()) { error = "project previewGallery contains an invalid path"; return false; }
+            project.previewGallery->emplace_back(path);
+        }
+    }
     if ((!source.empty() && project.sourceDirectory.empty()) ||
         (!preview.empty() && project.primaryPreview.empty()))
     {
@@ -623,7 +643,7 @@ bool ProjectStore::Load(std::string& error)
     }
     const auto schema = JsonUnsigned(root, "schemaVersion");
     const JsonValue* projects = root.Find("projects");
-    if (!schema || (*schema != 1 &&
+    if (!schema || (*schema != 1 && *schema != 2 &&
             *schema != kProjectStoreSchemaVersion) ||
         !projects || !projects->IsArray())
     {

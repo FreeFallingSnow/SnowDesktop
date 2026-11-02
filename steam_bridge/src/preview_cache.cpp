@@ -340,12 +340,44 @@ void PreviewCache::Request(std::uint64_t itemId, std::string url)
     });
 }
 
+namespace
+{
+std::string LocalPreviewIdentity(const std::filesystem::path& path)
+{
+    std::error_code stampError;
+    const auto stamp = std::filesystem::last_write_time(path, stampError);
+    const auto bytes = std::filesystem::file_size(path, stampError);
+    return "local:" + std::to_string(
+        std::hash<std::wstring>{}(path.wstring())) + ":" +
+        std::to_string(stamp.time_since_epoch().count()) + ":" + std::to_string(bytes);
+}
+}
+
+void PreviewCache::RefreshLocal(bool force)
+{
+    bool changed = false;
+    {
+        std::lock_guard lock(mutex_);
+        for (auto& [key, entry] : entries_)
+        {
+            (void)key;
+            if (!entry->url.starts_with("local:")) continue;
+            const auto identity = LocalPreviewIdentity(entry->path);
+            if (!force && identity == entry->url) continue;
+            entry->url = identity;
+            entry->error.clear();
+            entry->state.store(Entry::State::Ready);
+            changed = true;
+        }
+    }
+    if (changed) NotifyChanged();
+}
+
 void PreviewCache::RequestLocal(std::uint64_t key,
     const std::filesystem::path& path)
 {
     if (key == 0 || path.empty()) return;
-    const std::string identity = "local:" + std::to_string(
-        std::hash<std::wstring>{}(path.wstring()));
+    const std::string identity = LocalPreviewIdentity(path);
     {
         std::lock_guard lock(mutex_);
         if (const auto found = entries_.find(key); found != entries_.end() &&
@@ -389,7 +421,7 @@ PreviewTexture PreviewCache::Get(std::uint64_t itemId) const
     if (found == entries_.end()) return {};
     const auto state = found->second->state.load();
     PreviewTexture result;
-    result.view = found->second->view.Get();
+    result.view = state == Entry::State::Loaded ? found->second->view.Get() : nullptr;
     result.width = found->second->width;
     result.height = found->second->height;
     result.loading = state == Entry::State::Loading ||

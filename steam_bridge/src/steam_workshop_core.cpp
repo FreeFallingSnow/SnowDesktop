@@ -14,6 +14,7 @@
 #include "workshop_upload_validation.h"
 #include "workshop_staging.h"
 #include "workshop_project.h"
+#include "manager_preview_gallery.h"
 
 #include <algorithm>
 #include <array>
@@ -180,6 +181,27 @@ bool RequireLoggedOn(CoreError& error)
 }
 
 using UploadDirectory = WorkshopUploadDirectory;
+
+bool ReadAdditionalPreviews(ISteamUGC& ugc, UGCQueryHandle_t query,
+    std::uint32_t itemIndex, PublishedItem& item, CoreError& error)
+{
+    const auto count = ugc.GetQueryUGCNumAdditionalPreviews(query, itemIndex);
+    if (count > 256)
+    { SetError(error, kSteamOperationFailed, "preview_query_failed", "Too many additional previews"); return false; }
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        std::array<char, 8192> url{};
+        std::array<char, 1024> name{};
+        EItemPreviewType type{};
+        if (!ugc.GetQueryUGCAdditionalPreview(query, itemIndex, index,
+                url.data(), static_cast<uint32>(url.size()), name.data(),
+                static_cast<uint32>(name.size()), &type))
+        { SetError(error, kSteamOperationFailed, "preview_query_failed", "Cannot resolve additional previews"); return false; }
+        item.additionalPreviewFilenames.emplace_back(type == k_EItemPreviewType_Image ? name.data() : "");
+        item.additionalPreviews.push_back({url.data(), name.data(), static_cast<int>(type)});
+    }
+    return true;
+}
 #endif
 }
 
@@ -594,6 +616,7 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
             &ISteamUGC::GetQueryUGCMetadata);
         item.previewUrl = QueryText(*ugc, guard.handle, index,
             &ISteamUGC::GetQueryUGCPreviewURL);
+        if (!ReadAdditionalPreviews(*ugc, guard.handle, index, item, error)) return std::nullopt;
         item.subscriptions = QueryStatistic(*ugc, guard.handle, index,
             k_EItemStatistic_NumSubscriptions);
         item.favorites = QueryStatistic(*ugc, guard.handle, index,
@@ -645,18 +668,75 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     PublishedItem result; result.publishedFileId = id; result.ownerSteamId = details.m_ulSteamIDOwner;
     result.consumerAppId = details.m_nConsumerAppID; result.creatorAppId = details.m_nCreatorAppID; result.banned = details.m_bBanned;
     result.metadata = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCMetadata);
-    const auto count = ugc->GetQueryUGCNumAdditionalPreviews(guard.handle, 0);
-    if (count > 256) { SetError(error, kSteamOperationFailed, "preview_query_failed", "Too many additional previews"); return std::nullopt; }
-    for (uint32 index = 0; index < count; ++index)
-    {
-        std::array<char, 4096> url{}; std::array<char, 1024> name{}; EItemPreviewType type{};
-        if (!ugc->GetQueryUGCAdditionalPreview(guard.handle, 0, index, url.data(), static_cast<uint32>(url.size()), name.data(), static_cast<uint32>(name.size()), &type))
-        { SetError(error, kSteamOperationFailed, "preview_query_failed", "Cannot resolve additional previews"); return std::nullopt; }
-        result.additionalPreviewFilenames.emplace_back(type == k_EItemPreviewType_Image ? name.data() : "");
-    }
+    result.previewUrl = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCPreviewURL);
+    if (!ReadAdditionalPreviews(*ugc, guard.handle, 0, result, error)) return std::nullopt;
     return result;
 #else
     return std::nullopt;
+#endif
+}
+
+bool SteamWorkshopCore::UpdatePreviews(const WorkshopPreviewUpdate& request,
+    const PublishProgressCallback& progress, CoreError& error)
+{
+    if (!Initialize(error)) return false;
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!RequireLoggedOn(error)) return false;
+    if (!ValidateManagerPreviewUpdate(request, request.expected,
+            SteamUser()->GetSteamID().ConvertToUint64(), kSteamAppId))
+    { SetError(error, kInvalidArguments, "invalid_preview_update", "Invalid preview changes or item owner"); return false; }
+    WorkshopUploadDirectory staging;
+    std::string message;
+    if (!PrepareWorkshopStaging(stagingRoot_, message))
+    { SetError(error, kSteamOperationFailed, "staging_failed", message); return false; }
+    const auto directory = stagingRoot_ / (L"manager-previews-" + std::to_wstring(GetCurrentProcessId()) +
+        L"-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    if (!std::filesystem::create_directory(directory, ec) || ec)
+    { SetError(error, kSteamOperationFailed, "staging_failed", "Cannot stage preview changes"); return false; }
+    staging.root = directory;
+    WorkshopPreviewUpdate frozen = request;
+    const auto freeze = [&](std::filesystem::path& path) {
+        if (!ValidateWorkshopUploadFile(path, true, WorkshopContentKind::Widget, error)) return false;
+        const auto target = directory / (std::to_wstring(staging.files.size()) + L"-" + path.filename().wstring());
+        std::filesystem::copy_file(path, target, std::filesystem::copy_options::none, ec);
+        if (ec) { SetError(error, kInvalidArguments, "invalid_preview", "Cannot freeze preview file"); return false; }
+        staging.files.push_back(target);
+        path = target;
+        return ValidateWorkshopUploadFile(path, true, WorkshopContentKind::Widget, error);
+    };
+    if (frozen.primary && !freeze(*frozen.primary)) return false;
+    for (auto& edit : frozen.edits)
+        if (!edit.replacement.empty() && !freeze(edit.replacement)) return false;
+    for (auto& image : frozen.additions) if (!freeze(image)) return false;
+    // Re-query after file preparation; never apply stale indices or another account's draft.
+    const auto current = FindItem(request.expected.publishedFileId, error);
+    if (!current) return false;
+    if (!ValidateManagerPreviewUpdate(request, *current,
+            SteamUser()->GetSteamID().ConvertToUint64(), kSteamAppId))
+    { SetError(error, kInvalidArguments, "preview_state_changed", "Workshop previews changed; discard changes and refresh before editing again"); return false; }
+    auto* ugc = SteamUGC();
+    const auto update = ugc->StartItemUpdate(kSteamAppId, current->publishedFileId);
+    if (update == k_UGCUpdateHandleInvalid || !ApplyManagerPreviewUpdate(frozen,
+            [&](const auto& path) { return ugc->SetItemPreview(update, WideToUtf8(path.wstring()).c_str()); },
+            [&](std::uint32_t index, const auto& path) { return ugc->UpdateItemPreviewFile(update, index, WideToUtf8(path.wstring()).c_str()); },
+            [&](std::uint32_t index) { return ugc->RemoveItemPreview(update, index); },
+            [&](const auto& path) { return ugc->AddItemPreviewFile(update, WideToUtf8(path.wstring()).c_str(), k_EItemPreviewType_Image); }))
+    { SetError(error, kSteamOperationFailed, "preview_rejected", "Steam rejected the preview changes"); return false; }
+    SubmitItemUpdateResult_t result{};
+    const auto call = ugc->SubmitItemUpdate(update, nullptr);
+    if (progress) progress({PublishStage::UploadingPreview, current->publishedFileId, 0, 0, 0, true});
+    if (!WaitForCall(call, result, std::chrono::minutes(5), connectionCallbacks_->sessionInvalid,
+            [this] { SampleActiveConnection(); }, message))
+    { SetError(error, kSteamOperationTimedOut, "preview_update_uncertain", "Preview update result is unknown; refresh before retrying: " + message); return false; }
+    if (result.m_eResult != k_EResultOK || result.m_bUserNeedsToAcceptWorkshopLegalAgreement)
+    { SetError(error, kSteamOperationFailed, "preview_update_failed", result.m_bUserNeedsToAcceptWorkshopLegalAgreement ?
+        "Accept the Steam Workshop legal agreement, then refresh the item" : ResultName(result.m_eResult)); return false; }
+    return true;
+#else
+    (void)request;
+    (void)progress;
+    return false;
 #endif
 }
 

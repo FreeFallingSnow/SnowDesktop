@@ -93,7 +93,8 @@ bool BuildComponentPublishPlan(const WorkshopProject& project,
             inspection.preview : project.primaryPreview;
         if (!preview.empty()) plan.preview = preview;
         plan.preparedPreviews = FreezeComponentPreviews(plan.preview,
-            inspection.previewGallery, package.temporaryDirectory, package.packageId, error);
+            project.previewGallery ? project.previewGallery : inspection.previewGallery,
+            package.temporaryDirectory, package.packageId, error);
         if (!plan.preparedPreviews) return false;
         if (plan.preparedPreviews->primary) plan.preview = plan.preparedPreviews->primary->path;
         plan.previewGallery = plan.preparedPreviews->gallery;

@@ -11,7 +11,7 @@
 
 namespace snowdesktop::steam_bridge
 {
-inline constexpr int kProjectStoreSchemaVersion = 2;
+inline constexpr int kProjectStoreSchemaVersion = 3;
 
 enum class WorkshopTextSource
 {
@@ -40,6 +40,8 @@ struct WorkshopProject
     std::string localId;
     std::filesystem::path sourceDirectory;
     std::filesystem::path primaryPreview;
+    // nullopt follows widget.json; an empty override explicitly clears our gallery.
+    std::optional<std::vector<std::filesystem::path>> previewGallery;
     std::vector<std::string> tags;
     std::optional<std::uint64_t> publishedFileId;
     std::string packageId;
