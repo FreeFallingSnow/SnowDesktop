@@ -1,5 +1,6 @@
 #include "dock_window_preview.h"
 #include "dock_window_preview_layout.h"
+#include "diagnostics/diagnostic_log.h"
 #include <commctrl.h>
 #include <algorithm>
 #include <cmath>
@@ -9,6 +10,7 @@ namespace
 {
 constexpr UINT_PTR kToolbarOwnerSubclass = 0x53445442;
 constexpr UINT_PTR kToolbarOverlaySubclass = 0x53445443;
+constexpr UINT_PTR kToolbarAuditTimer = 0x53445444;
 LRESULT CALLBACK ToolbarOwnerProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 LRESULT CALLBACK ToolbarOverlayProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
@@ -23,7 +25,44 @@ struct ToolbarLayer
     DWORD* pixels = nullptr;
     SIZE size{};
     bool enabled = false, excludedFromPeek = false;
+    bool auditNext = true;
+    unsigned generation = 1;
+    DWORD presentError = 0, syncError = 0;
+    HWND source = nullptr;
+    std::wstring artwork;
     explicit ToolbarLayer(HWND card) : owner(card) {}
+    void Audit(const wchar_t* phase, DiagnosticLogLevel level = DiagnosticLogLevel::Info)
+    {
+        DWORD cloak = 0, ownerCloak = 0, attributes = 0;
+        BYTE alpha = 0; COLORREF key = 0;
+        const HRESULT cloakResult = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak));
+        const HRESULT ownerCloakResult = DwmGetWindowAttribute(owner, DWMWA_CLOAKED, &ownerCloak, sizeof(ownerCloak));
+        const BOOL hasAttributes = GetLayeredWindowAttributes(window, &key, &alpha, &attributes);
+        RECT ownerRect{}, layerRect{}; GetWindowRect(owner, &ownerRect); GetWindowRect(window, &layerRect);
+        size_t visiblePixels = 0;
+        if (pixels && size.cx > 0 && size.cy > 0)
+            visiblePixels = static_cast<size_t>(std::count_if(pixels, pixels + static_cast<size_t>(size.cx) * size.cy,
+                [](DWORD pixel) { return (pixel >> 24) != 0; }));
+        wchar_t line[2048]{};
+        swprintf_s(line, L"DockThumbLayer phase=%ls generation=%u pid=%lu tid=%lu ownerTid=%lu owner=%p layer=%p source=%p "
+            L"enabled=%u ownerVisible=%d visible=%d ownerEx=%Ix layerEx=%Ix ownerParent=%p layerOwner=%p "
+            L"cloak=%lu cloakHr=%08X ownerCloak=%lu ownerCloakHr=%08X attributes=%d flags=%lu alpha=%u "
+            L"ownerRect=%ld,%ld,%ld,%ld layerRect=%ld,%ld,%ld,%ld size=%ld,%ld pixels=%zu dcType=%lu selected=%p "
+            L"ownerPrev=%p layerPrev=%p layerNext=%p presentError=%lu syncError=%lu art=%ls",
+            phase, generation, GetCurrentProcessId(), GetCurrentThreadId(), GetWindowThreadProcessId(owner, nullptr),
+            static_cast<void*>(owner), static_cast<void*>(window), static_cast<void*>(source), static_cast<unsigned>(enabled),
+            IsWindowVisible(owner), IsWindowVisible(window), GetWindowLongPtrW(owner, GWL_EXSTYLE), GetWindowLongPtrW(window, GWL_EXSTYLE),
+            static_cast<void*>(GetWindow(owner, GW_OWNER)), static_cast<void*>(GetWindow(window, GW_OWNER)),
+            cloak, static_cast<unsigned>(cloakResult), ownerCloak, static_cast<unsigned>(ownerCloakResult),
+            hasAttributes, attributes, static_cast<unsigned>(alpha), ownerRect.left, ownerRect.top, ownerRect.right, ownerRect.bottom,
+            layerRect.left, layerRect.top, layerRect.right, layerRect.bottom, size.cx, size.cy, visiblePixels, GetObjectType(dc),
+            GetCurrentObject(dc, OBJ_BITMAP), static_cast<void*>(GetWindow(owner, GW_HWNDPREV)),
+            static_cast<void*>(GetWindow(window, GW_HWNDPREV)), static_cast<void*>(GetWindow(window, GW_HWNDNEXT)),
+            presentError, syncError, artwork.c_str());
+        // Two bounded records per open retain real compositor evidence even
+        // when detailed Dock logging is disabled. No window titles are logged.
+        WriteDiagnosticLogEntry(line, level);
+    }
     ~ToolbarLayer()
     {
         if (window) DestroyWindow(window);
@@ -58,8 +97,12 @@ struct ToolbarLayer
         if (!enabled || !IsWindowVisible(owner) || !GetClientRect(owner, &client) || client.right != size.cx)
         { ShowWindow(window, SW_HIDE); return; }
         POINT position{0, client.bottom - size.cy}; ClientToScreen(owner, &position);
-        SetWindowPos(window, nullptr, position.x, position.y, 0, 0,
+        SetLastError(ERROR_SUCCESS);
+        const BOOL shown = SetWindowPos(window, nullptr, position.x, position.y, 0, 0,
             SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        const DWORD error = shown ? ERROR_SUCCESS : GetLastError();
+        if (error && error != syncError) { syncError = error; Audit(L"position-failed", DiagnosticLogLevel::Warning); }
+        syncError = error;
     }
     bool Present()
     {
@@ -78,9 +121,24 @@ struct ToolbarLayer
         POINT position{0, client.bottom - size.cy}; ClientToScreen(owner, &position);
         POINT origin{}; BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         GdiFlush();
+        SetLastError(ERROR_SUCCESS);
         if (!UpdateLayeredWindow(window, nullptr, &position, &size, dc, &origin, 0, &blend, ULW_ALPHA))
-        { enabled = false; ShowWindow(window, SW_HIDE); return false; }
+        {
+            const DWORD error = GetLastError();
+            enabled = false; ShowWindow(window, SW_HIDE);
+            if (auditNext || error != presentError)
+            { presentError = error; Audit(L"present-failed", DiagnosticLogLevel::Warning); }
+            auditNext = false;
+            return false;
+        }
+        presentError = ERROR_SUCCESS;
         Sync();
+        if (auditNext)
+        {
+            Audit(L"present");
+            SetTimer(window, kToolbarAuditTimer, 650, nullptr);
+            auditNext = false;
+        }
         return true;
     }
 };
@@ -88,6 +146,12 @@ LRESULT CALLBACK ToolbarOverlayProc(HWND window, UINT message, WPARAM wParam, LP
 {
     if (message == WM_NCHITTEST) return HTTRANSPARENT;
     if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (message == WM_TIMER && wParam == kToolbarAuditTimer)
+    {
+        KillTimer(window, kToolbarAuditTimer);
+        reinterpret_cast<ToolbarLayer*>(data)->Audit(L"settled");
+        return 0;
+    }
     if (message == WM_NCDESTROY)
     {
         auto* layer = reinterpret_cast<ToolbarLayer*>(data);
@@ -249,7 +313,12 @@ void DockWindowPreview::StartToolbarTracking()
     namespace native = snowdesktop::thumbnail_toolbar;
     ClearToolbarTooltips();
     for (const HWND window : windows_)
-        if (auto* layer = FindToolbarLayer(window)) { layer->enabled = false; layer->Sync(); }
+        if (auto* layer = FindToolbarLayer(window))
+        {
+            ++layer->generation; layer->auditNext = true;
+            if (layer->window) KillTimer(layer->window, kToolbarAuditTimer);
+            layer->enabled = false; layer->Sync();
+        }
     std::vector<native::Snapshot> next(items_.size());
     PrepareToolbars(items_);
     if (toolbarClient_) toolbarClient_->SetNotification(hwnd_, kToolbarUpdateMessage);
@@ -322,6 +391,20 @@ void DockWindowPreview::PaintToolbar(HDC, size_t index, const RECT& client)
     if (!layer->Resize(size))
     {
         layer->enabled = false; layer->Sync(); return;
+    }
+    if (layer->auditNext)
+    {
+        layer->source = reinterpret_cast<HWND>(toolbars_[index].target.window);
+        layer->artwork.clear();
+        for (DWORD button = 0; button < toolbars_[index].count; ++button)
+        {
+            const auto& value = toolbars_[index].buttons[button];
+            const size_t count = std::min<size_t>(static_cast<size_t>(value.width) * value.height, value.pixels.size());
+            const size_t alpha = static_cast<size_t>(std::count_if(value.pixels.begin(), value.pixels.begin() + count,
+                [](DWORD pixel) { return (pixel >> 24) != 0; }));
+            layer->artwork += std::to_wstring(value.native.id) + L":" + std::to_wstring(value.native.flags) + L":" +
+                std::to_wstring(value.width) + L"x" + std::to_wstring(value.height) + L":" + std::to_wstring(alpha) + L",";
+        }
     }
     const int hovered = hoveredToolbar_.first == static_cast<int>(index) ? hoveredToolbar_.second : -1;
     const bool pressed = pressedToolbar_ && pressedToolbar_->target == toolbars_[index].target &&
