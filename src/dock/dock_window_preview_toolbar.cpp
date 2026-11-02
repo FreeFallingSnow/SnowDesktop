@@ -2,9 +2,125 @@
 #include "dock_window_preview_layout.h"
 #include <commctrl.h>
 #include <algorithm>
+#include <cmath>
+#include <new>
 
 namespace
 {
+constexpr UINT_PTR kToolbarOwnerSubclass = 0x53445442;
+constexpr UINT_PTR kToolbarOverlaySubclass = 0x53445443;
+LRESULT CALLBACK ToolbarOwnerProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+LRESULT CALLBACK ToolbarOverlayProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
+// The owned, input-transparent surface is composed above the live DWM
+// thumbnail. Its lifetime follows the card through the owner's subclass.
+struct ToolbarLayer
+{
+    HWND owner = nullptr, window = nullptr;
+    HDC dc = nullptr;
+    HBITMAP bitmap = nullptr;
+    HGDIOBJ previous = nullptr;
+    DWORD* pixels = nullptr;
+    SIZE size{};
+    bool enabled = false, excludedFromPeek = false;
+    explicit ToolbarLayer(HWND card) : owner(card) {}
+    ~ToolbarLayer()
+    {
+        if (window) DestroyWindow(window);
+        if (dc && previous) SelectObject(dc, previous);
+        if (bitmap) DeleteObject(bitmap);
+        if (dc) DeleteDC(dc);
+    }
+    bool Resize(SIZE requested)
+    {
+        if (requested.cx <= 0 || requested.cy <= 0) return false;
+        if (bitmap && size.cx == requested.cx && size.cy == requested.cy) return true;
+        if (!dc) dc = CreateCompatibleDC(nullptr);
+        if (!dc) return false;
+        BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = requested.cx; info.bmiHeader.biHeight = -requested.cy;
+        info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+        void* bits = nullptr;
+        const HBITMAP next = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!next || !bits) { if (next) DeleteObject(next); return false; }
+        if (previous) SelectObject(dc, previous);
+        if (bitmap) DeleteObject(bitmap);
+        bitmap = next; previous = SelectObject(dc, bitmap);
+        if (!previous || previous == HGDI_ERROR)
+        { DeleteObject(bitmap); bitmap = nullptr; previous = nullptr; pixels = nullptr; return false; }
+        pixels = static_cast<DWORD*>(bits); size = requested;
+        return true;
+    }
+    void Sync()
+    {
+        if (!window) return;
+        RECT client{};
+        if (!enabled || !IsWindowVisible(owner) || !GetClientRect(owner, &client) || client.right != size.cx)
+        { ShowWindow(window, SW_HIDE); return; }
+        POINT position{0, client.bottom - size.cy}; ClientToScreen(owner, &position);
+        SetWindowPos(window, nullptr, position.x, position.y, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    bool Present()
+    {
+        if (!window)
+        {
+            window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                L"STATIC", L"SnowDesktop Thumbnail Controls", WS_POPUP, 0, 0, 1, 1,
+                owner, nullptr, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE)), nullptr);
+            if (!window) return false;
+            if (!SetWindowSubclass(window, ToolbarOverlayProc, kToolbarOverlaySubclass, reinterpret_cast<DWORD_PTR>(this)))
+            { DestroyWindow(window); window = nullptr; return false; }
+            const BOOL excluded = TRUE;
+            excludedFromPeek = SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_EXCLUDED_FROM_PEEK, &excluded, sizeof(excluded)));
+        }
+        RECT client{}; GetClientRect(owner, &client);
+        POINT position{0, client.bottom - size.cy}; ClientToScreen(owner, &position);
+        POINT origin{}; BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        GdiFlush();
+        if (!UpdateLayeredWindow(window, nullptr, &position, &size, dc, &origin, 0, &blend, ULW_ALPHA))
+        { enabled = false; ShowWindow(window, SW_HIDE); return false; }
+        Sync();
+        return true;
+    }
+};
+LRESULT CALLBACK ToolbarOverlayProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
+{
+    if (message == WM_NCHITTEST) return HTTRANSPARENT;
+    if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (message == WM_NCDESTROY)
+    {
+        auto* layer = reinterpret_cast<ToolbarLayer*>(data);
+        if (layer->window == window) layer->window = nullptr;
+        RemoveWindowSubclass(window, ToolbarOverlayProc, kToolbarOverlaySubclass);
+    }
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+LRESULT CALLBACK ToolbarOwnerProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
+{
+    if (message == WM_NCDESTROY)
+    {
+        RemoveWindowSubclass(window, ToolbarOwnerProc, kToolbarOwnerSubclass);
+        delete reinterpret_cast<ToolbarLayer*>(data);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+    const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
+    DWORD_PTR current = 0;
+    if ((message == WM_WINDOWPOSCHANGED || message == WM_SHOWWINDOW) &&
+        GetWindowSubclass(window, ToolbarOwnerProc, kToolbarOwnerSubclass, &current) && current == data)
+        reinterpret_cast<ToolbarLayer*>(data)->Sync();
+    return result;
+}
+ToolbarLayer* FindToolbarLayer(HWND owner, bool create = false)
+{
+    DWORD_PTR data = 0;
+    if (GetWindowSubclass(owner, ToolbarOwnerProc, kToolbarOwnerSubclass, &data))
+        return reinterpret_cast<ToolbarLayer*>(data);
+    if (!create) return nullptr;
+    std::unique_ptr<ToolbarLayer> layer(new(std::nothrow) ToolbarLayer(owner));
+    if (!layer || !SetWindowSubclass(owner, ToolbarOwnerProc, kToolbarOwnerSubclass, reinterpret_cast<DWORD_PTR>(layer.get()))) return nullptr;
+    return layer.release();
+}
 std::array<RECT, snowdesktop::thumbnail_toolbar::kMaximumButtons> ButtonRects(
     const RECT& card, UINT dpi, const snowdesktop::thumbnail_toolbar::Snapshot& toolbar)
 {
@@ -79,6 +195,42 @@ void DrawButtonIcon(HDC dc, const RECT& bounds, UINT dpi, const snowdesktop::thu
     if (color) DeleteObject(color);
     if (mask) DeleteObject(mask);
 }
+void RenderToolbarImage(HDC dc, DWORD* pixels, SIZE size, UINT dpi,
+    const snowdesktop::thumbnail_toolbar::Snapshot& toolbar, bool lightTheme, int hoveredButton, int pressedButton)
+{
+    namespace native = snowdesktop::thumbnail_toolbar;
+    GdiFlush();
+    std::fill_n(pixels, static_cast<size_t>(size.cx) * size.cy, 0u);
+    const RECT client{0, 0, size.cx, size.cy};
+    const auto rects = ButtonRects(client, dpi, toolbar);
+    for (DWORD button = 0; button < toolbar.count; ++button)
+    {
+        const auto& value = toolbar.buttons[button];
+        if (!native::Visible(value.native)) continue;
+        const RECT& rect = rects[button];
+        if (!(value.native.flags & THBF_NOBACKGROUND))
+        {
+            const bool hot = static_cast<int>(button) == hoveredButton && native::Interactive(value.native);
+            const bool pressed = hot && static_cast<int>(button) == pressedButton;
+            const unsigned opacity = (value.native.flags & THBF_DISABLED) ? 96u : pressed ? 194u : hot ? 164u : 128u;
+            const unsigned color = lightTheme ? 255u : 24u;
+            const float radius = static_cast<float>(std::max(1, MulDiv(4, static_cast<int>(dpi), 96)));
+            for (LONG y = std::max(0L, rect.top); y < std::min(size.cy, rect.bottom); ++y)
+                for (LONG x = std::max(0L, rect.left); x < std::min(size.cx, rect.right); ++x)
+                {
+                    const float px = static_cast<float>(x) + .5f, py = static_cast<float>(y) + .5f;
+                    const float dx = std::max({static_cast<float>(rect.left) + radius - px, 0.f, px - static_cast<float>(rect.right) + radius});
+                    const float dy = std::max({static_cast<float>(rect.top) + radius - py, 0.f, py - static_cast<float>(rect.bottom) + radius});
+                    const float coverage = std::clamp(radius + .5f - std::hypot(dx, dy), 0.f, 1.f);
+                    const DWORD alpha = static_cast<DWORD>(std::lround(static_cast<float>(opacity) * coverage));
+                    const DWORD channel = color * alpha / 255;
+                    pixels[static_cast<size_t>(y) * size.cx + x] = (alpha << 24) | (channel << 16) | (channel << 8) | channel;
+                }
+        }
+        DrawButtonIcon(dc, rect, dpi, value);
+    }
+    GdiFlush();
+}
 }
 void DockWindowPreview::PrepareToolbars(const std::vector<DockWindowPreviewItem>& items)
 {
@@ -96,6 +248,8 @@ void DockWindowPreview::StartToolbarTracking()
 {
     namespace native = snowdesktop::thumbnail_toolbar;
     ClearToolbarTooltips();
+    for (const HWND window : windows_)
+        if (auto* layer = FindToolbarLayer(window)) { layer->enabled = false; layer->Sync(); }
     std::vector<native::Snapshot> next(items_.size());
     PrepareToolbars(items_);
     if (toolbarClient_) toolbarClient_->SetNotification(hwnd_, kToolbarUpdateMessage);
@@ -154,40 +308,28 @@ void DockWindowPreview::RefreshToolbar()
     }
     else { UpdateToolbarTooltips(); InvalidatePopups(); }
 }
-void DockWindowPreview::PaintToolbar(HDC dc, size_t index, const RECT& client)
+void DockWindowPreview::PaintToolbar(HDC, size_t index, const RECT& client)
 {
-    if (index >= toolbars_.size()) return;
+    if (index >= windows_.size()) return;
     namespace native = snowdesktop::thumbnail_toolbar;
-    if (!native::VisibleCount(toolbars_[index])) return;
-    const int inset = std::max(1, MulDiv(5, static_cast<int>(dpi_), 96));
-    const RECT bar{client.left + inset,
-        std::max(client.top, client.bottom - MulDiv(dock_preview_toolbar::kBarRegionHeight, static_cast<int>(dpi_), 96)),
-        client.right - inset, client.bottom - inset};
-    HBRUSH backgroundBrush = CreateSolidBrush(lightTheme_ ? RGB(240, 240, 242) : RGB(37, 39, 43));
-    FillRect(dc, &bar, backgroundBrush);
-    DeleteObject(backgroundBrush);
-    const auto rects = ButtonRects(client, dpi_, toolbars_[index]);
-    for (DWORD button = 0; button < toolbars_[index].count; ++button)
+    const bool visible = index < toolbars_.size() && native::VisibleCount(toolbars_[index]);
+    auto* layer = FindToolbarLayer(windows_[index], visible);
+    if (!layer) return;
+    layer->enabled = visible;
+    if (!visible) { layer->Sync(); return; }
+    const SIZE size{client.right - client.left,
+        std::min(client.bottom - client.top, static_cast<LONG>(MulDiv(dock_preview_toolbar::kBarRegionHeight, static_cast<int>(dpi_), 96)))};
+    if (!layer->Resize(size))
     {
-        const auto& value = toolbars_[index].buttons[button];
-        if (!native::Visible(value.native)) continue;
-        const auto& rect = rects[button];
-        if (!(value.native.flags & THBF_NOBACKGROUND))
-        {
-            const bool hovered = hoveredToolbar_ == std::pair{static_cast<int>(index), static_cast<int>(button)} &&
-                native::Interactive(value.native);
-            const bool pressed = hovered && pressedToolbar_ && pressedToolbar_->target == toolbars_[index].target &&
-                pressedToolbar_->identity == toolbars_[index].identity && pressedToolbar_->button == value.native.id;
-            const COLORREF background = lightTheme_
-                ? (pressed ? RGB(208, 209, 211) : hovered ? RGB(246, 246, 246) : RGB(231, 232, 234))
-                : (pressed ? RGB(57, 59, 63) : hovered ? RGB(83, 85, 89) : RGB(67, 69, 73));
-            HBRUSH brush = CreateSolidBrush(background);
-            HGDIOBJ oldBrush = SelectObject(dc, brush), oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
-            RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, MulDiv(5, static_cast<int>(dpi_), 96), MulDiv(5, static_cast<int>(dpi_), 96));
-            SelectObject(dc, oldPen); SelectObject(dc, oldBrush); DeleteObject(brush);
-        }
-        DrawButtonIcon(dc, rect, dpi_, value);
+        layer->enabled = false; layer->Sync(); return;
     }
+    const int hovered = hoveredToolbar_.first == static_cast<int>(index) ? hoveredToolbar_.second : -1;
+    const bool pressed = pressedToolbar_ && pressedToolbar_->target == toolbars_[index].target &&
+        pressedToolbar_->identity == toolbars_[index].identity && hovered >= 0 &&
+        static_cast<DWORD>(hovered) < toolbars_[index].count && toolbars_[index].buttons[hovered].native.id == pressedToolbar_->button;
+    RenderToolbarImage(layer->dc, layer->pixels, size, dpi_, toolbars_[index], lightTheme_, hovered, pressed ? hovered : -1);
+    layer->Present();
+    if (!layer->excludedFromPeek) peekSurfacesReady_ = false;
 }
 void DockWindowPreview::ClearToolbarTooltips()
 {

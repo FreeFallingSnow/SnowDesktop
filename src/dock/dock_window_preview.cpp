@@ -998,20 +998,6 @@ void DockWindowPreview::RegisterThumbnails()
         RECT destination = FitThumbnailRect(
             thumbnailRects_[index], sourceSize);
         RECT source{0, 0, sourceSize.cx, sourceSize.cy};
-        bool visible = true;
-        if (index < toolbars_.size() && snowdesktop::thumbnail_toolbar::VisibleCount(toolbars_[index]))
-        {
-            // Keep the same image scale as the ordinary preview. The bar
-            // covers its bottom portion; do not shrink the whole image into
-            // the remaining height (which would also narrow the picture).
-            const LONG bottom = std::min(destination.bottom, cardRects_[index].bottom -
-                ScaleForDpi(dock_preview_toolbar::kBarRegionHeight, dpi_));
-            const LONG height = destination.bottom - destination.top;
-            visible = bottom > destination.top;
-            if (visible && height > 0 && sourceSize.cy > 0)
-                source.bottom = std::max(1, MulDiv(sourceSize.cy, bottom - destination.top, height));
-            destination.bottom = std::max(destination.top + 1, bottom);
-        }
         OffsetRect(&destination, -cardRects_[index].left, -cardRects_[index].top);
         DWM_THUMBNAIL_PROPERTIES properties{};
         properties.dwFlags =
@@ -1026,7 +1012,7 @@ void DockWindowPreview::RegisterThumbnails()
             properties.rcSource = source;
         }
         properties.opacity = 255;
-        properties.fVisible = visible ? TRUE : FALSE;
+        properties.fVisible = TRUE;
         properties.fSourceClientAreaOnly = FALSE;
         if (FAILED(DwmUpdateThumbnailProperties(
                 thumbnail, &properties)))
@@ -1691,7 +1677,12 @@ HWND DockWindowPreview::PointerWindowAt(POINT screenPoint) const
     const HWND hit = WindowFromPoint(screenPoint);
     for (const HWND window : windows_)
     {
-        if (!window || !IsWindowVisible(window) || hit != window) continue;
+        if (!window || !IsWindowVisible(window)) continue;
+        // The input-transparent control surface is owned by this card and
+        // shares its hit geometry, including the entire non-Peek bar region.
+        const LONG_PTR transparentLayer = WS_EX_LAYERED | WS_EX_TRANSPARENT;
+        if (hit != window && (::GetWindow(hit, GW_OWNER) != window ||
+            (GetWindowLongPtrW(hit, GWL_EXSTYLE) & transparentLayer) != transparentLayer)) continue;
         POINT client = screenPoint;
         RECT bounds{};
         if (ScreenToClient(window, &client) && GetClientRect(window, &bounds) && PtInRect(&bounds, client))
