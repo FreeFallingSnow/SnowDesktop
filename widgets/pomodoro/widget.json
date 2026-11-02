@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 2,
   "entry": "main.lua",
-  "minHostVersion": "1.0.12.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Pomodoro",
   "nameKey": "lua_widget.pomodoro.name",
-  "version": "2.1.12",
+  "version": "2.1.13",
   "description": "A Pomodoro timer with focus and break cycles, pause and resume, and customizable durations and colors.",
   "descriptionKey": "lua_widget.pomodoro.description",
   "previewData": {
@@ -329,8 +329,8 @@
     }
   },
   "defaultSize": {
-    "columns": 2,
-    "rows": 2
+    "rows": 2,
+    "aspectRatio": 1
   },
   "resources": {
     "sound": {
@@ -359,7 +359,8 @@
     "view.text.flow",
     "view.theme.tokens",
     "view.tree.core",
-    "resource.audio"
+    "resource.audio",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "task.notification.show",

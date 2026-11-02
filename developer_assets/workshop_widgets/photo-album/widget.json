@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.11.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
   "name": "Photo Album",
   "nameKey": "album.name",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Create a slideshow from multiple folders or images, or display a single photo.",
   "descriptionKey": "album.description",
   "locales": {
@@ -456,8 +456,8 @@
     }
   },
   "defaultSize": {
-    "columns": 3,
-    "rows": 2
+    "rows": 2,
+    "aspectRatio": 1.3333333333333333
   },
   "previewData": {
     "introduction": "Create a slideshow from multiple folders or images, or display a single photo.",
@@ -490,7 +490,8 @@
     "schedule.basic",
     "interaction.fileDrop",
     "interaction.fileDrop.async",
-    "interaction.contextMenu"
+    "interaction.contextMenu",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [],
   "resources": {

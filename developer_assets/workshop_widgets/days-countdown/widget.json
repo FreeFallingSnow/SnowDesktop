@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.6.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
   "name": "Days Countdown",
   "nameKey": "countdown.name",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Count days to or since a linked calendar event.",
   "descriptionKey": "countdown.description",
   "locales": {
@@ -336,8 +336,8 @@
     }
   },
   "defaultSize": {
-    "columns": 2,
-    "rows": 2
+    "rows": 1,
+    "aspectRatio": 2
   },
   "previewData": {
     "storage": {
@@ -345,19 +345,19 @@
     },
     "variants": [
       {
-        "id": "square",
-        "title": "2 × 2",
+        "id": "wide",
+        "title": "2:1",
         "size": {
-          "columns": 2,
-          "rows": 2
+          "rows": 1,
+          "aspectRatio": 2
         }
       },
       {
-        "id": "wide",
-        "title": "2 × 1",
+        "id": "square",
+        "title": "1:1",
         "size": {
-          "columns": 2,
-          "rows": 1
+          "rows": 2,
+          "aspectRatio": 1
         }
       }
     ]
@@ -383,7 +383,8 @@
     "ui.semanticMetrics.rowUnit",
     "task.calendar.write",
     "task.start",
-    "layout.relativeUnits"
+    "layout.relativeUnits",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "data.calendar.events.query"

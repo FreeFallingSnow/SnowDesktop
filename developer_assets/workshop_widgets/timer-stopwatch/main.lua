@@ -70,7 +70,7 @@ local function desktop(_,m)
                 hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})}})
     elseif not cd and t.value==0 and not t.running then
         local size=math.min(tileH*1.8,width*0.61)
-        children[#children+1]=view.column({key="start.area",width="fill",height=tileH*2+gap,justifyContent="center",alignItems="center",
+        children[#children+1]=view.column({key="start.area",width="fill",height="fill",justifyContent="center",alignItems="center",
             children={icon("toggle",0xF04B,c.start,size,true)}})
     else
         local valueHeight=side*0.36

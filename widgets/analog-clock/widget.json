@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Analog Clock",
   "nameKey": "lua_widget.analog_clock.name",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "Displays a responsive analog clock.",
   "descriptionKey": "lua_widget.analog_clock.description",
   "locales": {
@@ -116,8 +116,8 @@
     }
   },
   "defaultSize": {
-    "columns": 2,
-    "rows": 2
+    "rows": 2,
+    "aspectRatio": 1
   },
   "permissions": [],
   "requiredFeatures": [
@@ -125,7 +125,8 @@
     "lifecycle.model",
     "schedule.basic",
     "schedule.visibility",
-    "time.basic"
+    "time.basic",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": []
 }

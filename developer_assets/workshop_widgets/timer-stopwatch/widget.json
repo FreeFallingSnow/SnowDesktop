@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.6.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
   "name": "Timer & Stopwatch",
   "nameKey": "timer.name",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Countdown presets, custom durations and a stopwatch.",
   "descriptionKey": "timer.description",
   "locales": {
@@ -246,17 +246,25 @@
     }
   },
   "defaultSize": {
-    "columns": 2,
-    "rows": 2
+    "rows": 2,
+    "aspectRatio": 1.3333333333333333
   },
   "previewData": {
     "variants": [
       {
+        "id": "horizontal",
+        "title": "4:3",
         "size": {
-          "columns": 2,
-          "rows": 2
+          "rows": 2,
+          "aspectRatio": 1.3333333333333333
+        }
+      },
+      {
+        "size": {
+          "rows": 2,
+          "aspectRatio": 1
         },
-        "title": "2 × 2",
+        "title": "1:1",
         "id": "square"
       }
     ]
@@ -276,7 +284,8 @@
     "schedule.visibility",
     "widget.panel",
     "ui.semanticMetrics.rowUnit",
-    "layout.relativeUnits"
+    "layout.relativeUnits",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "ui.durationPicker",

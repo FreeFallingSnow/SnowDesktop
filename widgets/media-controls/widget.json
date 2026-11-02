@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 3,
   "entry": "main.lua",
-  "minHostVersion": "1.0.4.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Media Controls",
   "nameKey": "lua_widget.media_control.name",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "Displays and controls the current Windows media session.",
   "descriptionKey": "lua_widget.media_control.description",
   "locales": {
@@ -166,8 +166,8 @@
     }
   },
   "defaultSize": {
-    "columns": 3,
-    "rows": 1
+    "rows": 1,
+    "aspectRatio": 3
   },
   "resources": {},
   "slots": {
@@ -205,7 +205,8 @@
     "slots.model",
     "slots.mutation.userGesture",
     "task.media.control",
-    "task.start"
+    "task.start",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "draw.imageFit.roundedClip",

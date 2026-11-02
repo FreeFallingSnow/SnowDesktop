@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.12.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Community",
   "license": "GPL-3.0-only",
   "name": "Wooden Fish",
   "nameKey": "lua_widget.wooden_fish.name",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "A calming wooden fish counter with tactile visual feedback.",
   "descriptionKey": "lua_widget.wooden_fish.description",
   "preview": "workshop-preview.png",
@@ -187,8 +187,8 @@
     }
   },
   "defaultSize": {
-    "columns": 2,
-    "rows": 2
+    "rows": 2,
+    "aspectRatio": 1
   },
   "previewData": {
     "storage": {
@@ -218,7 +218,8 @@
     "storage.typed",
     "storage.writeBudget",
     "time.basic",
-    "resource.audio"
+    "resource.audio",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "task.audio.playback",

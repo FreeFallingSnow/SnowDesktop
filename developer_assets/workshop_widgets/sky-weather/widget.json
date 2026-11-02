@@ -5,12 +5,12 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.11.0",
+  "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Sky Weather",
   "nameKey": "lua_widget.sky_weather.name",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Current weather and a five-day forecast with global city search and system location.",
   "descriptionKey": "lua_widget.sky_weather.description",
   "locales": {
@@ -666,8 +666,8 @@
     }
   },
   "defaultSize": {
-    "columns": 4,
-    "rows": 3
+    "rows": 3,
+    "aspectRatio": 1.3333333333333333
   },
   "previewData": {
     "introduction": "Current weather and a five-day forecast in a sky card.",
@@ -678,8 +678,8 @@
         "title": "Sky card",
         "titleKey": "lua_widget.sky_weather.variant_standard",
         "size": {
-          "columns": 4,
-          "rows": 3
+          "rows": 3,
+          "aspectRatio": 1.3333333333333333
         }
       },
       {
@@ -687,8 +687,8 @@
         "title": "Compact",
         "titleKey": "lua_widget.sky_weather.variant_compact",
         "size": {
-          "columns": 2,
-          "rows": 2
+          "rows": 2,
+          "aspectRatio": 1
         }
       },
       {
@@ -696,8 +696,8 @@
         "title": "Wide",
         "titleKey": "lua_widget.sky_weather.variant_wide",
         "size": {
-          "columns": 6,
-          "rows": 2
+          "rows": 2,
+          "aspectRatio": 2.5
         }
       }
     ]
@@ -741,7 +741,8 @@
     "settings.select.localizedOptions",
     "task.location.current",
     "view.text.flow",
-    "view.keyboardNavigation.basic"
+    "view.keyboardNavigation.basic",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "task.network.retryDirect",
