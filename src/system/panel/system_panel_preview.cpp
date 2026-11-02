@@ -235,6 +235,7 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
     source.unsubscribe = [state](std::string_view topic) { state->subscriptions.erase(std::string(topic)); };
     source.close = [state] { ++state->closes; state->subscriptions.clear(); };
     source.settings = [](const wchar_t*) { throw std::runtime_error("offline panel must not launch Windows Settings"); };
+    source.launchShortcut = [](SystemPanelShortcut) { throw std::runtime_error("offline panel must not launch a system shortcut"); };
     source.nativeControls = [state] { ++state->nativeControls; };
     source.prompt = [](system_control::Request&) -> bool { throw std::runtime_error("offline panel must not show confirmation or credential prompts"); };
     source.media = [state]() -> std::optional<wr::WidgetMediaSessionsDataSnapshot> {
@@ -2514,7 +2515,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         Require(!stage.pixels.empty(), "cannot create system panel preview background");
         const std::vector<std::string> presets = controls ?
             std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","quick-manage",
-                "audio-many","wifi-many","bluetooth-many","media-empty","overview-bottom","audio-many-bottom"} :
+                "audio-many","wifi-many","bluetooth-many","media-empty","overview-bottom","audio-many-bottom","system-menu","system-menu-confirmation"} :
             trayPanel ? std::vector<std::string>{"grid","updated","manage","empty","connecting","unavailable"} :
             resources ? std::vector<std::string>{"cpu","memory","gpu","traffic","idle","warming","unavailable","gap","gpu-partial"} :
             std::vector<std::string>{"empty","agenda"};
@@ -2523,6 +2524,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         {
             const bool bottom=controls&&outputPreset.ends_with("-bottom");
             const auto preset=bottom?outputPreset.substr(0,outputPreset.size()-7):outputPreset;
+            const bool systemMenu=controls&&preset.starts_with("system-menu");
             if (request.theme && controls && outputPreset != "overview") continue;
             result.stage = "panel.model."+preset;
             auto state = std::make_shared<PreviewState>(); StatusBarSettings settings;
@@ -2546,13 +2548,18 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                     state->tray.icons[2].pixels.resize(3);
                 }
             }
-            const auto action = controls ? StatusBarAction::ControlCenter : trayPanel ? StatusBarAction::Tray :
+            const auto action = systemMenu ? StatusBarAction::SystemMenu : controls ? StatusBarAction::ControlCenter : trayPanel ? StatusBarAction::Tray :
                 calendarPanel ? StatusBarAction::Calendar : preset == "memory" ? StatusBarAction::Memory :
                 preset == "gpu" || preset == "gpu-partial" ? StatusBarAction::Gpu :
                 preset == "traffic" ? StatusBarAction::Traffic : StatusBarAction::Cpu;
             SystemPanelModel model(FixtureSource(state),settings,action);std::string renderedHover;
             model.Refresh(available,availableWidth);
-            if (controls)
+            if(systemMenu)
+            {
+                if(preset=="system-menu-confirmation")model.Invoke("power.shutdown");
+                model.Refresh(available,availableWidth);
+            }
+            else if (controls)
             {
                 model.Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" || preset == "media-empty" ? "" :
                     !state->manySection.empty() ? state->manySection : preset);
@@ -2604,7 +2611,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                     if (node.id.starts_with("date:"))
                         Require((node.bounds.top>=0&&node.bounds.bottom<=scene.height)||scene.Find("scrollbar"),
                             "a constrained calendar month has no scroll affordance");
-            if (controls) CheckControls(model,state,preset);
+            if (controls&&!systemMenu) CheckControls(model,state,preset);
             if (trayPanel)
             {
                 Require(!scene.Find("tray:preview-7") && (preset == "manage" || !scene.Find("tray:preview-0")),

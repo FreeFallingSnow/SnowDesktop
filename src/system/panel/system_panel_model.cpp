@@ -74,6 +74,14 @@ SystemPanelSource LiveSystemPanelSource(std::shared_ptr<wr::WidgetSystemDataProv
     s.unsubscribe=[data](auto topic){data->StopTopic("nativeSystemPanel",topic);};
     s.close=[data,service]{data->RemoveConsumer("nativeSystemPanel");service->RemoveConsumer("nativeSystemPanel");};
     s.settings=[](const wchar_t* uri){ShellExecuteW(nullptr,L"open",uri,nullptr,nullptr,SW_SHOWNORMAL);};
+    s.launchShortcut=[](SystemPanelShortcut shortcut) {
+        const wchar_t* target=shortcut==SystemPanelShortcut::TaskManager?L"taskmgr.exe":
+            shortcut==SystemPanelShortcut::Terminal?L"wt.exe":L"ms-settings:";
+        auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",target,nullptr,nullptr,SW_SHOWNORMAL));
+        if(result<=32&&shortcut==SystemPanelShortcut::Terminal)
+            result=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",L"powershell.exe",nullptr,nullptr,SW_SHOWNORMAL));
+        if(result<=32)MessageBeep(MB_ICONWARNING);
+    };
     s.media=[data]{return data->MediaSessions();};s.artwork=[data]{return data->MediaArtwork();};
     s.cpu=[data]{return data->Cpu();};s.memory=[data]{return data->Memory();};s.gpu=[data]{return data->Gpu(true);};s.traffic=[data]{return data->NetworkTraffic();};
     s.history=[data](auto topic,auto id){return data->ResourceHistory(topic,id);};
@@ -102,6 +110,7 @@ void SystemPanelModel::SyncSubscriptions()
 {
     std::set<std::string> needed;
     if(IsSystemResourceAction(action_))needed.insert(Topic(action_));
+    else if(action_==StatusBarAction::SystemMenu)needed.insert("host.power.actions");
     else if(action_!=StatusBarAction::Tray&&action_!=StatusBarAction::Calendar&&action_!=StatusBarAction::InputMethodPanel)
     {
         if(settings_.mediaControls){needed.insert("media.sessions");needed.insert("media.artwork");}
@@ -1004,14 +1013,42 @@ void SystemPanelModel::Power(float& y)
 void SystemPanelModel::PowerActions(float& y)
 {
     const auto capabilities=Current("host.power.actions");
-    for(const auto& action:SystemPowerActions)
+    // Segoe MDL2 glyphs used by the native panel renderer.
+    constexpr const wchar_t* glyphs[]{L"\uE72E",L"\uE708",L"\uE8AC",L"\uE777",L"\uE7E8"};
+    for(std::size_t index=0;index<SystemPowerActions.size();++index)
     {
+        const auto& action=SystemPowerActions[index];
         const std::string id="power."+std::string(action.id);
-        auto& item=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(action.label));
+        auto& item=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(action.label),
+            action_==StatusBarAction::SystemMenu?glyphs[index]:L"");
         item.enabled=std::string_view(action.id)!="hibernate"||j::Flag(capabilities,"hibernateSupported");
         BindAction(id,"power.action",action.id);const std::string task=action.task;
-        Command(id,[this,task]{Start(task);});y+=48;
+        Command(id,[this,task]{
+            if(action_==StatusBarAction::SystemMenu&&system_control::RequiresConfirmation(task))
+                BeginPowerConfirmation(task,true);
+            else Start(task);
+        });y+=48;
     }
+}
+void SystemPanelModel::SystemMenu(float& y)
+{
+    struct Shortcut { const char* id; const char* label; const wchar_t* glyph; SystemPanelShortcut target; };
+    const Shortcut shortcuts[]{
+        {"system.taskManager","statusBar.taskManager",L"\uE9D9",SystemPanelShortcut::TaskManager},
+        {"system.terminal","statusBar.terminal",L"\uE756",SystemPanelShortcut::Terminal},
+        {"system.settings","statusBar.systemSettings",L"\uE713",SystemPanelShortcut::Settings}};
+    for(const auto& shortcut:shortcuts)
+    {
+        auto& item=Add(shortcut.id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(shortcut.label),shortcut.glyph);
+        item.enabled=static_cast<bool>(source_.launchShortcut);
+        Command(item.id,[this,target=shortcut.target]{
+            const auto launch=source_.launchShortcut;
+            if(launch){dismissRequested_=true;launch(target);}
+        });y+=48;
+    }
+    y+=8;
+    Add("system.power.heading",ui::Role::Text,Rect(24,y,scene_.width-48,24),_LW("statusBar.powerControls")).fontSize=12;
+    y+=28;PowerActions(y);
 }
 void SystemPanelModel::PrepareMedia()
 {
@@ -1113,7 +1150,8 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     scene_.width=336;
     // The old offline "media" preset still selects the overview; media has no detail page.
     if(page_=="media")page_.clear();
-    PrepareMedia();
+    const bool systemMenu=action_==StatusBarAction::SystemMenu;
+    if(!systemMenu)PrepareMedia();
     const auto* quick=FindSystemQuickControl(page_);
     const char* title=page_=="quick-manage"?"controlCenter.manageButtons":quick?quick->label:page_=="audio"?"statusBar.audioControls":page_=="brightness"?"statusBar.brightnessControls":page_.starts_with("wifi")?"statusBar.wifiControls":page_=="bluetooth"?"statusBar.bluetoothControls":"statusBar.powerControls";
     std::uint64_t inlineCompletion=0;
@@ -1131,12 +1169,13 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         else controlDraft_->error.clear();
     }
     const bool standalone=controlDraft_&&controlDraft_->returnRoute==ControlDraft::ReturnRoute::ClosePanel;
-    if(standalone)
+    if(standalone||systemMenu)
     {
-        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(title));heading.bold=true;heading.fontSize=16;bodyStart_=56;
+        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(systemMenu&&!standalone?"statusBar.menu":title));heading.bold=true;heading.fontSize=16;bodyStart_=56;
     }
     else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
+    else if(systemMenu)SystemMenu(y);
     else if(page_.empty())Overview(y);else if(page_=="quick-manage")ManageQuickControls(y);else if(quick&&page_!="power")QuickControlMenu(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);else if(page_=="power-actions")PowerActions(y);
     PrunePendingActions();
     for(const auto& completion:completions)
@@ -1164,7 +1203,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         }
     }
     ApplyError(y);
-    Finish(y,settings_.mediaControls&&!standalone);
+    Finish(y,settings_.mediaControls&&!standalone&&!systemMenu);
     ApplyPendingActions();
     std::erase_if(pendingValues_,[&](const auto& entry){const auto* node=scene_.Find(entry.first);if(!node)return false;const auto target=sliderTargets_.find(entry.first);return !node->enabled||target==sliderTargets_.end()||target->second!=entry.second.target;});
     for(auto& node:scene_.nodes)

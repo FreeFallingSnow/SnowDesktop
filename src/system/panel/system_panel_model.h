@@ -51,6 +51,7 @@ struct SystemPanelInputMethodActions
     std::function<void(const wchar_t*)> settings;
     bool menuAvailable = false;
 };
+enum class SystemPanelShortcut { TaskManager, Terminal, Settings };
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
 {
@@ -78,6 +79,7 @@ struct SystemPanelSource
     // Internal task boundary; optional for deterministic offline sources.
     std::function<bool(std::uint64_t)> cancel;
     SystemPanelInputMethodActions inputMethod;
+    std::function<void(SystemPanelShortcut)> launchShortcut;
 };
 SystemPanelSource LiveSystemPanelSource(std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
 native_ui::Palette SystemPanelPalette(const PersonalizationSettings&, bool highContrast = false);
@@ -221,6 +223,7 @@ private:
     void Bluetooth(float&);
     void Power(float&);
     void PowerActions(float&);
+    void SystemMenu(float&);
     void Media(float&);
     void Calendar();
     void FinishStackedCalendar(float monthEnd,float agendaTop,float agendaStart,float agendaEnd,bool empty);

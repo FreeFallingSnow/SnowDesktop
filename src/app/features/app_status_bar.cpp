@@ -11,7 +11,6 @@
 #include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_native.h"
 #include <shellscalingapi.h>
-#include <powrprof.h>
 
 namespace
 {
@@ -141,7 +140,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
     const bool dismissDock = action == Action::Dismiss;
-    if ((snowdesktop::IsStatusBarContextMenuAction(action) || action == Action::SystemMenu) &&
+    if (snowdesktop::IsStatusBarContextMenuAction(action) &&
         action == statusBarMenuAction_ && statusBarMenuMonitor_ == statusBarActivationMonitor_ &&
         statusBarMenuOwner_ && activeMenu && GetWindow(activeMenu, GW_OWNER) == statusBarMenuOwner_)
         action = Action::Dismiss;
@@ -378,7 +377,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->Hide();
         return;
     }
-    const bool externalSurface = action == Action::SystemMenu || snowdesktop::IsStatusBarContextMenuAction(action) ||
+    const bool externalSurface = snowdesktop::IsStatusBarContextMenuAction(action) ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
@@ -668,58 +667,6 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 L"scheduler-unavailable");
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar system shortcut relay scheduler unavailable", DiagnosticLogLevel::Error);
             MessageBeep(MB_ICONWARNING);
-        }
-    }
-    else if (action == Action::SystemMenu)
-    {
-        CloseQuickNavigation();
-        if (systemPanel_) systemPanel_->Hide();
-        HMENU menu = CreatePopupMenu();
-        if (!menu) return;
-        PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
-        const char* labels[]{"statusBar.taskManager", "statusBar.terminal", "statusBar.systemSettings",
-            "controlCenter.lock", "controlCenter.sleep", "controlCenter.hibernate", "controlCenter.restart", "controlCenter.shutdown"};
-        // Fluent Regular 20 glyphs from the same embedded, pinned font as Dock.
-        const wchar_t* icons[]{L"\uE49D",L"\uEE6F",L"\uF6A9",L"\uE78F",L"\uEB2D",L"\uEB2D",L"\uF13D",L"\uF60E"};
-        for (UINT index = 0; index < std::size(labels); ++index)
-        {
-            if (index == 3) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(menu, MF_STRING|(index==5&&!IsPwrHibernateAllowed()?MF_GRAYED:0), index + 1, _LW(labels[index]));
-            SetMenuItemIcon(menu,index+1,icons[index],MenuIconFont::FluentRegular);
-        }
-        statusBarMenuMonitor_ = monitor;
-        statusBarMenuOwner_ = owner;
-        statusBarMenuAction_ = action;
-        const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
-        statusBarMenuMonitor_ = nullptr;
-        statusBarMenuOwner_ = nullptr;
-        statusBarMenuAction_ = Action::None;
-        DestroyMenu(menu);
-        ClearMenuIcons();
-        if (!current()) return;
-        if (command >= 1 && command <= 3)
-        {
-            const wchar_t* target = command == 1 ? L"taskmgr.exe" : command == 2 ? L"wt.exe" : L"ms-settings:";
-            auto opened = reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", target, nullptr, nullptr, SW_SHOWNORMAL));
-            if (opened <= 32 && command == 2)
-                opened = reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", L"powershell.exe", nullptr, nullptr, SW_SHOWNORMAL));
-            if (opened <= 32) MessageBeep(MB_ICONWARNING);
-        }
-        else if (command >= 4 && command <= 8)
-        {
-            const char* tasks[]{"system.power.lock", "system.power.sleep", "host.power.hibernate", "system.power.restart", "system.power.shutdown"};
-            if (command >= 5)
-            {
-                ensureSystemPanel();
-                systemPanel_->ShowPowerConfirmation(tasks[command - 4], owner, anchor,
-                    collectionPopupAppearance_, generalSettings_.statusBar, systemDataProvider_);
-            }
-            else
-            {
-                snowdesktop::system_control::Request request;
-                request.name = tasks[command - 4];
-                if (!systemDataProvider_->Controls()->Start("statusBarVolume", std::move(request))) MessageBeep(MB_ICONWARNING);
-            }
         }
     }
     else if (snowdesktop::IsStatusBarContextMenuAction(action))

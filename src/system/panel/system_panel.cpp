@@ -201,7 +201,7 @@ struct SystemPanel::Impl
     {
         if(!showing||closing||modal||slide.IsAnimating()||!model)return {};
         LuaWidgetAccessibilitySnapshot snapshot;snapshot.widgetId=L"system-panel";
-        snapshot.name=_L(current->action==StatusBarAction::Calendar?"statusBar.clock":current->action==StatusBarAction::Tray?"statusBar.tray":"statusBar.controlCenter");snapshot.bounds={0,0,width,height};
+        snapshot.name=_L(current->action==StatusBarAction::Calendar?"statusBar.clock":current->action==StatusBarAction::Tray?"statusBar.tray":current->action==StatusBarAction::SystemMenu?"statusBar.menu":"statusBar.controlCenter");snapshot.bounds={0,0,width,height};
         const auto regions=input.AccessibilityRegions();std::string focus;
         const auto nativeFocus=calendarInputs?calendarInputs->FieldId(GetFocus()):std::string{};
         for(const auto& r:regions)if((GetFocus()==window&&input.Identity(r.key)==input.Focused())||(!nativeFocus.empty()&&input.Identity(r.key)==nativeFocus))focus=r.key;
