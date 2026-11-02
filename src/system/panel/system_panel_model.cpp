@@ -1013,21 +1013,24 @@ void SystemPanelModel::Power(float& y)
 void SystemPanelModel::PowerActions(float& y)
 {
     const auto capabilities=Current("host.power.actions");
+    const bool compact=action_==StatusBarAction::SystemMenu;
     // Segoe MDL2 glyphs used by the native panel renderer.
     constexpr const wchar_t* glyphs[]{L"\uE72E",L"\uE708",L"\uE8AC",L"\uE777",L"\uE7E8"};
     for(std::size_t index=0;index<SystemPowerActions.size();++index)
     {
         const auto& action=SystemPowerActions[index];
         const std::string id="power."+std::string(action.id);
-        auto& item=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(action.label),
-            action_==StatusBarAction::SystemMenu?glyphs[index]:L"");
+        const float inset=compact?4.f:16.f;
+        auto& item=Add(id,ui::Role::ListItem,Rect(inset,y,scene_.width-2*inset,compact?32.f:44.f),_LW(action.label),
+            compact?glyphs[index]:L"");
+        if(compact)item.glyphSize=16;
         item.enabled=std::string_view(action.id)!="hibernate"||j::Flag(capabilities,"hibernateSupported");
         BindAction(id,"power.action",action.id);const std::string task=action.task;
         Command(id,[this,task]{
             if(action_==StatusBarAction::SystemMenu&&system_control::RequiresConfirmation(task))
                 BeginPowerConfirmation(task,true);
             else Start(task);
-        });y+=48;
+        });y+=compact?32.f:48.f;
     }
 }
 void SystemPanelModel::SystemMenu(float& y)
@@ -1039,16 +1042,16 @@ void SystemPanelModel::SystemMenu(float& y)
         {"system.settings","statusBar.systemSettings",L"\uE713",SystemPanelShortcut::Settings}};
     for(const auto& shortcut:shortcuts)
     {
-        auto& item=Add(shortcut.id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(shortcut.label),shortcut.glyph);
+        auto& item=Add(shortcut.id,ui::Role::ListItem,Rect(4,y,scene_.width-8,32),_LW(shortcut.label),shortcut.glyph);
+        item.glyphSize=16;
         item.enabled=static_cast<bool>(source_.launchShortcut);
         Command(item.id,[this,target=shortcut.target]{
             const auto launch=source_.launchShortcut;
             if(launch){dismissRequested_=true;launch(target);}
-        });y+=48;
+        });y+=32;
     }
-    y+=8;
-    Add("system.power.heading",ui::Role::Text,Rect(24,y,scene_.width-48,24),_LW("statusBar.powerControls")).fontSize=12;
-    y+=28;PowerActions(y);
+    Add("system.power.separator",ui::Role::Separator,Rect(8,y+4,scene_.width-16,1));
+    y+=8;PowerActions(y);
 }
 void SystemPanelModel::PrepareMedia()
 {
@@ -1169,10 +1172,11 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         else controlDraft_->error.clear();
     }
     const bool standalone=controlDraft_&&controlDraft_->returnRoute==ControlDraft::ReturnRoute::ClosePanel;
-    if(standalone||systemMenu)
+    if(standalone)
     {
-        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(systemMenu&&!standalone?"statusBar.menu":title));heading.bold=true;heading.fontSize=16;bodyStart_=56;
+        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(title));heading.bold=true;heading.fontSize=16;bodyStart_=56;
     }
+    else if(systemMenu){scene_.width=192;bodyStart_=4;}
     else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
     else if(systemMenu)SystemMenu(y);
