@@ -114,7 +114,7 @@ local function panel(_,m)
         style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
         hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})
     local content=view.column({key="duration.panel",width="fill",height="auto",minHeight=layout.contentHeight(),
-        flexShrink=0,justifyContent="center",padding=r*0.6,gap=r*0.5,children=children})
+        flexShrink=0,justifyContent="center",padding=r*0.2,gap=r*0.5,children=children})
     return view.scroll({key="duration.viewport",width="fill",height="fill",children={content}})
 end
 local function startCountdown(m,duration)

@@ -256,7 +256,7 @@ function M.panel(_context,model,systemSession,systemPermission)
                 padding={horizontal=row*0.3},children={label("playlist.empty",l10n.tr(#p.tracks>0 and searching and "music.no_matches" or "music.empty"))}})})
     end
     local content=view.column({key="playlist.surface",width="fill",height=model.panelKind=="options" and "auto" or "fill",
-        padding=model.panelKind=="options" and row*0.3 or {vertical=row*0.3},gap=row*0.28,children=children})
+        padding=model.panelKind=="options" and row*0.2 or {vertical=row*0.2},gap=row*0.28,children=children})
     if model.panelKind=="options" then
         return view.scroll({key="options.scroll",width="fill",height="fill",children={content}})
     end

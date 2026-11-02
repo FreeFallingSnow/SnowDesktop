@@ -392,7 +392,7 @@ local function panel(_context,m)
                         borderColor=colors.border,borderWidth=1,cornerRadius=row*0.18},hoverStyle={background=colors.selected}})
             }}),
         view.scroll({key="city.scroll",width="fill",height="fill",children={view.column({key="city.items",width="fill",height="auto",
-            padding={left=row*0.14,right=row*0.36,top=row*0.14,bottom=row*0.14},gap=row*0.22,children=items})}}),
+            padding={horizontal=row*0.2,vertical=row*0.14},gap=row*0.22,children=items})}}),
         view.row({key="picker.footer",width="fill",height=row*1.2,flexShrink=0,gap=row*0.2,alignItems="center",children={
             label("picker.source","Open-Meteo · GeoNames",row*0.43,row*1.2,true),
             view.button({key="panel.settings",label=l10n.tr("lua_widget.sky_weather.settings"),width="auto",height=row*1.2,flexShrink=0,
@@ -400,7 +400,13 @@ local function panel(_context,m)
                 style={foreground=colors.accent,borderWidth=0,cornerRadius=row*0.16},hoverStyle={background=colors.selected}})
             }})
     }
-    return view.column({key="cities.panel",width="fill",height="fill",padding=row*0.50,gap=row*0.36,children=children})
+    for i,control in ipairs(children) do
+        if control.key~="city.scroll" then
+            children[i]=view.column({key=control.key..".inset",width="fill",height="auto",flexShrink=0,
+                padding={horizontal=row*0.2},children={control}})
+        end
+    end
+    return view.column({key="cities.panel",width="fill",height="fill",padding={vertical=row*0.2},gap=row*0.36,children=children})
 end
 
 local function setup(context)

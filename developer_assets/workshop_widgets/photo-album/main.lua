@@ -46,6 +46,7 @@ local function button(key, label, row, active, icon)
         action={id=key},accessibility={label=label},tooltip=label}
     if key=="previous" or key=="next" then options.events={doubleClick={id=key}} end
     if icon then options.label=nil;options.glyph=utf8.char(glyphs[icon]);options.iconFont="fa";return view.iconButton(options) end
+    options.padding={horizontal=row*0.32}
     return view.button(options)
 end
 
@@ -164,7 +165,7 @@ local function panel(context,m)
         if a.error then children[#children+1]=text("clear.error",c[a.error] or c.error,row,true) end
         children[#children+1]=view.row({key="clear.actions",width="fill",height=row,gap=row*0.25,
             children={button("clear.cancel",c.cancel,row),button("clear.confirm",c.clearAll,row,not m.preview)}})
-        return view.column({key="clear",width="fill",height="fill",padding=row*0.6,gap=row*0.4,children=children})
+        return view.column({key="clear",width="fill",height="fill",padding=row*0.2,gap=row*0.4,children=children})
     end
     local header={}
     if a:canChangeMode() then
@@ -240,12 +241,17 @@ local function panel(context,m)
             button("page.previous",c.previous,row,page>1),text("page",tostring(page).." / "..math.ceil(total/pageSize),row),
             button("page.next",c.next,row,page*pageSize<total)}})
     end
+    -- Keep fixed controls inset, while the viewport reaches the host gutter.
+    for i,control in ipairs(header) do
+        header[i]=view.column({key=control.key..".inset",width="fill",height="auto",flexShrink=0,
+            padding={horizontal=row*0.2},children={control}})
+    end
     header[#header+1]=view.scroll({key="list."..m.tab..":"..m.page,width="fill",height="fill",children={
-        view.column({key="items",width="fill",height="auto",gap=row*0.25,children=items})}})
+        view.column({key="items",width="fill",height="auto",padding={horizontal=row*0.2},gap=row*0.25,children=items})}})
     local footer={button("settings",c.settings,row,true)}
     if #a.sources>0 or a.importing or a.picking then footer[#footer+1]=button("clear",c.clearAll,row,not m.preview) end
-    header[#header+1]=view.row({key="footer",width="fill",height=row,gap=row*0.25,children=footer})
-    return view.column({key="album.panel",width="fill",height="fill",padding=row*0.6,gap=row*0.4,children=header})
+    header[#header+1]=view.row({key="footer",width="fill",height=row,flexShrink=0,padding={horizontal=row*0.2},gap=row*0.25,children=footer})
+    return view.column({key="album.panel",width="fill",height="fill",padding={vertical=row*0.2},gap=row*0.4,children=header})
 end
 
 local function event(context,m,e)

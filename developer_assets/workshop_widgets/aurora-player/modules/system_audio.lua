@@ -322,7 +322,7 @@ function M.view(model,localModel)
         children[#children+1]=panel.text("system.audio.error",l10n.tr("shared.error"),row,{style={foreground=c.secondary}})
     end
     return view.scroll({key="system.audio.scroll",width="fill",height="fill",children={
-        view.column({key="system.audio.settings",width="fill",height="auto",padding=row*0.3,gap=row*0.45,children=children})}})
+        view.column({key="system.audio.settings",width="fill",height="auto",padding=row*0.2,gap=row*0.45,children=children})}})
 end
 
 function M.dispose(model)

@@ -181,7 +181,7 @@ local function popover(_context,m)
     -- Rotate the same cyclic traversal order so the first committed scene
     -- focuses the current metric, before any opening-animation cache exists.
     for i,item in ipairs(children) do item.tabIndex=(i-initial+#children)%#children+1 end
-    return view.column({key="selector.root",width="fill",height="fill",padding=r*0.32,gap=r*0.13,children=children})
+    return view.column({key="selector.root",width="fill",height="fill",padding=r*0.2,gap=r*0.13,children=children})
 end
 local function panel(_context,m)
     local c,r,children=copy(),ui.metrics().layoutRowHeight,{}
@@ -196,7 +196,7 @@ local function panel(_context,m)
             action={id="device.choose",value={id=choice.id,mode=m.mode}},accessibility={label=choice.label}})
     end
     return view.scroll({key="devices.scroll",width="fill",height="fill",children={
-        view.column({key="devices.list",width="fill",padding=r*0.4,gap=r*0.15,children=children})}})
+        view.column({key="devices.list",width="fill",padding=r*0.2,gap=r*0.15,children=children})}})
 end
 local function menu(_context,m,request)
     if request.id~="monitor.menu" then return nil end
