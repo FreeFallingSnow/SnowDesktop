@@ -19,23 +19,36 @@ local function color(a,b,t)
 end
 local function prepare(line,g,p,width)
     if g.replica then return g.replica end
-    local reserve=#g.words>0 and 1.95 or 1.55
-    local block=Text.wrap(line.text,p.font*reserve,math.max(1,p.width-p.font*0.55),draw.measureText)
+    local available=math.max(1,p.width-p.font*0.2)
+    local block=Text.wrap(line.text,p.font,available/2.2,draw.measureText)
     Text.words(block,{text=line.text,words=g.words},draw.measureText)
-    local result={pieces={},height=block.height,lineHeight=block.lineHeight}
+    local result={pieces={}}
     local function piece(row,n,first,last,x1,x2,start,finish)
         local value=line.text:sub(first,last)
         if value:match("^%s*$") then return end
         local index=#result.pieces+1;local seed=line.start/1000+index
         local measured=draw.measureText(value,p.font,0,true)
         local item={key="lyrics.word."..tostring(line.start).."."..index,text=value,width=measured.width+p.font*0.12,
-            height=p.font*1.6,x=(width-row.width)/2+(x1+x2-measured.width-p.font*0.12)/2,
-            y=(n-1)*block.lineHeight+(block.lineHeight-p.font*1.6)/2,start=start or line.start,finish=finish or line.finish,
+            height=math.max(p.font*1.35,measured.height),start=start or line.start,finish=finish or line.finish,
             scale=start and 1.1+random(seed,4)*0.2 or 1,
             dx=start and (random(seed,1)-0.5)*p.font*0.56 or 0,
             dy=start and (random(seed,2)-0.5)*p.font*0.56 or 0,
             rotate=start and (random(seed,3)-0.5)*10 or 0,
             passedRotate=start and (random(seed,8)-0.5)*45 or 0}
+        -- Measure each word's transformed footprint instead of scaling an entire
+        -- text run and assuming every word needs the same extra spacing.
+        local function extent(w,h,angle)
+            angle=math.min(math.rad(angle),math.atan(h/w))
+            return w*math.cos(angle)+h*math.sin(angle)
+        end
+        local peak=item.scale*1.4*1.044
+        local activeAngle=math.abs(item.rotate)+3
+        local settledAngle=math.abs(item.rotate)+math.max(20,math.abs(item.passedRotate))
+        item.slotWidth=math.max(peak*extent(item.width,item.height,activeAngle),
+            item.scale*extent(item.width,item.height,settledAngle))
+        item.slotHeight=math.max(peak*extent(item.height,item.width,activeAngle),
+            item.scale*extent(item.height,item.width,settledAngle))+p.font*0.56
+        item.first=first;item.last=last
         result.pieces[#result.pieces+1]=item
     end
     for n,row in ipairs(block.rows) do
@@ -49,6 +62,25 @@ local function prepare(line,g,p,width)
         end
         if cursor<=row.last then piece(row,n,cursor,row.last,x,row.width) end
     end
+    local rows={};local row={pieces={},width=0,height=0};local previous
+    for _,item in ipairs(result.pieces) do
+        local gap=previous and (line.text:sub(previous.last+1,item.first-1):find("%s") and p.font*0.24 or p.font*0.05) or 0
+        if #row.pieces>0 and row.width+gap+item.slotWidth>available then
+            rows[#rows+1]=row;row={pieces={},width=0,height=0};gap=0
+        end
+        item.slotX=row.width+gap;row.width=item.slotX+item.slotWidth
+        row.height=math.max(row.height,item.slotHeight);row.pieces[#row.pieces+1]=item;previous=item
+    end
+    if #row.pieces>0 then rows[#rows+1]=row end
+    local top=0
+    for _,r in ipairs(rows) do
+        for _,item in ipairs(r.pieces) do
+            item.x=(width-r.width)/2+item.slotX+(item.slotWidth-item.width)/2
+            item.y=top+(r.height-item.height)/2;item.slotHeight=r.height
+        end
+        top=top+r.height+p.font*0.08
+    end
+    result.height=math.max(0,top-p.font*0.08);result.lineHeight=rows[1] and rows[1].height or p.font*2
     result.subtitleY=result.height+p.font*0.55
     result.height=result.height+(g.subtitle and p.font*0.55+g.subtitle.height or 0)
     g.replica=result;return result
@@ -107,6 +139,14 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
             local x=piece.dx+(math.sin(piece.dy)*p.font*1.39)*(1-enter)
             local y=piece.dy+(math.cos(piece.dx)*p.font*0.69)*(1-enter)
             local rotate=piece.rotate+20*(1-enter)+piece.passedRotate*clamp((media-piece.finish)/5000)
+            -- Entry drift stays inside the footprint reserved for this word.
+            -- The settled Folia-style offsets remain intact; neighboring words
+            -- and rows cannot collide during the entry or scale overshoot.
+            local radians=math.rad(rotate)
+            local extentX=scale*(math.abs(math.cos(radians))*piece.width+math.abs(math.sin(radians))*piece.height)/2
+            local extentY=scale*(math.abs(math.cos(radians))*piece.height+math.abs(math.sin(radians))*piece.width)/2
+            local roomX=math.max(0,piece.slotWidth/2-extentX);local roomY=math.max(0,piece.slotHeight/2-extentY)
+            x=math.max(-roomX,math.min(roomX,x));y=math.max(-roomY,math.min(roomY,y))
             local alpha=(reduced and 0.9 or ease(elapsed/0.1)*(1-after*0.18))*lineAlpha
             local py=top+piece.y+breath+(reduced and 0 or y)
             if py+piece.height*2>=0 and py-piece.height<height and alpha>0.001 then
