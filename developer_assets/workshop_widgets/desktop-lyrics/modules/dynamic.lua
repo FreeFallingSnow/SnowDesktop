@@ -29,10 +29,10 @@ local function prepare(line,g,p,width,height)
     local available=math.max(1,p.width-p.font*0.2)
     local block=Text.wrap(line.text,p.font,available/1.95,draw.measureText)
     Text.words(block,{text=line.text,words=g.words},draw.measureText)
-    local result={pieces={},pages={},surfaceHeight=height,left=p.padding+p.font*0.1,mainHeight=0};local measurements={}
+    local result={pieces={},pages={},surfaceHeight=height,left=p.padding+p.font*0.1};local measurements={}
     if g.subtitle and #g.subtitle.rows==0 then g.subtitle=nil end
     local room=math.max(1,height-p.padding*2-p.font*0.44)
-    result.subtitleRows=g.subtitle and math.max(1,math.floor(room*0.22/g.subtitle.lineHeight)) or 0
+    result.subtitleRows=g.subtitle and math.min(#g.subtitle.rows,math.max(1,math.floor(room*0.22/g.subtitle.lineHeight))) or 0
     local subtitleHeight=g.subtitle and result.subtitleRows*g.subtitle.lineHeight+p.font*0.35 or 0
     local pageRoom=math.max(1,room-subtitleHeight)
     local bend,turn=0,0
@@ -128,13 +128,14 @@ local function prepare(line,g,p,width,height)
             table.remove(a.pieces);table.insert(b.pieces,1,item);rowSize(a);rowSize(b)
         end
     end
-    local page={rows={},height=0,start=line.start,pieceCount=0}
+    local page={rows={},width=0,height=0,start=line.start,pieceCount=0}
     for i,r in ipairs(rows) do
         r.angle=(random(line.start/1000,i)-0.5)*3.6
         if #page.rows>0 and (page.height+p.font*0.10+r.height>pageRoom or page.pieceCount+#r.pieces>180) then
-            result.pages[#result.pages+1]=page;page={rows={},height=0,start=r.pieces[1].focusStart,pieceCount=0}
+            result.pages[#result.pages+1]=page;page={rows={},width=0,height=0,start=r.pieces[1].focusStart,pieceCount=0}
         end
         local indent=#page.rows>0 and math.min(math.max(0,available-r.width)*(0.35+random(line.start/1000,i+30)*0.25),p.font*2.3) or 0
+        page.width=math.max(page.width,indent+r.width)
         local x=result.left+indent+r.pieces[1].slotWidth/2
         for n,item in ipairs(r.pieces) do
             if n>1 then x=x+item.step end
@@ -146,7 +147,10 @@ local function prepare(line,g,p,width,height)
     if #page.rows>0 then result.pages[#result.pages+1]=page end
     for i,v in ipairs(result.pages) do
         v.finish=result.pages[i+1] and result.pages[i+1].start or line.finish
-        result.mainHeight=math.max(result.mainHeight,v.height)
+        -- Center the complete reserved fragment once, including hidden words.
+        -- Singing and transforms never change these anchors.
+        local shift=(width-v.width)/2-result.left
+        for _,r in ipairs(v.rows) do for _,item in ipairs(r.pieces) do item.x=item.x+shift end end
     end
     result.subtitleHeight=subtitleHeight;g.replica=result;return result
 end
@@ -192,6 +196,36 @@ local function pose(piece,media,pageStart,reduced,angle,previousAngle)
         y=reduced and 0 or (1-enter)*0.06+floating*0.12,
         alpha=reduced and 0.9 or ease(elapsed/0.1)*(1-after*0.18)}
 end
+function M.interlude(m,start,finish,media,width,height,font,primary,accent,description)
+    local children={};local reduced=m.reducedMotion==true
+    local unit=math.min(font,width/9,height/3)
+    local diameter=unit*0.25;local pitch=unit*1.15
+    local span=math.max(1,(finish-start)/6)
+    for i=1,6 do
+        local at=start+(i-1)*span
+        local progress=clamp((media-at)/span)
+        local entered=media>=at
+        local after=ease((media-at-span)/500)
+        local scale=reduced and 1 or (entered and 0.5+spring((media-at)/1000)*(1-after*0.25) or 0.5)
+        local glow=not reduced and entered and math.sin(progress*math.pi) or 0
+        local x=width/2+(i-3.5)*pitch-diameter/2
+        local y=height/2-diameter/2+(reduced and 0 or unit*0.08*math.sin((media-start)/1400+i*0.7))
+        local dots={}
+        for layer=1,3 do
+            local size=diameter*(1+layer*0.65)
+            dots[#dots+1]={type="stack",key="lyrics.interlude.glow."..i.."."..layer,width=size,height=size,
+                offset={x=(diameter-size)/2,y=(diameter-size)/2},
+                style={background=accent,cornerRadius=size/2,opacity=glow*0.10/layer}}
+        end
+        dots[#dots+1]={type="stack",key="lyrics.interlude.dot."..i,width=diameter,height=diameter,
+            style={background=color(primary,accent,glow),cornerRadius=diameter/2}}
+        children[#children+1]={type="stack",key="lyrics.interlude."..i,width=diameter,height=diameter,
+            offset={x=x,y=y},children=dots,style={opacity=reduced and 0.8 or (entered and 0.85 or 0.18)},
+            transform={scale=scale,rotate=0,originX=0.5,originY=0.5},accessibility={hidden=true}}
+    end
+    return {type="stack",key="lyrics.interlude",width=width,height=height,overflow="clip",children=children,
+        accessibility={role="text",label=description}}
+end
 function M.scene(m,g,line,media,width,height,p,primary,accent)
     local prepared=prepare(line,g,p,width,height);local children={};local pageIndex=1
     for i,page in ipairs(prepared.pages) do if media>=page.start then pageIndex=i end end
@@ -199,7 +233,7 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
     if not page then return {type="stack",key="lyrics.dynamic",width=width,height=height,children={}} end
     local reduced=m.reducedMotion==true
     local breath=reduced and 0 or p.font*0.20*math.sin((media-line.start)/7000*math.pi*2)
-    local top=(height-prepared.mainHeight-prepared.subtitleHeight)/2+breath
+    local top=(height-page.height-prepared.subtitleHeight)/2+breath
     local lineAlpha=reduced and 1 or 0.2+0.8*ease((media-page.start)/260)
     local glowBudget=72
     for _,row in ipairs(page.rows) do
@@ -245,7 +279,7 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
         local part=math.min(chunks-1,math.floor(clamp((media-page.start)/math.max(1,page.finish-page.start))*chunks))
         first=first+part*prepared.subtitleRows
         for n=first,math.min(last,first+prepared.subtitleRows-1) do
-            local row=g.subtitle.rows[n];local y=top+prepared.mainHeight+p.font*0.35+(n-first)*g.subtitle.lineHeight
+            local row=g.subtitle.rows[n];local y=top+page.height+p.font*0.35+(n-first)*g.subtitle.lineHeight
             children[#children+1]=label("lyrics.subtitle."..n,row.text,prepared.left,y,row.boxWidth,g.subtitle.lineHeight,
                 g.subtitle.font,"textSecondary",0.85*lineAlpha)
         end

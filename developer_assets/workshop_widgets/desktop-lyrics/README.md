@@ -2,7 +2,9 @@
 
 SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，只绘制歌词；当前行位于纵向中央，前后行逐渐淡出。组件高度决定可见行数，字号和行距可独立调整。右键菜单可直接切换滚动、动态两种模式，并显示选中状态；“重新匹配歌词”保留刷新图标。显示设置和外观预设使用宿主统一的组件设置入口。
 
-组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”，与右键菜单共用保存值。默认保留滚动模式；动态模式参考 Folia 的弹簧放大、逐字光晕和整句呼吸，未唱的词隐藏，唱完后缩回并淡去光晕。字间留白收紧，字位沿随机起伏的路径保持相近距离，空格保留单词分隔；后续行使用独立的稳定偏移，不排成整齐网格。字位预先确定，动画不推动相邻字或重新居中整行。已经唱过的字继续各自缓慢旋转、上下浮动，幅度、相位和节奏按字错开，整体偏转限制在八度以内。首行与分段切换沿用稳定起点，翻译保留原对齐。只绘制当前句及其已开启的翻译、罗马音，不叠加前后句。
+组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”，与右键菜单共用保存值。默认保留滚动模式；动态模式参考 Folia 的弹簧放大、逐字光晕和整句呼吸，未唱的词隐藏，唱完后缩回并淡去光晕。字间留白收紧，字位沿随机起伏的路径保持相近距离，空格保留单词分隔；后续行使用独立的稳定偏移，不排成整齐网格。每个展示分段按完整占位范围在组件窗口中居中，包含尚未出现的字；字位预先确定，逐字动画不推动相邻字或重新计算中心。已经唱过的字继续各自缓慢旋转、上下浮动，幅度、相位和节奏按字错开，整体偏转限制在八度以内。翻译保留原对齐。只绘制当前句及其已开启的翻译、罗马音，不叠加前后句。动态预览默认停在最后一个字演唱中段，显式指定的预览时间仍优先。
+
+动态模式中，超过三秒的前奏、句间空档和尾奏显示六个居中的独立圆点，参考 Folia 按空档时间逐个入场、放大并亮起光晕。暂停冻结动画，减少动态效果时显示静态圆点。原生逐字歌词按实际演唱结束时间判断；普通 LRC 使用已有的文字时长估算，关闭逐字高亮估算时也保留空档判断，不能据此确认真实音频中没有人声。短停顿继续保留歌词。
 
 原生逐字与估算逐字共用这套效果。动态歌词按组件可用宽高拆成能完整显示的小段，超宽单词继续拆分，中文可按字拆分，组合字符和 emoji 保持完整；随演唱切换当前小段，保留原歌词时间，不把超高文本块滑入裁切区域。翻译和罗马音也按完整行分段。基准字号沿用用户设置，只在空间不足以完整容纳单行时适配；切段和动画不会反复改变字号或换行。关闭估算后不创建逐字时间，长句分段仅按整句时段切换。暂停时切段、缩放、角度、位置和光晕一起冻结；减少动态效果时关闭装饰动画。字形光晕使用有界的宿主原生字形层。
 
@@ -37,6 +39,7 @@ AMLL TTML 和网易云 YRC 保留原生逐字时间。缺少逐字时间的 LRC 
 - [Folia 酷狗歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/kugou/kugouLyricProvider.ts)
 - [Folia 普通 LRC 时间估算思路](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/utils/lyrics/parserCore.ts#L59)：借鉴按句长和文字权重分配时间的思路，组件独立实现估算与缓存。
 - [Folia 逐词动画状态](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/glowWordVariants.ts)：对应等待、演唱、已唱的缩放、弹簧位移和旋转状态。
+- [Folia 间奏时间处理](https://github.com/chthollyphile/folia-major/blob/main/src/utils/lyrics/parserCore.ts)与[经典动态布局](https://github.com/chthollyphile/folia-major/blob/main/src/components/visualizer/classic/Visualizer.tsx)：借鉴超过三秒空档的六段提示及居中逐点动画；组件独立绘制圆点，并将同一表现扩展到尾奏。
 - [Folia 经典歌词排布](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/classic/Visualizer.tsx)：对应由歌曲时间确定的稳定词布局与整句呼吸。
 - [Folia 字形光晕](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/wordGlow.ts)：对应逐字激活、保持及唱完后的光晕衰减；组件使用宿主已有原生视图与变换独立实现。
 - [AMLL 原生接口](https://amll.dev/reference/http-api/native)
@@ -64,7 +67,9 @@ Native TTML, YRC, QRC and KRC word timing is supported. QQ and Kugou try native 
 
 A read-only community lyric widget for SnowDesktop. It starts transparent and draws lyrics only. The current line stays centered; increasing widget height reveals more surrounding lines. Font scale and line spacing are separate preferences.
 
-“Lyric mode” in the existing widget settings and the checked context-menu entries share the same saved value. Scrolling remains the default. Dynamic mode references Folia's spring scale, glyph glow and sentence breathing. Upcoming words stay hidden, then enter, enlarge and settle as their glow fades. Tighter glyph spacing follows an irregular path with comparable neighboring distances, while spaces preserve word separation. Subsequent rows use independent stable offsets. Anchors are computed once so animation does not shift neighbors or recenter the row. Sung glyphs continue rotating and floating with staggered phases and rates; rotation stays within eight degrees. First rows and fragment changes retain a stable origin, and subtitles keep their alignment. Only the current sentence and its enabled translation/romanization are drawn.
+“Lyric mode” in the existing widget settings and the checked context-menu entries share the same saved value. Scrolling remains the default. Dynamic mode references Folia's spring scale, glyph glow and sentence breathing. Upcoming words stay hidden, then enter, enlarge and settle as their glow fades. Tighter glyph spacing follows an irregular path with comparable neighboring distances, while spaces preserve word separation. Subsequent rows use independent stable offsets. Each complete fragment reservation is centered in the widget window, including upcoming words. Anchors are computed once so singing does not shift neighbors or recalculate the center. Sung glyphs continue rotating and floating with staggered phases and rates; rotation stays within eight degrees. Subtitles keep their alignment. Only the current sentence and its enabled translation/romanization are drawn. Dynamic previews default to the middle of the final character's singing interval; explicit preview positions remain authoritative.
+
+In dynamic mode, intros, gaps between lines and outros longer than three seconds show six centered geometric dots. Following Folia's interlude idea, dots enter, enlarge and glow in sequence over the gap. Pause freezes them, and reduced motion keeps them static. Native word timings determine the singing end; ordinary LRC uses the existing text-duration estimate even when estimated highlighting is disabled. This estimate cannot establish that the actual audio has no vocals. Short pauses retain the lyrics.
 
 Native and estimated timing share these effects. Dynamic lyrics split into complete fragments that fit the available width and height. Oversized words split further, CJK text can split by character, and graphemes/emoji remain intact. Singing selects the current fragment using the original timeline; oversized blocks are no longer scrolled through a clipping viewport. Translations and romanization also use complete-row fragments. The configured base font adapts only when a full row cannot fit; fragment changes and animation do not repeatedly change font size or wrapping. Disabling estimates creates no word timing; fragment selection uses the line's interval only. Pause freezes the fragment, transforms and glow. Reduced motion removes decorative animation. Halos use bounded native glyph layers.
 

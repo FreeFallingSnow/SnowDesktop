@@ -26,6 +26,13 @@ local function geometry(model,index,font,width,translate,roman,estimate,replica)
     local line=model.client.lines[index]
     local words=estimate and Text.estimateWords(line) or (line.words or {})
     local result={words=words,height=0}
+    if replica then
+        local timing=#words>0 and words or Text.estimateWords(line)
+        result.singingStart=timing[1] and math.max(line.start,timing[1].start) or line.start
+        result.singingEnd=result.singingStart
+        for _,word in ipairs(timing) do result.singingEnd=math.max(result.singingEnd,word.finish) end
+        if #timing==0 then result.singingEnd=line.finish end
+    end
     if not replica then
         result.main=Text.wrap(line.text,font,width,draw.measureText)
         Text.words(result.main,{text=line.text,words=words},draw.measureText);result.height=result.main.height
@@ -76,8 +83,24 @@ function M.render(_context,m,canvas)
     local index=clock.index(lines,media);local target=math.max(1,index)
     if dynamicMode then
         m.scrollIndex=nil;m.shift=nil;m.lastDraw=nil
-        if index>0 then
-            local result=dynamic.scene(m,get(index),lines[index],media,w,h,p,primary,accent)
+        local start,finish
+        if index==0 then start=0;finish=get(1).singingStart
+        else
+            local current=get(index)
+            if media<current.singingStart then start=lines[index].start;finish=current.singingStart
+            elseif media>=current.singingEnd then
+                start=current.singingEnd
+                finish=lines[index+1] and lines[index+1].start or
+                    m.clock.duration-number("offset",0)-(m.client.offset or 0)
+            end
+        end
+        local result
+        if start and finish-start>3000 and media>=start and media<=finish then
+            result=dynamic.interlude(m,start,finish,media,w,h,p.font,primary,accent,c.instrumental)
+        elseif index>0 then
+            result=dynamic.scene(m,get(index),lines[index],media,w,h,p,primary,accent)
+        end
+        if result then
             if canvas then paint.add(result) else return result end
         end
         return

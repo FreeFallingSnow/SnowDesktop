@@ -4,7 +4,22 @@ local client=module.require("modules/client.lua")
 local json=module.require("modules/json.lua")
 local V=module.require("modules/visual.lua")
 local strings=module.require("modules/strings.lua")
+local Text=module.require("modules/text_layout.lua")
 local FRAME="lyrics.frame"
+local function previewPosition(lines)
+    local position=tonumber(storage.get("previewPositionMs"))
+    if position then return position end
+    position=45500
+    if storage.get("lyricMode")~="dynamic" then return position end
+    local line=lines[clock.index(lines,position)]
+    if not line then return position end
+    local words=Text.estimateWords(line);local last=words[#words]
+    if last then
+        local count=math.max(1,#Text.clusters(last.text))
+        return last.finish-(last.finish-last.start)/count/2
+    end
+    return line.finish-(line.finish-line.start)/math.max(1,#Text.clusters(line.text))/2
+end
 local function frames(m)
     local visual=not m.reducedMotion and m.status=="ready" and m.clock and m.clock.playing and #m.client.lines>0
     local decoding=m.client.decodeJob and m.client.enabled
@@ -35,9 +50,10 @@ local function setup(context)
             lines[i]={text=value,start=(i-1)*7000,finish=i*7000,words=words}
         end
         m.client.lines=lines;m.client.state="ready";m.status="ready"
-        m.clock={position=tonumber(storage.get("previewPositionMs")) or 45500,duration=98000,playing=false,rate=1,at=time.monotonic()}
+        m.clock={position=45500,duration=98000,playing=false,rate=1,at=time.monotonic()}
         local sample=storage.get("previewState");m.playbackActive=sample~="waiting"
         if sample=="estimated" then for _,line in ipairs(lines) do line.words={} end end
+        m.clock.position=previewPosition(lines)
         if sample=="unsupported" then m.status="unsupported";m.clock=nil
         elseif sample=="waiting" then m.status="waiting";m.clock=nil end
     else
@@ -64,12 +80,15 @@ local function event(context,m,e)
     elseif e.kind=="visibility" then m.visible=e.visible;if e.visible then refresh(context,m) else frames(m) end
     elseif e.kind=="data.change" or (e.kind=="schedule" and e.id=="lyrics.refresh") then refresh(context,m)
     elseif e.kind=="environment" then refresh(context,m)
-    elseif e.kind=="settings.changed" then m.textCache=nil;m.snap=true
+    elseif e.kind=="settings.changed" then
+        m.textCache=nil;m.snap=true
+        if m.preview and m.clock then m.clock.position=previewPosition(m.client.lines) end
     elseif e.kind=="action" then
         if e.id=="mode.scroll" or e.id=="mode.dynamic" then
             local mode=e.id=="mode.dynamic" and "dynamic" or "scroll"
             if storage.get("lyricMode")~=mode then storage.set("lyricMode",mode) end
             m.textCache=nil;m.snap=true;m.scrollIndex=nil;m.shift=nil;frames(m)
+            if m.preview and m.clock then m.clock.position=previewPosition(m.client.lines) end
         elseif e.id=="retry" and not m.preview then
             refresh(context,m)
             if m.mediaValid then m.client:retry(true);m.status=m.client.state;frames(m) end
