@@ -311,7 +311,10 @@ queries, write storage or rebuild invariant data on every frame.
 - Give each actionable context-menu command a semantic host glyph through
   `icon` and `iconFont`, or a declared resource image when that feature is
   available. Reuse the host's Fluent icon vocabulary for actions such as
-  refresh; separators and informational rows do not need command icons.
+  refresh; separators and informational rows do not need command icons. Follow
+  [Icon meaning and glyph verification](references/visual-authoring.md#icon-meaning-and-glyph-verification)
+  to check the symbol's meaning, actual font mapping and rendered result;
+  unrelated substitute icons are prohibited.
 - Expose a selectable component appearance, such as a transparent theme,
   through `settings.presets` with a stable `id`, localized `label` and grouped
   `values`. Mark the intended initial choice with `default=true`; put its
