@@ -1,10 +1,10 @@
 #include "dock_window_preview.h"
+#include "dock_window_preview_layout.h"
 #include <commctrl.h>
 #include <algorithm>
 
 namespace
 {
-constexpr int kToolbarHeight = 36;
 std::array<RECT, snowdesktop::thumbnail_toolbar::kMaximumButtons> ButtonRects(
     const RECT& card, UINT dpi, const snowdesktop::thumbnail_toolbar::Snapshot& toolbar)
 {
@@ -12,17 +12,18 @@ std::array<RECT, snowdesktop::thumbnail_toolbar::kMaximumButtons> ButtonRects(
     const auto count = snowdesktop::thumbnail_toolbar::VisibleCount(toolbar);
     if (!count) return rects;
     const int inset = std::max(1, MulDiv(5, static_cast<int>(dpi), 96));
-    const int width = std::max(1, std::min(MulDiv(28, static_cast<int>(dpi), 96),
-        static_cast<int>(card.right - card.left - inset * 2) / static_cast<int>(count)));
-    const int height = MulDiv(28, static_cast<int>(dpi), 96);
-    int left = card.left + (card.right - card.left - static_cast<int>(count) * width) / 2;
-    const int top = card.bottom - MulDiv(kToolbarHeight, static_cast<int>(dpi), 96) +
-        MulDiv(3, static_cast<int>(dpi), 96);
+    const int gap = MulDiv(dock_preview_toolbar::kButtonGap, static_cast<int>(dpi), 96);
+    const int gaps = static_cast<int>(count - 1) * gap;
+    const int width = std::max(1, std::min(MulDiv(dock_preview_toolbar::kButtonSize, static_cast<int>(dpi), 96),
+        static_cast<int>(card.right - card.left - inset * 2 - gaps) / static_cast<int>(count)));
+    const int height = MulDiv(dock_preview_toolbar::kButtonSize, static_cast<int>(dpi), 96);
+    int left = card.left + (card.right - card.left - static_cast<int>(count) * width - gaps) / 2;
+    const int top = card.bottom - MulDiv(dock_preview_toolbar::kBottomInset, static_cast<int>(dpi), 96) - height;
     for (DWORD index = 0; index < toolbar.count; ++index)
     {
         if (!snowdesktop::thumbnail_toolbar::Visible(toolbar.buttons[index].native)) continue;
         rects[index] = {left, top, left + width, std::min<LONG>(card.bottom, top + height)};
-        left += width;
+        left += width + gap;
     }
     return rects;
 }
@@ -56,7 +57,7 @@ void DrawButtonIcon(HDC dc, const RECT& bounds, UINT dpi, const snowdesktop::thu
             ? CreateIconIndirect(&iconInfo) : nullptr;
         if (icon)
         {
-            const int size = std::max(1, std::min({MulDiv(18, static_cast<int>(dpi), 96),
+            const int size = std::max(1, std::min({MulDiv(dock_preview_toolbar::kIconSize, static_cast<int>(dpi), 96),
                 static_cast<int>(bounds.right - bounds.left), static_cast<int>(bounds.bottom - bounds.top)}));
             const int x = bounds.left + (bounds.right - bounds.left - size) / 2;
             const int y = bounds.top + (bounds.bottom - bounds.top - size) / 2;
@@ -68,30 +69,44 @@ void DrawButtonIcon(HDC dc, const RECT& bounds, UINT dpi, const snowdesktop::thu
     if (mask) DeleteObject(mask);
 }
 }
+void DockWindowPreview::PrepareToolbars(const std::vector<DockWindowPreviewItem>& items)
+{
+    if (!toolbarClient_) return;
+    std::vector<HWND> targets;
+    for (const auto& item : items) targets.push_back(item.window);
+    // Switching groups can prefetch the new group while the old preview is
+    // still visible. Keep its updates and commands alive until Show switches.
+    if (IsVisible())
+        for (const auto& item : items_)
+            if (std::find(targets.begin(), targets.end(), item.window) == targets.end()) targets.push_back(item.window);
+    toolbarClient_->SetTargets(targets);
+}
 void DockWindowPreview::StartToolbarTracking()
 {
     namespace native = snowdesktop::thumbnail_toolbar;
     ClearToolbarTooltips();
     std::vector<native::Snapshot> next(items_.size());
-    std::vector<HWND> targets;
+    PrepareToolbars(items_);
+    if (toolbarClient_) toolbarClient_->SetNotification(hwnd_, kToolbarUpdateMessage);
+    const auto update = toolbarClient_ ? toolbarClient_->Take() : native::Update{};
     for (size_t index = 0; index < items_.size(); ++index)
     {
-        targets.push_back(items_[index].window);
+        const auto target = native::Capture(items_[index].window);
         for (const auto& toolbar : toolbars_)
-            if (toolbar.target.window == reinterpret_cast<std::uintptr_t>(items_[index].window) &&
-                toolbar.target == native::Capture(items_[index].window)) { next[index] = toolbar; break; }
+            if (toolbar.target == target) { next[index] = toolbar; break; }
+        // Consume the hover-prefetched snapshot before the first Layout,
+        // including a fresh empty toolbar replacing a previously cached one.
+        for (const auto& toolbar : update.snapshots)
+            if (toolbar.target == target) { next[index] = toolbar; break; }
     }
     toolbars_ = std::move(next);
-    if (!toolbarClient_) toolbarClient_ = std::make_unique<native::Client>();
-    toolbarClient_->SetTargets(targets);
-    SetTimer(hwnd_, kToolbarTimerId, 100, nullptr);
 }
 int DockWindowPreview::ToolbarRegionAtPoint(POINT point) const
 {
     const int index = CardIndexAtPoint(point);
     if (index < 0 || static_cast<size_t>(index) >= toolbars_.size() ||
         !snowdesktop::thumbnail_toolbar::VisibleCount(toolbars_[index])) return -1;
-    return point.y >= cardRects_[index].bottom - MulDiv(kToolbarHeight, static_cast<int>(dpi_), 96) ? index : -1;
+    return point.y >= cardRects_[index].bottom - MulDiv(dock_preview_toolbar::kBarRegionHeight, static_cast<int>(dpi_), 96) ? index : -1;
 }
 std::pair<int, int> DockWindowPreview::ToolbarButtonAtPoint(POINT point) const
 {
@@ -132,16 +147,30 @@ void DockWindowPreview::PaintToolbar(HDC dc, size_t index, const RECT& client)
 {
     if (index >= toolbars_.size()) return;
     namespace native = snowdesktop::thumbnail_toolbar;
+    if (!native::VisibleCount(toolbars_[index])) return;
+    const int inset = std::max(1, MulDiv(5, static_cast<int>(dpi_), 96));
+    const RECT bar{client.left + inset,
+        std::max(client.top, client.bottom - MulDiv(dock_preview_toolbar::kBarRegionHeight, static_cast<int>(dpi_), 96)),
+        client.right - inset, client.bottom - inset};
+    HBRUSH backgroundBrush = CreateSolidBrush(lightTheme_ ? RGB(240, 240, 242) : RGB(37, 39, 43));
+    FillRect(dc, &bar, backgroundBrush);
+    DeleteObject(backgroundBrush);
     const auto rects = ButtonRects(client, dpi_, toolbars_[index]);
     for (DWORD button = 0; button < toolbars_[index].count; ++button)
     {
         const auto& value = toolbars_[index].buttons[button];
         if (!native::Visible(value.native)) continue;
         const auto& rect = rects[button];
-        if (hoveredToolbar_ == std::pair{static_cast<int>(index), static_cast<int>(button)} &&
-            native::Interactive(value.native) && !(value.native.flags & THBF_NOBACKGROUND))
+        if (!(value.native.flags & THBF_NOBACKGROUND))
         {
-            HBRUSH brush = CreateSolidBrush(lightTheme_ ? RGB(197, 216, 241) : RGB(77, 99, 128));
+            const bool hovered = hoveredToolbar_ == std::pair{static_cast<int>(index), static_cast<int>(button)} &&
+                native::Interactive(value.native);
+            const bool pressed = hovered && pressedToolbar_ && pressedToolbar_->target == toolbars_[index].target &&
+                pressedToolbar_->identity == toolbars_[index].identity && pressedToolbar_->button == value.native.id;
+            const COLORREF background = lightTheme_
+                ? (pressed ? RGB(208, 209, 211) : hovered ? RGB(246, 246, 246) : RGB(231, 232, 234))
+                : (pressed ? RGB(57, 59, 63) : hovered ? RGB(83, 85, 89) : RGB(67, 69, 73));
+            HBRUSH brush = CreateSolidBrush(background);
             HGDIOBJ oldBrush = SelectObject(dc, brush), oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
             RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, MulDiv(5, static_cast<int>(dpi_), 96), MulDiv(5, static_cast<int>(dpi_), 96));
             SelectObject(dc, oldPen); SelectObject(dc, oldBrush); DeleteObject(brush);

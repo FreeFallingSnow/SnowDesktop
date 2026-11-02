@@ -75,7 +75,10 @@ struct Client::State
     std::condition_variable wake;
     std::vector<Target> targets;
     std::deque<Click> clicks;
+    std::deque<Snapshot> cache;
     Update update;
+    HWND notifyWindow = nullptr;
+    UINT notifyMessage = 0;
     std::uint64_t generation = 0;
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::jthread worker;
@@ -97,6 +100,7 @@ struct Client::State
             std::optional<Adapter> adapter;
             HMODULE entry = nullptr;
             struct ModuleOwner { HMODULE& module; ~ModuleOwner() { if (module) FreeLibrary(module); } } moduleOwner{entry};
+            bool warmup = true;
             while (!token.stop_requested())
             {
                 std::vector<Target> current;
@@ -104,9 +108,10 @@ struct Client::State
                 std::uint64_t revision = 0;
                 {
                     std::unique_lock lock(mutex);
-                    wake.wait(lock, [&] { return token.stop_requested() || !targets.empty(); });
+                    wake.wait(lock, [&] { return token.stop_requested() || warmup || !targets.empty(); });
                     if (token.stop_requested()) break;
                     current = targets; actions.swap(clicks); revision = generation;
+                    warmup = false;
                 }
                 if (!runtime_modules::Allowed(runtime_modules::Module::Taskbar))
                 {
@@ -162,8 +167,19 @@ struct Client::State
                     std::unique_lock lock(mutex);
                     if (revision == generation)
                     {
+                        for (const auto& snapshot : next.snapshots)
+                        {
+                            std::erase_if(cache, [&](const Snapshot& saved) { return saved.target.window == snapshot.target.window; });
+                            cache.push_back(snapshot);
+                        }
+                        while (cache.size() > 32) cache.pop_front();
+                        const bool changed = update.snapshots != next.snapshots || !next.dismiss.empty();
                         update.snapshots = std::move(next.snapshots);
                         update.dismiss.insert(update.dismiss.end(), next.dismiss.begin(), next.dismiss.end());
+                        // Completion reaches the preview directly, without a
+                        // second polling interval after native work finishes.
+                        if (changed && notifyWindow && notifyMessage)
+                            PostMessageW(notifyWindow, notifyMessage, 0, 0);
                     }
                     wake.wait_for(lock, std::chrono::milliseconds(350),
                         [&] { return token.stop_requested() || revision != generation || !clicks.empty(); });
@@ -186,7 +202,16 @@ void Client::SetTargets(const std::vector<HWND>& windows)
     std::lock_guard lock(state_->mutex);
     if (targets == state_->targets) return;
     state_->targets = std::move(targets); ++state_->generation;
-    state_->clicks.clear(); state_->update = {}; state_->wake.notify_all();
+    state_->clicks.clear(); state_->update = {};
+    for (const auto& target : state_->targets)
+        for (const auto& snapshot : state_->cache)
+            if (snapshot.target == target) { state_->update.snapshots.push_back(snapshot); break; }
+    state_->wake.notify_all();
+}
+void Client::SetNotification(HWND window, UINT message)
+{
+    std::lock_guard lock(state_->mutex);
+    state_->notifyWindow = window; state_->notifyMessage = message;
 }
 void Client::Invoke(Click click)
 {

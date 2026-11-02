@@ -269,11 +269,9 @@ DockWindowPreviewLayout CalculateDockWindowPreviewLayout(
     const int padding = std::max(1, ScaleForDpi(5, dpi));
     const int title = std::max(1, ScaleForDpi(34, dpi));
     const int desiredHeight = std::max(1, ScaleForDpi(113, dpi));
-    const bool hasToolbar = std::any_of(toolbarButtons.begin(), toolbarButtons.end(), [](size_t count) { return count != 0; });
-    const int footer = hasToolbar ? ScaleForDpi(36, dpi) : 0;
     const auto atHeight = [&](int height) {
         DockWindowPreviewLayout layout;
-        layout.cardHeight = title + padding + height + footer;
+        layout.cardHeight = title + padding + height;
         int rowWidth = 0;
         int row = 0;
         int columns = 0;
@@ -283,7 +281,8 @@ DockWindowPreviewLayout CalculateDockWindowPreviewLayout(
             const double ratio = size.cx > 0 && size.cy > 0
                 ? static_cast<double>(size.cx) / size.cy : 16.0 / 9.0;
             const size_t buttons = index < toolbarButtons.size() ? std::min<size_t>(7, toolbarButtons[index]) : 0;
-            const int minimumWidth = static_cast<int>(buttons) * ScaleForDpi(28, dpi);
+            const int minimumWidth = buttons ? static_cast<int>(buttons) * ScaleForDpi(dock_preview_toolbar::kButtonSize, dpi) +
+                static_cast<int>(buttons - 1) * ScaleForDpi(dock_preview_toolbar::kButtonGap, dpi) : 0;
             const int width = padding * 2 + std::max(minimumWidth, static_cast<int>(std::min<double>(
                 maximumWidth + 1.0, std::max(1.0, std::round(height * ratio)))));
             if (width > maximumWidth) return DockWindowPreviewLayout{};
@@ -320,7 +319,7 @@ DockWindowPreviewLayout CalculateDockWindowPreviewLayout(
     };
     DockWindowPreviewLayout best;
     int low = 1;
-    int high = std::min(desiredHeight, maximumHeight - title - padding - footer);
+    int high = std::min(desiredHeight, maximumHeight - title - padding);
     while (low <= high)
     {
         const int middle = low + (high - low) / 2;
@@ -705,8 +704,11 @@ bool DockWindowPreview::Initialize(
     windowClass.hCursor = LoadCursorW(nullptr, IDC_HAND);
     windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName = kDockWindowPreviewClassName;
-    return RegisterClassExW(&windowClass) != 0 ||
-        GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+    if (!RegisterClassExW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+    // Resolve the Shell adapter during initialization, before the user opens
+    // a preview. The worker does not sample windows until hover prepares them.
+    toolbarClient_ = std::make_unique<snowdesktop::thumbnail_toolbar::Client>();
+    return true;
 }
 
 bool DockWindowPreview::EnsureWindow()
@@ -965,12 +967,13 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbna
     for (size_t index = 0; index < cardRects_.size(); ++index)
     {
         const RECT& card = cardRects_[index];
-        const int footer = index < toolbarButtons.size() && toolbarButtons[index] ? ScaleForDpi(36, dpi) : 0;
+        const int bottomInset = index < toolbarButtons.size() && toolbarButtons[index]
+            ? ScaleForDpi(dock_preview_toolbar::kBarRegionHeight, dpi) : contentPadding;
         thumbnailRects_.push_back({
             card.left + contentPadding,
             card.top + titleHeight,
             card.right - contentPadding,
-            std::max(card.top + titleHeight + 1, card.bottom - contentPadding - footer)
+            std::max(card.top + titleHeight + 1, card.bottom - bottomInset)
         });
     }
 }
@@ -1115,7 +1118,6 @@ void DockWindowPreview::RemoveWindow(HWND window)
     ClearToolbarTooltips();
     pressedToolbar_.reset();
     hoveredToolbar_ = {-1, -1};
-    if (hwnd_) KillTimer(hwnd_, kToolbarTimerId);
     const HWND popup = windows_[index];
     // Detach before destruction so WM_NCDESTROY cannot clear the new timer owner.
     windows_.erase(windows_.begin() + index);
@@ -1147,7 +1149,6 @@ void DockWindowPreview::RemoveWindow(HWND window)
 void DockWindowPreview::Hide()
 {
     if (toolbarClient_) toolbarClient_->SetTargets({});
-    if (hwnd_) KillTimer(hwnd_, kToolbarTimerId);
     ClearToolbarTooltips();
     pressedToolbar_.reset();
     hoveredToolbar_ = {-1, -1};
@@ -1572,6 +1573,16 @@ void DockWindowPreview::OnPeekTimer()
         CancelPeek();
         return;
     }
+    POINT pointer{};
+    if (GetCursorPos(&pointer))
+        if (const HWND card = PointerWindowAt(pointer); card && ScreenToClient(card, &pointer) &&
+            ToolbarRegionAtPoint(ToLayoutPoint(card, pointer)) >= 0)
+        {
+            // A queued Peek timer or a newly arrived toolbar must not expose
+            // the source window while the pointer is anywhere in the bar.
+            CancelPeek();
+            return;
+        }
     if ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) ||
         (windowPeek_.Active() && (!windowPeek_.TargetIsCurrent() ||
             !windowPeek_.ForegroundUnchanged())) ||
@@ -1805,6 +1816,7 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
     const auto pressed = std::exchange(pressedToolbar_, std::nullopt);
     if (pressed || ToolbarRegionAtPoint(point) >= 0)
     {
+        InvalidatePopups();
         CancelPeek(true);
         KeepVisible();
         const auto [card, button] = ToolbarButtonAtPoint(point);
@@ -1980,6 +1992,9 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
 
     switch (message)
     {
+    case kToolbarUpdateMessage:
+        preview->RefreshToolbar();
+        return 0;
     case kPointerReconcileMessage:
         preview->pointerReconcilePending_ = false;
         if (preview->IsVisible()) preview->RefreshPointerTracking();
@@ -2018,6 +2033,7 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
             const auto& native = toolbar.buttons[button].native;
             if (snowdesktop::thumbnail_toolbar::Interactive(native))
                 preview->pressedToolbar_ = snowdesktop::thumbnail_toolbar::Click{toolbar.target, toolbar.identity, native.id};
+            preview->InvalidatePopups();
         }
         const int index = preview->CardIndexAtPoint(point);
         if (index < 0 || static_cast<size_t>(index) >= preview->thumbnailRects_.size() ||
@@ -2045,7 +2061,6 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         }));
         return 0;
     case WM_TIMER:
-        if (wParam == kToolbarTimerId) { preview->RefreshToolbar(); return 0; }
         if (wParam == kPeekTimerId)
         {
             preview->OnPeekTimer();

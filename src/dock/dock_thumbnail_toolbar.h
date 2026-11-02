@@ -12,7 +12,8 @@ struct Update
     std::vector<Snapshot> snapshots;
     std::vector<Target> dismiss;
 };
-// Native queries stay off the preview/UI thread; hidden previews stop sampling.
+// Prepare symbols before hover and cache per-window snapshots across opens.
+// Native queries stay off the UI thread; no targets means no sampling.
 class Client
 {
 public:
@@ -20,6 +21,7 @@ public:
     ~Client();
     Client(const Client&) = delete;
     void SetTargets(const std::vector<HWND>& windows);
+    void SetNotification(HWND window, UINT message);
     void Invoke(Click click);
     Update Take();
 private:

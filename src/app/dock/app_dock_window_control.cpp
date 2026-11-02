@@ -412,9 +412,14 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         dockWindowPreview_->ScheduleHide();
     if (transition.armTimer && hwnd_)
     {
+        // Use the existing hover delay for native toolbar discovery, so the
+        // first preview layout can include its buttons and final geometry.
+        dockWindowPreview_->PrepareToolbars(CollectDockWindowPreviewItems(target.identity));
         SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
             QueryDockWindowPreviewHoverTime(), nullptr);
     }
+    else if (!hasTarget && !previewVisible)
+        dockWindowPreview_->PrepareToolbars({});
 }
 
 void DesktopApp::OnDockWindowPreviewHoverTimer()

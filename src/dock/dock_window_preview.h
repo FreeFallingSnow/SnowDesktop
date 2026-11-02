@@ -122,6 +122,7 @@ public:
         HINSTANCE instance,
         ActivateCallback activateCallback,
         CloseCallback closeCallback, std::function<void()> visibilityChanged = {});
+    void PrepareToolbars(const std::vector<DockWindowPreviewItem>& items);
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
@@ -158,10 +159,10 @@ public:
 private:
     static constexpr UINT_PTR kHideTimerId = 1;
     static constexpr UINT_PTR kPeekTimerId = 2;
-    static constexpr UINT_PTR kToolbarTimerId = 3;
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
     static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
+    static constexpr UINT kToolbarUpdateMessage = WM_APP + 2;
 
     static LRESULT CALLBACK WindowProc(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
