@@ -17,7 +17,7 @@ local function copy()
         unavailable=l10n.tr("monitor.unavailable"), not_present=l10n.tr("monitor.not_present"),
         device_missing=l10n.tr("monitor.device_missing"), no_vram=l10n.tr("monitor.no_vram"), stale=l10n.tr("monitor.stale"),
         cpu_source=l10n.tr("monitor.processor"), memory_source=l10n.tr("monitor.physical"),
-        battery_source=l10n.tr("monitor.this_device"), network_source=l10n.tr("monitor.aggregate"),
+        battery_source=l10n.tr("monitor.this_device"), network_source=l10n.tr("monitor.realtime_speed"),
     }
 end
 
@@ -203,7 +203,9 @@ local function menu(_context,m,request)
 end
 
 local function event(context,m,value)
-    if value.kind=="schedule" and value.id=="monitor.sample" then reconcile(m);sample(m)
+    if value.kind=="popover" and value.action=="opened" then
+        control.focus("mode."..m.mode)
+    elseif value.kind=="schedule" and value.id=="monitor.sample" then reconcile(m);sample(m)
     elseif value.kind=="settings.changed" or value.kind=="environment" or value.kind=="data.change" or
             (value.kind=="visibility" and value.visible) then reconcile(m);sample(m)
     elseif value.kind=="action" then

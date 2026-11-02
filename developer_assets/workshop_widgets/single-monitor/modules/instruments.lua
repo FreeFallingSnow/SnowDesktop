@@ -163,12 +163,12 @@ function M.render(mode, reading, values, now, c, format)
     local source=reading.source or c[mode.."_source"] or ""
     if reading.stale then source=source=="" and c.stale or source.." · "..c.stale end
     if source~="" then
-        local sourceSize=t*0.049
-        local metric=measure(source,sourceSize,false)
+        local sourceSize=titleFont
+        local metric=measure(source,sourceSize,true)
         local ink=bounds(metric)
         local sourceY=pad+(titleH-ink.height)/2-ink.top-math.max(0,(titleH-metric.height)/2)
         draw.marqueeText({key="monitor.source",x=x,y=sourceY,width=selectorX-x-t*0.045,height=titleH,
-            text=source,size=sourceSize,color=p.sub,speed=t*0.12,gap=t*0.10})
+            text=source,size=sourceSize,bold=true,color=p.text,speed=t*0.12,gap=t*0.10})
     end
     local headerBottom=pad+titleH+t*0.065
     if interaction.isHovered("monitor.selector") then
@@ -248,7 +248,7 @@ function M.render(mode, reading, values, now, c, format)
             captionY=y+bh-captionH
             if mode=="cpu" then gy,gh=y+bh*0.06,bh*0.65
             else
-                gh=mode=="battery" and math.min(s*0.20,bh*0.40) or
+                gh=mode=="battery" and math.min(s*0.34,bh*0.40) or
                     math.min(mode=="vram" and s*0.14 or s*0.09,bh*0.35)
                 gy=y+(bh-captionH-gh-s*0.04)/2
             end
@@ -260,7 +260,8 @@ function M.render(mode, reading, values, now, c, format)
             captionY=y+bh-captionH
             if mode=="cpu" then gy,gh=y+bh*0.40,bh*0.46
             else
-                gh=math.min(s*(mode=="battery" and 0.20 or (mode=="vram" and 0.14 or 0.09)),bh*0.20)
+                gh=math.min(s*(mode=="battery" and 0.34 or (mode=="vram" and 0.14 or 0.09)),
+                    bh*(mode=="battery" and 0.34 or 0.20))
                 gy=captionY-s*0.06-gh
             end
         end

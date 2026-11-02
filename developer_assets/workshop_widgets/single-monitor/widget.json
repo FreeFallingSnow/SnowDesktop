@@ -8,7 +8,7 @@
   "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Single Monitor",
   "nameKey": "monitor.name",
   "description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
@@ -49,7 +49,7 @@
       "monitor.processor": "处理器",
       "monitor.physical": "物理内存",
       "monitor.this_device": "本机",
-      "monitor.aggregate": "系统汇总",
+      "monitor.realtime_speed": "实时网速",
       "monitor.preview_intro": "在预览中选择信息预设，添加后也可点击标题或右键切换。"
     },
     "zh-TW": {
@@ -87,7 +87,7 @@
       "monitor.processor": "處理器",
       "monitor.physical": "實體記憶體",
       "monitor.this_device": "本機",
-      "monitor.aggregate": "系統總計",
+      "monitor.realtime_speed": "即時網速",
       "monitor.preview_intro": "在預覽中選擇資訊預設，加入後也可點擊標題或按右鍵切換。"
     },
     "en-US": {
@@ -125,7 +125,7 @@
       "monitor.processor": "Processor",
       "monitor.physical": "Physical memory",
       "monitor.this_device": "This device",
-      "monitor.aggregate": "System total",
+      "monitor.realtime_speed": "Live network speed",
       "monitor.preview_intro": "Choose a metric preset in the preview. After adding, click the title or right-click to switch."
     },
     "de-DE": {
@@ -163,7 +163,7 @@
       "monitor.processor": "Prozessor",
       "monitor.physical": "Physischer Speicher",
       "monitor.this_device": "Dieses Gerät",
-      "monitor.aggregate": "System gesamt",
+      "monitor.realtime_speed": "Aktuelle Netzwerkgeschwindigkeit",
       "monitor.preview_intro": "In der Vorschau einen Messwert wählen. Nach dem Hinzufügen über den Titel oder per Rechtsklick wechseln."
     },
     "fr-FR": {
@@ -201,7 +201,7 @@
       "monitor.processor": "Processeur",
       "monitor.physical": "Mémoire physique",
       "monitor.this_device": "Cet appareil",
-      "monitor.aggregate": "Total du système",
+      "monitor.realtime_speed": "Débit réseau en temps réel",
       "monitor.preview_intro": "Choisissez une information dans l’aperçu. Après l’ajout, cliquez sur le titre ou faites un clic droit pour changer."
     },
     "ja-JP": {
@@ -239,7 +239,7 @@
       "monitor.processor": "プロセッサ",
       "monitor.physical": "物理メモリ",
       "monitor.this_device": "このデバイス",
-      "monitor.aggregate": "システム合計",
+      "monitor.realtime_speed": "リアルタイム通信速度",
       "monitor.preview_intro": "プレビューで表示項目を選択します。追加後もタイトルのクリックや右クリックで切り替えられます。"
     },
     "ko-KR": {
@@ -277,7 +277,7 @@
       "monitor.processor": "프로세서",
       "monitor.physical": "물리 메모리",
       "monitor.this_device": "이 장치",
-      "monitor.aggregate": "시스템 합계",
+      "monitor.realtime_speed": "실시간 네트워크 속도",
       "monitor.preview_intro": "미리 보기에서 표시할 정보를 선택하세요. 추가한 후에도 제목을 클릭하거나 오른쪽 클릭으로 전환할 수 있습니다."
     },
     "es-ES": {
@@ -315,7 +315,7 @@
       "monitor.processor": "Procesador",
       "monitor.physical": "Memoria física",
       "monitor.this_device": "Este dispositivo",
-      "monitor.aggregate": "Total del sistema",
+      "monitor.realtime_speed": "Velocidad de red en tiempo real",
       "monitor.preview_intro": "Elige la información en la vista previa. Después de añadirlo, haz clic en el título o usa el botón derecho para cambiarla."
     },
     "es-419": {
@@ -353,7 +353,7 @@
       "monitor.processor": "Procesador",
       "monitor.physical": "Memoria física",
       "monitor.this_device": "Este dispositivo",
-      "monitor.aggregate": "Total del sistema",
+      "monitor.realtime_speed": "Velocidad de red en tiempo real",
       "monitor.preview_intro": "Elige la información en la vista previa. Después de agregarlo, haz clic en el título o usa el botón derecho para cambiarla."
     },
     "pt-BR": {
@@ -391,7 +391,7 @@
       "monitor.processor": "Processador",
       "monitor.physical": "Memória física",
       "monitor.this_device": "Este dispositivo",
-      "monitor.aggregate": "Total do sistema",
+      "monitor.realtime_speed": "Velocidade da rede em tempo real",
       "monitor.preview_intro": "Escolha a informação na prévia. Após adicionar, clique no título ou use o botão direito para alternar."
     }
   },
@@ -434,6 +434,8 @@
     "view.surface.panel",
     "view.tree.core",
     "view.theme.tokens",
+    "control.focus",
+    "view.focus.request",
     "ui.semanticMetrics.rowUnit",
     "draw.marqueeText",
     "widget.creationPresets"
