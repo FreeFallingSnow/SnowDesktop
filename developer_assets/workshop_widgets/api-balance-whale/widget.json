@@ -10,7 +10,7 @@
   "license": "MIT",
   "name": "Little Whale Balance Checker",
   "nameKey": "lua_widget.api_balance_whale.name",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "View API balances and key quotas in whale or data mode.",
   "descriptionKey": "lua_widget.api_balance_whale.description",
   "locales": {
@@ -676,8 +676,8 @@
         "title": "Compact",
         "titleKey": "lua_widget.api_balance_whale.preview_compact",
         "size": {
-          "rows": 2,
-          "aspectRatio": 1
+          "columns": 2,
+          "aspectRatio": 0.75
         }
       },
       {
