@@ -12,6 +12,7 @@
 #include "settings/settings_process.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_context_menu_site.h"
+#include "shell_native_menu_projection.h"
 #include "shell_start_pin.h"
 #include <algorithm>
 #include <atomic>
@@ -410,6 +411,8 @@ struct Native
     bool metadataOnly = false;
     bool shortcutObjects = false;
     ComPtr<IShellItem> nvidiaApplication;
+    std::wstring nvidiaClass;
+    NativeMenuProjection projection;
     ComPtr<IExplorerCommand> explorer;
     std::wstring explorerClass;
     ~Native()
@@ -437,6 +440,10 @@ struct Host
     std::map<UINT, Command> commands;
     UINT next = 1;
     Native *tracking = nullptr;
+    Native *nativeRoot = nullptr;
+    std::vector<Registration> nativePackages;
+    std::vector<std::unique_ptr<RegistryWatch>> nativePackageWatches;
+    ULONGLONG nativePackagesRead = 0;
     bool nativePopup = false;
     bool nativeLightTheme = true;
     bool invoked = false;
@@ -899,12 +906,14 @@ struct Host
         progress("release previous menu");
         commands.clear();
         menus.clear();
+        nativeRoot = nullptr;
         next = 1;
         count = 0;
         invoked = false;
     }
     void AppendPackagedCommands(const Request& request, IShellFolder* folder,
-        std::vector<PCIDLIST_ABSOLUTE>& ids, const std::vector<Registration>& packages, Reply& reply)
+        std::vector<PCIDLIST_ABSOLUTE>& ids, const std::vector<Registration>& packages, Reply& reply,
+        const std::vector<PCUITEMID_CHILD>* originalChildren = nullptr)
     {
         if (request.startPinOnly || request.originalShortcutOnly || !request.sourceClsid.empty()) return;
         MenuTiming timing("packaged_commands");
@@ -918,6 +927,7 @@ struct Host
         });
         if (!request.background) for (const auto id : ids)
             children.push_back(sameFolder ? ILFindLastID(id) : reinterpret_cast<PCUITEMID_CHILD>(id));
+        if (originalChildren && originalChildren->size() == ids.size()) children = *originalChildren;
         struct Candidate { const Registration* registration; std::unique_ptr<Native> source; };
         std::vector<Candidate> candidates;
         for (const auto& registration : packages)
@@ -1048,21 +1058,12 @@ struct Host
         else for (auto& candidate : candidates) append(candidate, true);
         timing.Record("complete");
     }
-    void NvidiaCompatibility(const Request &request, Reply &reply)
+    void AppendNvidiaApplication(ComPtr<IShellItem> item, const wchar_t* clsid, Reply& reply)
     {
-        if (request.omitNvidiaCompatibility || !request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
-            !NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
-        progress("activate NVIDIA compatibility factory");
-        CLSID clsid{};
-        if (FAILED(CLSIDFromString(NvidiaControlPanelClsid, &clsid))) return;
-        ComPtr<IContextMenu> extension;
-        const auto factory = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&extension));
-        if (!NvidiaCompatibilityRequired(request, true, true, factory)) return;
-        progress("bind NVIDIA compatibility application");
-        auto item = NvidiaControlPanelApplication();
         if (!item) return;
         auto source = std::make_unique<Native>();
         source->nvidiaApplication = item;
+        source->nvidiaClass = clsid;
         PWSTR filePath = nullptr;
         if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &filePath)) && filePath)
         {
@@ -1077,8 +1078,8 @@ struct Host
         Entry entry;
         entry.label = name; CoTaskMemFree(name);
         if (entry.label.empty()) return;
-        entry.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
-        entry.registration = NvidiaControlPanelRegistration;
+        entry.key = Utf8(Lower(clsid));
+        entry.registration = "clsid:" + entry.key;
         progress("read NVIDIA compatibility image");
         ComPtr<IShellItemImageFactory> image;
         HBITMAP bitmap = nullptr;
@@ -1093,6 +1094,29 @@ struct Host
         ++count;
         menus.push_back(std::move(source));
         MenuTrace("nvidia_compatibility", "installed_application");
+    }
+    void NvidiaCompatibility(const Request &request, Reply &reply)
+    {
+        if (request.omitNvidiaCompatibility || !request.background || ResolveContext(request) != Context::Desktop ||
+            !request.sourceClsid.empty()) return;
+        if (NvidiaControlPanelRegistered() && HandlerEnabled(NvidiaControlPanelClsid))
+        {
+            CLSID clsid{}; CLSIDFromString(NvidiaControlPanelClsid, &clsid);
+            ComPtr<IContextMenu> extension;
+            const auto factory = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&extension));
+            if (NvidiaCompatibilityRequired(request, true, true, factory))
+                AppendNvidiaApplication(NvidiaControlPanelApplication(), NvidiaControlPanelClsid, reply);
+        }
+        if (nativePopup && NvidiaDesktopHandlerRegistered(NvidiaAppClsid) && HandlerEnabled(NvidiaAppClsid) && !request.paths.empty())
+        {
+            CLSID clsid{}; CLSIDFromString(NvidiaAppClsid, &clsid);
+            ComPtr<IShellExtInit> initialize;
+            Pidl directory;
+            if (SUCCEEDED(SHParseDisplayName(request.paths.front().c_str(), nullptr, &directory.value, 0, nullptr)) &&
+                SUCCEEDED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&initialize))) &&
+                initialize->Initialize(directory.value, nullptr, nullptr) == E_FAIL)
+                AppendNvidiaApplication(NvidiaAppApplication(), NvidiaAppClsid, reply);
+        }
     }
     Reply QueryShortcutObjects(const Request &request, Native &delegated,
         IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,
@@ -1422,8 +1446,13 @@ struct Host
     }
     bool PrepareNative(const Request& request, const NativeMenuSelection& snapshot, POINT point)
     {
+        for (auto& old : menus) retiredMenus.push_back(std::move(old));
+        menus.clear();
         ReleaseMenu();
-        providers.Load(request, ReadPackagedMenuCommands());
+        // Preserve the loader-lock workaround for classic in-process handlers.
+        // Packaged commands are activated through their own interface below;
+        // asking every one for an IClassFactory first only duplicates work.
+        providers.Load(request);
         nativePopup = true;
         nativeLightTheme = snapshot.lightTheme;
         // Providers and Windows menu metrics obtain DPI from this HWND.
@@ -1515,7 +1544,9 @@ struct Host
                 : target->folder->GetUIObjectOf(owner, static_cast<UINT>(children.size()), children.data(),
                     IID_IContextMenu, nullptr, reinterpret_cast<void**>(menu));
         };
-        const UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU | (request.background ? CMF_EXPLORE : (CMF_ITEMMENU | CMF_CANRENAME)) |
+        // This is a live native HMENU, not a serialized custom-menu snapshot.
+        // Its IContextMenu2/3 loop initializes cascades before they are shown.
+        const UINT flags = CMF_NORMAL | (request.background ? CMF_EXPLORE : (CMF_ITEMMENU | CMF_CANRENAME)) |
             (request.extended ? CMF_EXTENDEDVERBS : 0);
         // Every target uses this same supervised single-query builder.
         // A partial/failed first result never selects a primer or UI fallback.
@@ -1528,13 +1559,67 @@ struct Host
             : source->site.BuildSelectionMenu(source->folder.Get(), window, source->menu, 1, 0x7fff,
                 flags, bind, static_cast<UINT>(children.size()), children.data(), source->context.GetAddressOf());
         if (FAILED(built)) return false;
+        nativeRoot = source.get();
         menus.push_back(std::move(source));
+        std::vector<PCIDLIST_ABSOLUTE> absolute;
+        std::vector<std::unique_ptr<Pidl>> combined;
+        if (!request.background)
+        {
+            if (!snapshot.children.empty())
+                for (size_t index = 1; index < nativeRoot->selection.size(); ++index)
+                {
+                    auto id = std::make_unique<Pidl>();
+                    id->value = ILCombine(nativeRoot->selection.front()->value, nativeRoot->selection[index]->value);
+                    if (!id->value) return false;
+                    absolute.push_back(id->value); combined.push_back(std::move(id));
+                }
+            else for (const auto& id : nativeRoot->selection) absolute.push_back(id->value);
+        }
+        auto complete = request;
+        complete.visibleMenuProviders.reset(); complete.rootMetadataOnly = false;
+        Reply additions;
+        AppendPackagedCommands(complete, viewFolder.Get(), absolute, NativePackages(), additions, &children);
+        NvidiaCompatibility(complete, additions);
+        std::set<std::wstring> existing;
+        for (int index = 0; index < GetMenuItemCount(nativeRoot->menu); ++index)
+        {
+            MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_ID;
+            if (GetMenuItemInfoW(nativeRoot->menu, index, TRUE, &item)) existing.insert(Lower(Verb(*nativeRoot, item.wID)));
+        }
+        UINT position = 0;
+        for (const auto& entry : additions.entries)
+        {
+            if (!entry.key.empty() && existing.contains(Lower(Wide(entry.key)))) continue;
+            if (!nativeRoot->projection.Insert(nativeRoot->menu, position++, entry, GetDpiForWindow(window))) return false;
+        }
+        MenuTrace("native_session.complete", "supplemented", 0, position);
         return true;
+    }
+    const std::vector<Registration>& NativePackages()
+    {
+        if (nativePackageWatches.empty())
+        {
+            nativePackageWatches.push_back(std::make_unique<RegistryWatch>(HKEY_CLASSES_ROOT,
+                L"Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages", 20));
+            nativePackageWatches.push_back(std::make_unique<RegistryWatch>(HKEY_CLASSES_ROOT, L"PackagedCom", 21));
+            for (const auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+                for (const auto* path : {L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
+                                         L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
+                    nativePackageWatches.push_back(std::make_unique<RegistryWatch>(hive, path, 22));
+        }
+        bool changed = false;
+        for (const auto& watch : nativePackageWatches) changed |= watch->Changed();
+        // Registry deployment invalidates immediately. The age bound also
+        // refreshes external manifests if an installer rewrites files in place.
+        if (!nativePackagesRead || changed || GetTickCount64() - nativePackagesRead >= 30000)
+        { nativePackages = ReadPackagedMenuCommands(); nativePackagesRead = GetTickCount64(); }
+        else MenuTrace("packaged.registration", "native_reused", 0, static_cast<unsigned>(nativePackages.size()));
+        return nativePackages;
     }
     NativeMenuResult ShowNative(POINT point, UINT& invokeToken)
     {
-        if (menus.empty()) return {false, false, {}, "native menu query failed"};
-        auto& source = *menus.back();
+        if (!nativeRoot) return {false, false, {}, "native menu query failed"};
+        auto& source = *nativeRoot;
         tracking = &source;
         native_menu_theme::ScopedTheme theme(nativeLightTheme);
         theme.ApplyToWindow(window);
@@ -1547,6 +1632,13 @@ struct Host
             point.x, point.y, window, nullptr);
         tracking = nullptr;
         if (!chosen) { ShowWindow(window, SW_HIDE); return {true, false, {}, {}}; }
+        return SelectNativeCommand(source, chosen, invokeToken);
+    }
+    NativeMenuResult SelectNativeCommand(Native& source, UINT chosen, UINT& invokeToken)
+    {
+        if (!chosen) return {true, false, {}, {}};
+        if (const auto token = source.projection.Token(chosen))
+        { invokeToken = *token; return {true, true, {}, {}}; }
         auto verb = Lower(Verb(source, chosen));
         if (IsRootMenuCommand(source.menu, chosen))
         {
@@ -1607,8 +1699,9 @@ struct Host
             // Recheck registration/security and the installed target at click.
             // A stale menu cannot launch an unregistered or blocked provider,
             // a replacement application, or a newly disabled default command.
-            if (!NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return E_ACCESSDENIED;
-            auto current = NvidiaControlPanelApplication();
+            if (!NvidiaDesktopHandlerRegistered(source.nvidiaClass.c_str()) || !HandlerEnabled(source.nvidiaClass)) return E_ACCESSDENIED;
+            auto current = _wcsicmp(source.nvidiaClass.c_str(), NvidiaControlPanelClsid) == 0
+                ? NvidiaControlPanelApplication() : NvidiaAppApplication();
             int order = 1;
             if (!current || FAILED(source.nvidiaApplication->Compare(current.Get(), SICHINT_CANONICAL, &order)) || order) return E_INVALIDARG;
             source.context.Reset();
@@ -2031,12 +2124,16 @@ void Session::Invoke(UINT token, POINT position, HWND owner)
 }
 struct NativeMenuSession::Impl
 {
+    static thread_local std::unique_ptr<Impl> idle;
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<NativeMenuResult> result;
     ULONGLONG started = GetTickCount64();
+    ULONGLONG born = started;
+    std::uint64_t registryRevision = 0;
+    unsigned uses = 0;
     DWORD timeout = 8000;
-    bool showing = false, invoked = false;
+    bool showing = false, invoked = false, reusable = false, delivered = false;
     ~Impl()
     {
         channel.Close();
@@ -2047,6 +2144,7 @@ struct NativeMenuSession::Impl
         }).detach();
     }
 };
+thread_local std::unique_ptr<NativeMenuSession::Impl> NativeMenuSession::Impl::idle;
 NativeMenuSelection NativeMenuSelection::Capture(IShellFolder* folder, UINT count, PCUITEMID_CHILD_ARRAY children)
 {
     if (!folder || !children || !count || count > 256) throw settings_ipc::ProtocolError("invalid native selection");
@@ -2068,31 +2166,53 @@ NativeMenuSelection NativeMenuSelection::Capture(IShellFolder* folder, UINT coun
 }
 NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND owner,
     NativeMenuSelection selection, DWORD timeoutMs)
-    : impl_(std::make_unique<Impl>())
 {
     MenuTiming launch("native_session.launch");
+    const auto notifications = SharedRegistryNotifications();
+    std::uint64_t revision = 0;
+    { std::lock_guard lock(notifications->mutex); revision = notifications->Poll(); }
+    if (Impl::idle && Impl::idle->process->Running() && Impl::idle->registryRevision == revision &&
+        GetTickCount64() - Impl::idle->born < kWorkerLifetimeMs && Impl::idle->uses < kMaximumWarmQueries)
+        impl_ = std::move(Impl::idle);
+    else { Impl::idle.reset(); impl_ = std::make_unique<Impl>(); }
+    impl_->started = GetTickCount64();
+    impl_->registryRevision = revision;
+    ++impl_->uses;
+    impl_->showing = impl_->invoked = impl_->reusable = impl_->delivered = false;
+    impl_->result.reset();
     impl_->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
     impl_->channel.Bind<void>("menu.native-showing", [p = impl_.get()] {
         p->showing = true;
         MenuTrace("native_session.showing", "ready", double(GetTickCount64() - p->started));
     });
     impl_->channel.Bind<void, NativeMenuResult>("menu.native-result", [p = impl_.get()](NativeMenuResult result) {
+        p->reusable = result.ok && !result.invoked && (result.verb.empty() || result.verb.starts_with("prepared:"));
         p->invoked = result.invoked; p->result = std::move(result);
     });
-    impl_->process->Start(impl_->channel, L"--shell-menu-helper");
+    const bool reused = impl_->process->Running();
+    if (!reused) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
     AllowSetForegroundWindow(impl_->process->ProcessId());
     const auto origin = ShellInvocationOwner::Capture(owner);
     impl_->channel.Notify("menu.native", ShellMenuRequest(request), selection, point.x, point.y, origin.window, origin.process, origin.thread,
         reinterpret_cast<std::uint64_t>(GetForegroundWindow()));
-    launch.Record("scheduled");
+    launch.Record(reused ? "reused" : "scheduled");
 }
-NativeMenuSession::~NativeMenuSession() = default;
+NativeMenuSession::~NativeMenuSession()
+{
+    // A live popup, failed preparation or executed command never enters the
+    // idle pool. Reuse only a completed cancellation; rebuild every target.
+    if (impl_ && impl_->delivered && impl_->reusable && impl_->process->Running() &&
+        impl_->uses < kMaximumWarmQueries && GetTickCount64() - impl_->born < kWorkerLifetimeMs)
+        Impl::idle = std::move(impl_);
+}
 bool NativeMenuSession::Preparing() const { return !impl_->showing && !impl_->result; }
 std::optional<NativeMenuResult> NativeMenuSession::Poll()
 {
+    if (impl_->delivered) return {};
     if (!impl_->result && (!impl_->process->Running() ||
         (!impl_->showing && GetTickCount64() - impl_->started >= impl_->timeout)))
         impl_->result = NativeMenuResult{false, false, {}, "native menu helper stopped or timed out"};
+    if (impl_->result) impl_->delivered = true;
     return std::exchange(impl_->result, {});
 }
 
@@ -2162,7 +2282,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                     if (!host.PrepareNative(request, selection, {x, y})) result = {false, false, {}, "native menu query failed"};
                     else if (request.catalogueOnly)
                     {
-                        auto& source = *host.menus.back();
+                        auto& source = *host.nativeRoot;
                         host.MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(source.menu), 0);
                         result = {true, false, "prepared:" + std::to_string(GetMenuItemCount(source.menu)), {}};
                     }
@@ -2188,10 +2308,18 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                         SetForegroundWindow(target);
                     }
                 }
+                ShowWindow(host.window, SW_HIDE);
+                if (!token && result.ok && !result.invoked && (result.verb.empty() || result.verb.starts_with("prepared:")))
+                {
+                    // Reuse the apartment/factories only. PrepareNative retires
+                    // old menus and clears all executable mappings next time.
+                    actualQueryReceived = invocationQueued = false;
+                    dispatchedAt = invokedAt = 0;
+                    lastQuery = GetTickCount64();
+                }
+                else invokedAt = GetTickCount64();
                 channel.Notify("menu.native-result", result);
                 if (token) host.Invoke(token, {x, y}, {owner, ownerProcess, ownerThread});
-                ShowWindow(host.window, SW_HIDE);
-                invokedAt = GetTickCount64();
             });
         });
         channel.Bind<void>("menu.prepare", [&] {
