@@ -141,36 +141,154 @@ std::vector<double> Resample(
     return result;
 }
 
-void TransformSpectrum(std::vector<std::complex<double>>& values)
+// Capture repeatedly analyzes the same window. Keep one bounded workspace per
+// calling thread so reconfiguration cannot race another provider or caller.
+class SpectrumWorkspace
 {
-    const std::size_t count = values.size();
-    for (std::size_t index = 1, reversed = 0; index < count; ++index)
+public:
+    void Compute(const std::vector<double>& samples, unsigned int sampleRate,
+        std::size_t spectrumBins, std::vector<double>& result)
     {
-        std::size_t bit = count >> 1;
-        for (; reversed & bit; bit >>= 1) reversed ^= bit;
-        reversed ^= bit;
-        if (index < reversed) std::swap(values[index], values[reversed]);
-    }
-    for (std::size_t length = 2; length <= count; length <<= 1)
-    {
-        const double angle = -2.0 * std::numbers::pi /
-            static_cast<double>(length);
-        const std::complex<double> step(
-            std::cos(angle), std::sin(angle));
-        for (std::size_t offset = 0; offset < count; offset += length)
+        result.assign(spectrumBins, 0.0);
+        if (samples.size() < 2 || sampleRate == 0 || spectrumBins == 0) return;
+        const std::size_t available = std::min(samples.size(), MaximumSpectrumWindow);
+        std::size_t count = 1;
+        while ((count << 1) <= available) count <<= 1;
+        const bool sizeChanged = count != transformed_.size();
+        if (sizeChanged) PrepareWindow(count);
+        if (sizeChanged || sampleRate != sampleRate_ || bands_.size() != spectrumBins)
+            PrepareBands(sampleRate, spectrumBins);
+
+        const std::size_t start = samples.size() - count;
+        for (std::size_t index = 0; index < count; ++index)
+            transformed_[index] = std::clamp(samples[start + index], -1.0, 1.0) * window_[index];
+        for (std::size_t index = 1; index < count; ++index)
         {
+            const std::size_t reversed = reversed_[index];
+            if (index < reversed) std::swap(transformed_[index], transformed_[reversed]);
+        }
+        for (std::size_t length = 2; length <= count; length <<= 1)
+        {
+            const std::size_t half = length / 2;
+            const auto* factors = factors_.data() + half - 1;
+            for (std::size_t offset = 0; offset < count; offset += length)
+            {
+                for (std::size_t index = 0; index < half; ++index)
+                {
+                    const auto even = transformed_[offset + index];
+                    const auto odd = transformed_[offset + index + half] * factors[index];
+                    transformed_[offset + index] = even + odd;
+                    transformed_[offset + index + half] = even - odd;
+                }
+            }
+        }
+        for (std::size_t index = 1; index < magnitudes_.size(); ++index)
+            magnitudes_[index] = std::clamp(std::abs(transformed_[index]) * scale_, 0.0, 1.0);
+        for (std::size_t band = 0; band < bands_.size(); ++band)
+        {
+            const auto& mapping = bands_[band];
+            if (mapping.first <= mapping.last)
+            {
+                double peak = 0.0;
+                double total = 0.0;
+                for (std::size_t index = mapping.first; index <= mapping.last; ++index)
+                {
+                    peak = std::max(peak, magnitudes_[index]);
+                    total += magnitudes_[index];
+                }
+                const double average = total / static_cast<double>(mapping.last - mapping.first + 1);
+                result[band] = std::clamp(peak * 0.7 + average * 0.3, 0.0, 1.0);
+            }
+            else
+                result[band] = magnitudes_[mapping.left] +
+                    (magnitudes_[mapping.right] - magnitudes_[mapping.left]) * mapping.fraction;
+        }
+    }
+
+private:
+    struct Band
+    {
+        std::size_t first = 1, last = 0, left = 0, right = 0;
+        double fraction = 0.0;
+    };
+
+    void PrepareWindow(std::size_t count)
+    {
+        transformed_.resize(count);
+        magnitudes_.assign(count / 2 + 1, 0.0);
+        window_.resize(count);
+        reversed_.resize(count);
+        factors_.resize(count - 1);
+        double windowSum = 0.0;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            window_[index] = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi *
+                static_cast<double>(index) / static_cast<double>(count - 1));
+            windowSum += window_[index];
+        }
+        scale_ = windowSum > 0.0 ? 2.0 / windowSum : 0.0;
+        reversed_[0] = 0;
+        for (std::size_t index = 1, reversed = 0; index < count; ++index)
+        {
+            std::size_t bit = count >> 1;
+            for (; reversed & bit; bit >>= 1) reversed ^= bit;
+            reversed ^= bit;
+            reversed_[index] = reversed;
+        }
+        for (std::size_t length = 2; length <= count; length <<= 1)
+        {
+            const double angle = -2.0 * std::numbers::pi / static_cast<double>(length);
+            const std::complex<double> step(std::cos(angle), std::sin(angle));
             std::complex<double> factor(1.0, 0.0);
             for (std::size_t index = 0; index < length / 2; ++index)
             {
-                const auto even = values[offset + index];
-                const auto odd = values[offset + index + length / 2] *
-                    factor;
-                values[offset + index] = even + odd;
-                values[offset + index + length / 2] = even - odd;
+                factors_[length / 2 - 1 + index] = factor;
                 factor *= step;
             }
         }
     }
+
+    void PrepareBands(unsigned int sampleRate, std::size_t spectrumBins)
+    {
+        sampleRate_ = sampleRate;
+        bands_.assign(spectrumBins, {});
+        const std::size_t lastFftBin = transformed_.size() / 2;
+        const double frequencyStep = static_cast<double>(sampleRate) /
+            static_cast<double>(transformed_.size());
+        const double lower = std::max(LowerSpectrumFrequency, frequencyStep);
+        const double upper = std::min(UpperSpectrumFrequency, static_cast<double>(sampleRate) * 0.5);
+        if (upper <= lower) return;
+        const double ratio = upper / lower;
+        for (std::size_t band = 0; band < spectrumBins; ++band)
+        {
+            const double lowerEdge = lower * std::pow(ratio,
+                static_cast<double>(band) / static_cast<double>(spectrumBins));
+            const double upperEdge = lower * std::pow(ratio,
+                static_cast<double>(band + 1) / static_cast<double>(spectrumBins));
+            auto& mapping = bands_[band];
+            mapping.first = std::max<std::size_t>(1,
+                static_cast<std::size_t>(std::ceil(lowerEdge / frequencyStep)));
+            mapping.last = std::min(lastFftBin,
+                static_cast<std::size_t>(std::floor(upperEdge / frequencyStep)));
+            const double center = std::sqrt(lowerEdge * upperEdge) / frequencyStep;
+            mapping.left = std::clamp<std::size_t>(static_cast<std::size_t>(center), 1, lastFftBin);
+            mapping.right = std::min(mapping.left + 1, lastFftBin);
+            mapping.fraction = std::clamp(center - static_cast<double>(mapping.left), 0.0, 1.0);
+        }
+    }
+
+    unsigned int sampleRate_ = 0;
+    double scale_ = 0.0;
+    std::vector<double> window_, magnitudes_;
+    std::vector<std::size_t> reversed_;
+    std::vector<std::complex<double>> transformed_, factors_;
+    std::vector<Band> bands_;
+};
+
+SpectrumWorkspace& ThreadSpectrumWorkspace()
+{
+    thread_local SpectrumWorkspace workspace;
+    return workspace;
 }
 
 std::string OpaqueEndpointId(IMMDevice* endpoint)
@@ -262,28 +380,32 @@ void AppendMonoSamples(std::vector<double>& samples, const BYTE* data,
     const std::size_t channels = format->nChannels;
     const std::size_t bytesPerSample =
         format->nBlockAlign / format->nChannels;
-    samples.reserve(samples.size() + frames);
-    for (UINT32 frame = 0; frame < frames; ++frame)
+    // Both waveform/scalars and FFT consume only the latest 2048 frames.
+    // Discard older PCM before decoding, including oversized capture packets.
+    const UINT32 keptFrames = std::min<UINT32>(frames,
+        static_cast<UINT32>(MaximumSpectrumWindow));
+    const std::size_t keptPrevious = std::min(samples.size(),
+        MaximumSpectrumWindow - keptFrames);
+    if (keptPrevious < samples.size())
+        samples.erase(samples.begin(), samples.end() - static_cast<std::ptrdiff_t>(keptPrevious));
+    samples.reserve(MaximumSpectrumWindow);
+    if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0 || !data)
+    {
+        samples.insert(samples.end(), keptFrames, 0.0);
+        return;
+    }
+    for (UINT32 frame = frames - keptFrames; frame < frames; ++frame)
     {
         double mono = 0.0;
-        if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) == 0 && data)
+        const BYTE* frameData = data +
+            static_cast<std::size_t>(frame) * format->nBlockAlign;
+        for (std::size_t channel = 0; channel < channels; ++channel)
         {
-            const BYTE* frameData = data +
-                static_cast<std::size_t>(frame) * format->nBlockAlign;
-            for (std::size_t channel = 0; channel < channels; ++channel)
-            {
-                mono += DecodeSample(
-                    frameData + channel * bytesPerSample, kind);
-            }
-            mono /= static_cast<double>(channels);
+            mono += DecodeSample(
+                frameData + channel * bytesPerSample, kind);
         }
+        mono /= static_cast<double>(channels);
         samples.push_back(std::clamp(mono, -1.0, 1.0));
-    }
-    constexpr std::size_t MaxBufferedSamples = 8192;
-    if (samples.size() > MaxBufferedSamples)
-    {
-        samples.erase(samples.begin(),
-            samples.end() - static_cast<std::ptrdiff_t>(MaxBufferedSamples));
     }
 }
 
@@ -307,12 +429,15 @@ WidgetAudioAnalysisDataSnapshot Analyze(
     snapshot.hasPeak = configuration.peak;
     if (configuration.waveform)
         snapshot.waveform.assign(configuration.waveformPoints, 0.0);
-    if (configuration.spectrum)
-        snapshot.spectrum.assign(configuration.spectrumBins, 0.0);
-    if (samples.empty()) return snapshot;
+    if (samples.empty())
+    {
+        if (configuration.spectrum)
+            snapshot.spectrum.assign(configuration.spectrumBins, 0.0);
+        return snapshot;
+    }
 
     const std::size_t windowSize = std::min<std::size_t>(
-        samples.size(), 2048);
+        samples.size(), MaximumSpectrumWindow);
     const std::size_t windowStart = samples.size() - windowSize;
     double sumSquares = 0.0;
     for (std::size_t index = windowStart; index < samples.size(); ++index)
@@ -341,9 +466,14 @@ WidgetAudioAnalysisDataSnapshot Analyze(
             total / static_cast<double>(end - begin), -1.0, 1.0);
     }
 
-    if (configuration.spectrum && snapshot.peak != 0.0)
-        snapshot.spectrum = ComputeWidgetAudioSpectrum(samples,
-            sampleRate, configuration.spectrumBins);
+    if (configuration.spectrum)
+    {
+        if (snapshot.peak != 0.0)
+            ThreadSpectrumWorkspace().Compute(samples, sampleRate,
+                configuration.spectrumBins, snapshot.spectrum);
+        else
+            snapshot.spectrum.assign(configuration.spectrumBins, 0.0);
+    }
     return snapshot;
 }
 
@@ -364,88 +494,8 @@ std::vector<double> ComputeWidgetAudioSpectrum(
     const std::vector<double>& samples, unsigned int sampleRate,
     std::size_t spectrumBins)
 {
-    std::vector<double> result(spectrumBins, 0.0);
-    if (samples.size() < 2 || sampleRate == 0 || spectrumBins == 0)
-        return result;
-
-    const std::size_t available = std::min(
-        samples.size(), MaximumSpectrumWindow);
-    std::size_t fftSize = 1;
-    while ((fftSize << 1) <= available) fftSize <<= 1;
-    if (fftSize < 2) return result;
-
-    const std::size_t start = samples.size() - fftSize;
-    std::vector<std::complex<double>> transformed(fftSize);
-    double windowSum = 0.0;
-    for (std::size_t index = 0; index < fftSize; ++index)
-    {
-        const double window = fftSize > 1
-            ? 0.5 - 0.5 * std::cos(
-                2.0 * std::numbers::pi * static_cast<double>(index) /
-                static_cast<double>(fftSize - 1))
-            : 1.0;
-        transformed[index] = std::clamp(
-            samples[start + index], -1.0, 1.0) * window;
-        windowSum += window;
-    }
-    TransformSpectrum(transformed);
-
-    const std::size_t lastFftBin = fftSize / 2;
-    std::vector<double> magnitudes(lastFftBin + 1, 0.0);
-    const double scale = windowSum > 0.0 ? 2.0 / windowSum : 0.0;
-    for (std::size_t index = 1; index <= lastFftBin; ++index)
-    {
-        magnitudes[index] = std::clamp(
-            std::abs(transformed[index]) * scale, 0.0, 1.0);
-    }
-
-    const double frequencyStep = static_cast<double>(sampleRate) /
-        static_cast<double>(fftSize);
-    const double lower = std::max(
-        LowerSpectrumFrequency, frequencyStep);
-    const double upper = std::min(
-        UpperSpectrumFrequency, static_cast<double>(sampleRate) * 0.5);
-    if (upper <= lower) return result;
-    const double ratio = upper / lower;
-
-    for (std::size_t band = 0; band < spectrumBins; ++band)
-    {
-        const double lowerEdge = lower * std::pow(ratio,
-            static_cast<double>(band) /
-                static_cast<double>(spectrumBins));
-        const double upperEdge = lower * std::pow(ratio,
-            static_cast<double>(band + 1) /
-                static_cast<double>(spectrumBins));
-        const std::size_t first = std::max<std::size_t>(1,
-            static_cast<std::size_t>(std::ceil(lowerEdge / frequencyStep)));
-        const std::size_t last = std::min(lastFftBin,
-            static_cast<std::size_t>(std::floor(upperEdge / frequencyStep)));
-        if (first <= last)
-        {
-            double peak = 0.0;
-            double total = 0.0;
-            for (std::size_t index = first; index <= last; ++index)
-            {
-                peak = std::max(peak, magnitudes[index]);
-                total += magnitudes[index];
-            }
-            const double average = total /
-                static_cast<double>(last - first + 1);
-            result[band] = std::clamp(
-                peak * 0.7 + average * 0.3, 0.0, 1.0);
-            continue;
-        }
-
-        const double center = std::sqrt(lowerEdge * upperEdge) /
-            frequencyStep;
-        const std::size_t left = std::clamp<std::size_t>(
-            static_cast<std::size_t>(center), 1, lastFftBin);
-        const std::size_t right = std::min(left + 1, lastFftBin);
-        const double fraction = std::clamp(
-            center - static_cast<double>(left), 0.0, 1.0);
-        result[band] = magnitudes[left] +
-            (magnitudes[right] - magnitudes[left]) * fraction;
-    }
+    std::vector<double> result;
+    ThreadSpectrumWorkspace().Compute(samples, sampleRate, spectrumBins, result);
     return result;
 }
 
@@ -490,12 +540,12 @@ WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
     result.hasSpectrum = configuration.spectrum;
     result.hasRms = configuration.rms;
     result.hasPeak = configuration.peak;
-    result.waveform = configuration.waveform
-        ? Resample(snapshot.waveform, configuration.waveformPoints)
-        : std::vector<double>{};
-    result.spectrum = configuration.spectrum
-        ? Resample(snapshot.spectrum, configuration.spectrumBins)
-        : std::vector<double>{};
+    if (!configuration.waveform) result.waveform.clear();
+    else if (result.waveform.size() != configuration.waveformPoints)
+        result.waveform = Resample(snapshot.waveform, configuration.waveformPoints);
+    if (!configuration.spectrum) result.spectrum.clear();
+    else if (result.spectrum.size() != configuration.spectrumBins)
+        result.spectrum = Resample(snapshot.spectrum, configuration.spectrumBins);
     if (!configuration.rms) result.rms = 0.0;
     if (!configuration.peak) result.peak = 0.0;
     return result;
@@ -766,7 +816,11 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
                     &data, &frames, &flags, nullptr, nullptr);
                 if (FAILED(packetStatus)) break;
                 AppendMonoSamples(samples, data, frames, flags, format, kind);
-                samplesChanged = true;
+                // Exact silence following an already-zero analysis has the
+                // same derived values, even while the zero window fills up.
+                // Keep publishing timestamps and listening for new packets.
+                samplesChanged = samplesChanged || !analyzed || analyzed->peak != 0.0 ||
+                    ((flags & AUDCLNT_BUFFERFLAGS_SILENT) == 0 && data);
                 lastPacket = Clock::now();
                 captureClient->ReleaseBuffer(frames);
                 packetStatus = captureClient->GetNextPacketSize(
