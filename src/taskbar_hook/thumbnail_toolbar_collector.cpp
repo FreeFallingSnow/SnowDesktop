@@ -93,10 +93,13 @@ void Collect(HWND taskband, Request& request)
         if (button.native.id > 0xffff) return;
         HICON icon = nullptr;
         const auto& native = button.native;
-        // The Shell prefers HICON, then falls back to the image list.
-        if ((native.mask & THB_ICON) && native.icon) icon = CopyIcon(reinterpret_cast<HICON>(static_cast<UINT_PTR>(native.icon)));
-        if (!icon && (native.mask & THB_BITMAP) && imageList && native.bitmap <= INT_MAX)
+        // This is the Shell's materialized record, not the application's
+        // input THUMBBUTTON. HICON registrations also receive a resolved
+        // image-list index; their stored hIcon is not an ordinary local icon.
+        if (imageList && native.bitmap <= INT_MAX)
             icon = ImageList_GetIcon(imageList, static_cast<int>(native.bitmap), ILD_TRANSPARENT);
+        if (!icon && (native.mask & THB_ICON) && native.icon)
+            icon = CopyIcon(reinterpret_cast<HICON>(static_cast<UINT_PTR>(native.icon)));
         if (icon)
         {
             tray::Event pixels{};
