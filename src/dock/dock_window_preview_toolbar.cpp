@@ -43,6 +43,14 @@ void DrawButtonIcon(HDC dc, const RECT& bounds, UINT dpi, const snowdesktop::thu
         auto* output = static_cast<DWORD*>(pixels);
         const auto count = static_cast<size_t>(button.width) * button.height;
         std::copy_n(button.pixels.begin(), count, output);
+        RECT ink{static_cast<LONG>(button.width), static_cast<LONG>(button.height), 0, 0};
+        for (LONG y = 0; y < static_cast<LONG>(button.height); ++y)
+            for (LONG x = 0; x < static_cast<LONG>(button.width); ++x)
+                if (output[static_cast<size_t>(y) * button.width + x] >> 24)
+                {
+                    ink.left = std::min(ink.left, x); ink.right = std::max(ink.right, x + 1);
+                    ink.top = std::min(ink.top, y); ink.bottom = std::max(ink.bottom, y + 1);
+                }
         if (button.native.flags & THBF_DISABLED)
             for (size_t index = 0; index < count; ++index)
             {
@@ -59,8 +67,11 @@ void DrawButtonIcon(HDC dc, const RECT& bounds, UINT dpi, const snowdesktop::thu
         {
             const int size = std::max(1, std::min({MulDiv(dock_preview_toolbar::kIconSize, static_cast<int>(dpi), 96),
                 static_cast<int>(bounds.right - bounds.left), static_cast<int>(bounds.bottom - bounds.top)}));
-            const int x = bounds.left + (bounds.right - bounds.left - size) / 2;
-            const int y = bounds.top + (bounds.bottom - bounds.top - size) / 2;
+            // Application artwork can have uneven transparent padding. Keep
+            // its original scale, but center the visible ink rather than the
+            // full image canvas; disabled rendering uses the same alignment.
+            const int x = (bounds.left + bounds.right - MulDiv(ink.left + ink.right, size, static_cast<int>(button.width))) / 2;
+            const int y = (bounds.top + bounds.bottom - MulDiv(ink.top + ink.bottom, size, static_cast<int>(button.height))) / 2;
             DrawIconEx(dc, x, y, icon, size, size, 0, nullptr, DI_NORMAL);
             DestroyIcon(icon);
         }
