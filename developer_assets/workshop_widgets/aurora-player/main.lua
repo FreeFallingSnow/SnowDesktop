@@ -672,6 +672,7 @@ local function viewTree(context, model)
                 width = "fill",
                 height = plan.sliderHeight,
                 enabled = seekEnabled,
+                capturePointer = widget.hasFeature("interaction.pointerCapture"),
                 events = {
                     pointerEnter = { id = "media.hover" },
                     pointerLeave = { id = "media.hover" },
