@@ -26,7 +26,7 @@ local function prepare(line,g,p,width,height)
     local available=math.max(1,p.width-p.font*0.2)
     local block=Text.wrap(line.text,p.font,available/2.2,draw.measureText)
     Text.words(block,{text=line.text,words=g.words},draw.measureText)
-    local result={pieces={},pages={},surfaceHeight=height};local measurements={}
+    local result={pieces={},pages={},surfaceHeight=height,left=p.padding+p.font*0.1,mainHeight=0};local measurements={}
     if g.subtitle and #g.subtitle.rows==0 then g.subtitle=nil end
     local room=math.max(1,height-p.padding*2-p.font*0.44)
     result.subtitleRows=g.subtitle and math.max(1,math.floor(room*0.22/g.subtitle.lineHeight)) or 0
@@ -104,6 +104,11 @@ local function prepare(line,g,p,width,height)
     local page={rows={},height=0,start=line.start,pieceCount=0}
     for i,r in ipairs(rows) do
         r.angle=(random(line.start/1000,i)-0.5)*2
+        local x=result.left
+        for n,item in ipairs(r.pieces) do
+            if n>1 then x=x+item.gapBefore end
+            item.x=x+(item.slotWidth-item.width)/2;x=x+item.slotWidth
+        end
         if #page.rows>0 and (page.height+p.font*0.16+r.height>pageRoom or page.pieceCount+#r.pieces>180) then
             result.pages[#result.pages+1]=page;page={rows={},height=0,start=r.pieces[1].focusStart,pieceCount=0}
         end
@@ -111,7 +116,10 @@ local function prepare(line,g,p,width,height)
         page.rows[#page.rows+1]=r;page.height=r.y+r.height;page.pieceCount=page.pieceCount+#r.pieces
     end
     if #page.rows>0 then result.pages[#result.pages+1]=page end
-    for i,v in ipairs(result.pages) do v.finish=result.pages[i+1] and result.pages[i+1].start or line.finish end
+    for i,v in ipairs(result.pages) do
+        v.finish=result.pages[i+1] and result.pages[i+1].start or line.finish
+        result.mainHeight=math.max(result.mainHeight,v.height)
+    end
     result.subtitleHeight=subtitleHeight;g.replica=result;return result
 end
 local function glyphs(piece,font)
@@ -140,9 +148,8 @@ local function pose(piece,media,pageStart,reduced,angle)
     local scale=(reduced and 1 or 0.5+(target-0.5)*enter+(piece.scale-target)*after)*piece.fit
     local rotate=reduced and 0 or angle+1.5*(1-enter)
     local radians=math.rad(rotate)
-    local ex=scale*(math.abs(math.cos(radians))*piece.width+math.abs(math.sin(radians))*piece.height)/2
     local ey=scale*(math.abs(math.cos(radians))*piece.height+math.abs(math.sin(radians))*piece.width)/2
-    return {elapsed=elapsed,after=after,scale=scale,rotate=rotate,ex=ex,ey=ey,
+    return {elapsed=elapsed,after=after,scale=scale,rotate=rotate,ey=ey,
         y=reduced and 0 or (1-enter)*0.12,
         alpha=reduced and 0.9 or ease(elapsed/0.1)*(1-after*0.18)}
 end
@@ -153,19 +160,12 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
     if not page then return {type="stack",key="lyrics.dynamic",width=width,height=height,children={}} end
     local reduced=m.reducedMotion==true
     local breath=reduced and 0 or p.font*0.20*math.sin((media-line.start)/7000*math.pi*2)
-    local top=(height-page.height-prepared.subtitleHeight)/2+breath
+    local top=(height-prepared.mainHeight-prepared.subtitleHeight)/2+breath
     local lineAlpha=reduced and 1 or 0.2+0.8*ease((media-page.start)/260)
     local glowBudget=72
     for _,row in ipairs(page.rows) do
-        local poses={};local rowWidth=0
-        for i,piece in ipairs(row.pieces) do
-            local value=pose(piece,media,page.start,reduced,row.angle);poses[i]=value
-            rowWidth=rowWidth+(i>1 and piece.gapBefore or 0)+value.ex*2
-        end
-        local x=(width-rowWidth)/2
-        for index,piece in ipairs(row.pieces) do
-            local value=poses[index];if index>1 then x=x+piece.gapBefore end
-            local px=x+value.ex-piece.width/2;x=x+value.ex*2
+        for _,piece in ipairs(row.pieces) do
+            local value=pose(piece,media,page.start,reduced,row.angle)
             if reduced or value.elapsed>=0 then
                 local y=value.y*p.font;local roomY=math.max(0,row.height/2-value.ey)
                 y=math.max(-roomY,math.min(roomY,y))
@@ -194,7 +194,7 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
                 end
                 items[#items+1]=label(piece.key..".body",piece.text,0,0,piece.width,piece.height,p.font,color(primary,accent,brightness),1)
                 children[#children+1]={type="stack",key=piece.key,width=piece.width,height=piece.height,
-                    offset={x=px,y=py},children=items,style={opacity=value.alpha*lineAlpha},
+                    offset={x=piece.x,y=py},children=items,style={opacity=value.alpha*lineAlpha},
                     transform={scale=value.scale,rotate=value.rotate,originX=0.5,originY=0.5}}
             end
         end
@@ -205,8 +205,8 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
         local part=math.min(chunks-1,math.floor(clamp((media-page.start)/math.max(1,page.finish-page.start))*chunks))
         first=first+part*prepared.subtitleRows
         for n=first,math.min(last,first+prepared.subtitleRows-1) do
-            local row=g.subtitle.rows[n];local y=top+page.height+p.font*0.35+(n-first)*g.subtitle.lineHeight
-            children[#children+1]=label("lyrics.subtitle."..n,row.text,(width-row.width)/2,y,row.boxWidth,g.subtitle.lineHeight,
+            local row=g.subtitle.rows[n];local y=top+prepared.mainHeight+p.font*0.35+(n-first)*g.subtitle.lineHeight
+            children[#children+1]=label("lyrics.subtitle."..n,row.text,prepared.left,y,row.boxWidth,g.subtitle.lineHeight,
                 g.subtitle.font,"textSecondary",0.85*lineAlpha)
         end
     end

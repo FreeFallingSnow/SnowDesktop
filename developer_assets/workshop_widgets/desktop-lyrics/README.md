@@ -2,7 +2,7 @@
 
 SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，只绘制歌词；当前行位于纵向中央，前后行逐渐淡出。组件高度决定可见行数，字号和行距可独立调整。右键菜单可直接切换滚动、动态两种模式，并显示选中状态；“重新匹配歌词”保留刷新图标。显示设置和外观预设使用宿主统一的组件设置入口。
 
-组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”，与右键菜单共用保存值。默认保留滚动模式；动态模式参考 Folia 的弹簧放大、逐字光晕和整句呼吸，未唱的词隐藏，唱完后缩回并淡去光晕。相邻字词按当帧变换后的边界保持统一间距，空格保留单词分隔；同一行共用轻微倾角，入场只小幅偏转，相邻字的角度差控制在两度以内。只绘制当前句及其已开启的翻译、罗马音，不叠加前后句。
+组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”，与右键菜单共用保存值。默认保留滚动模式；动态模式参考 Folia 的弹簧放大、逐字光晕和整句呼吸，未唱的词隐藏，唱完后缩回并淡去光晕。字位按最大放大范围一次确定，中文使用等距预留空间，空格保留单词分隔；动画只在各自字位内变化，不推动其他字或重新居中整行。各分段使用相同的左侧起点和顶部基线，翻译同步对齐；同一行共用轻微倾角，相邻字的角度差控制在两度以内。只绘制当前句及其已开启的翻译、罗马音，不叠加前后句。
 
 原生逐字与估算逐字共用这套效果。动态歌词按组件可用宽高拆成能完整显示的小段，超宽单词继续拆分，中文可按字拆分，组合字符和 emoji 保持完整；随演唱切换当前小段，保留原歌词时间，不把超高文本块滑入裁切区域。翻译和罗马音也按完整行分段。基准字号沿用用户设置，只在空间不足以完整容纳单行时适配；切段和动画不会反复改变字号或换行。关闭估算后不创建逐字时间，长句分段仅按整句时段切换。暂停时切段、缩放、角度、位置和光晕一起冻结；减少动态效果时关闭装饰动画。字形光晕使用有界的宿主原生字形层。
 
@@ -64,7 +64,7 @@ Native TTML, YRC, QRC and KRC word timing is supported. QQ and Kugou try native 
 
 A read-only community lyric widget for SnowDesktop. It starts transparent and draws lyrics only. The current line stays centered; increasing widget height reveals more surrounding lines. Font scale and line spacing are separate preferences.
 
-“Lyric mode” in the existing widget settings and the checked context-menu entries share the same saved value. Scrolling remains the default. Dynamic mode references Folia's spring scale, glyph glow and sentence breathing. Upcoming words stay hidden, then enter, enlarge and settle as their glow fades. Neighboring glyph/word bounds keep one consistent gap at each frame, with spaces preserving word separation. Each row shares a slight tilt; entry rotation is restrained and neighboring glyph angles differ by less than two degrees. Only the current sentence and its enabled translation/romanization are drawn.
+“Lyric mode” in the existing widget settings and the checked context-menu entries share the same saved value. Scrolling remains the default. Dynamic mode references Folia's spring scale, glyph glow and sentence breathing. Upcoming words stay hidden, then enter, enlarge and settle as their glow fades. Glyph anchors are laid out once with maximum-scale space reserved, evenly spaced CJK slots and spaces preserving word separation. Animation stays within those anchors without shifting neighbors or recentering the row. Fragments share a fixed left origin and top baseline, with subtitles aligned to the same origin. Each row shares a slight tilt, with neighboring glyph angles differing by less than two degrees. Only the current sentence and its enabled translation/romanization are drawn.
 
 Native and estimated timing share these effects. Dynamic lyrics split into complete fragments that fit the available width and height. Oversized words split further, CJK text can split by character, and graphemes/emoji remain intact. Singing selects the current fragment using the original timeline; oversized blocks are no longer scrolled through a clipping viewport. Translations and romanization also use complete-row fragments. The configured base font adapts only when a full row cannot fit; fragment changes and animation do not repeatedly change font size or wrapping. Disabling estimates creates no word timing; fragment selection uses the line's interval only. Pause freezes the fragment, transforms and glow. Reduced motion removes decorative animation. Halos use bounded native glyph layers.
 
