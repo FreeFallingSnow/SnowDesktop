@@ -154,6 +154,41 @@ void TestCreationPresetManifest()
         "host advertises content creation presets separately from themes");
 }
 
+void TestPreviewGalleryManifest()
+{
+    using namespace snowdesktop::widget;
+    snowdesktop::test::TemporaryDirectory temporary;
+    const auto write = [&](const std::string& field) {
+        std::ofstream manifest(temporary.path / "widget.json");
+        manifest << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23","slug":"gallery-test",
+            "version":"1.0.0","entry":"main.lua","name":"Gallery Test")" << field << '}';
+    };
+    { std::ofstream lua(temporary.path / "main.lua"); lua << "return {}"; }
+    { std::ofstream image(temporary.path / "gpu.png", std::ios::binary); image << "image"; }
+    PackageManifest manifest;
+    write("");
+    Check(WidgetPackageValidator{}.ValidateDirectory(temporary.path, &manifest).Ok() &&
+        !manifest.previewGallery, "legacy packages preserve the remote gallery");
+    write(R"(,"previewGallery":[])");
+    Check(WidgetPackageValidator{}.ValidateDirectory(temporary.path, &manifest).Ok() &&
+        manifest.previewGallery && manifest.previewGallery->empty(), "explicit empty gallery requests managed-image removal");
+    write(R"(,"previewGallery":["gpu.png"])");
+    Check(WidgetPackageValidator{}.ValidateDirectory(temporary.path, &manifest).Ok() &&
+        manifest.previewGallery->size() == 1, "gallery paths survive package validation");
+    for (const auto& invalid : {R"(null)", R"([2])", R"(["../gpu.png"])",
+            R"(["missing.png"])", R"(["main.lua"])", R"(["gpu.png","GPU.png"])",
+            R"(["gpu.png","gpu.png","gpu.png","gpu.png","gpu.png","gpu.png","gpu.png","gpu.png"])"})
+    {
+        write(std::string(",\"previewGallery\":") + invalid);
+        Check(!WidgetPackageValidator{}.ValidateDirectory(temporary.path).Ok(), "invalid gallery is rejected before packaging");
+    }
+    { std::ofstream image(temporary.path / "gpu.png", std::ios::binary | std::ios::trunc);
+      const std::string bytes(1024 * 1024, 'x'); image << bytes; }
+    write(R"(,"previewGallery":["gpu.png"])");
+    Check(!WidgetPackageValidator{}.ValidateDirectory(temporary.path).Ok(), "Steam gallery size limit is exclusive at 1 MiB");
+}
+
 void TestAspectGridSizes()
 {
     using namespace snowdesktop::widget;
@@ -374,6 +409,7 @@ int main(int argc, char* argv[])
     TestPermissionReport();
     TestCreationPresetManifest();
     TestAspectGridSizes();
+    TestPreviewGalleryManifest();
     Check(snowdesktop::widget_api::SupportsFeature("widget.confirmRemoval"),
         "host advertises removal confirmation for protected components");
     std::cout << "widget author tools tests passed\n";

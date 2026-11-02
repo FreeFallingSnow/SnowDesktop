@@ -207,6 +207,7 @@ int PrintConfiguration()
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
               << ",\"componentWorkflowProtocolVersion\":1"
+              << ",\"componentPreviewGalleryProtocolVersion\":1"
               << ",\"iconPackWorkflowProtocolVersion\":1"
               << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]"
               << ",\"steamworksCompiled\":"
@@ -1078,8 +1079,31 @@ void PrintComponentPlan(
         WorkshopAssetSourceName(project.publishPreferences.previewSource));
     std::cout << ",\"path\":";
     if (plan.preview)
-        WriteJsonString(std::cout, WideToUtf8(plan.preview->wstring()));
+        WriteJsonString(std::cout, WideToUtf8((plan.preparedPreviews && plan.preparedPreviews->primary ?
+            plan.preparedPreviews->primary->source : *plan.preview).wstring()));
     else std::cout << "null";
+    if (plan.preparedPreviews && plan.preparedPreviews->primary)
+    {
+        std::cout << ",\"sha256\":";
+        WriteJsonString(std::cout, plan.preparedPreviews->primary->sha256);
+    }
+    std::cout << ",\"gallery\":";
+    if (!plan.previewGallery) std::cout << "null";
+    else
+    {
+        std::cout << '[';
+        for (std::size_t index = 0; index < plan.previewGallery->size(); ++index)
+        {
+            if (index) std::cout << ',';
+            const auto& image = (*plan.previewGallery)[index];
+            std::cout << "{\"path\":";
+            WriteJsonString(std::cout, WideToUtf8(image.source.wstring()));
+            std::cout << ",\"sha256\":";
+            WriteJsonString(std::cout, image.sha256);
+            std::cout << '}';
+        }
+        std::cout << ']';
+    }
     std::cout << "},\"tags\":{\"source\":";
     WriteJsonString(std::cout,
         WorkshopAssetSourceName(project.publishPreferences.tagsSource));

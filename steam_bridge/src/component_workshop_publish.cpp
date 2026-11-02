@@ -92,6 +92,11 @@ bool BuildComponentPublishPlan(const WorkshopProject& project,
         const auto preview = project.primaryPreview.empty() ?
             inspection.preview : project.primaryPreview;
         if (!preview.empty()) plan.preview = preview;
+        plan.preparedPreviews = FreezeComponentPreviews(plan.preview,
+            inspection.previewGallery, package.temporaryDirectory, package.packageId, error);
+        if (!plan.preparedPreviews) return false;
+        if (plan.preparedPreviews->primary) plan.preview = plan.preparedPreviews->primary->path;
+        plan.previewGallery = plan.preparedPreviews->gallery;
     }
     if (creating && !plan.preview)
     {

@@ -124,6 +124,8 @@ struct PackageManifest
     std::string author;
     std::string license;
     std::string preview;
+    // Absent preserves the existing Steam gallery; an empty array clears our images.
+    std::optional<std::vector<std::string>> previewGallery;
     std::string previewIntroduction;
     std::string previewIntroductionKey;
     std::unordered_map<std::string, std::string> previewStorage;

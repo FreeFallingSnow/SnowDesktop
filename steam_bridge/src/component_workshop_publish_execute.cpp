@@ -35,6 +35,13 @@ bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
 {
     result = {};
     error = {};
+    std::vector<std::filesystem::path> galleryPaths;
+    if (plan.previewGallery)
+        for (const auto& image : *plan.previewGallery) galleryPaths.push_back(image.path);
+    if ((plan.previewGallery && !plan.preparedPreviews) ||
+        (plan.preparedPreviews && !plan.preparedPreviews->Matches(
+            plan.preview.value_or(std::filesystem::path{}), galleryPaths)))
+    { error = {kInvalidArguments, "stalePreparation", "Component preview images changed; prepare the plan again"}; return false; }
     if (plan.publishedFileId)
     {
         const auto status = transport.status(error);
@@ -76,6 +83,22 @@ bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
     };
     primary.updateContent = plan.updateContent;
     primary.preview = plan.preview;
+    primary.syncAdditionalPreviews = plan.previewGallery.has_value();
+    primary.additionalPreviews = galleryPaths;
+    primary.managedPreviewPrefix = ComponentGalleryPrefix(plan.packageId);
+    if (plan.preparedPreviews)
+    {
+        const auto frozen = plan.preparedPreviews;
+        primary.validateStagedArtifacts = [frozen](const auto&, const auto& preview) {
+            std::vector<std::filesystem::path> images;
+            if (frozen->gallery)
+                for (const auto& image : *frozen->gallery) images.push_back(image.path);
+            return frozen->Matches(preview, images);
+        };
+        primary.validateStagedPreviews = [frozen, preview = plan.preview](const auto& images) {
+            return frozen->Matches(preview.value_or(std::filesystem::path{}), images);
+        };
+    }
     primary.publishedFileId = plan.publishedFileId;
     primary.metadata = plan.metadata;
     primary.tags = plan.tags;

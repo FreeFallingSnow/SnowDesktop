@@ -1910,7 +1910,7 @@ private:
             }
             if (!creating)
             {
-                BeginSettingRow(T("同时更新主预览", "Also update primary preview"),
+                BeginSettingRow(T("同时更新预览图片", "Also update preview images"),
                     ImGui::GetFrameHeight());
                 bool previewValue = updatePreview_;
                 if (ImGui::Checkbox("##update-preview", &previewValue))
@@ -2042,6 +2042,32 @@ private:
                             ImVec2(texture.width * scale, texture.height * scale));
                     }
                     else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
+                }
+                if (plan.previewGallery)
+                {
+                    ImGui::Text(T("附加预览（%zu）", "Additional previews (%zu)"), plan.previewGallery->size());
+                    if (plan.previewGallery->empty())
+                        ImGui::TextWrapped("%s", T("清除本工具上传的附加预览", "Remove additional previews uploaded by this tool"));
+                    const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / (152.0f * gDpiScale)));
+                    if (!plan.previewGallery->empty() && ImGui::BeginTable("planned-gallery", columns))
+                    {
+                        for (const auto& image : *plan.previewGallery)
+                        {
+                            ImGui::TableNextColumn();
+                            const auto key = StableKey(WideToUtf8(image.path.wstring()));
+                            previewCache_.RequestLocal(key, image.path);
+                            const auto texture = previewCache_.Get(key);
+                            if (texture.view)
+                            {
+                                const float scale = std::min(140.0f * gDpiScale / texture.width,
+                                    140.0f * gDpiScale / texture.height);
+                                ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(texture.view))),
+                                    ImVec2(texture.width * scale, texture.height * scale));
+                            }
+                            else if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
+                        }
+                        ImGui::EndTable();
+                    }
                 }
                 ImGui::TextWrapped("%s: %s", T("标签", "Tags"),
                     plan.tags ? T("提交本地标签", "Submit local tags") :
@@ -2225,7 +2251,7 @@ private:
             }
 
             std::shared_ptr<ManagerPreparedPreview> frozenPreview;
-            if (plan.preview)
+            if (plan.preview && !plan.preparedPreviews)
             {
                 frozenPreview = FreezeManagerPreview(*plan.preview, artifact.temporaryDirectory, error);
                 if (!frozenPreview) { SetMessage(false, error); return; }

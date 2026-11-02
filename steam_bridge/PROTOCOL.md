@@ -144,6 +144,38 @@ remote values. Steam-managed sources are invalid for creation. When the packed
 SHA-256 is unchanged, listing, preview, tag, and visibility changes use a
 metadata-only update unless `--force-content` is specified.
 
+### Component preview gallery
+
+`configuration.componentPreviewGalleryProtocolVersion = 1` advertises this
+additive publishing contract. Component schema/API versions remain 2; this
+metadata adds no runtime dependency. Use matching bundled `snowwidget` and
+bridge versions when publishing a gallery.
+
+The manifest keeps `preview` as the primary cover and may add `previewGallery`,
+an ordered array of up to seven package-relative PNG/JPG/GIF paths. Each
+additional image must be nonempty and strictly smaller than 1 MiB. Paths must
+be safe, distinct under Windows path comparison, and present in the package.
+The primary cover is separate from the array. All images form one public
+Steam gallery; there are no per-language image variants.
+
+With local preview policy, `component-plan.preview.gallery` is an ordered
+array of source image paths and prepared SHA-256 hashes. Source paths remain
+usable after the offline CLI exits; frozen copies live only for that attempt.
+`null` preserves additional
+previews (including legacy manifests); `[]` removes only this tool's images.
+Steam preview policy preserves both primary cover and gallery. The Manager
+confirmation displays the frozen cover and gallery. Prepared files and staged
+upload copies are checked against their hashes before submission. Gallery
+images are submitted once, on the base update, independently of listing text
+localizations.
+
+Managed filenames reserve
+`SnowDesktop-widget-<package UUID>-<0..6>-<64 lowercase SHA-256 digits>.<extension>`.
+After verifying item ownership and package identity, updates remove only
+matching image names for this package, in descending Steam preview index
+order, then append the new images. Manually uploaded images, videos and other
+packages' images are preserved. Do not manually use this reserved namespace.
+
 ## Author query and association
 
 `workshop list-published --page N` returns the current Steam user's published

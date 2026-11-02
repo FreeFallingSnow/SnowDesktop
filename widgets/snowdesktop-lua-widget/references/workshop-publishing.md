@@ -19,6 +19,39 @@ project association, reuse policies, package staging and publication history in
 the same `data\SteamWorkshopManager` store used by the Manager. Do not create a
 second project-data directory beside the installed Skill.
 
+## Multiple preview images
+
+Keep `preview` as the primary cover. Add optional `previewGallery` to
+`widget.json` for up to seven additional PNG/JPG/GIF images in display order:
+
+```json
+"preview": "workshop-preview.png",
+"previewGallery": ["previews/gpu.png", "previews/memory.png"]
+```
+
+Each gallery path must be safe, relative to the component package, unique,
+and point to a nonempty file smaller than 1 MiB. The cover is separate from
+the array. This is one public gallery shared by all listing languages.
+Before publishing multiple images, require
+`configuration.componentPreviewGalleryProtocolVersion=1` and use the matching
+bundled authoring CLI; older publishers can publish only the primary cover.
+No new component runtime feature or API version is needed.
+
+Local preview policy submits the cover and declared gallery. Missing
+`previewGallery` preserves existing additional images; an explicit `[]`
+removes only images previously uploaded by this tool for the same package.
+Steam preview policy preserves all current images. Manually uploaded images
+and videos are preserved. Do not use the reserved
+`SnowDesktop-widget-<package UUID>-<index>-<SHA-256>.<extension>` filenames for
+manual uploads.
+
+The plan freezes images and reports ordered `preview.gallery` source paths and
+SHA-256 hashes. Show all planned images, including any removal request, before
+obtaining approval. Frozen copies are temporary and expire with the plan;
+prepare a new plan for each publishing attempt. A changed prepared or staged
+image aborts submission. Images are uploaded once, independently of the
+existing multilingual title and description updates.
+
 ## Plan before changing Steam
 
 ```powershell

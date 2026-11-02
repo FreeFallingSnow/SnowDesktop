@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cwctype>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -546,8 +547,18 @@ std::string ManifestJson(const PackageManifest& manifest)
         << "  \"description\": \"" << JsonEscape(manifest.description) << "\",\n"
         << "  \"author\": \"" << JsonEscape(manifest.author) << "\",\n"
         << "  \"license\": \"" << JsonEscape(manifest.license) << "\",\n"
-        << "  \"preview\": \"" << JsonEscape(manifest.preview) << "\",\n"
-        << "  \"previewData\": {\"storage\": {";
+        << "  \"preview\": \"" << JsonEscape(manifest.preview) << "\",\n";
+    if (manifest.previewGallery)
+    {
+        out << "  \"previewGallery\": [";
+        for (std::size_t index = 0; index < manifest.previewGallery->size(); ++index)
+        {
+            if (index) out << ',';
+            out << '"' << JsonEscape((*manifest.previewGallery)[index]) << '"';
+        }
+        out << "],\n";
+    }
+    out << "  \"previewData\": {\"storage\": {";
     appendStringMap(out, manifest.previewStorage);
     out << "}, \"storageKeys\": {";
     appendStringMap(out, manifest.previewStorageKeys);
@@ -1561,6 +1572,14 @@ bool WidgetPackageValidator::ReadManifest(
         ReadString(root, "publisher", manifest.author);
     ReadString(root, "license", manifest.license);
     ReadString(root, "preview", manifest.preview);
+    if (root.Find("previewGallery"))
+    {
+        bool valid = true;
+        manifest.previewGallery = ReadStringArray(root, "previewGallery", valid);
+        if (!valid || manifest.previewGallery->size() > 7)
+            report.Add(ValidationSeverity::Error, "manifest.previewGallery", manifestPath,
+                "previewGallery must be an array of at most seven image paths");
+    }
     if (const JsonValue* previewData = root.Find("previewData"))
     {
         if (!previewData->IsObject())
@@ -2336,6 +2355,30 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
             root / Utf8ToWide(manifest.preview), ec)))
         report.Add(ValidationSeverity::Error, "package.previewMissing",
             manifest.preview, "preview path is unsafe or missing");
+    if (manifest.previewGallery)
+    {
+        std::set<std::wstring> unique;
+        for (const auto& image : *manifest.previewGallery)
+        {
+            const std::filesystem::path relative = Utf8ToWide(image);
+            auto normalized = relative.lexically_normal().generic_wstring();
+            std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+            auto extension = relative.extension().wstring();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+            ec.clear();
+            const auto path = root / relative;
+            const bool regular = std::filesystem::is_regular_file(path, ec);
+            const auto size = regular && !ec ? std::filesystem::file_size(path, ec) : 0;
+            if (!IsSafeRelativePath(relative) || !unique.insert(normalized).second ||
+                (extension != L".png" && extension != L".jpg" &&
+                 extension != L".jpeg" && extension != L".gif") ||
+                !regular || ec || size == 0 || size >= 1024 * 1024)
+                report.Add(ValidationSeverity::Error, "package.previewGallery", relative,
+                    "gallery images must be unique safe relative PNG/JPG/GIF files, nonempty and smaller than 1 MiB");
+        }
+    }
     std::size_t fontCount = 0;
     for (const auto& [name, resource] : manifest.resources)
     {

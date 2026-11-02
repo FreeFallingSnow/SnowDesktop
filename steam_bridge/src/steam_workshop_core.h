@@ -129,7 +129,8 @@ struct PublishRequest
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&)> validateStagedArtifacts;
     std::function<bool(const std::vector<std::filesystem::path>&)> validateStagedPreviews;
     std::vector<std::filesystem::path> additionalPreviews;
-    // Only this theme's generated images may be replaced on an update.
+    bool syncAdditionalPreviews = false;
+    // Only this item's generated images may be replaced on an update.
     std::string managedPreviewPrefix;
     // Previous remote identity, verified from the owned item's metadata.
     std::string previousManagedPreviewPrefix;

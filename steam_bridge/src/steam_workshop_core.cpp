@@ -9,6 +9,7 @@
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
 #include "../../src/theme/theme_preview_parts.h"
+#include "component_preview_gallery.h"
 #include "publish_lifecycle.h"
 #include "workshop_upload_validation.h"
 #include "workshop_staging.h"
@@ -920,6 +921,45 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             return std::nullopt;
         }
     }
+    if (request.contentKind == WorkshopContentKind::Widget &&
+        (request.validateStagedArtifacts || request.syncAdditionalPreviews))
+    {
+        if (!request.validateStagedArtifacts ||
+            (request.syncAdditionalPreviews && (!request.validateStagedPreviews ||
+                request.additionalPreviews.size() > 7 || request.expectedPackageId.empty() ||
+                request.managedPreviewPrefix != ComponentGalleryPrefix(request.expectedPackageId))))
+        { SetError(error, kInvalidArguments, "stalePreparation", "Missing component preview validation"); return std::nullopt; }
+        std::filesystem::create_directories(stagingRoot_, ec);
+        const DWORD attributes = GetFileAttributesW(stagingRoot_.c_str());
+        if (ec || attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        { SetError(error, kInvalidArguments, "staging_failed", "Component preview staging is unavailable"); return std::nullopt; }
+        themePreview.root = stagingRoot_ / (L"widget-previews-" + std::to_wstring(GetCurrentProcessId()) +
+            L"-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count()));
+        if (!std::filesystem::create_directory(themePreview.root, ec) || ec)
+        { SetError(error, kInvalidArguments, "staging_failed", "Cannot stage component previews"); return std::nullopt; }
+        if (request.preview)
+        {
+            previewPath = themePreview.root / request.preview->filename();
+            themePreview.files.push_back(previewPath);
+            std::filesystem::copy_file(*request.preview, previewPath, std::filesystem::copy_options::none, ec);
+            if (ec) { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze component cover"); return std::nullopt; }
+        }
+        for (const auto& image : request.additionalPreviews)
+        {
+            if (!request.syncAdditionalPreviews || !ComponentManagedGalleryFilename(
+                    WideToUtf8(image.filename().wstring()), request.managedPreviewPrefix))
+            { SetError(error, kInvalidArguments, "stalePreparation", "Invalid component gallery name"); return std::nullopt; }
+            const auto staged = themePreview.root / image.filename();
+            themePreview.files.push_back(staged);
+            std::filesystem::copy_file(image, staged, std::filesystem::copy_options::none, ec);
+            if (ec) { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze component gallery"); return std::nullopt; }
+            additionalPreviews.push_back(staged);
+        }
+        if (!request.validateStagedArtifacts({}, previewPath) ||
+            (request.syncAdditionalPreviews && !request.validateStagedPreviews(additionalPreviews)))
+        { SetError(error, kInvalidArguments, "stalePreparation", "Component preview images changed before upload"); return std::nullopt; }
+    }
     if (request.contentKind == WorkshopContentKind::Theme)
     {
         themePreview.root = upload.root; themePreview.root += L"-preview";
@@ -1014,6 +1054,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         if (!item || item->banned || !CanBindWorkshopItem(project, item->metadata, item->ownerSteamId,
             SteamUser()->GetSteamID().ConvertToUint64(), item->consumerAppId, appId, detail))
         { SetError(error, kInvalidArguments, "project_item_mismatch", detail.empty() ? "Workshop item identity changed before upload" : detail); return std::nullopt; }
+        if (request.syncAdditionalPreviews) previousPreviews = item->additionalPreviewFilenames;
     }
     if (!creating && (request.contentKind == WorkshopContentKind::Theme || request.contentKind == WorkshopContentKind::IconPack))
     {
@@ -1050,13 +1091,15 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
     }
     for (std::size_t index = previousPreviews.size(); index > 0; --index)
-        if (themes::preview::ReplaceableGalleryFilename(previousPreviews[index - 1],
-                request.managedPreviewPrefix, request.previousManagedPreviewPrefix) &&
+        if ((request.contentKind == WorkshopContentKind::Widget ?
+                ComponentManagedGalleryFilename(previousPreviews[index - 1], request.managedPreviewPrefix) :
+                themes::preview::ReplaceableGalleryFilename(previousPreviews[index - 1],
+                    request.managedPreviewPrefix, request.previousManagedPreviewPrefix)) &&
             !ugc->RemoveItemPreview(update, static_cast<uint32>(index - 1)))
-        { SetError(error, kSteamOperationFailed, "preview_rejected", "Cannot replace generated theme gallery"); return std::nullopt; }
+        { SetError(error, kSteamOperationFailed, "preview_rejected", "Cannot replace generated preview gallery"); return std::nullopt; }
     for (const auto& image : additionalPreviews)
         if (!ugc->AddItemPreviewFile(update, WideToUtf8(image.wstring()).c_str(), k_EItemPreviewType_Image))
-        { SetError(error, kSteamOperationFailed, "preview_rejected", "Steam rejected a theme gallery image"); return std::nullopt; }
+        { SetError(error, kSteamOperationFailed, "preview_rejected", "Steam rejected a gallery image"); return std::nullopt; }
     if (request.language && !ugc->SetItemUpdateLanguage(update,
             request.language->c_str()))
     {

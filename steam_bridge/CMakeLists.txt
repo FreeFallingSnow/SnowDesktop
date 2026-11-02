@@ -27,6 +27,7 @@ target_link_libraries(SnowDesktopSteamWorkshopCore PUBLIC
 add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/authoring_toolchain.cpp
     src/component_workshop_publish.cpp
+    src/component_preview_gallery.cpp
     src/manager_localization.cpp
     src/package_tool.cpp
     src/workshop_localization.cpp

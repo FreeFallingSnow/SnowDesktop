@@ -6,6 +6,7 @@
 #include "workshop_localization.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,6 +24,7 @@ struct WidgetInspection
     std::string author;
     std::string license;
     std::filesystem::path preview;
+    std::optional<std::vector<std::filesystem::path>> previewGallery;
     std::vector<std::string> permissions;
     std::vector<std::string> networkDomains;
     std::vector<WidgetLocalization> localizations;

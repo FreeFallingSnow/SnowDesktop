@@ -106,6 +106,23 @@ if (BUILD_TESTING)
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32
         LABELS authoring contract data permission security widget)
 
+    # Stable publication contract: preserve manual media and submit the exact
+    # confirmed gallery once. Reuse production code with only Steam substituted.
+    snowdesktop_add_test(
+        SnowDesktopComponentPublishGalleryTests
+        component_publish_gallery
+        SOURCES tests/steam/component_publish_gallery_tests.cpp
+        INCLUDE_DIRECTORIES tests steam_bridge/src
+        LINK_LIBRARIES SnowDesktopSteamWorkshopCore SnowDesktopWorkshopManagerSupport
+        COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/single-monitor/workshop-preview.png"
+        LABELS contract publishing widget)
+    if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
+        add_custom_command(TARGET SnowDesktopComponentPublishGalleryTests POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SNOWDESKTOP_STEAMWORKS_SDK_ROOT}/redistributable_bin/win64/steam_api64.dll"
+                "$<TARGET_FILE_DIR:SnowDesktopComponentPublishGalleryTests>/steam_api64.dll")
+    endif()
+
     snowdesktop_add_test(
         SnowDesktopWidgetStorageTransactionTests
         widget_storage_transaction
