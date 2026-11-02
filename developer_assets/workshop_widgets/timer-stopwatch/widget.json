@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Timer & Stopwatch",
   "nameKey": "timer.name",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Countdown presets, custom durations and a stopwatch.",
   "descriptionKey": "timer.description",
   "locales": {
@@ -36,8 +36,7 @@
       "timer.unit": "분",
       "timer.settings": "설정",
       "timer.schedule_failed": "타이머를 예약하지 못했습니다. 입력과 진행 상태가 유지되었습니다. 다시 시도하세요.",
-      "timer.layout_horizontal": "가로",
-      "timer.layout_square": "정사각형"
+      "timer.layout_horizontal": "가로"
     },
     "en-US": {
       "timer.resume": "Resume",
@@ -61,8 +60,7 @@
       "timer.unit": "MIN",
       "timer.settings": "Settings",
       "timer.schedule_failed": "The timer could not be scheduled. Your input and progress are kept. Please try again.",
-      "timer.layout_horizontal": "Horizontal",
-      "timer.layout_square": "Square"
+      "timer.layout_horizontal": "Horizontal"
     },
     "fr-FR": {
       "timer.resume": "Reprendre",
@@ -86,8 +84,7 @@
       "timer.unit": "MIN",
       "timer.settings": "Paramètres",
       "timer.schedule_failed": "Le minuteur n’a pas pu être programmé. Votre saisie et votre progression sont conservées. Réessayez.",
-      "timer.layout_horizontal": "Horizontal",
-      "timer.layout_square": "Carré"
+      "timer.layout_horizontal": "Horizontal"
     },
     "pt-BR": {
       "timer.resume": "Retomar",
@@ -111,8 +108,7 @@
       "timer.unit": "MIN",
       "timer.settings": "Configurações",
       "timer.schedule_failed": "Não foi possível agendar o temporizador. A entrada e o progresso foram mantidos. Tente novamente.",
-      "timer.layout_horizontal": "Horizontal",
-      "timer.layout_square": "Quadrado"
+      "timer.layout_horizontal": "Horizontal"
     },
     "de-DE": {
       "timer.resume": "Weiter",
@@ -136,8 +132,7 @@
       "timer.unit": "MIN",
       "timer.settings": "Einstellungen",
       "timer.schedule_failed": "Der Timer konnte nicht geplant werden. Eingabe und Fortschritt bleiben erhalten. Bitte erneut versuchen.",
-      "timer.layout_horizontal": "Querformat",
-      "timer.layout_square": "Quadratisch"
+      "timer.layout_horizontal": "Querformat"
     },
     "zh-CN": {
       "timer.resume": "继续",
@@ -161,8 +156,7 @@
       "timer.unit": "分钟",
       "timer.settings": "设置",
       "timer.schedule_failed": "无法安排计时，输入和进度已保留。请重试。",
-      "timer.layout_horizontal": "横向",
-      "timer.layout_square": "方形"
+      "timer.layout_horizontal": "横向"
     },
     "zh-TW": {
       "timer.resume": "繼續",
@@ -186,8 +180,7 @@
       "timer.unit": "分鐘",
       "timer.settings": "設定",
       "timer.schedule_failed": "無法排定計時，輸入與進度已保留。請重試。",
-      "timer.layout_horizontal": "橫向",
-      "timer.layout_square": "方形"
+      "timer.layout_horizontal": "橫向"
     },
     "es-419": {
       "timer.resume": "Continuar",
@@ -211,8 +204,7 @@
       "timer.unit": "MIN",
       "timer.settings": "Configuración",
       "timer.schedule_failed": "No se pudo programar el temporizador. Se conservaron la entrada y el progreso. Vuelve a intentarlo.",
-      "timer.layout_horizontal": "Horizontal",
-      "timer.layout_square": "Cuadrado"
+      "timer.layout_horizontal": "Horizontal"
     },
     "es-ES": {
       "timer.resume": "Continuar",
@@ -236,8 +228,7 @@
       "timer.unit": "MIN",
       "timer.settings": "Ajustes",
       "timer.schedule_failed": "No se pudo programar el temporizador. Se conservaron la entrada y el progreso. Vuelve a intentarlo.",
-      "timer.layout_horizontal": "Horizontal",
-      "timer.layout_square": "Cuadrado"
+      "timer.layout_horizontal": "Horizontal"
     },
     "ja-JP": {
       "timer.resume": "再開",
@@ -261,13 +252,12 @@
       "timer.unit": "分",
       "timer.settings": "設定",
       "timer.schedule_failed": "タイマーを設定できませんでした。入力と進行状況は保持されています。再試行してください。",
-      "timer.layout_horizontal": "横向き",
-      "timer.layout_square": "正方形"
+      "timer.layout_horizontal": "横向き"
     }
   },
   "defaultSize": {
     "rows": 2,
-    "aspectRatio": 1.6
+    "aspectRatio": 1.3333333333333333
   },
   "previewData": {
     "variants": [
@@ -276,18 +266,9 @@
         "title": "Horizontal",
         "size": {
           "rows": 2,
-          "aspectRatio": 1.6
+          "aspectRatio": 1.3333333333333333
         },
         "titleKey": "timer.layout_horizontal"
-      },
-      {
-        "size": {
-          "rows": 2,
-          "aspectRatio": 1
-        },
-        "title": "Square",
-        "id": "square",
-        "titleKey": "timer.layout_square"
       }
     ]
   },
@@ -328,7 +309,6 @@
   "preview": "workshop-preview.png",
   "previewGallery": [
     "previews/zh-CN.png",
-    "previews/zh-size-square.png",
     "previews/en-mode-stopwatch.png"
   ]
 }
