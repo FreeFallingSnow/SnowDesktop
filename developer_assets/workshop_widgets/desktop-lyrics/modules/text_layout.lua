@@ -25,6 +25,7 @@ local function clusters(value)
     return result
 end
 local function space(code)return code==32 or code==9 or code==0x3000 end
+M.clusters=clusters
 function M.estimateWords(line)
     if line.words and #line.words>0 then return line.words end
     local duration=(line.finish or 0)-(line.start or 0)
@@ -129,14 +130,17 @@ function M.wrap(value,font,width,measure)
     return {rows=rows,font=font,lineHeight=lineHeight,height=#rows*lineHeight}
 end
 function M.words(block,line,measure)
-    local cursor=1
+    local cursor,rowCursor=1,1
     for _,word in ipairs(line.words or {}) do
         local value=word.text
         local first,last=line.text:find(value,cursor,true)
         if not first then value=value:gsub("^%s+",""):gsub("%s+$","");first,last=line.text:find(value,cursor,true) end
         if first and last>=first then
             cursor=last+1;local count=utf8.len(value)
-            for _,row in ipairs(block.rows) do
+            while block.rows[rowCursor] and block.rows[rowCursor].last<first do rowCursor=rowCursor+1 end
+            local rowIndex=rowCursor
+            while block.rows[rowIndex] and block.rows[rowIndex].first<=last do
+                local row=block.rows[rowIndex]
                 local a,b=math.max(first,row.first),math.min(last,row.last)
                 if a<=b then
                     local x1=measure(line.text:sub(row.first,a-1),block.font,0,true).width
@@ -144,6 +148,7 @@ function M.words(block,line,measure)
                     row.segments[#row.segments+1]={word=word,x1=x1,x2=x2,first=a,last=b,
                         from=utf8.len(line.text:sub(first,a-1))/count,to=utf8.len(line.text:sub(first,b))/count}
                 end
+                rowIndex=rowIndex+1
             end
         end
     end

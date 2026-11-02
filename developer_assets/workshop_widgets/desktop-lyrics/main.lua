@@ -34,7 +34,7 @@ local function setup(context)
             lines[i]={text=value,start=(i-1)*7000,finish=i*7000,words=words}
         end
         m.client.lines=lines;m.client.state="ready";m.status="ready"
-        m.clock={position=45500,duration=98000,playing=false,rate=1,at=time.monotonic()}
+        m.clock={position=tonumber(storage.get("previewPositionMs")) or 45500,duration=98000,playing=false,rate=1,at=time.monotonic()}
         local sample=storage.get("previewState");m.playbackActive=sample~="waiting"
         if sample=="estimated" then for _,line in ipairs(lines) do line.words={} end end
         if sample=="unsupported" then m.status="unsupported";m.clock=nil
@@ -57,7 +57,11 @@ local function event(context,m,e)
     elseif e.kind=="environment" then refresh(context,m)
     elseif e.kind=="settings.changed" then m.textCache=nil;m.snap=true
     elseif e.kind=="action" then
-        if e.id=="retry" and not m.preview then
+        if e.id=="mode.scroll" or e.id=="mode.dynamic" then
+            local mode=e.id=="mode.dynamic" and "dynamic" or "scroll"
+            if storage.get("lyricMode")~=mode then storage.set("lyricMode",mode) end
+            m.textCache=nil;m.snap=true;m.scrollIndex=nil;m.shift=nil;frames(m)
+        elseif e.id=="retry" and not m.preview then
             refresh(context,m)
             if m.mediaValid then m.client:retry(true);m.status=m.client.state;frames(m) end
         end
@@ -80,8 +84,15 @@ local function settings()
         {key="romanization",type="bool",label=c.romanization,default=false}}}
 end
 return widget.define({name=strings().name,useCustomStyle=true,followPersonalizationDefault=false,showTitle=false,
-    setup=setup,render=V.render,event=event,settings=settings(),
-    menu=function()local c=strings();return ui.menu({{id="retry",label=c.retry,icon=utf8.char(0xF13D),iconFont="fluent"}})end,
+    setup=setup,view=V.view,event=event,settings=settings(),
+    menu=function()
+        local c=strings();local mode=storage.get("lyricMode")=="dynamic" and "dynamic" or "scroll"
+        return ui.menu({
+            {id="mode.scroll",label=c.mode_scroll,checked=mode=="scroll",icon=utf8.char(0xE8FD),iconFont="fluent"},
+            {id="mode.dynamic",label=c.mode_dynamic,checked=mode=="dynamic",icon=utf8.char(0xE786),iconFont="fluent"},
+            {type="separator"},
+            {id="retry",label=c.retry,icon=utf8.char(0xF13D),iconFont="fluent"}})
+    end,
     dispose=function(_context,m)
         if m.media then m.media:unsubscribe() end
         m.client:dispose();animation.cancelFrame(FRAME);schedule.cancel("lyrics.refresh")

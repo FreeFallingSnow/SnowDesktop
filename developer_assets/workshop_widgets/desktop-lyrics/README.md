@@ -1,8 +1,10 @@
 # Desktop Lyrics / 桌面歌词
 
-SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，只绘制歌词；当前行位于纵向中央，前后行逐渐淡出。组件高度决定可见行数，字号和行距可独立调整。右键菜单提供带刷新图标的“重新匹配歌词”；显示设置和外观预设使用宿主统一的组件设置入口。
+SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，只绘制歌词；当前行位于纵向中央，前后行逐渐淡出。组件高度决定可见行数，字号和行距可独立调整。右键菜单可直接切换滚动、动态两种模式，并显示选中状态；“重新匹配歌词”保留刷新图标。显示设置和外观预设使用宿主统一的组件设置入口。
 
-组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”。默认保留滚动模式；动态模式只绘制当前句及其已开启的翻译、罗马音，逐字渐亮并轻微上浮，换句时淡入，不叠加前后句。原生逐字与估算逐字共用这套效果；关闭估算后，普通 LRC 仅保留整句淡入。字号由既有字号设置控制，长句保持字号换行；超出高度时沿演唱位置移动句内文本。动画由媒体时间轴驱动，暂停时连同文字位置、亮度一起冻结，减少动态效果时关闭装饰位移和入场淡入。
+组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”，与右键菜单共用保存值。默认保留滚动模式；动态模式按 Folia 经典逐词效果重做：未唱的词隐藏，在演唱前短暂提前入场，从小尺寸和偏移位置经弹簧运动放大到演唱状态，伴随旋转、逐字光晕和整句呼吸浮动；唱完后缩回、缓慢旋转并淡去光晕。只绘制当前句及其已开启的翻译、罗马音，不叠加前后句。
+
+原生逐字与估算逐字共用这套效果；关闭估算后，普通 LRC 保留整句入场和呼吸，不编造逐词时间。基准字号由既有字号设置控制，排版预留峰值缩放空间；原生变换不反复改变字号或换行。长句超出高度时沿演唱位置移动句内文本。动画由媒体时间轴驱动，暂停时连同缩放、旋转、位置和光晕一起冻结；减少动态效果时关闭这些装饰动画。字形光晕在宿主原生视图内由有界的字形层呈现，并非浏览器的 CSS 模糊滤镜。
 
 ## 使用条件
 
@@ -32,7 +34,9 @@ AMLL TTML 和网易云 YRC 保留原生逐字时间。缺少逐字时间的 LRC 
 - [Folia QQ 歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/qq/qqLyricProvider.ts)
 - [Folia 酷狗歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/kugou/kugouLyricProvider.ts)
 - [Folia 普通 LRC 时间估算思路](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/utils/lyrics/parserCore.ts#L59)：借鉴按句长和文字权重分配时间的思路，组件独立实现估算与缓存。
-- [Folia 逐词动画状态](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/glowWordVariants.ts)：参考等待、演唱与已唱状态的渐亮和位移节奏；本组件通过现有绘制 API 独立实现轻量单句效果。
+- [Folia 逐词动画状态](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/glowWordVariants.ts)：对应等待、演唱、已唱的缩放、弹簧位移和旋转状态。
+- [Folia 经典歌词排布](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/classic/Visualizer.tsx)：对应由歌曲时间确定的稳定词布局与整句呼吸。
+- [Folia 字形光晕](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/wordGlow.ts)：对应逐字激活、保持及唱完后的光晕衰减；组件使用宿主已有原生视图与变换独立实现。
 - [AMLL 原生接口](https://amll.dev/reference/http-api/native)
 - [LRCLIB API](https://lrclib.net/docs)
 
@@ -56,7 +60,9 @@ YRC、TTML 等逐字歌词取得同曲的可靠逐行对照时，统一按相同
 
 A read-only community lyric widget for SnowDesktop. It starts transparent and draws lyrics only. The current line stays centered; increasing widget height reveals more surrounding lines. Font scale and line spacing are separate preferences.
 
-“Lyric mode” in the existing widget settings offers “Scrolling lyrics” (the default) and “Dynamic lyrics”. Dynamic mode draws only the current sentence and its enabled translation/romanization, with timed highlighting, gentle word lift and a sentence entrance fade. It never layers previous or upcoming sentences. Native and estimated word timing share the effect; disabling estimates leaves an entrance fade for ordinary LRC. Font size remains user-controlled and stable across sentences; long text wraps, then follows the singing position within the same sentence when height is limited. Media time drives animation, so pausing freezes positions and brightness as well as highlighting. Reduced motion disables decorative lift and entrance fading.
+“Lyric mode” in the existing widget settings and the checked context-menu entries share the same saved value. Scrolling remains the default. Dynamic mode follows Folia's classic word-state motion: upcoming words stay hidden, enter shortly before singing from a smaller displaced pose, spring up to the active scale with rotation and glyph halos, then settle and rotate slowly as their glow fades. The sentence breathes gently. Only the current sentence and its enabled translation/romanization are drawn.
+
+Native and estimated timing share these effects. With estimates disabled, ordinary LRC retains sentence entrance and breathing without invented word timing. Base font size remains user-controlled; layout reserves peak-scale space, and native transforms do not continuously change font metrics or wrapping. Oversized sentences follow their singing position within the viewport. Media time freezes scale, rotation, position and glow on pause. Reduced motion removes decorative animation. Glyph halos use bounded native text layers rather than browser CSS blur filters.
 
 A valid Windows SMTC session and timeline are required. Media without a usable timeline is explicitly unsupported, with a recommendation to try Folia. A temporarily stale snapshot displays the waiting message instead. The widget searches five sources: AMLL, NetEase, QQ Music, Kugou and LRCLIB. A known artist must match; an album cannot override an artist mismatch. Album identity is a fallback only when the target artist is absent. Available duration and meaningful version markers are also checked. NetEase and QQ song IDs allow AMLL TTML lookup; QQ tries both its mid and numeric ID. LRCLIB has a candidate-search fallback. One request runs at a time, with a five-second timeout and bounded retry backoff.
 
