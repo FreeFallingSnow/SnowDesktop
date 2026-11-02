@@ -123,6 +123,9 @@ local function history(historyValues, field, now, x, y, width, height, maximum, 
             local point = { x + width * math.max(0, math.min(1, (entry.time - now + 60000) / 60000)),
                 y + height * (1 - math.min(1, value / maximum)) }
             points[#points + 1], endpoint, lastTime = point, point, entry.time
+        elseif entry.time >= now - 60000 then
+            flush()
+            lastTime, endpoint = nil, nil
         end
     end
     flush()
@@ -262,7 +265,32 @@ function M.render(mode, reading, values, now, c, format)
             else
                 gh=math.min(s*(mode=="battery" and 0.34 or (mode=="vram" and 0.14 or 0.09)),
                     bh*(mode=="battery" and 0.34 or 0.20))
-                gy=captionY-s*0.06-gh
+                local numberFont=font("100%",t*0.28,pw,ph,true)
+                local numberH=bounds(measure("100%",numberFont,true)).height
+                local numberBottom=py+(ph+numberH)/2
+                local captionFont,captionInkH
+                if mode=="memory" then
+                    captionFont=math.min(font(c.used,t*0.05,gw*0.46,captionH,false),
+                        font(c.available,t*0.05,gw*0.46,captionH,false))
+                    captionInkH=math.max(bounds(measure(c.used,captionFont,false)).height,
+                        bounds(measure(c.available,captionFont,false)).height)
+                else
+                    local reference=mode=="vram" and c.dedicated or c.on_battery
+                    captionFont=font(reference,t*(mode=="vram" and 0.05 or 0.052),gw,captionH,false)
+                    captionInkH=bounds(measure(reference,captionFont,false)).height
+                end
+                local captionTop=captionY+(captionH-captionInkH)/2
+                if mode=="battery" then
+                    local gap=(captionTop-numberBottom-gh)/2
+                    gy=numberBottom+gap
+                else
+                    local reference=format.capacityReference(reading.total)
+                    local capacityFont=font(reference,t*0.065,pw,detailH,false)
+                    local capacityH=bounds(measure(reference,capacityFont,false)).height
+                    local gap=(captionTop-numberBottom-capacityH-gh)/3
+                    detailY=numberBottom+gap-(detailH-capacityH)/2
+                    gy=numberBottom+gap*2+capacityH
+                end
             end
         end
         percentage(px,py,pw,ph,t*0.28)

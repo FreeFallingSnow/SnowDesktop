@@ -65,7 +65,9 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
         end
     end})
 )");
+    auto provider = std::make_shared<snowdesktop::widget_runtime::WidgetSystemDataProvider>();
     WidgetEngine engine;
+    engine.SetSystemDataProvider(provider);
     Require(engine.Init(context.Get(), dwrite.Get()), "initialize isolated real widget engine");
     std::wstring error;
     Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error),
@@ -111,5 +113,113 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
             engine.UnloadWidget(instance);
         }
     }
+
+    // Exercise the shipped community source before the opened callback, as the
+    // real host does when caching its opening animation. Also cover reopening.
+    auto sourceRoot = std::filesystem::absolute(std::filesystem::path(__FILE__)).parent_path();
+    while (!std::filesystem::exists(sourceRoot / L"developer_assets/workshop_widgets/single-monitor/widget.json"))
+    {
+        const auto parent = sourceRoot.parent_path();
+        Require(parent != sourceRoot && !parent.empty(), "find community source in candidate");
+        sourceRoot = parent;
+    }
+    Require(WidgetEngine::InstallWidgetPackage((sourceRoot /
+        L"developer_assets/workshop_widgets/single-monitor/widget.json").wstring(), error),
+        "install actual single-monitor package");
+    for (const std::string mode : {"cpu", "gpu", "memory", "vram", "battery", "disk", "network"})
+    {
+        const std::wstring instance = L"monitor-" + std::wstring(mode.begin(), mode.end());
+        engine.RuntimeSetStorageValue(instance, "metric", mode);
+        Require(engine.EnsureWidgetLoaded(instance, L"b6a2874c-97b4-4f5d-a02b-d08a077c7efe"),
+            "load actual monitor " + mode + ": " + diagnostics());
+        for (int opening = 0; opening < 2; ++opening)
+        {
+            engine.PrepareWidgetPanelFocus(instance);
+            const auto render = [&] {
+                context->BeginDraw();
+                const bool rendered = engine.RenderWidgetPanel(instance, context.Get(),
+                    RECT{0, 0, 320, 360}, "popover");
+                const HRESULT drawn = context->EndDraw();
+                Require(rendered && SUCCEEDED(drawn), "render actual monitor " + mode + ": " + diagnostics());
+                Require(engine.GetWidgets().front().panelViewKeyboardFocusKey == "mode." + mode,
+                    mode + " must be focused in the first animation frame");
+            };
+            render();
+            engine.InvokeMouseEvent(instance, "onPopoverOpened", 0, 0, 0, 0);
+            render();
+            Require(engine.GetWidgetErrors().empty(), "monitor must not move focus after opening: " + diagnostics());
+            engine.CloseWidgetPanelSurface(instance, "popover");
+        }
+        engine.UnloadWidget(instance);
+    }
+
+    // Another host consumer is already sampling before the Lua subscription is
+    // created. A newly loaded widget must read that same past immediately.
+    for (const std::string topic : {"system.cpu", "system.network.traffic"})
+        Require(provider->StartTopic("history-contract", topic, std::chrono::milliseconds(500)),
+            "start pre-existing private monitor " + topic);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (provider->ResourceHistory("system.cpu").size() < 3 ||
+        provider->ResourceHistory("system.network.traffic").size() < 3)
+    {
+        Require(std::chrono::steady_clock::now() < deadline, "pre-existing monitors must have three time buckets within 8s");
+        Sleep(20);
+    }
+    Write(package / L"main.lua", R"(
+return widget.define({setup=function()
+    assert(widget.hasFeature("data.subscription.history"),"history capability missing")
+    for _,topic in ipairs({"system.cpu","system.network.traffic"}) do
+        local h=data.subscribe(topic,{maxAgeMs=1000})
+        local points,reason=h:history()
+        assert(not reason and #points>=3 and #points<=61,"existing history unavailable: "..tostring(reason))
+        local previous=0
+        for _,p in ipairs(points) do
+            assert(p.timestamp>previous and p.ageMs>=0 and p.ageMs<=60000,"invalid history time")
+            assert(p.value==nil or (p.value>=0 and p.value<math.huge),"invalid history value")
+            previous=p.timestamp
+        end
+        h:unsubscribe()
+        local empty,closed=h:history()
+        assert(#empty==0 and closed=="unsubscribed","released handle leaked history")
+    end
+    return {}
+end,render=function() end})
+)");
+    Write(package / L"widget.json", R"({"schemaVersion":2,"apiVersion":2,
+        "dataVersion":1,"id":"57aeb6ac-104b-43fb-af95-10d7ce082f56",
+        "slug":"focus-contract","version":"1.0.1","entry":"main.lua",
+        "name":"History Contract","permissions":["system.performance.read","system.network.read"],
+        "requiredFeatures":["data.subscribe","data.system.cpu","data.system.network.traffic","data.subscription.history"]})");
+    Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error),
+        "install actual history subscription fixture");
+    std::string permissionError;
+    Require(WidgetEngine::SetWidgetPermissionDecision(L"57aeb6ac-104b-43fb-af95-10d7ce082f56",
+        snowdesktop::widget::PermissionDecisionState::Granted,
+        {"system.performance.read", "system.network.read"}, {}, permissionError), "grant private fixture permissions");
+    Require(engine.EnsureWidgetLoaded(L"history-reader", L"57aeb6ac-104b-43fb-af95-10d7ce082f56"),
+        "read already collected history during setup: " + diagnostics());
+    Require(engine.GetWidgetErrors().empty(), "Lua history contract: " + diagnostics());
+    engine.UnloadWidget(L"history-reader");
+    Write(package / L"main.lua", R"(
+return widget.define({setup=function()
+    local h=data.subscribe("system.cpu")
+    local points,reason=h:history()
+    assert(#points==0 and reason=="permissionDenied","denied subscription leaked shared history")
+    return {}
+end,render=function() end})
+)");
+    auto deniedManifest = Read(package / L"widget.json");
+    const auto version = deniedManifest.find("1.0.1");
+    Require(version != std::string::npos, "find private fixture version");
+    deniedManifest.replace(version, 5, "1.0.2");
+    Write(package / L"widget.json", deniedManifest);
+    Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error), "update denied fixture");
+    Require(WidgetEngine::SetWidgetPermissionDecision(L"57aeb6ac-104b-43fb-af95-10d7ce082f56",
+        snowdesktop::widget::PermissionDecisionState::Denied, {}, {}, permissionError), "deny private fixture permissions");
+    Require(engine.EnsureWidgetLoaded(L"history-denied", L"57aeb6ac-104b-43fb-af95-10d7ce082f56"),
+        "load denied history subscription: " + diagnostics());
+    Require(engine.GetWidgetErrors().empty(), "history must respect permission: " + diagnostics());
+    engine.UnloadWidget(L"history-denied");
+    provider->RemoveConsumer("history-contract");
 }
 }

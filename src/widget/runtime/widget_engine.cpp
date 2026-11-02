@@ -5325,6 +5325,42 @@ static int lua_DataSubscriptionValue(lua_State* state)
     return 1;
 }
 
+static int lua_DataSubscriptionHistory(lua_State* state)
+{
+    auto* handle = CheckDataSubscriptionHandle(state, 1);
+    std::string error;
+    const auto points = handle->engine && handle->id != 0
+        ? handle->engine->RuntimeGetDataHistory(handle->id, error)
+        : (error = "unsubscribed", std::vector<snowdesktop::widget_runtime::WidgetResourcePoint>{});
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    lua_createtable(state, static_cast<int>(points.size()), 0);
+    lua_Integer index = 0;
+    for (const auto& point : points)
+    {
+        if (point.timestampMs > now || point.timestampMs < now - 60000) continue;
+        lua_createtable(state, 0, 4);
+        lua_pushinteger(state, static_cast<lua_Integer>(point.timestampMs));
+        lua_setfield(state, -2, "timestamp");
+        lua_pushinteger(state, static_cast<lua_Integer>(now - point.timestampMs));
+        lua_setfield(state, -2, "ageMs");
+        if (point.primary)
+        {
+            lua_pushnumber(state, *point.primary);
+            lua_setfield(state, -2, "value");
+        }
+        if (point.secondary)
+        {
+            lua_pushnumber(state, *point.secondary);
+            lua_setfield(state, -2, "secondary");
+        }
+        lua_rawseti(state, -2, ++index);
+    }
+    if (error.empty()) lua_pushnil(state);
+    else lua_pushlstring(state, error.data(), error.size());
+    return 2;
+}
+
 static int lua_DataSubscriptionUnsubscribe(lua_State* state)
 {
     auto* handle = CheckDataSubscriptionHandle(state, 1);
@@ -5353,6 +5389,8 @@ static void RegisterDataSubscriptionHandle(lua_State* state)
         lua_newtable(state);
         lua_pushcfunction(state, lua_DataSubscriptionValue);
         lua_setfield(state, -2, "value");
+        lua_pushcfunction(state, lua_DataSubscriptionHistory);
+        lua_setfield(state, -2, "history");
         lua_pushcfunction(state, lua_DataSubscriptionUnsubscribe);
         lua_setfield(state, -2, "unsubscribe");
         lua_setfield(state, -2, "__index");
@@ -23812,6 +23850,23 @@ bool WidgetEngine::RuntimeUnsubscribeData(
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
     ApplyWidgetDataBrokerActions();
     return removed;
+}
+
+std::vector<snowdesktop::widget_runtime::WidgetResourcePoint>
+WidgetEngine::RuntimeGetDataHistory(std::uint64_t subscriptionId, std::string& error) const
+{
+    error.clear();
+    const auto binding = dataBroker_ ? dataBroker_->SubscriptionSnapshot(subscriptionId) : std::nullopt;
+    if (!binding) { error = "unsubscribed"; return {}; }
+    if (previewOnly_ || binding->options.preview) return {};
+    if (!binding->options.permissionGranted) { error = "permissionDenied"; return {}; }
+    if (binding->topic != "system.cpu" && binding->topic != "system.network.traffic")
+    {
+        error = "historyUnavailable";
+        return {};
+    }
+    if (!widgetSystemDataProvider_) { error = "providerUnavailable"; return {}; }
+    return widgetSystemDataProvider_->ResourceHistory(binding->topic);
 }
 
 std::optional<LuaWidgetDataSnapshot>

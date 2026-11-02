@@ -133,4 +133,26 @@ function M.append(history, now, reading)
     while #history > 61 do table.remove(history, 1) end
 end
 
+function M.mergeHistory(history, now, mode, points)
+    local byTimestamp={}
+    for _,point in ipairs(history) do
+        if point.time>=now-60000 then byTimestamp[math.floor(point.timestamp/1000)]=point end
+    end
+    for _,point in ipairs(points) do
+        if M.number(point.timestamp) and M.number(point.ageMs) and point.ageMs<=60000 then
+            local entry={time=now-point.ageMs,timestamp=point.timestamp}
+            if mode=="cpu" then entry.value=M.percent(point.value)
+            else
+                entry.download=M.number(point.value) and point.value or nil
+                entry.upload=M.number(point.secondary) and point.secondary or nil
+            end
+            byTimestamp[math.floor(point.timestamp/1000)]=entry
+        end
+    end
+    for i=#history,1,-1 do history[i]=nil end
+    for _,point in pairs(byTimestamp) do history[#history+1]=point end
+    table.sort(history,function(a,b) return a.timestamp<b.timestamp end)
+    while #history>61 do table.remove(history,1) end
+end
+
 return M

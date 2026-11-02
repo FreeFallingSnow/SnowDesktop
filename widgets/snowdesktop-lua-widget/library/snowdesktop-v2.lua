@@ -1715,8 +1715,15 @@ function animation.cancelFrame(id) end
 ---@field warmingUp boolean
 ---@field error? string
 
+---@class SnowDataHistoryPoint
+---@field timestamp integer Unix epoch milliseconds.
+---@field ageMs integer Age at the history read, from 0 to 60000 milliseconds.
+---@field value? number CPU percent or network download bytes per second; nil marks missing data.
+---@field secondary? number Network upload bytes per second; nil marks missing data.
+
 ---@class SnowDataSubscription<T>
 ---@field value fun(self: SnowDataSubscription<T>): SnowDataSnapshot<T>
+---@field history fun(self: SnowDataSubscription<T>): SnowDataHistoryPoint[], string? Requires data.subscription.history; supports system.cpu and system.network.traffic.
 ---@field unsubscribe fun(self: SnowDataSubscription<T>): boolean
 
 ---@class snow.data

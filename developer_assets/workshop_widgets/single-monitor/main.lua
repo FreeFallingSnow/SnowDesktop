@@ -66,7 +66,11 @@ local function reconcile(m)
     local permitted=widget.hasPermission(source.permission)
     local available=widget.hasFeature("data."..source.topic)
     local identity=mode..":"..deviceId
-    if m.identity~=identity then m.history,m.identity={},identity end
+    if m.identity~=identity then
+        m.history=m.histories[identity] or {}
+        if mode=="cpu" or mode=="network" then m.histories[identity]=m.history end
+        m.identity=identity
+    end
     m.mode=mode
     if m.topic~=source.topic or m.details~=details or not permitted or not available then
         if m.handle then m.handle:unsubscribe();m.handle=nil end
@@ -85,6 +89,11 @@ local function sample(m)
     m.snapshot=m.handle and m.handle:value() or nil
     m.current=m.blocked and {status=m.blocked} or metrics.read(m.mode,m.snapshot,selected(m.mode),m.details)
     metrics.append(m.history,m.now,m.current)
+    if m.handle and (m.mode=="cpu" or m.mode=="network") and
+            widget.hasFeature("data.subscription.history") then
+        local points,reason=m.handle:history()
+        if not reason then metrics.mergeHistory(m.history,m.now,m.mode,points) end
+    end
     m.choices={}
     if m.snapshot and m.snapshot.available then
         local c,value=copy(),m.snapshot.value or {}
@@ -108,7 +117,7 @@ local function sample(m)
 end
 
 -- Only deterministic preview fixtures receive a representative past.
--- Live instances start with real samples; there is no invented live history.
+-- Live instances use only real local samples and the host's shared history.
 local function previewHistory(m)
     if m.current.status~="ready" or (m.mode~="cpu" and m.mode~="network") then return end
     m.history={}
@@ -123,7 +132,7 @@ local function previewHistory(m)
 end
 
 local function setup(context)
-    local m={history={},choices={},menuTargets={}}
+    local m={history={},histories={},choices={},menuTargets={}}
     reconcile(m);sample(m)
     if context.preview then previewHistory(m) end
     schedule.every("monitor.sample",1000,{whenHidden="pause"})
@@ -159,6 +168,13 @@ local function popover(_context,m)
                 action={id="device.open"},accessibility={label=c.device}})
         end
     end
+    local initial=1
+    for i,item in ipairs(children) do
+        if item.key=="mode."..m.mode then initial=i;break end
+    end
+    -- Rotate the same cyclic traversal order so the first committed scene
+    -- focuses the current metric, before any opening-animation cache exists.
+    for i,item in ipairs(children) do item.tabIndex=(i-initial+#children)%#children+1 end
     return view.column({key="selector.root",width="fill",height="fill",padding=r*0.32,gap=r*0.13,children=children})
 end
 local function panel(_context,m)
@@ -203,9 +219,7 @@ local function menu(_context,m,request)
 end
 
 local function event(context,m,value)
-    if value.kind=="popover" and value.action=="opened" then
-        control.focus("mode."..m.mode)
-    elseif value.kind=="schedule" and value.id=="monitor.sample" then reconcile(m);sample(m)
+    if value.kind=="schedule" and value.id=="monitor.sample" then reconcile(m);sample(m)
     elseif value.kind=="settings.changed" or value.kind=="environment" or value.kind=="data.change" or
             (value.kind=="visibility" and value.visible) then reconcile(m);sample(m)
     elseif value.kind=="action" then
