@@ -1,6 +1,9 @@
 return function()
     return {
         preset_transparent=l10n.tr("lua_widget.desktop_lyrics.preset_transparent"),
+        lyric_mode=l10n.tr("lua_widget.desktop_lyrics.lyric_mode"),
+        mode_scroll=l10n.tr("lua_widget.desktop_lyrics.mode_scroll"),
+        mode_dynamic=l10n.tr("lua_widget.desktop_lyrics.mode_dynamic"),
         offset=l10n.tr("lua_widget.desktop_lyrics.offset"),
         text_scale=l10n.tr("lua_widget.desktop_lyrics.text_scale"),
         translation=l10n.tr("lua_widget.desktop_lyrics.translation"),

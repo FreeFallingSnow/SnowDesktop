@@ -69,6 +69,8 @@ local function settings()
     return {presets={{id="transparent",label=c.preset_transparent,default=true,
         values={followPersonalization=false,bg=0,border=0,alpha=0,borderAlpha=0,gradientEndA=0,
             glassEnabled=false,acrylicEnabled=false,__contentTheme=0}}},fields={
+        {key="lyricMode",type="select",label=c.lyric_mode,default="scroll",options={"scroll","dynamic"},
+            optionLabels={c.mode_scroll,c.mode_dynamic}},
         {key="textScale",type="int",label=c.text_scale,default=100,min=60,max=200,step=5},
         {key="lineSpacing",type="int",label=c.line_spacing,default=175,min=140,max=240,step=5},
         {key="offset",type="int",label=c.offset,default=0,min=-5000,max=5000,step=50},

@@ -2,6 +2,8 @@
 
 SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，只绘制歌词；当前行位于纵向中央，前后行逐渐淡出。组件高度决定可见行数，字号和行距可独立调整。右键菜单提供带刷新图标的“重新匹配歌词”；显示设置和外观预设使用宿主统一的组件设置入口。
 
+组件设置中的“歌词模式”可切换“滚动歌词”和“动态歌词”。默认保留滚动模式；动态模式只绘制当前句及其已开启的翻译、罗马音，逐字渐亮并轻微上浮，换句时淡入，不叠加前后句。原生逐字与估算逐字共用这套效果；关闭估算后，普通 LRC 仅保留整句淡入。字号由既有字号设置控制，长句保持字号换行；超出高度时沿演唱位置移动句内文本。动画由媒体时间轴驱动，暂停时连同文字位置、亮度一起冻结，减少动态效果时关闭装饰位移和入场淡入。
+
 ## 使用条件
 
 - 播放器必须通过 Windows SMTC 提供当前歌曲名称、歌手和有效播放进度。没有 SMTC 会话时等待媒体；没有可用进度时明确显示不支持，不按系统时间、音频或歌曲时长猜测进度。
@@ -30,6 +32,7 @@ AMLL TTML 和网易云 YRC 保留原生逐字时间。缺少逐字时间的 LRC 
 - [Folia QQ 歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/qq/qqLyricProvider.ts)
 - [Folia 酷狗歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/kugou/kugouLyricProvider.ts)
 - [Folia 普通 LRC 时间估算思路](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/utils/lyrics/parserCore.ts#L59)：借鉴按句长和文字权重分配时间的思路，组件独立实现估算与缓存。
+- [Folia 逐词动画状态](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/components/visualizer/glowWordVariants.ts)：参考等待、演唱与已唱状态的渐亮和位移节奏；本组件通过现有绘制 API 独立实现轻量单句效果。
 - [AMLL 原生接口](https://amll.dev/reference/http-api/native)
 - [LRCLIB API](https://lrclib.net/docs)
 
@@ -52,6 +55,8 @@ YRC、TTML 等逐字歌词取得同曲的可靠逐行对照时，统一按相同
 ## English
 
 A read-only community lyric widget for SnowDesktop. It starts transparent and draws lyrics only. The current line stays centered; increasing widget height reveals more surrounding lines. Font scale and line spacing are separate preferences.
+
+“Lyric mode” in the existing widget settings offers “Scrolling lyrics” (the default) and “Dynamic lyrics”. Dynamic mode draws only the current sentence and its enabled translation/romanization, with timed highlighting, gentle word lift and a sentence entrance fade. It never layers previous or upcoming sentences. Native and estimated word timing share the effect; disabling estimates leaves an entrance fade for ordinary LRC. Font size remains user-controlled and stable across sentences; long text wraps, then follows the singing position within the same sentence when height is limited. Media time drives animation, so pausing freezes positions and brightness as well as highlighting. Reduced motion disables decorative lift and entrance fading.
 
 A valid Windows SMTC session and timeline are required. Media without a usable timeline is explicitly unsupported, with a recommendation to try Folia. A temporarily stale snapshot displays the waiting message instead. The widget searches five sources: AMLL, NetEase, QQ Music, Kugou and LRCLIB. A known artist must match; an album cannot override an artist mismatch. Album identity is a fallback only when the target artist is absent. Available duration and meaningful version markers are also checked. NetEase and QQ song IDs allow AMLL TTML lookup; QQ tries both its mid and numeric ID. LRCLIB has a candidate-search fallback. One request runs at a time, with a five-second timeout and bounded retry backoff.
 

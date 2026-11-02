@@ -141,7 +141,7 @@ function M.words(block,line,measure)
                 if a<=b then
                     local x1=measure(line.text:sub(row.first,a-1),block.font,0,true).width
                     local x2=measure(line.text:sub(row.first,b),block.font,0,true).width
-                    row.segments[#row.segments+1]={word=word,x1=x1,x2=x2,
+                    row.segments[#row.segments+1]={word=word,x1=x1,x2=x2,first=a,last=b,
                         from=utf8.len(line.text:sub(first,a-1))/count,to=utf8.len(line.text:sub(first,b))/count}
                 end
             end

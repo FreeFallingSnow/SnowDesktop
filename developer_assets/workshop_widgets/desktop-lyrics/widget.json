@@ -12,7 +12,7 @@
   "nameKey": "lua_widget.desktop_lyrics.name",
   "description": "Read-only lyrics synchronized to Windows SMTC, on a transparent background.",
   "descriptionKey": "lua_widget.desktop_lyrics.description",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "locales": {
     "en-US": {
       "lua_widget.desktop_lyrics.offset": "Extra lyric delay (ms)",
@@ -41,7 +41,10 @@
       "lua_widget.desktop_lyrics.preview_song": "Every step becomes a song",
       "lua_widget.desktop_lyrics.preset_transparent": "Transparent",
       "lua_widget.desktop_lyrics.estimate_words": "Estimate word timing",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Hide placeholder text when not playing"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Hide placeholder text when not playing",
+      "lua_widget.desktop_lyrics.lyric_mode": "Lyric mode",
+      "lua_widget.desktop_lyrics.mode_scroll": "Scrolling lyrics",
+      "lua_widget.desktop_lyrics.mode_dynamic": "Dynamic lyrics"
     },
     "zh-CN": {
       "lua_widget.desktop_lyrics.offset": "额外歌词延迟（毫秒）",
@@ -70,7 +73,10 @@
       "lua_widget.desktop_lyrics.preview_song": "每一步都成为歌",
       "lua_widget.desktop_lyrics.preset_transparent": "透明",
       "lua_widget.desktop_lyrics.estimate_words": "估算逐字歌词",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "未播放时隐藏占位文本"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "未播放时隐藏占位文本",
+      "lua_widget.desktop_lyrics.lyric_mode": "歌词模式",
+      "lua_widget.desktop_lyrics.mode_scroll": "滚动歌词",
+      "lua_widget.desktop_lyrics.mode_dynamic": "动态歌词"
     },
     "zh-TW": {
       "lua_widget.desktop_lyrics.offset": "額外歌詞延遲（毫秒）",
@@ -99,7 +105,10 @@
       "lua_widget.desktop_lyrics.preview_song": "每一步都成為歌",
       "lua_widget.desktop_lyrics.preset_transparent": "透明",
       "lua_widget.desktop_lyrics.estimate_words": "估算逐字歌詞",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "未播放時隱藏預留文字"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "未播放時隱藏預留文字",
+      "lua_widget.desktop_lyrics.lyric_mode": "歌詞模式",
+      "lua_widget.desktop_lyrics.mode_scroll": "捲動歌詞",
+      "lua_widget.desktop_lyrics.mode_dynamic": "動態歌詞"
     },
     "ja-JP": {
       "lua_widget.desktop_lyrics.offset": "歌詞の追加遅延（ms）",
@@ -128,7 +137,10 @@
       "lua_widget.desktop_lyrics.preview_song": "一歩ずつ歌になっていく",
       "lua_widget.desktop_lyrics.preset_transparent": "透明",
       "lua_widget.desktop_lyrics.estimate_words": "逐語タイミングを推定",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "再生していないときは待機テキストを非表示"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "再生していないときは待機テキストを非表示",
+      "lua_widget.desktop_lyrics.lyric_mode": "歌詞モード",
+      "lua_widget.desktop_lyrics.mode_scroll": "スクロール歌詞",
+      "lua_widget.desktop_lyrics.mode_dynamic": "ダイナミック歌詞"
     },
     "ko-KR": {
       "lua_widget.desktop_lyrics.offset": "추가 가사 지연(ms)",
@@ -157,7 +169,10 @@
       "lua_widget.desktop_lyrics.preview_song": "발걸음마다 노래가 되어",
       "lua_widget.desktop_lyrics.preset_transparent": "투명",
       "lua_widget.desktop_lyrics.estimate_words": "단어별 타이밍 추정",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "재생 중이 아닐 때 대기 문구 숨기기"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "재생 중이 아닐 때 대기 문구 숨기기",
+      "lua_widget.desktop_lyrics.lyric_mode": "가사 모드",
+      "lua_widget.desktop_lyrics.mode_scroll": "스크롤 가사",
+      "lua_widget.desktop_lyrics.mode_dynamic": "동적 가사"
     },
     "de-DE": {
       "lua_widget.desktop_lyrics.offset": "Zusätzliche Textverzögerung (ms)",
@@ -186,7 +201,10 @@
       "lua_widget.desktop_lyrics.preview_song": "Jeder Schritt wird zu einem Lied",
       "lua_widget.desktop_lyrics.preset_transparent": "Transparent",
       "lua_widget.desktop_lyrics.estimate_words": "Wortzeiten schätzen",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Platzhaltertext ohne Wiedergabe ausblenden"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Platzhaltertext ohne Wiedergabe ausblenden",
+      "lua_widget.desktop_lyrics.lyric_mode": "Liedtextmodus",
+      "lua_widget.desktop_lyrics.mode_scroll": "Scrollender Liedtext",
+      "lua_widget.desktop_lyrics.mode_dynamic": "Dynamischer Liedtext"
     },
     "fr-FR": {
       "lua_widget.desktop_lyrics.offset": "Retard supplémentaire des paroles (ms)",
@@ -215,7 +233,10 @@
       "lua_widget.desktop_lyrics.preview_song": "Chaque pas devient une chanson",
       "lua_widget.desktop_lyrics.preset_transparent": "Transparent",
       "lua_widget.desktop_lyrics.estimate_words": "Estimer le minutage mot à mot",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Masquer le texte d’attente hors lecture"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Masquer le texte d’attente hors lecture",
+      "lua_widget.desktop_lyrics.lyric_mode": "Mode des paroles",
+      "lua_widget.desktop_lyrics.mode_scroll": "Paroles défilantes",
+      "lua_widget.desktop_lyrics.mode_dynamic": "Paroles animées"
     },
     "es-ES": {
       "lua_widget.desktop_lyrics.offset": "Retraso adicional de letras (ms)",
@@ -244,7 +265,10 @@
       "lua_widget.desktop_lyrics.preview_song": "Cada paso se convierte en canción",
       "lua_widget.desktop_lyrics.preset_transparent": "Transparente",
       "lua_widget.desktop_lyrics.estimate_words": "Estimar tiempos por palabra",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar el texto de espera cuando no se reproduce"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar el texto de espera cuando no se reproduce",
+      "lua_widget.desktop_lyrics.lyric_mode": "Modo de letras",
+      "lua_widget.desktop_lyrics.mode_scroll": "Letras con desplazamiento",
+      "lua_widget.desktop_lyrics.mode_dynamic": "Letras dinámicas"
     },
     "es-419": {
       "lua_widget.desktop_lyrics.offset": "Retraso adicional de letras (ms)",
@@ -273,7 +297,10 @@
       "lua_widget.desktop_lyrics.preview_song": "Cada paso se convierte en canción",
       "lua_widget.desktop_lyrics.preset_transparent": "Transparente",
       "lua_widget.desktop_lyrics.estimate_words": "Estimar tiempos por palabra",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar el texto de espera cuando no se reproduce"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar el texto de espera cuando no se reproduce",
+      "lua_widget.desktop_lyrics.lyric_mode": "Modo de letras",
+      "lua_widget.desktop_lyrics.mode_scroll": "Letras con desplazamiento",
+      "lua_widget.desktop_lyrics.mode_dynamic": "Letras dinámicas"
     },
     "pt-BR": {
       "lua_widget.desktop_lyrics.offset": "Atraso adicional da letra (ms)",
@@ -302,7 +329,10 @@
       "lua_widget.desktop_lyrics.preview_song": "Cada passo se torna uma canção",
       "lua_widget.desktop_lyrics.preset_transparent": "Transparente",
       "lua_widget.desktop_lyrics.estimate_words": "Estimar tempo por palavra",
-      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar texto de espera quando não estiver reproduzindo"
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar texto de espera quando não estiver reproduzindo",
+      "lua_widget.desktop_lyrics.lyric_mode": "Modo da letra",
+      "lua_widget.desktop_lyrics.mode_scroll": "Letra com rolagem",
+      "lua_widget.desktop_lyrics.mode_dynamic": "Letra dinâmica"
     }
   },
   "defaultSize": {
@@ -359,7 +389,8 @@
     "task.start",
     "task.network.request",
     "task.network.headers",
-    "task.network.requestBody"
+    "task.network.requestBody",
+    "settings.select.localizedOptions"
   ],
   "optionalFeatures": [],
   "permissions": [

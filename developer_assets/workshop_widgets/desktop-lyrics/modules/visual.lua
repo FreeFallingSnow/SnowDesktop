@@ -2,6 +2,7 @@ local clock=module.require("modules/media_clock.lua")
 local plan=module.require("modules/layout.lua")
 local Text=module.require("modules/text_layout.lua")
 local strings=module.require("modules/strings.lua")
+local dynamic=module.require("modules/dynamic.lua")
 local M={}
 local function number(key,default)
     local value=tonumber(storage.get(key));return value or default
@@ -60,9 +61,16 @@ function M.render(_context,m)
     local estimate=M.enabled("estimateWordTiming",true)
     local secondary=(translate and m.client.hasTranslation) or (roman and m.client.hasRomanization)
     local p=plan.metrics(w,h,row,number("textScale",100),number("lineSpacing",175),secondary)
+    local dynamicMode=storage.get("lyricMode")=="dynamic"
+    if dynamicMode then p.font=p.font*1.35 end
     local function get(index)return geometry(m,index,p.font,p.width,translate,roman,estimate)end
     local now=time.monotonic();local media=clock.position(m.clock,now)-number("offset",0)-(m.client.offset or 0)
     local index=clock.index(lines,media);local target=math.max(1,index)
+    if dynamicMode then
+        m.scrollIndex=nil;m.shift=nil;m.lastDraw=nil
+        if index>0 then dynamic.render(m,get(index),lines[index],media,w,h,p,primary,accent) end
+        return
+    end
     local elapsed=m.lastDraw and now-m.lastDraw or 0
     local reset=m.snap or m.reducedMotion or not m.scrollIndex or m.scrollIndex>#lines
     local shift=m.shift or 0
