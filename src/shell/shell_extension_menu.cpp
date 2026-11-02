@@ -1064,10 +1064,12 @@ struct Host
         auto source = std::make_unique<Native>();
         source->nvidiaApplication = item;
         source->nvidiaClass = clsid;
+        std::wstring executableName;
         PWSTR filePath = nullptr;
         if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &filePath)) && filePath)
         {
             source->directory = std::filesystem::path(filePath).parent_path().wstring();
+            if (_wcsicmp(clsid, NvidiaAppClsid) == 0) executableName = std::filesystem::path(filePath).stem().wstring();
             CoTaskMemFree(filePath);
         }
         // Display metadata does not need an application context-menu query.
@@ -1077,6 +1079,7 @@ struct Host
         if (FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &name)) || !name) return;
         Entry entry;
         entry.label = name; CoTaskMemFree(name);
+        if (!executableName.empty()) entry.label = std::move(executableName);
         if (entry.label.empty()) return;
         entry.key = Utf8(Lower(clsid));
         entry.registration = "clsid:" + entry.key;
