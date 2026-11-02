@@ -148,30 +148,34 @@ function M.render(mode, reading, values, now, c, format)
     local wide=w/h>=1.6
     local ringMode=mode=="gpu" or mode=="disk"
     local ringWide=wide and ringMode and reading.status=="ready"
-    local headerWidth=ringWide and bw*0.48 or bw
-    local titleH,sourceH=t*0.105,t*0.075
-    local titleX=x+t*0.102
-    local titleWidth=headerWidth-t*0.155
-    local titleFont=font(c[mode],t*0.074,titleWidth,titleH,true)
+    local titleH,iconSize=t*0.105,t*0.065
+    local titleFont=font(c[mode],t*0.064,bw*0.62-t*0.155,titleH,true)
     local titleInk=bounds(measure(c[mode],titleFont,true))
-    M.icon(mode,x,pad+(titleH-t*0.065)/2,t*0.065,p.text)
-    text(titleX,pad,titleWidth,titleH,c[mode],titleFont,p.text,true)
+    local selectorW=titleInk.width+t*0.155
+    local selectorX=x+bw-selectorW
+    local titleX=selectorX+iconSize+t*0.028
+    M.icon(mode,selectorX,pad+(titleH-iconSize)/2,iconSize,p.text)
+    text(titleX,pad,titleInk.width+t*0.004,titleH,c[mode],titleFont,p.text,true)
     local arrowX=titleX+titleInk.width+t*0.025
     local arrowY=pad+titleH*0.5
     path({{arrowX,arrowY-t*0.008},{arrowX+t*0.014,arrowY+t*0.007},
         {arrowX+t*0.028,arrowY-t*0.008}},p.sub,t*0.005)
-    local sourceY=pad+t*0.132
     local source=reading.source or c[mode.."_source"] or ""
+    if reading.stale then source=source=="" and c.stale or source.." · "..c.stale end
     if source~="" then
-        draw.marqueeText({key="monitor.source",x=x,y=sourceY,width=headerWidth,height=sourceH,
-            text=source,size=t*0.049,color=p.sub,speed=t*0.12,gap=t*0.10})
+        local sourceSize=t*0.049
+        local metric=measure(source,sourceSize,false)
+        local ink=bounds(metric)
+        local sourceY=pad+(titleH-ink.height)/2-ink.top-math.max(0,(titleH-metric.height)/2)
+        draw.marqueeText({key="monitor.source",x=x,y=sourceY,width=selectorX-x-t*0.045,height=titleH,
+            text=source,size=sourceSize,color=p.sub,speed=t*0.12,gap=t*0.10})
     end
-    local headerBottom=sourceY+sourceH+t*0.045
+    local headerBottom=pad+titleH+t*0.065
     if interaction.isHovered("monitor.selector") then
         draw.line(titleX,pad+titleH,arrowX+t*0.028,pad+titleH,s*0.004,p.sub,0.6)
     end
     local y=headerBottom
-    local bh=h-pad-y-t*0.065
+    local bh=h-pad-y
     local function percentage(px,py,pw,ph,size,align)
         local fixed=font("100%",size,pw,ph,true)
         text(px,py,pw,ph,format.percent(reading.percent),fixed,p.text,true,align)
@@ -190,16 +194,14 @@ function M.render(mode, reading, values, now, c, format)
         local stroke=s*0.061
         local radius,cx,cy,fx,fy,fw,fh
         if ringWide then
-            radius=math.min((h-pad*2-stroke)*0.48,bw*0.22)
-            cx,cy=x+bw*0.76,h/2
-            fx,fy,fw,fh=x,h*0.63,headerWidth,h*0.24-pad
+            radius=math.min((bh-stroke)*0.48,bw*0.22)
+            cx,cy=x+bw*0.76,y+bh/2
+            fx,fy,fw,fh=x,y+bh*0.55,bw*0.48,bh*0.28
         else
             local captionH,gap=t*0.10,s*0.06
             radius=math.min((bw-stroke)*0.47,(bh-captionH-gap-stroke)/2)
-            local groupH=radius*2+stroke+gap+captionH
-            local top=y+(bh-groupH)/2
-            cx,cy=x+bw/2,top+radius+stroke/2
-            fx,fy,fw,fh=x,top+radius*2+stroke+gap,bw,captionH
+            cx,cy=x+bw/2,y+(bh-captionH-gap)/2
+            fx,fy,fw,fh=x,y+bh-captionH,bw,captionH
         end
         draw.arc(cx,cy,radius,-90,360,stroke,p.track,p.trackAlpha)
         if reading.percent>0 then draw.arc(cx,cy,radius,-90,reading.percent*3.6,stroke,p[mode]) end
@@ -213,8 +215,8 @@ function M.render(mode, reading, values, now, c, format)
         local stacked=bw/bh<0.85
         local gap=stacked and s*0.12 or s*0.075
         local cellW=stacked and bw or (bw-gap)/2
-        local cellH=stacked and math.min((bh-gap)/2,bw*1.10) or bh
-        local top=stacked and y+(bh-cellH*2-gap)/2 or y
+        local cellH=stacked and (bh-gap)/2 or bh
+        local top=y
         local maximum=1
         for _,entry in ipairs(values) do maximum=math.max(maximum,entry.download or 0,entry.upload or 0) end
         local reference=format.rateReference()
@@ -251,17 +253,16 @@ function M.render(mode, reading, values, now, c, format)
                 gy=y+(bh-captionH-gh-s*0.04)/2
             end
         else
-            local u=math.min(bw,bh/0.98)
-            local bodyH=mode=="cpu" and u*0.87 or
-                (mode=="battery" and u*0.85 or (mode=="vram" and u*0.93 or u*0.84))
-            local top=y+(bh-bodyH)/2
-            px,py,pw,ph=x,top,bw,u*0.29
-            detailY,detailH=top+u*0.33,u*0.11
+            px,py,pw,ph=x,y,bw,bh*(mode=="cpu" and 0.35 or 0.42)
+            detailY,detailH=y+bh*0.44,math.min(t*0.11,bh*0.11)
             gx,gw=x,bw
-            if mode=="cpu" then gy,gh=top+u*0.41,u*0.32
-            elseif mode=="battery" then gy,gh=top+u*0.45,u*0.20
-            else gy,gh=top+u*0.57,mode=="vram" and u*0.14 or u*0.09 end
-            captionY,captionH=top+bodyH-u*0.10,u*0.10
+            captionH=math.min(t*0.10,bh*0.10)
+            captionY=y+bh-captionH
+            if mode=="cpu" then gy,gh=y+bh*0.40,bh*0.46
+            else
+                gh=math.min(s*(mode=="battery" and 0.20 or (mode=="vram" and 0.14 or 0.09)),bh*0.20)
+                gy=captionY-s*0.06-gh
+            end
         end
         percentage(px,py,pw,ph,t*0.28)
         if mode=="memory" or mode=="vram" then capacityLabel(px,detailY,pw,detailH) end
@@ -310,7 +311,6 @@ function M.render(mode, reading, values, now, c, format)
     end
     if reading.stale then
         draw.circle(w-pad*0.62,pad*0.55,s*0.012,p.warning)
-        label(x,h-pad-t*0.045,bw,t*0.045,c.stale,t*0.036,p.warning,"end")
     end
     interaction.region({key="monitor.body",shape={type="rect",x=0,y=0,width=w,height=h},
         events={contextMenu={id="monitor.menu",scope="component"}},
@@ -318,8 +318,8 @@ function M.render(mode, reading, values, now, c, format)
             (reading.status=="ready" and (mode=="network" and
                 (c.download.." "..format.rate(reading.download)..", "..c.upload.." "..format.rate(reading.upload)) or
                 format.percent(reading.percent)) or (c[reading.status] or c.unavailable))}})
-    interaction.region({key="monitor.selector",shape={type="rect",x=pad,y=pad*0.5,
-        width=headerWidth,height=headerBottom-pad*0.5},cursor="hand",
+    interaction.region({key="monitor.selector",shape={type="rect",x=selectorX,y=pad*0.5,
+        width=selectorW,height=titleH+pad},cursor="hand",
         events={click={id="selector.open"},contextMenu={id="monitor.menu",scope="component"}},
         accessibility={role="button",label=c.choose}})
 end

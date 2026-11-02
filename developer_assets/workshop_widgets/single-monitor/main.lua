@@ -49,7 +49,10 @@ local format = {
     end,
     rate=function(value) return l10n.formatBytes(value,{base=1024,maximumFractionDigits=1}).."/s" end,
 }
-local glyphs={cpu=0xF4BF,gpu=0xF4BF,memory=0xF4BF,vram=0xF4BF,battery=0xF1D9,disk=0xF4B2,network=0xF3C4}
+-- FluentSystemIcons-Regular.ttf: developer_board, desktop_pulse, ram,
+-- battery_9, hard_drive and globe, all at the semantic 20-unit size.
+local glyphs={cpu=0xE4AC,gpu=0xE49D,memory=0xE9F3,vram=0xE9F3,battery=0xF1CD,disk=0xE6E3,network=0xF45A}
+local deviceGlyph,automaticGlyph=0xE4AA,0xF190 -- desktop_toolbox, arrow_sync
 local function selected(mode)
     if mode=="gpu" or mode=="vram" then return storage.get("gpuId") or "" end
     if mode=="disk" then return storage.get("volumeId") or "" end
@@ -149,11 +152,12 @@ local function popover(_context,m)
             padding={horizontal=r*0.38},bold=mode==m.mode,
             style={foreground="textPrimary",cornerRadius=r*0.16},
             action={id="mode."..mode},accessibility={label=c[mode]}})
-    end
-    if m.mode=="gpu" or m.mode=="vram" or m.mode=="disk" then
-        children[#children+1]=view.button({key="device.open",label=c.device,height=r,width="fill",
-            fontSize=r*0.46,style={foreground="textPrimary",cornerRadius=r*0.16},
-            action={id="device.open"},accessibility={label=c.device}})
+        if mode==m.mode and (mode=="gpu" or mode=="vram" or mode=="disk") then
+            children[#children+1]=view.button({key="device.open",label=c.device,height=r,width="fill",
+                textAlign="start",padding={left=r*0.95,right=r*0.38},fontSize=r*0.46,
+                style={foreground="textPrimary",cornerRadius=r*0.16},
+                action={id="device.open"},accessibility={label=c.device}})
+        end
     end
     return view.column({key="selector.root",width="fill",height="fill",padding=r*0.32,gap=r*0.13,children=children})
 end
@@ -186,13 +190,13 @@ local function menu(_context,m,request)
             local action="device.menu."..i
             m.menuTargets[action]={id=choice.id,mode=m.mode}
             choices[#choices+1]={id=action,label=choice.label,checked=choice.id==selected(m.mode),
-                icon=utf8.char(glyphs[m.mode]),iconFont="fluent"}
+                icon=utf8.char(choice.id=="" and automaticGlyph or glyphs[m.mode]),iconFont="fluent"}
         end
         items[#items+1]={type="separator"}
         if #choices>0 then
-            items[#items+1]={label=c.device,children=choices,icon=utf8.char(glyphs[m.mode]),iconFont="fluent"}
+            items[#items+1]={label=c.device,children=choices,icon=utf8.char(deviceGlyph),iconFont="fluent"}
         else
-            items[#items+1]={id="device.open",label=c.device,icon=utf8.char(glyphs[m.mode]),iconFont="fluent"}
+            items[#items+1]={id="device.open",label=c.device,icon=utf8.char(deviceGlyph),iconFont="fluent"}
         end
     end
     return ui.menu(items)
@@ -207,7 +211,7 @@ local function event(context,m,value)
             local r=ui.metrics().layoutRowHeight
             local rows=(m.mode=="gpu" or m.mode=="vram" or m.mode=="disk") and 8 or 7
             widget.openPopover({anchorKey="monitor.selector",width=math.ceil(r*10),
-                height=math.ceil(r*(rows*1.13+0.8)),placement="bottomStart"})
+                height=math.ceil(r*(rows*1.13+0.8)),placement="bottomEnd"})
         elseif value.id:sub(1,5)=="mode." then chooseMode(m,value.id:sub(6))
         elseif value.id=="device.open" then
             widget.closePopover();widget.openPanel({title=copy().device,width=440,height=360})
@@ -224,7 +228,7 @@ end
 local c=copy()
 local labels={c.cpu,c.gpu,c.memory,c.vram,c.battery,c.disk,c.network}
 return widget.define({
-    name=c.name,useCustomStyle=true,followPersonalizationDefault=true,
+    name=c.name,useCustomStyle=true,followPersonalizationDefault=true,showTitle=false,
     bg=0x142234,border=0xDFEBFF,alpha=0.34,borderAlpha=0.18,gradientEndA=0.28,
     settings={fields={{key="metric",label=c.choose,type="select",default="cpu",
         options=metrics.order,optionLabels=labels}}},
