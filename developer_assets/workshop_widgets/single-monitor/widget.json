@@ -387,7 +387,7 @@
   },
   "defaultSize": {
     "rows": 2,
-    "aspectRatio": 1
+    "aspectRatio": 1.25
   },
   "previewData": {
     "introduction": "Choose a metric preset in the preview. After adding, click the title or right-click to switch.",
