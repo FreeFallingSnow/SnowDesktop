@@ -2284,6 +2284,7 @@ bool DockWindowTransition::OnAnimationFrame(
         // with a failed uncloak and each asynchronous presentation phase.
         if (now >= restoreCleanupDeadlineMs_)
         {
+            if (!sourceCloaked_) ActivateRestoredWindowForHandoff();
             Finish();
             return false;
         }
@@ -2315,10 +2316,12 @@ bool DockWindowTransition::OnAnimationFrame(
             restorePresentationPhase_ = RestorePresentationPhase::None;
             if (retiring || FAILED(*result))
             {
+                if (!retiring) ActivateRestoredWindowForHandoff();
                 restorePresentationAcknowledged_ = retiring && SUCCEEDED(*result);
                 Finish();
                 return false;
             }
+            if (diagnosticCallback_) diagnosticCallback_(L"Dock restore source presentation acknowledged: activation pending");
             restoreVisibleTimeMs_ = MonotonicTimeMilliseconds();
             return true;
         }
@@ -2421,13 +2424,18 @@ bool DockWindowTransition::OnAnimationFrame(
                 if (diagnosticCallback_) diagnosticCallback_(L"Dock restore realigning: retaining live image until presentation");
                 return true;
             }
-            ActivateRestoredWindowForHandoff();
+            // Uncloaking acknowledges the attribute write, not presentation of
+            // the source. Keep the final image while DWM presents the exposed
+            // window; the visible-time branch activates only after that barrier.
+            ReleaseSourceCloak();
             // A failed cross-process release retains ownership; do not retire
             // the only visible image while its source is still cloaked.
             if (!sourceCloaked_)
             {
+                if (diagnosticCallback_) diagnosticCallback_(L"Dock restore source exposed: waiting for presentation before activation");
                 if (!BeginPresentationBarrier(RestorePresentationPhase::ExposedSource))
                 {
+                    ActivateRestoredWindowForHandoff();
                     Finish();
                     return false;
                 }
