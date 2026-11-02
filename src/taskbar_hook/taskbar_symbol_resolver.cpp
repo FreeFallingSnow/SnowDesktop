@@ -148,6 +148,34 @@ DWORD ReadSymbols(const std::filesystem::path& dll, const std::filesystem::path&
         std::string("?get_Size") + vectorPrefix + "UEAAHPEAI@Z",
         std::string("?GetAt") + vectorPrefix + "UEAAHIPEAPEAX@Z"
     };
+    auto& thumbnail = resolution.thumbnail;
+    thumbnail = {}; thumbnail.image = adapter.image;
+    const auto windowTable = resolve("??_7CTaskBand@@6BCImpWndProc@@@");
+    const auto managerTable = resolve("??_7CTaskBand@@6BITaskListManager@@@");
+    static constexpr std::array thumbnailNames{
+        "?GetTaskFromWindow@CTaskBand@@UEAAJPEAUHWND__@@PEAPEAUITaskGroup@@PEAPEAUITaskItem@@@Z",
+        "?GetThumbButtons@CTaskItem@@UEAAPEAUtagTHUMBBUTTON32@@PEAH@Z",
+        "?ThumbBarGetImageList@CTaskItem@@UEAAPEAU_IMAGELIST@@XZ",
+        "?GetWindow@CWindowTaskItem@@UEAAPEAUHWND__@@XZ"
+    };
+    bool thumbnailCompatible = windowTable && managerTable;
+    if (thumbnailCompatible) { thumbnail.windowVtable = *windowTable; thumbnail.managerVtable = *managerTable; }
+    for (size_t index = 0; thumbnailCompatible && index < thumbnailNames.size(); ++index)
+    {
+        const auto address = resolve(thumbnailNames[index]);
+        if (!address) { thumbnailCompatible = false; break; }
+        auto function = image.Function(*address);
+        if (!function)
+        {
+            AutoHideFunction leaf{*address, *address + 16};
+            if (image.Executable(leaf.begin, leaf.end) && image.Read(leaf.begin, leaf.entry)) function = leaf;
+        }
+        if (!function) { thumbnailCompatible = false; break; }
+        thumbnail.functions[index] = *function;
+    }
+    resolution.thumbnailError = thumbnailCompatible && thumbnail_toolbar::Validate(bytes, thumbnail)
+        ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
+    if (resolution.thumbnailError != ERROR_SUCCESS) thumbnail = {};
     auto& modern = resolution.modernTray; modern = {}; modern.image = adapter.image;
     const auto root = resolve("?g_trayUI@@3V?$ComPtr@UITrayUI@@@WRL@Microsoft@@A");
     const auto itemVtable = resolve("??_7NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@6B@");

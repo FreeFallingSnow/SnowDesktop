@@ -2,6 +2,7 @@
 
 #include "taskbar_autohide_adapter.h"
 #include "tray_modern_adapter.h"
+#include "thumbnail_toolbar_protocol.h"
 #include <filesystem>
 #include <optional>
 
@@ -10,11 +11,13 @@ namespace snowdesktop::taskbar_hook
 inline constexpr wchar_t kSymbolHelperCommand[] = L"--internal-taskbar-symbols";
 struct AutoHideResolution
 {
-    DWORD magic = 0x53445359, version = 2;
+    DWORD magic = 0x53445359, version = 3;
     DWORD error = ERROR_IO_PENDING;
     AutoHideAdapter adapter;
     DWORD modernTrayError = ERROR_IO_PENDING;
     ModernTrayAdapter modernTray;
+    DWORD thumbnailError = ERROR_IO_PENDING;
+    thumbnail_toolbar::Adapter thumbnail;
 };
 // These functions run in the host/helper, never inside Explorer. DbgHelp has
 // process-global, single-threaded state; the isolated helper owns all its calls.

@@ -3,6 +3,7 @@
 #include "dock_settings.h"
 #include "dock_window_pin.h"
 #include "dock_window_peek.h"
+#include "dock_thumbnail_toolbar.h"
 
 #include <dwmapi.h>
 #include <windows.h>
@@ -10,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,6 +158,7 @@ public:
 private:
     static constexpr UINT_PTR kHideTimerId = 1;
     static constexpr UINT_PTR kPeekTimerId = 2;
+    static constexpr UINT_PTR kToolbarTimerId = 3;
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
     static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
@@ -169,6 +172,13 @@ private:
     void RegisterThumbnails();
     void UnregisterThumbnails();
     void Paint(HWND window);
+    void StartToolbarTracking();
+    void RefreshToolbar();
+    void PaintToolbar(HDC dc, size_t index, const RECT& client);
+    int ToolbarRegionAtPoint(POINT point) const;
+    std::pair<int, int> ToolbarButtonAtPoint(POINT point) const;
+    void ClearToolbarTooltips();
+    void UpdateToolbarTooltips();
     void InvalidatePopups();
     POINT ToLayoutPoint(HWND window, POINT point) const;
     void OnMouseMove(HWND window, POINT point);
@@ -212,6 +222,11 @@ private:
     ULONGLONG peekCommitDeadline_ = 0;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
+    std::unique_ptr<snowdesktop::thumbnail_toolbar::Client> toolbarClient_;
+    std::vector<snowdesktop::thumbnail_toolbar::Snapshot> toolbars_;
+    std::vector<HWND> toolbarTooltips_;
+    std::optional<snowdesktop::thumbnail_toolbar::Click> pressedToolbar_;
+    std::pair<int, int> hoveredToolbar_{-1, -1};
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;
     std::vector<HTHUMBNAIL> thumbnails_;

@@ -11,6 +11,7 @@ struct DockWindowPreviewLayout : DockWindowPreviewGrid
 };
 
 DockWindowPreviewLayout CalculateDockWindowPreviewLayout(
-    const std::vector<SIZE>& sourceSizes, int maximumWidth, int maximumHeight, UINT dpi);
+    const std::vector<SIZE>& sourceSizes, int maximumWidth, int maximumHeight, UINT dpi,
+    const std::vector<size_t>& toolbarButtons = {});
 std::vector<RECT> CalculateDockWindowPreviewLayoutCardRects(
     const DockWindowPreviewLayout& layout, UINT dpi);

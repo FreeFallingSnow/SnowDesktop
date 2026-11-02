@@ -7,6 +7,7 @@
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 
 #include "taskbar_hook_protocol.h"
+#include "thumbnail_toolbar_protocol.h"
 #include "taskbar_material_render.h"
 #include "taskbar_autohide_observer.h"
 #include "taskbar_native.h"
@@ -1979,6 +1980,9 @@ SnowDesktopRegistryQueryHookProc(int code, WPARAM wParam, LPARAM lParam)
         {
             ProcessRegistryQuery(static_cast<DWORD>(message->wParam));
         }
+        if (message->message == RegisterWindowMessageW(snowdesktop::thumbnail_toolbar::kMessage))
+            snowdesktop::thumbnail_toolbar::Process(message->hwnd, static_cast<DWORD>(message->wParam),
+                static_cast<std::uint64_t>(message->lParam));
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
