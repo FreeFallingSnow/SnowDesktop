@@ -1795,6 +1795,7 @@ void DockWindowPreview::OnMouseLeave(HWND window)
     hoveredCloseIndex_ = -1;
     hoveredPinIndex_ = -1;
     hoveredToolbar_ = {-1, -1};
+    pressedToolbar_.reset();
     InvalidatePopups();
     ScheduleHide();
 }

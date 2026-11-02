@@ -50,7 +50,11 @@ void DrawButtonIcon(HDC dc, const RECT& bounds, UINT dpi, const snowdesktop::thu
                 output[index] = ((pixel >> 25) << 24) | (grey << 16) | (grey << 8) | grey;
             }
         ICONINFO iconInfo{TRUE, 0, 0, mask, color};
-        if (HICON icon = CreateIconIndirect(&iconInfo))
+        // An all-zero alpha image is a transparent placeholder. Creating an
+        // HICON would let User32 treat it as a legacy opaque bitmap instead.
+        const HICON icon = std::any_of(output, output + count, [](DWORD pixel) { return (pixel >> 24) != 0; })
+            ? CreateIconIndirect(&iconInfo) : nullptr;
+        if (icon)
         {
             const int size = std::max(1, std::min({MulDiv(18, static_cast<int>(dpi), 96),
                 static_cast<int>(bounds.right - bounds.left), static_cast<int>(bounds.bottom - bounds.top)}));
