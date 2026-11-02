@@ -164,10 +164,16 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
         Require(provider->StartTopic("history-contract", topic, std::chrono::milliseconds(500)),
             "start pre-existing private monitor " + topic);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
-    while (provider->ResourceHistory("system.cpu").size() < 3 ||
-        provider->ResourceHistory("system.network.traffic").size() < 3)
+    const auto hasCurve = [&](std::string_view topic) {
+        const auto points = provider->ResourceHistory(topic);
+        std::size_t valid = 0;
+        for (const auto& point : points)
+            if (point.primary && (topic == "system.cpu" || point.secondary)) ++valid;
+        return points.size() >= 3 && valid >= 2;
+    };
+    while (!hasCurve("system.cpu") || !hasCurve("system.network.traffic"))
     {
-        Require(std::chrono::steady_clock::now() < deadline, "pre-existing monitors must have three time buckets within 8s");
+        Require(std::chrono::steady_clock::now() < deadline, "pre-existing monitors must have two valid curve samples within 8s");
         Sleep(20);
     }
     Write(package / L"main.lua", R"(
@@ -177,12 +183,14 @@ return widget.define({setup=function()
         local h=data.subscribe(topic,{maxAgeMs=1000})
         local points,reason=h:history()
         assert(not reason and #points>=3 and #points<=61,"existing history unavailable: "..tostring(reason))
-        local previous=0
+        local previous,valid=0,0
         for _,p in ipairs(points) do
             assert(p.timestamp>previous and p.ageMs>=0 and p.ageMs<=60000,"invalid history time")
             assert(p.value==nil or (p.value>=0 and p.value<math.huge),"invalid history value")
+            if p.value~=nil and (topic=="system.cpu" or p.secondary~=nil) then valid=valid+1 end
             previous=p.timestamp
         end
+        assert(valid>=2,"cached history must contain enough values to draw immediately")
         h:unsubscribe()
         local empty,closed=h:history()
         assert(#empty==0 and closed=="unsubscribed","released handle leaked history")
@@ -195,7 +203,9 @@ end,render=function() end})
         "slug":"focus-contract","version":"1.0.1","entry":"main.lua",
         "name":"History Contract","permissions":[],"optionalPermissions":["system.performance.read","system.network.read"],
         "requiredFeatures":["data.subscribe","data.system.cpu","data.system.network.traffic","data.subscription.history"]})");
-    Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error),
+    // This private fixture intentionally adds optional permissions to its old
+    // focus-only version. Approve that known expansion without changing policy.
+    Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), error, false, true),
         "install actual history subscription fixture");
     Require(WidgetEngine::SetWidgetPermissionDecision(L"57aeb6ac-104b-43fb-af95-10d7ce082f56",
         snowdesktop::widget::PermissionDecisionState::Granted,
