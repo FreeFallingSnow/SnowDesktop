@@ -48,16 +48,20 @@ void LogDockWindowActivation(HWND target, const wchar_t* phase,
         ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
     WINDOWPLACEMENT placement{sizeof(placement)};
     const BOOL placementKnown = GetWindowPlacement(target, &placement);
+    DWORD cloaked = 0;
+    const HRESULT cloakResult = DwmGetWindowAttribute(
+        target, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
     wchar_t message[768]{};
     swprintf_s(message,
         L"DockActivation tick=%llu phase=%ls target=%p pid=%lu tid=%lu "
         L"foreground=%p foregroundPid=%lu foregroundTid=%lu "
         L"iconic=%d visible=%d hung=%d placementKnown=%d placement=%u flags=%u "
-        L"show=%d accepted=%d error=%lu",
+        L"cloaked=%lu cloakResult=0x%08X show=%d accepted=%d error=%lu",
         GetTickCount64(), phase, target, process, thread,
         foreground, foregroundProcess, foregroundThread,
         IsIconic(target), IsWindowVisible(target), IsHungAppWindow(target),
-        placementKnown, placement.showCmd, placement.flags, showCommand, accepted, error);
+        placementKnown, placement.showCmd, placement.flags, cloaked,
+        static_cast<unsigned>(cloakResult), showCommand, accepted, error);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Debug);
 }
 
@@ -1582,16 +1586,19 @@ void DesktopApp::HandleDockWindowRestoreTransition(
             // Only submit the maximized/normal restore here. The transition
             // restores the cloaked source before its visual timeline starts,
             // letting the application finish its native restore underneath the
-            // animation. This remains asynchronous and submits no second restore.
-            const DockWindowActivationOutcome outcome =
-                RequestDockWindowActivation(target, true);
+            // animation. Foreground retries belong to the exposed-window
+            // handoff: running them here can activate a still-cloaked source.
+            CancelAllDockWindowActivationObservations();
+            LogDockWindowActivation(target, L"animation-restore-request");
+            RequestDockWindowShow(target, true);
             UpdateDockWindowActivationState(
-                target, outcome.restored,
-                outcome.foreground);
+                target, IsIconic(target) == FALSE, false);
         }
         return;
     }
 
+    LogDockWindowActivation(target, L"animation-source-exposed");
+    BeginDockWindowActivationObservation(target, IsIconic(target) != FALSE);
     const DockWindowActivationOutcome outcome =
         ActivateDockWindowAfterShow(target, true);
     UpdateDockWindowActivationState(
