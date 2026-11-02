@@ -13,7 +13,7 @@ function M.new(d)
         if not self.song or self.request or self.disposed then return end
         if not self.enabled then self.deferred=step;return end
         if not d.permission() then self.state="network_permission";return end
-        local headers={Accept="application/json",["User-Agent"]="SnowDesktopLyrics/1.1.11 (+https://github.com/FreeFallingSnow/SnowDesktop)"}
+        local headers={Accept="application/json",["User-Agent"]="SnowDesktopLyrics/1.1.12 (+https://github.com/FreeFallingSnow/SnowDesktop)"}
         for key,value in pairs(step.headers or {}) do headers[key]=value end
         local ok,id=pcall(d.start,{url=step.url,method=step.method or "GET",body=step.body,
             timeoutMs=5000,cacheSeconds=3600,maxBytes=1048576,headers=headers})

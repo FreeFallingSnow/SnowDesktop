@@ -12,7 +12,7 @@
   "nameKey": "lua_widget.desktop_lyrics.name",
   "description": "Read-only lyrics synchronized to Windows SMTC, on a transparent background.",
   "descriptionKey": "lua_widget.desktop_lyrics.description",
-  "version": "1.1.11",
+  "version": "1.1.12",
   "locales": {
     "en-US": {
       "lua_widget.desktop_lyrics.offset": "Extra lyric delay (ms)",

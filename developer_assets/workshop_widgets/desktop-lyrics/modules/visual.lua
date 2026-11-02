@@ -67,6 +67,10 @@ function M.render(_context,m,canvas)
     local secondary=(translate and m.client.hasTranslation) or (roman and m.client.hasRomanization)
     local p=plan.metrics(w,h,row,number("textScale",100),number("lineSpacing",175),secondary)
     local dynamicMode=storage.get("lyricMode")=="dynamic"
+    if dynamicMode then
+        p.padding=math.min(p.padding,h*0.08,w*0.04);p.width=math.max(1,w-p.padding*2)
+        p.font=math.min(p.font,p.width/2.35,math.max(1,h-p.padding*2)/(secondary and 4.2 or 3.2))
+    end
     local function get(index)return geometry(m,index,p.font,p.width,translate,roman,estimate,dynamicMode)end
     local now=time.monotonic();local media=clock.position(m.clock,now)-number("offset",0)-(m.client.offset or 0)
     local index=clock.index(lines,media);local target=math.max(1,index)
