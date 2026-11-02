@@ -98,6 +98,9 @@ struct NativeMenuSelection
 class NativeMenuSession
 {
 public:
+    // Optional owning-STA preparation, with no target menu query. Returns true
+    // only once the bounded worker has finished registration/provider loading.
+    static bool PrepareWorker(const Request&);
     NativeMenuSession(const Request&, POINT, HWND owner, NativeMenuSelection selection = {}, DWORD timeoutMs = 8000);
     ~NativeMenuSession();
     NativeMenuSession(const NativeMenuSession&) = delete;

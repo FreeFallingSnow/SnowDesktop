@@ -560,6 +560,10 @@ UINT DesktopApp::ShowModernMenu(
             return kContextMoreCommand;
     }
 
+    const UINT moreState = GetMenuState(rootMenu, kContextMoreCommand, MF_BYCOMMAND);
+    if (shellRequest && moreState != static_cast<UINT>(-1) && !(moreState & (MF_DISABLED | MF_GRAYED)))
+        snowdesktop::shell_extensions::NativeMenuSession::PrepareWorker(*shellRequest);
+
     std::vector<snowdesktop::modern_menu::Item> items =
         BuildModernMenuItems(rootMenu);
     snowdesktop::background_menu_order::Apply(rootMenu, items,

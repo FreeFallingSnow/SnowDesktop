@@ -2137,6 +2137,7 @@ struct NativeMenuSession::Impl
     unsigned uses = 0;
     DWORD timeout = 8000;
     bool showing = false, invoked = false, reusable = false, delivered = false;
+    bool preparationOnly = false, preparationReady = false, preparationFailed = false;
     ~Impl()
     {
         channel.Close();
@@ -2148,6 +2149,33 @@ struct NativeMenuSession::Impl
     }
 };
 thread_local std::unique_ptr<NativeMenuSession::Impl> NativeMenuSession::Impl::idle;
+bool NativeMenuSession::PrepareWorker(const Request& request)
+{
+    try
+    {
+        const auto notifications = SharedRegistryNotifications();
+        std::uint64_t revision = 0;
+        { std::lock_guard lock(notifications->mutex); revision = notifications->Poll(); }
+        if (Impl::idle && Impl::idle->process->Running() && Impl::idle->registryRevision == revision &&
+            GetTickCount64() - Impl::idle->born < kWorkerLifetimeMs && !Impl::idle->preparationFailed &&
+            (!Impl::idle->preparationOnly || Impl::idle->preparationReady ||
+                GetTickCount64() - Impl::idle->started < Impl::idle->timeout))
+            return !Impl::idle->preparationOnly || Impl::idle->preparationReady;
+        Impl::idle.reset();
+        auto worker = std::make_unique<Impl>();
+        worker->registryRevision = revision;
+        worker->preparationOnly = true;
+        worker->channel.Bind<void, bool>("menu.native-prepared", [p = worker.get()](bool ready) {
+            p->preparationReady = ready; p->preparationFailed = !ready;
+            MenuTrace("native_preparation", ready ? "ready" : "failed", double(GetTickCount64() - p->started));
+        });
+        worker->process->Start(worker->channel, L"--shell-menu-helper");
+        worker->channel.Notify("menu.native-prepare", ShellMenuRequest(request));
+        Impl::idle = std::move(worker);
+    }
+    catch (...) { /* Optional preparation cannot prevent the custom menu. */ }
+    return false;
+}
 NativeMenuSelection NativeMenuSelection::Capture(IShellFolder* folder, UINT count, PCUITEMID_CHILD_ARRAY children)
 {
     if (!folder || !children || !count || count > 256) throw settings_ipc::ProtocolError("invalid native selection");
@@ -2175,7 +2203,8 @@ NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND o
     std::uint64_t revision = 0;
     { std::lock_guard lock(notifications->mutex); revision = notifications->Poll(); }
     if (Impl::idle && Impl::idle->process->Running() && Impl::idle->registryRevision == revision &&
-        GetTickCount64() - Impl::idle->born < kWorkerLifetimeMs && Impl::idle->uses < kMaximumWarmQueries)
+        GetTickCount64() - Impl::idle->born < kWorkerLifetimeMs && Impl::idle->uses < kMaximumWarmQueries &&
+        !Impl::idle->preparationFailed && (!Impl::idle->preparationOnly || Impl::idle->preparationReady))
         impl_ = std::move(Impl::idle);
     else { Impl::idle.reset(); impl_ = std::make_unique<Impl>(); }
     impl_->started = GetTickCount64();
@@ -2183,6 +2212,7 @@ NativeMenuSession::NativeMenuSession(const Request& request, POINT point, HWND o
     ++impl_->uses;
     impl_->showing = impl_->invoked = impl_->reusable = impl_->delivered = false;
     impl_->result.reset();
+    impl_->preparationOnly = false;
     impl_->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
     impl_->channel.Bind<void>("menu.native-showing", [p = impl_.get()] {
         p->showing = true;
@@ -2250,6 +2280,17 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         channel.SetDisconnected([&] {
             if (!invocationQueued)
                 PostQuitMessage(0);
+        });
+        channel.Bind<void, Request>("menu.native-prepare", [&](Request request) {
+            if (actualQueryReceived || invocationQueued || preparationReceived) return;
+            preparationReceived = true;
+            channel.Post([&, request = std::move(request)] {
+                bool ready = false;
+                try { host.NativePackages(); host.providers.Load(request); ready = true; }
+                catch (...) { /* The real request uses its supervised cold path. */ }
+                lastQuery = GetTickCount64();
+                channel.Notify("menu.native-prepared", ready);
+            });
         });
         channel.Bind<void, Request, NativeMenuSelection, LONG, LONG, std::uint64_t, DWORD, DWORD, std::uint64_t>("menu.native",
             [&](Request request, NativeMenuSelection selection, LONG x, LONG y, std::uint64_t owner, DWORD ownerProcess, DWORD ownerThread, std::uint64_t foreground) {
