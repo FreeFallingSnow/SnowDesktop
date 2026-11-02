@@ -967,13 +967,11 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi, bool reuseThumbna
     for (size_t index = 0; index < cardRects_.size(); ++index)
     {
         const RECT& card = cardRects_[index];
-        const int bottomInset = index < toolbarButtons.size() && toolbarButtons[index]
-            ? ScaleForDpi(dock_preview_toolbar::kBarRegionHeight, dpi) : contentPadding;
         thumbnailRects_.push_back({
             card.left + contentPadding,
             card.top + titleHeight,
             card.right - contentPadding,
-            std::max(card.top + titleHeight + 1, card.bottom - bottomInset)
+            std::max(card.top + titleHeight + 1, card.bottom - contentPadding)
         });
     }
 }
@@ -999,6 +997,21 @@ void DockWindowPreview::RegisterThumbnails()
         DwmQueryThumbnailSourceSize(thumbnail, &sourceSize);
         RECT destination = FitThumbnailRect(
             thumbnailRects_[index], sourceSize);
+        RECT source{0, 0, sourceSize.cx, sourceSize.cy};
+        bool visible = true;
+        if (index < toolbars_.size() && snowdesktop::thumbnail_toolbar::VisibleCount(toolbars_[index]))
+        {
+            // Keep the same image scale as the ordinary preview. The bar
+            // covers its bottom portion; do not shrink the whole image into
+            // the remaining height (which would also narrow the picture).
+            const LONG bottom = std::min(destination.bottom, cardRects_[index].bottom -
+                ScaleForDpi(dock_preview_toolbar::kBarRegionHeight, dpi_));
+            const LONG height = destination.bottom - destination.top;
+            visible = bottom > destination.top;
+            if (visible && height > 0 && sourceSize.cy > 0)
+                source.bottom = std::max(1, MulDiv(sourceSize.cy, bottom - destination.top, height));
+            destination.bottom = std::max(destination.top + 1, bottom);
+        }
         OffsetRect(&destination, -cardRects_[index].left, -cardRects_[index].top);
         DWM_THUMBNAIL_PROPERTIES properties{};
         properties.dwFlags =
@@ -1007,8 +1020,13 @@ void DockWindowPreview::RegisterThumbnails()
             DWM_TNP_OPACITY |
             DWM_TNP_SOURCECLIENTAREAONLY;
         properties.rcDestination = destination;
+        if (sourceSize.cx > 0 && sourceSize.cy > 0)
+        {
+            properties.dwFlags |= DWM_TNP_RECTSOURCE;
+            properties.rcSource = source;
+        }
         properties.opacity = 255;
-        properties.fVisible = TRUE;
+        properties.fVisible = visible ? TRUE : FALSE;
         properties.fSourceClientAreaOnly = FALSE;
         if (FAILED(DwmUpdateThumbnailProperties(
                 thumbnail, &properties)))
@@ -2036,7 +2054,8 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
             preview->InvalidatePopups();
         }
         const int index = preview->CardIndexAtPoint(point);
-        if (index < 0 || static_cast<size_t>(index) >= preview->thumbnailRects_.size() ||
+        if (index < 0 || preview->ToolbarRegionAtPoint(point) >= 0 ||
+            static_cast<size_t>(index) >= preview->thumbnailRects_.size() ||
             !PtInRect(&preview->thumbnailRects_[index], point) ||
             !preview->windowPeek_.Active() ||
             preview->windowPeek_.Target() != preview->items_[index].window)
