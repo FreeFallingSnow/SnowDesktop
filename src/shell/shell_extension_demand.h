@@ -4,12 +4,6 @@
 
 namespace snowdesktop::shell_extensions
 {
-struct DemandPlan
-{
-    std::vector<Request> sources;
-    bool full = true;
-};
-
 // Catalogue evidence names the COM source; captions and application names are
 // never routing keys. Ambiguous or unobserved commands keep the aggregate path.
 inline const Registration *DemandSource(const Catalogue &catalogue, const Catalogue &observed,
@@ -96,17 +90,20 @@ inline std::wstring DemandSourceKey(const Registration &source, const Request &r
     return {};
 }
 
-inline DemandPlan PlanDemandQueries(const Catalogue &catalogue, const Catalogue &observed,
+inline std::vector<Request> UnmappedMenuSources(const Catalogue &catalogue, const Catalogue &observed,
                                     const Preferences &prefs, const Request &request, unsigned contexts)
 {
-    DemandPlan plan;
+    std::vector<Request> queries;
     if ((!catalogue.revision && catalogue.rows.empty()) || !contexts || request.paths.empty() || !request.sourceClsid.empty() ||
-        request.startPinOnly || request.originalShortcutOnly || request.extended) return plan;
+        request.startPinOnly || request.originalShortcutOnly || request.extended) return queries;
     if (!request.background && std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
         const auto target = std::filesystem::path(path).lexically_normal();
         return !target.is_absolute() || !target.has_relative_path();
-    })) return plan; // Drives and virtual namespace objects retain Shell class selection.
-    plan.full = false;
+    })) return queries; // Drives and virtual namespace objects retain Shell class selection.
+    std::set<const Registration*> mapped;
+    for (const auto& item : observed.rows)
+        if (item.id == item.display.provider)
+            if (const auto* source = DemandSource(catalogue, observed, item.id, contexts)) mapped.insert(source);
     std::set<std::string> wanted;
     for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
         for (const auto &id : EffectiveShownIds(prefs, static_cast<Context>(i))) wanted.insert(id);
@@ -118,18 +115,22 @@ inline DemandPlan PlanDemandQueries(const Catalogue &catalogue, const Catalogue 
         if (!visible) continue;
         if (StateVisibilityId(id) == "state:start-pin" && !request.background && request.paths.size() == 1) continue;
         const auto *source = StatePairForId(id) ? nullptr : DemandSource(catalogue, observed, id, contexts);
-        if (source && source->id == id && !Applies(*source, request)) continue;
-        const auto key = source ? DemandSourceKey(*source, request, contexts) : std::wstring{};
-        if (key.empty()) { plan.full = true; continue; }
+        if (!source) continue;
+        if (source->id == id && !Applies(*source, request)) continue;
+        // Known command identities are matched against the aggregate in memory.
+        // Only an extension with no recorded command ownership needs a probe.
+        if (mapped.contains(source)) continue;
+        const auto key = DemandSourceKey(*source, request, contexts);
+        if (key.empty()) continue;
         auto query = request;
         query.catalogueOnly = false;
         query.omitNvidiaCompatibility = false;
         query.sourceClsid.assign(source->verbs.front().begin(), source->verbs.front().end());
         query.sourceKey = key;
         query.visibleMenuProviders.reset();
-        if (std::find(plan.sources.begin(), plan.sources.end(), query) == plan.sources.end())
-            plan.sources.push_back(std::move(query));
+        if (std::find(queries.begin(), queries.end(), query) == queries.end())
+            queries.push_back(std::move(query));
     }
-    return plan;
+    return queries;
 }
 }
