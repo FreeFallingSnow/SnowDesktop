@@ -1720,6 +1720,9 @@ private:
         if (BeginPreviewGrid("local-preview-gallery", gallery.size() + 1))
         {
             ImGui::TableNextColumn(); ImGui::PushID("primary");
+            // Tables inherit the preceding cell's final button baseline. Give
+            // every card the same first-line height and baseline before text.
+            ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(T("主预览", "Primary preview"));
             if (coverCount) RenderPreviewCardImage(images, 0);
             else ImGui::Dummy(ImVec2(1, 172.0f * gDpiScale));
@@ -1730,6 +1733,7 @@ private:
             for (std::size_t index = 0; index < gallery.size(); ++index)
             {
                 ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(index));
+                ImGui::AlignTextToFramePadding();
                 ImGui::Text("%zu / %zu", index + 1, gallery.size());
                 RenderPreviewCardImage(images, index + coverCount);
                 auto candidate = project; candidate.previewGallery = gallery;
@@ -2822,6 +2826,7 @@ private:
         if (BeginPreviewGrid("remote-preview-gallery", expected.additionalPreviews.size() + draft.additions.size() + 1))
         {
             ImGui::TableNextColumn(); ImGui::PushID("primary");
+            ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(T("主预览", "Primary preview"));
             if (primaryCount) RenderPreviewCardImage(images, 0);
             else ImGui::Dummy(ImVec2(1, 172.0f * gDpiScale));
@@ -2834,6 +2839,7 @@ private:
             {
                 ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(index));
                 const auto& image = expected.additionalPreviews[index];
+                ImGui::AlignTextToFramePadding();
                 ImGui::Text("%zu / %zu", index + 1, expected.additionalPreviews.size());
                 if (image.type == 0)
                 {
@@ -2869,6 +2875,7 @@ private:
             for (std::size_t index = 0; index < draft.additions.size() && additionsBegin + index < images.size(); ++index)
             {
                 ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(expected.additionalPreviews.size() + index));
+                ImGui::AlignTextToFramePadding();
                 ImGui::Text("+%zu", index + 1);
                 RenderPreviewCardImage(images, additionsBegin + index);
                 ImGui::BeginDisabled(!editable);
