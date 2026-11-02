@@ -111,6 +111,7 @@ if (BUILD_TESTING)
         widget_storage_transaction
         SOURCES
             tests/widget_storage_transaction_tests.cpp
+            src/widget/settings/widget_setting_rules.cpp
             src/widget/storage/widget_storage_transaction.cpp
             src/widget/storage/widget_storage_value.cpp
         INCLUDE_DIRECTORIES src

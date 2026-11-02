@@ -3347,6 +3347,32 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
 交付对应宿主，再发布组件，或像上例保留可运行的降级路径。
 
+## 添加预设（`widget.creationPresets`）
+
+清单的 `creationPresets` 注册可在“添加组件”预览中切换的内容预设。它与
+`settings.presets` 外观主题分开，不向主题菜单添加项目，也不改变材质或前景。
+必须在 `requiredFeatures` 中声明 `widget.creationPresets`；API/schema 保持 v2。
+不支持该能力的旧宿主或同版本早期构建会拒绝加载，不能仅凭版本号判断支持情况。
+
+```json
+"creationPresets": [
+  {"id":"cpu", "title":"CPU", "titleKey":"monitor.cpu", "values":{"metric":"cpu"}},
+  {"id":"gpu", "title":"GPU", "titleKey":"monitor.gpu", "values":{"metric":"gpu"}}
+]
+```
+
+支持 1–32 个预设，`id` 在清单内唯一，仅使用字母、数字、`-`、`_`，最多 64 字节。
+`title` 为必填回退文字，`titleKey` 按组件本地化目录翻译。每项 `values` 包含
+1–64 个以字符串编码的普通设置值；键最多 128 字节，值最多 16 KiB，总量最多 64 KiB。
+普通 `select`、文本、布尔、整数等设置使用各自原有的字符串编码。密码、文件系统句柄、
+实体引用、宿主外观键、typed range 和 multiSelect 不属于此通道。
+
+宿主在隔离预览中按组件实际设置 schema 校验值，点击添加后重新按当前声明校验，
+再以普通设置事务保存到新实例。校验或保存失败时不创建带错误预设的桌面对象。
+`previewData.storage` 及尺寸方案的示例存储保持隔离，不会随添加写入。未声明
+`creationPresets` 的组件继续使用原有的尺寸预览和默认添加行为。
+社区包要求此能力前，应先发布支持它的宿主，再发布组件。
+
 ## 清单 v2 最小要求
 
 ```json

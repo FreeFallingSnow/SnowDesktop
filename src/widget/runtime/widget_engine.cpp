@@ -32297,6 +32297,21 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             }
         }
     }
+    if (const auto* presets = root.Find("creationPresets"); presets && presets->IsArray())
+    {
+        for (const auto& item : presets->array)
+        {
+            if (!item.IsObject() || manifest.creationPresets.size() >= 32) continue;
+            snowdesktop::widget::CreationPreset preset;
+            readString(item, "id", preset.id);
+            readString(item, "title", preset.title);
+            readString(item, "titleKey", preset.titleKey);
+            if (const auto* values = item.Find("values"); values && values->IsObject())
+                for (const auto& [key, value] : values->object)
+                    if (value.IsString()) preset.values[key] = value.string;
+            manifest.creationPresets.push_back(std::move(preset));
+        }
+    }
     readString(root, "entry", manifest.entry);
     readString(root, "signature", manifest.signature);
     manifest.permissions = readStringArray(root, "permissions");
@@ -32569,6 +32584,10 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                     manifest, localizationKey, value->second);
         }
     }
+
+    for (auto& preset : manifest.creationPresets)
+        if (!preset.titleKey.empty()) preset.title = TranslateManifest(
+            manifest, preset.titleKey, preset.title);
 
     if (manifest.permissions.empty())
         manifest.permissions = {};

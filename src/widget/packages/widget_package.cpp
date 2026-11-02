@@ -563,8 +563,19 @@ std::string ManifestJson(const PackageManifest& manifest)
         appendStringMap(out, variant.storageKeys);
         out << "}}";
     }
-    out << "]},\n"
-        << "  \"defaultSize\": {\"columns\": " << manifest.defaultColumns
+    out << "]},\n  \"creationPresets\": [";
+    for (std::size_t i = 0; i < manifest.creationPresets.size(); ++i)
+    {
+        if (i) out << ", ";
+        const auto& preset = manifest.creationPresets[i];
+        out << "{\"id\": \"" << JsonEscape(preset.id)
+            << "\", \"title\": \"" << JsonEscape(preset.title)
+            << "\", \"titleKey\": \"" << JsonEscape(preset.titleKey)
+            << "\", \"values\": {";
+        appendStringMap(out, preset.values);
+        out << "}}";
+    }
+    out << "],\n  \"defaultSize\": {\"columns\": " << manifest.defaultColumns
         << ", \"rows\": " << manifest.defaultRows << "},\n"
         << "  \"minSize\": {\"columns\": " << manifest.minColumns
         << ", \"rows\": " << manifest.minRows << "},\n"
@@ -951,6 +962,8 @@ PackageManifest LocalizedManifest(PackageManifest manifest,
         };
         translate(manifest.previewIntroductionKey,
             manifest.previewIntroduction);
+        for (auto& preset : manifest.creationPresets)
+            translate(preset.titleKey, preset.title);
         for (auto& helper : manifest.nativeHelpers)
         {
             translate(helper.purposeKey, helper.purpose);
@@ -1696,6 +1709,56 @@ bool WidgetPackageValidator::ReadManifest(
             }
         }
     }
+    if (const JsonValue* presets = root.Find("creationPresets"))
+    {
+        if (!presets->IsArray() || presets->array.size() > 32)
+            report.Add(ValidationSeverity::Error, "manifest.creationPresets",
+                manifestPath, "creationPresets must be an array of at most 32 entries");
+        else
+        {
+            std::set<std::string> ids;
+            for (const auto& item : presets->array)
+            {
+                CreationPreset preset;
+                ReadString(item, "id", preset.id);
+                ReadString(item, "title", preset.title);
+                ReadString(item, "titleKey", preset.titleKey);
+                if (!item.IsObject() || preset.id.empty() || preset.id.size() > 64 ||
+                    !std::all_of(preset.id.begin(), preset.id.end(), [](unsigned char ch) {
+                        return std::isalnum(ch) || ch == '-' || ch == '_'; }) ||
+                    !ids.insert(preset.id).second || preset.title.empty())
+                {
+                    report.Add(ValidationSeverity::Error, "manifest.creationPreset",
+                        manifestPath, "creation presets require a unique ASCII id and fallback title");
+                    continue;
+                }
+                const auto* values = item.Find("values");
+                if (!values || !values->IsObject() || values->object.empty() || values->object.size() > 64)
+                {
+                    report.Add(ValidationSeverity::Error, "manifest.creationPresetValues",
+                        manifestPath, "creation preset values must contain 1 to 64 ordinary setting strings");
+                    continue;
+                }
+                std::size_t bytes = 0;
+                for (const auto& [key, value] : values->object)
+                {
+                    if (key.empty() || key.size() > 128 || key.find('\0') != std::string::npos || key.starts_with("__") ||
+                        !value.IsString() || value.string.size() > 16 * 1024)
+                    {
+                        report.Add(ValidationSeverity::Error, "manifest.creationPresetValue",
+                            manifestPath, "creation presets accept only ordinary setting names and string values");
+                        continue;
+                    }
+                    bytes += key.size() + value.string.size();
+                    preset.values[key] = value.string;
+                }
+                if (bytes > 64 * 1024)
+                    report.Add(ValidationSeverity::Error, "manifest.creationPresetQuota",
+                        manifestPath, "creation preset values exceed 64 KiB");
+                manifest.creationPresets.push_back(std::move(preset));
+            }
+        }
+    }
     ReadInteger(root, "refreshIntervalMs", manifest.refreshIntervalMs);
     ReadSize(root, "defaultSize", manifest.defaultColumns, manifest.defaultRows);
     ReadSize(root, "minSize", manifest.minColumns, manifest.minRows);
@@ -1708,6 +1771,11 @@ bool WidgetPackageValidator::ReadManifest(
         ReadStringArray(root, "networkDomains", arraysValid);
     manifest.requiredFeatures =
         ReadStringArray(root, "requiredFeatures", arraysValid);
+    if (!manifest.creationPresets.empty() &&
+        std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+            "widget.creationPresets") == manifest.requiredFeatures.end())
+        report.Add(ValidationSeverity::Error, "manifest.creationPresetFeature",
+            manifestPath, "creationPresets require widget.creationPresets");
     manifest.optionalFeatures =
         ReadStringArray(root, "optionalFeatures", arraysValid);
     {

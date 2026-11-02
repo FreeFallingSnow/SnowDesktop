@@ -328,6 +328,15 @@ queries, write storage or rebuild invariant data on every frame.
   the add-component preview. Its `storage` remains isolated preview data and
   is never copied into a new instance, so do not use it to imply a persistent
   mode or setting that the added component will not receive.
+- Register initial content modes in manifest `creationPresets`, not in
+  `settings.presets` (which are appearance themes). Require
+  `widget.creationPresets`. Each preset has a stable `id`, an English `title`,
+  optional `titleKey`, and `values` containing ordinary string-backed settings.
+  The picker shows each preset and initializes the added instance with the
+  selected values after validating them against its actual settings schema.
+  At most 32 content presets are supported. Secrets, opaque references,
+  host-owned appearance keys and typed range/multi-select settings are excluded.
+  Existing preview-only `storage` is never copied into the new instance.
 - Keep explicit default, preview and finite boundary dimensions from 1 through
   8. Omit `minSize` to use the host's 1 × 1 default. Omit `maxSize`, or use a
   schema-permitted maximum dimension of `0`, when the widget has no functional

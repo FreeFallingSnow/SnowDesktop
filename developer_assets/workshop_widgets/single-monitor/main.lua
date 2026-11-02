@@ -7,7 +7,7 @@ local function copy()
         memory=l10n.tr("monitor.memory"), vram=l10n.tr("monitor.vram"),
         battery=l10n.tr("monitor.battery"), disk=l10n.tr("monitor.disk"), network=l10n.tr("monitor.network"),
         choose=l10n.tr("monitor.choose"), device=l10n.tr("monitor.device"), automatic=l10n.tr("monitor.automatic"),
-        settings=l10n.tr("monitor.settings"), history=l10n.tr("monitor.history"),
+        history=l10n.tr("monitor.history"),
         used=l10n.tr("monitor.used"), available=l10n.tr("monitor.available"),
         dedicated=l10n.tr("monitor.dedicated"), gpu_load=l10n.tr("monitor.gpu_load"),
         charging=l10n.tr("monitor.charging"), charged=l10n.tr("monitor.charged"),
@@ -21,11 +21,31 @@ local function copy()
     }
 end
 
+local function byteParts(value)
+    local formatted=l10n.formatBytes(value,{base=1024,maximumFractionDigits=1})
+    local amount,unit=formatted:match("^(.-)"..utf8.char(0x202F).."(.+)$")
+    return amount or formatted,unit or ""
+end
+local function capacity(used,total,reference)
+    local divisor=1
+    while total/divisor>=1024 do divisor=divisor*1024 end
+    local _,unit=byteParts(total)
+    local options={maximumFractionDigits=1,minimumFractionDigits=reference and 1 or 0}
+    local left=l10n.formatNumber((reference and total or used)/divisor,options)
+    local right=l10n.formatNumber(total/divisor,options)
+    if reference then left=left:gsub("%d","8");right=right:gsub("%d","8") end
+    return left.." / "..right.." "..unit
+end
 local format = {
     percent=function(value) return l10n.formatNumber(value,{maximumFractionDigits=0}).."%" end,
-    capacity=function(used,total)
-        return l10n.formatBytes(used,{base=1024,maximumFractionDigits=1}).." / "..
-            l10n.formatBytes(total,{base=1024,maximumFractionDigits=1})
+    capacity=function(used,total) return capacity(used,total,false) end,
+    capacityReference=function(total) return capacity(total,total,true) end,
+    rateParts=function(value)
+        local amount,unit=byteParts(value)
+        return amount,unit.."/s"
+    end,
+    rateReference=function()
+        return l10n.formatNumber(1023.9,{minimumFractionDigits=1,maximumFractionDigits=1}):gsub("%d","8")
     end,
     rate=function(value) return l10n.formatBytes(value,{base=1024,maximumFractionDigits=1}).."/s" end,
 }
@@ -135,9 +155,6 @@ local function popover(_context,m)
             fontSize=r*0.46,style={foreground="textPrimary",cornerRadius=r*0.16},
             action={id="device.open"},accessibility={label=c.device}})
     end
-    children[#children+1]=view.button({key="settings.open",label=c.settings,height=r,width="fill",
-        fontSize=r*0.46,style={foreground="textPrimary",cornerRadius=r*0.16},
-        action={id="settings.open"},accessibility={label=c.settings}})
     return view.column({key="selector.root",width="fill",height="fill",padding=r*0.32,gap=r*0.13,children=children})
 end
 local function panel(_context,m)
@@ -188,8 +205,9 @@ local function event(context,m,value)
     elseif value.kind=="action" then
         if value.id=="selector.open" then
             local r=ui.metrics().layoutRowHeight
+            local rows=(m.mode=="gpu" or m.mode=="vram" or m.mode=="disk") and 8 or 7
             widget.openPopover({anchorKey="monitor.selector",width=math.ceil(r*10),
-                height=math.ceil(r*11),placement="bottomStart"})
+                height=math.ceil(r*(rows*1.13+0.8)),placement="bottomStart"})
         elseif value.id:sub(1,5)=="mode." then chooseMode(m,value.id:sub(6))
         elseif value.id=="device.open" then
             widget.closePopover();widget.openPanel({title=copy().device,width=440,height=360})
@@ -198,22 +216,18 @@ local function event(context,m,value)
         elseif value.id:sub(1,12)=="device.menu." and m.menuTargets[value.id]~=nil then
             local target=m.menuTargets[value.id]
             if target.mode==m.mode then chooseDevice(m,target.id) end
-        elseif value.id=="settings.open" then widget.closePopover();widget.openSettings() end
+        end
         if context.preview then previewHistory(m) end
     end
 end
 
 local c=copy()
 local labels={c.cpu,c.gpu,c.memory,c.vram,c.battery,c.disk,c.network}
-local presets={}
-for i,mode in ipairs(metrics.order) do
-    presets[#presets+1]={id=mode,label=labels[i],default=mode=="cpu",values={metric=mode}}
-end
 return widget.define({
     name=c.name,useCustomStyle=true,followPersonalizationDefault=true,
     bg=0x142234,border=0xDFEBFF,alpha=0.34,borderAlpha=0.18,gradientEndA=0.28,
     settings={fields={{key="metric",label=c.choose,type="select",default="cpu",
-        options=metrics.order,optionLabels=labels}},presets=presets},
+        options=metrics.order,optionLabels=labels}}},
     setup=setup,render=render,popover=popover,panel=panel,menu=menu,event=event,
     dispose=function(_context,m)
         if m.handle then m.handle:unsubscribe() end

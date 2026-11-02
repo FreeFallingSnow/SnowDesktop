@@ -20,20 +20,42 @@ function M.palette()
     }
 end
 
-local function measure(text, size, bold)
-    return draw.measureText(text, size, nil, bold)
+local function measure(text, size, bold, width)
+    return draw.measureText(text, size, width, bold)
 end
 
--- Fit the complete numeric value. Labels use the host's single-line ellipsis.
-function M.text(x, y, value, size, color, width, bold, align, fit)
-    local metric = measure(value, size, bold)
-    if fit and metric.width > width then
-        size = size * width / metric.width
-        metric = measure(value, size, bold)
+local function bounds(metric)
+    return metric.ink or { left = 0, top = 0, width = metric.width, height = metric.height }
+end
+
+-- Numeric fonts depend on a stable reference, never on the current reading.
+local function font(reference, size, width, height, bold, wrap)
+    for _ = 1, 3 do
+        local metric = measure(reference, size, bold, wrap and width or nil)
+        local ink = bounds(metric)
+        local factor = math.min(1, width * 0.98 / math.max(metric.width, ink.width),
+            height * 0.98 / math.max(ink.height, size * 0.2))
+        if factor >= 0.999 then break end
+        size = size * factor
     end
-    local offset = align == "center" and math.max(0, (width - metric.width) / 2) or
-        (align == "end" and math.max(0, width - metric.width) or 0)
-    draw.text(x + offset, y, value, size, color, width - offset, bold, true, size * 1.5)
+    return size
+end
+
+local function text(x, y, width, height, value, size, color, bold, align, wrap)
+    local metric = measure(value, size, bold, wrap and width or nil)
+    local ink = bounds(metric)
+    local left = align == "center" and (width - ink.width) / 2 or
+        (align == "end" and width - ink.width or 0)
+    local ox, oy = x + left - ink.left, y + (height - ink.height) / 2 - ink.top
+    -- Measurement and drawing share one line box; leave rounding room without
+    -- invoking DirectWrite's end ellipsis on values that already fit.
+    draw.text(ox, oy, value, size, color, wrap and width or math.max(width, metric.width + size * 0.12),
+        bold, not wrap, math.max(metric.height + size * 0.15, height + size * 0.15))
+end
+
+local function label(x, y, width, height, value, size, color, align, bold, wrap)
+    local fitted = font(value, size, width, height, bold, wrap)
+    text(x, y, width, height, value, fitted, color, bold, align, wrap)
 end
 
 local function path(points, color, thickness, alpha)
@@ -118,121 +140,188 @@ local function capacityTrack(x, y, width, height, percent, color, palette, radiu
 end
 
 function M.render(mode, reading, values, now, c, format)
-    local w, h = layout.contentWidth(), layout.contentHeight()
-    local s = math.min(w, h)
-    local pad, p = s * 0.065, M.palette()
-    local titleHeight = s * 0.14
-    M.icon(mode, pad, pad + s * 0.018, s * 0.070, p.text)
-    local titleX, titleWidth = pad + s * 0.105, w * 0.50 - pad - s * 0.105
-    M.text(titleX, pad, c[mode], s * 0.077, p.text, titleWidth, true)
-    local measured = measure(c[mode], s * 0.077, true).width
-    local arrowX = titleX + math.min(titleWidth, measured) + s * 0.025
-    path({ { arrowX, pad + s * 0.045 }, { arrowX + s * 0.016, pad + s * 0.061 },
-        { arrowX + s * 0.032, pad + s * 0.045 } }, p.sub, s * 0.005)
-    local source = reading.source or c[mode .. "_source"] or ""
-    M.text(w * 0.56, pad + s * 0.009, source, s * 0.047, p.sub, w * 0.44 - pad, false, "end")
-    if interaction.isHovered("monitor.selector") then
-        draw.line(titleX, pad + s * 0.105, math.min(w * 0.52, arrowX + s * 0.04),
-            pad + s * 0.105, s * 0.004, p.sub, 0.6)
+    local w,h=layout.contentWidth(),layout.contentHeight()
+    local s=math.min(w,h*0.8)
+    local t=math.min(w*1.35,h*0.89)
+    local pad,p=s*0.065,M.palette()
+    local x,bw=pad,w-pad*2
+    local wide=w/h>=1.6
+    local ringMode=mode=="gpu" or mode=="disk"
+    local ringWide=wide and ringMode and reading.status=="ready"
+    local headerWidth=ringWide and bw*0.48 or bw
+    local titleH,sourceH=t*0.105,t*0.075
+    local titleX=x+t*0.102
+    local titleWidth=headerWidth-t*0.155
+    local titleFont=font(c[mode],t*0.074,titleWidth,titleH,true)
+    local titleInk=bounds(measure(c[mode],titleFont,true))
+    M.icon(mode,x,pad+(titleH-t*0.065)/2,t*0.065,p.text)
+    text(titleX,pad,titleWidth,titleH,c[mode],titleFont,p.text,true)
+    local arrowX=titleX+titleInk.width+t*0.025
+    local arrowY=pad+titleH*0.5
+    path({{arrowX,arrowY-t*0.008},{arrowX+t*0.014,arrowY+t*0.007},
+        {arrowX+t*0.028,arrowY-t*0.008}},p.sub,t*0.005)
+    local sourceY=pad+t*0.132
+    local source=reading.source or c[mode.."_source"] or ""
+    if source~="" then
+        draw.marqueeText({key="monitor.source",x=x,y=sourceY,width=headerWidth,height=sourceH,
+            text=source,size=t*0.049,color=p.sub,speed=t*0.12,gap=t*0.10})
     end
-    local x, y, bw, bh = pad, pad + titleHeight, w - pad * 2, h - pad * 2 - titleHeight
-    if reading.status ~= "ready" then
-        M.text(x, y + bh * 0.15, "—", s * 0.27, p.sub, bw, true, "center")
-        M.text(x, y + bh * 0.64, c[reading.status] or c.unavailable, s * 0.055, p.sub, bw, false, "center", true)
+    local headerBottom=sourceY+sourceH+t*0.045
+    if interaction.isHovered("monitor.selector") then
+        draw.line(titleX,pad+titleH,arrowX+t*0.028,pad+titleH,s*0.004,p.sub,0.6)
+    end
+    local y=headerBottom
+    local bh=h-pad-y-t*0.065
+    local function percentage(px,py,pw,ph,size,align)
+        local fixed=font("100%",size,pw,ph,true)
+        text(px,py,pw,ph,format.percent(reading.percent),fixed,p.text,true,align)
+    end
+    local function capacityLabel(px,py,pw,ph,align)
+        local fixed=font(format.capacityReference(reading.total),t*0.065,pw,ph,false)
+        text(px,py,pw,ph,format.capacity(reading.used,reading.total),fixed,p.sub,false,align)
+    end
+    if reading.status~="ready" then
+        local groupH=math.min(bh,t*0.60)
+        local gy=y+(bh-groupH)/2
+        label(x,gy,bw,groupH*0.48,"—",t*0.25,p.sub,"center",true)
+        label(x,gy+groupH*0.56,bw,groupH*0.44,c[reading.status] or c.unavailable,
+            t*0.059,p.sub,"center",false,true)
+    elseif ringMode then
+        local stroke=s*0.061
+        local radius,cx,cy,fx,fy,fw,fh
+        if ringWide then
+            radius=math.min((h-pad*2-stroke)*0.48,bw*0.22)
+            cx,cy=x+bw*0.76,h/2
+            fx,fy,fw,fh=x,h*0.63,headerWidth,h*0.24-pad
+        else
+            local captionH,gap=t*0.10,s*0.06
+            radius=math.min((bw-stroke)*0.47,(bh-captionH-gap-stroke)/2)
+            local groupH=radius*2+stroke+gap+captionH
+            local top=y+(bh-groupH)/2
+            cx,cy=x+bw/2,top+radius+stroke/2
+            fx,fy,fw,fh=x,top+radius*2+stroke+gap,bw,captionH
+        end
+        draw.arc(cx,cy,radius,-90,360,stroke,p.track,p.trackAlpha)
+        if reading.percent>0 then draw.arc(cx,cy,radius,-90,reading.percent*3.6,stroke,p[mode]) end
+        local inner=radius-stroke/2-s*0.01
+        -- This rectangle lies inside the inner circle. Center visible glyph
+        -- bounds rather than the font's asymmetric line box.
+        percentage(cx-inner*0.90,cy-inner*0.40,inner*1.80,inner*0.80,inner*0.95,"center")
+        if mode=="disk" then capacityLabel(fx,fy,fw,fh,"center")
+        else label(fx,fy,fw,fh,c.gpu_load,t*0.06,p.sub,"center") end
+    elseif mode=="network" then
+        local stacked=bw/bh<0.85
+        local gap=stacked and s*0.12 or s*0.075
+        local cellW=stacked and bw or (bw-gap)/2
+        local cellH=stacked and math.min((bh-gap)/2,bw*1.10) or bh
+        local top=stacked and y+(bh-cellH*2-gap)/2 or y
+        local maximum=1
+        for _,entry in ipairs(values) do maximum=math.max(maximum,entry.download or 0,entry.upload or 0) end
+        local reference=format.rateReference()
+        local valueFont=font(reference,t*0.18,cellW,cellH*0.25,true)
+        local nameFont=math.min(font("↓ "..c.download,t*0.052,cellW,cellH*0.13,false),
+            font("↑ "..c.upload,t*0.052,cellW,cellH*0.13,false))
+        local unitFont=font("MiB/s",t*0.048,cellW,cellH*0.13,false)
+        for i,field in ipairs({"download","upload"}) do
+            local nx=x+(stacked and 0 or (i-1)*(cellW+gap))
+            local ny=top+(stacked and (i-1)*(cellH+gap) or 0)
+            local color=i==1 and p.network or p.upload
+            text(nx,ny,cellW,cellH*0.13,(i==1 and "↓ " or "↑ ")..c[field],nameFont,color)
+            local amount,unit=format.rateParts(reading[field])
+            text(nx,ny+cellH*0.17,cellW,cellH*0.25,amount,valueFont,p.text,true)
+            text(nx,ny+cellH*0.43,cellW,cellH*0.13,unit,unitFont,p.sub)
+            history(values,field,now,nx,ny+cellH*0.64,cellW-s*0.012,cellH*0.35,
+                maximum,color,s,p)
+        end
     else
-        local color = p[mode]
-        if mode == "battery" and reading.percent <= 20 and not reading.charging then color = p.danger end
-        local wide = w / h > 1.65
-        local mainSize = s * 0.27
-        if mode == "gpu" or mode == "disk" then
-            local radius = math.min(bw * 0.35, bh * 0.33)
-            local cx, cy = x + bw / 2, y + bh * 0.43
-            draw.arc(cx, cy, radius, -90, 360, s * 0.073, p.track, p.trackAlpha)
-            if reading.percent > 0 then draw.arc(cx, cy, radius, -90,
-                reading.percent * 3.6, s * 0.073, color) end
-            M.text(cx - radius * 0.90, cy - s * 0.125, format.percent(reading.percent),
-                s * 0.22, p.text, radius * 1.8, true, "center", true)
-            local footer = mode == "disk" and format.capacity(reading.used, reading.total) or c.gpu_load
-            M.text(x, y + bh * 0.84, footer, s * 0.060, p.sub, bw, false, "center", true)
-        elseif mode == "network" then
-            local gap, column = s * 0.065, (bw - s * 0.065) / 2
-            local graphY, graphH = y + bh * 0.43, bh * 0.39
-            local maximum = 1
-            for _, entry in ipairs(values) do maximum = math.max(maximum, entry.download or 0, entry.upload or 0) end
-            for i, field in ipairs({ "download", "upload" }) do
-                local nx = x + (i - 1) * (column + gap)
-                local netColor = i == 1 and color or p.upload
-                M.text(nx, y + bh * 0.04, (i == 1 and "↓ " or "↑ ") .. format.rate(reading[field]),
-                    s * 0.117, p.text, column, true, nil, true)
-                history(values, field, now, nx, graphY, column - s * 0.012, graphH,
-                    maximum, netColor, s, p)
-                M.text(nx, y + bh * 0.87, c[field], s * 0.050, p.sub, column, false, "center")
+        local color=p[mode]
+        if mode=="battery" and reading.percent<=20 and not reading.charging then color=p.danger end
+        local px,py,pw,ph,gx,gy,gw,gh,captionY,captionH,detailY,detailH
+        if wide then
+            pw,ph=bw*0.43,bh*0.61
+            px,py=x,y+bh*0.04
+            detailY,detailH=py+ph+bh*0.05,bh*0.19
+            gx,gw=x+bw*0.48,bw*0.52
+            captionH=bh*0.19
+            captionY=y+bh-captionH
+            if mode=="cpu" then gy,gh=y+bh*0.06,bh*0.65
+            else
+                gh=mode=="battery" and math.min(s*0.20,bh*0.40) or
+                    math.min(mode=="vram" and s*0.14 or s*0.09,bh*0.35)
+                gy=y+(bh-captionH-gh-s*0.04)/2
             end
         else
-            local mainWidth = wide and bw * 0.43 or bw
-            local mainY = wide and y + bh * 0.12 or y
-            M.text(x, mainY, format.percent(reading.percent), mainSize, p.text, mainWidth, true, nil, true)
-            local gx = wide and x + bw * 0.48 or x
-            local gy = wide and y + bh * 0.18 or y + bh * 0.50
-            local gw = wide and bw * 0.52 or bw
-            if mode == "cpu" then
-                local gh = wide and bh * 0.59 or bh * 0.33
-                history(values, "value", now, gx, gy, gw - s * 0.11, gh, 100, color, s, p)
-                M.text(gx + gw - s * 0.10, gy - s * 0.019, "100%", s * 0.038, p.sub, s * 0.11)
-                M.text(gx + gw - s * 0.10, gy + gh - s * 0.025, "0%", s * 0.038, p.sub, s * 0.11)
-                M.text(gx, y + bh * 0.88, c.history, s * 0.049, p.sub, gw)
-            elseif mode == "battery" then
-                local batteryY = gy + bh * 0.01
-                local batteryH, batteryW = math.min(s * 0.20, bh * 0.24), gw * 0.92
-                draw.strokeRect(gx, batteryY, batteryW, batteryH, p.sub, batteryH * 0.16, s * 0.008)
-                draw.rect(gx + batteryW + s * 0.014, batteryY + batteryH * 0.29,
-                    gw * 0.035, batteryH * 0.42, p.sub, s * 0.006)
-                local inset = s * 0.018
-                capacityTrack(gx + inset, batteryY + inset, batteryW - inset * 2,
-                    batteryH - inset * 2, reading.percent, color, p, batteryH * 0.09)
-                if reading.charging then
-                    local cx = gx + batteryW * 0.52
-                    local cy = batteryY + batteryH / 2
-                    path({ { cx + s * 0.015, cy - s * 0.055 }, { cx - s * 0.018, cy },
-                        { cx + s * 0.018, cy }, { cx - s * 0.015, cy + s * 0.055 } }, p.text, s * 0.012)
-                end
-                local status = reading.charging and c.charging or
-                    (reading.acPower and (reading.percent >= 99 and c.charged or c.plugged_in) or
-                    (reading.saver and c.saver or c.on_battery))
-                M.text(gx, y + bh * 0.88, status, s * 0.052, p.sub, gw, false, nil, true)
+            local u=math.min(bw,bh/0.98)
+            local bodyH=mode=="cpu" and u*0.87 or
+                (mode=="battery" and u*0.85 or (mode=="vram" and u*0.93 or u*0.84))
+            local top=y+(bh-bodyH)/2
+            px,py,pw,ph=x,top,bw,u*0.29
+            detailY,detailH=top+u*0.33,u*0.11
+            gx,gw=x,bw
+            if mode=="cpu" then gy,gh=top+u*0.41,u*0.32
+            elseif mode=="battery" then gy,gh=top+u*0.45,u*0.20
+            else gy,gh=top+u*0.57,mode=="vram" and u*0.14 or u*0.09 end
+            captionY,captionH=top+bodyH-u*0.10,u*0.10
+        end
+        percentage(px,py,pw,ph,t*0.28)
+        if mode=="memory" or mode=="vram" then capacityLabel(px,detailY,pw,detailH) end
+        if mode=="cpu" then
+            local legendW=s*0.12
+            history(values,"value",now,gx,gy,gw-legendW,gh,100,color,s,p)
+            label(gx+gw-legendW+s*0.015,gy-s*0.025,legendW-s*0.015,s*0.05,
+                "100%",t*0.038,p.sub)
+            label(gx+gw-legendW+s*0.015,gy+gh-s*0.025,legendW-s*0.015,s*0.05,
+                "0%",t*0.038,p.sub)
+            label(gx,captionY,gw,captionH,c.history,t*0.05,p.sub)
+        elseif mode=="battery" then
+            local batteryW=gw*0.92
+            local stroke=s*0.007
+            draw.strokeRect(gx,gy,batteryW,gh,p.sub,gh*0.16,stroke)
+            draw.rect(gx+batteryW+s*0.014,gy+gh*0.29,gw*0.035,gh*0.42,p.sub,s*0.006)
+            local inset=math.min(s*0.017,gh*0.16)
+            capacityTrack(gx+inset,gy+inset,batteryW-inset*2,gh-inset*2,reading.percent,color,p,gh*0.09)
+            if reading.charging then
+                local cx,cy=gx+batteryW*0.52,gy+gh/2
+                path({{cx+gh*0.09,cy-gh*0.29},{cx-gh*0.10,cy},
+                    {cx+gh*0.10,cy},{cx-gh*0.09,cy+gh*0.29}},p.text,s*0.009)
+            end
+            local status=reading.charging and c.charging or
+                (reading.acPower and (reading.percent>=99 and c.charged or c.plugged_in) or
+                (reading.saver and c.saver or c.on_battery))
+            -- All power states share a fixed font as charge and AC state change.
+            local fixed=t*0.052
+            for _,candidate in ipairs({c.charging,c.charged,c.plugged_in,c.saver,c.on_battery}) do
+                fixed=math.min(fixed,font(candidate,t*0.052,gw,captionH,false))
+            end
+            text(gx,captionY,gw,captionH,status,fixed,p.sub)
+        else
+            capacityTrack(gx,gy,gw,gh,reading.percent,color,p,mode=="vram" and s*0.017 or gh/2)
+            if mode=="vram" then
+                for i=1,3 do draw.line(gx+gw*i/4,gy+gh+s*0.012,gx+gw*i/4,
+                    gy+gh+s*0.025,s*0.004,p.sub,0.6) end
+                label(gx,captionY,gw,captionH,c.dedicated,t*0.05,p.sub)
             else
-                local detailY = wide and mainY + mainSize * 1.34 or y + bh * 0.35
-                M.text(x, detailY, format.capacity(reading.used, reading.total), s * 0.068,
-                    p.sub, mainWidth, false, nil, true)
-                local trackY = wide and gy + bh * 0.17 or y + bh * 0.62
-                local trackH = mode == "vram" and s * 0.14 or s * 0.085
-                capacityTrack(gx, trackY, gw, trackH, reading.percent, color, p,
-                    mode == "vram" and s * 0.018 or trackH / 2)
-                if mode == "vram" then
-                    for i = 1, 3 do draw.line(gx + gw * i / 4, trackY + trackH + s * 0.012,
-                        gx + gw * i / 4, trackY + trackH + s * 0.025, s * 0.004, p.sub, 0.6) end
-                    M.text(gx, y + bh * 0.88, c.dedicated, s * 0.050, p.sub, gw)
-                else
-                    M.text(gx, y + bh * 0.88, c.used, s * 0.050, p.sub, gw / 2)
-                    M.text(gx + gw / 2, y + bh * 0.88, c.available, s * 0.050, p.sub, gw / 2, false, "end")
-                end
+                local fixed=math.min(font(c.used,t*0.05,gw*0.46,captionH,false),
+                    font(c.available,t*0.05,gw*0.46,captionH,false))
+                text(gx,captionY,gw*0.46,captionH,c.used,fixed,p.sub)
+                text(gx+gw*0.54,captionY,gw*0.46,captionH,c.available,fixed,p.sub,false,"end")
             end
         end
-        if reading.stale then
-            draw.circle(w - pad * 0.62, pad * 0.55, s * 0.012, p.warning)
-            M.text(x, h - s * 0.055, c.stale, s * 0.038, p.warning, bw, false, "end")
-        end
     end
-    interaction.region({ key = "monitor.body", shape = { type = "rect", x = 0, y = 0, width = w, height = h },
-        events = { contextMenu = { id = "monitor.menu", scope = "component" } },
-        accessibility = { role = "group", label = c[mode] .. ": " ..
-            (reading.status == "ready" and (mode == "network" and
-                (c.download .. " " .. format.rate(reading.download) .. ", " .. c.upload .. " " .. format.rate(reading.upload)) or
-                format.percent(reading.percent)) or (c[reading.status] or c.unavailable)) } })
-    interaction.region({ key = "monitor.selector", shape = { type = "rect", x = pad, y = pad * 0.6,
-        width = w * 0.52 - pad, height = titleHeight }, cursor = "hand",
-        events = { click = { id = "selector.open" }, contextMenu = { id = "monitor.menu", scope = "component" } },
-        accessibility = { role = "button", label = c.choose } })
+    if reading.stale then
+        draw.circle(w-pad*0.62,pad*0.55,s*0.012,p.warning)
+        label(x,h-pad-t*0.045,bw,t*0.045,c.stale,t*0.036,p.warning,"end")
+    end
+    interaction.region({key="monitor.body",shape={type="rect",x=0,y=0,width=w,height=h},
+        events={contextMenu={id="monitor.menu",scope="component"}},
+        accessibility={role="group",label=c[mode]..": "..
+            (reading.status=="ready" and (mode=="network" and
+                (c.download.." "..format.rate(reading.download)..", "..c.upload.." "..format.rate(reading.upload)) or
+                format.percent(reading.percent)) or (c[reading.status] or c.unavailable))}})
+    interaction.region({key="monitor.selector",shape={type="rect",x=pad,y=pad*0.5,
+        width=headerWidth,height=headerBottom-pad*0.5},cursor="hand",
+        events={click={id="selector.open"},contextMenu={id="monitor.menu",scope="component"}},
+        accessibility={role="button",label=c.choose}})
 end
 
 return M

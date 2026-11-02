@@ -201,6 +201,7 @@ struct LuaWidgetManifest
     /// Maps preview storage names to keys in the manifest locale catalogs.
     std::unordered_map<std::string, std::string> previewStorageKeys;
     std::vector<snowdesktop::widget::PreviewVariant> previewVariants;
+    std::vector<snowdesktop::widget::CreationPreset> creationPresets;
     std::string entry;
     std::string signature;
     bool signatureValid = true;

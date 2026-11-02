@@ -87,6 +87,15 @@ struct PreviewVariant
     std::unordered_map<std::string, std::string> storageKeys;
 };
 
+/** Ordinary initial settings selected in the component picker, never a theme. */
+struct CreationPreset
+{
+    std::string id;
+    std::string title;
+    std::string titleKey;
+    std::unordered_map<std::string, std::string> values;
+};
+
 struct NativeHelper
 {
     std::string id, path, sha256;
@@ -117,6 +126,7 @@ struct PackageManifest
     std::unordered_map<std::string, std::string> previewStorage;
     std::unordered_map<std::string, std::string> previewStorageKeys;
     std::vector<PreviewVariant> previewVariants;
+    std::vector<CreationPreset> creationPresets;
     int defaultColumns = 1;
     int defaultRows = 1;
     int minColumns = 1;

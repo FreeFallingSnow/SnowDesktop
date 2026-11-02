@@ -8,7 +8,7 @@
   "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Single Monitor",
   "nameKey": "monitor.name",
   "description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
@@ -27,7 +27,6 @@
       "monitor.choose": "显示信息",
       "monitor.device": "选择设备",
       "monitor.automatic": "自动选择",
-      "monitor.settings": "组件设置",
       "monitor.history": "最近 60 秒",
       "monitor.used": "已用",
       "monitor.available": "可用",
@@ -51,7 +50,7 @@
       "monitor.physical": "物理内存",
       "monitor.this_device": "本机",
       "monitor.aggregate": "系统汇总",
-      "monitor.preview_intro": "添加后点击标题或右键切换显示信息。可在组件设置中选择七种预设。"
+      "monitor.preview_intro": "在预览中选择信息预设，添加后也可点击标题或右键切换。"
     },
     "zh-TW": {
       "monitor.name": "單項系統監控",
@@ -66,7 +65,6 @@
       "monitor.choose": "顯示資訊",
       "monitor.device": "選擇裝置",
       "monitor.automatic": "自動選擇",
-      "monitor.settings": "元件設定",
       "monitor.history": "最近 60 秒",
       "monitor.used": "已用",
       "monitor.available": "可用",
@@ -90,7 +88,7 @@
       "monitor.physical": "實體記憶體",
       "monitor.this_device": "本機",
       "monitor.aggregate": "系統總計",
-      "monitor.preview_intro": "加入後點擊標題或按右鍵切換顯示資訊。可在元件設定中選擇七種預設。"
+      "monitor.preview_intro": "在預覽中選擇資訊預設，加入後也可點擊標題或按右鍵切換。"
     },
     "en-US": {
       "monitor.name": "Single Monitor",
@@ -105,7 +103,6 @@
       "monitor.choose": "Display metric",
       "monitor.device": "Choose device",
       "monitor.automatic": "Automatic",
-      "monitor.settings": "Widget settings",
       "monitor.history": "Last 60 seconds",
       "monitor.used": "Used",
       "monitor.available": "Available",
@@ -129,7 +126,7 @@
       "monitor.physical": "Physical memory",
       "monitor.this_device": "This device",
       "monitor.aggregate": "System total",
-      "monitor.preview_intro": "After adding, click the title or right-click to switch metrics. Seven presets are available in widget settings."
+      "monitor.preview_intro": "Choose a metric preset in the preview. After adding, click the title or right-click to switch."
     },
     "de-DE": {
       "monitor.name": "Einzelmonitor",
@@ -144,7 +141,6 @@
       "monitor.choose": "Angezeigter Wert",
       "monitor.device": "Gerät auswählen",
       "monitor.automatic": "Automatisch",
-      "monitor.settings": "Widget-Einstellungen",
       "monitor.history": "Letzte 60 Sekunden",
       "monitor.used": "Belegt",
       "monitor.available": "Verfügbar",
@@ -168,7 +164,7 @@
       "monitor.physical": "Physischer Speicher",
       "monitor.this_device": "Dieses Gerät",
       "monitor.aggregate": "System gesamt",
-      "monitor.preview_intro": "Nach dem Hinzufügen den Titel anklicken oder per Rechtsklick den Wert wechseln. Sieben Voreinstellungen stehen in den Widget-Einstellungen bereit."
+      "monitor.preview_intro": "In der Vorschau einen Messwert wählen. Nach dem Hinzufügen über den Titel oder per Rechtsklick wechseln."
     },
     "fr-FR": {
       "monitor.name": "Moniteur individuel",
@@ -183,7 +179,6 @@
       "monitor.choose": "Information affichée",
       "monitor.device": "Choisir un appareil",
       "monitor.automatic": "Automatique",
-      "monitor.settings": "Paramètres du widget",
       "monitor.history": "60 dernières secondes",
       "monitor.used": "Utilisé",
       "monitor.available": "Disponible",
@@ -207,7 +202,7 @@
       "monitor.physical": "Mémoire physique",
       "monitor.this_device": "Cet appareil",
       "monitor.aggregate": "Total du système",
-      "monitor.preview_intro": "Après l’ajout, cliquez sur le titre ou faites un clic droit pour changer d’information. Sept préréglages sont proposés dans les paramètres du widget."
+      "monitor.preview_intro": "Choisissez une information dans l’aperçu. Après l’ajout, cliquez sur le titre ou faites un clic droit pour changer."
     },
     "ja-JP": {
       "monitor.name": "単項目システムモニター",
@@ -222,7 +217,6 @@
       "monitor.choose": "表示する情報",
       "monitor.device": "デバイスを選択",
       "monitor.automatic": "自動選択",
-      "monitor.settings": "ウィジェットの設定",
       "monitor.history": "過去60秒",
       "monitor.used": "使用済み",
       "monitor.available": "使用可能",
@@ -246,7 +240,7 @@
       "monitor.physical": "物理メモリ",
       "monitor.this_device": "このデバイス",
       "monitor.aggregate": "システム合計",
-      "monitor.preview_intro": "追加後、タイトルをクリックするか右クリックして表示項目を切り替えます。ウィジェットの設定で7種類のプリセットを選択できます。"
+      "monitor.preview_intro": "プレビューで表示項目を選択します。追加後もタイトルのクリックや右クリックで切り替えられます。"
     },
     "ko-KR": {
       "monitor.name": "단일 시스템 모니터",
@@ -261,7 +255,6 @@
       "monitor.choose": "표시 정보",
       "monitor.device": "장치 선택",
       "monitor.automatic": "자동 선택",
-      "monitor.settings": "위젯 설정",
       "monitor.history": "최근 60초",
       "monitor.used": "사용 중",
       "monitor.available": "사용 가능",
@@ -285,7 +278,7 @@
       "monitor.physical": "물리 메모리",
       "monitor.this_device": "이 장치",
       "monitor.aggregate": "시스템 합계",
-      "monitor.preview_intro": "추가한 후 제목을 클릭하거나 마우스 오른쪽 버튼을 눌러 표시 정보를 전환하세요. 위젯 설정에서 7가지 사전 설정을 선택할 수 있습니다."
+      "monitor.preview_intro": "미리 보기에서 표시할 정보를 선택하세요. 추가한 후에도 제목을 클릭하거나 오른쪽 클릭으로 전환할 수 있습니다."
     },
     "es-ES": {
       "monitor.name": "Monitor individual",
@@ -300,7 +293,6 @@
       "monitor.choose": "Información mostrada",
       "monitor.device": "Elegir dispositivo",
       "monitor.automatic": "Automático",
-      "monitor.settings": "Ajustes del widget",
       "monitor.history": "Últimos 60 segundos",
       "monitor.used": "En uso",
       "monitor.available": "Disponible",
@@ -324,7 +316,7 @@
       "monitor.physical": "Memoria física",
       "monitor.this_device": "Este dispositivo",
       "monitor.aggregate": "Total del sistema",
-      "monitor.preview_intro": "Tras añadirlo, haz clic en el título o usa el botón derecho para cambiar la información. Los ajustes del widget incluyen siete preajustes."
+      "monitor.preview_intro": "Elige la información en la vista previa. Después de añadirlo, haz clic en el título o usa el botón derecho para cambiarla."
     },
     "es-419": {
       "monitor.name": "Monitor individual",
@@ -339,7 +331,6 @@
       "monitor.choose": "Información mostrada",
       "monitor.device": "Elegir dispositivo",
       "monitor.automatic": "Automático",
-      "monitor.settings": "Configuración del widget",
       "monitor.history": "Últimos 60 segundos",
       "monitor.used": "En uso",
       "monitor.available": "Disponible",
@@ -363,7 +354,7 @@
       "monitor.physical": "Memoria física",
       "monitor.this_device": "Este dispositivo",
       "monitor.aggregate": "Total del sistema",
-      "monitor.preview_intro": "Después de agregarlo, haz clic en el título o usa el botón derecho para cambiar la información. La configuración del widget incluye siete preajustes."
+      "monitor.preview_intro": "Elige la información en la vista previa. Después de agregarlo, haz clic en el título o usa el botón derecho para cambiarla."
     },
     "pt-BR": {
       "monitor.name": "Monitor individual",
@@ -378,7 +369,6 @@
       "monitor.choose": "Informação exibida",
       "monitor.device": "Escolher dispositivo",
       "monitor.automatic": "Automático",
-      "monitor.settings": "Configurações do widget",
       "monitor.history": "Últimos 60 segundos",
       "monitor.used": "Em uso",
       "monitor.available": "Disponível",
@@ -402,7 +392,7 @@
       "monitor.physical": "Memória física",
       "monitor.this_device": "Este dispositivo",
       "monitor.aggregate": "Total do sistema",
-      "monitor.preview_intro": "Após adicionar, clique no título ou use o botão direito para alternar as informações. As configurações do widget incluem sete predefinições."
+      "monitor.preview_intro": "Escolha a informação na prévia. Após adicionar, clique no título ou use o botão direito para alternar."
     }
   },
   "defaultSize": {
@@ -410,7 +400,7 @@
     "rows": 2
   },
   "previewData": {
-    "introduction": "After adding, click the title or right-click to switch metrics. Seven presets are available in widget settings.",
+    "introduction": "Choose a metric preset in the preview. After adding, click the title or right-click to switch.",
     "introductionKey": "monitor.preview_intro"
   },
   "resources": {},
@@ -444,7 +434,9 @@
     "view.surface.panel",
     "view.tree.core",
     "view.theme.tokens",
-    "ui.semanticMetrics.rowUnit"
+    "ui.semanticMetrics.rowUnit",
+    "draw.marqueeText",
+    "widget.creationPresets"
   ],
   "optionalFeatures": [
     "data.system.cpu",
@@ -454,7 +446,66 @@
     "data.system.memory",
     "data.system.power",
     "data.system.storage.volumes",
-    "data.system.network.traffic"
+    "data.system.network.traffic",
+    "draw.textInkMetrics"
   ],
-  "preview": "workshop-preview.png"
+  "preview": "workshop-preview.png",
+  "creationPresets": [
+    {
+      "id": "cpu",
+      "title": "CPU",
+      "titleKey": "monitor.cpu",
+      "values": {
+        "metric": "cpu"
+      }
+    },
+    {
+      "id": "gpu",
+      "title": "GPU",
+      "titleKey": "monitor.gpu",
+      "values": {
+        "metric": "gpu"
+      }
+    },
+    {
+      "id": "memory",
+      "title": "Memory",
+      "titleKey": "monitor.memory",
+      "values": {
+        "metric": "memory"
+      }
+    },
+    {
+      "id": "vram",
+      "title": "VRAM",
+      "titleKey": "monitor.vram",
+      "values": {
+        "metric": "vram"
+      }
+    },
+    {
+      "id": "battery",
+      "title": "Battery",
+      "titleKey": "monitor.battery",
+      "values": {
+        "metric": "battery"
+      }
+    },
+    {
+      "id": "disk",
+      "title": "Disk",
+      "titleKey": "monitor.disk",
+      "values": {
+        "metric": "disk"
+      }
+    },
+    {
+      "id": "network",
+      "title": "Network",
+      "titleKey": "monitor.network",
+      "values": {
+        "metric": "network"
+      }
+    }
+  ]
 }

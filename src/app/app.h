@@ -2257,7 +2257,7 @@ private:
         const std::unordered_map<std::string, std::string>& previewStorage,
         int width, int height, UINT dpi,
         const snowdesktop::component_preview::StagePlacement& stage,
-        bool hovered);
+        bool hovered, std::string_view creationPresetId = {});
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
     HMENU CreateDockContextMenu(bool includeStatusBar);

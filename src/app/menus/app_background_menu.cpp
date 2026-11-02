@@ -1,5 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/preview/widget_preset_preview.h"
+#include "widget/settings/widget_engine_settings_backend.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
 #include "sort_menu.h"
@@ -519,7 +521,7 @@ DesktopApp::RenderWidgetMenuPreview(
     const std::unordered_map<std::string, std::string>& previewStorage,
     int width, int height, UINT dpi,
     const snowdesktop::component_preview::StagePlacement& stage,
-    bool hovered)
+    bool hovered, std::string_view creationPresetId)
 {
     using snowdesktop::component_preview::Bitmap;
     Bitmap result;
@@ -574,6 +576,31 @@ DesktopApp::RenderWidgetMenuPreview(
             !previewEngine->EnsureWidgetPreviewLoaded(
                 data->id, data->packageId, previewStorage))
             return {};
+        if (!creationPresetId.empty())
+        {
+            const auto manifest = WidgetEngine::GetWidgetManifest(data->packageId);
+            const auto preset = std::find_if(manifest.creationPresets.begin(),
+                manifest.creationPresets.end(), [&](const auto& candidate) {
+                    return candidate.id == creationPresetId;
+                });
+            if (preset == manifest.creationPresets.end()) return {};
+            auto backend = snowdesktop::widget_runtime::
+                CreateWidgetEngineSettingsBackend(*previewEngine);
+            snowdesktop::widget_runtime::WidgetSettingsService reader(*backend);
+            const auto loaded = reader.Load(data->id);
+            if (!loaded.Succeeded() || !loaded.snapshot) return {};
+            std::vector<snowdesktop::widget_runtime::WidgetSettingOrdinaryWrite> writes;
+            std::unordered_map<std::string, std::string> values;
+            std::string error;
+            if (!snowdesktop::widget_runtime::NormalizeCreationPreset(
+                    *preset, loaded.snapshot->fields, writes, values, error)) return {};
+            auto effective = previewStorage;
+            for (auto& [key, value] : values) effective[key] = std::move(value);
+            reader.CloseAll();
+            previewEngine->UnloadWidget(data->id);
+            if (!previewEngine->EnsureWidgetPreviewLoaded(
+                    data->id, data->packageId, effective)) return {};
+        }
     }
     std::unique_ptr<Widget> widget = CreateWidget(data, this);
     if (!widget) return {};
@@ -989,7 +1016,8 @@ DesktopApp::BuildAddWidgetMenuPreview(
                             child->listMode = settings.listMode;
             }
             return RenderWidgetMenuPreview(
-                scene, rootId, storage, width, height, dpi, stage, hovered);
+                scene, rootId, storage, width, height, dpi, stage, hovered,
+                settings.creationPresetId);
         };
         if (rootData)
         {
@@ -1308,42 +1336,43 @@ DesktopApp::BuildAddWidgetMenuPreview(
     model.introduction = Utf8ToWide(
         manifest.previewIntroduction.empty()
             ? manifest.description : manifest.previewIntroduction);
-    std::vector<snowdesktop::widget::PreviewVariant> variants =
-        manifest.previewVariants;
+    std::vector<snowdesktop::widget::PreviewVariant> variants = manifest.previewVariants;
     if (variants.empty())
     {
         snowdesktop::widget::PreviewVariant variant;
         variant.id = "default";
-        variant.title = WideToUtf8(
-            _LW("app.widget_preview.default_mode"));
+        variant.title = WideToUtf8(_LW("app.widget_preview.default_mode"));
         variant.columns = manifest.defaultColumns;
         variant.rows = manifest.defaultRows;
         variants.push_back(std::move(variant));
     }
-    for (size_t i = 0; i < variants.size() && i < 4; ++i)
+    auto presets = manifest.creationPresets;
+    if (presets.empty()) presets.emplace_back();
+    for (const auto& variant : variants)
     {
-        auto& variant = variants[i];
-        auto scene = makeScene();
-        DesktopWidget root;
-        root.type = DesktopWidgetType::LuaScript;
-        root.packageId = packageId;
-        root.title = model.title;
-        root.gridSpan = {
-            std::clamp(variant.columns, 1, 8),
-            std::clamp(variant.rows, 1, 8) };
-        const std::wstring title = Utf8ToWide(variant.title).empty()
-            ? _LW("app.widget_preview.default_mode")
-            : Utf8ToWide(variant.title);
-        const std::wstring description =
-            Utf8ToWide(variant.description);
-        const std::wstring modeKey = L"lua:" + packageId + L":" +
-            Utf8ToWide(variant.id.empty()
-                ? std::to_string(i) : variant.id);
-        addCard("app.widget_preview.default_mode", nullptr, modeKey,
-            scene, std::move(root), variant.storage);
-        model.cards.back().title = title;
-        model.cards.back().description = description;
+        for (const auto& preset : presets)
+        {
+            auto scene = makeScene();
+            DesktopWidget root;
+            root.type = DesktopWidgetType::LuaScript;
+            root.packageId = packageId;
+            root.title = model.title;
+            root.gridSpan = { std::clamp(variant.columns, 1, 8),
+                std::clamp(variant.rows, 1, 8) };
+            const std::wstring title = !preset.id.empty()
+                ? Utf8ToWide(preset.title)
+                : (variant.title.empty() ? _LW("app.widget_preview.default_mode")
+                                        : Utf8ToWide(variant.title));
+            const std::wstring modeKey = L"lua:" + packageId + L":" +
+                Utf8ToWide(variant.id) + L":" + Utf8ToWide(preset.id);
+            addCard("app.widget_preview.default_mode", nullptr, modeKey,
+                scene, std::move(root), variant.storage);
+            model.cards.back().title = title;
+            model.cards.back().description = Utf8ToWide(variant.description);
+            model.cards.back().applySettings.creationPresetId = preset.id;
+        }
     }
+
     return model;
 }
 

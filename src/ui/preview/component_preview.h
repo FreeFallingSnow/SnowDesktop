@@ -74,6 +74,8 @@ struct ApplySettings
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
+    /// Registered ordinary settings to validate again before creating a Lua instance.
+    std::string creationPresetId;
 };
 
 enum class OptionSetting

@@ -515,6 +515,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_l10n_format.cpp
     src/widget/runtime/widget_time.cpp
     src/widget/preview/widget_preview_context.cpp
+    src/widget/preview/widget_preset_preview.h
     src/widget/data/widget_data_broker.cpp
     src/widget/data/widget_calendar_event_query.cpp
     src/widget/data/widget_calendar_event_query.h

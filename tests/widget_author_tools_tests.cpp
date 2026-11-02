@@ -108,6 +108,51 @@ void TestCatalogueRefreshCache()
 
 // Exercise the exact file-export core used by the settings worker: real ZIP
 // validation, identity changes, and Windows replacement failures, without a UI picker.
+void TestCreationPresetManifest()
+{
+    using namespace snowdesktop::widget;
+    snowdesktop::test::TemporaryDirectory temporary;
+    const auto manifestPath = temporary.path / L"widget.json";
+    const auto write = [&](std::string presets, std::string features) {
+        std::ofstream file(manifestPath, std::ios::binary | std::ios::trunc);
+        file << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23","slug":"preset-test",
+            "version":"1.0.0","entry":"main.lua","name":"Preset Test",
+            "creationPresets":)" << presets << ",\"requiredFeatures\":" << features << "}";
+    };
+    const std::string valid = R"([{"id":"cpu","title":"CPU","values":{"metric":"cpu"}},
+        {"id":"gpu","title":"GPU","values":{"metric":"gpu"}},
+        {"id":"memory","title":"Memory","values":{"metric":"memory"}},
+        {"id":"vram","title":"VRAM","values":{"metric":"vram"}},
+        {"id":"battery","title":"Battery","values":{"metric":"battery"}},
+        {"id":"disk","title":"Disk","values":{"metric":"disk"}},
+        {"id":"network","title":"Network","values":{"metric":"network"}}])";
+    write(valid, R"(["widget.creationPresets"])");
+    PackageManifest manifest;
+    ValidationReport report;
+    Check(WidgetPackageValidator{}.ReadManifest(manifestPath, manifest, report) &&
+        report.Ok() && manifest.creationPresets.size() == 7 &&
+        manifest.creationPresets.back().values.at("metric") == "network",
+        "all seven registered creation presets survive manifest parsing");
+    write(valid, "[]");
+    report = {};
+    Check(!WidgetPackageValidator{}.ReadManifest(manifestPath, manifest, report),
+        "creation presets cannot silently target an unaware host");
+    write(R"([{"id":"cpu","title":"CPU","values":{"__contentTheme":"0"}}])",
+        R"(["widget.creationPresets"])");
+    report = {};
+    Check(!WidgetPackageValidator{}.ReadManifest(manifestPath, manifest, report),
+        "creation presets reject host appearance metadata");
+    write(R"([{"id":"cpu","title":"CPU","values":{"metric":"cpu"}},
+        {"id":"cpu","title":"GPU","values":{"metric":"gpu"}}])",
+        R"(["widget.creationPresets"])");
+    report = {};
+    Check(!WidgetPackageValidator{}.ReadManifest(manifestPath, manifest, report),
+        "duplicate creation preset identities are rejected");
+    Check(snowdesktop::widget_api::SupportsFeature("widget.creationPresets"),
+        "host advertises content creation presets separately from themes");
+}
+
 void TestStandalonePackageExport()
 {
     using namespace snowdesktop::widget;
@@ -215,6 +260,7 @@ int main(int argc, char* argv[])
     TestReviewedPackageInstallation();
     TestCatalogueRefreshCache();
     TestPermissionReport();
+    TestCreationPresetManifest();
     Check(snowdesktop::widget_api::SupportsFeature("widget.confirmRemoval"),
         "host advertises removal confirmation for protected components");
     std::cout << "widget author tools tests passed\n";

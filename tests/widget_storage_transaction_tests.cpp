@@ -2,6 +2,7 @@
 #include "widget/storage/widget_storage_value.h"
 #include "widget/storage/widget_settings_preview.h"
 #include "widget/storage/widget_storage_persistence.h"
+#include "widget/preview/widget_preset_preview.h"
 #include "test_temporary_directory.h"
 
 #include <cstdlib>
@@ -373,6 +374,40 @@ void TestSettingsPreviewCommitIsolation()
 }
 }
 
+void TestCreationPresetSelection()
+{
+    using namespace snowdesktop::widget_runtime;
+    WidgetSettingFieldState field;
+    field.schema.key = "metric";
+    field.schema.rawType = "select";
+    field.schema.options = {{"cpu", "CPU"}, {"gpu", "GPU"}};
+    const std::vector<WidgetSettingFieldState> fields{field};
+    snowdesktop::widget::CreationPreset preset{"gpu", "GPU", {}, {{"metric", "gpu"}}};
+    std::vector<WidgetSettingOrdinaryWrite> writes;
+    std::unordered_map<std::string, std::string> preview;
+    std::string error;
+    Check(NormalizeCreationPreset(preset, fields, writes, preview, error) &&
+        writes.size() == 1 && writes.front().value.string == "gpu" &&
+        preview.size() == 1 && preview.at("metric") == "gpu",
+        "preview and new-instance initialization retain the selected metric without appearance keys");
+    std::string persisted;
+    Check(EncodeLegacyWidgetSettingValue(field.schema, writes.front().value, persisted, error) &&
+        persisted == preview.at("metric"),
+        "the atomic ordinary writer stores the value shown by the preview");
+    preset.values["metric"] = "unknown";
+    Check(!NormalizeCreationPreset(preset, fields, writes, preview, error) &&
+        writes.front().value.string == "gpu" && preview.at("metric") == "gpu",
+        "an invalid or stale creation value leaves the entire previous result unchanged");
+    preset.values = {{"__contentTheme", "0"}};
+    Check(!NormalizeCreationPreset(preset, fields, writes, preview, error),
+        "content initialization cannot become an appearance write");
+    field.schema.key = "secret";
+    field.schema.rawType = "password";
+    preset.values = {{"secret", "plaintext"}};
+    Check(!NormalizeCreationPreset(preset, {field}, writes, preview, error),
+        "creation presets cannot inject secret or opaque values");
+}
+
 int main() try
 {
     TestReadWriteAndRemoval();
@@ -386,6 +421,7 @@ int main() try
     TestTypedStorageValueRoundTrip();
     TestTypedStorageValueRejectsMalformedPayloads();
     TestSettingsPreviewCommitIsolation();
+    TestCreationPresetSelection();
     if (failures != 0)
     {
         std::cerr << failures << " widget storage transaction checks failed\n";

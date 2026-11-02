@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget_package_source_capture.h"
+#include "widget/preview/widget_preset_preview.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
@@ -496,6 +497,8 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     }
     case ApplyKind::LuaScript:
         if (settings.packageId.empty()) return {};
+        if (!settings.creationPresetId.empty() &&
+            (!widgetEngine_ || !widgetSettingsService_ || !widgetSettingsBackend_)) return {};
         widget.type = DesktopWidgetType::LuaScript;
         widget.packageId = settings.packageId;
         CaptureWidgetPackageSource(widget);
@@ -504,7 +507,40 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         widget.bottomBarHover = true;
         if (widgetEngine_)
         {
-            widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId);
+            if (!widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId)) return {};
+            if (!settings.creationPresetId.empty())
+            {
+                const auto manifest = WidgetEngine::GetWidgetManifest(settings.packageId);
+                const auto preset = std::find_if(manifest.creationPresets.begin(),
+                    manifest.creationPresets.end(), [&](const auto& candidate) {
+                        return candidate.id == settings.creationPresetId;
+                    });
+                bool applied = false;
+                if (preset != manifest.creationPresets.end() &&
+                    widgetSettingsService_ && widgetSettingsBackend_)
+                {
+                    const auto loaded = widgetSettingsService_->Load(widget.id);
+                    snowdesktop::widget_runtime::WidgetSettingsBackendDescriptor descriptor;
+                    if (loaded.Succeeded() && loaded.snapshot &&
+                        widgetSettingsBackend_->Describe(widget.id, descriptor).Succeeded())
+                    {
+                        std::vector<snowdesktop::widget_runtime::WidgetSettingOrdinaryWrite> writes;
+                        std::unordered_map<std::string, std::string> previewValues;
+                        std::string error;
+                        if (snowdesktop::widget_runtime::NormalizeCreationPreset(
+                                *preset, loaded.snapshot->fields, writes, previewValues, error))
+                            applied = widgetSettingsBackend_->ApplyOrdinaryTransaction(descriptor,
+                                snowdesktop::widget_runtime::WidgetSettingMutationGuard::FromSnapshot(
+                                    *loaded.snapshot), writes).Succeeded();
+                    }
+                    widgetSettingsService_->Close(widget.id);
+                }
+                if (!applied)
+                {
+                    widgetEngine_->DeleteWidgetInstance(widget.id);
+                    return {};
+                }
+            }
             widget.showTitle = widgetEngine_->ReadBoolFlag(
                 settings.packageId, "showTitle", false);
             widget.bottomBarHover = widgetEngine_->ReadBoolFlag(
