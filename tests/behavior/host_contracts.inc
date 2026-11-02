@@ -302,9 +302,13 @@ void SettingsHostCommit()
         "install isolated runtime-error fixture");
     const std::wstring brokenId = L"64b52de4-173c-4c19-a878-9e2c0c68eb36";
     const auto failed = Access::CreateLuaWidget(*profile.app, brokenId);
+    const auto failureState = engine.GetWidgetHostState(failed, brokenId);
+    const auto failureDetail = engine.RuntimeGetStorageValue(failed, "lastError");
     Require(!failed.empty() &&
-        engine.GetWidgetHostState(failed, brokenId).kind == WidgetHostStateKind::LoadFailed,
-        "ordinary Add retains the recoverable error placeholder for a failed script");
+        widget_runtime::ShowsHostPlaceholder(failureState.kind) &&
+        failureDetail.find("controlled component load failure") != std::string::npos,
+        "ordinary Add retains a recoverable placeholder and the script failure diagnostic: " +
+            failureDetail);
 }
 void GroupTypeContract()
 {
