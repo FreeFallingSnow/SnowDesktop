@@ -29,6 +29,16 @@ inline constexpr int CompanionPanelRadiusDip(Appearance appearance)
     return IsWin10Style(appearance) ? PanelRadiusDip(appearance) : 10;
 }
 
+inline constexpr unsigned BlurPanelAlpha(bool lightTheme)
+{
+    return lightTheme ? 52u : 58u;
+}
+
+inline constexpr unsigned BlurTintAlpha(bool lightTheme)
+{
+    return lightTheme ? 0x48u : 0x50u;
+}
+
 inline constexpr bool IsWindows11OrGreater(
     unsigned long majorVersion, unsigned long buildNumber)
 {
@@ -43,13 +53,21 @@ inline constexpr Appearance DefaultForWindows(
         ? Appearance::FollowSystem : Appearance::Win10FollowSystem;
 }
 
-inline Appearance DefaultForCurrentWindows()
+inline constexpr Appearance LegacyFollowForWindows(
+    unsigned long majorVersion, unsigned long buildNumber)
 {
-    struct WindowsVersion
-    {
-        DWORD major = 0;
-        DWORD build = 0;
-    };
+    return IsWindows11OrGreater(majorVersion, buildNumber)
+        ? Appearance::FollowSystem : Appearance::OpaqueFollowSystem;
+}
+
+struct WindowsVersion
+{
+    DWORD major = 0;
+    DWORD build = 0;
+};
+
+inline WindowsVersion CurrentWindowsVersion()
+{
     static const WindowsVersion current = [] {
         using RtlGetVersionProc = LONG(WINAPI*)(OSVERSIONINFOW*);
         const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -67,7 +85,19 @@ inline Appearance DefaultForCurrentWindows()
         return WindowsVersion{
             version.dwMajorVersion, version.dwBuildNumber };
     }();
-    return DefaultForWindows(current.major, current.build);
+    return current;
+}
+
+inline Appearance DefaultForCurrentWindows()
+{
+    const auto version = CurrentWindowsVersion();
+    return DefaultForWindows(version.major, version.build);
+}
+
+inline Appearance LegacyFollowForCurrentWindows()
+{
+    const auto version = CurrentWindowsVersion();
+    return LegacyFollowForWindows(version.major, version.build);
 }
 
 inline constexpr Appearance ResolveForCurrentWindows(

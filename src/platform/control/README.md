@@ -342,8 +342,11 @@ order: 0 is Win11 opaque following system light/dark (the legacy compatible-foll
 selection), 1/2 are Win11 light/dark, 3/4 are Win11 opaque light/dark, 5/6 are Win10
 light/dark, 7 is Win11 following system light/dark, and 8 is Win10 following system
 light/dark. New profiles default to 8 on Windows 10 and 7 on Windows 11. Existing
-profiles without the field retain 0. Read the advertised enum before writing new
-values to an older host; protocol v1 and Lua API versions are unchanged.
+profiles with an unversioned follow value migrate to 7 on Windows 11 and 0 on
+Windows 10, retaining their previous material. Saved appearance files include
+`contextMenuStyleVersion:1`, so a new explicit opaque-follow choice remains 0
+on reload. Read the advertised enum before writing new values to an older host;
+protocol v1 and Lua API versions are unchanged.
 An internal/retired field or a system-owned projection can be readable while
 remaining read-only. `general.autoStartEnabled` is a Windows-owned projection:
 use `set-auto-start` on `general` or `global`, with `arguments:{enabled:boolean}`.

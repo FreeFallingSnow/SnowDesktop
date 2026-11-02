@@ -515,12 +515,18 @@ bool LoadPersonalization(
         if (ReadDoubleField(text, key, v) && std::isfinite(v)) s.*member = static_cast<float>(v);
     }
     NormalizeWindowPinBorderAppearance(s);
-    // Existing profiles retain the legacy compatible-follow choice when the
-    // field predates persistence; only a new profile uses the OS default.
+    // Unversioned follow used blur on Win11 and opaque compatibility on Win10.
+    // The marker distinguishes that legacy value from a new explicit opaque
+    // follow selection, so later reloads never migrate the user's choice again.
     s.contextMenuStyle = static_cast<int>(snowdesktop::modern_menu::Appearance::OpaqueFollowSystem);
     if (ReadDoubleField(text, "contextMenuStyle", v) && std::isfinite(v))
         s.contextMenuStyle = static_cast<int>(std::clamp(v, 0.0,
             static_cast<double>(snowdesktop::modern_menu::kMaximumAppearance)));
+    const auto* menuStyleVersion = documentParsed ? document.Find("contextMenuStyleVersion") : nullptr;
+    const bool versionedMenuStyle = menuStyleVersion && menuStyleVersion->IsNumber() && menuStyleVersion->number >= 1;
+    if (!versionedMenuStyle && s.contextMenuStyle == 0)
+        s.contextMenuStyle = static_cast<int>(
+            snowdesktop::modern_menu::appearance_rules::LegacyFollowForCurrentWindows());
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     s.widgetTransformCursors = true;
@@ -667,6 +673,7 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"windowPinBorderOpacity\": " << pinAppearance.windowPinBorderOpacity << ",\n";
     file << "  \"contextMenuStyle\": "
          << std::clamp(s.contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance) << ",\n";
+    file << "  \"contextMenuStyleVersion\": 1,\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";

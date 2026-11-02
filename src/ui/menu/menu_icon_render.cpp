@@ -617,11 +617,12 @@ bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
 }
 
 void DrawGlyphLayer(HDC dc, const wchar_t* glyph,
-    const RECT& bounds, COLORREF color, const RECT* clip)
+    const RECT& bounds, COLORREF color, const RECT* clip,
+    bool opticalWeight = true)
 {
     if (!glyph || !*glyph)
         return;
-    if (DrawOpticallyWeightedFluentGlyph(
+    if (opticalWeight && DrawOpticallyWeightedFluentGlyph(
             dc, glyph, bounds, color, clip))
     {
         return;
@@ -766,7 +767,7 @@ void DrawSubmenuArrow(HDC dc, HFONT arrowFont, const RECT& bounds,
         bounds.bottom,
     };
     DrawGlyphLayer(dc, menu_fluent_glyphs::kChevronRight,
-        arrowBounds, color, &bounds);
+        arrowBounds, color, &bounds, false);
     SelectObject(dc, oldFont);
 }
 
@@ -837,6 +838,7 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         metrics.selectionRadius = Scale(2, effectiveDpi);
         metrics.leftPadding = Scale(8, effectiveDpi);
         metrics.iconColumnWidth = Scale(20, effectiveDpi);
+        metrics.submenuArrowFontHeight = Scale(14, effectiveDpi);
         metrics.textGap = Scale(6, effectiveDpi);
         metrics.rightPadding = Scale(8, effectiveDpi);
         // Native menus normally use 9pt (12 DIP); this is also the fallback
@@ -994,9 +996,13 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         SelectObject(dc, oldFont);
 
     if (item.hasSubmenu)
+    {
+        const COLORREF arrowColor = disabled ? palette.disabledText
+            : (palette.lightTheme ? RGB(100, 100, 100) : RGB(187, 187, 187));
         DrawSubmenuArrow(dc,
             submenuArrowFont ? submenuArrowFont : iconFont,
-            bounds, metrics, foreground);
+            bounds, metrics, arrowColor);
+    }
 
     SetTextColor(dc, oldTextColor);
     SetBkMode(dc, oldBackgroundMode);

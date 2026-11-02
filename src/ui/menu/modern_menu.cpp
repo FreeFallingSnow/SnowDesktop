@@ -822,13 +822,6 @@ public:
             }
             RestoreDC(memoryDc, savedRowDc);
         }
-        if (MaxHorizontalScroll(popup) > 0)
-        {
-            if (popup.horizontalScrollOffset > 0)
-                DrawHorizontalScrollIndicator(memoryDc, popup, true);
-            if (popup.horizontalScrollOffset < MaxHorizontalScroll(popup))
-                DrawHorizontalScrollIndicator(memoryDc, popup, false);
-        }
         if (popup.quickSeparatorRect.right >
             popup.quickSeparatorRect.left)
         {
@@ -2902,41 +2895,6 @@ private:
             palette_.separator, lightTheme_ ? RGB(38, 38, 38) : RGB(238, 238, 238));
     }
 
-    void DrawHorizontalScrollIndicator(
-        HDC dc, const Popup& popup, bool left)
-    {
-        RECT track = popup.horizontalScrollRect;
-        OffsetRect(&track, 0, -popup.scrollOffset);
-        const int indicatorWidth = Scale(14, options_.dpi);
-        RECT background = track;
-        if (left)
-            background.right = background.left + indicatorWidth;
-        else
-            background.left = background.right - indicatorWidth;
-        HBRUSH brush = CreateSolidBrush(palette_.background);
-        if (brush)
-        {
-            FillRect(dc, &background, brush);
-            DeleteObject(brush);
-        }
-
-        const int centerX = (background.left + background.right) / 2;
-        const int centerY = (background.top + background.bottom) / 2;
-        const int half = Scale(3, options_.dpi);
-        HPEN pen = CreatePen(PS_SOLID, 1,
-            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
-        if (!pen)
-            return;
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        MoveToEx(dc, centerX + (left ? half / 2 : -half / 2),
-            centerY - half, nullptr);
-        LineTo(dc, centerX + (left ? -half / 2 : half / 2), centerY);
-        LineTo(dc, centerX + (left ? half / 2 : -half / 2),
-            centerY + half);
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
-    }
-
     void ApplyAlphaMask(Popup& popup, std::uint32_t* pixels,
         const RECT& panel)
     {
@@ -2948,8 +2906,8 @@ private:
         // The acrylic backdrop already supplies its own tint.  Keeping the
         // custom surface comparatively translucent lets the blurred desktop
         // remain visible instead of stacking two nearly opaque colour layers.
-        const float blurPanelAlpha = lightTheme_ ? 70.0f : 76.0f;
-        constexpr float blurHoverAlpha = 146.0f;
+        const float blurPanelAlpha = static_cast<float>(appearance_rules::BlurPanelAlpha(lightTheme_));
+        constexpr float blurHoverAlpha = 124.0f;
         constexpr float blurContentAlpha = 246.0f;
         const float shadowAlpha =
             appearance_rules::IsWin10Style(effectiveAppearance_) ? 14.0f : 34.0f;
@@ -2958,6 +2916,19 @@ private:
         const unsigned borderBlue = GetBValue(borderColor);
         const unsigned borderGreen = GetGValue(borderColor);
         const unsigned borderRed = GetRValue(borderColor);
+
+        RECT horizontalTrack = popup.horizontalScrollRect;
+        OffsetRect(&horizontalTrack, 0, -popup.scrollOffset);
+        horizontalTrack.top = std::max(horizontalTrack.top,
+            panel.top + panelPadding_ + popup.scrollTopBand);
+        horizontalTrack.bottom = std::min(horizontalTrack.bottom,
+            panel.bottom - panelPadding_ - popup.scrollBottomBand);
+        const int maximumHorizontalScroll = MaxHorizontalScroll(popup);
+        const bool fadeLeft = popup.horizontalScrollOffset > 0;
+        const bool fadeRight = popup.horizontalScrollOffset < maximumHorizontalScroll;
+        const float fadeWidth = static_cast<float>(std::max(1, std::min(
+            Scale(24, metrics_.dpi),
+            static_cast<int>(horizontalTrack.right - horizontalTrack.left) / 2)));
 
         for (int y = 0; y < popup.windowHeight; ++y)
         {
@@ -3004,6 +2975,27 @@ private:
                 float blue = static_cast<float>(pixel & 0xFFu);
                 float green = static_cast<float>((pixel >> 8) & 0xFFu);
                 float red = static_cast<float>((pixel >> 16) & 0xFFu);
+                if (maximumHorizontalScroll > 0 &&
+                    y >= horizontalTrack.top && y < horizontalTrack.bottom &&
+                    x >= horizontalTrack.left && x < horizontalTrack.right)
+                {
+                    float opacity = 1.0f;
+                    if (fadeLeft)
+                        opacity = std::min(opacity,
+                            (static_cast<float>(x - horizontalTrack.left) + 0.5f) / fadeWidth);
+                    if (fadeRight)
+                        opacity = std::min(opacity,
+                            (static_cast<float>(horizontalTrack.right - x) - 0.5f) / fadeWidth);
+                    opacity = std::clamp(opacity, 0.0f, 1.0f);
+                    const float contentAlpha = surfaceAlpha * opacity;
+                    const float backgroundAlpha = (blurEnabled_ ? blurPanelAlpha : opaquePanelAlpha) * (1.0f - opacity);
+                    surfaceAlpha = contentAlpha + backgroundAlpha;
+                    // Fade the row content into the same material as the rest
+                    // of the panel; acrylic must not gain an opaque edge strip.
+                    blue = (blue * contentAlpha + GetBValue(palette_.background) * backgroundAlpha) / surfaceAlpha;
+                    green = (green * contentAlpha + GetGValue(palette_.background) * backgroundAlpha) / surfaceAlpha;
+                    red = (red * contentAlpha + GetRValue(palette_.background) * backgroundAlpha) / surfaceAlpha;
+                }
                 blue += (static_cast<float>(borderBlue) - blue) *
                     borderCoverage;
                 green += (static_cast<float>(borderGreen) - green) *
@@ -3112,7 +3104,7 @@ private:
             return;
 
         const COLORREF tint = palette_.background;
-        const DWORD tintAlpha = lightTheme_ ? 0x58 : 0x60;
+        const DWORD tintAlpha = appearance_rules::BlurTintAlpha(lightTheme_);
         AccentPolicy accent;
         accent.state = AccentState::AcrylicBlurBehind;
         accent.flags = 2;

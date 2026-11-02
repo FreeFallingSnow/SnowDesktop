@@ -49,6 +49,11 @@ void Settings()
     const auto appearanceFile = profile.root / L"menu-appearance.json";
     PersonalizationSettings menuSettings;
     const int newProfileDefault = static_cast<int>(appearance::DefaultForCurrentWindows());
+    const int legacyFollow = static_cast<int>(appearance::LegacyFollowForCurrentWindows());
+    Require(appearance::LegacyFollowForWindows(10, 19045) == menu::Appearance::OpaqueFollowSystem &&
+        appearance::LegacyFollowForWindows(10, 22000) == menu::Appearance::FollowSystem &&
+        appearance::LegacyFollowForWindows(10, 26100) == menu::Appearance::FollowSystem,
+        "legacy follow retains Win11 blur or Win10 opaque compatibility by Windows version");
     const auto initialFile = profile.root / L"initial-user/SnowDesktop.personalization.json";
     PersonalizationSettings initialSettings;
     Require(!LoadInitialPersonalization(initialFile, initialSettings) &&
@@ -56,17 +61,30 @@ void Settings()
         "unused profile receives the system-specific menu default through native initialization");
     Write(initialFile.parent_path() / L"SnowDesktop.general.json", "{}");
     initialSettings = PersonalizationSettings{};
-    Require(!LoadInitialPersonalization(initialFile, initialSettings) && initialSettings.contextMenuStyle == 0,
-        "older profile with other settings but no appearance file retains compatible-follow");
+    Require(!LoadInitialPersonalization(initialFile, initialSettings) && initialSettings.contextMenuStyle == legacyFollow,
+        "older profile with other settings but no appearance file retains its previous follow material");
     Require(!LoadPersonalization(appearanceFile.c_str(), menuSettings) &&
         menuSettings.contextMenuStyle == 0,
         "missing appearance file preserves the caller's legacy baseline");
     Write(appearanceFile, "{}");
-    Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == 0,
-        "existing profiles without a menu field retain the compatible-follow choice");
+    Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == legacyFollow,
+        "existing profiles without a menu field retain their previous follow material");
+    Write(appearanceFile, "{\"contextMenuStyle\":0}");
+    Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == legacyFollow &&
+        SavePersonalization(appearanceFile.c_str(), menuSettings),
+        "unversioned follow migrates by Windows version and persists the migration");
+    PersonalizationSettings migratedSettings;
+    Require(LoadPersonalization(appearanceFile.c_str(), migratedSettings) && migratedSettings.contextMenuStyle == legacyFollow,
+        "migrated follow remains stable after save and reload");
     for (int storedStyle = 0; storedStyle <= 8; ++storedStyle)
     {
-        Write(appearanceFile, "{\"contextMenuStyle\":" + std::to_string(storedStyle) + "}");
+        if (storedStyle >= 1 && storedStyle <= 6)
+        {
+            Write(appearanceFile, "{\"contextMenuStyle\":" + std::to_string(storedStyle) + "}");
+            Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == storedStyle,
+                "legacy explicit light/dark choices retain their stored style");
+        }
+        Write(appearanceFile, "{\"contextMenuStyleVersion\":1,\"contextMenuStyle\":" + std::to_string(storedStyle) + "}");
         Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) &&
             menuSettings.contextMenuStyle == storedStyle && SavePersonalization(appearanceFile.c_str(), menuSettings),
             "legacy and new menu choices keep their stable stored IDs");
@@ -76,7 +94,7 @@ void Settings()
     }
     Require(appearance::ResolveForCurrentWindows(static_cast<menu::Appearance>(0), true) == menu::Appearance::OpaqueLight &&
         appearance::ResolveForCurrentWindows(static_cast<menu::Appearance>(0), false) == menu::Appearance::OpaqueDark,
-        "legacy compatible-follow migrates to Win11 opaque in both system themes");
+        "new explicit opaque-follow remains opaque in both system themes");
     Require(appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, true) == menu::Appearance::SystemLightBlur &&
         appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, false) == menu::Appearance::SystemDarkBlur &&
         appearance::ResolveForCurrentWindows(menu::Appearance::Win10FollowSystem, true) == menu::Appearance::Win10Light &&

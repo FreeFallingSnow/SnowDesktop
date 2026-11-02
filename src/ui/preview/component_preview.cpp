@@ -1578,9 +1578,14 @@ bool Window::RenderCurrent()
 
     GdiFlush();
     const int radius = Scale(panelRadiusDip_, dpi_);
+    // Opaque companion panels have no DWM outline. Match the menu's visible
+    // one-pixel frame, including its small Win10 rounded corners.
+    if (!blurEnabled_)
+        RoundedOutline(pixels, width_, height_, panel, radius,
+            lightTheme_ ? RGB(215, 215, 215) : RGB(73, 73, 73));
     const unsigned contentAlpha = blurEnabled_ ? 246u : 255u;
     const unsigned materialAlpha = blurEnabled_
-        ? (lightTheme_ ? 70u : 76u)
+        ? modern_menu::appearance_rules::BlurPanelAlpha(lightTheme_)
         : 255u;
     for (int y = 0; y < height_; ++y)
     {
@@ -1731,7 +1736,7 @@ void Window::ApplyWindowAppearance()
     }
     const COLORREF tint =
         menu_icon::ResolvePalette(lightTheme_).background;
-    const DWORD tintAlpha = lightTheme_ ? 0x58 : 0x60;
+    const DWORD tintAlpha = modern_menu::appearance_rules::BlurTintAlpha(lightTheme_);
     AccentPolicy accent;
     accent.state = AccentState::AcrylicBlurBehind;
     accent.flags = 2;

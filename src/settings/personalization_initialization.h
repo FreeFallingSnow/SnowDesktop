@@ -44,7 +44,8 @@ inline bool LoadInitialPersonalization(
             modern_menu::appearance_rules::DefaultForCurrentWindows());
     }
     else if (!appearanceHasUserState)
-        settings.contextMenuStyle = 0; // Legacy compatible-follow migration.
+        settings.contextMenuStyle = static_cast<int>(
+            modern_menu::appearance_rules::LegacyFollowForCurrentWindows());
     return LoadPersonalization(path.c_str(), settings, categorizedTabHeightLoaded);
 }
 }
