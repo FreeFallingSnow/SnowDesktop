@@ -2758,5 +2758,6 @@
   "settings.contextMenu.expandAllExtensions": "展开全部扩展项目",
   "settings.contextMenu.expandAllExtensions.description": "显示当前对象读取到的全部扩展菜单项目，并停用下方的显示设置；关闭后恢复原设置。",
   "app.settings.context_menu_opaque_follow_system": "Win11风格-不透明-深浅跟随",
-  "app.settings.context_menu_win10_follow_system": "Win10风格-深浅跟随"
+  "app.settings.context_menu_win10_follow_system": "Win10风格-深浅跟随",
+  "settings.contextMenu.pinToStart": "固定到开始"
 }

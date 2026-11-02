@@ -501,8 +501,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         // Only explicit category/localization changes reset the list. Polling,
         // refresh and search reconcile identities and preserve surviving rows.
         if (rowCategory != category) { ClearRows(); rowCategory = category; }
+        const auto startPinLabel = L("settings.contextMenu.pinToStart");
         filteredRows = mode == ext::ManagementView::Applications
-            ? ext::ExtensionManagementRows(view.registrations, category, std::wstring(search.Text()))
+            ? ext::ExtensionManagementRows(view.registrations, category, std::wstring(search.Text()), startPinLabel)
             : ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()));
         hasVisibleRows = !filteredRows.empty();
         std::vector<ext::ManagementCard> cards;
@@ -516,7 +517,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             cardOrder.push_back(model.id);
             if (mode == ext::ManagementView::Applications && expandedSoftware.contains(model.id))
             {
-                for (auto& row : ext::ApplicationRegistrationRows(view.registrations, model.rows.front(), category))
+                for (auto& row : ext::ApplicationRegistrationRows(view.registrations, model.rows.front(), category, startPinLabel))
                 { rowGroups[row.id] = model.id; visible.push_back(std::move(row)); }
             }
             else if (mode != ext::ManagementView::Applications)

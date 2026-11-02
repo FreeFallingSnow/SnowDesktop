@@ -2758,5 +2758,6 @@
   "settings.contextMenu.expandAllExtensions": "展開全部擴充項目",
   "settings.contextMenu.expandAllExtensions.description": "顯示目前物件讀取到的全部擴充功能表項目，並停用下方的顯示設定；關閉後恢復原設定。",
   "app.settings.context_menu_opaque_follow_system": "Win11風格-不透明-深淺跟隨",
-  "app.settings.context_menu_win10_follow_system": "Win10風格-深淺跟隨"
+  "app.settings.context_menu_win10_follow_system": "Win10風格-深淺跟隨",
+  "settings.contextMenu.pinToStart": "釘選到開始"
 }

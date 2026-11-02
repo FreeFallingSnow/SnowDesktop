@@ -2758,5 +2758,6 @@
   "settings.contextMenu.expandAllExtensions": "Mostrar todos los elementos de extensiones",
   "settings.contextMenu.expandAllExtensions.description": "Muestra todos los elementos de menú de extensiones leídos para la selección actual y desactiva los ajustes de visualización de abajo. Al desactivarlo, se restauran tus ajustes.",
   "app.settings.context_menu_opaque_follow_system": "Estilo Win11 - Opaco - Seguir claro/oscuro",
-  "app.settings.context_menu_win10_follow_system": "Estilo Win10 - Seguir claro/oscuro"
+  "app.settings.context_menu_win10_follow_system": "Estilo Win10 - Seguir claro/oscuro",
+  "settings.contextMenu.pinToStart": "Anclar a Inicio"
 }

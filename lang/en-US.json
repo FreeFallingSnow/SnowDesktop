@@ -2758,5 +2758,6 @@
   "settings.contextMenu.expandAllExtensions": "Show all extension items",
   "settings.contextMenu.expandAllExtensions.description": "Show every extension menu item read for the current selection and disable the display settings below. Turn off to restore your settings.",
   "app.settings.context_menu_opaque_follow_system": "Win11 Style - Opaque - Follow Light/Dark",
-  "app.settings.context_menu_win10_follow_system": "Win10 Style - Follow Light/Dark"
+  "app.settings.context_menu_win10_follow_system": "Win10 Style - Follow Light/Dark",
+  "settings.contextMenu.pinToStart": "Pin to Start"
 }

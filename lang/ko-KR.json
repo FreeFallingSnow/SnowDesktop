@@ -2758,5 +2758,6 @@
   "settings.contextMenu.expandAllExtensions": "모든 확장 항목 표시",
   "settings.contextMenu.expandAllExtensions.description": "현재 선택 항목에서 읽은 모든 확장 메뉴 항목을 표시하고 아래 표시 설정을 비활성화합니다. 끄면 기존 설정이 복원됩니다.",
   "app.settings.context_menu_opaque_follow_system": "Win11 스타일 - 불투명 - 시스템 테마 따르기",
-  "app.settings.context_menu_win10_follow_system": "Win10 스타일 - 시스템 테마 따르기"
+  "app.settings.context_menu_win10_follow_system": "Win10 스타일 - 시스템 테마 따르기",
+  "settings.contextMenu.pinToStart": "시작 화면에 고정"
 }
