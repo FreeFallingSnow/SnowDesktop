@@ -7,7 +7,8 @@ function M.normal(s)
     return s
 end
 function M.encode(s) return (s:gsub("[^%w%-._~]",function(c)return string.format("%%%02X",c:byte())end)) end
-local versionMarkers={"live","remix","mix","version","ver.","cover","instrumental","karaoke","remaster","edit","伴奏","现场","現場","翻唱","カラオケ"}
+local versionMarkers={"live","remix","mix","version","ver.","cover","instrumental","karaoke","remaster","edit",
+    "伴奏","现场","現場","翻唱","カラオケ"} -- l10n-allow: Original song-version metadata tokens must match verbatim in every UI locale.
 function M.title(s)
     s=type(s)=="string" and s or ""
     local function bracket(inner)
@@ -20,7 +21,7 @@ function M.title(s)
 end
 local function artists(s)
     s=type(s)=="string" and s or ""
-    s=s:gsub("、",","):gsub("与",","):gsub("%s+[Ff][Ee][Aa][Tt]%.?%s+",","):gsub("%s+[Ff][Tt]%.?%s+",",")
+    s=s:gsub("、",","):gsub("与",","):gsub("%s+[Ff][Ee][Aa][Tt]%.?%s+",","):gsub("%s+[Ff][Tt]%.?%s+",",") -- l10n-allow: Original artist metadata separator, independent of the UI locale.
     local result={}
     for token in s:gmatch("[^,/&;]+") do local value=M.normal(token);if value~="" then result[#result+1]=value end end
     return result

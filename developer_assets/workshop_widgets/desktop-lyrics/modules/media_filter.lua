@@ -26,13 +26,13 @@ local browsers={
     {"waterfox",{"waterfox.exe","Waterfox Browser"},{"Waterfox"}},
     {"yandex",{"Yandex Browser","Yandex.Browser","YandexBrowser","browser.exe"},{"Yandex"}},
     {"whale",{"whale.exe","Naver Whale","Whale Browser"},{"Whale"}},
-    {"qq",{"QQBrowser","QQBrowser.exe","QQ浏览器"}},
+    {"qq",{"QQBrowser","QQBrowser.exe","QQ浏览器"}}, -- l10n-allow: Exact browser labels from media metadata, never displayed as component UI text.
     {"360",{"360se","360se.exe","360chrome","360chrome.exe","360ChromeX","360ChromeX.exe",
-        "360 Browser","360安全浏览器","360极速浏览器","360极速浏览器X"}},
-    {"sogou",{"SogouExplorer","SogouExplorer.exe","Sogou Browser","搜狗浏览器","搜狗高速浏览器"}},
-    {"quark",{"Quark Browser","夸克浏览器","quark.exe"},{"Quark"}},
-    {"uc",{"UC Browser","UCBrowser.exe","UC浏览器"}},
-    {"maxthon",{"Maxthon Browser","Maxthon.exe","傲游浏览器","遨游浏览器"},{"Maxthon"}},
+        "360 Browser","360安全浏览器","360极速浏览器","360极速浏览器X"}}, -- l10n-allow: Exact browser labels from media metadata, never displayed as component UI text.
+    {"sogou",{"SogouExplorer","SogouExplorer.exe","Sogou Browser","搜狗浏览器","搜狗高速浏览器"}}, -- l10n-allow: Exact browser labels from media metadata, never displayed as component UI text.
+    {"quark",{"Quark Browser","夸克浏览器","quark.exe"},{"Quark"}}, -- l10n-allow: Exact browser labels from media metadata, never displayed as component UI text.
+    {"uc",{"UC Browser","UCBrowser.exe","UC浏览器"}}, -- l10n-allow: Exact browser labels from media metadata, never displayed as component UI text.
+    {"maxthon",{"Maxthon Browser","Maxthon.exe","傲游浏览器","遨游浏览器"},{"Maxthon"}}, -- l10n-allow: Exact browser labels from media metadata, never displayed as component UI text.
     {"duckduckgo",{"DuckDuckGo Browser","DuckDuckGo.exe"},{"DuckDuckGo"}},
     {"electron",{"Electron","Electron.exe"}},
 }
