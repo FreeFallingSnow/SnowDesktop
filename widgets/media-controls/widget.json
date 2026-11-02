@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Media Controls",
   "nameKey": "lua_widget.media_control.name",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "Displays and controls the current Windows media session.",
   "descriptionKey": "lua_widget.media_control.description",
   "locales": {
@@ -165,6 +165,10 @@
       "lua_widget.media_control.next": "Próxima"
     }
   },
+  "preview": "preview.png",
+  "previewGallery": [
+    "previews/zh-CN.png"
+  ],
   "defaultSize": {
     "rows": 1,
     "aspectRatio": 3

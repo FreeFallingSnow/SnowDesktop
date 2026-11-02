@@ -36,13 +36,13 @@
 ## 官方社区组件与 Workshop
 
 - 社区源码不放 `widgets/`、不随应用发行；仅用户明确要求提升为内置时迁入并同步内置契约检查。
-- 先确认目标 `.build/<Configuration>/SnowDesktop.exe` 由当前源码标准构建，再运行：
+- 官方社区组件每轮开发完成并通过必要检查后，交付回复前必须同步到目标构建的 `data/widgets/dev/<slug>/`；此步骤同时适用于源码、manifest、本地化和预览图更新。先确认目标 `.build/<Configuration>/SnowDesktop.exe` 由当前源码标准构建，再运行：
 
   ```bat
   scripts/widget-dev.bat developer_assets/workshop_widgets/<slug> -Configuration <Configuration> -Once
   ```
 
-  镜像到该构建 `data/widgets/dev/<slug>/`。新候选、来源切换或尚未发现目录时，打开组件设置/“添加组件”菜单重扫；旧宿主不支持入口刷新才加 `-RestartHost`。新发现且通过校验的 UUID 默认激活开发来源，保留已保存停用决定及旧注册表现有选择。核对当前来源与权限，再完成交互验收。
+  镜像到该构建 `data/widgets/dev/<slug>/`。同步后核对源与 dev 包的 manifest UUID、版本及全部文件哈希，交付记录目标构建、dev 目录和同步结果；同步受阻时记录具体阻断和下一步，保持待交付状态。新候选、来源切换或尚未发现目录时，打开组件设置/“添加组件”菜单重扫；旧宿主不支持入口刷新才加 `-RestartHost`。新发现且通过校验的 UUID 默认激活开发来源，保留已保存停用决定及旧注册表现有选择。核对当前来源与权限，再完成交互验收。
 - Workshop 发布或更新前先同步 dev 目录；Workshop Manager 项目与 CLI `--source` 均绑定该目录，显式传同构建 `--data-directory`。由 dev 目录生成计划，核对包版本、哈希、预览及现有 PublishedFileId。
 - 曾误绑源码时，把原 PublishedFileId、发布版本、哈希、时间、偏好迁移到 dev 项目，移除重复源码登记；保留 UUID 和工坊条目，不重建条目。
 - 来源切换交付分别核对错误的 `widgets/<slug>` 不存在、目标 `data/widgets/dev/<slug>` 存在、“开发中”入口可见。

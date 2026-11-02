@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Photo Album",
   "nameKey": "album.name",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Create a slideshow from multiple folders or images, or display a single photo.",
   "descriptionKey": "album.description",
   "locales": {
@@ -505,5 +505,6 @@
     "filesystem.userSelected.read"
   ],
   "optionalPermissions": [],
-  "preview": "workshop-preview.png"
+  "preview": "workshop-preview.png",
+  "previewGallery": []
 }

@@ -8,7 +8,7 @@
   "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "name": "Single Monitor",
   "nameKey": "monitor.name",
   "description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
@@ -454,7 +454,15 @@
     "draw.textInkMetrics"
   ],
   "preview": "workshop-preview.png",
-  "previewGallery": ["previews/gpu.png", "previews/memory.png", "previews/vram.png", "previews/battery.png", "previews/disk.png", "previews/network.png"],
+  "previewGallery": [
+    "previews/zh-CN.png",
+    "previews/gpu.png",
+    "previews/memory.png",
+    "previews/vram.png",
+    "previews/battery.png",
+    "previews/disk.png",
+    "previews/network.png"
+  ],
   "creationPresets": [
     {
       "id": "cpu",

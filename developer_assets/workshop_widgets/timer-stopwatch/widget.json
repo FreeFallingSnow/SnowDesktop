@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Timer & Stopwatch",
   "nameKey": "timer.name",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Countdown presets, custom durations and a stopwatch.",
   "descriptionKey": "timer.description",
   "locales": {
@@ -303,5 +303,10 @@
     "columns": 2,
     "rows": 2
   },
-  "preview": "workshop-preview.png"
+  "preview": "workshop-preview.png",
+  "previewGallery": [
+    "previews/zh-CN.png",
+    "previews/zh-size-square.png",
+    "previews/en-mode-stopwatch.png"
+  ]
 }

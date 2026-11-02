@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Days Countdown",
   "nameKey": "countdown.name",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Count days to or since a linked calendar event.",
   "descriptionKey": "countdown.description",
   "locales": {
@@ -396,5 +396,9 @@
   "optionalPermissions": [
     "calendar.write"
   ],
-  "preview": "workshop-preview.png"
+  "preview": "workshop-preview.png",
+  "previewGallery": [
+    "previews/zh-CN.png",
+    "previews/en-size-square.png"
+  ]
 }
