@@ -3,6 +3,7 @@ local M={}
 function M.update(m,envelope,permission,now,wall)
     local session=envelope and envelope.available==true and envelope.value and envelope.value.session
     local identity=clock.identity(session)
+    m.playbackActive=permission and identity~=nil and not envelope.stale and session.playbackStatus=="playing"
     m.mediaValid=false;m.client:setEnabled(false)
     if not permission then m.status="media_permission";m.clock=nil;m.client:setSong(nil)
     elseif clock.excluded(session) then m.status="waiting";m.clock=nil;m.client:setSong(nil);m.pendingKey=nil

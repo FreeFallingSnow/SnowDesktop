@@ -12,7 +12,7 @@
   "nameKey": "lua_widget.desktop_lyrics.name",
   "description": "Read-only lyrics synchronized to Windows SMTC, on a transparent background.",
   "descriptionKey": "lua_widget.desktop_lyrics.description",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "locales": {
     "en-US": {
       "lua_widget.desktop_lyrics.offset": "Extra lyric delay (ms)",
@@ -39,7 +39,9 @@
       "lua_widget.desktop_lyrics.preview_after": "The quiet gathers in our hands",
       "lua_widget.desktop_lyrics.preview_horizon": "A new horizon opens slowly",
       "lua_widget.desktop_lyrics.preview_song": "Every step becomes a song",
-      "lua_widget.desktop_lyrics.preset_transparent": "Transparent"
+      "lua_widget.desktop_lyrics.preset_transparent": "Transparent",
+      "lua_widget.desktop_lyrics.estimate_words": "Estimate word timing",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Hide placeholder text when not playing"
     },
     "zh-CN": {
       "lua_widget.desktop_lyrics.offset": "额外歌词延迟（毫秒）",
@@ -66,7 +68,9 @@
       "lua_widget.desktop_lyrics.preview_after": "让宁静落在掌心",
       "lua_widget.desktop_lyrics.preview_horizon": "新的远方慢慢展开",
       "lua_widget.desktop_lyrics.preview_song": "每一步都成为歌",
-      "lua_widget.desktop_lyrics.preset_transparent": "透明"
+      "lua_widget.desktop_lyrics.preset_transparent": "透明",
+      "lua_widget.desktop_lyrics.estimate_words": "估算逐字歌词",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "未播放时隐藏占位文本"
     },
     "zh-TW": {
       "lua_widget.desktop_lyrics.offset": "額外歌詞延遲（毫秒）",
@@ -93,7 +97,9 @@
       "lua_widget.desktop_lyrics.preview_after": "讓寧靜落在掌心",
       "lua_widget.desktop_lyrics.preview_horizon": "新的遠方慢慢展開",
       "lua_widget.desktop_lyrics.preview_song": "每一步都成為歌",
-      "lua_widget.desktop_lyrics.preset_transparent": "透明"
+      "lua_widget.desktop_lyrics.preset_transparent": "透明",
+      "lua_widget.desktop_lyrics.estimate_words": "估算逐字歌詞",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "未播放時隱藏預留文字"
     },
     "ja-JP": {
       "lua_widget.desktop_lyrics.offset": "歌詞の追加遅延（ms）",
@@ -120,7 +126,9 @@
       "lua_widget.desktop_lyrics.preview_after": "静けさが手のひらに集う",
       "lua_widget.desktop_lyrics.preview_horizon": "新しい地平がゆっくり開く",
       "lua_widget.desktop_lyrics.preview_song": "一歩ずつ歌になっていく",
-      "lua_widget.desktop_lyrics.preset_transparent": "透明"
+      "lua_widget.desktop_lyrics.preset_transparent": "透明",
+      "lua_widget.desktop_lyrics.estimate_words": "逐語タイミングを推定",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "再生していないときは待機テキストを非表示"
     },
     "ko-KR": {
       "lua_widget.desktop_lyrics.offset": "추가 가사 지연(ms)",
@@ -147,7 +155,9 @@
       "lua_widget.desktop_lyrics.preview_after": "고요함이 손안에 모이고",
       "lua_widget.desktop_lyrics.preview_horizon": "새로운 지평선이 천천히 열리고",
       "lua_widget.desktop_lyrics.preview_song": "발걸음마다 노래가 되어",
-      "lua_widget.desktop_lyrics.preset_transparent": "투명"
+      "lua_widget.desktop_lyrics.preset_transparent": "투명",
+      "lua_widget.desktop_lyrics.estimate_words": "단어별 타이밍 추정",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "재생 중이 아닐 때 대기 문구 숨기기"
     },
     "de-DE": {
       "lua_widget.desktop_lyrics.offset": "Zusätzliche Textverzögerung (ms)",
@@ -174,7 +184,9 @@
       "lua_widget.desktop_lyrics.preview_after": "Die Stille liegt in unseren Händen",
       "lua_widget.desktop_lyrics.preview_horizon": "Ein neuer Horizont öffnet sich langsam",
       "lua_widget.desktop_lyrics.preview_song": "Jeder Schritt wird zu einem Lied",
-      "lua_widget.desktop_lyrics.preset_transparent": "Transparent"
+      "lua_widget.desktop_lyrics.preset_transparent": "Transparent",
+      "lua_widget.desktop_lyrics.estimate_words": "Wortzeiten schätzen",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Platzhaltertext ohne Wiedergabe ausblenden"
     },
     "fr-FR": {
       "lua_widget.desktop_lyrics.offset": "Retard supplémentaire des paroles (ms)",
@@ -201,7 +213,9 @@
       "lua_widget.desktop_lyrics.preview_after": "Le silence repose dans nos mains",
       "lua_widget.desktop_lyrics.preview_horizon": "Un nouvel horizon s’ouvre doucement",
       "lua_widget.desktop_lyrics.preview_song": "Chaque pas devient une chanson",
-      "lua_widget.desktop_lyrics.preset_transparent": "Transparent"
+      "lua_widget.desktop_lyrics.preset_transparent": "Transparent",
+      "lua_widget.desktop_lyrics.estimate_words": "Estimer le minutage mot à mot",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Masquer le texte d’attente hors lecture"
     },
     "es-ES": {
       "lua_widget.desktop_lyrics.offset": "Retraso adicional de letras (ms)",
@@ -228,7 +242,9 @@
       "lua_widget.desktop_lyrics.preview_after": "El silencio descansa en nuestras manos",
       "lua_widget.desktop_lyrics.preview_horizon": "Un nuevo horizonte se abre despacio",
       "lua_widget.desktop_lyrics.preview_song": "Cada paso se convierte en canción",
-      "lua_widget.desktop_lyrics.preset_transparent": "Transparente"
+      "lua_widget.desktop_lyrics.preset_transparent": "Transparente",
+      "lua_widget.desktop_lyrics.estimate_words": "Estimar tiempos por palabra",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar el texto de espera cuando no se reproduce"
     },
     "es-419": {
       "lua_widget.desktop_lyrics.offset": "Retraso adicional de letras (ms)",
@@ -255,7 +271,9 @@
       "lua_widget.desktop_lyrics.preview_after": "El silencio descansa en nuestras manos",
       "lua_widget.desktop_lyrics.preview_horizon": "Un nuevo horizonte se abre despacio",
       "lua_widget.desktop_lyrics.preview_song": "Cada paso se convierte en canción",
-      "lua_widget.desktop_lyrics.preset_transparent": "Transparente"
+      "lua_widget.desktop_lyrics.preset_transparent": "Transparente",
+      "lua_widget.desktop_lyrics.estimate_words": "Estimar tiempos por palabra",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar el texto de espera cuando no se reproduce"
     },
     "pt-BR": {
       "lua_widget.desktop_lyrics.offset": "Atraso adicional da letra (ms)",
@@ -282,7 +300,9 @@
       "lua_widget.desktop_lyrics.preview_after": "O silêncio repousa em nossas mãos",
       "lua_widget.desktop_lyrics.preview_horizon": "Um novo horizonte se abre devagar",
       "lua_widget.desktop_lyrics.preview_song": "Cada passo se torna uma canção",
-      "lua_widget.desktop_lyrics.preset_transparent": "Transparente"
+      "lua_widget.desktop_lyrics.preset_transparent": "Transparente",
+      "lua_widget.desktop_lyrics.estimate_words": "Estimar tempo por palavra",
+      "lua_widget.desktop_lyrics.hide_idle_placeholder": "Ocultar texto de espera quando não estiver reproduzindo"
     }
   },
   "defaultSize": {

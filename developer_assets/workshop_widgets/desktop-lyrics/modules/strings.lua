@@ -5,6 +5,8 @@ return function()
         text_scale=l10n.tr("lua_widget.desktop_lyrics.text_scale"),
         translation=l10n.tr("lua_widget.desktop_lyrics.translation"),
         romanization=l10n.tr("lua_widget.desktop_lyrics.romanization"),
+        estimate_words=l10n.tr("lua_widget.desktop_lyrics.estimate_words"),
+        hide_idle_placeholder=l10n.tr("lua_widget.desktop_lyrics.hide_idle_placeholder"),
         preview_previous=l10n.tr("lua_widget.desktop_lyrics.preview_previous"),
         preview_current=l10n.tr("lua_widget.desktop_lyrics.preview_current"),
         preview_next=l10n.tr("lua_widget.desktop_lyrics.preview_next"),

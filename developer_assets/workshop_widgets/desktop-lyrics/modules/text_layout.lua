@@ -25,6 +25,42 @@ local function clusters(value)
     return result
 end
 local function space(code)return code==32 or code==9 or code==0x3000 end
+function M.estimateWords(line)
+    if line.words and #line.words>0 then return line.words end
+    local duration=(line.finish or 0)-(line.start or 0)
+    if duration<=0 then return {} end
+    local tokens={};local total=0;local latin
+    for _,char in ipairs(clusters(line.text)) do
+        local value=line.text:sub(char.first,char.last)
+        local blank=space(char.code) or char.code==10 or char.code==13
+        local punctuation=closing[char.code] or opening[char.code] or value:match("^%p$")
+        local letter=not blank and not punctuation and not cjk(char.code) and char.code<0x1f000
+        if not blank then
+            local token=letter and latin or nil
+            if #tokens>=256 then token=tokens[256] end
+            if not token then
+                token={first=char.first,last=char.last,weight=0,count=0}
+                tokens[#tokens+1]=token
+            end
+            token.last=char.last
+            if not punctuation then
+                local weight=letter and token.count>0 and 0.2 or 1
+                token.weight=token.weight+weight;total=total+weight;token.count=token.count+1
+            end
+            latin=letter and token or nil
+        else latin=nil end
+    end
+    if total==0 then return {} end
+    -- Leave a short hold at the end; a long instrumental gap must not stretch every character.
+    local active=math.min(duration,total*500+1500)*0.9
+    local words={};local cursor=line.start
+    for _,token in ipairs(tokens) do
+        local stop=cursor+active*token.weight/total
+        words[#words+1]={text=line.text:sub(token.first,token.last),start=cursor,finish=stop}
+        cursor=stop
+    end
+    return words
+end
 function M.wrap(value,font,width,measure)
     local chars=clusters(value);local rows={};local first=1
     local available=math.max(width*0.5,width-font/16)

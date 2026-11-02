@@ -35,7 +35,8 @@ local function setup(context)
         end
         m.client.lines=lines;m.client.state="ready";m.status="ready"
         m.clock={position=45500,duration=98000,playing=false,rate=1,at=time.monotonic()}
-        local sample=storage.get("previewState")
+        local sample=storage.get("previewState");m.playbackActive=sample~="waiting"
+        if sample=="estimated" then for _,line in ipairs(lines) do line.words={} end end
         if sample=="unsupported" then m.status="unsupported";m.clock=nil
         elseif sample=="waiting" then m.status="waiting";m.clock=nil end
     else
@@ -71,6 +72,8 @@ local function settings()
         {key="textScale",type="int",label=c.text_scale,default=100,min=60,max=200,step=5},
         {key="lineSpacing",type="int",label=c.line_spacing,default=175,min=140,max=240,step=5},
         {key="offset",type="int",label=c.offset,default=0,min=-5000,max=5000,step=50},
+        {key="estimateWordTiming",type="bool",label=c.estimate_words,default=true},
+        {key="hideIdlePlaceholder",type="bool",label=c.hide_idle_placeholder,default=false},
         {key="translation",type="bool",label=c.translation,default=true},
         {key="romanization",type="bool",label=c.romanization,default=false}}}
 end

@@ -13,17 +13,18 @@ end
 local function rowText(x,y,row,font,color,alpha)
     draw.text(x,y,row.text,font,color,row.boxWidth,true,true,row.height,alpha)
 end
-local function geometry(model,index,font,width,translate,roman)
+local function geometry(model,index,font,width,translate,roman,estimate)
     local cache=model.textCache
     if not cache or cache.width~=width or cache.font~=font or cache.lines~=model.client.lines or
-        cache.translate~=translate or cache.roman~=roman then
-        cache={width=width,font=font,lines=model.client.lines,translate=translate,roman=roman,items={},order={}}
+        cache.translate~=translate or cache.roman~=roman or cache.estimate~=estimate then
+        cache={width=width,font=font,lines=model.client.lines,translate=translate,roman=roman,estimate=estimate,items={},order={}}
         model.textCache=cache
     end
     if cache.items[index] then return cache.items[index] end
     local line=model.client.lines[index]
-    local result={main=Text.wrap(line.text,font,width,draw.measureText)}
-    Text.words(result.main,line,draw.measureText);result.height=result.main.height
+    local words=estimate and Text.estimateWords(line) or (line.words or {})
+    local result={main=Text.wrap(line.text,font,width,draw.measureText),words=words}
+    Text.words(result.main,{text=line.text,words=words},draw.measureText);result.height=result.main.height
     local subtitle=translate and line.translation or ""
     subtitle=subtitle or ""
     if roman and line.romanization and line.romanization~="" then
@@ -45,10 +46,9 @@ function M.render(_context,m)
     interaction.region({key="lyrics",shape={type="rect",x=0,y=0,width=w,height=h},cursor="default",
         events={contextMenu={id="lyrics.menu",scope="component"}},accessibility={role="text",label=c.name}})
     local lines=m.client.lines
-    local idle=not m.preview and (not m.clock or not m.clock.playing) and
-        m.status~="media_permission" and m.status~="network_permission" and m.status~="unsupported"
-    if idle or m.status~="ready" or not m.clock or #lines==0 then
-        local message=idle and c.waiting or (c[m.status] or c.waiting)
+    if m.status~="ready" or not m.clock or #lines==0 then
+        if M.enabled("hideIdlePlaceholder",false) and not m.playbackActive then return end
+        local message=c[m.status] or c.waiting
         local block=Text.wrap(message,row*0.44,math.max(1,w-row),draw.measureText)
         draw.pushClip(0,0,w,h)
         for i,part in ipairs(block.rows) do
@@ -57,9 +57,10 @@ function M.render(_context,m)
         draw.popClip();return
     end
     local translate,roman=M.enabled("translation",true),M.enabled("romanization",false)
+    local estimate=M.enabled("estimateWordTiming",true)
     local secondary=(translate and m.client.hasTranslation) or (roman and m.client.hasRomanization)
     local p=plan.metrics(w,h,row,number("textScale",100),number("lineSpacing",175),secondary)
-    local function get(index)return geometry(m,index,p.font,p.width,translate,roman)end
+    local function get(index)return geometry(m,index,p.font,p.width,translate,roman,estimate)end
     local now=time.monotonic();local media=clock.position(m.clock,now)-number("offset",0)-(m.client.offset or 0)
     local index=clock.index(lines,media);local target=math.max(1,index)
     local elapsed=m.lastDraw and now-m.lastDraw or 0
@@ -88,7 +89,7 @@ function M.render(_context,m)
             local y=top+(n-1)*g.main.lineHeight
             rowText(p.padding,y,part,g.main.font,primary,(active and 0.55 or 0.72)*fade)
             if active then
-                if #line.words==0 then rowText(p.padding,y,part,g.main.font,accent,fade)
+                if #g.words==0 then rowText(p.padding,y,part,g.main.font,accent,fade)
                 else for _,segment in ipairs(part.segments or {}) do
                     local word=segment.word
                     local progress=media>=word.finish and 1 or math.max(0,(media-word.start)/math.max(1,word.finish-word.start))

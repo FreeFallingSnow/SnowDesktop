@@ -16,7 +16,9 @@ SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，�
 
 AMLL 先按歌名和歌手搜索，必要时按歌名重查并在本地核对身份。网易云和 QQ 找到匹配的歌曲后，还会按平台歌曲 ID 探测 AMLL 的 TTML；QQ 同时支持 mid 和数字 ID。LRCLIB 精确获取失败后再搜索候选。每次只有一个在途请求，单次请求最多五秒，全部来源失败后退避重试；切歌会取消上一首的请求。
 
-AMLL TTML 和网易云 YRC 保留原生逐字时间；QQ、酷狗和 LRCLIB 的 LRC 按行同步，不伪造逐字时间。候选列表综合歌曲、歌手、专辑与时长选择最高匹配项。身份匹配优先于逐字格式：较低匹配的结果可以先显示，但会继续寻找更高匹配的结果，不能仅凭带逐字时间抢先结束；匹配程度相同时优先逐字歌词。后续来源失败时保留已经取得的最佳结果。歌词及其翻译、音译在当前实例内做有界缓存，组件目录不写入缓存文件。
+AMLL TTML 和网易云 YRC 保留原生逐字时间。缺少逐字时间的 LRC 默认启用“估算逐字歌词”：按字符、单词权重和句子时长分配高亮时间，过长句间空隙按估算阅读时长收敛，句尾保留短暂停留。标点不额外占用演唱时长，组合字符和 emoji 不从中间拆开。估算不能保证与拖音、停顿或变速演唱逐字对齐，可在现有组件设置中关闭，恢复逐行高亮。估算只用于显示，不写入歌词缓存，不参与来源评分，也不覆盖已有原生逐字时间。
+
+候选列表综合歌曲、歌手、专辑与时长选择最高匹配项。身份匹配优先于逐字格式：较低匹配的结果可以先显示，但会继续寻找更高匹配的结果，不能仅凭带逐字时间抢先结束；匹配程度相同时优先原生逐字歌词。后续来源失败时保留已经取得的最佳结果。歌词及其翻译、音译在当前实例内做有界缓存，组件目录不写入缓存文件。
 
 组件仅向清单列出的六个服务主机发送匹配所需的歌名、歌手、平台歌曲 ID 和时长，不使用播放器账号，不读取音频文件。Folia 的汽水源依赖桌面桥接，Spotify 源需要账号；本组件保持独立，不接入这两类有额外运行条件的来源。第三方接口可能限流、拒绝匿名请求或未收录对应版本，接入来源不保证每首歌曲都能匹配。
 
@@ -27,6 +29,7 @@ AMLL TTML 和网易云 YRC 保留原生逐字时间；QQ、酷狗和 LRCLIB 的 
 - [Folia 歌词来源及可用条件](https://github.com/chthollyphile/folia-major/blob/main/src/utils/lyrics/lyricSources.ts)
 - [Folia QQ 歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/qq/qqLyricProvider.ts)
 - [Folia 酷狗歌词实现](https://github.com/chthollyphile/folia-major/blob/main/src/services/onlineMusic/kugou/kugouLyricProvider.ts)
+- [Folia 普通 LRC 时间估算思路](https://github.com/chthollyphile/folia-major/blob/f03e8ecad21af765976cd00c5802218cdb22c8e4/src/utils/lyrics/parserCore.ts#L59)：借鉴按句长和文字权重分配时间的思路，组件独立实现估算与缓存。
 - [AMLL 原生接口](https://amll.dev/reference/http-api/native)
 - [LRCLIB API](https://lrclib.net/docs)
 
@@ -42,7 +45,7 @@ YRC、TTML 等逐字歌词取得同曲的可靠逐行对照时，统一按相同
 
 “额外歌词延迟”使用毫秒，正数让歌词稍后出现。“透明”是可重新选择的默认组件预设，不开启背景层、玻璃或底色；宿主负责应用预设与保存外观选择。歌词字号由用户设置与宿主行单位决定，不随每句长度变化。长句优先在标点、词边界拆分，再按固定字号换行；原生逐字高亮随文字跨行继续。每句按实际行数和翻译高度排布，组件高度决定能显示的前后歌词数量。绘制宽度另留舍入余量，避免恰好放得下时误省略最后一个字。演示歌词为原创示例，不从网络歌曲中截取。
 
-暂停、停止或没有媒体会话时显示“此刻留白，静候下一段旋律。”；恢复播放后显示同步歌词。权限不足时显示明确原因；播放器未提供可用 SMTC 进度时提示推荐 Folia 播放器。短暂媒体快照过期仅显示等待占位，不误判为播放器不支持。
+暂停或停止时，有效时间线对应的已获取歌词继续显示，高亮停在当前位置；恢复播放后继续扫动。没有可显示歌词时显示“此刻留白，静候下一段旋律。”等状态文本。“未播放时隐藏占位文本”默认关闭，开启后只在未播放且没有可显示歌词时隐藏占位语，暂停中的歌词保留。正在播放时的匹配、权限或不支持提示仍可见；播放器未提供可用 SMTC 进度时继续推荐 Folia。短暂媒体快照过期仅作为等待处理，不误判为播放器不支持。
 
 本组件替代未发布的 Folia Desktop 实验组件，保留 UUID `e2ce8149-ff61-4c2f-9975-8ae4c010e639`；新开发来源为 `data/widgets/dev/desktop-lyrics/`。原布局与组件存储不手工删除，原来的连接字段不再读取。
 
@@ -52,13 +55,15 @@ A read-only community lyric widget for SnowDesktop. It starts transparent and dr
 
 A valid Windows SMTC session and timeline are required. Media without a usable timeline is explicitly unsupported, with a recommendation to try Folia. A temporarily stale snapshot displays the waiting message instead. The widget searches five sources: AMLL, NetEase, QQ Music, Kugou and LRCLIB. A known artist must match; an album cannot override an artist mismatch. Album identity is a fallback only when the target artist is absent. Available duration and meaningful version markers are also checked. NetEase and QQ song IDs allow AMLL TTML lookup; QQ tries both its mid and numeric ID. LRCLIB has a candidate-search fallback. One request runs at a time, with a five-second timeout and bounded retry backoff.
 
-Native TTML and YRC word timing is preserved. Synchronized LRC remains line-timed. Candidate lists rank song, artist, album and available duration. Identity confidence takes priority over word timing: a weaker word-timed result does not stop the search or replace a stronger line-timed match. Word timing wins when confidence is equal. Usable lyrics appear while later sources are checked, and the best result remains available if those requests fail. Only six lyric-service hosts are allowed by the manifest. No account cookies, audio files or playback controls are used. Folia's Qishui source needs its desktop bridge and Spotify needs an account; neither is included here. Upstream coverage and anonymous access can vary.
+Native TTML and YRC word timing is preserved. For LRC without word timing, “Estimate word timing” is on by default. It distributes line time by character and word weights, limits long instrumental gaps using estimated reading time, and leaves a short hold at the end. Punctuation adds no singing duration, and combining sequences and emoji stay intact. Estimates may differ from real singing and can be disabled in the existing widget settings to restore line highlighting. They are prepared only for display, never written into the lyric cache, used for source scoring, or substituted for native word timing.
+
+Candidate lists rank song, artist, album and available duration. Identity confidence takes priority over native word timing: a weaker word-timed result does not stop the search or replace a stronger line-timed match. Native word timing wins when confidence is equal. Usable lyrics appear while later sources are checked, and the best result remains available if those requests fail. Only six lyric-service hosts are allowed by the manifest. No account cookies, audio files or playback controls are used. Folia's Qishui source needs its desktop bridge and Spotify needs an account; neither is included here. Upstream coverage and anonymous access can vary.
 
 TTML plain seconds such as `19.340` and minute/hour clock forms share the same absolute timeline. When SMTC omits its playback rate, two consistent real sample intervals establish an estimated rate for smooth interpolation; a single sample never implies 1x playback. Duplicate source samples retain their clock anchor. Temporary missing or stale media pauses new requests while retaining lyrics, calibration and the next request stage. Album enrichment or a replacement session for the same song does not restart lyric lookup.
 
 YRC and TTML word-timed lyrics share a generic calibration path when reliable line timing for the same track is available. NetEase uses its accompanying LRC; AMLL uses platform song IDs and QQ uses the matched song to obtain a reference. Matching original-text anchors across the song can establish a stable source offset. Calibration requires enough consistent anchors over different song positions and rejects drifting or ambiguous timing. It preserves native word intervals and never changes the user's delay preference. No song names, artists or fixed per-song offsets are special-cased. Missing references leave the original timing intact.
 
-The default transparent appearance is a selectable component preset. Settings use the host entry; the sole component context-menu command is lyric rematching with a Fluent refresh icon. Paused or stopped playback displays “A quiet pause, awaiting the next melody.” Font size stays consistent between sentences. Long lyrics split at punctuation or word boundaries and wrap without shrinking; native word highlighting continues across rows. Actual block heights, including wrapped translations, determine spacing and visible content. The drawing box includes a rounding margin to preserve the last glyph.
+The default transparent appearance is a selectable component preset. Settings use the host entry; the sole component context-menu command is lyric rematching with a Fluent refresh icon. Paused or stopped playback retains available lyrics on a valid timeline, with highlighting frozen at the current position. Without usable lyrics, the widget shows “A quiet pause, awaiting the next melody.” or the relevant status message. “Hide placeholder text when not playing” is off by default; enabling it hides only idle placeholder text and keeps paused lyrics visible. Status messages during active playback remain visible. Font size stays consistent between sentences. Long lyrics split at punctuation or word boundaries and wrap without shrinking; word highlighting continues across rows. Actual block heights, including wrapped translations, determine spacing and visible content. The drawing box includes a rounding margin to preserve the last glyph.
 
 Allow media reading and network access. No Folia installation, adapter mod, token or local service is required. Required features are checked; the declared minimum host version is 1.0.13.0. GPL-3.0-only; see LICENSE.
 
