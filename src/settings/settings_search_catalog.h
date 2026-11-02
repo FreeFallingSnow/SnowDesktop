@@ -1,6 +1,7 @@
 #pragma once
 #include "settings_search_index.h"
 #include "settings_page_catalog.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 #include <functional>
 
 namespace snowdesktop
@@ -772,7 +773,8 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                 if (std::string_view(definition.focusId) == "statusBar.controlCenterPanel" &&
                     !supportsQuickSettings) continue;
                 if (std::string_view(definition.focusId) == "contextMenu.expandQuickActions" &&
-                    (contextMenuStyle == 5 || contextMenuStyle == 6)) continue;
+                    modern_menu::appearance_rules::IsWin10Style(
+                        static_cast<modern_menu::Appearance>(contextMenuStyle))) continue;
                 StaticSettingSearchDescriptor descriptor;
                 const auto target = CanonicalizeSettingsRoute(SettingsRoute::ForPage(definition.page, definition.focusId));
                 descriptor.page = target.page;

@@ -579,7 +579,7 @@ struct SystemPanel::Impl
             item.enabled=std::string_view(action.id)!="hibernate"||IsPwrHibernateAllowed()!=FALSE;items.push_back(std::move(item));
         }
         modern_menu::Options options;options.owner=window;options.topmost=true;options.dpi=static_cast<UINT>(scale*96);
-        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(current->appearance.contextMenuStyle,0,6));
+        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(current->appearance.contextMenuStyle,0,modern_menu::kMaximumAppearance));
         options.lightTheme=modern_menu::appearance_rules::IsLightThemeForCurrentWindows(options.appearance);
         options.anchor={anchor.left,anchor.top};options.anchorRect=anchor;options.rootPlacement=modern_menu::RootPlacement::AboveAnchorRect;
         const auto life=lifetime;auto active=model;StopPointerHover();input.Cancel();modal=calendarMenu=true;

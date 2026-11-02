@@ -44,7 +44,7 @@ void Enrich(Value& schema, const std::string& path)
         Range(schema, "categorizedTabHeight", 24, 48); Range(schema, "luaWidgetContentRowHeight", 18, 48);
         Range(schema, "cornerRadius", 0, 100); Range(schema, "windowPinBorderWidth", 1, 20);
         Range(schema, "popupHoverDelayMs", 100, 3000); Range(schema, "tabHoverDelayMs", 100, 3000);
-        Choices(schema, "contentTheme", {0, 1}); Choices(schema, "contextMenuStyle", {0, 1, 2, 3, 4, 5, 6});
+        Choices(schema, "contentTheme", {0, 1}); Choices(schema, "contextMenuStyle", {0, 1, 2, 3, 4, 5, 6, 7, 8});
         Choices(schema, "backgroundPreset", {0, 1, 6, 7, 9, 10, 11, 12, 13});
     }
     if (Child(schema, "minimumWidth") && Child(schema, "feather"))

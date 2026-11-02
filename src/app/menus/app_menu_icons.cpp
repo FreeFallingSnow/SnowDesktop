@@ -221,7 +221,7 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     menuIconDpi_ = dpi;
     const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
-        appearance.contextMenuStyle, 0, 6);
+        appearance.contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance);
     menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
         static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
 }

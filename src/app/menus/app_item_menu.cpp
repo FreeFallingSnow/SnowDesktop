@@ -1226,7 +1226,7 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
     try
     {
         selection.lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
-            static_cast<snowdesktop::modern_menu::Appearance>(std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+            static_cast<snowdesktop::modern_menu::Appearance>(std::clamp(CurrentPersonalization().contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance)));
         request.extended = request.extended || (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
         auto session = std::make_shared<snowdesktop::shell_extensions::NativeMenuSession>(request, point, menuOwner, std::move(selection));
         nativeMenuSession_ = session;

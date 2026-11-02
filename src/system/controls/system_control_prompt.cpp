@@ -107,7 +107,7 @@ struct Prompt
         const wchar_t* labels[]{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"};
         for(int i=0;i<3;++i){modern_menu::Item item;item.command=static_cast<UINT>(i+1);item.label=labels[i];item.checked=i==securityChoice;choices.push_back(std::move(item));}
         modern_menu::Options options;options.owner=security;options.zOrderOwner=window;options.dpi=dpi;
-        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(appearance.contextMenuStyle,0,6));
+        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(appearance.contextMenuStyle,0,modern_menu::kMaximumAppearance));
         options.lightTheme=modern_menu::appearance_rules::IsLightThemeForCurrentWindows(options.appearance);
         GetWindowRect(security,&options.anchorRect);options.anchor={options.anchorRect.left,options.anchorRect.bottom};
         options.rootPlacement=modern_menu::RootPlacement::BelowAnchorRect;

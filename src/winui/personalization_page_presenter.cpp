@@ -10,6 +10,7 @@
 #include "quick_navigation_options.h"
 #include "theme/theme_library_settings.h"
 #include "theme_library_controls.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -37,6 +38,20 @@ using presenter_controls::SettingRow;
 
 namespace
 {
+
+// Display order is independent of persisted values: 0 remains the legacy
+// compatible-follow choice, while 7 and 8 are the new follow choices.
+constexpr std::array<modern_menu::Appearance, 9> kContextMenuStyles = {
+    modern_menu::Appearance::FollowSystem,
+    modern_menu::Appearance::SystemLightBlur,
+    modern_menu::Appearance::SystemDarkBlur,
+    modern_menu::Appearance::OpaqueFollowSystem,
+    modern_menu::Appearance::OpaqueLight,
+    modern_menu::Appearance::OpaqueDark,
+    modern_menu::Appearance::Win10FollowSystem,
+    modern_menu::Appearance::Win10Light,
+    modern_menu::Appearance::Win10Dark,
+};
 
 constexpr std::array<int, 8> kPresetIds = {
     kAppearancePresetDark,
@@ -1231,11 +1246,11 @@ struct PersonalizationPagePresenter::Impl
         contextMenuToken = contextMenuCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int value = contextMenuCombo.SelectedIndex();
-                if (value < 0)
+                if (value < 0 || value >= static_cast<int>(kContextMenuStyles.size()))
                     return;
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [value](PersonalizationSettings& settings) {
-                        settings.contextMenuStyle = std::clamp(value, 0, 6);
+                        settings.contextMenuStyle = static_cast<int>(kContextMenuStyles[value]);
                     });
             });
         showGroupTabCountsToken = showGroupTabCounts.Toggled(
@@ -1468,8 +1483,10 @@ struct PersonalizationPagePresenter::Impl
         widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
-        contextMenuCombo.SelectedIndex(
-            std::clamp(settings.contextMenuStyle, 0, 6));
+        const auto menuStyle = std::find(kContextMenuStyles.begin(), kContextMenuStyles.end(),
+            static_cast<modern_menu::Appearance>(settings.contextMenuStyle));
+        contextMenuCombo.SelectedIndex(menuStyle == kContextMenuStyles.end()
+            ? 0 : static_cast<int>(menuStyle - kContextMenuStyles.begin()));
         UpdateDependentStates();
     }
 
@@ -1872,13 +1889,15 @@ struct PersonalizationPagePresenter::Impl
         contextMenuRow.SetText(
             L("app.settings.context_menu_style", L"Menu Style"));
         ReplaceComboItems(contextMenuCombo, {
-            {"app.settings.context_menu_follow_system", L"Follow System"},
-            {"app.settings.context_menu_system_light_blur", L"Light"},
-            {"app.settings.context_menu_system_dark_blur", L"Dark"},
-            {"app.settings.context_menu_opaque_light", L"Light (Opaque)"},
-            {"app.settings.context_menu_opaque_dark", L"Dark (Opaque)"},
-            {"app.settings.context_menu_win10_light", L"Win10 Light"},
-            {"app.settings.context_menu_win10_dark", L"Win10 Dark"},
+            {"app.settings.context_menu_follow_system", L"Win11 Style - Follow Light/Dark"},
+            {"app.settings.context_menu_system_light_blur", L"Win11 Style - Light"},
+            {"app.settings.context_menu_system_dark_blur", L"Win11 Style - Dark"},
+            {"app.settings.context_menu_opaque_follow_system", L"Win11 Style - Opaque - Follow Light/Dark"},
+            {"app.settings.context_menu_opaque_light", L"Win11 Style - Light Opaque"},
+            {"app.settings.context_menu_opaque_dark", L"Win11 Style - Dark Opaque"},
+            {"app.settings.context_menu_win10_follow_system", L"Win10 Style - Follow Light/Dark"},
+            {"app.settings.context_menu_win10_light", L"Win10 Style - Light"},
+            {"app.settings.context_menu_win10_dark", L"Win10 Style - Dark"},
         });
 
         SetContinuousText(cornerRadius,

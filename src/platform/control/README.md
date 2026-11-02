@@ -337,6 +337,13 @@ stored units (for example, opacity 0..1), not UI percentages. Collections are
 bounded, unknown keys and wrong types are rejected, and 64-bit model integers
 use decimal strings when needed to retain exact values. Target services may
 add their own schema, visibility, enablement and validation information.
+`personalization.contextMenuStyle` keeps stable stored IDs independently of UI
+order: 0 is Win11 opaque following system light/dark (the legacy compatible-follow
+selection), 1/2 are Win11 light/dark, 3/4 are Win11 opaque light/dark, 5/6 are Win10
+light/dark, 7 is Win11 following system light/dark, and 8 is Win10 following system
+light/dark. New profiles default to 8 on Windows 10 and 7 on Windows 11. Existing
+profiles without the field retain 0. Read the advertised enum before writing new
+values to an older host; protocol v1 and Lua API versions are unchanged.
 An internal/retired field or a system-owned projection can be readable while
 remaining read-only. `general.autoStartEnabled` is a Windows-owned projection:
 use `set-auto-start` on `general` or `global`, with `arguments:{enabled:boolean}`.

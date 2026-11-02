@@ -10,7 +10,8 @@ inline constexpr unsigned long kWindows11MinimumBuild = 22000;
 inline constexpr bool IsWin10Style(Appearance appearance)
 {
     return appearance == Appearance::Win10Light ||
-        appearance == Appearance::Win10Dark;
+        appearance == Appearance::Win10Dark ||
+        appearance == Appearance::Win10FollowSystem;
 }
 
 inline constexpr int PanelPaddingDip(Appearance appearance)
@@ -23,6 +24,11 @@ inline constexpr int PanelRadiusDip(Appearance appearance)
     return IsWin10Style(appearance) ? 4 : 8;
 }
 
+inline constexpr int CompanionPanelRadiusDip(Appearance appearance)
+{
+    return IsWin10Style(appearance) ? PanelRadiusDip(appearance) : 10;
+}
+
 inline constexpr bool IsWindows11OrGreater(
     unsigned long majorVersion, unsigned long buildNumber)
 {
@@ -30,19 +36,14 @@ inline constexpr bool IsWindows11OrGreater(
         (majorVersion == 10 && buildNumber >= kWindows11MinimumBuild);
 }
 
-inline constexpr Appearance ResolveForWindows(
-    Appearance requested, bool lightTheme,
+inline constexpr Appearance DefaultForWindows(
     unsigned long majorVersion, unsigned long buildNumber)
 {
-    if (requested != Appearance::FollowSystem)
-        return requested;
-    if (IsWindows11OrGreater(majorVersion, buildNumber))
-        return Appearance::FollowSystem;
-    return lightTheme ? Appearance::OpaqueLight : Appearance::OpaqueDark;
+    return IsWindows11OrGreater(majorVersion, buildNumber)
+        ? Appearance::FollowSystem : Appearance::Win10FollowSystem;
 }
 
-inline Appearance ResolveForCurrentWindows(
-    Appearance requested, bool lightTheme)
+inline Appearance DefaultForCurrentWindows()
 {
     struct WindowsVersion
     {
@@ -66,8 +67,19 @@ inline Appearance ResolveForCurrentWindows(
         return WindowsVersion{
             version.dwMajorVersion, version.dwBuildNumber };
     }();
-    return ResolveForWindows(
-        requested, lightTheme, current.major, current.build);
+    return DefaultForWindows(current.major, current.build);
+}
+
+inline constexpr Appearance ResolveForCurrentWindows(
+    Appearance requested, bool lightTheme)
+{
+    if (requested == Appearance::OpaqueFollowSystem)
+        return lightTheme ? Appearance::OpaqueLight : Appearance::OpaqueDark;
+    if (requested == Appearance::FollowSystem)
+        return lightTheme ? Appearance::SystemLightBlur : Appearance::SystemDarkBlur;
+    if (requested == Appearance::Win10FollowSystem)
+        return lightTheme ? Appearance::Win10Light : Appearance::Win10Dark;
+    return requested;
 }
 
 inline constexpr bool IsLightTheme(

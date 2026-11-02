@@ -1104,8 +1104,8 @@ struct SettingsWindowHost::Impl
                     snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
                 options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable);
         }
-        if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
-            snapshot->values.personalization.contextMenuStyle == 6))
+        if (snapshot && modern_menu::appearance_rules::IsWin10Style(
+            static_cast<modern_menu::Appearance>(snapshot->values.personalization.contextMenuStyle)))
         {
             std::erase_if(input.staticSettings, [](const auto& descriptor) {
                 return descriptor.focusId == "contextMenu.expandQuickActions";

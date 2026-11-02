@@ -266,6 +266,7 @@ private:
     bool lightTheme_ = true;
     bool blurEnabled_ = true;
     int menuPanelPaddingDip_ = modern_menu::kSubmenuPanelPaddingDip;
+    int panelRadiusDip_ = 10;
     bool pointerTracking_ = false;
     bool componentHovered_ = false;
     ApplyHandler onApply_;

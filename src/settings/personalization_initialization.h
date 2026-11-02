@@ -1,6 +1,7 @@
 #pragma once
 
 #include "theme/personalization.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 
 #include <filesystem>
 
@@ -19,7 +20,8 @@ inline bool LoadInitialPersonalization(
         const bool exists = std::filesystem::exists(candidate, error);
         return exists || bool(error);
     };
-    bool newProfile = !hasUserState(path);
+    const bool appearanceHasUserState = hasUserState(path);
+    bool newProfile = !appearanceHasUserState;
     if (newProfile)
     {
         // Older profiles can have no separate appearance file. Their other
@@ -36,7 +38,13 @@ inline bool LoadInitialPersonalization(
         }
     }
     if (newProfile)
+    {
         settings = PersonalizationSettings::GlassDarkPreset();
+        settings.contextMenuStyle = static_cast<int>(
+            modern_menu::appearance_rules::DefaultForCurrentWindows());
+    }
+    else if (!appearanceHasUserState)
+        settings.contextMenuStyle = 0; // Legacy compatible-follow migration.
     return LoadPersonalization(path.c_str(), settings, categorizedTabHeightLoaded);
 }
 }

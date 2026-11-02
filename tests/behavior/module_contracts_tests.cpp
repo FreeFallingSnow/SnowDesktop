@@ -5,6 +5,8 @@
 #include "widget/tasks/widget_task_broker.h"
 #include "widget/api/widget_api_registry.h"
 #include "dock/dock_window_pin.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
+#include "settings/personalization_initialization.h"
 extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
@@ -38,6 +40,48 @@ void Settings()
 {
     Profile profile;
     using namespace snowdesktop;
+    namespace menu = modern_menu;
+    namespace appearance = menu::appearance_rules;
+    Require(appearance::DefaultForWindows(10, 19045) == menu::Appearance::Win10FollowSystem &&
+        appearance::DefaultForWindows(10, 22000) == menu::Appearance::FollowSystem &&
+        appearance::DefaultForWindows(10, 26100) == menu::Appearance::FollowSystem,
+        "new profiles choose Win10/Win11 light-dark following by Windows version");
+    const auto appearanceFile = profile.root / L"menu-appearance.json";
+    PersonalizationSettings menuSettings;
+    const int newProfileDefault = static_cast<int>(appearance::DefaultForCurrentWindows());
+    const auto initialFile = profile.root / L"initial-user/SnowDesktop.personalization.json";
+    PersonalizationSettings initialSettings;
+    Require(!LoadInitialPersonalization(initialFile, initialSettings) &&
+        initialSettings.contextMenuStyle == newProfileDefault,
+        "unused profile receives the system-specific menu default through native initialization");
+    Write(initialFile.parent_path() / L"SnowDesktop.general.json", "{}");
+    initialSettings = PersonalizationSettings{};
+    Require(!LoadInitialPersonalization(initialFile, initialSettings) && initialSettings.contextMenuStyle == 0,
+        "older profile with other settings but no appearance file retains compatible-follow");
+    Require(!LoadPersonalization(appearanceFile.c_str(), menuSettings) &&
+        menuSettings.contextMenuStyle == 0,
+        "missing appearance file preserves the caller's legacy baseline");
+    Write(appearanceFile, "{}");
+    Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == 0,
+        "existing profiles without a menu field retain the compatible-follow choice");
+    for (int storedStyle = 0; storedStyle <= 8; ++storedStyle)
+    {
+        Write(appearanceFile, "{\"contextMenuStyle\":" + std::to_string(storedStyle) + "}");
+        Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) &&
+            menuSettings.contextMenuStyle == storedStyle && SavePersonalization(appearanceFile.c_str(), menuSettings),
+            "legacy and new menu choices keep their stable stored IDs");
+        PersonalizationSettings reloaded;
+        Require(LoadPersonalization(appearanceFile.c_str(), reloaded) && reloaded.contextMenuStyle == storedStyle,
+            "all nine menu choices survive a physical save/reload");
+    }
+    Require(appearance::ResolveForCurrentWindows(static_cast<menu::Appearance>(0), true) == menu::Appearance::OpaqueLight &&
+        appearance::ResolveForCurrentWindows(static_cast<menu::Appearance>(0), false) == menu::Appearance::OpaqueDark,
+        "legacy compatible-follow migrates to Win11 opaque in both system themes");
+    Require(appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, true) == menu::Appearance::SystemLightBlur &&
+        appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, false) == menu::Appearance::SystemDarkBlur &&
+        appearance::ResolveForCurrentWindows(menu::Appearance::Win10FollowSystem, true) == menu::Appearance::Win10Light &&
+        appearance::ResolveForCurrentWindows(menu::Appearance::Win10FollowSystem, false) == menu::Appearance::Win10Dark,
+        "new follow choices retain their style family in both system themes");
     auto store = CreateNativeSettingsStore();
     SettingsObserver observer;
     SettingsController controller(store, &observer);

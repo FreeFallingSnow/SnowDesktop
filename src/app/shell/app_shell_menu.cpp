@@ -45,7 +45,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     // Shell menus can also reach this entry without first preparing menu icons.
     const bool lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
         static_cast<snowdesktop::modern_menu::Appearance>(
-            std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+            std::clamp(CurrentPersonalization().contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance)));
 
     HWND dockOwner = nullptr;
     for (const auto& host : persistentDockHosts_)

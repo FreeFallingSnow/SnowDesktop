@@ -32,15 +32,19 @@ enum class RootPlacement
 /** 右键菜单的独立外观，不跟随组件主题。 */
 enum class Appearance
 {
-    /** 根据 Windows 应用/菜单主题和系统版本选择菜单外观。 */
-    FollowSystem = 0,
+    /** 旧版兼容跟随值，迁移为 Win11 不透明并跟随系统深浅。 */
+    OpaqueFollowSystem = 0,
     SystemLightBlur = 1,
     SystemDarkBlur = 2,
     OpaqueLight = 3,
     OpaqueDark = 4,
     Win10Light = 5,
     Win10Dark = 6,
+    FollowSystem = 7,
+    Win10FollowSystem = 8,
 };
+
+inline constexpr int kMaximumAppearance = static_cast<int>(Appearance::Win10FollowSystem);
 
 enum class IconFont
 {

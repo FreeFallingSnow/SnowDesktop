@@ -709,6 +709,8 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
         effectiveAppearance);
     menuPanelPaddingDip_ = modern_menu::appearance_rules::PanelPaddingDip(
         effectiveAppearance);
+    panelRadiusDip_ = modern_menu::appearance_rules::CompanionPanelRadiusDip(
+        effectiveAppearance);
     onApply_ = std::move(onApply);
     componentHovered_ = false;
     waitingForWallpaperEngineFrame_ = false;
@@ -765,7 +767,9 @@ bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
         if (resolvedLightTheme != lightTheme_ ||
             resolvedBlur != blurEnabled_ ||
             modern_menu::appearance_rules::PanelPaddingDip(effectiveAppearance) !=
-                menuPanelPaddingDip_)
+                menuPanelPaddingDip_ ||
+            modern_menu::appearance_rules::CompanionPanelRadiusDip(effectiveAppearance) !=
+                panelRadiusDip_)
         {
             return Show(model, menuBounds, owner, dpi, lightTheme,
                 std::move(onApply), itemBounds, appearance);
@@ -1319,7 +1323,7 @@ bool Window::RenderCurrent()
         previewRect_.bottom + previewInset };
     const int cardWidth = cardRect_.right - cardRect_.left;
     const int cardHeight = cardRect_.bottom - cardRect_.top;
-    const int cardRadius = Scale(8, dpi_);
+    const int cardRadius = Scale(std::min(8, panelRadiusDip_), dpi_);
     snowdesktop::widget_preview::Wallpaper wallpaper;
     const widget_preview::Wallpaper* desktopWallpaper =
         desktopWallpaperEngineFrame_
@@ -1573,7 +1577,7 @@ bool Window::RenderCurrent()
     if (glyphFont) DeleteObject(glyphFont);
 
     GdiFlush();
-    const int radius = Scale(10, dpi_);
+    const int radius = Scale(panelRadiusDip_, dpi_);
     const unsigned contentAlpha = blurEnabled_ ? 246u : 255u;
     const unsigned materialAlpha = blurEnabled_
         ? (lightTheme_ ? 70u : 76u)

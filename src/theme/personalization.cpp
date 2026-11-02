@@ -12,6 +12,7 @@
 #include "appearance_edge_presets.h"
 #include "edge_light_codec.h"
 #include "data/data_paths.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 
 #include <windows.h>
 #include <shlwapi.h>
@@ -514,8 +515,12 @@ bool LoadPersonalization(
         if (ReadDoubleField(text, key, v) && std::isfinite(v)) s.*member = static_cast<float>(v);
     }
     NormalizeWindowPinBorderAppearance(s);
-    if (ReadDoubleField(text, "contextMenuStyle", v))
-        s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
+    // Existing profiles retain the legacy compatible-follow choice when the
+    // field predates persistence; only a new profile uses the OS default.
+    s.contextMenuStyle = static_cast<int>(snowdesktop::modern_menu::Appearance::OpaqueFollowSystem);
+    if (ReadDoubleField(text, "contextMenuStyle", v) && std::isfinite(v))
+        s.contextMenuStyle = static_cast<int>(std::clamp(v, 0.0,
+            static_cast<double>(snowdesktop::modern_menu::kMaximumAppearance)));
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     s.widgetTransformCursors = true;
@@ -661,7 +666,7 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"windowPinBorderWidth\": " << pinAppearance.windowPinBorderWidth << ",\n";
     file << "  \"windowPinBorderOpacity\": " << pinAppearance.windowPinBorderOpacity << ",\n";
     file << "  \"contextMenuStyle\": "
-         << std::clamp(s.contextMenuStyle, 0, 6) << ",\n";
+         << std::clamp(s.contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance) << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";

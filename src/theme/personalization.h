@@ -223,8 +223,9 @@ struct PersonalizationSettings
 
     /**
      * @brief 自绘右键菜单样式，不属于主题预设。
-     * @details 0=跟随系统，1=浅色模糊，2=深色模糊，
-     *          3=浅色不透明，4=深色不透明，5=Win10 浅色，6=Win10 深色。
+     * @details 0=Win11 不透明跟随（旧版兼容值），1/2=Win11 浅/深，
+     *          3/4=Win11 浅/深不透明，5/6=Win10 浅/深，
+     *          7=Win11 深浅跟随，8=Win10 深浅跟随。
      */
     int contextMenuStyle = 0;
 
