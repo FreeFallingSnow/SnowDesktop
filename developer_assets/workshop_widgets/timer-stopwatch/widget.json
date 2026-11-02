@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Timer & Stopwatch",
   "nameKey": "timer.name",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Countdown presets, custom durations and a stopwatch.",
   "descriptionKey": "timer.description",
   "locales": {
@@ -267,7 +267,7 @@
   },
   "defaultSize": {
     "rows": 2,
-    "aspectRatio": 1.3333333333333333
+    "aspectRatio": 1.6
   },
   "previewData": {
     "variants": [
@@ -276,7 +276,7 @@
         "title": "Horizontal",
         "size": {
           "rows": 2,
-          "aspectRatio": 1.3333333333333333
+          "aspectRatio": 1.6
         },
         "titleKey": "timer.layout_horizontal"
       },
