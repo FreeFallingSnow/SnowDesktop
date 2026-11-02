@@ -17,6 +17,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <fstream>
 #include <iomanip>
@@ -496,6 +497,16 @@ void ReadSize(const JsonValue& root, const char* name, int& columns, int& rows)
 
 std::string ManifestJson(const PackageManifest& manifest)
 {
+    auto writeSize = [](std::ostringstream& out, int columns, int rows,
+        const std::optional<AspectGridSize>& aspect) {
+        out << '{';
+        if (aspect)
+            out << (aspect->fixedRows ? "\"rows\": " : "\"columns\": ")
+                << (aspect->fixedRows ? rows : columns)
+                << ", \"aspectRatio\": " << std::setprecision(17) << aspect->ratio;
+        else out << "\"columns\": " << columns << ", \"rows\": " << rows;
+        out << '}';
+    };
     auto appendArray = [](std::ostringstream& out,
         const std::vector<std::string>& values) {
         out << '[';
@@ -556,8 +567,9 @@ std::string ManifestJson(const PackageManifest& manifest)
             << JsonEscape(variant.description)
             << "\", \"descriptionKey\": \""
             << JsonEscape(variant.descriptionKey)
-            << "\", \"size\": {\"columns\": " << variant.columns
-            << ", \"rows\": " << variant.rows << "}, \"storage\": {";
+            << "\", \"size\": ";
+        writeSize(out, variant.columns, variant.rows, variant.aspectSize);
+        out << ", \"storage\": {";
         appendStringMap(out, variant.storage);
         out << "}, \"storageKeys\": {";
         appendStringMap(out, variant.storageKeys);
@@ -573,11 +585,17 @@ std::string ManifestJson(const PackageManifest& manifest)
             << "\", \"titleKey\": \"" << JsonEscape(preset.titleKey)
             << "\", \"values\": {";
         appendStringMap(out, preset.values);
-        out << "}}";
+        out << '}';
+        if (preset.size)
+        {
+            out << ", \"size\": ";
+            writeSize(out, preset.size->columns, preset.size->rows, preset.size->aspect);
+        }
+        out << '}';
     }
-    out << "],\n  \"defaultSize\": {\"columns\": " << manifest.defaultColumns
-        << ", \"rows\": " << manifest.defaultRows << "},\n"
-        << "  \"minSize\": {\"columns\": " << manifest.minColumns
+    out << "],\n  \"defaultSize\": ";
+    writeSize(out, manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize);
+    out << ",\n  \"minSize\": {\"columns\": " << manifest.minColumns
         << ", \"rows\": " << manifest.minRows << "},\n"
         << "  \"maxSize\": {\"columns\": " << manifest.maxColumns
         << ", \"rows\": " << manifest.maxRows << "},\n"
@@ -1684,6 +1702,11 @@ bool WidgetPackageValidator::ReadManifest(
                             variant.descriptionKey);
                         ReadSize(value, "size",
                             variant.columns, variant.rows);
+                        std::string sizeError;
+                        if (!ReadAspectGridSize(value.Find("size"), variant.columns,
+                                variant.rows, variant.aspectSize, sizeError))
+                            report.Add(ValidationSeverity::Error,
+                                "manifest.aspectSize", manifestPath, sizeError);
                         if (variant.id.empty() || variant.id.size() > 64 ||
                             !std::all_of(variant.id.begin(), variant.id.end(),
                                 [](unsigned char ch) {
@@ -1723,6 +1746,26 @@ bool WidgetPackageValidator::ReadManifest(
                 ReadString(item, "id", preset.id);
                 ReadString(item, "title", preset.title);
                 ReadString(item, "titleKey", preset.titleKey);
+                if (const auto* size = item.Find("size"))
+                {
+                    WidgetSizeDefinition definition;
+                    ReadSize(item, "size", definition.columns, definition.rows);
+                    std::string sizeError;
+                    const auto* c = size->Find("columns");
+                    const auto* r = size->Find("rows");
+                    const bool validGrid = size->Find("aspectRatio") ||
+                        (c && r && c->IsNumber() && r->IsNumber() &&
+                         std::isfinite(c->number) && std::isfinite(r->number) &&
+                         c->number == std::floor(c->number) && r->number == std::floor(r->number));
+                    if (!size->IsObject() || !ReadAspectGridSize(size, definition.columns,
+                            definition.rows, definition.aspect, sizeError) ||
+                        !validGrid ||
+                        definition.columns < 1 || definition.columns > 8 ||
+                        definition.rows < 1 || definition.rows > 8)
+                        report.Add(ValidationSeverity::Error, "manifest.creationPresetSize",
+                            manifestPath, sizeError.empty() ? "creation preset size must define a valid grid or aspect size" : sizeError);
+                    preset.size = definition;
+                }
                 if (!item.IsObject() || preset.id.empty() || preset.id.size() > 64 ||
                     !std::all_of(preset.id.begin(), preset.id.end(), [](unsigned char ch) {
                         return std::isalnum(ch) || ch == '-' || ch == '_'; }) ||
@@ -1761,6 +1804,12 @@ bool WidgetPackageValidator::ReadManifest(
     }
     ReadInteger(root, "refreshIntervalMs", manifest.refreshIntervalMs);
     ReadSize(root, "defaultSize", manifest.defaultColumns, manifest.defaultRows);
+    {
+        std::string sizeError;
+        if (!ReadAspectGridSize(root.Find("defaultSize"), manifest.defaultColumns,
+                manifest.defaultRows, manifest.defaultAspectSize, sizeError))
+            report.Add(ValidationSeverity::Error, "manifest.aspectSize", manifestPath, sizeError);
+    }
     ReadSize(root, "minSize", manifest.minColumns, manifest.minRows);
     ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
     bool arraysValid = true;
@@ -1771,6 +1820,15 @@ bool WidgetPackageValidator::ReadManifest(
         ReadStringArray(root, "networkDomains", arraysValid);
     manifest.requiredFeatures =
         ReadStringArray(root, "requiredFeatures", arraysValid);
+    const bool adaptiveSize = manifest.defaultAspectSize.has_value() ||
+        std::any_of(manifest.previewVariants.begin(), manifest.previewVariants.end(),
+            [](const auto& variant) { return variant.aspectSize.has_value(); }) ||
+        std::any_of(manifest.creationPresets.begin(), manifest.creationPresets.end(),
+            [](const auto& preset) { return preset.size.has_value(); });
+    if (adaptiveSize && std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+            "widget.size.aspectRatio") == manifest.requiredFeatures.end())
+        report.Add(ValidationSeverity::Error, "manifest.aspectSizeFeature", manifestPath,
+            "aspect sizes and per-preset sizes require widget.size.aspectRatio");
     if (!manifest.creationPresets.empty() &&
         std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
             "widget.creationPresets") == manifest.requiredFeatures.end())
@@ -2012,8 +2070,17 @@ bool WidgetPackageValidator::ReadManifest(
             manifestPath, "a license identifier is recommended");
     for (auto& variant : manifest.previewVariants)
     {
+        if (variant.columns == 0 && variant.rows == 0 && !variant.aspectSize)
+            variant.aspectSize = manifest.defaultAspectSize;
         if (variant.columns == 0) variant.columns = manifest.defaultColumns;
         if (variant.rows == 0) variant.rows = manifest.defaultRows;
+        if (variant.aspectSize)
+        {
+            const auto span = ResolveWidgetSize({variant.columns, variant.rows, variant.aspectSize},
+                StandardWidgetSizeGridMetrics(), manifest.minColumns, manifest.minRows,
+                manifest.maxColumns, manifest.maxRows);
+            variant.columns = span.first; variant.rows = span.second;
+        }
         if (variant.columns < manifest.minColumns ||
             variant.rows < manifest.minRows ||
             (manifest.maxColumns > 0 &&
@@ -2028,6 +2095,13 @@ bool WidgetPackageValidator::ReadManifest(
     if (!arraysValid)
         report.Add(ValidationSeverity::Error, "manifest.array", manifestPath,
             "permissions, domains, and feature declarations must be string arrays");
+    for (const auto& preset : manifest.creationPresets)
+        if (preset.size && !preset.size->aspect &&
+            (preset.size->columns < manifest.minColumns || preset.size->rows < manifest.minRows ||
+             (manifest.maxColumns > 0 && preset.size->columns > manifest.maxColumns) ||
+             (manifest.maxRows > 0 && preset.size->rows > manifest.maxRows)))
+            report.Add(ValidationSeverity::Error, "manifest.creationPresetSize", manifestPath,
+                "creation preset grid sizes must stay within minSize and maxSize");
     std::set<std::string> uniquePermissions;
     for (const auto& permission : manifest.permissions)
     {

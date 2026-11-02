@@ -3,6 +3,7 @@
 #include "widget/packages/widget_catalog_refresh.h"
 #include "widget/packages/widget_package_file_export.h"
 #include "widget/api/widget_api_registry.h"
+#include "app/widgets/widget_grid_size.h"
 extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
@@ -153,6 +154,109 @@ void TestCreationPresetManifest()
         "host advertises content creation presets separately from themes");
 }
 
+void TestAspectGridSizes()
+{
+    using namespace snowdesktop::widget;
+    // Real page geometry, including configurable gaps and integer pitch.
+    GridPage page;
+    page.id = L"aspect-page";
+    page.columns = 10; page.rows = 8;
+    page.workArea = {0, 0, 1000, 1200};
+    page.cellWidth = 90; page.cellHeight = 140;
+    page.gapX = page.gapY = 10; page.marginX = page.marginY = 5;
+    GridCell cell; cell.pageId = page.id;
+    const WidgetSizeDefinition square{1, 2, AspectGridSize{1, true}};
+    Check(ResolveWidgetSize(square, WidgetSizeMetricsForPage(&page, cell)) == std::pair{3, 2},
+        "two rows resolve to three columns on a tall-cell screen");
+    const auto frame = GetGridRect({page}, cell, {3, 2});
+    Check(frame.right - frame.left == frame.bottom - frame.top,
+        "resolved square uses actual outer grid frame dimensions");
+    GridPage wide = page;
+    wide.columns = 8; wide.workArea = {0, 0, 1200, 800};
+    wide.cellWidth = 140; wide.cellHeight = 90;
+    Check(ResolveWidgetSize(square, WidgetSizeMetricsForPage(&wide, cell)) == std::pair{1, 2},
+        "the same definition resolves differently on a wide-cell screen");
+    GridPage scaled = page;
+    scaled.workArea = {0, 0, 2000, 2400};
+    scaled.cellWidth *= 2; scaled.cellHeight *= 2;
+    scaled.gapX *= 2; scaled.gapY *= 2; scaled.marginX *= 2; scaled.marginY *= 2;
+    Check(ResolveWidgetSize(square, WidgetSizeMetricsForPage(&scaled, cell)) == std::pair{3, 2},
+        "uniform DPI scaling preserves the chosen integer span");
+    GridPage gaps = page;
+    gaps.columns = 8; gaps.workArea = {0, 0, 1120, 880};
+    gaps.cellWidth = 80; gaps.cellHeight = 110;
+    gaps.gapX = 60; gaps.marginX = 30; gaps.gapY = gaps.marginY = 0;
+    Check(ResolveWidgetSize(square, WidgetSizeMetricsForPage(&gaps, cell)) == std::pair{2, 2},
+        "large horizontal spacing participates in the aspect calculation");
+    const auto metrics = WidgetSizeMetricsForPage(&page, cell);
+    Check(ResolveWidgetSize(square, metrics, 4) == std::pair{4, 2} &&
+        ResolveWidgetSize(square, metrics, 1, 1, 2) == std::pair{2, 2},
+        "aspect choice respects declared minimum and maximum columns");
+    auto limited = metrics; limited.columns = 2; limited.rows = 1;
+    Check(ResolveWidgetSize(square, limited).first <= 2 &&
+        ResolveWidgetSize(square, limited).second == 1,
+        "fixed axes and derived axes fit the destination page");
+    Check(ResolveWidgetSize({3, 1, AspectGridSize{1, false}}, metrics) == std::pair{3, 2},
+        "fixed columns derive the closest row count");
+    Check(ResolveWidgetSize({2, 3, {}}, metrics) == std::pair{2, 3},
+        "legacy grid sizes are independent of screen proportions");
+
+    snowdesktop::test::TemporaryDirectory temporary;
+    const auto source = temporary.path / L"component";
+    std::filesystem::create_directory(source);
+    { std::ofstream file(source / L"main.lua"); file << "return widget.define({})"; }
+    const auto write = [&](const std::string& size, bool feature) {
+        std::ofstream file(source / L"widget.json", std::ios::binary | std::ios::trunc);
+        file << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23","slug":"aspect-test",
+            "version":"1.0.0","entry":"main.lua","name":"Aspect Test",
+            "description":"Aspect size contract","license":"MIT","permissions":[],
+            "defaultSize":)" << size << R"(,"requiredFeatures":["widget.creationPresets")"
+            << (feature ? ",\"widget.size.aspectRatio\"" : "") << R"(],
+            "previewData":{"variants":[{"id":"wide","title":"Wide","size":{"columns":3,"aspectRatio":2}}]},
+            "creationPresets":[{"id":"cpu","title":"CPU","values":{"metric":"cpu"},
+            "size":{"rows":2,"aspectRatio":1}}]})";
+    };
+    write(R"({"rows":2,"aspectRatio":1})", true);
+    PackageManifest manifest;
+    ValidationReport report;
+    WidgetPackageValidator validator;
+    Check(validator.ReadManifest(source / L"widget.json", manifest, report) && report.Ok() &&
+        manifest.defaultAspectSize && manifest.defaultAspectSize->fixedRows &&
+        manifest.previewVariants.size() == 1 && manifest.creationPresets.size() == 1 &&
+        manifest.previewVariants.front().aspectSize && !manifest.previewVariants.front().aspectSize->fixedRows &&
+        manifest.creationPresets.front().size && manifest.creationPresets.front().size->aspect,
+        "default, preview and content-preset aspect sizes survive manifest parsing");
+    const auto archive = temporary.path / L"aspect.snowwidget";
+    PackagePaths paths; paths.staging = temporary.path / L"staging";
+    WidgetPackageManager manager(paths);
+    PackageArtifact artifact;
+    std::string error;
+    Check(manager.ExportDirectory(source, archive, artifact, report, error),
+        "aspect package exports without flattening screen-dependent sizes");
+    PackageManifest roundtrip;
+    Check(manager.ValidateArchive(archive, &roundtrip).Ok() && roundtrip.defaultAspectSize &&
+        roundtrip.defaultAspectSize->ratio == 1 && roundtrip.creationPresets.size() == 1 &&
+        roundtrip.creationPresets.front().size && roundtrip.creationPresets.front().size->aspect,
+        "archive roundtrip retains adaptive size definitions");
+    write(R"({"rows":2,"aspectRatio":1})", false);
+    report = {};
+    Check(!validator.ReadManifest(source / L"widget.json", manifest, report),
+        "new size semantics require an explicit host capability");
+    for (const std::string invalid : {R"({"rows":2,"columns":2,"aspectRatio":1})",
+        R"({"aspectRatio":1})", R"({"rows":0,"aspectRatio":1})",
+        R"({"rows":2.5,"aspectRatio":1})", R"({"rows":9,"aspectRatio":1})",
+        R"({"rows":2,"aspectRatio":0})", R"({"rows":2,"aspectRatio":-1})",
+        R"({"rows":2,"aspectRatio":"1:1"})"})
+    {
+        write(invalid, true); report = {};
+        Check(!validator.ReadManifest(source / L"widget.json", manifest, report),
+            "invalid ratio or ambiguous/fractional anchor axes are rejected");
+    }
+    Check(snowdesktop::widget_api::SupportsFeature("widget.size.aspectRatio"),
+        "host advertises aspect-ratio grid sizing");
+}
+
 void TestStandalonePackageExport()
 {
     using namespace snowdesktop::widget;
@@ -261,6 +365,7 @@ int main(int argc, char* argv[])
     TestCatalogueRefreshCache();
     TestPermissionReport();
     TestCreationPresetManifest();
+    TestAspectGridSizes();
     Check(snowdesktop::widget_api::SupportsFeature("widget.confirmRemoval"),
         "host advertises removal confirmation for protected components");
     std::cout << "widget author tools tests passed\n";

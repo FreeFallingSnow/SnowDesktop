@@ -17,6 +17,7 @@
 #include <vector>
 #include "widget/runtime/widget_logical_slot.h"
 #include "widget/permissions/widget_permission_state.h"
+#include "widget_size_rules.h"
 
 namespace snowdesktop::widget
 {
@@ -83,6 +84,7 @@ struct PreviewVariant
     std::string descriptionKey;
     int columns = 0;
     int rows = 0;
+    std::optional<AspectGridSize> aspectSize;
     std::unordered_map<std::string, std::string> storage;
     std::unordered_map<std::string, std::string> storageKeys;
 };
@@ -94,6 +96,7 @@ struct CreationPreset
     std::string title;
     std::string titleKey;
     std::unordered_map<std::string, std::string> values;
+    std::optional<WidgetSizeDefinition> size;
 };
 
 struct NativeHelper
@@ -129,6 +132,7 @@ struct PackageManifest
     std::vector<CreationPreset> creationPresets;
     int defaultColumns = 1;
     int defaultRows = 1;
+    std::optional<AspectGridSize> defaultAspectSize;
     int minColumns = 1;
     int minRows = 1;
     int maxColumns = 0;

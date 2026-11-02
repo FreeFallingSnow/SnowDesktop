@@ -175,6 +175,7 @@ struct LuaWidgetManifest
         std::unordered_map<std::string, std::string>> locales; ///< 组件自带的多语言文本
     int defaultColumns = 1;            ///< 默认占据列数（桌面栅格）
     int defaultRows = 1;               ///< 默认占据行数（桌面栅格）
+    std::optional<snowdesktop::widget::AspectGridSize> defaultAspectSize;
     int minColumns = 1;                ///< 最少占据列数
     int minRows = 1;                   ///< 最少占据行数
     int maxColumns = 0;                ///< 最多占据列数，0 表示不限制

@@ -8,7 +8,7 @@
   "minHostVersion": "1.0.14.0",
   "author": "SnowDesktop Workshop Lab",
   "license": "GPL-3.0-only",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "name": "Single Monitor",
   "nameKey": "monitor.name",
   "description": "A focused instrument for CPU, GPU, memory, VRAM, battery, disk, or network.",
@@ -396,8 +396,8 @@
     }
   },
   "defaultSize": {
-    "columns": 2,
-    "rows": 2
+    "rows": 2,
+    "aspectRatio": 1
   },
   "previewData": {
     "introduction": "Choose a metric preset in the preview. After adding, click the title or right-click to switch.",
@@ -438,7 +438,8 @@
     "view.keyboardNavigation.order",
     "ui.semanticMetrics.rowUnit",
     "draw.marqueeText",
-    "widget.creationPresets"
+    "widget.creationPresets",
+    "widget.size.aspectRatio"
   ],
   "optionalFeatures": [
     "data.subscription.history",

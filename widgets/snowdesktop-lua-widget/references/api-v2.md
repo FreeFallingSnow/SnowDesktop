@@ -3365,6 +3365,26 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 
 ## 添加预设（`widget.creationPresets`）
 
+默认尺寸与预设尺寸支持能力 `widget.size.aspectRatio`，API/schema 仍为 2。
+例如 `"defaultSize":{"rows":2,"aspectRatio":1}` 固定高 2 格，添加时按目标屏幕
+实际网格尺寸和间距选择最接近 1:1 的列数。也可定义
+`{"columns":3,"aspectRatio":1.7777777777777777}`，固定 3 列并求最接近 16:9 的行数。
+`aspectRatio` 是有限正数（外框宽/高）；必须且只能提供 `rows` 或 `columns` 其中一轴，
+该轴为 1–8 的整数。另一轴在可用页面、1–8 格及组件 `minSize/maxSize` 范围内选择，
+以实际宽高比绝对误差最小为准；误差相同时选更小的跨度。固定轴同样受页面与边界约束。
+
+此写法可用于 `defaultSize`、`previewData.variants[].size`、`creationPresets[].size`。
+内容预设 `size` 优先于尺寸预览预设，未提供时沿用对应尺寸预设或默认尺寸。
+内容预设也可使用 `"size":{"columns":3,"rows":2}` 覆盖初始格数。
+使用比例定义或内容预设尺寸覆盖时，必须在 `requiredFeatures` 中声明
+`widget.size.aspectRatio`。旧的 `columns/rows` 清单继续按固定格数工作；
+旧宿主及同版本早期构建不支持新能力时会拒绝加载，分发组件前须先发布支持它的宿主。
+
+添加预览与实际添加使用同一换算规则，点击添加时会按当时的目标网格重新解析。
+没有目标屏幕的离屏工具使用标准 92×116、间距 8 的网格作为参考。
+组件保存的仍是整数网格跨度；本能力不锁定后续缩放比例，不重排已有实例，
+也不改变 Lua 绘制、布局单位或渲染规则。
+
 清单的 `creationPresets` 注册可在“添加组件”预览中切换的内容预设。它与
 `settings.presets` 外观主题分开，不向主题菜单添加项目，也不改变材质或前景。
 必须在 `requiredFeatures` 中声明 `widget.creationPresets`；API/schema 保持 v2。

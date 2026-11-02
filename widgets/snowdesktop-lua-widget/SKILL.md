@@ -341,6 +341,15 @@ queries, write storage or rebuild invariant data on every frame.
   8. Omit `minSize` to use the host's 1 × 1 default. Omit `maxSize`, or use a
   schema-permitted maximum dimension of `0`, when the widget has no functional
   upper bound. Recommended preview variants do not need to restrict resizing.
+- For screen-dependent starting proportions, require `widget.size.aspectRatio`
+  and define `defaultSize` or a preview variant's `size` as
+  `{"rows":2,"aspectRatio":1}` (fixed two rows, choose the closest square width),
+  or use `columns` instead to derive rows. Supply exactly one axis; the ratio is
+  outer width divided by outer height. A creation preset may override `size` in
+  the same format or with an explicit grid size. The host resolves integer spans
+  using the destination page's actual grid and spacing; rendering and saved
+  spans remain unchanged. Publish the supporting host first; old hosts reject
+  this required feature instead of guessing a starting size.
 - Keep `permissions` empty unless a documented guarded API needs one. Reserved
   vocabulary does not make an API available.
 - Native helpers are limited to declared, hash-matched `.exe` files with

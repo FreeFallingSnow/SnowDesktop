@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget_package_source_capture.h"
+#include "widget_grid_size.h"
 #include "widget/preview/widget_preset_preview.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
@@ -417,7 +418,7 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     if (settings.kind == ApplyKind::None) return {};
 
     lastContextMenuScreenPoint_ = screenPoint;
-    const GridSpan span{
+    GridSpan span{
         std::clamp(settings.columns, 1, 8),
         std::clamp(settings.rows, 1, 8),
     };
@@ -497,6 +498,34 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     }
     case ApplyKind::LuaScript:
         if (settings.packageId.empty()) return {};
+        {
+            const auto manifest = WidgetEngine::GetWidgetManifest(settings.packageId);
+            snowdesktop::widget::WidgetSizeDefinition size{
+                manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize};
+            if (!settings.sizeVariantId.empty())
+                for (const auto& variant : manifest.previewVariants)
+                    if (variant.id == settings.sizeVariantId)
+                    {
+                        size = {variant.columns, variant.rows, variant.aspectSize};
+                        break;
+                    }
+            bool presetSize = false;
+            for (const auto& preset : manifest.creationPresets)
+                if (preset.id == settings.creationPresetId && preset.size)
+                {
+                    size = *preset.size; presetSize = true; break;
+                }
+            if (size.aspect || presetSize)
+            {
+                POINT point = screenPoint;
+                ScreenToClient(hwnd_, &point);
+                const auto* page = GridPageFromPoint(point);
+                const auto resolved = snowdesktop::widget::ResolveWidgetSize(size,
+                    snowdesktop::widget::WidgetSizeMetricsForPage(page, CellFromPoint(point)),
+                    manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
+                span = {std::clamp(resolved.first, 1, 8), std::clamp(resolved.second, 1, 8)};
+            }
+        }
         if (!settings.creationPresetId.empty() &&
             (!widgetEngine_ || !widgetSettingsService_ || !widgetSettingsBackend_)) return {};
         widget.type = DesktopWidgetType::LuaScript;

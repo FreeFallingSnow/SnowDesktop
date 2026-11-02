@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "widget/preview/widget_preset_preview.h"
+#include "app/widgets/widget_grid_size.h"
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
@@ -1344,6 +1345,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         variant.title = WideToUtf8(_LW("app.widget_preview.default_mode"));
         variant.columns = manifest.defaultColumns;
         variant.rows = manifest.defaultRows;
+        variant.aspectSize = manifest.defaultAspectSize;
         variants.push_back(std::move(variant));
     }
     auto presets = manifest.creationPresets;
@@ -1357,8 +1359,13 @@ DesktopApp::BuildAddWidgetMenuPreview(
             root.type = DesktopWidgetType::LuaScript;
             root.packageId = packageId;
             root.title = model.title;
-            root.gridSpan = { std::clamp(variant.columns, 1, 8),
-                std::clamp(variant.rows, 1, 8) };
+            snowdesktop::widget::WidgetSizeDefinition size{
+                variant.columns, variant.rows, variant.aspectSize};
+            if (preset.size) size = *preset.size;
+            const auto span = snowdesktop::widget::ResolveWidgetSize(size,
+                snowdesktop::widget::WidgetSizeMetricsForPage(previewPage, previewCell),
+                manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
+            root.gridSpan = {std::clamp(span.first, 1, 8), std::clamp(span.second, 1, 8)};
             const std::wstring title = !preset.id.empty()
                 ? Utf8ToWide(preset.title)
                 : (variant.title.empty() ? _LW("app.widget_preview.default_mode")
@@ -1370,6 +1377,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             model.cards.back().title = title;
             model.cards.back().description = Utf8ToWide(variant.description);
             model.cards.back().applySettings.creationPresetId = preset.id;
+            model.cards.back().applySettings.sizeVariantId = variant.id;
         }
     }
 

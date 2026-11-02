@@ -76,6 +76,8 @@ struct ApplySettings
     bool showSearchBox = false;
     /// Registered ordinary settings to validate again before creating a Lua instance.
     std::string creationPresetId;
+    /// Keeps the selected authored size so adding can resolve the current page again.
+    std::string sizeVariantId;
 };
 
 enum class OptionSetting

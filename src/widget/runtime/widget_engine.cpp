@@ -32332,6 +32332,9 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                         std::isfinite(number))
                         variant.rows = std::clamp(
                             static_cast<int>(number), 1, 8);
+                    std::string sizeError;
+                    (void)snowdesktop::widget::ReadAspectGridSize(size,
+                        variant.columns, variant.rows, variant.aspectSize, sizeError);
                 }
                 if (const JsonValue* variantStorage = value.Find("storage");
                     variantStorage && variantStorage->IsObject())
@@ -32371,6 +32374,18 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readString(item, "id", preset.id);
             readString(item, "title", preset.title);
             readString(item, "titleKey", preset.titleKey);
+            if (const auto* size = item.Find("size"); size && size->IsObject())
+            {
+                snowdesktop::widget::WidgetSizeDefinition definition;
+                if (const auto* c = size->Find("columns"); c && c->IsNumber() && std::isfinite(c->number))
+                    definition.columns = static_cast<int>(std::clamp(c->number, 1.0, 8.0));
+                if (const auto* r = size->Find("rows"); r && r->IsNumber() && std::isfinite(r->number))
+                    definition.rows = static_cast<int>(std::clamp(r->number, 1.0, 8.0));
+                std::string sizeError;
+                (void)snowdesktop::widget::ReadAspectGridSize(size, definition.columns,
+                    definition.rows, definition.aspect, sizeError);
+                preset.size = definition;
+            }
             if (const auto* values = item.Find("values"); values && values->IsObject())
                 for (const auto& [key, value] : values->object)
                     if (value.IsString()) preset.values[key] = value.string;
@@ -32604,6 +32619,11 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             rows = normalize(value);
     };
     readSize("defaultSize", manifest.defaultColumns, manifest.defaultRows, 1, 8);
+    {
+        std::string sizeError;
+        (void)snowdesktop::widget::ReadAspectGridSize(root.Find("defaultSize"),
+            manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize, sizeError);
+    }
     readSize("minSize", manifest.minColumns, manifest.minRows, 1, 1);
     readSize("maxSize", manifest.maxColumns, manifest.maxRows, 0, 0);
 
@@ -32633,8 +32653,18 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     }
     for (auto& variant : manifest.previewVariants)
     {
+        if (variant.columns <= 0 && variant.rows <= 0 && !variant.aspectSize)
+            variant.aspectSize = manifest.defaultAspectSize;
         if (variant.columns <= 0) variant.columns = manifest.defaultColumns;
         if (variant.rows <= 0) variant.rows = manifest.defaultRows;
+        if (variant.aspectSize)
+        {
+            const auto span = snowdesktop::widget::ResolveWidgetSize(
+                {variant.columns, variant.rows, variant.aspectSize},
+                snowdesktop::widget::StandardWidgetSizeGridMetrics(), manifest.minColumns,
+                manifest.minRows, manifest.maxColumns, manifest.maxRows);
+            variant.columns = span.first; variant.rows = span.second;
+        }
         if (!variant.titleKey.empty())
             variant.title = TranslateManifest(
                 manifest, variant.titleKey, variant.title);

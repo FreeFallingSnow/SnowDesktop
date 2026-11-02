@@ -205,6 +205,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "widget.confirmRemoval",
     "widget.context",
     "widget.creationPresets",
+    "widget.size.aspectRatio",
     "widget.dialog",
     "widget.panel",
     "widget.popover",
