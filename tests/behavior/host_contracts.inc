@@ -253,7 +253,7 @@ void SettingsHostCommit()
         "name":"Creation consent","permissions":["network.internet"]})");
     Write(package / L"main.lua", R"(return widget.define({
         setup=function() storage.set("started", "1") end,
-        view=function() return {type="text",key="body",text="Ready"} end})");
+        view=function() return {type="text",key="body",text="Ready"} end}))");
     const std::wstring packageId = L"12345678-1234-5678-1234-567812345678";
     std::wstring installError;
     Require(WidgetEngine::InstallWidgetPackage((package / L"widget.json").wstring(), installError),
