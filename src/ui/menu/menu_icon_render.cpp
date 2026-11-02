@@ -839,7 +839,9 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         metrics.iconColumnWidth = Scale(20, effectiveDpi);
         metrics.textGap = Scale(6, effectiveDpi);
         metrics.rightPadding = Scale(8, effectiveDpi);
-        metrics.textFontHeight = Scale(11, effectiveDpi);
+        // Native menus normally use 9pt (12 DIP); this is also the fallback
+        // when the per-DPI system menu font cannot be queried.
+        metrics.textFontHeight = Scale(12, effectiveDpi);
         metrics.iconFontHeight = Scale(16, effectiveDpi);
         metrics.maximumImageSize = Scale(16, effectiveDpi);
     }

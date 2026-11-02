@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <cwchar>
 #include <cwctype>
 #include <memory>
 #include <sstream>
@@ -173,10 +174,40 @@ public:
         const int submenuArrowHeight = -metrics_.submenuArrowFontHeight;
         const int quickTextHeight = -metrics_.quickActionTextFontHeight;
         const int quickIconHeight = -metrics_.quickActionFontHeight;
-        textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+        const bool win10Style = appearance_rules::IsWin10Style(effectiveAppearance_);
+        if (win10Style)
+        {
+            // Match native menu typography, including the user's text size,
+            // at the popup DPI. Explicit application font choices still win.
+            NONCLIENTMETRICSW systemMetrics{};
+            systemMetrics.cbSize = sizeof(systemMetrics);
+            if (SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,
+                    sizeof(systemMetrics), &systemMetrics, 0, metrics_.dpi))
+            {
+                LOGFONTW font = systemMetrics.lfMenuFont;
+                const auto family = snowdesktop::app_fonts::GdiFamily(font.lfFaceName);
+                wcsncpy_s(font.lfFaceName, family.c_str(), _TRUNCATE);
+                textFont_ = CreateFontIndirectW(&font);
+            }
+        }
+        if (!textFont_)
+            textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
+                FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+        if (win10Style && textFont_)
+        {
+            if (HDC dc = GetDC(nullptr))
+            {
+                HGDIOBJ previousFont = SelectObject(dc, textFont_);
+                TEXTMETRICW textMetrics{};
+                if (GetTextMetricsW(dc, &textMetrics))
+                    metrics_.rowHeight = std::max(metrics_.rowHeight,
+                        static_cast<int>(textMetrics.tmHeight) + Scale(6, metrics_.dpi));
+                if (previousFont) SelectObject(dc, previousFont);
+                ReleaseDC(nullptr, dc);
+            }
+        }
         // Only the official Regular face is embedded.  Requesting Semibold
         // makes GDI synthesize thicker outlines, which distorts the 20px
         // Fluent masters most visibly on 96-DPI / low-resolution screens.
