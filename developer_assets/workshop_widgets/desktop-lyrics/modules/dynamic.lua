@@ -9,6 +9,9 @@ end
 local function random(seed,offset)
     local value=math.sin(seed+offset)*10000;return value-math.floor(value)
 end
+local function drift(age,phase,rate)
+    return 0.65*math.sin(age*rate+phase)+0.35*math.sin(age*rate*1.618+phase*0.73)
+end
 local function color(a,b,t)
     t=clamp(t);local value=0
     for _,unit in ipairs({65536,256,1}) do
@@ -24,7 +27,7 @@ end
 local function prepare(line,g,p,width,height)
     if g.replica and g.replica.surfaceHeight==height then return g.replica end
     local available=math.max(1,p.width-p.font*0.2)
-    local block=Text.wrap(line.text,p.font,available/2.2,draw.measureText)
+    local block=Text.wrap(line.text,p.font,available/1.95,draw.measureText)
     Text.words(block,{text=line.text,words=g.words},draw.measureText)
     local result={pieces={},pages={},surfaceHeight=height,left=p.padding+p.font*0.1,mainHeight=0};local measurements={}
     if g.subtitle and #g.subtitle.rows==0 then g.subtitle=nil end
@@ -32,10 +35,11 @@ local function prepare(line,g,p,width,height)
     result.subtitleRows=g.subtitle and math.max(1,math.floor(room*0.22/g.subtitle.lineHeight)) or 0
     local subtitleHeight=g.subtitle and result.subtitleRows*g.subtitle.lineHeight+p.font*0.35 or 0
     local pageRoom=math.max(1,room-subtitleHeight)
+    local bend,turn=0,0
     local function piece(first,last,start,finish,split)
         local value=line.text:sub(first,last)
         if value:match("^%s*$") then return end
-        local chars=not split and Text.clusters(value) or nil;local isCjk=false
+        local chars=not split and utf8.len(value)>1 and Text.clusters(value) or nil;local isCjk=false
         if chars then for _,char in ipairs(chars) do
             if (char.code>=0x2e80 and char.code<=0xa4cf) or char.code>=0x20000 then isCjk=true;break end
         end end
@@ -46,22 +50,32 @@ local function prepare(line,g,p,width,height)
             return
         end
         local index=#result.pieces+1;local measured=measurements[value]
-        if not measured then measured=draw.measureText(value,p.font,0,true);measurements[value]=measured end
+        if not measured then
+            local native=draw.measureText(value,p.font,0,true)
+            local w,h=native.width+p.font*0.06,math.max(p.font*1.1,native.height)
+            measured={width=w,height=h,spanX=extent(w,h,8),spanY=extent(h,w,8)};measurements[value]=measured
+        end
         local item={key="lyrics.word."..tostring(line.start).."."..index,text=value,
-            width=measured.width+p.font*0.12,height=math.max(p.font*1.35,measured.height),
+            width=measured.width,height=measured.height,
             start=start or line.start,finish=finish or line.finish,scale=start and 1.2 or 1,first=first,last=last}
         item.focusStart=start or line.start+(line.finish-line.start)*(first-1)/math.max(1,#line.text)
-        local peak=item.scale*1.4*1.044
-        item.slotWidth=peak*extent(item.width,item.height,3)
-        item.slotHeight=peak*extent(item.height,item.width,3)+p.font*0.24
-        if not split and #chars>1 and (item.slotWidth>available or item.slotHeight>pageRoom) then
+        local peak=item.scale*1.25*1.044
+        item.slotWidth=peak*measured.spanX
+        item.slotHeight=peak*measured.spanY+p.font*0.24
+        if chars and #chars>1 and (item.slotWidth>available or item.slotHeight>pageRoom) then
             local span=(finish or line.finish)-(start or line.start)
             for i,char in ipairs(chars) do piece(first+char.first-1,first+char.last-1,
                 start and start+span*(i-1)/#chars or nil,start and start+span*i/#chars or nil,true) end
             return
         end
-        item.fit=math.min(1,available/item.slotWidth,pageRoom/item.slotHeight)
+        item.fit=1
+        if item.slotWidth>available or item.slotHeight>pageRoom then item.fit=math.min(available/item.slotWidth,pageRoom/item.slotHeight) end
         item.slotWidth=item.slotWidth*item.fit;item.slotHeight=item.slotHeight*item.fit
+        local seed=line.start/1000+index*1.618
+        bend=bend*0.35+(random(seed,2)*2-1)*0.65
+        turn=turn*0.55+(random(seed,3)*2-1)*0.45
+        item.anchorY=bend*p.font*0.18;item.tilt=turn*2.6
+        item.motionSeed=seed
         result.pieces[#result.pieces+1]=item
     end
     for _,row in ipairs(block.rows) do
@@ -74,21 +88,33 @@ local function prepare(line,g,p,width,height)
         end
         if cursor<=row.last then piece(cursor,row.last) end
     end
-    local gap=p.font*0.14;local rows={};local row={pieces={},width=0,height=0}
+    local gap=p.font*0.03;local rows={};local row={pieces={},width=0,height=0}
+    local bendRoomSquared=(p.font*0.36)^2
+    local function advance(a,b)
+        local clear=(a.slotWidth+b.slotWidth)/2+b.gapBefore
+        local dy=b.anchorY-a.anchorY
+        -- Preserve near-equal travel along an irregular path and horizontal
+        -- clearance for both maximum transformed bounds.
+        return math.sqrt(clear*clear+bendRoomSquared-dy*dy)
+    end
     local function rowSize(r)
         r.width=0;r.height=0
         for i,item in ipairs(r.pieces) do
-            r.width=r.width+(i>1 and item.gapBefore or 0)+item.slotWidth;r.height=math.max(r.height,item.slotHeight)
+            if i==1 then r.width=item.slotWidth
+            else local previous=r.pieces[i-1];r.width=r.width-previous.slotWidth/2+item.step+item.slotWidth/2 end
+            r.height=math.max(r.height,item.slotHeight)
         end
     end
     local previous
     for _,item in ipairs(result.pieces) do
-        item.gapBefore=previous and line.text:sub(previous.last+1,item.first-1):find("%s") and p.font*0.38 or gap
-        local spacing=#row.pieces>0 and item.gapBefore or 0
-        if #row.pieces>0 and (row.width+spacing+item.slotWidth>available or #row.pieces>=128) then
-            rows[#rows+1]=row;row={pieces={},width=0,height=0};spacing=0
+        item.gapBefore=previous and line.text:sub(previous.last+1,item.first-1):find("%s") and p.font*0.28 or gap
+        item.step=previous and advance(previous,item) or 0
+        local nextWidth=#row.pieces>0 and row.width-row.pieces[#row.pieces].slotWidth/2+
+            item.step+item.slotWidth/2 or item.slotWidth
+        if #row.pieces>0 and (nextWidth>available or #row.pieces>=128) then
+            rows[#rows+1]=row;row={pieces={},width=0,height=0};nextWidth=item.slotWidth
         end
-        row.pieces[#row.pieces+1]=item;row.width=row.width+spacing+item.slotWidth
+        row.pieces[#row.pieces+1]=item;row.width=nextWidth
         row.height=math.max(row.height,item.slotHeight);previous=item
     end
     if #row.pieces>0 then rows[#rows+1]=row end
@@ -97,22 +123,24 @@ local function prepare(line,g,p,width,height)
         local a,b=rows[#rows-1],rows[#rows]
         while #a.pieces>1 and b.width<a.width*0.65 do
             local item=a.pieces[#a.pieces]
-            if b.width+item.slotWidth+b.pieces[1].gapBefore>available then break end
+            local added=item.slotWidth/2+b.pieces[1].step-b.pieces[1].slotWidth/2
+            if b.width+added>available then break end
             table.remove(a.pieces);table.insert(b.pieces,1,item);rowSize(a);rowSize(b)
         end
     end
     local page={rows={},height=0,start=line.start,pieceCount=0}
     for i,r in ipairs(rows) do
-        r.angle=(random(line.start/1000,i)-0.5)*2
-        local x=result.left
-        for n,item in ipairs(r.pieces) do
-            if n>1 then x=x+item.gapBefore end
-            item.x=x+(item.slotWidth-item.width)/2;x=x+item.slotWidth
-        end
-        if #page.rows>0 and (page.height+p.font*0.16+r.height>pageRoom or page.pieceCount+#r.pieces>180) then
+        r.angle=(random(line.start/1000,i)-0.5)*3.6
+        if #page.rows>0 and (page.height+p.font*0.10+r.height>pageRoom or page.pieceCount+#r.pieces>180) then
             result.pages[#result.pages+1]=page;page={rows={},height=0,start=r.pieces[1].focusStart,pieceCount=0}
         end
-        r.y=page.height+(#page.rows>0 and p.font*0.16 or 0)
+        local indent=#page.rows>0 and math.min(math.max(0,available-r.width)*(0.35+random(line.start/1000,i+30)*0.25),p.font*2.3) or 0
+        local x=result.left+indent+r.pieces[1].slotWidth/2
+        for n,item in ipairs(r.pieces) do
+            if n>1 then x=x+item.step end
+            item.x=x-item.width/2
+        end
+        r.y=page.height+(#page.rows>0 and p.font*0.10 or 0)
         page.rows[#page.rows+1]=r;page.height=r.y+r.height;page.pieceCount=page.pieceCount+#r.pieces
     end
     if #page.rows>0 then result.pages[#result.pages+1]=page end
@@ -141,16 +169,27 @@ local function label(key,value,x,y,width,height,font,foreground,alpha)
         style={foreground=foreground,opacity=alpha}}
 end
 local directions={{1,0},{-1,0},{0,1},{0,-1},{0.707,0.707},{-0.707,0.707},{0.707,-0.707},{-0.707,-0.707}}
-local function pose(piece,media,pageStart,reduced,angle)
+local function pose(piece,media,pageStart,reduced,angle,previousAngle)
     local elapsed=(media-math.max(piece.start-150,pageStart))/1000
     local enter=spring(elapsed);local after=ease((media-piece.finish)/500)
-    local target=piece.scale*1.4
+    local target=piece.scale*1.25
     local scale=(reduced and 1 or 0.5+(target-0.5)*enter+(piece.scale-target)*after)*piece.fit
-    local rotate=reduced and 0 or angle+1.5*(1-enter)
+    local age=math.max(0,(media-piece.finish)/1000);local floating,spinning=0,0
+    if not reduced and age>0 then
+        if not piece.phase then
+            piece.phase=random(piece.motionSeed,8)*math.pi*2;piece.rate=0.9+random(piece.motionSeed,9)*0.8
+            piece.zeroY=drift(0,piece.phase,piece.rate);piece.zeroAngle=drift(0,piece.phase+1.7,piece.rate*0.67)
+        end
+        local settled=ease(age/0.35)*0.5
+        floating=(drift(age,piece.phase,piece.rate)-piece.zeroY)*settled
+        spinning=(drift(age,piece.phase+1.7,piece.rate*0.67)-piece.zeroAngle)*settled
+    end
+    local rotate=reduced and 0 or math.max(-8,math.min(8,angle+piece.tilt+1.8*(1-enter)+spinning*2.8))
+    if previousAngle then rotate=math.max(previousAngle-8,math.min(previousAngle+8,rotate)) end
     local radians=math.rad(rotate)
     local ey=scale*(math.abs(math.cos(radians))*piece.height+math.abs(math.sin(radians))*piece.width)/2
     return {elapsed=elapsed,after=after,scale=scale,rotate=rotate,ey=ey,
-        y=reduced and 0 or (1-enter)*0.12,
+        y=reduced and 0 or (1-enter)*0.06+floating*0.12,
         alpha=reduced and 0.9 or ease(elapsed/0.1)*(1-after*0.18)}
 end
 function M.scene(m,g,line,media,width,height,p,primary,accent)
@@ -164,10 +203,11 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
     local lineAlpha=reduced and 1 or 0.2+0.8*ease((media-page.start)/260)
     local glowBudget=72
     for _,row in ipairs(page.rows) do
+        local previousAngle
         for _,piece in ipairs(row.pieces) do
-            local value=pose(piece,media,page.start,reduced,row.angle)
+            local value=pose(piece,media,page.start,reduced,row.angle,previousAngle);previousAngle=value.rotate
             if reduced or value.elapsed>=0 then
-                local y=value.y*p.font;local roomY=math.max(0,row.height/2-value.ey)
+                local y=piece.anchorY+value.y*p.font;local roomY=math.max(0,row.height/2-value.ey)
                 y=math.max(-roomY,math.min(roomY,y))
                 local py=top+row.y+(row.height-piece.height)/2+y
                 local progress=clamp((media-piece.start)/math.max(1,piece.finish-piece.start))
