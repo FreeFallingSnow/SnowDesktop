@@ -48,20 +48,16 @@ void LogDockWindowActivation(HWND target, const wchar_t* phase,
         ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
     WINDOWPLACEMENT placement{sizeof(placement)};
     const BOOL placementKnown = GetWindowPlacement(target, &placement);
-    DWORD cloaked = 0;
-    const HRESULT cloakResult = DwmGetWindowAttribute(
-        target, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
     wchar_t message[768]{};
     swprintf_s(message,
         L"DockActivation tick=%llu phase=%ls target=%p pid=%lu tid=%lu "
         L"foreground=%p foregroundPid=%lu foregroundTid=%lu "
         L"iconic=%d visible=%d hung=%d placementKnown=%d placement=%u flags=%u "
-        L"cloaked=%lu cloakResult=0x%08X show=%d accepted=%d error=%lu",
+        L"show=%d accepted=%d error=%lu",
         GetTickCount64(), phase, target, process, thread,
         foreground, foregroundProcess, foregroundThread,
         IsIconic(target), IsWindowVisible(target), IsHungAppWindow(target),
-        placementKnown, placement.showCmd, placement.flags, cloaked,
-        static_cast<unsigned>(cloakResult), showCommand, accepted, error);
+        placementKnown, placement.showCmd, placement.flags, showCommand, accepted, error);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Debug);
 }
 
@@ -112,13 +108,11 @@ bool ActivateDockWindowForeground(HWND target, HWND activationTarget)
             });
 }
 
-void RequestDockWindowShow(HWND target, bool wasMinimized, bool activate = true)
+void RequestDockWindowShow(HWND target, bool wasMinimized)
 {
     if (!target || !IsWindow(target))
         return;
-    const int showCommand = wasMinimized
-        ? (activate ? DockRestoreShowCommand(target) : SW_SHOWNOACTIVATE)
-        : SW_SHOW;
+    const int showCommand = wasMinimized ? DockRestoreShowCommand(target) : SW_SHOW;
     LogDockWindowActivation(target, L"show-request", showCommand);
     SetLastError(ERROR_SUCCESS);
     const BOOL showAccepted = ShowWindowAsync(target, showCommand);
@@ -1585,21 +1579,19 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            // SW_RESTORE/SW_SHOWMAXIMIZED activate even without an explicit
-            // SetForegroundWindow. Restore the cloaked source without activation;
-            // SW_SHOWNOACTIVATE also preserves restore-to-maximized placement.
-            // Foreground ownership belongs to the exposed-window handoff.
-            CancelAllDockWindowActivationObservations();
-            LogDockWindowActivation(target, L"animation-restore-request");
-            RequestDockWindowShow(target, true, false);
+            // Only submit the maximized/normal restore here. The transition
+            // restores the cloaked source before its visual timeline starts,
+            // letting the application finish its native restore underneath the
+            // animation. This remains asynchronous and submits no second restore.
+            const DockWindowActivationOutcome outcome =
+                RequestDockWindowActivation(target, true);
             UpdateDockWindowActivationState(
-                target, IsIconic(target) == FALSE, false);
+                target, outcome.restored,
+                outcome.foreground);
         }
         return;
     }
 
-    LogDockWindowActivation(target, L"animation-source-exposed");
-    BeginDockWindowActivationObservation(target, IsIconic(target) != FALSE);
     const DockWindowActivationOutcome outcome =
         ActivateDockWindowAfterShow(target, true);
     UpdateDockWindowActivationState(
