@@ -114,6 +114,25 @@ foreground or `1` for a dark/black foreground so host chrome follows that
 preset. Pass it directly to the preview CLI for authoring overrides, and never
 read or persist it from component Lua.
 
+## Icon meaning and glyph verification
+
+Choose icons whose established meaning matches the command or information they
+represent. Do not use an unrelated symbol merely because it looks attractive,
+fills the slot or resembles the intended icon. Check the action label and icon
+together and confirm that they describe the same action or state.
+
+For font icons, verify the named glyph and code point against the mapping for
+the actual font family and version used by `iconFont`. Never guess a private-use
+code point or copy one from another icon font, including a different Fluent
+family. A valid, nonempty glyph is not evidence of the correct meaning. If no
+appropriate host glyph exists, use a semantically appropriate declared resource
+image when supported instead of substituting an unrelated icon.
+
+Inspect the actual glyph rendered with that font at the intended UI size,
+alongside its label, before accepting the change. Confirm that it is the chosen
+symbol, remains legible and has appropriate visual weight. Code review or a
+check that `icon` is nonempty cannot replace this visual check.
+
 ## Scrollable auxiliary surfaces
 
 Keep a panel, dialog or popover's outer `view.scroll` at `width="fill"` and
