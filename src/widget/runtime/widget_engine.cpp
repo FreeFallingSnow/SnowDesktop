@@ -5329,9 +5329,35 @@ static int lua_DataSubscriptionHistory(lua_State* state)
 {
     auto* handle = CheckDataSubscriptionHandle(state, 1);
     std::string error;
-    const auto points = handle->engine && handle->id != 0
-        ? handle->engine->RuntimeGetDataHistory(handle->id, error)
-        : (error = "unsubscribed", std::vector<snowdesktop::widget_runtime::WidgetResourcePoint>{});
+    std::string adapterId;
+    if (!lua_isnoneornil(state, 2))
+    {
+        if (!lua_istable(state, 2)) error = "invalidHistoryOptions";
+        else
+        {
+            lua_getfield(state, 2, "adapterId");
+            if (!lua_isnil(state, -1))
+            {
+                if (lua_type(state, -1) != LUA_TSTRING) error = "invalidHistoryOptions";
+                else
+                {
+                    std::size_t length = 0;
+                    const char* id = lua_tolstring(state, -1, &length);
+                    if (length == 0 || length > 1024) error = "invalidHistoryOptions";
+                    else adapterId.assign(id, length);
+                }
+            }
+            lua_pop(state, 1);
+        }
+    }
+    std::vector<snowdesktop::widget_runtime::WidgetResourcePoint> points;
+    if (error.empty())
+    {
+        if (handle->engine && handle->id != 0)
+            points = handle->engine->RuntimeGetDataHistory(
+                handle->id, error, adapterId, handle->includeGpuDetails);
+        else error = "unsubscribed";
+    }
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     lua_createtable(state, static_cast<int>(points.size()), 0);
@@ -23853,19 +23879,37 @@ bool WidgetEngine::RuntimeUnsubscribeData(
 }
 
 std::vector<snowdesktop::widget_runtime::WidgetResourcePoint>
-WidgetEngine::RuntimeGetDataHistory(std::uint64_t subscriptionId, std::string& error) const
+WidgetEngine::RuntimeGetDataHistory(std::uint64_t subscriptionId, std::string& error,
+    std::string_view adapterId, bool includeGpuDetails) const
 {
     error.clear();
     const auto binding = dataBroker_ ? dataBroker_->SubscriptionSnapshot(subscriptionId) : std::nullopt;
     if (!binding) { error = "unsubscribed"; return {}; }
     if (previewOnly_ || binding->options.preview) return {};
     if (!binding->options.permissionGranted) { error = "permissionDenied"; return {}; }
-    if (binding->topic != "system.cpu" && binding->topic != "system.network.traffic")
+    if (binding->topic != "system.cpu" && binding->topic != "system.memory" &&
+        binding->topic != "system.gpu" && binding->topic != "system.network.traffic")
     {
         error = "historyUnavailable";
         return {};
     }
     if (!widgetSystemDataProvider_) { error = "providerUnavailable"; return {}; }
+    if (binding->topic == "system.gpu")
+    {
+        if (!includeGpuDetails) { error = "detailsRequired"; return {}; }
+        if (adapterId.empty()) { error = "adapterRequired"; return {}; }
+        const auto snapshot = widgetSystemDataProvider_->Gpu(true);
+        if (snapshot)
+        {
+            for (const auto& adapter : snapshot->adapters)
+                if (adapter.id == adapterId ||
+                    std::find(adapter.aliasIds.begin(), adapter.aliasIds.end(), adapterId) != adapter.aliasIds.end())
+                    return widgetSystemDataProvider_->ResourceHistory(binding->topic, adapter.id);
+        }
+        error = "adapterNotFound";
+        return {};
+    }
+    if (!adapterId.empty()) { error = "invalidHistoryOptions"; return {}; }
     return widgetSystemDataProvider_->ResourceHistory(binding->topic);
 }
 

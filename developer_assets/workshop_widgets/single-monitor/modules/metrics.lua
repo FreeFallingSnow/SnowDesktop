@@ -141,7 +141,7 @@ function M.mergeHistory(history, now, mode, points)
     for _,point in ipairs(points) do
         if M.number(point.timestamp) and M.number(point.ageMs) and point.ageMs<=60000 then
             local entry={time=now-point.ageMs,timestamp=point.timestamp}
-            if mode=="cpu" then entry.value=M.percent(point.value)
+            if mode=="cpu" or mode=="gpu" or mode=="memory" then entry.value=M.percent(point.value)
             else
                 entry.download=M.number(point.value) and point.value or nil
                 entry.upload=M.number(point.secondary) and point.secondary or nil

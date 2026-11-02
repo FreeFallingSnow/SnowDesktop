@@ -1297,7 +1297,8 @@ public:
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
     std::vector<snowdesktop::widget_runtime::WidgetResourcePoint> RuntimeGetDataHistory(
-        std::uint64_t subscriptionId, std::string& error) const;
+        std::uint64_t subscriptionId, std::string& error,
+        std::string_view adapterId = {}, bool includeGpuDetails = false) const;
 
     /**
      * @brief 添加一条运行时日志

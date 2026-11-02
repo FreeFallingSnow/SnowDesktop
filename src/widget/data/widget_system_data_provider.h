@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <memory>
 #include <optional>
@@ -354,6 +355,10 @@ public:
     static constexpr std::size_t MaximumProcessSummaryEntries = 12;
 
     WidgetSystemDataProvider() = default;
+    // Replace the external GPU measurement source while retaining the shared
+    // worker, publication and cache lifecycle (e.g. deterministic contract tests).
+    using GpuSampleSource = std::function<WidgetGpuDataSnapshot(bool resetBaseline)>;
+    explicit WidgetSystemDataProvider(GpuSampleSource gpuSampleSource);
     ~WidgetSystemDataProvider();
 
     WidgetSystemDataProvider(const WidgetSystemDataProvider&) = delete;
@@ -494,6 +499,7 @@ private:
     Clock::time_point previousProcessSample_{};
     WidgetNetworkTrafficSampler networkTrafficSampler_;
     WidgetGpuSampler gpuSampler_;
+    const GpuSampleSource gpuSampleSource_;
     void* storageIoQuery_ = nullptr;
     void* storageReadCounter_ = nullptr;
     void* storageWriteCounter_ = nullptr;

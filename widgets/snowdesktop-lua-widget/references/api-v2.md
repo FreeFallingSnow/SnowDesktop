@@ -1803,19 +1803,35 @@ end
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
 热重载和关闭也会自动释放。
 
-能力 `data.subscription.history` 为订阅句柄增加只读 `handle:history()`，API 版本仍为 2。
-当前支持 `system.cpu` 和 `system.network.traffic`，沿用该主题的读取权限，不启动额外采样。
+能力 `data.subscription.history` 为订阅句柄增加只读 `handle:history(options?)`，API 版本仍为 2。
+支持 `system.cpu`、`system.memory`、`system.gpu` 和 `system.network.traffic`，
+沿用该主题的读取权限，不启动额外采样。内存和 GPU 历史分别用新增能力
+`data.system.memory.history`、`data.system.gpu.history` 探测；早期只有基础历史能力的宿主仅支持 CPU/网络。
 若宿主已有其他监控消费者，创建订阅后即可读取共享缓存；无缓存时返回空数组。
 返回 `points, error?`：最多 61 个点，按时间递增，每秒最多一个点，限定最近 60 秒。
 每点包含 Unix 毫秒 `timestamp`、读取时的 `ageMs`，以及可选的 `value/secondary`。
-CPU 的 `value` 为百分比；网络的 `value/secondary` 分别为下载/上传字节每秒。
+CPU、内存、GPU 的 `value` 为 0–100 百分比，其中内存为已用物理内存占比；
+网络的 `value/secondary` 分别为下载/上传字节每秒。
+GPU 订阅必须启用 `includeDetails=true`，并调用 `handle:history({adapterId=id})`，
+其中 `id` 来自 `value.adapters`；可接受宿主已确认的逻辑别名，读取其当前物理显卡对应的同一条历史。
+不同显卡独立缓存，不提供隐式首选显卡或合计值。其他三个主题使用无参 `history()`。
 缺失值代表采样不可用，绘图应保留断点；不能将其补零或插值成有效样本。
 组件可使用 `time.monotonic() - point.ageMs` 定位横轴，避免混用时钟。
 预览返回空数组，不读取实时历史；取消订阅后返回空数组和 `unsubscribed`，
 权限不足返回 `permissionDenied`，不支持的主题返回 `historyUnavailable`。
+GPU 未启用详细订阅时返回 `detailsRequired`，未提供显卡时返回 `adapterRequired`，
+显卡不在当前快照中返回 `adapterNotFound`。选项非表、`adapterId` 非字符串/为空/超过 1024 字节，
+或给非 GPU 主题传入显卡选择时返回 `invalidHistoryOptions`。这些错误均伴随空数组。
 此方法不保存持久历史；最后一个消费者停止后的缓存生命周期由宿主采样器管理。
 发布依赖此能力的组件前应先发布宿主。兼容旧宿主及同版本早期构建时，
 将能力列入 `optionalFeatures`，先用 `widget.hasFeature` 探测，再退回组件自己采集的历史。
+
+```lua
+if widget.hasFeature("data.system.gpu.history") then
+    -- gpu is an existing includeDetails=true subscription; selected.id comes from its adapters.
+    local points, reason = gpu:history({adapterId=selected.id})
+end
+```
 
 所有轮询采样 provider 都在 API 层统一稳定包络语义：数值、速率和仍处于可用态的
 value 会逐样本更新；从可用态进入 `warmingUp`、不可用或错误态时，必须连续两次采样

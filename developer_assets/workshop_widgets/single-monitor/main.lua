@@ -91,9 +91,11 @@ local function sample(m)
         m.identity=identity
     end
     metrics.append(m.history,m.now,m.current)
-    if m.handle and (m.mode=="cpu" or m.mode=="network") and
+    local gpuHistory=m.mode=="gpu" and m.current.deviceId and m.details and
+        widget.hasFeature("data.system.gpu.history")
+    if m.handle and (m.mode=="cpu" or m.mode=="network" or gpuHistory) and
             widget.hasFeature("data.subscription.history") then
-        local points,reason=m.handle:history()
+        local points,reason=m.handle:history(gpuHistory and {adapterId=m.current.deviceId} or nil)
         if not reason then metrics.mergeHistory(m.history,m.now,m.mode,points) end
     end
     m.choices={}

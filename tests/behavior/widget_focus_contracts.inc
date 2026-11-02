@@ -2,6 +2,7 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <wrl/client.h>
+#include <utility>
 
 namespace behavior
 {
@@ -65,7 +66,27 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
         end
     end})
 )");
-    auto provider = std::make_shared<snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+    // Only replace the external GPU counters. The shared worker, publication,
+    // per-device cache, broker, Lua handle and permission checks remain real.
+    auto provider = std::make_shared<snowdesktop::widget_runtime::WidgetSystemDataProvider>([](bool) {
+        using namespace snowdesktop::widget_runtime;
+        WidgetGpuDataSnapshot snapshot;
+        snapshot.available = true;
+        snapshot.warmingUp = false;
+        snapshot.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        for (const std::string id : {"gpu-a", "gpu-b", "gpu-gap"})
+        {
+            WidgetGpuAdapterDataSnapshot adapter;
+            adapter.id = id;
+            adapter.name = id;
+            adapter.usageAvailable = id != "gpu-gap";
+            adapter.usagePercent = id == "gpu-a" ? 25.0 : 75.0;
+            if (id == "gpu-a") adapter.aliasIds.push_back("gpu-a-alias");
+            snapshot.adapters.push_back(std::move(adapter));
+        }
+        return snapshot;
+    });
     WidgetEngine engine;
     engine.SetSystemDataProvider(provider);
     Require(engine.Init(context.Get(), dwrite.Get()), "initialize isolated real widget engine");
@@ -160,18 +181,20 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
 
     // Another host consumer is already sampling before the Lua subscription is
     // created. A newly loaded widget must read that same past immediately.
-    for (const std::string topic : {"system.cpu", "system.network.traffic"})
+    for (const std::string topic : {"system.cpu", "system.memory", "system.gpu", "system.network.traffic"})
         Require(provider->StartTopic("history-contract", topic, std::chrono::milliseconds(500)),
             "start pre-existing private monitor " + topic);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
-    const auto hasCurve = [&](std::string_view topic) {
-        const auto points = provider->ResourceHistory(topic);
+    const auto hasCurve = [&](std::string_view topic, std::string_view adapterId = {}) {
+        const auto points = provider->ResourceHistory(topic, adapterId);
         std::size_t valid = 0;
         for (const auto& point : points)
-            if (point.primary && (topic == "system.cpu" || point.secondary)) ++valid;
+            if (point.primary && (topic != "system.network.traffic" || point.secondary)) ++valid;
         return points.size() >= 3 && valid >= 2;
     };
-    while (!hasCurve("system.cpu") || !hasCurve("system.network.traffic"))
+    while (!hasCurve("system.cpu") || !hasCurve("system.memory") ||
+        !hasCurve("system.gpu", "gpu-a") || !hasCurve("system.gpu", "gpu-b") ||
+        !hasCurve("system.network.traffic"))
     {
         Require(std::chrono::steady_clock::now() < deadline, "pre-existing monitors must have two valid curve samples within 8s");
         Sleep(20);
@@ -179,7 +202,9 @@ return widget.define({view=tree,panel=tree,dialog=tree,popover=tree,
     Write(package / L"main.lua", R"(
 return widget.define({setup=function()
     assert(widget.hasFeature("data.subscription.history"),"history capability missing")
-    for _,topic in ipairs({"system.cpu","system.network.traffic"}) do
+    assert(widget.hasFeature("data.system.memory.history"),"memory history capability missing")
+    assert(widget.hasFeature("data.system.gpu.history"),"GPU history capability missing")
+    for _,topic in ipairs({"system.cpu","system.memory","system.network.traffic"}) do
         local h=data.subscribe(topic,{maxAgeMs=1000})
         local points,reason=h:history()
         assert(not reason and #points>=3 and #points<=61,"existing history unavailable: "..tostring(reason))
@@ -187,7 +212,8 @@ return widget.define({setup=function()
         for _,p in ipairs(points) do
             assert(p.timestamp>previous and p.ageMs>=0 and p.ageMs<=60000,"invalid history time")
             assert(p.value==nil or (p.value>=0 and p.value<math.huge),"invalid history value")
-            if p.value~=nil and (topic=="system.cpu" or p.secondary~=nil) then valid=valid+1 end
+            if p.value~=nil and (topic~="system.network.traffic" or p.secondary~=nil) then valid=valid+1 end
+            if topic=="system.memory" then assert(p.value==nil or p.value<=100,"memory history must be percent") end
             previous=p.timestamp
         end
         assert(valid>=2,"cached history must contain enough values to draw immediately")
@@ -195,6 +221,33 @@ return widget.define({setup=function()
         local empty,closed=h:history()
         assert(#empty==0 and closed=="unsubscribed","released handle leaked history")
     end
+    local gpu=data.subscribe("system.gpu",{includeDetails=true})
+    for _,device in ipairs({{"gpu-a",25},{"gpu-b",75},{"gpu-a-alias",25}}) do
+        local points,reason=gpu:history({adapterId=device[1]})
+        assert(not reason and #points>=3,"cached GPU history unavailable: "..tostring(reason))
+        local previous=0
+        for _,p in ipairs(points) do
+            assert(p.value==device[2],"GPU histories mixed or lost their percentage")
+            assert(p.timestamp>previous and p.ageMs>=0 and p.ageMs<=60000,"invalid GPU history time")
+            previous=p.timestamp
+        end
+    end
+    local gaps,reason=gpu:history({adapterId="gpu-gap"})
+    assert(not reason and #gaps>=3,"missing samples must retain time points")
+    for _,p in ipairs(gaps) do assert(p.value==nil,"missing GPU values must not become zero") end
+    for _,case in ipairs({{nil,"adapterRequired"},{{adapterId="absent"},"adapterNotFound"},
+        {{adapterId=12},"invalidHistoryOptions"},{{adapterId=""},"invalidHistoryOptions"},
+        {false,"invalidHistoryOptions"}}) do
+        local empty,err=gpu:history(case[1])
+        assert(#empty==0 and err==case[2],"invalid GPU history request: "..tostring(err))
+    end
+    local basic=data.subscribe("system.gpu")
+    local empty,err=basic:history({adapterId="gpu-a"})
+    assert(#empty==0 and err=="detailsRequired","basic GPU subscription exposed detailed history")
+    basic:unsubscribe()
+    gpu:unsubscribe()
+    empty,err=gpu:history({adapterId="gpu-a"})
+    assert(#empty==0 and err=="unsubscribed","closed GPU handle leaked history")
     return {}
 end,render=function() end})
 )");
@@ -216,9 +269,12 @@ end,render=function() end})
     engine.UnloadWidget(L"history-reader");
     Write(package / L"main.lua", R"(
 return widget.define({setup=function()
-    local h=data.subscribe("system.cpu")
-    local points,reason=h:history()
-    assert(#points==0 and reason=="permissionDenied","denied subscription leaked shared history")
+    for _,topic in ipairs({"system.cpu","system.memory","system.gpu","system.network.traffic"}) do
+        local h=data.subscribe(topic,topic=="system.gpu" and {includeDetails=true} or nil)
+        local points,reason=h:history(topic=="system.gpu" and {adapterId="gpu-a"} or nil)
+        assert(#points==0 and reason=="permissionDenied","denied subscription leaked shared history: "..topic)
+        h:unsubscribe()
+    end
     return {}
 end,render=function() end})
 )");

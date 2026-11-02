@@ -1718,12 +1718,15 @@ function animation.cancelFrame(id) end
 ---@class SnowDataHistoryPoint
 ---@field timestamp integer Unix epoch milliseconds.
 ---@field ageMs integer Age at the history read, from 0 to 60000 milliseconds.
----@field value? number CPU percent or network download bytes per second; nil marks missing data.
+---@field value? number CPU, physical memory or selected GPU percent; network download bytes per second. Nil marks missing data.
 ---@field secondary? number Network upload bytes per second; nil marks missing data.
+
+---@class SnowDataHistoryOptions
+---@field adapterId? string Required for GPU: opaque current adapter ID or confirmed alias; 1–1024 bytes. Other topics omit it.
 
 ---@class SnowDataSubscription<T>
 ---@field value fun(self: SnowDataSubscription<T>): SnowDataSnapshot<T>
----@field history fun(self: SnowDataSubscription<T>): SnowDataHistoryPoint[], string? Requires data.subscription.history; supports system.cpu and system.network.traffic.
+---@field history fun(self: SnowDataSubscription<T>, options?: SnowDataHistoryOptions): SnowDataHistoryPoint[], string? Requires data.subscription.history. CPU/network: no options. Memory: data.system.memory.history. GPU: data.system.gpu.history, includeDetails=true and adapterId. Empty plus reason on error; previews return empty.
 ---@field unsubscribe fun(self: SnowDataSubscription<T>): boolean
 
 ---@class snow.data
