@@ -1051,7 +1051,7 @@
   "workshop_manager.localization_failed": "Falha na localização da Oficina %s: %s",
   "workshop_manager.initial_title": "Título inicial",
   "workshop_manager.initial_description": "Descrição inicial",
-  "workshop_manager.update_preview": "Atualizar também a visualização principal",
+  "workshop_manager.update_preview": "Atualizar também as imagens de prévia",
   "workshop_manager.update_tags": "Atualizar também as tags",
   "workshop_manager.submit_locked": "O Steam está enviando os dados. Mantenha esta janela aberta; você pode minimizá-la.",
   "workshop_manager.remove_local": "Remover apenas registro local",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "Mostra todos os itens de menu de extensões lidos para a seleção atual e desativa as configurações de exibição abaixo. Desative para restaurar suas configurações.",
   "app.settings.context_menu_opaque_follow_system": "Estilo Win11 - Opaco - Seguir claro/escuro",
   "app.settings.context_menu_win10_follow_system": "Estilo Win10 - Seguir claro/escuro",
-  "settings.contextMenu.pinToStart": "Fixar em Iniciar"
+  "settings.contextMenu.pinToStart": "Fixar em Iniciar",
+  "workshop_manager.additional_previews": "Prévias adicionais (%zu)",
+  "workshop_manager.remove_additional_previews": "Remover as prévias adicionais enviadas por esta ferramenta"
 }

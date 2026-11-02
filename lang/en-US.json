@@ -1051,7 +1051,7 @@
     "workshop_manager.localization_failed": "Workshop localization %s failed: %s",
     "workshop_manager.initial_title": "Initial title",
     "workshop_manager.initial_description": "Initial description",
-    "workshop_manager.update_preview": "Also update primary preview",
+    "workshop_manager.update_preview": "Also update preview images",
     "workshop_manager.update_tags": "Also update tags",
     "workshop_manager.submit_locked": "Steam is submitting. Keep this window open; you can minimize it.",
     "workshop_manager.remove_local": "Remove local record only",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "Show every extension menu item read for the current selection and disable the display settings below. Turn off to restore your settings.",
   "app.settings.context_menu_opaque_follow_system": "Win11 Style - Opaque - Follow Light/Dark",
   "app.settings.context_menu_win10_follow_system": "Win10 Style - Follow Light/Dark",
-  "settings.contextMenu.pinToStart": "Pin to Start"
+  "settings.contextMenu.pinToStart": "Pin to Start",
+  "workshop_manager.additional_previews": "Additional previews (%zu)",
+  "workshop_manager.remove_additional_previews": "Remove additional previews uploaded by this tool"
 }

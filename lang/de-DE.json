@@ -1051,7 +1051,7 @@
   "workshop_manager.localization_failed": "Workshop-Lokalisierung %s fehlgeschlagen: %s",
   "workshop_manager.initial_title": "Ursprünglicher Titel",
   "workshop_manager.initial_description": "Erstbeschreibung",
-  "workshop_manager.update_preview": "Aktualisieren Sie auch die primäre Vorschau",
+  "workshop_manager.update_preview": "Vorschaubilder ebenfalls aktualisieren",
   "workshop_manager.update_tags": "Aktualisieren Sie auch Tags",
   "workshop_manager.submit_locked": "Steam übermittelt die Daten. Lassen Sie dieses Fenster geöffnet; Sie können es minimieren.",
   "workshop_manager.remove_local": "Nur lokalen Datensatz entfernen",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "Alle für die aktuelle Auswahl gelesenen Erweiterungsmenüeinträge anzeigen und die Anzeigeeinstellungen darunter deaktivieren. Beim Ausschalten werden Ihre Einstellungen wiederhergestellt.",
   "app.settings.context_menu_opaque_follow_system": "Win11-Stil - Deckend - System (Hell/Dunkel)",
   "app.settings.context_menu_win10_follow_system": "Win10-Stil - System (Hell/Dunkel)",
-  "settings.contextMenu.pinToStart": "An „Start“ anheften"
+  "settings.contextMenu.pinToStart": "An „Start“ anheften",
+  "workshop_manager.additional_previews": "Zusätzliche Vorschaubilder (%zu)",
+  "workshop_manager.remove_additional_previews": "Von diesem Tool hochgeladene zusätzliche Vorschaubilder entfernen"
 }

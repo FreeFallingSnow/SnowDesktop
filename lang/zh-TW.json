@@ -1051,7 +1051,7 @@
   "workshop_manager.localization_failed": "Steam 本地化 %s 提交失敗：%s",
   "workshop_manager.initial_title": "初始標題",
   "workshop_manager.initial_description": "初始說明",
-  "workshop_manager.update_preview": "同時更新主預覽",
+  "workshop_manager.update_preview": "同時更新預覽圖片",
   "workshop_manager.update_tags": "同時更新標籤",
   "workshop_manager.submit_locked": "Steam 正在提交，請保持此視窗開啟，可以最小化。",
   "workshop_manager.remove_local": "僅移除本機記錄",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "顯示目前物件讀取到的全部擴充功能表項目，並停用下方的顯示設定；關閉後恢復原設定。",
   "app.settings.context_menu_opaque_follow_system": "Win11風格-不透明-深淺跟隨",
   "app.settings.context_menu_win10_follow_system": "Win10風格-深淺跟隨",
-  "settings.contextMenu.pinToStart": "釘選到開始"
+  "settings.contextMenu.pinToStart": "釘選到開始",
+  "workshop_manager.additional_previews": "附加預覽（%zu）",
+  "workshop_manager.remove_additional_previews": "清除本工具上傳的附加預覽"
 }

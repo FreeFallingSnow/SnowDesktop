@@ -1051,7 +1051,7 @@
   "workshop_manager.localization_failed": "Workshop %s 현지화 실패: %s",
   "workshop_manager.initial_title": "초기 제목",
   "workshop_manager.initial_description": "초기 설명",
-  "workshop_manager.update_preview": "기본 미리보기도 업데이트",
+  "workshop_manager.update_preview": "미리 보기 이미지도 업데이트",
   "workshop_manager.update_tags": "태그도 업데이트",
   "workshop_manager.submit_locked": "Steam에서 제출 중입니다. 이 창을 열어 두세요. 최소화할 수 있습니다.",
   "workshop_manager.remove_local": "로컬 레코드만 제거",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "현재 선택 항목에서 읽은 모든 확장 메뉴 항목을 표시하고 아래 표시 설정을 비활성화합니다. 끄면 기존 설정이 복원됩니다.",
   "app.settings.context_menu_opaque_follow_system": "Win11 스타일 - 불투명 - 시스템 테마 따르기",
   "app.settings.context_menu_win10_follow_system": "Win10 스타일 - 시스템 테마 따르기",
-  "settings.contextMenu.pinToStart": "시작 화면에 고정"
+  "settings.contextMenu.pinToStart": "시작 화면에 고정",
+  "workshop_manager.additional_previews": "추가 미리 보기 (%zu)",
+  "workshop_manager.remove_additional_previews": "이 도구로 업로드한 추가 미리 보기 삭제"
 }

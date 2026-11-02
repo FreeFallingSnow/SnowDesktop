@@ -1051,7 +1051,7 @@
   "workshop_manager.localization_failed": "Workshop の %s ローカライズに失敗しました: %s",
   "workshop_manager.initial_title": "初期タイトル",
   "workshop_manager.initial_description": "初期説明",
-  "workshop_manager.update_preview": "プライマリ プレビューも更新します",
+  "workshop_manager.update_preview": "プレビュー画像も更新",
   "workshop_manager.update_tags": "タグも更新します",
   "workshop_manager.submit_locked": "Steam が送信中です。このウィンドウを開いたままにしてください。最小化は可能です。",
   "workshop_manager.remove_local": "ローカル レコードのみを削除",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "現在の選択対象から読み取った拡張メニュー項目をすべて表示し、下の表示設定を無効にします。オフにすると元の設定に戻ります。",
   "app.settings.context_menu_opaque_follow_system": "Win11スタイル-不透明-システムの明暗に追従",
   "app.settings.context_menu_win10_follow_system": "Win10スタイル-システムの明暗に追従",
-  "settings.contextMenu.pinToStart": "スタートにピン留めする"
+  "settings.contextMenu.pinToStart": "スタートにピン留めする",
+  "workshop_manager.additional_previews": "追加プレビュー（%zu）",
+  "workshop_manager.remove_additional_previews": "このツールでアップロードした追加プレビューを削除"
 }

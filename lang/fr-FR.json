@@ -1051,7 +1051,7 @@
   "workshop_manager.localization_failed": "Échec de la localisation Workshop %s : %s",
   "workshop_manager.initial_title": "Titre initial",
   "workshop_manager.initial_description": "Description initiale",
-  "workshop_manager.update_preview": "Mettre également à jour l'aperçu principal",
+  "workshop_manager.update_preview": "Mettre aussi à jour les images d’aperçu",
   "workshop_manager.update_tags": "Mettre également à jour les balises",
   "workshop_manager.submit_locked": "Steam transmet les données. Gardez cette fenêtre ouverte ; vous pouvez la réduire.",
   "workshop_manager.remove_local": "Supprimer l'enregistrement local uniquement",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "Affiche tous les éléments de menu des extensions lus pour la sélection actuelle et désactive les réglages d’affichage ci-dessous. Désactivez cette option pour rétablir vos réglages.",
   "app.settings.context_menu_opaque_follow_system": "Style Win11 - Opaque - Clair/sombre du système",
   "app.settings.context_menu_win10_follow_system": "Style Win10 - Clair/sombre du système",
-  "settings.contextMenu.pinToStart": "Épingler au menu Démarrer"
+  "settings.contextMenu.pinToStart": "Épingler au menu Démarrer",
+  "workshop_manager.additional_previews": "Aperçus supplémentaires (%zu)",
+  "workshop_manager.remove_additional_previews": "Supprimer les aperçus supplémentaires envoyés par cet outil"
 }

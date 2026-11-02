@@ -1068,7 +1068,7 @@
   "workshop_manager.localization_failed": "Error en la localización de Workshop %s: %s",
   "workshop_manager.initial_title": "Título inicial",
   "workshop_manager.initial_description": "Descripción inicial",
-  "workshop_manager.update_preview": "Actualizar también la vista previa principal",
+  "workshop_manager.update_preview": "Actualizar también las imágenes de vista previa",
   "workshop_manager.update_tags": "Actualizar también las etiquetas",
   "settings.shell.title": "Configuración",
   "settings.shell.back": "Atrás",
@@ -2759,5 +2759,7 @@
   "settings.contextMenu.expandAllExtensions.description": "Muestra todos los elementos de menú de extensiones leídos para la selección actual y desactiva los ajustes de visualización de abajo. Al desactivarlo, se restauran tus ajustes.",
   "app.settings.context_menu_opaque_follow_system": "Estilo Win11 - Opaco - Seguir claro/oscuro",
   "app.settings.context_menu_win10_follow_system": "Estilo Win10 - Seguir claro/oscuro",
-  "settings.contextMenu.pinToStart": "Anclar a Inicio"
+  "settings.contextMenu.pinToStart": "Anclar a Inicio",
+  "workshop_manager.additional_previews": "Vistas previas adicionales (%zu)",
+  "workshop_manager.remove_additional_previews": "Eliminar las vistas previas adicionales cargadas por esta herramienta"
 }
