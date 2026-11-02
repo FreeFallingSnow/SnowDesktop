@@ -270,6 +270,68 @@ local function decode(s)
         return ""
     end))
 end
+local function timedRows(text,duration,kind)
+    if type(text)~="string" or #text>131072 or not utf8.len(text) then return nil end
+    if text:find("<!DOCTYPE",1,true) or text:find("<!ENTITY",1,true) then return nil end
+    if kind=="qrc" then
+        local _,attribute=text:match("LyricContent%s*=%s*(['\"])(.-)%1")
+        if attribute then text=decode(attribute) end
+    end
+    local lines={};local total=0
+    for start,length,row in text:gmatch("%[(%d+),(%d+)%]([^\r\n]*)") do
+        if #lines>=1000 then return nil end
+        start,length=tonumber(start),tonumber(length)
+        if start>1e9 or length>1e9 then return nil end
+        local parts,words,cursor={},{},1
+        local leading=kind=="krc" or row:match("^%(%d+,%d+[,0-9]*%)")~=nil
+        local pattern=kind=="krc" and "<(%d+),(%d+),%d+>" or "%((%d+),(%d+)[,0-9]*%)"
+        local a,b,at,span=row:find(pattern,cursor)
+        if leading and a and a>1 then parts[#parts+1]=row:sub(1,a-1) end
+        while a do
+            local nextA,nextB,nextAt,nextSpan=row:find(pattern,b+1)
+            local value=leading and row:sub(b+1,(nextA or (#row+1))-1) or row:sub(cursor,a-1)
+            parts[#parts+1]=value;at,span=tonumber(at),tonumber(span)
+            if at>1e9 or span>1e9 then return nil end
+            if #words<256 and value~="" then
+                local position=at+(kind=="krc" and start or 0)
+                words[#words+1]={text=value,start=position,finish=position+span}
+            end
+            total=total+1;if total>8192 then return nil end
+            cursor=b+1;a,b,at,span=nextA,nextB,nextAt,nextSpan
+        end
+        if #parts==0 then parts[1]=row
+        elseif not leading and cursor<=#row then parts[#parts+1]=row:sub(cursor) end
+        local value=table.concat(parts);local covered={}
+        for _,word in ipairs(words) do covered[#covered+1]=word.text end
+        if M.normal(value)~=M.normal(table.concat(covered)) then words={} end
+        lines[#lines+1]={start=start,finish=start+length,text=value,words=words,sourceIndex=#lines+1}
+    end
+    local result=finish(lines,duration);result.offset=tonumber(text:match("%[offset:([%+%-]?%d+)%]")) or 0
+    return #result.lines>0 and result or nil
+end
+function M.qrc(text,duration)return timedRows(text,duration,"qrc")end
+function M.krc(text,duration,decodeJson)
+    local result=timedRows(text,duration,"krc");if not result or not decodeJson then return result end
+    local language=text:match("%[language:([^%]]+)%]")
+    local raw=language and #language<=65536 and M.base64(language)
+    if not raw then return result end
+    local ok,value=pcall(decodeJson,raw)
+    for _,item in ipairs(ok and type(value)=="table" and type(value.content)=="table" and value.content or {}) do
+        local kind=tonumber(item.type);local key=kind==0 and "romanization" or kind==1 and "translation" or nil
+        if key then for _,line in ipairs(result.lines) do
+            local parts=type(item.lyricContent)=="table" and item.lyricContent[line.sourceIndex]
+            if type(parts)=="table" then
+                local values={}
+                for j,part in ipairs(parts) do
+                    if j>256 or type(part)~="string" then break end
+                    values[#values+1]=part
+                end
+                line[key]=table.concat(values)
+            end
+        end end
+    end
+    return result
+end
 local function localName(s) return s:match("([^:]+)$") end
 local function xml(text)
     assert(#text<=1048576 and not text:find("<!DOCTYPE",1,true) and not text:find("<!ENTITY",1,true),"unsupported XML")

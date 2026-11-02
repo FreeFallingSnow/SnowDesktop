@@ -50,11 +50,15 @@ end
 local function qqData(body)
     return type(body)=="table" and body.code==0 and type(body.request)=="table" and body.request.code==0 and body.request.data or nil
 end
-local function qqLrc(song,selected)
-    -- crypt=0 and qrc=0 request ordinary Base64 LRC, without encrypted QRC.
-    return qqRequest("lyrics","GetPlayLyricInfo","music.musichallSong.PlayLyricInfo",{
+local function qqLrc(song,selected,qrc)
+    return qqRequest(qrc and "qrc" or "lyrics","GetPlayLyricInfo","music.musichallSong.PlayLyricInfo",{
         songID=selected.id,songName="",singerName="",albumName="",interval=math.floor(selected.duration/1000),
-        crypt=0,ct=19,cv=2111,lrc_t=0,qrc=0,qrc_t=0,roma=1,roma_t=0,trans=1,trans_t=0,type=0})
+        crypt=qrc and 1 or 0,ct=19,cv=2111,lrc_t=0,qrc=qrc and 1 or 0,qrc_t=0,roma=1,roma_t=0,trans=1,trans_t=0,type=0})
+end
+local function kugouDownload(selected,krc)
+    return get(krc and "krc" or "lyrics","https://lyrics.kugou.com/download?fmt="..(krc and "krc" or "lrc")..
+        "&charset=utf8&client=mobi&ver=1&id="..L.encode(selected.id).."&accesskey="..L.encode(selected.accesskey),
+        {["User-Agent"]="Android14-1070-11070-201-0-Lyric-wifi"})
 end
 local function lrclibResult(song,body)
     if not L.matchLrc(song,body) then return nil end
@@ -149,13 +153,29 @@ M.sources={
                 if phase=="amll" then
                     local request=amllId("qqMusicId",state.candidate.id);request.phase="amllNumeric";return request
                 end
+                return qqLrc(song,state.candidate,true)
+            elseif phase=="qrc" then
+                local data=qqData(body);local value=type(data)=="table" and data.lyric
+                if type(value)=="string" then
+                    if value:find("LyricContent",1,true) or value:match("%[%d+,%d+%]") then
+                        local result=scored(L.qrc(value,song.duration),song,state.score)
+                        if L.hasWords(result) then state.native=result else state.fallback=state.fallback or result end
+                        return qqLrc(song,state.candidate)
+                    end
+                    return {decode={kind="qrc",data=value},phase="decodedQrc"}
+                end
+                return qqLrc(song,state.candidate)
+            elseif phase=="decodedQrc" then
+                local result=scored(L.qrc(body,song.duration),song,state.score)
+                if L.hasWords(result) then state.native=result else state.fallback=state.fallback or result end
                 return qqLrc(song,state.candidate)
             else
                 local data=phase=="cgi" and body or qqData(body)
                 local value=type(data)=="table" and data.lyric
                 local raw=type(value)=="string" and (value:find("%[%d+:") and value or L.base64(value))
                 local result=L.lrc(raw,song.duration)
-                if state.native and result then return {result=L.alignTiming(state.native,raw,song.duration)} end
+                if state.native and result then return {result=L.alternate(L.alignTiming(state.native,raw,song.duration),
+                    L.base64(data.trans),L.base64(data.roma),song.duration)} end
                 if result then return {result=scored(L.alternate(result,L.base64(data.trans),L.base64(data.roma),song.duration),song,state.score)} end
                 if phase~="cgi" then return get("cgi","https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid="..
                     L.encode(state.candidate.mid).."&format=json&nobase64=1",{Referer="https://y.qq.com/"}) end
@@ -180,12 +200,19 @@ M.sources={
                     end
                 end
                 state.candidate,state.score=L.bestSong(song,candidates)
-                if state.candidate then return get("lyrics","https://lyrics.kugou.com/download?fmt=lrc&charset=utf8&client=mobi&ver=1&id="..
-                    L.encode(state.candidate.id).."&accesskey="..L.encode(state.candidate.accesskey),
-                    {["User-Agent"]="Android14-1070-11070-201-0-Lyric-wifi"}) end
+                if state.candidate then return kugouDownload(state.candidate,true) end
+            elseif phase=="krc" then
+                if type(body)=="table" and type(body.content)=="string" then
+                    return {decode={kind="krc",data=body.content},phase="decodedKrc"}
+                end
+                return kugouDownload(state.candidate,false)
+            elseif phase=="decodedKrc" then
+                state.native=L.krc(body,song.duration,J.decode)
+                return kugouDownload(state.candidate,false)
             else
                 local value=type(body)=="table" and L.base64(body.content)
-                return {result=scored(L.lrc(value,song.duration),song,state.score)}
+                return {result=scored(state.native and L.alignTiming(state.native,value,song.duration) or
+                    L.lrc(value,song.duration),song,state.score)}
             end
         end,
     },

@@ -6,8 +6,9 @@ local V=module.require("modules/visual.lua")
 local strings=module.require("modules/strings.lua")
 local FRAME="lyrics.frame"
 local function frames(m)
-    local run=not m.preview and m.mediaValid~=false and m.visible~=false and not m.reducedMotion and
-        m.status=="ready" and m.clock and m.clock.playing and #m.client.lines>0
+    local visual=not m.reducedMotion and m.status=="ready" and m.clock and m.clock.playing and #m.client.lines>0
+    local decoding=m.client.decodeJob and m.client.enabled
+    local run=not m.preview and m.mediaValid~=false and m.visible~=false and (visual or decoding)
     if run and not m.framePending then m.framePending=animation.requestFrame(FRAME)==true
     elseif not run and m.framePending then animation.cancelFrame(FRAME);m.framePending=false end
 end
@@ -46,7 +47,15 @@ local function setup(context)
     return m
 end
 local function event(context,m,e)
-    if e.kind=="frame" and e.id==FRAME then m.framePending=false;frames(m);widget.invalidate();return end
+    if e.kind=="frame" and e.id==FRAME then
+        m.framePending=false
+        if m.client.decodeJob then
+            local previous=m.client.lines;m.client:advanceDecode()
+            if previous~=m.client.lines then m.snap=true;m.focus=nil;m.textCache=nil end
+            if m.mediaValid and m.clock then m.status=m.client.state end
+        end
+        frames(m);widget.invalidate();return
+    end
     if e.kind=="task.complete" then
         refresh(context,m)
         local previous=m.client.lines;m.client:complete(e)

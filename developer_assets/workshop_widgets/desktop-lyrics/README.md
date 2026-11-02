@@ -16,6 +16,8 @@ SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，�
 
 ## 歌词获取
 
+支持 AMLL TTML、网易云 YRC、QQ QRC 和酷狗 KRC 的原生逐字时间。QQ、酷狗先尝试原生逐字格式，获取或解码失败后回退到普通 LRC，并使用同曲可靠的逐行歌词检查稳定时间偏差。QRC 解密、KRC 解码及 zlib 解压在组件内分段执行；切歌取消，隐藏组件或暂时缺失媒体时暂停。暂停播放和减少动态效果不阻止歌词解码，无需原生助手、额外服务或新增权限。
+
 参考 Folia 的多源匹配思路，依次尝试 AMLL、网易云、QQ、酷狗和 LRCLIB，共五个歌词源。歌手已知时必须匹配歌手，专辑名不能绕过歌手检查；歌手缺失时才以专辑辅助核对。对提供时长的候选核对不超过三秒的时长差；忽略歌名中不表示版本的附注，保留 Live、翻唱、Remix 等版本标记，支持常见的多歌手分隔方式。
 
 AMLL 先按歌名和歌手搜索，必要时按歌名重查并在本地核对身份。网易云和 QQ 找到匹配的歌曲后，还会按平台歌曲 ID 探测 AMLL 的 TTML；QQ 同时支持 mid 和数字 ID。LRCLIB 精确获取失败后再搜索候选。每次只有一个在途请求，单次请求最多五秒，全部来源失败后退避重试；切歌会取消上一首的请求。
@@ -57,6 +59,8 @@ YRC、TTML 等逐字歌词取得同曲的可靠逐行对照时，统一按相同
 本组件替代未发布的 Folia Desktop 实验组件，保留 UUID `e2ce8149-ff61-4c2f-9975-8ae4c010e639`；新开发来源为 `data/widgets/dev/desktop-lyrics/`。原布局与组件存储不手工删除，原来的连接字段不再读取。
 
 ## English
+
+Native TTML, YRC, QRC and KRC word timing is supported. QQ and Kugou try native word-timed formats before ordinary LRC and use reliable same-song line timing for calibration. Transport decryption and zlib inflation run incrementally inside the component, without native helpers, extra services or permissions. Track changes cancel pending decoding; hidden or temporarily unavailable media pause it. Paused playback and reduced motion still allow decoding.
 
 A read-only community lyric widget for SnowDesktop. It starts transparent and draws lyrics only. The current line stays centered; increasing widget height reveals more surrounding lines. Font scale and line spacing are separate preferences.
 
