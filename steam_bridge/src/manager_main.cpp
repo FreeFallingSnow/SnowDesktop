@@ -1556,7 +1556,7 @@ private:
         {
             ImGui::TextDisabled("%s", T("预览图片", "Preview images"));
             if (!texture.error.empty()) ImGui::TextWrapped("%s", texture.error.c_str());
-            else ImGui::TextDisabled("...");
+            else ImGui::TextDisabled("%s", T("正在加载预览图片…", "Loading preview image…"));
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", image.title.c_str());
     }
@@ -1630,7 +1630,8 @@ private:
         if (!store_.Save(error))
         { project = std::move(previous); SetMessageUnlocked(false, error); return false; }
         InvalidatePreparedPublishUnlocked();
-        SetMessageUnlocked(true, T("已保存预览图片设置", "Preview image settings saved"));
+        SetMessageUnlocked(true, previous.primaryPreview != project.primaryPreview ?
+            T("已保存主预览", "Primary preview saved") : T("已保存预览图片设置", "Preview image settings saved"));
         return true;
     }
 
@@ -1643,85 +1644,119 @@ private:
         return true;
     }
 
+    bool BeginPreviewGrid(const char* id, std::size_t count)
+    {
+        if (!count) return false;
+        const float available = ImGui::GetContentRegionAvail().x;
+        const float padding = ImGui::GetStyle().CellPadding.x * 2.0f;
+        const float cardWidth = std::min(208.0f * gDpiScale, available);
+        const int columns = std::max(1, std::min(static_cast<int>(count),
+            static_cast<int>(available / std::max(1.0f, cardWidth))));
+        if (!ImGui::BeginTable(id, columns, ImGuiTableFlags_SizingFixedFit |
+                ImGuiTableFlags_NoHostExtendX | ImGuiTableFlags_NoSavedSettings,
+                ImVec2(std::min(available, columns * cardWidth), 0))) return false;
+        for (int column = 0; column < columns; ++column)
+            ImGui::TableSetupColumn("image", ImGuiTableColumnFlags_WidthFixed,
+                std::max(1.0f, cardWidth - padding));
+        return true;
+    }
+
+    void RenderPreviewCardImage(const std::vector<DisplayPreview>& images, std::size_t index)
+    {
+        ImGui::BeginChild("image-frame", ImVec2(0, 152.0f * gDpiScale), 0,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        RenderImage(images, index, 200.0f, 148.0f);
+        ImGui::EndChild();
+        const auto title = images[index].path.empty() ? images[index].title :
+            WideToUtf8(images[index].path.filename().wstring());
+        DrawEllipsizedText(ImGui::GetCursorScreenPos(), ImGui::GetContentRegionAvail().x,
+            ImGui::GetColorU32(ImGuiCol_Text), title);
+        ImGui::Dummy(ImVec2(1, ImGui::GetTextLineHeight()));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", title.c_str());
+    }
+
     void RenderLocalPreviewManager(HWND window, WorkshopProject& project)
     {
         auto& source = LocalPreviews(project);
+        const auto initialGallery = project.previewGallery ? *project.previewGallery :
+            source.gallery.value_or(std::vector<std::filesystem::path>{});
         ImGui::TextUnformatted(T("预览图片", "Preview images"));
-        if (SecondaryButton(T("刷新图片", "Refresh images")))
-        {
-            source = ReadManagerLocalPreviews(project);
-            previewCache_.RefreshLocal(true);
-        }
-        ContinueButtonRow(T("使用组件图片", "Use component images"));
-        if (SecondaryButton(T("使用组件图片", "Use component images")))
-        {
-            source = ReadManagerLocalPreviews(project);
-            if (source.error.empty())
-            {
-                auto candidate = project;
-                candidate.primaryPreview.clear(); candidate.previewGallery.reset();
-                SaveProjectPreviewsUnlocked(project, std::move(candidate));
-            }
-        }
-        if (!source.error.empty()) ImGui::TextWrapped("%s", source.error.c_str());
-        BeginSettingRow(T("主预览", "Primary preview"), ButtonWidth(T("选择主预览", "Choose primary preview")));
-        if (SecondaryButton(T("选择主预览", "Choose primary preview")))
-            if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
-            { auto candidate = project; candidate.primaryPreview = *path; SaveProjectPreviewsUnlocked(project, std::move(candidate)); }
-        auto images = ProjectImages(project);
-        const std::size_t coverCount = (!project.primaryPreview.empty() || !source.primary.empty()) ? 1 : 0;
-        if (coverCount) RenderImage(images, 0);
-        const auto gallery = project.previewGallery ? *project.previewGallery : source.gallery.value_or(std::vector<std::filesystem::path>{});
-        ImGui::Text(T("附加预览（%zu）", "Additional previews (%zu)"), gallery.size());
-        ImGui::BeginDisabled(gallery.size() >= 7);
+        ImGui::BeginDisabled(initialGallery.size() >= 7);
         if (SecondaryButton(T("添加图片", "Add images")))
         {
             std::vector<std::filesystem::path> paths;
             if (PickPath(window, false, &paths))
             {
-                if (gallery.size() + paths.size() > 7)
+                if (initialGallery.size() + paths.size() > 7)
                     SetMessageUnlocked(false, T("最多可添加 7 张附加预览图", "Up to 7 additional preview images are allowed"));
                 else if (CheckPreviewFiles(paths))
                 {
-                    auto candidate = project; candidate.previewGallery = gallery;
+                    auto candidate = project; candidate.previewGallery = initialGallery;
                     candidate.previewGallery->insert(candidate.previewGallery->end(), paths.begin(), paths.end());
                     SaveProjectPreviewsUnlocked(project, std::move(candidate));
                 }
             }
         }
         ImGui::EndDisabled();
-        std::optional<WorkshopProject> changed;
-        const int columns = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (220.0f * gDpiScale)), 1, 3);
-        if (!gallery.empty() && ImGui::BeginTable("local-preview-gallery", columns, ImGuiTableFlags_NoSavedSettings))
+        ContinueButtonRow(T("刷新图片", "Refresh images"));
+        if (SecondaryButton(T("刷新图片", "Refresh images")))
+        { source = ReadManagerLocalPreviews(project); previewCache_.RefreshLocal(true); }
+        ContinueButtonRow(T("使用组件图片", "Use component images"));
+        if (SecondaryButton(T("使用组件图片", "Use component images")))
         {
+            source = ReadManagerLocalPreviews(project);
+            if (source.error.empty())
+            {
+                auto candidate = project; candidate.primaryPreview.clear(); candidate.previewGallery.reset();
+                SaveProjectPreviewsUnlocked(project, std::move(candidate));
+            }
+        }
+        if (!source.error.empty()) ImGui::TextWrapped("%s", source.error.c_str());
+        const auto gallery = project.previewGallery ? *project.previewGallery :
+            source.gallery.value_or(std::vector<std::filesystem::path>{});
+        const auto images = ProjectImages(project);
+        const std::size_t coverCount = (!project.primaryPreview.empty() || !source.primary.empty()) ? 1 : 0;
+        std::optional<WorkshopProject> changed;
+        if (BeginPreviewGrid("local-preview-gallery", gallery.size() + 1))
+        {
+            ImGui::TableNextColumn(); ImGui::PushID("primary");
+            ImGui::TextUnformatted(T("主预览", "Primary preview"));
+            if (coverCount) RenderPreviewCardImage(images, 0);
+            else ImGui::Dummy(ImVec2(1, 172.0f * gDpiScale));
+            if (SecondaryButton(T("替换图片", "Replace image")))
+                if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
+                { auto candidate = project; candidate.primaryPreview = *path; changed = std::move(candidate); }
+            ImGui::PopID();
             for (std::size_t index = 0; index < gallery.size(); ++index)
             {
                 ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(index));
-                ImGui::Text("%zu", index + 1);
-                RenderImage(images, index + coverCount);
-                ImGui::TextWrapped("%s", WideToUtf8(gallery[index].filename().wstring()).c_str());
+                ImGui::Text("%zu / %zu", index + 1, gallery.size());
+                RenderPreviewCardImage(images, index + coverCount);
                 auto candidate = project; candidate.previewGallery = gallery;
                 if (SecondaryButton(T("替换图片", "Replace image")))
                     if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
                     { (*candidate.previewGallery)[index] = *path; changed = std::move(candidate); }
-                ContinueButtonRow(T("移除图片", "Remove image"));
-                if (SecondaryButton(T("移除图片", "Remove image")))
-                { candidate.previewGallery->erase(candidate.previewGallery->begin() + index); changed = std::move(candidate); }
-                if (SecondaryButton(T("设为主预览", "Use as primary preview")))
-                { candidate.primaryPreview = gallery[index]; changed = std::move(candidate); }
-                ImGui::BeginDisabled(index == 0);
-                if (SecondaryButton(T("前移", "Move earlier")))
-                { std::swap((*candidate.previewGallery)[index], (*candidate.previewGallery)[index - 1]); changed = std::move(candidate); }
-                ImGui::EndDisabled(); ContinueButtonRow(T("后移", "Move later"));
-                ImGui::BeginDisabled(index + 1 == gallery.size());
-                if (SecondaryButton(T("后移", "Move later")))
-                { std::swap((*candidate.previewGallery)[index], (*candidate.previewGallery)[index + 1]); changed = std::move(candidate); }
-                ImGui::EndDisabled(); ImGui::PopID();
+                ContinueButtonRow(T("更多", "More"));
+                if (SecondaryButton(T("更多", "More"))) ImGui::OpenPopup("image-actions");
+                if (ImGui::BeginPopup("image-actions"))
+                {
+                    if (ImGui::MenuItem(T("设为主预览", "Use as primary preview")))
+                    { candidate.primaryPreview = gallery[index]; changed = std::move(candidate); }
+                    if (ImGui::MenuItem(T("前移", "Move earlier"), nullptr, false, index > 0))
+                    { std::swap((*candidate.previewGallery)[index], (*candidate.previewGallery)[index - 1]); changed = std::move(candidate); }
+                    if (ImGui::MenuItem(T("后移", "Move later"), nullptr, false, index + 1 < gallery.size()))
+                    { std::swap((*candidate.previewGallery)[index], (*candidate.previewGallery)[index + 1]); changed = std::move(candidate); }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem(T("移除图片", "Remove image")))
+                    { candidate.previewGallery->erase(candidate.previewGallery->begin() + index); changed = std::move(candidate); }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopID();
             }
             ImGui::EndTable();
         }
         if (changed) SaveProjectPreviewsUnlocked(project, std::move(*changed));
-        ImGui::Separator();
+        ImGui::Spacing(); ImGui::Separator();
     }
 
     void RenderProjectPreviewUnlocked(const WorkshopProject& project)
@@ -2777,35 +2812,37 @@ private:
         const bool editable = !busy_.load() && status.loggedOn && !item.banned &&
             item.ownerSteamId == ParseItemId(status.steamId).value_or(0) && item.consumerAppId == status.appId;
         ImGui::BeginDisabled(!editable);
-        if (SecondaryButton(T("选择主预览", "Choose primary preview")))
-            if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
-            { draft.primary = *path; RequestManagerFrame(); }
-        ContinueButtonRow(T("添加图片", "Add images"));
         if (SecondaryButton(T("添加图片", "Add images")))
         {
             std::vector<std::filesystem::path> paths;
             if (PickPath(window, false, &paths) && CheckPreviewFiles(paths))
-            {
-                draft.additions.insert(draft.additions.end(), paths.begin(), paths.end());
-                RequestManagerFrame();
-            }
+            { draft.additions.insert(draft.additions.end(), paths.begin(), paths.end()); RequestManagerFrame(); }
         }
         ImGui::EndDisabled();
-        if (primaryCount) RenderImage(images, 0);
-        const int columns = std::clamp(static_cast<int>(ImGui::GetContentRegionAvail().x / (220.0f * gDpiScale)), 1, 3);
-        if ((!expected.additionalPreviews.empty() || !draft.additions.empty()) &&
-            ImGui::BeginTable("remote-preview-gallery", columns, ImGuiTableFlags_NoSavedSettings))
+        if (BeginPreviewGrid("remote-preview-gallery", expected.additionalPreviews.size() + draft.additions.size() + 1))
         {
+            ImGui::TableNextColumn(); ImGui::PushID("primary");
+            ImGui::TextUnformatted(T("主预览", "Primary preview"));
+            if (primaryCount) RenderPreviewCardImage(images, 0);
+            else ImGui::Dummy(ImVec2(1, 172.0f * gDpiScale));
+            ImGui::BeginDisabled(!editable);
+            if (SecondaryButton(T("选择主预览", "Choose primary preview")))
+                if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
+                { draft.primary = *path; RequestManagerFrame(); }
+            ImGui::EndDisabled(); ImGui::PopID();
             for (std::size_t index = 0; index < expected.additionalPreviews.size(); ++index)
             {
                 ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(index));
                 const auto& image = expected.additionalPreviews[index];
-                ImGui::Text("%zu", index + 1);
+                ImGui::Text("%zu / %zu", index + 1, expected.additionalPreviews.size());
                 if (image.type == 0)
                 {
-                    if (imageIndices[index] != static_cast<std::size_t>(-1)) RenderImage(images, imageIndices[index]);
-                    else ImGui::TextDisabled("%s", T("待移除", "Pending removal"));
-                    ImGui::TextWrapped("%s", image.filename.c_str());
+                    if (imageIndices[index] != static_cast<std::size_t>(-1)) RenderPreviewCardImage(images, imageIndices[index]);
+                    else
+                    {
+                        ImGui::TextDisabled("%s", T("待移除", "Pending removal"));
+                        ImGui::Dummy(ImVec2(1, 152.0f * gDpiScale));
+                    }
                     const auto change = [&](std::filesystem::path replacement) {
                         auto edit = std::find_if(draft.edits.begin(), draft.edits.end(),
                             [index](const auto& value) { return value.index == index; });
@@ -2816,8 +2853,13 @@ private:
                     ImGui::BeginDisabled(!editable);
                     if (SecondaryButton(T("替换图片", "Replace image")))
                         if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path})) change(*path);
-                    ContinueButtonRow(T("移除图片", "Remove image"));
-                    if (SecondaryButton(T("移除图片", "Remove image"))) change({});
+                    ContinueButtonRow(T("更多", "More"));
+                    if (SecondaryButton(T("更多", "More"))) ImGui::OpenPopup("image-actions");
+                    if (ImGui::BeginPopup("image-actions"))
+                    {
+                        if (ImGui::MenuItem(T("移除图片", "Remove image"))) change({});
+                        ImGui::EndPopup();
+                    }
                     ImGui::EndDisabled();
                 }
                 else ImGui::TextWrapped("%s", T("视频或其他媒体", "Video or other media"));
@@ -2827,10 +2869,19 @@ private:
             for (std::size_t index = 0; index < draft.additions.size() && additionsBegin + index < images.size(); ++index)
             {
                 ImGui::TableNextColumn(); ImGui::PushID(static_cast<int>(expected.additionalPreviews.size() + index));
-                RenderImage(images, additionsBegin + index);
-                ImGui::TextWrapped("%s", images[additionsBegin + index].title.c_str());
+                ImGui::Text("+%zu", index + 1);
+                RenderPreviewCardImage(images, additionsBegin + index);
                 ImGui::BeginDisabled(!editable);
-                if (SecondaryButton(T("移除图片", "Remove image"))) removeAddition = index;
+                if (SecondaryButton(T("替换图片", "Replace image")))
+                    if (const auto path = PickPath(window, false); path && CheckPreviewFiles({*path}))
+                    { draft.additions[index] = *path; RequestManagerFrame(); }
+                ContinueButtonRow(T("更多", "More"));
+                if (SecondaryButton(T("更多", "More"))) ImGui::OpenPopup("image-actions");
+                if (ImGui::BeginPopup("image-actions"))
+                {
+                    if (ImGui::MenuItem(T("移除图片", "Remove image"))) removeAddition = index;
+                    ImGui::EndPopup();
+                }
                 ImGui::EndDisabled(); ImGui::PopID();
             }
             if (removeAddition)
