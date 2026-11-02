@@ -876,14 +876,20 @@ void DockWindowPreview::Show(
             DeleteObject(region);
     }
     RegisterThumbnails();
-    for (const HWND window : windows_)
+    for (size_t index = 0; index < windows_.size(); ++index)
     {
+        const HWND window = windows_[index];
         InvalidateRect(window, nullptr, TRUE);
         if (!IsWindowVisible(window)) SetWindowPos(window, nullptr, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                 SWP_NOOWNERZORDER | SWP_NOACTIVATE |
                 SWP_SHOWWINDOW);
         UpdateWindow(window);
+        // The controls own a separate composition surface. A cached or
+        // occluded card need not receive WM_PAINT when reopened, so restore
+        // its current controls explicitly at the display boundary.
+        RECT client{};
+        if (GetClientRect(window, &client)) PaintToolbar(nullptr, index, client);
     }
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
     UpdateToolbarTooltips();
@@ -1420,7 +1426,6 @@ void DockWindowPreview::Paint(HWND window)
             : closeIdle;
         SetTextColor(dc, closeColor);
         DrawCenteredActionGlyph(dc, actionFont, kCloseGlyph, closeRect);
-        PaintToolbar(dc, index, client);
     }
 
     SelectObject(dc, oldFont);
@@ -1431,8 +1436,14 @@ void DockWindowPreview::Paint(HWND window)
 
 void DockWindowPreview::InvalidatePopups()
 {
-    for (const HWND window : windows_)
-        if (window) InvalidateRect(window, nullptr, FALSE);
+    for (size_t index = 0; index < windows_.size(); ++index)
+    {
+        const HWND window = windows_[index];
+        if (!window) continue;
+        InvalidateRect(window, nullptr, FALSE);
+        RECT client{};
+        if (IsWindowVisible(window) && GetClientRect(window, &client)) PaintToolbar(nullptr, index, client);
+    }
 }
 
 POINT DockWindowPreview::ToLayoutPoint(HWND window, POINT point) const
