@@ -112,11 +112,13 @@ bool ActivateDockWindowForeground(HWND target, HWND activationTarget)
             });
 }
 
-void RequestDockWindowShow(HWND target, bool wasMinimized)
+void RequestDockWindowShow(HWND target, bool wasMinimized, bool activate = true)
 {
     if (!target || !IsWindow(target))
         return;
-    const int showCommand = wasMinimized ? DockRestoreShowCommand(target) : SW_SHOW;
+    const int showCommand = wasMinimized
+        ? (activate ? DockRestoreShowCommand(target) : SW_SHOWNOACTIVATE)
+        : SW_SHOW;
     LogDockWindowActivation(target, L"show-request", showCommand);
     SetLastError(ERROR_SUCCESS);
     const BOOL showAccepted = ShowWindowAsync(target, showCommand);
@@ -1583,14 +1585,13 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            // Only submit the maximized/normal restore here. The transition
-            // restores the cloaked source before its visual timeline starts,
-            // letting the application finish its native restore underneath the
-            // animation. Foreground retries belong to the exposed-window
-            // handoff: running them here can activate a still-cloaked source.
+            // SW_RESTORE/SW_SHOWMAXIMIZED activate even without an explicit
+            // SetForegroundWindow. Restore the cloaked source without activation;
+            // SW_SHOWNOACTIVATE also preserves restore-to-maximized placement.
+            // Foreground ownership belongs to the exposed-window handoff.
             CancelAllDockWindowActivationObservations();
             LogDockWindowActivation(target, L"animation-restore-request");
-            RequestDockWindowShow(target, true);
+            RequestDockWindowShow(target, true, false);
             UpdateDockWindowActivationState(
                 target, IsIconic(target) == FALSE, false);
         }

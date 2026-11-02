@@ -151,7 +151,11 @@ bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     });
     return impl_->transition.StartRestore(window, target.anchor, [](HWND source, DockWindowRestoreTransitionPhase phase) {
-        if (phase == DockWindowRestoreTransitionPhase::RequestRestore || phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
+        // Keep native activation out of the cloaked preparation phase, just
+        // like the host path. Activate only after the transition exposes it.
+        if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+            ShowWindowAsync(source, SW_SHOWNOACTIVATE);
+        if (phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
             ShowWindowAsync(source, SW_RESTORE);
         if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) SetForegroundWindow(source);
     }, below);
