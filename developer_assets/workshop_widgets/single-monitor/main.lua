@@ -9,7 +9,7 @@ local function copy()
         choose=l10n.tr("monitor.choose"), device=l10n.tr("monitor.device"), automatic=l10n.tr("monitor.automatic"),
         history=l10n.tr("monitor.history"),
         used=l10n.tr("monitor.used"), available=l10n.tr("monitor.available"),
-        dedicated=l10n.tr("monitor.dedicated"), gpu_load=l10n.tr("monitor.gpu_load"),
+        dedicated=l10n.tr("monitor.dedicated"),
         charging=l10n.tr("monitor.charging"), charged=l10n.tr("monitor.charged"),
         plugged_in=l10n.tr("monitor.plugged_in"), on_battery=l10n.tr("monitor.on_battery"), saver=l10n.tr("monitor.saver"),
         download=l10n.tr("monitor.download"), upload=l10n.tr("monitor.upload"),
@@ -61,16 +61,10 @@ end
 
 local function reconcile(m)
     local mode=metrics.mode(storage.get("metric"))
-    local source,deviceId=metrics.sources[mode],selected(mode)
+    local source=metrics.sources[mode]
     local details=widget.hasFeature("data.system.gpu.details")
     local permitted=widget.hasPermission(source.permission)
     local available=widget.hasFeature("data."..source.topic)
-    local identity=mode..":"..deviceId
-    if m.identity~=identity then
-        m.history=m.histories[identity] or {}
-        if mode=="cpu" or mode=="network" then m.histories[identity]=m.history end
-        m.identity=identity
-    end
     m.mode=mode
     if m.topic~=source.topic or m.details~=details or not permitted or not available then
         if m.handle then m.handle:unsubscribe();m.handle=nil end
@@ -88,6 +82,14 @@ local function sample(m)
     m.now=time.monotonic()
     m.snapshot=m.handle and m.handle:value() or nil
     m.current=m.blocked and {status=m.blocked} or metrics.read(m.mode,m.snapshot,selected(m.mode),m.details)
+    -- Resolve automatic GPU selection to its actual adapter before choosing a
+    -- history. Device changes and temporary gaps must not join different GPUs.
+    local identity=m.mode..":"..(m.current.deviceId or selected(m.mode))
+    if m.identity~=identity then
+        m.history=m.histories[identity] or {}
+        if m.mode=="cpu" or m.mode=="gpu" or m.mode=="network" then m.histories[identity]=m.history end
+        m.identity=identity
+    end
     metrics.append(m.history,m.now,m.current)
     if m.handle and (m.mode=="cpu" or m.mode=="network") and
             widget.hasFeature("data.subscription.history") then
@@ -119,12 +121,14 @@ end
 -- Only deterministic preview fixtures receive a representative past.
 -- Live instances use only real local samples and the host's shared history.
 local function previewHistory(m)
-    if m.current.status~="ready" or (m.mode~="cpu" and m.mode~="network") then return end
+    if m.current.status~="ready" or (m.mode~="cpu" and m.mode~="gpu" and m.mode~="network") then return end
     m.history={}
     local pattern={0.6,0.9,0.72,1.4,0.98,1.7,1.1,0.82,0.45,0.65,0.52,0.9,0.4,0.62,0.94,
         0.72,1.25,1.65,1.05,1.4,0.95,0.7,0.55,0.3,0.65,0.9,0.76,0.6,0.9,1}
+    local latestTimestamp=m.current.timestamp or m.now
     for i,factor in ipairs(pattern) do
-        m.history[i]={time=m.now-(#pattern-i)*2000,timestamp=i,
+        local age=(#pattern-i)*2000
+        m.history[i]={time=m.now-age,timestamp=latestTimestamp-age,
             value=m.current.percent and math.min(100,m.current.percent*factor),
             download=m.current.download and m.current.download*factor,
             upload=m.current.upload and m.current.upload*pattern[#pattern-i+1]}

@@ -149,7 +149,8 @@ function M.render(mode, reading, values, now, c, format)
     local pad,p=s*0.065,M.palette()
     local x,bw=pad,w-pad*2
     local wide=w/h>=1.6
-    local ringMode=mode=="gpu" or mode=="disk"
+    local curveMode=mode=="cpu" or mode=="gpu"
+    local ringMode=mode=="disk"
     local ringWide=wide and ringMode and reading.status=="ready"
     local titleH,iconSize=t*0.105,t*0.065
     local titleFont=font(c[mode],t*0.064,bw*0.62-t*0.155,titleH,true)
@@ -212,8 +213,7 @@ function M.render(mode, reading, values, now, c, format)
         -- This rectangle lies inside the inner circle. Center visible glyph
         -- bounds rather than the font's asymmetric line box.
         percentage(cx-inner*0.90,cy-inner*0.40,inner*1.80,inner*0.80,inner*0.95,"center")
-        if mode=="disk" then capacityLabel(fx,fy,fw,fh,"center")
-        else label(fx,fy,fw,fh,c.gpu_load,t*0.06,p.sub,"center") end
+        capacityLabel(fx,fy,fw,fh,"center")
     elseif mode=="network" then
         local stacked=bw/bh<0.85
         local gap=stacked and s*0.12 or s*0.075
@@ -249,19 +249,19 @@ function M.render(mode, reading, values, now, c, format)
             gx,gw=x+bw*0.48,bw*0.52
             captionH=bh*0.19
             captionY=y+bh-captionH
-            if mode=="cpu" then gy,gh=y+bh*0.06,bh*0.65
+            if curveMode then gy,gh=y+bh*0.06,bh*0.65
             else
                 gh=mode=="battery" and math.min(s*0.34,bh*0.40) or
                     math.min(mode=="vram" and s*0.14 or s*0.09,bh*0.35)
                 gy=y+(bh-captionH-gh-s*0.04)/2
             end
         else
-            px,py,pw,ph=x,y,bw,bh*(mode=="cpu" and 0.35 or 0.42)
+            px,py,pw,ph=x,y,bw,bh*(curveMode and 0.35 or 0.42)
             detailY,detailH=y+bh*0.44,math.min(t*0.11,bh*0.11)
             gx,gw=x,bw
             captionH=math.min(t*0.10,bh*0.10)
             captionY=y+bh-captionH
-            if mode=="cpu" then gy,gh=y+bh*0.40,bh*0.46
+            if curveMode then gy,gh=y+bh*0.40,bh*0.46
             else
                 gh=math.min(s*(mode=="battery" and 0.34 or (mode=="vram" and 0.14 or 0.09)),
                     bh*(mode=="battery" and 0.34 or 0.20))
@@ -295,7 +295,7 @@ function M.render(mode, reading, values, now, c, format)
         end
         percentage(px,py,pw,ph,t*0.28)
         if mode=="memory" or mode=="vram" then capacityLabel(px,detailY,pw,detailH) end
-        if mode=="cpu" then
+        if curveMode then
             local legendW=s*0.12
             history(values,"value",now,gx,gy,gw-legendW,gh,100,color,s,p)
             label(gx+gw-legendW+s*0.015,gy-s*0.025,legendW-s*0.015,s*0.05,
