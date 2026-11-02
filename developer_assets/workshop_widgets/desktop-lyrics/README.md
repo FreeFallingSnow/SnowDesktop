@@ -6,7 +6,7 @@ SnowDesktop 官方社区歌词组件。默认选用“透明”外观预设，�
 
 - 播放器必须通过 Windows SMTC 提供当前歌曲名称、歌手和有效播放进度。没有 SMTC 会话时等待媒体；没有可用进度时明确显示不支持，不按系统时间、音频或歌曲时长猜测进度。
 - 为组件允许“读取媒体信息”和“联网”。组件只读取当前 Windows 媒体会话；不提供播放、暂停、切歌、跳转、音量、搜索点播或队列操作。
-- `electron.app.*` 这类应用标识会话，以及歌手字段为 `MSEdge`、`msedge.exe` 等浏览器/应用占位名的会话不获取歌词，显示静候旋律的占位语；浏览器提供真实歌曲信息时仍可使用。
+- `electron.app.*` 这类应用标识会话，以及歌手字段为浏览器/应用占位名的会话不获取歌词，显示静候旋律的占位语。覆盖 Edge、Chrome、Chromium、Firefox、Brave、Opera/GX、Vivaldi、Arc、Zen、Waterfox、Yandex、Whale、QQ、360、搜狗、夸克、UC、傲游及 DuckDuckGo 的名称和常用进程标识；占位名过滤会忽略空白和不可见格式字符。`Brave`、`Opera`、`Zen` 等可能是艺名的短名称须与浏览器来源一致；按完整值判断，不截取作者名。已识别浏览器的作者是 HTTP(S) URL 或以 `www.` 开头时同样不搜索。浏览器先提供标题、尚无真实歌手时等待元数据，不提前搜索；提供真实歌曲信息后仍可使用。请求完成和手动重新匹配前重读当前媒体，已变成占位会话时取消旧请求链。
 - 只需 SnowDesktop，无需 Folia、Stage API、Folium、令牌、适配模组或额外本地服务。
 - 使用支持清单所列 API v2 features 的宿主；最低声明版本为 1.0.13.0，同版本早期构建仍以 feature 检查为准。
 
@@ -62,4 +62,14 @@ The default transparent appearance is a selectable component preset. Settings us
 
 Allow media reading and network access. No Folia installation, adapter mod, token or local service is required. Required features are checked; the declared minimum host version is 1.0.13.0. GPL-3.0-only; see LICENSE.
 
-Application-identifier sessions such as `electron.app.*`, and tracks whose artist is a browser/application placeholder such as `MSEdge` or `msedge.exe`, are excluded before any lyric lookup. Browser sessions that provide real song metadata remain supported.
+Application-identifier sessions such as `electron.app.*`, and tracks whose artist is a browser/application placeholder, are excluded before any lyric lookup. Labels and common process identifiers cover Edge, Chrome, Chromium, Firefox, Brave, Opera/GX, Vivaldi, Arc, Zen, Waterfox, Yandex, Whale, QQ, 360, Sogou, Quark, UC, Maxthon and DuckDuckGo. Checks ignore whitespace and invisible format characters. Ambiguous short labels such as Brave, Opera and Zen require the matching browser source. Artist labels are matched as complete values, never truncated. Recognized browser sessions also exclude artists formatted as HTTP(S) URLs or beginning with www. Browser sessions with a title but no real artist wait for metadata before searching; browser sessions with real song metadata remain supported. Task completions and manual rematching refresh the current media first, canceling the old request chain when the session becomes a placeholder.
+
+浏览器标识与来源回退的核对资料 / Browser identity and fallback references:
+
+- [Chromium media metadata fallback](https://chromium.googlesource.com/chromium/src/+/e30962366bf80af4683d3b82b468c7ae1d00f2d5/content/browser/media/system_media_controls_notifier.cc)
+- [Firefox Windows SMTC implementation](https://searchfox.org/firefox-main/source/widget/windows/WindowsSMTCProvider.cpp)
+- [Brave process path](https://support.brave.app/hc/en-us/articles/360044860011-How-Do-I-Use-Command-Line-Flags-in-Brave), [Vivaldi process path](https://help.vivaldi.com/desktop/privacy/private-windows/), [Zen build documentation](https://docs.zen-browser.app/contribute/desktop/building)
+- [360 process names](https://browser.360.cn/se/help/faq-detail_zy_zy.html), [Yandex process path](https://yandex.com/support/browser/en/troubleshooting/media)
+
+以上名称作为占位过滤规则维护；未逐一实机确认所有浏览器都会把名称写入歌手字段。明确 URL 以外的普通带点艺名保留。
+These names define placeholder rules; not every browser has been observed publishing its name as the artist. Ordinary dotted artist names remain valid unless they are explicit URLs.

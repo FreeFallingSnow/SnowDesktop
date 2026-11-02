@@ -1,18 +1,10 @@
 local M={}
 local function finite(v) return type(v)=="number" and v==v and math.abs(v)<1e14 end
-local appArtists={msedge=true,["msedge.exe"]=true,microsoftedge=true,chrome=true,["chrome.exe"]=true,
-    googlechrome=true,firefox=true,["firefox.exe"]=true,mozillafirefox=true,electron=true,["electron.exe"]=true}
-function M.excluded(s)
-    if type(s)~="table" then return false end
-    local artist=type(s.artist)=="string" and s.artist:lower():gsub("%s","") or ""
-    if appArtists[artist] then return true end
-    for _,value in ipairs({s.sourceName or "",s.artist or ""}) do
-        if type(value)=="string" and value:lower():match("^%s*electron%.app%.") then return true end
-    end
-    return false
-end
+local filter=module.require("modules/media_filter.lua")
+M.excluded=filter.excluded
+M.pendingMetadata=filter.pendingMetadata
 function M.identity(s)
-    if type(s)~="table" or M.excluded(s) or type(s.id)~="string" or type(s.title)~="string" or s.title=="" then return nil end
+    if type(s)~="table" or M.excluded(s) or M.pendingMetadata(s) or type(s.id)~="string" or type(s.title)~="string" or s.title=="" then return nil end
     local function canonical(value)return (type(value)=="string" and value or ""):lower():gsub("%s","")end
     return table.concat({s.id,canonical(s.title),canonical(s.artist)},"\31")
 end

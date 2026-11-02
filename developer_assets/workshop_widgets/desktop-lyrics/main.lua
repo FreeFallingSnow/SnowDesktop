@@ -47,6 +47,7 @@ end
 local function event(context,m,e)
     if e.kind=="frame" and e.id==FRAME then m.framePending=false;frames(m);widget.invalidate();return end
     if e.kind=="task.complete" then
+        refresh(context,m)
         local previous=m.client.lines;m.client:complete(e)
         if previous~=m.client.lines then m.snap=true;m.focus=nil;m.textCache=nil end
         if m.mediaValid and m.clock then m.status=m.client.state end;frames(m)
@@ -55,7 +56,10 @@ local function event(context,m,e)
     elseif e.kind=="environment" then refresh(context,m)
     elseif e.kind=="settings.changed" then m.textCache=nil;m.snap=true
     elseif e.kind=="action" then
-        if e.id=="retry" and not m.preview then m.client:retry(true);m.status=m.client.state;frames(m) end
+        if e.id=="retry" and not m.preview then
+            refresh(context,m)
+            if m.mediaValid then m.client:retry(true);m.status=m.client.state;frames(m) end
+        end
     end
     widget.invalidate()
 end
