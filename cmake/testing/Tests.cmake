@@ -214,7 +214,7 @@ if (BUILD_TESTING)
         LABELS core integration isolated-native-model interaction)
     snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
     foreach(row IN ITEMS settings-host group-type-contract native-dialog
-            drag-source drag-files drag-batches drag-partial drag-release drag-popup)
+            drag-source drag-files drag-batches drag-partial drag-release drag-popup widget-focus)
         add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBehaviorTests>"

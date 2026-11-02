@@ -260,6 +260,7 @@ struct HostProfile : Profile
 #include "host_contracts.inc"
 #include "drag_contracts.inc"
 #include "popup_drag_contracts.inc"
+#include "widget_focus_contracts.inc"
 int main(int argc, char** argv)
 {
     try {
@@ -276,6 +277,7 @@ int main(int argc, char** argv)
         else if (behavior::scene == "drag-partial") behavior::DragPartial();
         else if (behavior::scene == "drag-release") behavior::DragRelease();
         else if (behavior::scene == "drag-popup") behavior::DragPopup();
+        else if (behavior::scene == "widget-focus") behavior::WidgetAuxiliaryFocus();
         else throw std::runtime_error("unknown behavior");
         std::cout << "PASS " << behavior::scene << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
