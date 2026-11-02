@@ -1339,6 +1339,8 @@ panel、dialog 或 popover 打开后，宿主在其首棵成功场景中自动�
 可聚焦元素，使方向键、Enter 和空格立即作用于辅助界面；同一打开回调中通过
 `control.focus()` 提交的显式目标优先。该自动聚焦每次打开只执行一次，后续重绘不会在用户按
 Escape 清除焦点后再次抢回；首帧尚无可聚焦元素时会等到首次成功提交此类元素。
+打开回调中的聚焦许可仅用于 `control.focus()`，其他操作仍执行各自的手势和权限检查。
+较早构建可能错误地以 `trustedGestureRequired` 拒绝此类聚焦请求，需要更新宿主；接口与 API 版本不变。
 
 探测 `view.surface.popover` 后，`popover(context, model)` 复用辅助 surface 场景管线，但位置
 来自 `widget.openPopover({ anchorKey=... })` 指向的当前成功 desktop scene 元素，而不是鼠标

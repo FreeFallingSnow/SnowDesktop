@@ -643,6 +643,7 @@ struct D2DState
     std::string storagePrefix;
     std::wstring currentWidgetId;
     const char* surfaceKind = "desktop";
+    bool openingFocusAllowed = false;
     int gridColumns = 1;
     int gridRows = 1;
     int gridCellW = 92;
@@ -2150,17 +2151,22 @@ private:
 class WidgetSurfaceScope
 {
 public:
-    WidgetSurfaceScope(D2DState* state, const char* surfaceKind)
+    WidgetSurfaceScope(D2DState* state, const char* surfaceKind,
+        bool allowOpeningFocus = false)
         : state_(state)
     {
         if (!state_) return;
         previous_ = state_->surfaceKind;
+        previousOpeningFocus_ = state_->openingFocusAllowed;
         state_->surfaceKind = surfaceKind ? surfaceKind : "desktop";
+        state_->openingFocusAllowed = allowOpeningFocus;
     }
 
     ~WidgetSurfaceScope()
     {
-        if (state_) state_->surfaceKind = previous_;
+        if (!state_) return;
+        state_->surfaceKind = previous_;
+        state_->openingFocusAllowed = previousOpeningFocus_;
     }
 
     WidgetSurfaceScope(const WidgetSurfaceScope&) = delete;
@@ -2169,6 +2175,7 @@ public:
 private:
     D2DState* state_ = nullptr;
     const char* previous_ = "desktop";
+    bool previousOpeningFocus_ = false;
 };
 
 static std::string ImageUseOwner(D2DState* state, bool background = false)
@@ -22641,7 +22648,10 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
                     : (std::strstr(callbackName, "Panel") != nullptr
                         ? "panel" : "desktop"));
         WidgetSurfaceScope surfaceScope(
-            d2dState_, eventSurface.c_str());
+            d2dState_, eventSurface.c_str(),
+            std::strcmp(callbackName, "onPanelOpened") == 0 ||
+                std::strcmp(callbackName, "onDialogOpened") == 0 ||
+                std::strcmp(callbackName, "onPopoverOpened") == 0);
         const char* kind = "pointer";
         const char* action = callbackName;
         if (std::strcmp(callbackName, "onClick") == 0 ||
@@ -33501,7 +33511,8 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
     std::string& error)
 {
     error.clear();
-    if (!trustedGestureState_.Active())
+    if (!trustedGestureState_.Active() &&
+        !(d2dState_ && d2dState_->openingFocusAllowed))
     {
         error = "trustedGestureRequired";
         return false;
