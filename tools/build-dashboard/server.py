@@ -717,6 +717,7 @@ class Store:
         accounting = resources.get("accountingAvailable")
         resource_view = {**{k: number(resources.get(k)) if accounting is not False else None for k in ("cpuSeconds", "peakJobMemoryBytes", "activeProcesses", "totalProcesses", "ioReadBytes", "ioWriteBytes")},
                          **{k: number(resources.get(k)) for k in ("requestedCpuSlots", "requestedMemoryMiB", "cpuLimitBasisPoints", "committedMemoryLimitBytes")},
+                         "memoryBudgetMode": resources.get("memoryBudgetMode") if resources.get("memoryBudgetMode") in ("advisory", "unbudgeted") else None,
                          "sampledUtc": resources.get("sampledUtc"), "finished": resources.get("finished") is True,
                          "accountingAvailable": accounting if isinstance(accounting, bool) else None}
         if not resources:

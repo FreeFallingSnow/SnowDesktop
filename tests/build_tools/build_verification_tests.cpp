@@ -88,7 +88,9 @@ void scenario(const fs::path& repo,const std::string& control){
         command(c,env,{"-Command","cancel","-Task","subscriber","-RunId",differentId});wait_run(c,env,differentId,4);
         c.gate(".build/hold-verification",false);wait_run(c,env,budgetId);
         const auto metrics=Json::parse(read(c.stateRoot/L"runs"/wide(budgetId+".resources.json")));
-        require(metrics.at("requestedCpuSlots").integer()==1&&metrics.at("committedMemoryLimitBytes").number==1073741824.0&&metrics.at("cpuLimitBasisPoints").number>0,"Weighted verification did not apply real private Job limits");
+        require(metrics.at("requestedCpuSlots").integer()==1&&metrics.at("requestedMemoryMiB").integer()==1024&&
+            metrics.at("memoryBudgetMode").str()=="advisory"&&metrics.at("committedMemoryLimitBytes").kind==Json::Kind::Null&&
+            metrics.at("cpuLimitBasisPoints").number>0,"Weighted verification lost its advisory memory budget or real private Job CPU limit");
     }
     const auto builds=count(c.root/L"build.count"),configures=count(c.root/L".build/configure.count"),executions=count(c.root/L".build/verification-exec.count");
     auto start=[&](const std::string& task,const Env& context){

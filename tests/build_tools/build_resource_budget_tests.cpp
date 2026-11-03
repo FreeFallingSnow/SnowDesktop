@@ -194,14 +194,18 @@ int job_probe(){
     GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernelAfter,&userAfter);
     const auto ticks=[](FILETIME value){ULARGE_INTEGER result{};result.LowPart=value.dwLowDateTime;result.HighPart=value.dwHighDateTime;return result.QuadPart;};
     const double used=static_cast<double>(ticks(kernelAfter)+ticks(userAfter)-ticks(kernelBefore)-ticks(userBefore))/10000000.0;
-    std::cout<<Json::object({{"memoryRead",memoryRead},{"cpuRead",cpuRead},{"allocationSucceeded",allocated},{"memoryLimitBytes",static_cast<double>(memory.JobMemoryLimit)},
+    std::cout<<Json::object({{"memoryRead",memoryRead},{"cpuRead",cpuRead},{"allocationSucceeded",allocated},{"memoryFlags",static_cast<int>(memory.BasicLimitInformation.LimitFlags)},{"memoryLimitBytes",static_cast<double>(memory.JobMemoryLimit)},
         {"cpuFlags",static_cast<int>(cpu.ControlFlags)},{"cpuRate",static_cast<int>(cpu.CpuRate)},{"observedCpuSeconds",used}}).dump()<<std::endl;return 0;
 }
 void limits(const fs::path& repo,const std::string& control={}){
     Coordinator c(repo,"job-budget");
     if(!control.empty()){
         auto source=read(c.scripts/L"build_job.cs");
-        if(control=="memory")replace(source,"limits.basic.flags |= 0x200;","limits.basic.flags |= 0;");
+        if(control=="memory")replace(source,"limits.basic.flags = 0x2000;",R"CS(limits.basic.flags = 0x2000;
+                if (resourceMemoryMiB > 0) {
+                    limits.basic.flags |= 0x200;
+                    limits.jobMemory = new UIntPtr(checked(resourceMemoryMiB * 1048576UL));
+                })CS");
         else replace(source,"CpuLimits cpu = new CpuLimits { flags = 5,","CpuLimits cpu = new CpuLimits { flags = 1,");
         write(c.scripts/L"build_job.cs",source);
     }
@@ -209,16 +213,20 @@ void limits(const fs::path& repo,const std::string& control={}){
     write(c.root/L"job-budget.ps1",". $PSScriptRoot/scripts/build_entry.ps1\nInitialize-ResourceRuntime\n[SnowDesktop.Build.Job]::ConfigureResourceBudget(1,[SnowDesktop.Build.Job]::LogicalProcessors(),512)\n[SnowDesktop.Build.Job]::ConfigureRunControl((Join-Path $PSScriptRoot 'cancel'),('a'*32),(Join-Path $PSScriptRoot 'metrics.json'))\n$code=[SnowDesktop.Build.Job]::RunLeasedCommand($PSScriptRoot,(Join-Path $PSScriptRoot 'probe.log'),"+ps_literal(utf8(childCommand))+")\n@{code=$code}|ConvertTo-Json\n",true);
     require(c.bridge->call(c.root/L"job-budget.ps1",{}).at("code").integer()==0,"Private budget probe failed");
     const auto probe=Json::parse(read(c.root/L"probe.log"));const auto metrics=Json::parse(read(c.root/L"metrics.json"));
-    require(probe.at("memoryRead").boolean&&probe.at("cpuRead").boolean&&!probe.at("allocationSucceeded").boolean&&probe.at("memoryLimitBytes").number==536870912.0,"Real committed-memory limit did not reject a1GiB allocation in the512MiB Job");
+    require(probe.at("memoryRead").boolean&&probe.at("cpuRead").boolean&&probe.at("allocationSucceeded").boolean&&
+        (probe.at("memoryFlags").integer()&(JOB_OBJECT_LIMIT_JOB_MEMORY|JOB_OBJECT_LIMIT_PROCESS_MEMORY))==0&&probe.at("memoryLimitBytes").number==0,
+        "Memory reservation blocked a1GiB allocation above the512MiB declaration");
     require((probe.at("cpuFlags").integer()&5)==5&&probe.at("cpuRate").number>0&&probe.at("observedCpuSeconds").number>0,"CPU hard-cap flags were not read back from the actual busy child Job");
-    require(metrics.at("finished").boolean&&metrics.at("committedMemoryLimitBytes").number==536870912.0&&metrics.at("cpuLimitBasisPoints").integer()==probe.at("cpuRate").integer(),"Producer metrics lost actual kernel limits");
+    require(metrics.at("finished").boolean&&metrics.at("requestedMemoryMiB").integer()==512&&metrics.at("memoryBudgetMode").str()=="advisory"&&
+        metrics.at("committedMemoryLimitBytes").kind==Json::Kind::Null&&metrics.at("peakJobMemoryBytes").number>536870912.0&&
+        metrics.at("cpuLimitBasisPoints").integer()==probe.at("cpuRate").integer(),"Producer metrics lost the advisory declaration, actual peak or CPU limit");
     if(control.empty()){
-        for(const auto& item:std::vector<std::pair<std::string,std::string>>{{"memory","Real committed-memory limit did not reject"},{"cpu","CPU hard-cap flags were not read back"}}){
+        for(const auto& item:std::vector<std::pair<std::string,std::string>>{{"memory","Memory reservation blocked"},{"cpu","CPU hard-cap flags were not read back"}}){
             const auto negative=run({executable().wstring(),repo.wstring(),wide("--limits-no-"+item.first)},c.root,45,{},true);
-            require(negative.code==1&&negative.err.find(item.second)!=std::string::npos,"Disabled kernel limit failed to reach its business assertion: "+negative.out+negative.err);
+            require(negative.code==1&&negative.err.find(item.second)!=std::string::npos,"Altered Job budget failed to reach its business assertion: "+negative.out+negative.err);
         }
     }
-    std::cout<<"PASS actual Job CPU flags/rate, busy-child CPU observation, committed-memory rejection and terminal metrics\n";
+    std::cout<<"PASS advisory memory overrun, actual Job CPU flags/rate, busy-child CPU observation and terminal peak metrics\n";
 }
 std::string generic(const fs::path& path){return utf8(path.generic_wstring());}
 std::string xml(std::string value){for(const auto& item:std::vector<std::pair<std::string,std::string>>{{"&","&amp;"},{"\"","&quot;"},{"<","&lt;"},{">","&gt;"}}){size_t at=0;while((at=value.find(item.first,at))!=std::string::npos){value.replace(at,item.first.size(),item.second);at+=item.second.size();}}return value;}
@@ -296,7 +304,9 @@ target_compile_options(BudgetProgram PRIVATE /W4 /WX /MP${SNOWDESKTOP_COMPILE_JO
             }
         }
         require(mtt&&units==5,"Weighted compiler controls were not used by the actual MSBuild graph");
-        require(view.at("resources").at("committedMemoryLimitBytes").number==3221225472.0&&view.at("resources").at("cpuLimitBasisPoints").number>0,"Actual compiler Job was not resource bounded");
+        require(view.at("resources").at("requestedMemoryMiB").integer()==3072&&view.at("resources").at("memoryBudgetMode").str()=="advisory"&&
+            view.at("resources").at("committedMemoryLimitBytes").kind==Json::Kind::Null&&view.at("resources").at("cpuLimitBasisPoints").number>0,
+            "Actual compiler Job lost its advisory memory budget or CPU bound");
         require(read(root/L".build/cxx/CMakeCache.txt").find("SNOWDESKTOP_BUILD_TOOL_JOBS:STRING=0")!=std::string::npos,"Weighted scheduling changed the persistent default compiler option");
         require(run({(root/L".build/cxx/Release/BudgetProgram.exe").wstring()},root).code==36,"Actual weighted compiler produced an incorrect program");
     };

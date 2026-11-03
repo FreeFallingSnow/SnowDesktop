@@ -668,7 +668,7 @@ void weighted_candidate(const fs::path& repo) {
     program(fs::path(wide(weighted.at("record").at("candidateExecution").at("output").str())),7);
     require(weighted.at("record").at("resourceAdmission").at("bindingValid").boolean&&
         weighted.at("resources").at("requestedCpuSlots").integer()==2&&weighted.at("resources").at("requestedMemoryMiB").integer()==768&&
-        weighted.at("resources").at("committedMemoryLimitBytes").number==805306368.0&&
+        weighted.at("resources").at("memoryBudgetMode").str()=="advisory"&&weighted.at("resources").at("committedMemoryLimitBytes").kind==Json::Kind::Null&&
         weighted.at("resources").at("finished").boolean&&weighted.at("resources").at("accountingAvailable").boolean,
         "Candidate private entry did not reuse its admitted runtime and parent CPU/memory budget");
     std::cout<<"PASS independent weighted candidate compiler execution, real admission and Job limits; bounded observers preserve the original Run\n";

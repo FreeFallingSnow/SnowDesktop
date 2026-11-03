@@ -195,9 +195,10 @@ void project_resources(const fs::path& repo,bool oldDefault=false){
     for(const auto& interval:completed.at("record").at("waitIntervals").items)resourceWait=resourceWait||(interval.at("resource").str()=="project-cpu-memory"&&interval.at("elapsedSeconds").number>=0);
     require(resourceWait&&status(c,firstId).at("status").str()=="interrupted","Project resource wait timing or interrupted owner evidence was lost");
     const auto completedBudget=completed.at("request").at("projectResources");
-    require(completed.at("resources").at("committedMemoryLimitBytes").number==completedBudget.at("memoryMiB").number*1048576.0&&
+    require(completed.at("resources").at("requestedMemoryMiB").number==completedBudget.at("memoryMiB").number&&
+        completed.at("resources").at("memoryBudgetMode").str()=="advisory"&&completed.at("resources").at("committedMemoryLimitBytes").kind==Json::Kind::Null&&
         completed.at("resources").at("cpuLimitBasisPoints").number>0&&completed.at("resources").at("cpuLimitBasisPoints").number<=7500,
-        "Default Run did not enforce its real Job CPU and memory limits");
+        "Default Run lost its memory reservation or real Job CPU limit");
     if(!oldDefault){
         const auto control=run({executable().wstring(),repo.wstring(),L"--project-resources-old-default"},c.root,40,{},true);
         require(control.code==1&&control.err.find("Default heavy execution did not reserve a bounded exclusive budget")!=std::string::npos,

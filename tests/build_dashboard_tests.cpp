@@ -402,6 +402,13 @@ void dashboard(const fs::path& repo,bool browser){
     atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());atomic(resourcePath,resourceRecord.dump());refresh();observed=Json::parse(http(port).body).at("current").at("run");
     require(observed.at("admission").at("cpuSlots").integer()==2&&observed.at("admission").at("lastObservation").at("occupiedCpuSlots").integer()==6&&observed.at("resources").at("cpuLimitBasisPoints").integer()==2500&&observed.at("resources").at("committedMemoryLimitBytes").number==3221225472.0,"Budget requests, queue observations and actual Job limits were conflated or lost");
     require(!observed.at("admission").has("policyPath")&&!observed.at("admission").has("policyHash")&&observed.at("admission").at("headroomMiB").kind==Json::Kind::Null,"Budget projection exposed private metadata or invented missing capacity");
+    resourceRecord["memoryBudgetMode"]="advisory";resourceRecord["committedMemoryLimitBytes"]=Json{};
+    resourceRecord["peakJobMemoryBytes"]=4294967296.0;
+    atomic(resourcePath,resourceRecord.dump());refresh();observed=Json::parse(http(port).body).at("current").at("run");
+    require(observed.at("resources").at("memoryBudgetMode").str()=="advisory"&&
+        observed.at("resources").at("committedMemoryLimitBytes").kind==Json::Kind::Null&&
+        observed.at("resources").at("peakJobMemoryBytes").number>observed.at("admission").at("memoryMiB").number*1048576.0,
+        "Advisory memory overrun was hidden or converted into a hard limit");
     runRecord["status"]="cancelled";runRecord["completedUtc"]="2026-10-02T10:00:03Z";atomic(runRoot/wide(observedRunId+".json"),runRecord.dump());refresh();observed=Json::parse(http(port).body).at("current").at("run");
     require(observed.at("phaseSummary").items[0].at("running").integer()==0&&observed.at("phaseSummary").items[0].at("incomplete").integer()==1&&!observed.at("compiler").at("complete").boolean,"Cancelled unfinished work was reported as running/completed");
     require(observed.at("resources").at("status").str()=="incomplete"&&observed.at("resources").at("cpuSeconds").number==1.5,"Terminal Run promoted an intermediate resource sample to complete");

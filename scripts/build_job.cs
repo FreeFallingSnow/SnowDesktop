@@ -102,7 +102,7 @@ namespace SnowDesktop.Build
             { resourceCpuSlots = 0; resourceLogicalProcessors = 0; resourceMemoryMiB = 0; return; }
             if (logicalProcessors != LogicalProcessors() || cpuSlots < 1 || cpuSlots > logicalProcessors ||
                 memoryMiB < 256 || memoryMiB > PhysicalMemoryBytes() / 1048576UL)
-                throw new ArgumentException("A resource budget needs valid CPU slots and committed-memory MiB on this machine");
+                throw new ArgumentException("A resource budget needs valid CPU slots and memory reservation MiB on this machine");
             resourceCpuSlots = cpuSlots; resourceLogicalProcessors = logicalProcessors; resourceMemoryMiB = memoryMiB;
         }
         static string cancelPath, cancelNonce, metricsPath;
@@ -174,6 +174,7 @@ namespace SnowDesktop.Build
                 ",\"peakJobMemoryBytes\":" + (memoryAvailable ? limits.peakJobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"requestedCpuSlots\":" + (resourceCpuSlots > 0 ? resourceCpuSlots.ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"requestedMemoryMiB\":" + (resourceMemoryMiB > 0 ? resourceMemoryMiB.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"memoryBudgetMode\":\"" + (resourceMemoryMiB > 0 ? "advisory" : "unbudgeted") + "\"" +
                 ",\"cpuLimitBasisPoints\":" + (cpuAvailable && (cpu.flags & 5) == 5 ? cpu.rate.ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"committedMemoryLimitBytes\":" + (memoryAvailable && (limits.basic.flags & 0x200) != 0 ? limits.jobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") + "}";
             string temporary = metricsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -240,11 +241,9 @@ namespace SnowDesktop.Build
                 Check(job != IntPtr.Zero);
                 Limits limits = new Limits();
                 limits.basic.flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                if (resourceMemoryMiB > 0)
-                {
-                    limits.basic.flags |= 0x200; // JOB_OBJECT_LIMIT_JOB_MEMORY: committed memory, not working set.
-                    limits.jobMemory = new UIntPtr(checked(resourceMemoryMiB * 1048576UL));
-                }
+                // Memory reservations govern admission and compiler parallelism.
+                // A link may legitimately peak above that estimate: do not turn
+                // the reservation into an allocation-failing Job memory limit.
                 Check(SetInformationJobObject(job, 9, ref limits, Marshal.SizeOf(typeof(Limits))));
                 if (resourceCpuSlots > 0)
                 {

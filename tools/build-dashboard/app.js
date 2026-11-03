@@ -300,8 +300,8 @@ function renderRunRecords(snapshot,batch){
   if(admission?.policy==="project-weighted-v1"){
    detail(box,"项目准入",admission.compatibilityMode==="shared"?"共享额度":admission.compatibilityMode==="exclusive"?"独占执行":"未记录");
    detail(box,"CPU 预留 / 总额度",known(admission.cpuSlots)+" / "+known(admission.cpuCapacity)+" 核心额度");
-   detail(box,"内存上限 / 预留 / 总额度",known(admission.memoryMiB)+" / "+known(admission.reservedMemoryMiB)+" / "+known(admission.memoryCapacityMiB)+" MiB");
-   detail(box,"Job CPU 硬上限 / 提交内存上限",(typeof resource.cpuLimitBasisPoints==="number"?(resource.cpuLimitBasisPoints/100).toFixed(2)+"%":"未记录")+" / "+(typeof resource.committedMemoryLimitBytes==="number"?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+" MiB":"未记录"));
+   detail(box,"内存申报 / 预留 / 总额度",known(admission.memoryMiB)+" / "+known(admission.reservedMemoryMiB)+" / "+known(admission.memoryCapacityMiB)+" MiB");
+   detail(box,"Job CPU 硬上限 / 提交内存上限",(typeof resource.cpuLimitBasisPoints==="number"?(resource.cpuLimitBasisPoints/100).toFixed(2)+"%":"未记录")+" / "+(typeof resource.committedMemoryLimitBytes==="number"?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+" MiB":resource.memoryBudgetMode==="advisory"?"未设置（申报为软预算）":"未记录"));
    const observation=admission.lastObservation;
    if(observation)detail(box,"排队时的额度观测",known(observation.occupiedCpuSlots)+" 核心额度 / "+known(observation.occupiedMemoryMiB)+" MiB 已预留 · "+({"cpu-capacity":"CPU 额度不足","memory-capacity":"内存额度不足","memory-headroom":"可用物理内存不足"}[observation.reason]||observation.reason)+(observation.observedUtc?" · "+time(observation.observedUtc):""));
   }else if(admission?.policy==="project-heavy-v1")detail(box,"项目准入","同项目独占执行");
