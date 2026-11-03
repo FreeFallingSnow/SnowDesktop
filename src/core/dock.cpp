@@ -2670,12 +2670,10 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             IsVertical() ? precedingVisual.bottom : precedingVisual.right);
         const float followingStart = static_cast<float>(
             IsVertical() ? followingVisual.top : followingVisual.left);
-        const float fixedFollowingStart = static_cast<float>(
-            IsVertical() ? followingBounds.top : followingBounds.left);
-        // The file boundary belongs to its fixed layout, independently of
-        // application scrolling and of either group's hover displacement.
+        // The file boundary follows the file group's hover geometry while
+        // remaining independent of application scrolling.
         const float position = anchorToFollowing
-            ? fixedFollowingStart - static_cast<float>(ScaledSeparatorGap()) * 0.5f
+            ? followingStart - static_cast<float>(ScaledSeparatorGap()) * 0.5f
             : (precedingEnd + followingStart) * 0.5f;
         if ((hasOverflow || IsEdgeAttached()) && scrollable)
         {
