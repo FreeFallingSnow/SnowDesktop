@@ -463,28 +463,41 @@ WidgetFilesystemTaskRunResult RunWrite(
 
 WidgetFilesystemTaskExecutor::WidgetFilesystemTaskExecutor(
     Runner runner, NowProvider nowProvider, CooperativeRunner cooperativeRunner)
-    : runner_(std::move(cooperativeRunner)), nowProvider_(std::move(nowProvider))
+    : state_(std::make_shared<State>()), nowProvider_(std::move(nowProvider))
 {
-    if (!runner_ && runner)
-        runner_ = [legacy = std::move(runner)](const auto& request, std::stop_token) {
+    state_->runner = std::move(cooperativeRunner);
+    if (!state_->runner && runner)
+        state_->runner = [legacy = std::move(runner)](const auto& request, std::stop_token) {
             return legacy(request);
         };
-    if (!runner_) runner_ = RunSystemAction;
+    if (!state_->runner) state_->runner = RunSystemAction;
     if (!nowProvider_)
         nowProvider_ = [] { return Clock::now(); };
 }
 
 WidgetFilesystemTaskExecutor::~WidgetFilesystemTaskExecutor()
 {
+    const auto state = state_;
+    bool runningImage = false;
     {
-        std::scoped_lock lock(mutex_);
-        stopping_ = true;
+        // Serialize with delivery, not the decoder. No completion callback may
+        // start after the executor and its host have been released.
+        std::scoped_lock delivery(state->completionMutex);
+        std::scoped_lock lock(state->mutex);
+        state->stopping = true;
+        state->completionCallback = {};
+        state->requests.clear();
+        state->completions.clear();
+        runningImage = state->runningImage;
     }
     if (worker_.joinable())
     {
         worker_.request_stop();
-        condition_.notify_all();
-        worker_.join();
+        state->condition.notify_all();
+        // Images are read-only and own all decode input/output. Keep the
+        // existing join for other actions, especially committed file writes.
+        if (runningImage) worker_.detach();
+        else worker_.join();
     }
 }
 
@@ -495,38 +508,38 @@ WidgetFilesystemTaskStartResult WidgetFilesystemTaskExecutor::Start(
     if (id == 0 || instanceId.empty() || !ValidateRequest(request))
         return { false, "invalidArguments" };
     const auto now = nowProvider_();
-    std::scoped_lock lock(mutex_);
-    if (stopping_ || active_.contains(id))
+    std::scoped_lock lock(state_->mutex);
+    if (state_->stopping || state_->active.contains(id))
         return { false, "taskExecutorUnavailable" };
     if (request.action == "filesystem.write")
     {
-        if (const auto last = lastWrites_.find(instanceId);
-            last != lastWrites_.end() && now >= last->second &&
+        if (const auto last = state_->lastWrites.find(instanceId);
+            last != state_->lastWrites.end() && now >= last->second &&
             now - last->second < MinimumWriteInterval)
             return { false, "rateLimited" };
-        lastWrites_.insert_or_assign(instanceId, now);
+        state_->lastWrites.insert_or_assign(instanceId, now);
     }
     auto stop = std::make_shared<std::stop_source>();
     try
     {
-        active_.insert(id);
-        requestStops_.emplace(id, stop);
-        requests_.push_back({ id, std::move(instanceId), std::move(request), std::move(stop) });
+        state_->active.insert(id);
+        state_->requestStops.emplace(id, stop);
+        state_->requests.push_back({ id, std::move(instanceId), std::move(request), std::move(stop) });
     }
     catch (...)
     {
-        active_.erase(id);
-        requestStops_.erase(id);
+        state_->active.erase(id);
+        state_->requestStops.erase(id);
         throw;
     }
     if (!worker_.joinable())
     {
         worker_ = std::jthread(
-            [this](std::stop_token stopToken) {
-                WorkerMain(stopToken);
+            [state = state_](std::stop_token stopToken) {
+                WorkerMain(state, stopToken);
             });
     }
-    condition_.notify_one();
+    state_->condition.notify_one();
     return { true, {} };
 }
 
@@ -534,42 +547,42 @@ bool WidgetFilesystemTaskExecutor::Cancel(std::uint64_t id)
 {
     std::shared_ptr<std::stop_source> stop;
     {
-        std::scoped_lock lock(mutex_);
-        if (!active_.contains(id)) return false;
-        canceled_.insert(id);
-        stop = requestStops_.at(id);
+        std::scoped_lock lock(state_->mutex);
+        if (!state_->active.contains(id)) return false;
+        state_->canceled.insert(id);
+        stop = state_->requestStops.at(id);
     }
     // Stop callbacks execute inline. Never invoke them under the executor lock.
     stop->request_stop();
-    condition_.notify_all();
+    state_->condition.notify_all();
     return true;
 }
 
 void WidgetFilesystemTaskExecutor::SetCompletionCallback(
     CompletionCallback callback)
 {
-    std::scoped_lock lock(mutex_);
-    completionCallback_ = std::move(callback);
+    std::scoped_lock lock(state_->mutex);
+    state_->completionCallback = std::move(callback);
 }
 
 void WidgetFilesystemTaskExecutor::ForgetInstance(
     std::string_view instanceId)
 {
-    std::scoped_lock lock(mutex_);
-    lastWrites_.erase(std::string(instanceId));
+    std::scoped_lock lock(state_->mutex);
+    state_->lastWrites.erase(std::string(instanceId));
 }
 
 std::vector<WidgetFilesystemTaskCompletion>
 WidgetFilesystemTaskExecutor::DrainCompletions()
 {
-    std::scoped_lock lock(mutex_);
-    return std::exchange(completions_, {});
+    std::scoped_lock lock(state_->mutex);
+    return std::exchange(state_->completions, {});
 }
 
 std::size_t WidgetFilesystemTaskExecutor::ActiveCount() const
 {
-    std::scoped_lock lock(mutex_);
-    return active_.size();
+    std::scoped_lock lock(state_->mutex);
+    return state_->active.size();
 }
 
 bool WidgetFilesystemTaskExecutor::SupportsAction(
@@ -632,21 +645,22 @@ WidgetFilesystemTaskExecutor::RunSystemAction(
 }
 
 void WidgetFilesystemTaskExecutor::WorkerMain(
-    std::stop_token stopToken)
+    const std::shared_ptr<State>& state, std::stop_token stopToken)
 {
     while (!stopToken.stop_requested())
     {
         QueuedRequest request;
         bool canceledBeforeRun = false;
         {
-            std::unique_lock lock(mutex_);
-            condition_.wait(lock, [&] {
-                return stopToken.stop_requested() || !requests_.empty();
+            std::unique_lock lock(state->mutex);
+            state->condition.wait(lock, [&] {
+                return state->stopping || stopToken.stop_requested() || !state->requests.empty();
             });
-            if (stopToken.stop_requested()) break;
-            request = std::move(requests_.front());
-            requests_.pop_front();
-            canceledBeforeRun = canceled_.contains(request.id);
+            if (state->stopping || stopToken.stop_requested()) break;
+            request = std::move(state->requests.front());
+            state->requests.pop_front();
+            canceledBeforeRun = state->canceled.contains(request.id);
+            state->runningImage = request.request.action == "filesystem.image";
         }
 
         WidgetFilesystemTaskRunResult result;
@@ -654,7 +668,7 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
         {
             std::stop_callback shutdownSignal(stopToken, [stop = request.stop] { stop->request_stop(); });
             performance::TaskExecution trace(request.id, "filesystem");
-            if (!canceledBeforeRun) result = runner_(request.request, request.stop->get_token());
+            if (!canceledBeforeRun) result = state->runner(request.request, request.stop->get_token());
         }
         catch (...)
         {
@@ -663,11 +677,13 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
         }
         CompletionCallback notify;
         {
-            std::scoped_lock lock(mutex_);
-            if (canceled_.erase(request.id) > 0)
+            std::scoped_lock lock(state->mutex);
+            state->runningImage = false;
+            if (state->stopping) return;
+            if (state->canceled.erase(request.id) > 0)
                 result = { false, {}, {}, {}, 0, false, "canceled" };
-            active_.erase(request.id);
-            requestStops_.erase(request.id);
+            state->active.erase(request.id);
+            state->requestStops.erase(request.id);
             WidgetFilesystemTaskCompletion completion{ request.id,
                 std::move(request.request.action), result.ok,
                 std::move(result.metadata), std::move(result.items),
@@ -677,11 +693,15 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
             completion.grantHandles = request.request.grantHandles;
             completion.image = std::move(result.image);
             completion.resourceToken = std::move(result.resourceToken);
-            completions_.push_back(std::move(completion));
-            if (!stopping_) notify = completionCallback_;
+            state->completions.push_back(std::move(completion));
         }
         // Never call host code under the executor lock. The posted UI message
         // may immediately drain results or start the latest queued photo.
+        std::scoped_lock delivery(state->completionMutex);
+        {
+            std::scoped_lock lock(state->mutex);
+            if (!state->stopping) notify = state->completionCallback;
+        }
         if (notify) { try { notify(); } catch (...) {} }
     }
 }

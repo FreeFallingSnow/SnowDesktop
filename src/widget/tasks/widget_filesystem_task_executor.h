@@ -145,20 +145,29 @@ private:
 
     static WidgetFilesystemTaskRunResult RunSystemAction(
         const WidgetFilesystemTaskRequest& request, std::stop_token stopToken);
-    void WorkerMain(std::stop_token stopToken);
+    // A WIC decode cannot be interrupted inside CopyPixels. An in-flight image
+    // owns this state independently of the executor and cannot retain the host.
+    struct State
+    {
+        CooperativeRunner runner;
+        std::mutex mutex;
+        std::mutex completionMutex;
+        std::condition_variable condition;
+        std::deque<QueuedRequest> requests;
+        std::unordered_set<std::uint64_t> active;
+        std::unordered_set<std::uint64_t> canceled;
+        std::unordered_map<std::uint64_t, std::shared_ptr<std::stop_source>> requestStops;
+        std::unordered_map<std::string, Clock::time_point> lastWrites;
+        std::vector<WidgetFilesystemTaskCompletion> completions;
+        CompletionCallback completionCallback;
+        bool stopping = false;
+        bool runningImage = false;
+    };
+    static void WorkerMain(const std::shared_ptr<State>& state,
+        std::stop_token stopToken);
 
-    CooperativeRunner runner_;
+    std::shared_ptr<State> state_;
     NowProvider nowProvider_;
-    mutable std::mutex mutex_;
-    std::condition_variable condition_;
-    std::deque<QueuedRequest> requests_;
-    std::unordered_set<std::uint64_t> active_;
-    std::unordered_set<std::uint64_t> canceled_;
-    std::unordered_map<std::uint64_t, std::shared_ptr<std::stop_source>> requestStops_;
-    std::unordered_map<std::string, Clock::time_point> lastWrites_;
-    std::vector<WidgetFilesystemTaskCompletion> completions_;
-    CompletionCallback completionCallback_;
     std::jthread worker_;
-    bool stopping_ = false;
 };
 }
