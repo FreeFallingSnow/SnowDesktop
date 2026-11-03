@@ -7,7 +7,7 @@
 | 任务 | 必读说明 |
 | --- | --- |
 | 新增或移动源码；修改头文件、类职责、状态所有权或跨模块依赖；第三方与仓库内容归档 | [源码与文件归属](.agents/rules/source-layout.md) |
-| 编译、测试、性能测量、缺陷回归或实机验收 | [构建与验证](.agents/rules/validation.md) |
+| 编译前检查、静态分析、编译、测试、性能测量、缺陷回归或实机验收 | [构建与验证](.agents/rules/validation.md) |
 | 提交、PR、Issue、版本发布、Steam 查询或更新说明 | [Git、Issue 与发布](.agents/rules/delivery.md) |
 | 设置界面、说明文案、图标、菜单或高级功能入口 | [产品界面规则](.agents/rules/product-ui.md) |
 | Lua 组件包、开发来源同步、Workshop 发布或封面 | [组件包与分发](.agents/rules/widget-packages.md) |
