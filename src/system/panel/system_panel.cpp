@@ -1,5 +1,6 @@
 #include "system_panel.h"
 #include "system_panel_model.h"
+#include "system/controls/system_quick_controls.h"
 #include "system/calendar/system_calendar_editor.h"
 #include "system_panel_placement.h"
 #include "system_panel_transition.h"
@@ -20,6 +21,9 @@
 #include <commctrl.h>
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cwchar>
+#include <iterator>
 #include <utility>
 #include <powrprof.h>
 

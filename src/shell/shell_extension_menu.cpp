@@ -1,4 +1,5 @@
 #include "shell_extension_menu.h"
+#include "shell_extension_state_commands.h"
 #include "shell_menu_read_projection.h"
 #include "shell_explorer_command_state.h"
 #include "shell_extension_source.h"
@@ -17,15 +18,21 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <cwchar>
 #include <cwctype>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <set>
 #include <shlwapi.h>
 #include <shobjidl.h>
 #include <thread>
+#include <utility>
 #include <wrl/client.h>
 
 namespace snowdesktop::shell_extensions

@@ -1,4 +1,6 @@
 #include "system_panel_model.h"
+#include "common/json_value.h"
+#include "system/controls/system_quick_controls.h"
 #include "system/status_bar/status_bar_battery.h"
 #include "system/controls/system_control_wifi_presentation.h"
 #include "system/controls/system_control_audio_presentation.h"
@@ -11,7 +13,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <utility>
 

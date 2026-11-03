@@ -1,6 +1,10 @@
 #pragma once
 #include "shell_extension_catalogue.h"
+#include "shell_extension_state_commands.h"
+#include <algorithm>
 #include <set>
+#include <string>
+#include <vector>
 
 namespace snowdesktop::shell_extensions
 {
