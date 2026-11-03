@@ -13,7 +13,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(SnowDesktopForegroundFullscreenTests foreground_fullscreen
         SOURCES tests/platform/foreground_fullscreen_tests.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32 dwmapi
+        LINK_LIBRARIES user32 dwmapi SnowDesktopDockPolicy SnowDesktopFullscreen
         LABELS core contract)
 
     # Admitted module contracts complement the host behavior matrix. Each
@@ -239,7 +239,7 @@ if (BUILD_TESTING)
         LABELS core integration isolated-native-model interaction)
     snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
     foreach(row IN ITEMS settings-host group-type-contract native-dialog
-            drag-source drag-files drag-batches drag-partial drag-release drag-popup widget-focus)
+            drag-source drag-files drag-batches drag-partial drag-release drag-popup widget-focus dock-overflow)
         add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBehaviorTests>"

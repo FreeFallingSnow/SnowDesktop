@@ -1,4 +1,15 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "app/dock/persistent_dock_host.h"
+#include "settings/settings_controller.h"
+#include "settings/settings_snapshot.h"
+#include "icons/large_icon_assets.h"
+#include "common/utils.h"
+#include "widget/runtime/widget_engine.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "ui/preview/component_preview.h"
+#include "core/dock.h"
+#include "core/slot.h"
 #include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "widgets/widget_folder_search.h"
 #include "ui/input/private_pointer.h"
@@ -6,7 +17,9 @@
 #include "app/shell/shell_refresh_snapshot.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "desktop/desktop_namespace_registry.h"
+#include "settings/animation_settings.h"
 #include "behavior_fixture.h"
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <exception>
@@ -201,6 +214,47 @@ struct NativeDragIntegrationAccess
         throw std::runtime_error("native member fixture requires its real container");
     }
     static const auto& Widgets(const DesktopApp& app) { return app.widgets_; }
+    static std::unique_ptr<DockContainer> OverflowDock(
+        DesktopApp& app, DockPosition position, bool attached, int hover, RECT area)
+    {
+        app.generalSettings_.dockEnabled = true;
+        app.dockSettings_.position = position;
+        app.dockSettings_.edgeAttached = attached;
+        app.dockSettings_.hoverEffect = hover;
+        app.dockSettings_.hoverScale = 2.0f;
+        app.dockSettings_.showWindowsButton = true;
+        app.dockSettings_.showQuickSearchButton = true;
+        app.dockSettings_.showFrequentItems = true;
+        app.dockSettings_.frequentItemCount = 2;
+        app.items_.clear();
+        app.dockUsageStats_.clear();
+        app.dockUnpinnedRunningApps_.clear();
+        for (int i = 0; i < 2; ++i)
+        {
+            DesktopItem frequent;
+            frequent.name = L"Frequent fixture " + std::to_wstring(i);
+            frequent.parsingName = L"missing-frequent-" + std::to_wstring(i) + L".lnk";
+            frequent.layoutKey = ToUpperInvariant(frequent.parsingName);
+            frequent.isShortcut = true;
+            frequent.isApplicationShortcut = true;
+            app.dockUsageStats_[frequent.layoutKey] = {2, 1};
+            app.items_.push_back(std::move(frequent));
+            DockRunningAppInfo running;
+            running.executablePath = L"missing-running-" + std::to_wstring(i) + L".exe";
+            running.identityKey = running.executablePath;
+            running.presence.SetVisible(true, 0, false);
+            app.dockUnpinnedRunningApps_.push_back(std::move(running));
+        }
+        app.dockEntries_.clear();
+        for (int i = 0; i < 24; ++i)
+            app.dockEntries_.push_back({DockEntryType::DesktopItem,
+                L"missing-overflow-app-" + std::to_wstring(i) + L".exe", true});
+        app.dockEntries_.push_back({DockEntryType::FolderMapping, L"overflow-files-1"});
+        app.dockEntries_.push_back({DockEntryType::FolderMapping, L"overflow-files-2"});
+        app.dockEntries_.push_back({DockEntryType::DesktopItem, kDesktopIconClsidRecycleBin});
+        return std::make_unique<DockContainer>(&app, &app.dockEntries_, area);
+    }
+    static void DockPointer(DesktopApp& app, POINT pointer) { app.lastMousePoint_ = pointer; }
 #include "module_access.inc"
 #include "drag_access.inc"
 #include "popup_drag_access.inc"
@@ -261,6 +315,130 @@ struct HostProfile : Profile
 #include "drag_contracts.inc"
 #include "popup_drag_contracts.inc"
 #include "widget_focus_contracts.inc"
+namespace behavior
+{
+// Protect scroll ownership and visible geometry through the real Dock model.
+// This does not claim raster/glass acceptance or start a desktop host.
+void DockOverflow()
+{
+    HostProfile profile;
+    snowdesktop::animation::SetRuntimePreferences(
+        snowdesktop::animation::AlwaysOn, 2, 1, 0, false, false, 1);
+    const auto center = [](const RECT& rect) {
+        return POINT{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+    };
+    for (const auto position : {DockPosition::Left, DockPosition::Right,
+        DockPosition::Top, DockPosition::Bottom})
+        for (const bool attached : {false, true})
+            for (const int hover : {1, 2})
+            {
+                const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+                const RECT area = vertical ? RECT{0, 40, 160, 780} : RECT{40, 0, 780, 160};
+                auto dock = Access::OverflowDock(*profile.app, position, attached, hover, area);
+                const auto& initial = dock->GetSlots();
+                Require(initial.size() == 32, "fixture includes fixed, running and frequent applications plus fixed files/controls");
+                const RECT firstApp = initial[0]->GetBounds();
+                const RECT running = initial[27]->GetBounds();
+                const RECT frequent = initial[29]->GetBounds();
+                const std::array<RECT, 4> fixed{initial[24]->GetBounds(), initial[25]->GetBounds(),
+                    initial[26]->GetBounds(), dock->GetSearchRect()};
+                Require(dock->ScrollByWheelDelta(center(firstApp), -180), "application lane scrolls on overflow");
+                const auto& scrolled = dock->GetSlots();
+                const RECT movedApp = scrolled[0]->GetBounds();
+                Require(!EqualRect(&firstApp, &movedApp), "wheel changes application position");
+                const RECT movedRunning = scrolled[27]->GetBounds();
+                const RECT movedFrequent = scrolled[29]->GetBounds();
+                Require(!EqualRect(&running, &movedRunning) && !EqualRect(&frequent, &movedFrequent),
+                    "running and frequent applications share the fixed-application scroll lane");
+                const std::array<RECT, 4> after{scrolled[24]->GetBounds(), scrolled[25]->GetBounds(),
+                    scrolled[26]->GetBounds(), dock->GetSearchRect()};
+                for (size_t i = 0; i < fixed.size(); ++i)
+                    Require(EqualRect(&fixed[i], &after[i]), "files and utility controls stay fixed while applications scroll");
+                Require(!dock->ScrollByWheelDelta(center(after[0]), -120), "file lane cannot scroll the application lane");
+                Require(dock->EntryAtPoint(center(after[0])) == scrolled[24]->GetItem(),
+                    "fixed file remains interactive outside the scroll viewport");
+
+                const RECT hidden = scrolled[23]->GetBounds();
+                RECT intersection{};
+                const RECT bounds = dock->GetBounds();
+                Require(!IntersectRect(&intersection, &hidden, &bounds), "fixture has a fully hidden overflow application");
+                Access::DockPointer(*profile.app, center(hidden));
+                (void)dock->GetElementVisualRect(hidden, center(hidden));
+                auto state = dock->CapturePresentationState();
+                Require(IsRectEmpty(&state.focusRect), "hidden overflow application cannot acquire hover focus");
+
+                const RECT start = dock->GetWindowsButtonRect();
+                POINT pointer = center(start);
+                if (vertical) pointer.y = start.bottom - 2;
+                else pointer.x = start.right - 2;
+                Access::DockPointer(*profile.app, pointer);
+                state.focusRect = start;
+                state.entry.SetHovered(true, 0, 1.0);
+                state.entry.Advance(1000);
+                state.single.SetTarget(start, 0, 1.0, vertical ? pointer.y : pointer.x);
+                state.single.Advance(1000);
+                Require(dock->RestorePresentationState(state), "restore deterministic hover geometry");
+                const RECT startVisual = dock->GetElementVisualRect(start, pointer);
+                Require(dock->GetElementIconSize(start, startVisual) > dock->GetElementIconSize(start, start),
+                    "fixed Start control retains its hover effect over clipped applications");
+                const LONG baseEnd = vertical ? start.bottom : start.right;
+                const LONG visualEnd = vertical ? startVisual.bottom : startVisual.right;
+                if (visualEnd > baseEnd + 2)
+                {
+                    POINT coveredPointer = center(startVisual);
+                    if (vertical) coveredPointer.y = (baseEnd + visualEnd) / 2;
+                    else coveredPointer.x = (baseEnd + visualEnd) / 2;
+                    Access::DockPointer(*profile.app, coveredPointer);
+                    (void)dock->GetElementVisualRect(start, coveredPointer);
+                    const auto coveredState = dock->CapturePresentationState();
+                    Require(EqualRect(&coveredState.focusRect, &start),
+                        "painted Start retains hover above applications clipped behind its expanded bounds");
+                    Require(!dock->ScrollByWheelDelta(coveredPointer, -120),
+                        "expanded fixed Start cannot scroll applications underneath it");
+                    Access::DockPointer(*profile.app, pointer);
+                }
+                bool coveredApplication = false;
+                for (size_t i = 0; i < 24; ++i)
+                {
+                    const RECT application = scrolled[i]->GetBounds();
+                    if (!IntersectRect(&intersection, &application, &start)) continue;
+                    coveredApplication = true;
+                    const RECT visual = dock->GetElementVisualRect(application, pointer);
+                    Require(EqualRect(&application, &visual),
+                        "clipped application beneath Start cannot take part in its hover geometry");
+                }
+                Require(coveredApplication, "fixture reproduces a scrolled application under the fixed Start control");
+                const RECT panel = dock->GetVisualPanelBounds(pointer);
+                Require(panel.left >= area.left && panel.top >= area.top &&
+                    panel.right <= area.right && panel.bottom <= area.bottom,
+                    "magnified independent panel stays in its reserved area away from adjacent glass");
+                Require(vertical ? panel.bottom == bounds.bottom : panel.right == bounds.right,
+                    "hidden trailing applications cannot lengthen the hovered panel");
+
+                const RECT file = after[0];
+                const POINT filePointer = center(file);
+                Access::DockPointer(*profile.app, filePointer);
+                state.focusRect = file;
+                state.single.SetTarget(file, 0, 1.0, vertical ? filePointer.y : filePointer.x);
+                state.single.Advance(1000);
+                Require(dock->RestorePresentationState(state), "restore fixed file hover geometry");
+                const RECT fileVisual = dock->GetElementVisualRect(file, filePointer);
+                const LONG fileBegin = vertical ? file.top : file.left;
+                const LONG fileVisualBegin = vertical ? fileVisual.top : fileVisual.left;
+                if (fileVisualBegin < fileBegin - 2)
+                {
+                    POINT overlap = center(fileVisual);
+                    if (vertical) overlap.y = (fileBegin + fileVisualBegin) / 2;
+                    else overlap.x = (fileBegin + fileVisualBegin) / 2;
+                    Access::DockPointer(*profile.app, overlap);
+                    Require(dock->EntryAtPoint(overlap) == scrolled[24]->GetItem(),
+                        "expanded fixed file owns input above clipped applications");
+                    Require(!dock->ScrollByWheelDelta(overlap, -120),
+                        "expanded fixed file cannot scroll applications underneath it");
+                }
+            }
+}
+}
 int main(int argc, char** argv)
 {
     try {
@@ -278,6 +456,7 @@ int main(int argc, char** argv)
         else if (behavior::scene == "drag-release") behavior::DragRelease();
         else if (behavior::scene == "drag-popup") behavior::DragPopup();
         else if (behavior::scene == "widget-focus") behavior::WidgetAuxiliaryFocus();
+        else if (behavior::scene == "dock-overflow") behavior::DockOverflow();
         else throw std::runtime_error("unknown behavior");
         std::cout << "PASS " << behavior::scene << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }

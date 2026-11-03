@@ -1,5 +1,8 @@
 #include "dock.h"
 #include "app/app.h"
+#include "common/utils.h"
+#include "settings/animation_settings.h"
+#include "ui/render/ui_animation_scheduler.h"
 
 namespace
 {
@@ -105,7 +108,7 @@ void DockContainer::DrawEntryRemovals(ID2D1DeviceContext* context, bool fixedFol
     {
         if (index >= removals.size()) continue;
         const auto& removal = removals[index];
-        if ((IsEdgeAttached() && removal.group == snowdesktop::dock_entry_removal::Group::Folder) != fixedFolders)
+        if ((removal.group == snowdesktop::dock_entry_removal::Group::Folder) != fixedFolders)
             continue;
         entryRemovals_->Present(index, snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         const float amount = removal.presence.Amount();
