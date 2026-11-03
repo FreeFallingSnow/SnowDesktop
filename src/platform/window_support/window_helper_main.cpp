@@ -6,7 +6,6 @@
 #include "window_pointer_observer.h"
 #include "dock/dock_window_pin.h"
 #include "dock/dock_window_helper_animation.h"
-#include "dock/dock_window_trace.h"
 #include "theme/personalization.h"
 #include "platform/operation_feedback.h"
 
@@ -172,7 +171,6 @@ struct Engine
             response.succeeded = PostMessageW(window, WM_CLOSE, 0, 0);
             break;
         case protocol::Command::MinimizeWindow:
-            dock_window_trace::Write(window, "helper-post-minimize", SC_MINIMIZE, true);
             response.succeeded = PostMessageW(window, WM_SYSCOMMAND, SC_MINIMIZE, 0);
             break;
         case protocol::Command::RestoreWindow:
@@ -192,9 +190,6 @@ struct Engine
             {
                 // Once accepted by the helper, preserve the user's native
                 // minimize/restore intent even if the shared image is unavailable.
-                dock_window_trace::Write(window, request.command == protocol::Command::StartMinimize
-                    ? "helper-fallback-minimize" : "helper-fallback-restore",
-                    request.command == protocol::Command::StartMinimize ? SC_MINIMIZE : SW_RESTORE, true);
                 response.succeeded = request.command == protocol::Command::StartMinimize
                     ? PostMessageW(window, WM_SYSCOMMAND, SC_MINIMIZE, 0)
                     : ShowWindowAsync(window, SW_RESTORE);

@@ -4,7 +4,6 @@
 #include <dwmapi.h>
 #include <mutex>
 #include "dock_cloak_dispatcher.h"
-#include "dock_window_trace.h"
 #include "dock_window_rules.h"
 
 namespace snowdesktop::dock_source_cloak
@@ -88,17 +87,6 @@ inline UINT CommandMessage() noexcept
 
 inline void RemoveOwner(HWND source, Owner owner) noexcept;
 
-inline bool SkipDiagnosticCloakWrite(HWND source, BOOL cloak) noexcept
-{
-    if (!dock_window_trace::SkipCloak(source)) return false;
-    if (cloak) return true;
-    // A lease may predate diagnostic initialization. A no-op release must
-    // never acknowledge and discard ownership of a real app-cloaked window.
-    DWORD flags = 0;
-    return SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
-        (flags & DWM_CLOAKED_APP) == 0;
-}
-
 inline void StopRecoveryTimer(HWND source) noexcept
 {
     const auto timer = reinterpret_cast<UINT_PTR>(RemovePropW(source, TimerProperty));
@@ -117,10 +105,7 @@ inline void CALLBACK RecoverOnSourceThread(HWND source, UINT, UINT_PTR timer, DW
     }
     if (GetPropW(source, RecoveryProperty) != owner.token && IsLiveOwner(owner)) return;
     const BOOL cloak = FALSE;
-    dock_window_trace::Write(source, "target-recovery-uncloak-before");
-    const HRESULT hr = SkipDiagnosticCloakWrite(source, cloak) ? S_OK :
-        DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
-    dock_window_trace::Write(source, "target-recovery-uncloak-after", 0, false, static_cast<DWORD>(hr));
+    const HRESULT hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
     if (SUCCEEDED(hr) &&
         SameOwner(source, owner))
     {
@@ -190,19 +175,17 @@ inline HRESULT WriteCloakOnSourceThread(HWND source, Owner owner, BOOL cloak,
                 if (FAILED(hr)) return hr;
             }
             if (!RestoreLeaseCurrent(source, owner)) return E_ABORT;
-            dock_window_trace::Write(source, "source-restore-before-cloak");
             // Restoring underneath a cloak defers Windows DesktopRecalc work
             // until exposure, where saved state can overwrite the restore.
             // Keep native restore and the following hide on this source thread.
-            ShowWindow(source, dock_window_rules::ResolveDockAnimatedRestoreShowCommand(
-                placement.flags, placement.showCmd));
+            const int command = dock_window_rules::ShouldRestoreDockWindowMaximized(
+                placement.flags, placement.showCmd) ? SW_SHOWMAXIMIZED : SW_SHOWNOACTIVATE;
+            ShowWindow(source, command);
             if (!RestoreLeaseCurrent(source, owner)) return E_ABORT;
             if (!IsWindow(source) || IsIconic(source)) return E_FAIL;
-            dock_window_trace::Write(source, "source-restore-prepared");
         }
     }
-    return SkipDiagnosticCloakWrite(source, cloak) ? S_OK :
-        DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    return DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
 }
 
 // DWMWA_CLOAK rejects a caller in a different process. The per-thread
@@ -220,11 +203,7 @@ inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& reques
     const bool prepareRestore = request.version == 3 &&
         request.cloak == dock_minimize::kPrepareRestoreCloak;
     HRESULT hr = cloak ? StartRecoveryTimer(source) : S_OK;
-    const bool skip = SkipDiagnosticCloakWrite(source, cloak);
-    dock_window_trace::Write(source, "target-cloak-before", cloak);
     if (SUCCEEDED(hr)) hr = WriteCloakOnSourceThread(source, owner, cloak, prepareRestore);
-    dock_window_trace::Write(source, skip ? "target-cloak-skipped" : "target-cloak-after",
-        cloak, false, static_cast<DWORD>(hr));
     // A failed preparation may still own the cloak from a reversing animation.
     // Keep its timer until release or removal of the lease completes cleanup.
     if ((cloak && FAILED(hr) && !prepareRestore) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
@@ -242,12 +221,7 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed,
     if (!thread) return E_INVALIDARG;
     if (!SameOwner(source, owner)) return E_ABORT;
     if (process == GetCurrentProcessId() && (!prepareRestore || thread == GetCurrentThreadId()))
-    {
-        dock_window_trace::Write(source, "local-cloak-before", cloak);
-        const HRESULT hr = WriteCloakOnSourceThread(source, owner, cloak, prepareRestore);
-        dock_window_trace::Write(source, "local-cloak-after", cloak, false, static_cast<DWORD>(hr));
-        return hr;
-    }
+        return WriteCloakOnSourceThread(source, owner, cloak, prepareRestore);
     RemovePropW(source, AckProperty);
     RemovePropW(source, ResultProperty);
     DWORD_PTR ignored = 0;

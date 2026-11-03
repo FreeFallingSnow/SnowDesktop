@@ -2,8 +2,6 @@
 #include "dock_external_minimize.h"
 #include "dock_minimize_protocol.h"
 #include "dock_window_transition.h"
-#include "dock_window_trace.h"
-#include "dock_window_rules.h"
 #include "dock_window_source_cloak.h"
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
@@ -151,20 +149,12 @@ bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
     const HWND window = wire::Window(target.identity);
     const HWND below = reinterpret_cast<HWND>(static_cast<UINT_PTR>(target.keepBelow));
     if (!restore) return impl_->transition.StartMinimize(window, target.anchor, below, [](HWND source) {
-        snowdesktop::dock_window_trace::Write(source, "helper-animation-minimize", SC_MINIMIZE, true);
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     });
     return impl_->transition.StartRestore(window, target.anchor, [](HWND source, DockWindowRestoreTransitionPhase phase) {
         if (phase == DockWindowRestoreTransitionPhase::RequestRestore &&
             (IsIconic(source) || !snowdesktop::dock_source_cloak::ReadOwner(source).window))
-        {
-            WINDOWPLACEMENT placement{sizeof(placement)};
-            const bool known = GetWindowPlacement(source, &placement) != FALSE;
-            const int command = known ? snowdesktop::dock_window_rules::
-                ResolveDockAnimatedRestoreShowCommand(placement.flags, placement.showCmd)
-                : SW_SHOWNOACTIVATE;
-            ShowWindowAsync(source, command);
-        }
+            ShowWindowAsync(source, SW_RESTORE);
         if (phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
             ShowWindowAsync(source, SW_RESTORE);
         if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) SetForegroundWindow(source);

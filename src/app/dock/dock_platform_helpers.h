@@ -588,17 +588,13 @@ inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)
         IsTaskbarDocumentProxyCandidate(window);
 }
 
-inline int DockRestoreShowCommand(HWND window, bool preparingAnimation = false)
+inline int DockRestoreShowCommand(HWND window)
 {
     WINDOWPLACEMENT placement{};
     placement.length = sizeof(placement);
     if (!window ||
         !GetWindowPlacement(window, &placement))
-        return preparingAnimation ? SW_SHOWNOACTIVATE : SW_RESTORE;
-    if (preparingAnimation)
-        return snowdesktop::dock_window_rules::
-            ResolveDockAnimatedRestoreShowCommand(
-                placement.flags, placement.showCmd);
+        return SW_RESTORE;
     return snowdesktop::dock_window_rules::
         ResolveDockRestoreShowCommand(
             placement.flags, placement.showCmd);
@@ -627,15 +623,12 @@ inline bool RequestDockWindowMinimize(HWND window,
         [window](WPARAM command) {
             // Match the system minimize command path so the application can
             // handle foreground succession. A successful post is not completion.
-            snowdesktop::dock_window_trace::Write(window, "host-post-minimize", static_cast<UINT>(command));
             return PostMessageW(window, WM_SYSCOMMAND, command, 0) != FALSE;
         },
         [window](int showCommand) {
-            snowdesktop::dock_window_trace::Write(window, "host-show-minimize", showCommand);
             return ShowWindowAsync(window, showCommand) != FALSE;
         },
         [window](WPARAM command) {
-            snowdesktop::dock_window_trace::Write(window, "host-default-minimize", static_cast<UINT>(command));
             DefWindowProcW(window, WM_SYSCOMMAND, command, 0);
         });
     if (route)

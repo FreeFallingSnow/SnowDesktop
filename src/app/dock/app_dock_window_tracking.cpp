@@ -28,8 +28,6 @@ constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
 
 void IssueDockNativeMinimize(HWND target)
 {
-    snowdesktop::dock_window_trace::Begin(target, false);
-    snowdesktop::dock_window_trace::Write(target, "host-native-minimize", SC_MINIMIZE, true);
     snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
     snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
     const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
@@ -51,10 +49,6 @@ bool IsDockConsentActivationProxy(HWND window)
 void LogDockWindowActivation(HWND target, const wchar_t* phase,
     int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
 {
-    char tracePhase[48]{};
-    for (std::size_t i = 0; phase[i] && i + 1 < std::size(tracePhase); ++i)
-        tracePhase[i] = phase[i] < 128 ? static_cast<char>(phase[i]) : '?';
-    snowdesktop::dock_window_trace::Write(target, tracePhase, showCommand, false, error);
     if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock)) return;
     DWORD process = 0, foregroundProcess = 0;
     const DWORD thread = GetWindowThreadProcessId(target, &process);
@@ -123,13 +117,11 @@ bool ActivateDockWindowForeground(HWND target, HWND activationTarget)
             });
 }
 
-void RequestDockWindowShow(HWND target, bool wasMinimized,
-    bool preparingAnimation = false)
+void RequestDockWindowShow(HWND target, bool wasMinimized)
 {
     if (!target || !IsWindow(target))
         return;
-    const int showCommand = wasMinimized
-        ? DockRestoreShowCommand(target, preparingAnimation) : SW_SHOW;
+    const int showCommand = wasMinimized ? DockRestoreShowCommand(target) : SW_SHOW;
     LogDockWindowActivation(target, L"show-request", showCommand);
     SetLastError(ERROR_SUCCESS);
     const BOOL showAccepted = ShowWindowAsync(target, showCommand);
@@ -532,9 +524,6 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
-    if (event == EVENT_SYSTEM_MINIMIZESTART || event == EVENT_SYSTEM_MINIMIZEEND ||
-        event == EVENT_SYSTEM_FOREGROUND || event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_SHOW)
-        snowdesktop::dock_window_trace::Write(window, "host-winevent", event);
     // A create notification begins a new HWND lifetime, including a recycled
     // handle whose previous window had an accepted close request.
     if (event == EVENT_OBJECT_CREATE) dockPendingCloseWindows_.erase(window);
@@ -1599,22 +1588,24 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            // Prepare the real source without starting the ordinary activation
-            // observer: its retries would foreground a still-cloaked window.
-            // The handoff starts activation after the source has been exposed.
-            CancelAllDockWindowActivationObservations();
-            // Normal animation preparation already restored on the source
-            // thread before cloaking. The immediate completion route can still
-            // arrive here with an iconic, exposed source and needs its request.
+            DockWindowActivationOutcome outcome;
             if (IsIconic(target) || !snowdesktop::dock_source_cloak::ReadOwner(target).window)
-                RequestDockWindowShow(target, true, true);
+                outcome = RequestDockWindowActivation(target, true);
+            else
+            {
+                // The source-thread repair already restored this window.
+                // Retain the original activation timing without restoring twice.
+                CancelAllDockWindowActivationObservations();
+                BeginDockWindowActivationObservation(target, true);
+                outcome = ActivateDockWindowAfterShow(target, true);
+                UpdateDockWindowActivationObservation(target, outcome);
+            }
             UpdateDockWindowActivationState(
-                target, !IsIconic(target), false);
+                target, outcome.restored, outcome.foreground);
         }
         return;
     }
 
-    BeginDockWindowActivationObservation(target, true);
     const DockWindowActivationOutcome outcome =
         ActivateDockWindowAfterShow(target, true);
     UpdateDockWindowActivationState(
