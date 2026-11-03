@@ -3,6 +3,7 @@
 #include "core/drop_model.h"
 #include "layout/grid_occupancy.h"
 #include <functional>
+#include <limits>
 
 namespace snowdesktop::desktop_landings
 {
@@ -71,79 +72,36 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
 
     GridCell cursor = targetCell;
 
-    // 阶段式搜索：1) 从 cursor 向右 + 下方行从 startCol 开始
-    //             1b) 上方行从 startCol 开始（绕回页面顶部填间隙）
-    //             1c) 下方/上方行从列 0..startCol-1 补扫（覆盖左侧空位）
-    //             2) 全页行优先搜索（兜底）
-    //             3) TryFindFreeCell 跨页搜索
-    auto tryPlaceRightward = [&](GridSpan span, GridCell fromCell, GridCell& outCell) -> bool {
-        // 获取 fromCell 所在页的维度（支持跨页后 cursor 切到新页）
+    // Prefer the closest available anchor on this page. Row wrapping can
+    // otherwise send a drop in a component gap to the opposite screen edge.
+    // Weight each axis by its actual pitch so non-square grids remain local.
+    auto tryPlaceNearest = [&](GridSpan span, GridCell fromCell, GridCell& outCell) -> bool {
         int pageCols = page->columns, pageRows = page->rows;
         if (fromCell.pageId != page->id)
         {
-            auto colIt = pageColumnsById.find(fromCell.pageId);
-            auto rowIt = pageRowsById.find(fromCell.pageId);
-            if (colIt != pageColumnsById.end()) pageCols = colIt->second;
-            if (rowIt != pageRowsById.end()) pageRows = rowIt->second;
+            if (const auto it = pageColumnsById.find(fromCell.pageId); it != pageColumnsById.end())
+                pageCols = it->second;
+            if (const auto it = pageRowsById.find(fromCell.pageId); it != pageRowsById.end())
+                pageRows = it->second;
         }
-
-        // 当前行从 fromCell.column 向右找
-        for (int c = fromCell.column; c + span.columns <= pageCols; ++c)
-        {
-            GridCell candidate{ fromCell.pageId, c, fromCell.row };
-            if (!grid_occupancy::Occupied(usedSlots, candidate, span))
+        const long long pitchX = std::max(1, page->itemPitchWidth);
+        const long long pitchY = std::max(1, page->itemPitchHeight);
+        long long bestDistance = std::numeric_limits<long long>::max();
+        bool found = false;
+        for (int row = 0; row + span.rows <= pageRows; ++row)
+            for (int column = 0; column + span.columns <= pageCols; ++column)
             {
+                const long long dx = (static_cast<long long>(column) - fromCell.column) * pitchX;
+                const long long dy = (static_cast<long long>(row) - fromCell.row) * pitchY;
+                const long long distance = dx * dx + dy * dy;
+                if (distance >= bestDistance) continue;
+                GridCell candidate{fromCell.pageId, column, row};
+                if (grid_occupancy::Occupied(usedSlots, candidate, span)) continue;
+                bestDistance = distance;
                 outCell = candidate;
-                return true;
+                found = true;
             }
-        }
-
-        // 下方行：先从 startCol 向右，再从 0..startCol-1 补扫
-        for (int r = fromCell.row + 1; r + span.rows <= pageRows; ++r)
-        {
-            for (int c = startCol; c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!grid_occupancy::Occupied(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-            for (int c = 0; c < startCol && c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!grid_occupancy::Occupied(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-        }
-
-        // 上方行：先从 startCol 向右，再从 0..startCol-1 补扫
-        for (int r = 0; r < fromCell.row && r + span.rows <= pageRows; ++r)
-        {
-            for (int c = startCol; c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!grid_occupancy::Occupied(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-            for (int c = 0; c < startCol && c + span.columns <= pageCols; ++c)
-            {
-                GridCell candidate{ fromCell.pageId, c, r };
-                if (!grid_occupancy::Occupied(usedSlots, candidate, span))
-                {
-                    outCell = candidate;
-                    return true;
-                }
-            }
-        }
-        return false;
+        return found;
     };
 
     for (const auto& entry : sourceList.entries)
@@ -172,7 +130,7 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
             return { c, r };
         };
 
-        // 阶段 1：从 cursor 向右 + 下方行从 startCol
+        // First keep the requested/cursor cell, then choose its nearest vacancy.
         auto [curCols, curRows] = getPageSize(cursor.pageId);
         if (grid_occupancy::Valid(cursor, span) && cursor.column + span.columns <= curCols &&
             cursor.row + span.rows <= curRows &&
@@ -183,33 +141,16 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
         }
         else
         {
-            found = tryPlaceRightward(span, cursor, cell);
+            found = tryPlaceNearest(span, cursor, cell);
         }
 
-        // 阶段 2：全页行优先搜索（兜底，优先本页）
-        if (!found)
-        {
-            for (int r = 0; r + span.rows <= curRows && !found; ++r)
-            {
-                for (int c = 0; c + span.columns <= curCols && !found; ++c)
-                {
-                    GridCell candidate{ cursor.pageId, c, r };
-                    if (!grid_occupancy::Occupied(usedSlots, candidate, span))
-                    {
-                        cell = candidate;
-                        found = true;
-                    }
-                }
-            }
-        }
-
-        // 阶段 3：跨页搜索（TryFindFreeCell 内部遍历其他显示页）
+        // 本页无法容纳时跨页搜索。
         if (!found)
         {
             found = services.findFree(span, usedSlots, cell, cursor.pageId, 0);
         }
 
-        // 阶段 4：所有现有页都满了 → 预分配新溢出页
+        // 所有现有页都满了时预分配新溢出页。
         if (!found)
         {
             const auto newPageId = services.generateId(reservedIds);

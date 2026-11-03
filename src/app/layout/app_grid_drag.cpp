@@ -370,6 +370,10 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
  */
 GridCell DesktopApp::FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const
 {
+    // Sources entering from components use the shared landing planner's
+    // nearest-vacancy search. Preserve translated-group search for desktop moves.
+    if (containers_.empty() || sourceList.origin != containers_.front().get())
+        return targetCell;
     return snowdesktop::selected_desktop_move::FindBest({items_, widgets_, gridPages_},
         {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }},
         sourceList, std::move(targetCell), bestDropCellCache_,

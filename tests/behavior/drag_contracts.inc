@@ -205,6 +205,24 @@ void DragPartial()
 }
 void DragRelease()
 {
+    for (int mods : {MK_ALT, 0})
+    {
+        HostProfile gapProfile;
+        const auto source = gapProfile.root / L"gap-source.txt";
+        Write(source, "gap-source-intact");
+        const auto preview = Access::GapDesktopPreview(*gapProfile.app, source, mods);
+        Require(preview.action == (mods ? DropAction::Link : DropAction::Move) && preview.landings.size() == 1,
+            "component gap advertises one landing for the requested action");
+        Require(SameCell(preview.landings.front().cell, {L"__page:1", 1, 1}),
+            "occupied gap grid cell must choose the adjacent left vacancy instead of a distant wrapped row");
+        if (!mods)
+        {
+            Access::ReleaseDrag(*gapProfile.app, {300, 150});
+            Require(SameCell(Access::Cell(*gapProfile.app, source), preview.landings.front().cell),
+                "actual gap release commits the same adjacent cell advertised by the preview");
+        }
+        else Access::CancelDrag(*gapProfile.app);
+    }
     // 66421876: require the actual release, commit, save and reload boundary.
     HostProfile profile(true); DragInput input; Access::EnableFileDispatch(*profile.app);
     const auto file=profile.desktop/L"release.txt"; Write(file,"original release bytes");

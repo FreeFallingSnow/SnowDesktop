@@ -102,6 +102,30 @@ static bool SubmitFiles(DesktopApp& app, const std::vector<std::filesystem::path
 }
 static bool FileOperationsIdle(const DesktopApp& app) { return app.shellFileOperationInFlight_ == 0; }
 static bool LayoutSaved(const DesktopApp& app) { return !app.layoutSavePending_; }
+static DropPreviewList GapDesktopPreview(DesktopApp& app, const std::filesystem::path& file, int mods)
+{
+    PopulateModel(app, {file}, 1);
+    DesktopWidget blocker;
+    blocker.id = blocker.title = L"gap-blocker";
+    blocker.type = DesktopWidgetType::Collection;
+    blocker.gridCell = {L"__page:1", 2, 0};
+    blocker.gridSpan = {2, 3};
+    blocker.autoCollect = false;
+    app.widgets_.push_back(std::move(blocker));
+    app.RebuildContainersAndItems(); app.LayoutItems();
+    // Expose the gap between the visual frame and its reserved grid area.
+    const RECT visibleFrame{320, 0, 400, 300};
+    MemberContainer(app, L"gap-blocker")->SetHostedFrame(&visibleFrame);
+    Select(app, {file}); BeginMembers(app, L"native-origin");
+    app.dragSession_.UpdateActionFromMods(mods);
+    const POINT gap{300, 150};
+    app.ResolveCurrentDragTargetAt(gap);
+    if (app.dragSession_.TargetContainer() != app.GetDesktopGrid())
+        throw std::runtime_error("gap must route to the real desktop target");
+    return app.BuildDropPreviewList(app.dragSession_.SourceList(),
+        app.dragSession_.TargetContainer(), app.dragSession_.TargetSlot(),
+        app.dragSession_.TargetRegion(), mods, gap);
+}
 static bool QueuePartial(DesktopApp& app, snowdesktop::ShellFileOperationRequest request,
     DesktopApp::FileOperationCompletion done)
 { return app.QueueShellFileOperation(std::move(request),std::move(done)); }
