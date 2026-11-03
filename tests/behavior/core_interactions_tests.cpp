@@ -3,6 +3,7 @@
 #include "app/dock/persistent_dock_host.h"
 #include "settings/settings_controller.h"
 #include "settings/settings_snapshot.h"
+#include "settings/settings_store.h"
 #include "icons/large_icon_assets.h"
 #include "common/utils.h"
 #include "widget/runtime/widget_engine.h"
