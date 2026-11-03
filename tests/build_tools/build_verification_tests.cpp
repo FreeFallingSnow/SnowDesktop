@@ -50,6 +50,10 @@ void scenario(const fs::path& repo,const std::string& control){
     }
     fs::create_directories(c.root/L"fake-bin");for(const auto& name:{L"cmake.exe",L"ctest.exe"})fs::copy_file(standin(),c.root/L"fake-bin"/name);
     Env env={{L"PATH",(c.root/L"fake-bin").wstring()+L";"+environment(L"PATH")}};
+    // The stand-in simulates a configured non-MSBuild generator. Production
+    // scheduling still resolves a real preset/cache context before building.
+    write(c.root/L"CMakePresets.json",R"JSON({"version":3,"configurePresets":[{"name":"tests","generator":"Ninja","binaryDir":"${sourceDir}/.build"}],"buildPresets":[{"name":"tests","configurePreset":"tests","configuration":"Release"},{"name":"all-tests","configurePreset":"tests","configuration":"Release"}],"testPresets":[{"name":"tests","configurePreset":"tests","configuration":"Release","execution":{"jobs":2}},{"name":"all-tests","configurePreset":"tests","configuration":"Release","execution":{"jobs":2}}]})JSON");
+    write(c.root/L".build/CMakeCache.txt","CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Release\n");
     write(c.root/L".build/known-runtime.txt","original explicit runtime resource");
     // Exercise the real collector with an isolated reviewed input outside the
     // explicit CTest file list. The stand-in controls execution, not collection.

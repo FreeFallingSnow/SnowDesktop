@@ -288,16 +288,18 @@ Run 的 `candidateExecution` 关联快照、清单摘要、槽位及实际源码
 SDK/包的传递文件依赖尚未闭合，仍为 `externalDependenciesClosed=false` 和 `reuseAllowed=false`。
 没有启用已完成结果自动缓存、依赖驱动筛选或现有批次自动迁移；本接口是后续调度的执行基础。
 
-MSBuild 同时构建的项目数由预设的 `jobs` 控制；每个项目内 MSVC 同时编译的源码数由
-`SNOWDESKTOP_COMPILE_JOBS` 控制。后者默认使用本机逻辑处理器数的一半，最少 1、最多 8，
-避免直接占满开发机。可按内存和其他任务负载，在实际使用的 `CMakePresets.json` preset 的
+标准入口的总并行以前述 Run 资源预算为准：Visual Studio 命令使用单个 MSBuild 节点与按内存计算的
+MTT 进程数。CMake 生成工程保留缓存层参数：项目数为预设的 `jobs`，每个项目内的源码数为
+`SNOWDESKTOP_COMPILE_JOBS`；后者默认使用逻辑处理器数的一半，最少 1、最多 8。
+这些缓存值用于旧请求或明确的诊断，不代表标准入口的总并行。可在实际使用的 `CMakePresets.json` preset 的
 `cacheVariables` 中声明 `SNOWDESKTOP_COMPILE_JOBS`，再走受保护的标准入口；修改配置输入仍须
 登记/claim。共享输出不直接运行未持租约的 `cmake --preset`；诊断参数实验使用独立输出目录。
 
-Debug 构建使用 debug preset 和 `scripts\build_debug.bat`。项目数与项目内编译数可能相乘，
-因此不要同时大幅提高两者；比较构建耗时时应固定源码输入并记录实际配置。
+Debug 构建使用 debug preset 和 `scripts\build_debug.bat`，默认采用相同的资源保护。
+旧的无预算路径中项目数与项目内编译数可能相乘；比较构建耗时时应固定源码输入并记录实际命令与额度。
 
-`SNOWDESKTOP_BUILD_TOOL_JOBS` 是跨 MSBuild 构建的 MultiToolTask 进程预算候选，默认 `0` 保持原模式。
+`SNOWDESKTOP_BUILD_TOOL_JOBS` 是 CMake 缓存层的跨 MSBuild MultiToolTask 进程预算，默认 `0`；
+标准入口另外通过单次命令设置 Run 的进程预算，不受该缓存缺省值关闭。
 Visual Studio/MSVC 下可在本地配置预设的 `cacheVariables` 中指定正整数（最多 65536），由生产 CMake
 为全部目标统一设置 `UseMultiToolTask`、`EnforceProcessCountAcrossBuilds` 和 `MultiProcMaxCount`。
 与已声明的 `CMAKE_VS_GLOBALS` 冲突时配置失败，不静默覆盖。它约束支持 MultiToolTask 的构建工具，
