@@ -13,12 +13,14 @@
 
 namespace snowdesktop::fullscreen
 {
-inline bool ClientCoversMonitor(const RECT& client, const RECT& monitor) noexcept
+inline bool ClientCoversMonitor(const RECT& client, const RECT& monitor, LONG edgeInset = 0) noexcept
 {
     return monitor.right > monitor.left && monitor.bottom > monitor.top &&
         client.right > client.left && client.bottom > client.top &&
-        client.left <= monitor.left && client.top <= monitor.top &&
-        client.right >= monitor.right && client.bottom >= monitor.bottom;
+        static_cast<LONGLONG>(client.left) <= static_cast<LONGLONG>(monitor.left) + edgeInset &&
+        static_cast<LONGLONG>(client.top) <= static_cast<LONGLONG>(monitor.top) + edgeInset &&
+        static_cast<LONGLONG>(client.right) >= static_cast<LONGLONG>(monitor.right) - edgeInset &&
+        static_cast<LONGLONG>(client.bottom) >= static_cast<LONGLONG>(monitor.bottom) - edgeInset;
 }
 
 inline bool IsWindowedMaximization(LONG_PTR style, bool maximized) noexcept
@@ -51,18 +53,14 @@ inline bool IsFullscreen(const WindowSample& window, const RECT& monitor) noexce
     if (window.cloaked || window.nonRude ||
         !IsCandidate(window.style, window.extended, window.maximized, window.shell)) return false;
     if (ClientCoversMonitor(window.client, monitor)) return true;
-    // Windows Terminal reserves two physical pixels for an auto-hidden taskbar,
-    // even in fullscreen. Accept only a frameless, monitor-covering outer window
-    // with at most this tiny client inset, never a work-area-sized window.
-    constexpr LONG edgeInset = 2;
-    const auto& client = window.client;
+    // Windows Terminal can inset its fullscreen client by two physical pixels
+    // for an auto-hidden taskbar. Steam Big Picture (SDL) can also stop its outer
+    // frame one pixel short. Bound both against the monitor so their allowances
+    // do not accumulate; ordinary work-area windows and framed windows stay out.
+    constexpr LONG clientEdgeInset = 2, frameEdgeInset = 1;
     return !(window.style & (WS_CAPTION | WS_THICKFRAME)) &&
-        ClientCoversMonitor(window.frame, monitor) &&
-        client.right > client.left && client.bottom > client.top &&
-        static_cast<LONGLONG>(client.left) <= static_cast<LONGLONG>(monitor.left) + edgeInset &&
-        static_cast<LONGLONG>(client.top) <= static_cast<LONGLONG>(monitor.top) + edgeInset &&
-        static_cast<LONGLONG>(client.right) >= static_cast<LONGLONG>(monitor.right) - edgeInset &&
-        static_cast<LONGLONG>(client.bottom) >= static_cast<LONGLONG>(monitor.bottom) - edgeInset;
+        ClientCoversMonitor(window.frame, monitor, frameEdgeInset) &&
+        ClientCoversMonitor(window.client, monitor, clientEdgeInset);
 }
 
 inline std::optional<WindowSample> SampleWindow(

@@ -8,6 +8,14 @@ if (BUILD_TESTING)
 
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/testing/Support.cmake")
 
+    # The shared fullscreen gate controls bar hiding, Dock reveal and focus.
+    # Reproduce native geometry without touching the user's desktop windows.
+    snowdesktop_add_test(SnowDesktopForegroundFullscreenTests foreground_fullscreen
+        SOURCES tests/platform/foreground_fullscreen_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 dwmapi
+        LABELS core contract)
+
     # Admitted module contracts complement the host behavior matrix. Each
     # target is isolated because it owns a language runtime, store, pipe server,
     # or external tool process; no helper-per-program expansion is retained.
