@@ -1594,7 +1594,11 @@ void DesktopApp::HandleDockWindowRestoreTransition(
             // observer: its retries would foreground a still-cloaked window.
             // The handoff starts activation after the source has been exposed.
             CancelAllDockWindowActivationObservations();
-            RequestDockWindowShow(target, true, true);
+            // Normal animation preparation already restored on the source
+            // thread before cloaking. The immediate completion route can still
+            // arrive here with an iconic, exposed source and needs its request.
+            if (IsIconic(target) || !snowdesktop::dock_source_cloak::ReadOwner(target).window)
+                RequestDockWindowShow(target, true, true);
             UpdateDockWindowActivationState(
                 target, !IsIconic(target), false);
         }

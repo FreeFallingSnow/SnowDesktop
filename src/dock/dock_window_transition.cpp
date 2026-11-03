@@ -948,9 +948,29 @@ bool DockWindowTransition::Start(
                 restoreCallback(sourceWindow, DockWindowRestoreTransitionPhase::ActivateRestored);
             return current;
         }
-        return Reverse(
+        if (direction == DockWindowTransitionDirection::Restore &&
+            !IsIconic(sourceWindow) && !minimizeObserved_)
+        {
+            // A posted native minimize may not have reached its source thread
+            // yet. Observe that accepted action before restoring synchronously;
+            // otherwise it could run after the new restore has been prepared.
+            pendingExternalRestore_ = true;
+            restoreCallback_ = std::move(restoreCallback);
+            return true;
+        }
+        const HWND reversingWindow = hwnd_;
+        const bool reversed = Reverse(
             direction,
             std::move(restoreCallback));
+        if (!reversed && hwnd_ == reversingWindow &&
+            direction_ == DockWindowTransitionDirection::Restore && restoreCallback_)
+        {
+            CompleteRestoreAfterRenderFailure();
+            const bool completed = !restoreCallback_;
+            Finish();
+            return completed;
+        }
+        return reversed;
     }
     if (startAction ==
         DockWindowTransitionStartAction::
@@ -1116,7 +1136,12 @@ bool DockWindowTransition::Start(
         return true;
     }
 
-    if (!AcquireSourceCloak()) { Cancel(); return false; }
+    const HWND preparingWindow = hwnd_;
+    if (!AcquireSourceCloak())
+    {
+        if (hwnd_ == preparingWindow && sourceWindow_ == sourceWindow) Cancel();
+        return false;
+    }
     animationStartTimeMs_ = MonotonicTimeMilliseconds();
     minimizeObserved_ = false;
     minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
@@ -1124,7 +1149,11 @@ bool DockWindowTransition::Start(
     restoreCleanupDeadlineMs_ = 0.0;
     restoreVisibleTimeMs_ = 0.0;
     restoreFadeStartTimeMs_ = 0.0;
-    RequestRestoreForAnimation();
+    if (!RequestRestoreForAnimation())
+    {
+        if (hwnd_ == preparingWindow && sourceWindow_ == sourceWindow) Cancel();
+        return false;
+    }
     if (!ScheduleAnimationWake())
     {
         if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=schedule");
@@ -1150,11 +1179,21 @@ bool DockWindowTransition::AcquireSourceCloak()
     // compose this window, so its shared image stays available. Avoid changing
     // the source's setter-only native transition policy, which cannot be read
     // reliably and may already have been disabled by the application.
+    const HWND source = sourceWindow_;
+    const HWND host = hwnd_;
     bool acquired = false;
-    snowdesktop::dock_window_trace::Write(sourceWindow_, "acquire-cloak-before");
-    const HRESULT cloakHr = snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired);
-    snowdesktop::dock_window_trace::Write(sourceWindow_, "acquire-cloak-after", acquired, false,
+    snowdesktop::dock_window_trace::Write(source, "acquire-cloak-before");
+    const HRESULT cloakHr = snowdesktop::dock_source_cloak::Acquire(source, host, acquired,
+        direction_ == DockWindowTransitionDirection::Restore);
+    snowdesktop::dock_window_trace::Write(source, "acquire-cloak-after", acquired, false,
         static_cast<DWORD>(cloakHr));
+    if (sourceWindow_ != source || hwnd_ != host)
+    {
+        // Native restore can dispatch application messages. A cancelled scene
+        // must release its original lease, never adopt it onto a replacement.
+        if (acquired) snowdesktop::dock_source_cloak::Release(source, host);
+        return false;
+    }
     if (acquired)
     {
         sourceCloaked_ = true;
@@ -1200,8 +1239,11 @@ bool DockWindowTransition::PrepareMinimizePresentation(double now)
         IsWindowVisible(sourceWindow_) && !IsIconic(sourceWindow_) &&
         ResolveVisibleWindowRect(sourceWindow_, frame) && EqualRect(&frame, &windowRect_) &&
         (!externalMinimize_ || snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()));
+    const HWND preparingWindow = hwnd_;
+    const HWND preparingSource = sourceWindow_;
     if (!ready || !AcquireSourceCloak())
     {
+        if (hwnd_ != preparingWindow || sourceWindow_ != preparingSource) return false;
         if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=presentation-barrier");
         CompleteImmediately();
         return false;
@@ -1362,7 +1404,12 @@ bool DockWindowTransition::Reverse(
     presentationBarrier_.reset();
     restorePresentationPhase_ = RestorePresentationPhase::None;
     restorePresentationAcknowledged_ = false;
-    RequestRestoreForAnimation();
+    if (!RequestRestoreForAnimation())
+    {
+        // The caller owns fallback and cleanup; retain its callback until the
+        // old cloak can be released before submitting an ordinary restore.
+        return false;
+    }
     if (!ScheduleAnimationWake())
     {
         CompleteRestoreAfterRenderFailure();
@@ -2276,11 +2323,22 @@ bool DockWindowTransition::OnAnimationFrame(
     }
     if (pendingExternalRestore_)
     {
-        if (!IsIconic(sourceWindow_)) return true;
+        if (!IsIconic(sourceWindow_))
+        {
+            if (now >= minimizeCleanupDeadlineMs_)
+            {
+                CompleteImmediately();
+                return false;
+            }
+            return true;
+        }
         pendingExternalRestore_ = false;
         animationStartTimeMs_ = now;
+        const HWND reversingWindow = hwnd_;
+        const HWND reversingSource = sourceWindow_;
         auto callback = std::move(restoreCallback_);
-        if (!Reverse(DockWindowTransitionDirection::Restore, std::move(callback)))
+        if (!Reverse(DockWindowTransitionDirection::Restore, std::move(callback)) &&
+            hwnd_ == reversingWindow && sourceWindow_ == reversingSource)
         {
             CompleteRestoreAfterRenderFailure();
             Finish();
@@ -2500,21 +2558,41 @@ bool DockWindowTransition::OnAnimationFrame(
     return false;
 }
 
-void DockWindowTransition::RequestRestoreForAnimation()
+bool DockWindowTransition::RequestRestoreForAnimation()
 {
     if (direction_ != DockWindowTransitionDirection::Restore ||
         !restoreCallback_ || restoreRequested_)
-        return;
+        return true;
+    // A fresh restore was prepared by AcquireSourceCloak. Reversal keeps the
+    // previous minimize lease, so prepare that source under the same ownership.
+    if (IsIconic(sourceWindow_))
+    {
+        const HWND source = sourceWindow_;
+        const HWND host = hwnd_;
+        const HRESULT hr = snowdesktop::dock_source_cloak::PrepareRestore(source, host);
+        if (sourceWindow_ != source || hwnd_ != host)
+        {
+            snowdesktop::dock_source_cloak::Release(source, host);
+            return false;
+        }
+        if (FAILED(hr))
+        {
+            if (diagnosticCallback_) diagnosticCallback_(L"Dock restore aborted: stage=source-prepare");
+            return false;
+        }
+    }
     restoreRequested_ = true;
     preparingRestore_ = true;
     restoreGeometryStableTimeMs_ = 0.0;
     restoreCleanupDeadlineMs_ = MonotonicTimeMilliseconds() + kRestoreCleanupTimeoutMs;
-    // Request the native restore while the source is cloaked and our first
-    // (collapsed, transparent) frame is already committed. This gives native
-    // geometry and application painting the whole Genie timeline to settle.
-    snowdesktop::dock_window_trace::Write(sourceWindow_, "native-restore-before");
-    restoreCallback_(sourceWindow_, DockWindowRestoreTransitionPhase::RequestRestore);
-    snowdesktop::dock_window_trace::Write(sourceWindow_, "native-restore-after");
+    // The source thread already restored before cloaking. Notify the caller
+    // without submitting a second native restore underneath the animation.
+    const HWND source = sourceWindow_;
+    const HWND host = hwnd_;
+    snowdesktop::dock_window_trace::Write(source, "restore-prepared-callback-before");
+    restoreCallback_(source, DockWindowRestoreTransitionPhase::RequestRestore);
+    snowdesktop::dock_window_trace::Write(source, "restore-prepared-callback-after");
+    return sourceWindow_ == source && hwnd_ == host;
 }
 
 bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
@@ -2667,10 +2745,14 @@ CompleteRestoreAfterRenderFailure()
         !sourceWindow_ ||
         !IsWindow(sourceWindow_))
         return;
+    const HWND source = sourceWindow_;
+    const HWND host = hwnd_;
+    ReleaseSourceCloak();
+    if (sourceCloaked_ || sourceWindow_ != source || hwnd_ != host) return;
     RestoreCallback callback =
         std::move(restoreCallback_);
     callback(
-        sourceWindow_,
+        source,
         DockWindowRestoreTransitionPhase::
             FallbackWithoutAnimation);
 }

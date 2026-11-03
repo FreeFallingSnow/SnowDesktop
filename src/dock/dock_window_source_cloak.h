@@ -5,6 +5,7 @@
 #include <mutex>
 #include "dock_cloak_dispatcher.h"
 #include "dock_window_trace.h"
+#include "dock_window_rules.h"
 
 namespace snowdesktop::dock_source_cloak
 {
@@ -35,9 +36,12 @@ inline Owner RequestOwner(const dock_minimize::CloakRequest& request) noexcept
         reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.process)),
         reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.token))};
 }
-inline dock_minimize::CloakRequest MakeRequest(HWND source, Owner owner, BOOL cloak) noexcept
+inline dock_minimize::CloakRequest MakeRequest(HWND source, Owner owner, BOOL cloak,
+    bool prepareRestore = false) noexcept
 {
-    return {2, static_cast<std::uint32_t>(cloak != FALSE), reinterpret_cast<UINT_PTR>(source),
+    return {prepareRestore ? 3u : 2u,
+        prepareRestore ? dock_minimize::kPrepareRestoreCloak : static_cast<std::uint32_t>(cloak != FALSE),
+        reinterpret_cast<UINT_PTR>(source),
         reinterpret_cast<UINT_PTR>(owner.window), reinterpret_cast<UINT_PTR>(owner.process),
         reinterpret_cast<UINT_PTR>(owner.token)};
 }
@@ -152,6 +156,55 @@ inline HRESULT StartRecoveryTimer(HWND source) noexcept
     return S_OK;
 }
 
+inline bool RestoreLeaseCurrent(HWND source, Owner owner) noexcept
+{
+    return SameOwner(source, owner) && IsLiveOwner(owner) &&
+        GetPropW(source, RecoveryProperty) != owner.token;
+}
+
+inline HRESULT WriteCloakOnSourceThread(HWND source, Owner owner, BOOL cloak,
+    bool prepareRestore) noexcept
+{
+    if (prepareRestore)
+    {
+        if (GetWindowThreadProcessId(source, nullptr) != GetCurrentThreadId() ||
+            !RestoreLeaseCurrent(source, owner)) return E_ABORT;
+        if (IsIconic(source))
+        {
+            WINDOWPLACEMENT placement{sizeof(placement)};
+            if (!GetWindowPlacement(source, &placement))
+            {
+                const DWORD error = GetLastError();
+                return HRESULT_FROM_WIN32(error ? error : ERROR_GEN_FAILURE);
+            }
+            DWORD flags = 0;
+            HRESULT hr = DwmGetWindowAttribute(source, DWMWA_CLOAKED, &flags, sizeof(flags));
+            if (FAILED(hr)) return hr;
+            if ((flags & ~static_cast<DWORD>(DWM_CLOAKED_APP)) != 0) return E_ABORT;
+            // Reversing a minimize can retain our lease and app cloak. Expose
+            // the iconic source before restoring, without discarding recovery.
+            if ((flags & DWM_CLOAKED_APP) != 0)
+            {
+                const BOOL exposed = FALSE;
+                hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &exposed, sizeof(exposed));
+                if (FAILED(hr)) return hr;
+            }
+            if (!RestoreLeaseCurrent(source, owner)) return E_ABORT;
+            dock_window_trace::Write(source, "source-restore-before-cloak");
+            // Restoring underneath a cloak defers Windows DesktopRecalc work
+            // until exposure, where saved state can overwrite the restore.
+            // Keep native restore and the following hide on this source thread.
+            ShowWindow(source, dock_window_rules::ResolveDockAnimatedRestoreShowCommand(
+                placement.flags, placement.showCmd));
+            if (!RestoreLeaseCurrent(source, owner)) return E_ABORT;
+            if (!IsWindow(source) || IsIconic(source)) return E_FAIL;
+            dock_window_trace::Write(source, "source-restore-prepared");
+        }
+    }
+    return SkipDiagnosticCloakWrite(source, cloak) ? S_OK :
+        DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+}
+
 // DWMWA_CLOAK rejects a caller in a different process. The per-thread
 // CALLWNDPROC hook applies it inside the source process and acknowledges the
 // current lease; the source application's window procedure is unchanged.
@@ -164,29 +217,34 @@ inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& reques
     DWORD process = 0;
     if (!GetWindowThreadProcessId(source, &process) || process != GetCurrentProcessId()) return;
     const BOOL cloak = request.cloak != 0;
+    const bool prepareRestore = request.version == 3 &&
+        request.cloak == dock_minimize::kPrepareRestoreCloak;
     HRESULT hr = cloak ? StartRecoveryTimer(source) : S_OK;
     const bool skip = SkipDiagnosticCloakWrite(source, cloak);
     dock_window_trace::Write(source, "target-cloak-before", cloak);
-    if (SUCCEEDED(hr) && !skip) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    if (SUCCEEDED(hr)) hr = WriteCloakOnSourceThread(source, owner, cloak, prepareRestore);
     dock_window_trace::Write(source, skip ? "target-cloak-skipped" : "target-cloak-after",
         cloak, false, static_cast<DWORD>(hr));
-    if ((cloak && FAILED(hr)) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
+    // A failed preparation may still own the cloak from a reversing animation.
+    // Keep its timer until release or removal of the lease completes cleanup.
+    if ((cloak && FAILED(hr) && !prepareRestore) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
     if (!SameOwner(source, owner)) return;
     SetPropW(source, ResultProperty, ULongToHandle(static_cast<ULONG>(hr)));
     SetPropW(source, AckProperty, owner.token);
 }
 
-inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed) noexcept
+inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed,
+    bool prepareRestore = false) noexcept
 {
     confirmed = true;
     DWORD process = 0;
-    if (!GetWindowThreadProcessId(source, &process)) return E_INVALIDARG;
+    const DWORD thread = GetWindowThreadProcessId(source, &process);
+    if (!thread) return E_INVALIDARG;
     if (!SameOwner(source, owner)) return E_ABORT;
-    if (process == GetCurrentProcessId())
+    if (process == GetCurrentProcessId() && (!prepareRestore || thread == GetCurrentThreadId()))
     {
         dock_window_trace::Write(source, "local-cloak-before", cloak);
-        const HRESULT hr = SkipDiagnosticCloakWrite(source, cloak) ? S_OK :
-            DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        const HRESULT hr = WriteCloakOnSourceThread(source, owner, cloak, prepareRestore);
         dock_window_trace::Write(source, "local-cloak-after", cloak, false, static_cast<DWORD>(hr));
         return hr;
     }
@@ -195,7 +253,7 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
     DWORD_PTR ignored = 0;
     SetLastError(0);
     const HWND dispatcher = reinterpret_cast<HWND>(GetPropW(source, dock_minimize::kCloakDispatcherProperty));
-    const auto request = MakeRequest(source, owner, cloak);
+    const auto request = MakeRequest(source, owner, cloak, prepareRestore);
     const bool sent = dock_minimize::SendCloakRequest(dispatcher ? dispatcher : source,
         request, dispatcher ? 180 : 120, ignored);
     const DWORD error = GetLastError();
@@ -250,7 +308,7 @@ inline bool RecoverStale(HWND source) noexcept
     return true;
 }
 
-inline HRESULT Acquire(HWND source, HWND host, bool& acquired) noexcept
+inline HRESULT Acquire(HWND source, HWND host, bool& acquired, bool prepareRestore = false) noexcept
 {
     const std::lock_guard lock(LocalLeaseMutex());
     acquired = false;
@@ -259,7 +317,8 @@ inline HRESULT Acquire(HWND source, HWND host, bool& acquired) noexcept
     HRESULT hr = DwmGetWindowAttribute(source, DWMWA_CLOAKED, &flags, sizeof(flags));
     if (FAILED(hr)) return hr;
     if (ReadOwner(source).window) return HRESULT_FROM_WIN32(ERROR_BUSY);
-    if ((flags & DWM_CLOAKED_APP) != 0) return S_OK;
+    if ((flags & DWM_CLOAKED_APP) != 0)
+        return prepareRestore ? HRESULT_FROM_WIN32(ERROR_BUSY) : S_OK;
     Owner owner{host, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(GetCurrentProcessId())),
         GetPropW(host, HostTokenProperty)};
     if (!IsLiveOwner(owner)) return E_INVALIDARG;
@@ -282,10 +341,20 @@ inline HRESULT Acquire(HWND source, HWND host, bool& acquired) noexcept
     }
     const BOOL cloak = TRUE;
     bool confirmed = false;
-    hr = ApplyCloak(source, owner, cloak, confirmed);
+    hr = ApplyCloak(source, owner, cloak, confirmed, prepareRestore);
     if (FAILED(hr) && confirmed) RemoveOwner(source, owner);
     else acquired = true;
     return hr;
+}
+
+inline HRESULT PrepareRestore(HWND source, HWND host) noexcept
+{
+    const std::lock_guard lock(LocalLeaseMutex());
+    const auto owner = ReadOwner(source);
+    if (owner.window != host ||
+        owner.process != reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(GetCurrentProcessId()))) return E_ABORT;
+    bool confirmed = false;
+    return ApplyCloak(source, owner, TRUE, confirmed, true);
 }
 
 inline HRESULT Release(HWND source, Owner owner) noexcept

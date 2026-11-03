@@ -233,7 +233,7 @@ private:
     void LogPresentation(int requestedEffect,
         const wchar_t* fallbackStage);
     bool OnAnimationFrame(double nowMilliseconds);
-    void RequestRestoreForAnimation();
+    bool RequestRestoreForAnimation();
     bool PrepareRestoredWindow(double nowMilliseconds);
     bool BeginPresentationBarrier(RestorePresentationPhase phase);
     bool AcquireSourceCloak();
