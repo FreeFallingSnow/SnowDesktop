@@ -108,13 +108,13 @@ PowerShell 7 启动器通过原生进程 API 启动 Windows PowerShell 5.1 时�
 
 活动批次的 `ready-and-wait` / `finish` 遇到协作 Git 事务占用时，保留原等待进程、批次、编辑修订和总等待期限。等待前校验成员与修订，释放状态事务后再退避；期间仍可投递紧急事件并返回 6，不自动确认消息。Git 租约释放后继续同一就绪流程；超时保留登记并报告 Git 阻塞原因。其他修改型命令的 Git 繁忙拒绝、非共享 I/O 错误及提交权限不变。
 
-新提交的重型 Run 以实际 `git-common-dir` 绑定一个跨工作树执行租约，同仓库参与协议的重型管线同时只准入一个。普通构建、IDE、测试执行和有实际构建/测试需求的新批次参与；`tests list/plan` 与无构建测试的批次记账不占重型名额。旧请求明确记录 `legacy-unbudgeted`，不改写已提交请求或接管旧执行者。
+新提交的重型 Run 以实际 `git-common-dir` 绑定跨工作树资源额度，默认使用 `project-weighted-v1` 独占预算，同仓库参与协议的重型管线同时只准入一个。普通构建、IDE、测试执行和有实际构建/测试需求的新批次参与；`tests list/plan` 与无构建测试的批次记账不占重型名额。旧请求保持其 `project-heavy-v1` 或 `legacy-unbudgeted` 契约，不改写已提交请求或接管旧执行者。
 
 Run 先取得本工作树的输出权，再等待共享项目名额；期间不做预检进程操作、配置、编译或测试。`waitingFor` 与 `waitIntervals` 记录实际阻塞及单调耗时，取消仍使用原 Task 和 nonce。操作系统文件句柄控制租约，正常完成、取消或执行者退出会释放；不按心跳或 PID 猜测回收。
 
-显式成对传入 `run start -CpuSlots N -MemoryMiB M` 可选择 `project-weighted-v1`；默认仍为上述单重型准入。`run budget` 只读查询当前或尚未保存的建议额度。以活动 Task 调用 `run budget -Task ID -CpuCapacity N -MemoryCapacityMiB M -Reason "调整依据"`，仅在没有任何项目执行租约时更新公共 Git 目录中的策略，保留旧策略；请求绑定策略代际与哈希，排队期间改变策略会失效退出 5，不自动换用新额度。缺失已初始化策略时拒绝自动重建，须显式在静止状态恢复配置。CPU 总额度默认保留两个逻辑处理器，至少一个；内存总额度最多为物理内存的 70%，以 256 MiB 预留，并保留至少 1 GiB 或物理内存的八分之一。准入还检查当时可用物理内存，保守计入其他预留。
+未声明额度的新 Run 默认申请不超过逻辑处理器的 75%（至少一个）和物理内存的 50%（向下取 256 MiB 的倍数），同时服从更小的项目策略容量。内存额度还按提交时可用内存降低：扣除策略的物理内存余量后取 75%，低端保留 1 GiB 运行额度（策略容量更小时服从策略）；预算冻结在请求中，不在排队后静默扩大。显式成对传入 `run start -CpuSlots N -MemoryMiB M` 可覆盖单次额度并按原条件选择共享。`run budget` 只读查询当前或尚未保存的建议容量，`defaultRequest` 同时显示默认 CPU、提交内存和编译进程数。以活动 Task 调用 `run budget -Task ID -CpuCapacity N -MemoryCapacityMiB M -Reason "调整依据"`，仅在没有任何项目执行租约时更新公共 Git 目录中的策略，保留旧策略；请求绑定策略代际与哈希，排队期间改变策略会失效退出 5，不自动换用新额度。缺失已初始化策略时拒绝自动重建，须显式在静止状态恢复配置。项目 CPU 总容量默认保留两个逻辑处理器，至少一个；内存总容量最多为物理内存的 70%，以 256 MiB 预留，并保留至少 1 GiB 或物理内存的八分之一。准入检查当时可用物理内存，保守计入其他预留；余量不足时排队，不取消保护。
 
-加权 Run 预留 CPU 和内存令牌，并对私有 Job 设置 CPU 硬上限与提交内存上限；无法设置时拒绝执行。CPU 槽是整机逻辑处理器容量的份额，提交内存不同于工作集；外层 Job 仍可能施加更严格限制。Visual Studio 构建在本次命令中设置单 MSBuild 节点、MTT 和 `MultiProcMaxCount`，不改变 CMake 缓存或默认 `SNOWDESKTOP_BUILD_TOOL_JOBS=0`；CTest 使用相同 CPU 槽数并核对测试的 `PROCESSORS`。带 Shell/应用进程操作、任意 IDE、需要配置的测试及含共享资源声明的补验保持独占。共同批次通过 `plan -ResourceCpuSlots N -ResourceMemoryMiB M` 声明，所有成员均明确加权时采用各项最大值作为共同 Run 上限；存在未声明成员则沿用独占协议。不同额度的活动补验不合并订阅。
+加权 Run 预留 CPU 和内存令牌，并对私有 Job 设置 CPU 硬上限与提交内存上限；无法设置时拒绝执行。CPU 槽是整机逻辑处理器容量的份额，提交内存不同于工作集；外层 Job 仍可能施加更严格限制。编译总并行取 CPU 槽和内存估算的较小值：为构建工具留 1 GiB，每个编译进程按 2 GiB 规划，至少一个；这是准入估算，最终由 Job 硬上限兜底。Visual Studio 构建在本次命令中设置单 MSBuild 节点、MTT 和上述 `MultiProcMaxCount`，其他生成器使用相同的总并行数；不改变 CMake 缓存或 `SNOWDESKTOP_BUILD_TOOL_JOBS=0`。CTest 使用 CPU 槽数并核对测试的 `PROCESSORS`。带 Shell/应用进程操作、任意 IDE、需要配置的测试及含共享资源声明的补验保持独占。共同批次通过 `plan -ResourceCpuSlots N -ResourceMemoryMiB M` 声明，所有成员均明确加权时采用各项最大值作为共同 Run 上限；存在未声明成员则使用默认独占预算。不同额度的活动补验不合并订阅。
 
 `resourceAdmission` 保存申请、实际排队观测和准入时点；Job 采样另存实际限制及用量，看板与 DSH 插件分别展示。该机制仅约束同仓库接入协议的新请求，不能覆盖旧请求、独立手工命令或其他仓库，也尚无公平排队与动态优先级。性能测量仍检查未接入的竞争进程，不将排队时间当作编译时间或提速；实际宿主性能尚待测量。
 

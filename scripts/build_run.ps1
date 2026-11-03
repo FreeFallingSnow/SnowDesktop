@@ -164,7 +164,11 @@ try {
                 if(-not $state -or $state.repositoryRoot -ne $root -or @($state.taskLedger.tasks|Where-Object {$_.id -eq $Task -and -not $_.closedUtc}).Count -ne 1){throw 'Budget configuration requires an active Task in this checkout.'}
                 Set-WeightedResourcePolicy $root $CpuCapacity $MemoryCapacityMiB $Task $Reason|ConvertTo-Json -Depth 8
             }finally{$transaction.Dispose()}
-        }else{Get-WeightedResourcePolicy $root|ConvertTo-Json -Depth 8}
+        }else{
+            $policy=Get-WeightedResourcePolicy $root
+            $policy|Add-Member NoteProperty defaultRequest (Get-DefaultResourceRequest $policy.policy)
+            $policy|ConvertTo-Json -Depth 8
+        }
         exit 0
     }
     if($CpuCapacity -or $MemoryCapacityMiB){throw 'Capacity changes require run budget; no execution was submitted.'}
@@ -236,7 +240,9 @@ try {
         $privateBuild=$request.action -eq 'candidate' -and $request.candidateAction -in 'release','debug'
         $exclusive=($request.action -notin 'release','debug' -and -not $privateBuild) -or $request.reloadShell -or $request.closeApplication
         if($Mode -eq 'verify'){$exclusive=$false}
-        $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
+        $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}
+            elseif($heavy -and -not $CpuSlots -and -not $MemoryMiB){Get-DefaultProjectResourceBinding $root}
+            else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
         $batchTransaction=$null;$joined=$false;$verification=$null;$referenceProposal=$null;$referenceReceipt=$null;$reused=$false
         if($Mode -eq 'verify'){
             $verification=Get-VerificationSnapshot $root $PlanBatch $Filter $(if($request.projectResources.policy -eq 'project-weighted-v1'){$request.projectResources}else{$null})

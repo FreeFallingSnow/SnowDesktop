@@ -139,6 +139,7 @@ function Invoke-BuildStageCommand([string]$Root,[string]$Name,[string]$File,[str
             if(Get-Command Get-EntryResourceBudget -ErrorAction SilentlyContinue){
                 $budget=Get-EntryResourceBudget $Root
                 if($budget){
+                    $compileJobs=Get-CompileResourceJobs $budget
                     $context=Get-ConfiguredBuildContext $Root $Arguments
                     if(-not $context){throw 'Configured generator is unavailable; weighted build scheduling was not applied.'}
                     $separator=[Array]::IndexOf($Arguments,'--')
@@ -148,9 +149,9 @@ function Invoke-BuildStageCommand([string]$Root,[string]$Name,[string]$File,[str
                         # Bound one MSBuild project graph and its file scheduler;
                         # command-line globals override cached project defaults.
                         # The Run Job bounds CPU for XAML, linker and all children.
-                        $Arguments+=@('--parallel','1','--')+$native+@('/p:UseMultiToolTask=true','/p:EnforceProcessCountAcrossBuilds=false',('/p:MultiProcMaxCount='+$budget.cpuSlots))
+                        $Arguments+=@('--parallel','1','--')+$native+@('/p:UseMultiToolTask=true','/p:EnforceProcessCountAcrossBuilds=false',('/p:MultiProcMaxCount='+$compileJobs))
                     }else{
-                        $Arguments+=@('--parallel',[string]$budget.cpuSlots)
+                        $Arguments+=@('--parallel',[string]$compileJobs)
                         if($native.Count){$Arguments+=@('--')+$native}
                     }
                 }

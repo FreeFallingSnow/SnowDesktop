@@ -379,6 +379,34 @@ function Initialize-ResourceRuntime {
     if(-not ('SnowDesktop.Build.Job' -as [type])){Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')}
     if(-not ('SnowDesktop.Build.ResourceBroker' -as [type])){throw 'This PowerShell process loaded an older resource runtime; start a new process before requesting weighted execution.'}
 }
+function Get-CompileResourceJobs($Budget) {
+    # Keep space for MSBuild, PowerShell, PCH and the linker. A CPU limit alone
+    # cannot prevent several memory-heavy translation units exhausting the Job.
+    $memoryJobs=[int][Math]::Max(1,[Math]::Floor(($Budget.memoryMiB-1024)/2048.0))
+    return [int][Math]::Min($Budget.cpuSlots,$memoryJobs)
+}
+function Get-DefaultResourceRequest($Policy,[long]$AvailableMemoryMiB=-1) {
+    # Per-Run defaults leave at least a quarter of CPU capacity and half of RAM
+    # for interactive work, within any stricter configured project capacity.
+    if($AvailableMemoryMiB -lt 0){$AvailableMemoryMiB=[long][Math]::Floor([SnowDesktop.Build.Job]::AvailableMemoryBytes()/1048576.0)}
+    $memoryCapacity=[int][Math]::Min($Policy.memoryCapacityMiB,[Math]::Max(256,[Math]::Floor($Policy.physicalMemoryMiB*0.50/256)*256))
+    # Account for applications already open when submitting. Leave a further
+    # quarter of available headroom for changes between submission/admission.
+    $availableBudget=[Math]::Max(1024,[Math]::Floor(($AvailableMemoryMiB-$Policy.headroomMiB)*0.75/256)*256)
+    $budget=[pscustomobject]@{
+        cpuSlots=[int][Math]::Min($Policy.cpuCapacity,[Math]::Max(1,[Math]::Floor($Policy.logicalProcessors*0.75)))
+        memoryMiB=[int][Math]::Min($memoryCapacity,$availableBudget)
+    }
+    $budget|Add-Member NoteProperty compileJobs (Get-CompileResourceJobs $budget)
+    return $budget
+}
+function Get-DefaultProjectResourceBinding([string]$Root) {
+    $state=Get-WeightedResourcePolicy $Root -Persist
+    $budget=Get-DefaultResourceRequest $state.policy
+    # Preserve the default single-heavy-Run lane. Sharing still needs an
+    # explicit reviewed request; default resource protection does not opt in.
+    return Get-ProjectResourceBinding $Root $true $budget.cpuSlots $budget.memoryMiB $true
+}
 function New-WeightedResourcePolicy {
     Initialize-ResourceRuntime
     $logical=[int][SnowDesktop.Build.Job]::LogicalProcessors()
@@ -387,7 +415,7 @@ function New-WeightedResourcePolicy {
     if($logical -gt 4096 -or $memory -lt 256 -or $memory -gt 1048576){throw 'Machine resource capacity is outside the supported policy range.'}
     return [pscustomobject]@{schemaVersion=1;policy='project-weighted-v1';generation=[Guid]::NewGuid().ToString('N');logicalProcessors=$logical;physicalMemoryMiB=$physical;
         cpuCapacity=[Math]::Max(1,$logical-2);memoryCapacityMiB=$memory;memorySlotMiB=256;headroomMiB=[int][Math]::Max(1024,[Math]::Floor($physical/8.0));
-        configuredUtc=[DateTime]::UtcNow.ToString('o');configuredBy='automatic-default';reason='Reserve two logical CPUs when available and physical-memory headroom; opt-in weighted requests only.'}
+        configuredUtc=[DateTime]::UtcNow.ToString('o');configuredBy='automatic-default';reason='Project capacity reserves two logical CPUs and physical-memory headroom; default Runs request a smaller exclusive budget.'}
 }
 function Assert-WeightedResourcePolicy($Policy,[switch]$Historical) {
     foreach($name in @('schemaVersion','policy','generation','logicalProcessors','physicalMemoryMiB','cpuCapacity','memoryCapacityMiB','memorySlotMiB','headroomMiB')){

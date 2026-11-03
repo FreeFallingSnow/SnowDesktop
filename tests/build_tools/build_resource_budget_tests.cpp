@@ -43,7 +43,11 @@ struct BudgetHarness {
     std::string start(int side,int cpu=1,int memory=512,bool legacy=false){
         std::vector<std::string> args={"-Command","start","-Task","runner","-Action","release"};
         if(!legacy)args.insert(args.end(),{"-CpuSlots",std::to_string(cpu),"-MemoryMiB",std::to_string(memory)});
+        const auto script=root(side)/L"scripts/build_run.ps1";
+        const auto original=read(script);
+        if(legacy){auto old=original;replace(old,"Get-DefaultProjectResourceBinding $root","Get-ProjectResourceBinding $root $true");write(script,old,true);}
         const auto id=call(side,args).at("id").str();
+        if(legacy)write(script,original,true);
         const auto launched=root(side)/L".build/collaboration/runs"/wide(id+".launch.json");until([&]{return fs::exists(launched);},15);
         first.workers.push_back(Json::parse(read(launched)));return id;
     }
@@ -107,10 +111,18 @@ $directory=Join-Path $PSScriptRoot 'headroom-probe'
 [void][IO.Directory]::CreateDirectory($directory)
 $first=[SnowDesktop.Build.ResourceBroker]::TryReserve($directory,1,1,1,1,0,1073741824)
 $second=[SnowDesktop.Build.ResourceBroker]::TryReserve($directory,1,1,1,1,2147483648,1073741824)
-try {@{reason=$first.BusyKind;firstAdmitted=[bool]$first.Lease;afterFailureAdmitted=[bool]$second.Lease}|ConvertTo-Json}finally{if($second.Lease){$second.Lease.Dispose()}}
+$policy=New-WeightedResourcePolicy
+try {@{reason=$first.BusyKind;firstAdmitted=[bool]$first.Lease;afterFailureAdmitted=[bool]$second.Lease;
+ idle=(Get-DefaultResourceRequest $policy $policy.physicalMemoryMiB);
+ busy=(Get-DefaultResourceRequest $policy ($policy.headroomMiB+4096));
+ low=(Get-DefaultResourceRequest $policy 0)}|ConvertTo-Json}finally{if($second.Lease){$second.Lease.Dispose()}}
 )PS",true);
     const auto headroom=h.bridge(0).call(h.root(0)/L"headroom-probe.ps1",{});
     require(headroom.at("reason").str()=="memory-headroom"&&!headroom.at("firstAdmitted").boolean&&headroom.at("afterFailureAdmitted").boolean,"Insufficient available memory admitted work or leaked partial reservation tokens");
+    require(headroom.at("busy").at("memoryMiB").integer()<headroom.at("idle").at("memoryMiB").integer()&&
+        headroom.at("busy").at("compileJobs").integer()<headroom.at("idle").at("compileJobs").integer()&&
+        headroom.at("low").at("memoryMiB").integer()>=1024&&headroom.at("low").at("compileJobs").integer()==1,
+        "Default budget failed to reduce compiler pressure under existing application load or keep a bounded low-memory request");
     if(h.cpuCapacity>=2){
         const auto a=h.start(0);const auto ownerA=h.running(0,a);const auto b=h.start(1);h.running(1,b);
         require(owner_alive(ownerA.at("owner")),"Two small reservations failed to coexist");
@@ -287,9 +299,12 @@ target_compile_options(BudgetProgram PRIVATE /W4 /WX /MP${SNOWDESKTOP_COMPILE_JO
         require(run({(root/L".build/cxx/Release/BudgetProgram.exe").wstring()},root).code==36,"Actual weighted compiler produced an incorrect program");
     };
     finish(*c.bridge,c.root,left);finish(second,other,right);
-    for(const auto& side:{"left","right"})require(read(probe/wide(std::string("scheduling-")+side+".txt")).find("true|false|"+std::to_string(cpu)+"|1")!=std::string::npos,"Actual MSBuild scheduling properties did not reflect the Run budget");
+    // Each Run has two CPU slots but only 3 GiB: keep one compiler active and
+    // leave room for the build graph. Verify the actual MSBuild property.
+    const int compilerJobs=1;
+    for(const auto& side:{"left","right"})require(read(probe/wide(std::string("scheduling-")+side+".txt")).find("true|false|"+std::to_string(compilerJobs)+"|1")!=std::string::npos,"Actual MSBuild scheduling properties did not reflect the Run memory budget");
     const auto counted=Json::parse(read(probe/L"counter.json"));
-    require(counted.at("starts").integer()==10&&counted.at("active").integer()==0&&counted.at("maximum").integer()<=capacity,"Real compilers exceeded pooled capacity or lost provenance");
+    require(counted.at("starts").integer()==10&&counted.at("active").integer()==0&&counted.at("maximum").integer()<=compilerJobs*2,"Real compilers exceeded memory-derived capacity or lost provenance");
     if(!control){
         const auto negative=run({executable().wstring(),repo.wstring(),L"--compile-no-scheduling"},c.root,150,{},true);
         require(negative.code==1&&negative.err.find("Weighted compiler controls were not used")!=std::string::npos,"Removed MSBuild scheduling did not reach its actual compiler assertion: "+negative.out+negative.err);

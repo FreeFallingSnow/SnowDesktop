@@ -1,4 +1,5 @@
 #include "build_tool_test_support.h"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -138,8 +139,13 @@ void request_publication(const fs::path& repo,bool oldPublication=false){
     std::cout<<"PASS request producer termination and create-only collision\n";
 }
 void await_dead(const Json& value) {until([&]{return !owner_alive(value);},10);}
-void project_resources(const fs::path& repo){
+void project_resources(const fs::path& repo,bool oldDefault=false){
     Coordinator c(repo,"project-resources");setup_run(c,repo);
+    if(oldDefault){
+        auto script=read(c.scripts/L"build_run.ps1");
+        replace(script,"Get-DefaultProjectResourceBinding $root","Get-ProjectResourceBinding $root $true");
+        write(c.scripts/L"build_run.ps1",script,true);
+    }
     const auto other=c.root/L"second worktree";
     require(c.git({L"worktree",L"add",L"--detach",other.wstring(),L"HEAD"}).code==0,"Could not create the real shared-common-dir worktree");
     fs::copy(c.scripts,other/L"scripts",fs::copy_options::recursive|fs::copy_options::overwrite_existing);
@@ -150,6 +156,13 @@ void project_resources(const fs::path& repo){
     require(parent.wait()==0,"First resource fixture launch failed");
     const auto firstId=Json::parse(read(c.root/L"submitted.json")).at("id").str();
     const auto first=await_running(c,firstId);parent.close();
+    const auto binding=Json::parse(read(c.stateRoot/L"runs"/wide(firstId+".request.json"))).at("projectResources");
+    require(binding.at("policy").str()=="project-weighted-v1"&&binding.at("compatibilityMode").str()=="exclusive",
+        "Default heavy execution did not reserve a bounded exclusive budget");
+    const auto policy=Json::parse(read(fs::path(wide(binding.at("policyPath").str()))));
+    require(binding.at("cpuSlots").integer()<=std::max(1,policy.at("logicalProcessors").integer()*3/4)&&
+        binding.at("memoryMiB").integer()<=policy.at("physicalMemoryMiB").integer()/2,
+        "Default Run failed to leave CPU and physical-memory headroom");
     const auto otherCommand=[&](const std::string& id,const std::vector<std::string>& arguments,int code=0){
         auto args=arguments;args.insert(args.end(),{"-RunId",id});
         return second.call(other/L"scripts/build_run.ps1",args,code);
@@ -179,9 +192,18 @@ void project_resources(const fs::path& repo){
     const auto completed=otherCommand(nextId,{"-Command","wait","-Seconds","15"});
     require(completed.at("status").str()=="passed"&&read(other/L"calls.txt")=="build\n"&&c.calls()==1,"Owner loss failed to release the project lease or duplicated execution");
     bool resourceWait=false;
-    for(const auto& interval:completed.at("record").at("waitIntervals").items)resourceWait=resourceWait||(interval.at("resource").str()=="project-execution"&&interval.at("elapsedSeconds").number>=0);
+    for(const auto& interval:completed.at("record").at("waitIntervals").items)resourceWait=resourceWait||(interval.at("resource").str()=="project-cpu-memory"&&interval.at("elapsedSeconds").number>=0);
     require(resourceWait&&status(c,firstId).at("status").str()=="interrupted","Project resource wait timing or interrupted owner evidence was lost");
-    std::cout<<"PASS real worktree heavy execution exclusion, queued cancellation, owner-loss release and one execution per request\n";
+    const auto completedBudget=completed.at("request").at("projectResources");
+    require(completed.at("resources").at("committedMemoryLimitBytes").number==completedBudget.at("memoryMiB").number*1048576.0&&
+        completed.at("resources").at("cpuLimitBasisPoints").number>0&&completed.at("resources").at("cpuLimitBasisPoints").number<=7500,
+        "Default Run did not enforce its real Job CPU and memory limits");
+    if(!oldDefault){
+        const auto control=run({executable().wstring(),repo.wstring(),L"--project-resources-old-default"},c.root,40,{},true);
+        require(control.code==1&&control.err.find("Default heavy execution did not reserve a bounded exclusive budget")!=std::string::npos,
+            "Old unbounded default did not reach the resource-protection assertion: "+control.out+control.err);
+    }
+    std::cout<<"PASS bounded default CPU/memory, real worktree exclusion, queued cancellation, owner-loss release and unbounded-default control\n";
 }
 void observer_snapshot(const fs::path& repo){
     Coordinator c(repo,"observer-snapshot");setup_run(c,repo);
@@ -474,7 +496,7 @@ void test_process_lifetime(const fs::path& repo) {
 int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
     require(argc<=3,"Unexpected build Run fixture arguments");
     const std::string mode=argc>2?argv[2]:"";
-    if(mode=="--project-resources")project_resources(repo);
+    if(mode=="--project-resources"||mode=="--project-resources-old-default")project_resources(repo,mode=="--project-resources-old-default");
     else if(mode=="--observer-snapshot")observer_snapshot(repo);
     else if(mode=="--request-publication")request_publication(repo);
     else if(mode=="--old-request-publication")request_publication(repo,true);
