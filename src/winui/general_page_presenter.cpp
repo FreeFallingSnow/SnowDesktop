@@ -1,4 +1,9 @@
 #include "pch.h"
+#include "theme/surface_theme.h"
+#include "../../steam_bridge/src/steam_connection_feedback.h"
+#include "start_page_presenter.h"
+#include "hotkey_recorder.h"
+#include "settings/settings_snapshot.h"
 #include "quick_navigation_options.h"
 
 #include "general_page_presenter.h"

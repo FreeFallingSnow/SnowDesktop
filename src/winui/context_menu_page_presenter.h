@@ -1,5 +1,7 @@
 #pragma once
-#include "personalization_page_presenter.h"
+#include "personalization_page_actions.h"
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <memory>
 
 namespace snowdesktop::winui
 {

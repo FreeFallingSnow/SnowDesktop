@@ -1,4 +1,9 @@
 #include "pch.h"
+#include "theme/personalization.h"
+#include "theme/surface_theme.h"
+#include "ui/render/native_tooltip_settings.h"
+#include "settings/settings_snapshot.h"
+#include "ui/render/app_font.h"
 
 #include "personalization_page_presenter.h"
 #include "settings_presenter_controls.h"

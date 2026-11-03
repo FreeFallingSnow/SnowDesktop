@@ -1,3 +1,16 @@
+#include <cmath>
+#include <algorithm>
+#include "theme/panel_gradient.h"
+#include "theme/edge_light_settings.h"
+#include "diagnostics/diagnostic_log_modules.h"
+#include "shell_extension_settings.h"
+#include "system/status_bar/status_bar_settings.h"
+#include "dock/dock_settings.h"
+#include "general_settings.h"
+#include "navigation/navigation_settings.h"
+#include "theme/personalization.h"
+#include "settings_controller_interface.h"
+#include "settings_snapshot.h"
 #include "control_global_settings.h"
 #include "control_settings_values.h"
 #include "layout/layout_spacing_rules.h"

@@ -1,4 +1,7 @@
 #include "pch.h"
+#include "theme/personalization.h"
+#include "icons/icon_library.h"
+#include "settings/settings_snapshot.h"
 
 #include "dock_page_presenter.h"
 #include "settings_presenter_controls.h"

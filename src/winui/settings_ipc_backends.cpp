@@ -1,3 +1,5 @@
+#include "settings/settings_snapshot.h"
+#include "settings/settings_controller_interface.h"
 #include "settings_ipc_backends.h"
 #include <thread>
 #include "settings_ipc_values.h"

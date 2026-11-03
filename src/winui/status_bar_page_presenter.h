@@ -1,12 +1,15 @@
 #pragma once
-#include "dock_page_presenter.h"
+#include "dock_page_actions.h"
+#include "settings_focus_feedback.h"
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <memory>
 
 namespace snowdesktop::winui
 {
 class StatusBarPagePresenter
 {
 public:
-    StatusBarPagePresenter(DockPagePresenter::LocalizeCallback localize,
+    StatusBarPagePresenter(std::function<std::wstring(std::string_view)> localize,
         const winrt::Microsoft::UI::Xaml::Style& cardStyle,
         std::function<void(SettingsRoute)> navigate = {});
     ~StatusBarPagePresenter();

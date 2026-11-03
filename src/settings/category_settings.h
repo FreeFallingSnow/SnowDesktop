@@ -1,30 +1,7 @@
-/**
- * @file category_settings.h
- * @brief 桌面文件分类设置
- */
-
 #pragma once
 
-#include <string>
-#include <vector>
+#include "category_settings_types.h"
 #include "layout/category_collection_rules.h"
-
-struct CategoryRule
-{
-    std::wstring id;
-    std::wstring customLabel;
-    std::wstring extensions;
-    bool enabled = true;
-};
-
-struct CategorySettings
-{
-    float tabFontSize = 15.0f;
-    bool collectProgramsEnabled = false;
-    std::vector<CategoryRule> rules;
-
-    static CategorySettings Defaults();
-};
 
 std::wstring GetCategorySettingsPath();
 bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings);

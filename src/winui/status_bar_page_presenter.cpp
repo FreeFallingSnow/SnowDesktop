@@ -1,4 +1,7 @@
 #include "pch.h"
+#include <cmath>
+#include "theme/surface_theme.h"
+#include "settings/settings_snapshot.h"
 #include "status_bar_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
@@ -14,7 +17,7 @@ namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
 using presenter_controls::SettingRow;
 struct StatusBarPagePresenter::Impl
 {
-    DockPagePresenter::LocalizeCallback localize;
+    std::function<std::wstring(std::string_view)> localize;
     DockPageActions actions;
     std::function<void(SettingsRoute)> navigate;
     std::unique_ptr<MergedBarHeightEditor> mergedHeight;
@@ -189,7 +192,7 @@ struct StatusBarPagePresenter::Impl
         syncing = true; scale.Value(percent); presenter_controls::SetNumberBoxValue(scaleNumber, percent); syncing = false;
         scaleReset.IsEnabled(percent != 100); scaleDirty = true; scalePreview.Queue(percent);
     }
-    Impl(DockPagePresenter::LocalizeCallback callback, const mux::Style& style,
+    Impl(std::function<std::wstring(std::string_view)> callback, const mux::Style& style,
         std::function<void(SettingsRoute)> navigateCallback)
         : localize(std::move(callback)), navigate(std::move(navigateCallback))
     {
@@ -583,7 +586,7 @@ struct StatusBarPagePresenter::Impl
         actions = {};
     }
 };
-StatusBarPagePresenter::StatusBarPagePresenter(DockPagePresenter::LocalizeCallback localize, const mux::Style& style,
+StatusBarPagePresenter::StatusBarPagePresenter(std::function<std::wstring(std::string_view)> localize, const mux::Style& style,
     std::function<void(SettingsRoute)> navigate)
     : impl_(std::make_unique<Impl>(std::move(localize), style, std::move(navigate))) {}
 StatusBarPagePresenter::~StatusBarPagePresenter() { Close(); }

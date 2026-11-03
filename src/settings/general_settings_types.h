@@ -1,0 +1,77 @@
+#pragma once
+
+#include <windows.h>
+#include "platform/runtime_module_types.h"
+#include "desktop/desktop_idle_hide_preferences.h"
+
+#include <string>
+#include <cstdint>
+#include "animation_preferences.h"
+#include "ui/render/app_font_types.h"
+#include "ui/render/native_tooltip_settings.h"
+#include "system/calendar/calendar_display.h"
+#include "dock/dock_layout_settings.h"
+#include "theme/surface_theme_types.h"
+#include "shell_extension_settings_types.h"
+#include "system/status_bar/status_bar_settings_types.h"
+
+struct GeneralSettings
+{
+    // Runtime projection of SnowDesktop's unified per-user logon task. The
+    // scheduled task remains the source of truth; this field is deliberately
+    // not serialized into SnowDesktop.general.json.
+    bool autoStartEnabled = false;
+    bool showAdvancedSettings = false;
+    bool steamShowRunningStatus = false;
+    snowdesktop::runtime_modules::Policy runtimeModules;
+    bool softwareDesktopEnabled = true;
+    bool softwareDesktopHotkeyEnabled = false;
+    UINT softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+    UINT softwareDesktopHotkeyVirtualKey = 'S';
+    bool forceRestartHotkeyEnabled = true;
+    UINT forceRestartHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+    UINT forceRestartHotkeyVirtualKey = 'S';
+    std::uint32_t diagnosticLogModules = 0;
+    bool demoModeEnabled = false;
+    bool doubleClickHideDesktop = false;
+    bool desktopIdleHideEnabled = false;
+    int desktopIdleHideDelaySeconds = snowdesktop::desktop_idle_hide::kDefaultDelaySeconds;
+    bool desktopIdleHidePauseWithWindows = false;
+    // The shortcut toggles temporary desktop/Dock passthrough; only this
+    // shortcut preference is persisted, never the active passthrough state.
+    bool desktopPassthroughHotkeyEnabled = false;
+    UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+    UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
+    bool pageNavigationKeyboardEnabled = true;
+    UINT pageNavigationPreviousModifiers = 0;
+    UINT pageNavigationPreviousVirtualKey = VK_PRIOR;
+    UINT pageNavigationNextModifiers = 0;
+    UINT pageNavigationNextVirtualKey = VK_NEXT;
+    int quickNavTheme = 1;
+    // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
+    // Dark preserves the legacy collection-popup appearance when absent.
+    int collectionPopupTheme = 0;
+    snowdesktop::SurfaceTheme quickNavigationAppearance;
+    snowdesktop::SurfaceTheme collectionPopupAppearance;
+    // Last successfully applied bindings; independent surfaces keep their own
+    // snapshots. Missing fields preserve the legacy global-preset resolver.
+    snowdesktop::SurfaceTheme globalQuickNavigationAppearance;
+    snowdesktop::SurfaceTheme globalCollectionPopupAppearance;
+    bool dockEnabled = kDefaultDockEnabled;
+    snowdesktop::StatusBarSettings statusBar;
+    bool widgetDeveloperToolsEnabled = false;
+    int animationMode = snowdesktop::animation::DefaultMode;
+    int popupAnimationEffect = 2;
+    int animationSpeed = 1;
+    int animationFrameLimit = 0;
+    bool animationEnergySaver = true;
+    bool animationOnBattery = false;
+    snowdesktop::calendar::DisplayPreferences calendarDisplay;
+    snowdesktop::shell_extensions::Preferences shellExtensions;
+    bool contextMenuExpandQuickActions = false;
+    bool contextMenuHidePageManagement = false;
+    bool contextMenuHideMoreManagement = false;
+    snowdesktop::app_fonts::Selection font;
+    int tooltipFontSize = snowdesktop::kDefaultTooltipFontSize;
+    char language[85] = "system";
+};

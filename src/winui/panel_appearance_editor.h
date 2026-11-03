@@ -1,4 +1,6 @@
 #pragma once
+#include <cmath>
+#include <algorithm>
 #include "appearance_sections.h"
 #include "edge_light_editor.h"
 #include "panel_gradient_editor.h"

@@ -2,7 +2,8 @@
 
 #include "settings_ipc_codec.h"
 #include "platform/runtime_module_status.h"
-#include "settings_controller.h"
+#include "settings_snapshot.h"
+#include "settings_host_actions.h"
 #include "widget/settings/widget_settings_service.h"
 #include "layout/page_layout_settings.h"
 #include "icons/large_icon_settings.h"

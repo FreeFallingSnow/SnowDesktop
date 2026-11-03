@@ -1,4 +1,7 @@
 #include "pch.h"
+#include "hotkey_recorder.h"
+#include "settings/settings_snapshot.h"
+#include "diagnostics/diagnostic_log_modules.h"
 
 #include "home_about_page_presenter.h"
 #include "settings_presenter_controls.h"

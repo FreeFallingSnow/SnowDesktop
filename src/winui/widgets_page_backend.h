@@ -1,6 +1,6 @@
 #pragma once
 
-#include "widgets_page_presenter.h"
+#include "widgets_page_model.h"
 
 #include <cstdint>
 #include <filesystem>

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "settings/settings_snapshot.h"
 #include "runtime_modules_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

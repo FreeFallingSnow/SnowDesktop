@@ -1,4 +1,6 @@
 #pragma once
+#include <cmath>
+#include <algorithm>
 #include "settings_presenter_controls.h"
 #include "theme/panel_gradient.h"
 #include <winrt/Windows.UI.Text.h>

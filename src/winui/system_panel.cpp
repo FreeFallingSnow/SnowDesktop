@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <algorithm>
 #include "system_panel.h"
 #include "system_control_view.h"
 #include "system_tray_view.h"

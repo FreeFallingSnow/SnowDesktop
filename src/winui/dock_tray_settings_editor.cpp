@@ -1,4 +1,7 @@
 #include "pch.h"
+#include <algorithm>
+#include "dock/dock_settings.h"
+#include "dock/dock_tray_rules.h"
 #include "dock_tray_settings_editor.h"
 #include "settings_presenter_controls.h"
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

@@ -1,4 +1,10 @@
-#include "settings_controller.h"
+#include "general_settings.h"
+#include "navigation/navigation_settings.h"
+#include "theme/personalization.h"
+#include "category_settings.h"
+#include "settings_store.h"
+#include "settings_values.h"
+#include "dock/dock_settings.h"
 #include "personalization_initialization.h"
 
 #include "common/l10n.h"

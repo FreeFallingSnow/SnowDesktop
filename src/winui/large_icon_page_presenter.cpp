@@ -1,4 +1,7 @@
 #include "pch.h"
+#include <cmath>
+#include <algorithm>
+#include "common/json_value.h"
 #include "large_icon_page_presenter.h"
 #include "icon_library_page_presenter.h"
 #include "settings_presenter_controls.h"

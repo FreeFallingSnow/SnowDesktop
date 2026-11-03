@@ -1,4 +1,7 @@
 #pragma once
+#include <cmath>
+#include <algorithm>
+#include "navigation/navigation_settings.h"
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "app/navigation/quick_navigation_theme.h"

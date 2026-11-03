@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "settings/category_settings.h"
+#include "settings/settings_snapshot.h"
 
 #include "desktop_page_presenter.h"
 #include "edge_light_editor.h"

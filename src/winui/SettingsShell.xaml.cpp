@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "settings/settings_snapshot.h"
 
 #include "SettingsShell.xaml.h"
 #include "ui/render/app_font.h"

@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "settings/settings_snapshot.h"
 #include "icon_appearance_presenter.h"
 #include "desktop_page_presenter.h"
 #include "settings_presenter_controls.h"

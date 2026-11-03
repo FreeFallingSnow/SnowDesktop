@@ -1,3 +1,5 @@
+#include <algorithm>
+#include "settings/animation_preferences.h"
 #include "settings_ipc_services.h"
 #include "settings_ipc_values.h"
 

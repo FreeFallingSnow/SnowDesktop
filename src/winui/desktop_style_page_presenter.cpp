@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "settings/settings_snapshot.h"
 #include "desktop_style_page_presenter.h"
 #include "merged_bar_height_editor.h"
 #include "settings_presenter_controls.h"

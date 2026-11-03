@@ -1,9 +1,12 @@
 #pragma once
 
-#include "ui/render/app_font.h"
+#include "ui/render/app_font_types.h"
 
 #include <windows.h>
+#include <cstddef>
 #include <limits>
+#include <string_view>
+#include <vector>
 
 namespace snowdesktop::winui::font_picker
 {

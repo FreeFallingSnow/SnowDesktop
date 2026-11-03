@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <algorithm>
 #include "system_resource_view.h"
 #include "system/status_bar/status_bar_presentation.h"
 #include "widget/data/widget_gpu_presentation.h"

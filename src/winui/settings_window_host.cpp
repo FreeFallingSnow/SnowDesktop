@@ -1,4 +1,12 @@
 #include "pch.h"
+#include "general_page_presenter.h"
+#include "hotkey_recorder.h"
+#include "settings/settings_controller_interface.h"
+#include "settings/settings_snapshot.h"
+#include "settings/general_settings.h"
+#include "theme/personalization.h"
+#include "navigation/navigation_settings.h"
+#include "dock/dock_settings.h"
 #include "platform/force_restart_hotkey.h"
 
 #include "settings_window_host.h"

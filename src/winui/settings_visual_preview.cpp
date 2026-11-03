@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "settings/settings_snapshot.h"
 #include "settings_visual_preview.h"
 #include "icon_library_page_presenter.h"
 #include "settings/settings_search_catalog.h"
@@ -1015,7 +1017,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         return index.staticSettings;
     };
     general.probeHotkey = [](SettingsHostActions::HotkeyTarget, HotkeyChord, std::uint64_t,
-        std::uint64_t, HotkeyRecorder::AvailabilityCompletion complete) { complete(true, {}); };
+        std::uint64_t, HotkeyAvailabilityCompletion complete) { complete(true, {}); };
     general.languageCatalog = [] { return std::vector<SettingsLanguageOption>{{"zh-CN", L"简体中文"}, {"en-US", L"English"}}; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
     general.queryAdvancedFeatureStatus = [generalNotice] {
         GeneralAdvancedFeatureStatus status;

@@ -1,3 +1,10 @@
+#include "ui/render/native_tooltip_settings.h"
+#include "common/json_value.h"
+#include "diagnostics/diagnostic_log_modules.h"
+#include "animation_preferences.h"
+#include "shell_extension_settings.h"
+#include "theme/surface_theme.h"
+#include "system/status_bar/status_bar_settings.h"
 #include "data/atomic_file.h"
 #include <sstream>
 /**
@@ -15,6 +22,16 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+
+void NormalizeGeneralAnimationSettings(GeneralSettings& settings) noexcept
+{
+    using namespace snowdesktop::animation;
+    settings.animationMode = NormalizeMode(settings.animationMode);
+    settings.popupAnimationEffect = NormalizePopupEffect(settings.popupAnimationEffect);
+    settings.animationSpeed = NormalizeSpeed(settings.animationSpeed);
+    settings.animationFrameLimit = NormalizeFrameLimit(settings.animationFrameLimit);
+}
+
 
 namespace
 {

@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include "settings_presenter_controls.h"
 #include "theme/edge_light_settings.h"
 #include <winrt/Windows.UI.Text.h>

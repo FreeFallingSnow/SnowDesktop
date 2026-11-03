@@ -1,7 +1,8 @@
 #pragma once
 
+#include "ui/render/app_font_types.h"
 #include "control_settings.h"
-#include "settings_controller.h"
+#include "settings_fwd.h"
 #include <functional>
 
 namespace snowdesktop::control_settings

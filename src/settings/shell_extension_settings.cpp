@@ -1,0 +1,347 @@
+#include "shell_extension_settings.h"
+#include "common/json_value.h"
+#include "shell/shell_extension_state_commands.h"
+
+#include <algorithm>
+#include <map>
+#include <set>
+#include <string_view>
+#include <utility>
+
+namespace snowdesktop::shell_extensions
+{
+
+Category CategoryOf(Context context)
+{
+    return context == Context::Desktop || context == Context::FolderBackground ? Category::Background : Category::Objects;
+}
+
+void Normalize(Preferences &value)
+{
+    auto validId = [](const auto &item) { return !item.id.empty() && item.id.size() <= 4096 && item.id.find('\0') == std::string::npos; };
+    std::erase_if(value.rules, [&](const Rule &r) { return !validId(r) || r.category < Category::Objects || r.category > Category::Background; });
+    std::erase_if(value.overrides, [&](const LocationOverride &r) { return !validId(r) || r.context < Context::File || r.context > Context::Desktop || r.visibility < Visibility::Inherit || r.visibility > Visibility::Hide; });
+    if (value.rules.size() > 8192) value.rules.resize(8192);
+    if (value.overrides.size() > 16384) value.overrides.resize(16384);
+    // Older settings independently enabled the two state variants. Preserve
+    // an opt-in from either variant, then write one authority per scope.
+    for (auto &r : value.rules) r.id = StateVisibilityId(r.id);
+    for (auto &r : value.overrides) r.id = StateVisibilityId(r.id);
+    for (auto *items : {&value.hidden, &value.shown})
+        for (auto &r : *items) r.id = StateVisibilityId(r.id);
+    for (size_t i = 0; i < value.rules.size(); ++i) if (StatePairForId(value.rules[i].id))
+        for (size_t j = i + 1; j < value.rules.size();)
+            if (value.rules[i].id == value.rules[j].id && value.rules[i].category == value.rules[j].category)
+            { value.rules[i].shown |= value.rules[j].shown; value.rules.erase(value.rules.begin() + j); }
+            else ++j;
+    for (size_t i = 0; i < value.overrides.size(); ++i) if (StatePairForId(value.overrides[i].id))
+        for (size_t j = i + 1; j < value.overrides.size();)
+            if (value.overrides[i].id == value.overrides[j].id && value.overrides[i].context == value.overrides[j].context)
+            { // Show wins a conflicting legacy opt-in, independently of order.
+              if (value.overrides[i].visibility == Visibility::Show || value.overrides[j].visibility == Visibility::Show)
+                  value.overrides[i].visibility = Visibility::Show;
+              else value.overrides[i].visibility = std::max(value.overrides[i].visibility, value.overrides[j].visibility);
+              value.overrides.erase(value.overrides.begin() + j); }
+            else ++j;
+    std::vector<Selection> kept;
+    for (auto item : value.selections)
+    {
+        if (kept.size() >= 512)
+            break;
+        if (item.provider.empty() || item.provider.size() > 2048 || item.command.size() > 2048 ||
+            item.label.size() > 4096 || item.placement < Placement::Hidden || item.placement > Placement::Root ||
+            item.provider.find('\0') != std::string::npos || item.command.find('\0') != std::string::npos)
+            continue;
+        auto found = std::find_if(kept.begin(), kept.end(), [&](const auto &old) {
+            return old.provider == item.provider && old.command == item.command;
+        });
+        if (found == kept.end())
+            kept.push_back(std::move(item));
+        else
+            *found = std::move(item);
+    }
+    value.selections = std::move(kept);
+    for (auto *items : {&value.hidden, &value.shown})
+    {
+        std::vector<HiddenItem> normalized;
+        for (const auto &item : *items)
+        {
+            if (normalized.size() >= 2048)
+                break;
+            if (item.id.empty() || item.id.size() > 4096 || item.id.find('\0') != std::string::npos ||
+                item.context < Context::File || item.context > Context::Desktop)
+                continue;
+            if (std::find(normalized.begin(), normalized.end(), item) == normalized.end())
+                normalized.push_back(item);
+        }
+        *items = std::move(normalized);
+    }
+}
+
+Preferences ReadPreferences(const JsonValue *json)
+{
+    Preferences result;
+    if (!json || !json->IsObject())
+        return result;
+    if (const auto *enabled = json->Find("enabled"); enabled && enabled->IsBoolean())
+        result.enabled = enabled->boolean;
+    if (const auto *all = json->Find("showAll"); all && all->IsBoolean()) result.showAll = all->boolean;
+    if (const auto *rows = json->Find("selections"); rows && rows->IsArray())
+        for (const auto &row : rows->array)
+        {
+            const auto *provider = row.Find("provider");
+            const auto *command = row.Find("command");
+            const auto *place = row.Find("placement");
+            const auto *label = row.Find("label");
+            if (!provider || !provider->IsString() || !command || !command->IsString() || !place ||
+                !place->IsNumber() || place->number < 0 || place->number > 2 ||
+                place->number != static_cast<int>(place->number))
+                continue;
+            result.selections.push_back({provider->string, command->string,
+                                         label && label->IsString() ? label->string : "",
+                                         static_cast<Placement>(static_cast<int>(place->number))});
+        }
+    for (const auto key : {"hidden", "shown"})
+        if (const auto *rows = json->Find(key); rows && rows->IsArray())
+            for (const auto &row : rows->array)
+            {
+                const auto *id = row.Find("id");
+                const auto *context = row.Find("context");
+                if (!id || !id->IsString() || !context || !context->IsNumber() || context->number < 0 ||
+                    context->number > 3 || context->number != static_cast<int>(context->number))
+                    continue;
+                (std::string_view(key) == "shown" ? result.shown : result.hidden)
+                    .push_back({id->string, static_cast<Context>(static_cast<int>(context->number))});
+            }
+    const auto *version = json->Find("rulesVersion");
+    result.rulesVersion = version && version->IsNumber() ? static_cast<int>(version->number) : 1;
+    if (const auto *rows = json->Find("rules"); rows && rows->IsArray())
+        for (const auto &row : rows->array)
+        {
+            const auto *id = row.Find("id"), *category = row.Find("category"), *shown = row.Find("shown");
+            if (id && id->IsString() && category && category->IsNumber() && (category->number == 0 || category->number == 1) && shown && shown->IsBoolean())
+                result.rules.push_back({id->string, static_cast<Category>(static_cast<int>(category->number)), shown->boolean});
+        }
+    if (const auto *rows = json->Find("overrides"); rows && rows->IsArray())
+        for (const auto &row : rows->array)
+        {
+            const auto *id = row.Find("id"), *context = row.Find("context"), *visibility = row.Find("visibility");
+            if (id && id->IsString() && context && context->IsNumber() && context->number >= 0 && context->number <= 3 && context->number == static_cast<int>(context->number) && visibility && visibility->IsNumber() && visibility->number >= 0 && visibility->number <= 2 && visibility->number == static_cast<int>(visibility->number))
+                result.overrides.push_back({id->string, static_cast<Context>(static_cast<int>(context->number)), static_cast<Visibility>(static_cast<int>(visibility->number))});
+        }
+    Normalize(result);
+    if (result.rulesVersion < 2)
+    {
+        for (const auto &item : result.shown)
+        {
+            const auto category = CategoryOf(item.context);
+            if (std::any_of(result.rules.begin(), result.rules.end(), [&](const auto &r) { return r.id == item.id && r.category == category; })) continue;
+            const auto first = category == Category::Objects ? Context::File : Context::FolderBackground;
+            const auto second = category == Category::Objects ? Context::Folder : Context::Desktop;
+            const bool a = std::find(result.shown.begin(), result.shown.end(), HiddenItem{item.id, first}) != result.shown.end();
+            const bool b = std::find(result.shown.begin(), result.shown.end(), HiddenItem{item.id, second}) != result.shown.end();
+            result.rules.push_back({item.id, category, a && b});
+            if (a != b)
+            {
+                result.overrides.push_back({item.id, first, a ? Visibility::Show : Visibility::Hide});
+                result.overrides.push_back({item.id, second, b ? Visibility::Show : Visibility::Hide});
+            }
+        }
+        result.rulesVersion = 2;
+    }
+    return result;
+}
+
+std::string Quote(const std::string &text)
+{
+    std::string out = "\"";
+    for (unsigned char c : text)
+    {
+        if (c == '"' || c == '\\')
+        {
+            out += '\\';
+            out += static_cast<char>(c);
+        }
+        else if (c < 32)
+        {
+            constexpr char hex[] = "0123456789abcdef";
+            out += "\\u00";
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+        else
+            out += static_cast<char>(c);
+    }
+    return out + '"';
+}
+
+std::string WritePreferences(Preferences value)
+{
+    Normalize(value);
+    std::string out = std::string("{\"enabled\":") + (value.enabled ? "true" : "false") +
+        ",\"showAll\":" + (value.showAll ? "true" : "false") + ",\"selections\":[";
+    bool first = true;
+    for (const auto &row : value.selections)
+    {
+        if (!first)
+            out += ',';
+        first = false;
+        out += "{\"provider\":" + Quote(row.provider) + ",\"command\":" + Quote(row.command) +
+               ",\"label\":" + Quote(row.label) + ",\"placement\":" + std::to_string(static_cast<int>(row.placement)) +
+               '}';
+    }
+    out += "],\"hidden\":[";
+    first = true;
+    for (const auto &row : value.hidden)
+    {
+        if (!first)
+            out += ',';
+        first = false;
+        out += "{\"id\":" + Quote(row.id) + ",\"context\":" + std::to_string(static_cast<int>(row.context)) + '}';
+    }
+    out += "],\"shown\":[";
+    first = true;
+    for (const auto &row : value.shown)
+    {
+        if (!first)
+            out += ',';
+        first = false;
+        out += "{\"id\":" + Quote(row.id) + ",\"context\":" + std::to_string(static_cast<int>(row.context)) +
+               '}';
+    }
+    out += "],\"rulesVersion\":" + std::to_string(value.rulesVersion) + ",\"rules\":[";
+    first = true;
+    for (const auto &r : value.rules)
+    {
+        if (!first) out += ',';
+        first = false;
+        out += "{\"id\":" + Quote(r.id) + ",\"category\":" + std::to_string(static_cast<int>(r.category)) + ",\"shown\":" + (r.shown ? "true" : "false") + '}';
+    }
+    out += "],\"overrides\":[";
+    first = true;
+    for (const auto &r : value.overrides)
+    {
+        if (!first) out += ',';
+        first = false;
+        out += "{\"id\":" + Quote(r.id) + ",\"context\":" + std::to_string(static_cast<int>(r.context)) + ",\"visibility\":" + std::to_string(static_cast<int>(r.visibility)) + '}';
+    }
+    return out + "]}";
+}
+
+bool IsHidden(const Preferences &prefs, const std::string &id, Context context)
+{
+    if (prefs.showAll) return false;
+    if (StatePairForId(id))
+    {
+        const auto key = StateVisibilityId(id);
+        bool overrideFound = false, ruleFound = false, shown = false;
+        for (const auto &r : prefs.overrides)
+            if (StateVisibilityId(r.id) == key && r.context == context && r.visibility != Visibility::Inherit)
+            { overrideFound = true; shown |= r.visibility == Visibility::Show; }
+        if (overrideFound) return !shown;
+        for (const auto &r : prefs.rules)
+            if (StateVisibilityId(r.id) == key && r.category == CategoryOf(context))
+            { ruleFound = true; shown |= r.shown; }
+        if (ruleFound) return !shown;
+        return std::none_of(prefs.shown.begin(), prefs.shown.end(), [&](const auto &r) {
+            return r.context == context && StateVisibilityId(r.id) == key;
+        });
+    }
+    for (const auto &r : prefs.overrides)
+        if (r.id == id && r.context == context && r.visibility != Visibility::Inherit)
+            return r.visibility == Visibility::Hide;
+    for (const auto &r : prefs.rules)
+        if (r.id == id && r.category == CategoryOf(context)) return !r.shown;
+    return std::find(prefs.shown.begin(), prefs.shown.end(), HiddenItem{id, context}) == prefs.shown.end();
+}
+
+bool CommonShown(const Preferences &prefs, const std::string &id, Category category)
+{
+    if (StatePairForId(id))
+    {
+        bool found = false, shown = false;
+        for (const auto &r : prefs.rules)
+            if (StateVisibilityId(r.id) == StateVisibilityId(id) && r.category == category)
+            { found = true; shown |= r.shown; }
+        if (found) return shown;
+    }
+    for (const auto &r : prefs.rules) if (r.id == id && r.category == category) return r.shown;
+    const auto first = category == Category::Objects ? Context::File : Context::FolderBackground;
+    const auto second = category == Category::Objects ? Context::Folder : Context::Desktop;
+    return !IsHidden(prefs, id, first) && !IsHidden(prefs, id, second);
+}
+
+Visibility OverrideOf(const Preferences &prefs, const std::string &id, Context context)
+{
+    if (StatePairForId(id))
+    {
+        Visibility result = Visibility::Inherit;
+        for (const auto &r : prefs.overrides)
+            if (StateVisibilityId(r.id) == StateVisibilityId(id) && r.context == context)
+            { if (r.visibility == Visibility::Show) return Visibility::Show;
+              if (r.visibility == Visibility::Hide) result = Visibility::Hide; }
+        return result;
+    }
+    for (const auto &r : prefs.overrides) if (r.id == id && r.context == context) return r.visibility;
+    return Visibility::Inherit;
+}
+
+void SetCommon(Preferences &prefs, const std::string &id, Category category, bool shown)
+{
+    const auto key = StateVisibilityId(id);
+    std::erase_if(prefs.rules, [&](const auto &r) { return StateVisibilityId(r.id) == key && r.category == category; });
+    prefs.rules.push_back({key, category, shown});
+    prefs.rulesVersion = 2;
+    Normalize(prefs);
+}
+
+void SetOverride(Preferences &prefs, const std::string &id, Context context, Visibility value)
+{
+    const auto key = StateVisibilityId(id);
+    // Persist an explicit base when restoring inheritance, so retained legacy
+    // records cannot recreate a migrated exception on the next association pass.
+    if (value == Visibility::Inherit && std::none_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return StateVisibilityId(r.id) == key && r.category == CategoryOf(context); }))
+        SetCommon(prefs, key, CategoryOf(context), CommonShown(prefs, key, CategoryOf(context)));
+    std::erase_if(prefs.overrides, [&](const auto &r) { return StateVisibilityId(r.id) == key && r.context == context; });
+    if (value != Visibility::Inherit) prefs.overrides.push_back({key, context, value});
+    Normalize(prefs);
+}
+
+std::set<std::string> EffectiveShownIds(const Preferences &prefs, Context context)
+{
+    if (prefs.showAll) return {"*"};
+    std::map<std::string, bool> states;
+    for (const auto &row : prefs.shown) if (row.context == context) states[row.id] = true;
+    // Match IsHidden's first-record precedence, including retained legacy data.
+    for (auto row = prefs.rules.rbegin(); row != prefs.rules.rend(); ++row)
+        if (row->category == CategoryOf(context)) states[row->id] = row->shown;
+    for (auto row = prefs.overrides.rbegin(); row != prefs.overrides.rend(); ++row)
+        if (row->context == context && row->visibility != Visibility::Inherit)
+            states[row->id] = row->visibility == Visibility::Show;
+    std::set<std::string> result;
+    for (const auto &[id, shown] : states) if (shown && !id.empty()) result.insert(id);
+    std::set<std::string> pairs;
+    for (const auto &[id, shown] : states) if (StatePairForId(id))
+    { result.erase(id); pairs.insert(StateVisibilityId(id)); }
+    for (const auto &id : pairs) if (!IsHidden(prefs, id, context)) result.insert(id);
+    return result;
+}
+
+bool HasOptIns(const Preferences &prefs, Context context)
+{
+    if (context != Context::Automatic) return !EffectiveShownIds(prefs, context).empty();
+    for (int i = 0; i < 4; ++i) if (!EffectiveShownIds(prefs, static_cast<Context>(i)).empty()) return true;
+    return false;
+}
+
+void SetHidden(Preferences &prefs, const std::string &id, Context context, bool hidden)
+{
+    if (StatePairForId(id)) { SetOverride(prefs, id, context, hidden ? Visibility::Hide : Visibility::Show); return; }
+    std::erase(prefs.hidden, HiddenItem{id, context});
+    std::erase(prefs.shown, HiddenItem{id, context});
+    if (!hidden)
+        prefs.shown.push_back({id, context});
+    Normalize(prefs);
+}
+
+} // namespace snowdesktop::shell_extensions

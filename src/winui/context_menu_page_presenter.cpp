@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "settings/settings_snapshot.h"
 #include "context_menu_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "ui/menu/modern_menu_appearance_rules.h"

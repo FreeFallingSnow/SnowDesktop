@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "common/json_value.h"
 #include "system_control_view.h"
 #include "system_panel_surface.h"
 #include "widget/data/widget_system_data_provider.h"

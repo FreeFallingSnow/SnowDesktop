@@ -1,3 +1,5 @@
+#include "settings_controller_interface.h"
+#include "settings_snapshot.h"
 #include "control_calendar_settings.h"
 
 #include <algorithm>
