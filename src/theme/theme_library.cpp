@@ -1,4 +1,7 @@
 #include "theme_library.h"
+#include <cmath>
+#include <algorithm>
+#include "theme/personalization.h"
 #include "ui/render/rgba_color.h"
 
 #include <objbase.h>

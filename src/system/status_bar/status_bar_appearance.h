@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include "theme/personalization.h"
 #include "status_bar_settings.h"
 #include <array>
 

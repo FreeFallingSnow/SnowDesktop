@@ -1,4 +1,7 @@
 #pragma once
+#include <cmath>
+#include <algorithm>
+#include "common/json_value.h"
 
 #include "theme/personalization.h"
 #include "theme/edge_light_codec.h"

@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include "icons/icon_beautify.h"
 #include "common/json_value.h"
 #include "edge_light_codec.h"

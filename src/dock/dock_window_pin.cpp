@@ -1,4 +1,5 @@
 #include "dock_window_pin.h"
+#include <cmath>
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/operation_feedback.h"
 #include "theme/personalization.h"

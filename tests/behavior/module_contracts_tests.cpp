@@ -1,3 +1,6 @@
+#include "dock/dock_settings.h"
+#include "settings/settings_snapshot.h"
+#include "settings/settings_store.h"
 #include "behavior_fixture.h"
 #include "settings/settings_controller.h"
 #include "data/layout_storage.h"

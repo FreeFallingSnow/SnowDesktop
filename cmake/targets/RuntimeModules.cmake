@@ -81,7 +81,10 @@ snowdesktop_add_runtime_module(SnowDesktopSettingsPolicy
     SOURCES src/settings/animation_settings.cpp src/settings/shell_extension_settings.cpp
         src/desktop/desktop_idle_hide_preferences.cpp src/settings/bar_settings_rules.cpp
         src/navigation/navigation_settings_rules.cpp
-    LINK_LIBRARIES SnowDesktopRuntimePolicy SnowDesktopThemePolicy user32)
+    LINK_LIBRARIES SnowDesktopRuntimePolicy user32)
+snowdesktop_add_runtime_module(SnowDesktopThemeLibrary
+    SOURCES src/theme/theme_library.cpp
+    LINK_LIBRARIES SnowDesktopThemePolicy SnowDesktopSettingsPolicy ole32)
 snowdesktop_add_runtime_module(SnowDesktopAppFonts
     SOURCES src/ui/render/app_font.cpp
     LINK_LIBRARIES dwrite gdi32 ole32)
@@ -111,12 +114,12 @@ snowdesktop_add_runtime_module(SnowDesktopSettingsPersistence
         src/dock/dock_fullscreen_storage.cpp src/dock/dock_tray_storage.cpp
         src/dock/dock_gradient_storage.cpp
         src/navigation/navigation_settings.cpp src/theme/personalization.cpp
-        src/theme/personalization_path.cpp src/theme/theme_library.cpp
+        src/theme/personalization_path.cpp
         src/theme/theme_library_settings.cpp
         src/ui/render/native_tooltip_preferences.cpp
     LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopNativeUtilities
         SnowDesktopLocalization SnowDesktopPerfetto SnowDesktopDockPolicy
-        SnowDesktopSettingsPolicy SnowDesktopThemePolicy dwmapi)
+        SnowDesktopSettingsPolicy SnowDesktopThemePolicy SnowDesktopThemeLibrary dwmapi)
 snowdesktop_add_runtime_module(SnowDesktopLayoutStorage
     SOURCES src/data/layout_storage.cpp
     LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy)
@@ -132,7 +135,7 @@ if(MSVC)
             SnowDesktopNativeUtilities SnowDesktopLocalization SnowDesktopSettingsPersistence
             SnowDesktopLayoutStorage SnowDesktopWidgetTasks SnowDesktopDockWindowPin
             SnowDesktopDockPolicy SnowDesktopFullscreen SnowDesktopSettingsPolicy SnowDesktopAppFonts
-            SnowDesktopRuntimePolicy SnowDesktopThemePolicy)
+            SnowDesktopRuntimePolicy SnowDesktopThemePolicy SnowDesktopThemeLibrary)
         # These sources previously used the host's Windows 10 platform and CRT
         # compatibility definitions. Keep them explicit on their new owners.
         target_compile_definitions(${module} PRIVATE

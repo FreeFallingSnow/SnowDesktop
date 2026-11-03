@@ -1,4 +1,5 @@
 #pragma once
+#include "common/json_value.h"
 
 // Explicit opt-in acceptance against an already running host. Default CTest
 // still uses its isolated protocol/transport fixtures and never user data.

@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "theme/surface_theme.h"
 #include "ui/render/app_font.h"
 #include "widget/data/widget_system_control_data.h"
 #include "widget/data/widget_gpu_lua.h"

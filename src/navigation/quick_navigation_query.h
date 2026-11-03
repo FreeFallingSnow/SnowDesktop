@@ -1,4 +1,5 @@
 #pragma once
+#include <locale>
 #include "navigation_settings.h"
 #include <algorithm>
 #include <cmath>
