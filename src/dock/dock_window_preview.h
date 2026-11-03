@@ -1,6 +1,7 @@
 #pragma once
 
-#include "dock_settings.h"
+#include "dock_layout_settings.h"
+#include "dock_window_preview_types.h"
 #include "dock_window_pin.h"
 #include "dock_window_peek.h"
 #include "dock_thumbnail_toolbar.h"
@@ -16,27 +17,6 @@
 #include <utility>
 #include <vector>
 
-struct DockWindowPreviewItem
-{
-    HWND window = nullptr;
-    std::wstring title;
-};
-
-struct DockWindowPreviewGrid
-{
-    int columns = 0;
-    int rows = 0;
-    int cardWidth = 0;
-    int cardHeight = 0;
-    int panelWidth = 0;
-    int panelHeight = 0;
-};
-
-struct DockWindowPreviewZOrderPolicy
-{
-    HWND insertAfter = nullptr;
-    UINT flags = 0;
-};
 
 DockWindowPreviewZOrderPolicy
 ResolveDockWindowPreviewZOrderPolicy(
@@ -59,48 +39,11 @@ bool IsPointInDockPreviewTransitionRegion(
     int tolerance);
 bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance);
 
-struct DockPreviewHoverTransition
-{
-    bool armTimer = false;
-    bool cancelTimer = false;
-    bool keepPreviewVisible = false;
-    bool schedulePreviewHide = false;
-};
 
 /**
  * @brief 管理 Dock 预览的延迟悬停与点击后锁定状态。
  */
-class DockPreviewHoverController
-{
-public:
-    DockPreviewHoverTransition UpdateTarget(
-        const std::wstring& targetToken,
-        bool previewVisible,
-        bool previewMatchesTarget);
-    bool ConsumeTimer(const std::wstring& observedTargetToken);
-    bool SuppressForActivation();
-    void MarkPreviewShown(const std::wstring& targetToken);
-    void Reset();
 
-    const std::wstring& CurrentTarget() const { return currentTarget_; }
-    const std::wstring& SuppressedTarget() const { return suppressedTarget_; }
-    bool TimerArmed() const { return timerArmed_; }
-    bool IsIdle() const
-    {
-        return currentTarget_.empty() &&
-            pendingTarget_.empty() &&
-            shownTarget_.empty() &&
-            suppressedTarget_.empty() &&
-            !timerArmed_;
-    }
-
-private:
-    std::wstring currentTarget_;
-    std::wstring pendingTarget_;
-    std::wstring shownTarget_;
-    std::wstring suppressedTarget_;
-    bool timerArmed_ = false;
-};
 
 /**
  * @brief 以不抢焦点的独立弹窗显示一组实时 DWM 窗口缩略图。

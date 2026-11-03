@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <algorithm>
+#include <cstdlib>
 #include <set>
 #include <system_error>
 #include <cwctype>
@@ -10,6 +11,51 @@
 
 namespace snowdesktop::app_fonts
 {
+std::atomic<std::shared_ptr<const Resource>> current;
+std::atomic<std::uint64_t> revision{0};
+
+HRESULT CreateTextFormat(IDWriteFactory* factory, const wchar_t* systemFamily,
+    DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch,
+    float size, const wchar_t* locale, IDWriteTextFormat** format)
+{
+    const auto resource = current.load();
+    const HRESULT result = factory->CreateTextFormat(resource ? resource->family.c_str() : systemFamily,
+        resource ? resource->collection.Get() : nullptr, weight, style, stretch, size, locale, format);
+    if (SUCCEEDED(result) && format && *format)
+    {
+        Microsoft::WRL::ComPtr<IDWriteTextFormat3> variable;
+        if (SUCCEEDED((*format)->QueryInterface(IID_PPV_ARGS(&variable))))
+        {
+            const DWRITE_FONT_AXIS_VALUE axis{DWRITE_FONT_AXIS_TAG_WEIGHT, static_cast<float>(weight)};
+            variable->SetFontAxisValues(&axis, 1);
+        }
+    }
+    return result;
+}
+
+void SetWeight(IDWriteTextLayout* layout, DWRITE_FONT_WEIGHT weight, DWRITE_TEXT_RANGE range)
+{
+    layout->SetFontWeight(weight, range);
+    Microsoft::WRL::ComPtr<IDWriteTextLayout4> variable;
+    if (SUCCEEDED(layout->QueryInterface(IID_PPV_ARGS(&variable))))
+    {
+        const DWRITE_FONT_AXIS_VALUE axis{DWRITE_FONT_AXIS_TAG_WEIGHT, static_cast<float>(weight)};
+        variable->SetFontAxisValues(&axis, 1, range);
+    }
+}
+
+std::wstring GdiFamily(const wchar_t* systemFamily)
+{
+    const auto resource = current.load();
+    return resource ? resource->family : systemFamily;
+}
+
+std::wstring XamlFamily()
+{
+    const auto resource = current.load();
+    return resource ? resource->xamlSource : L"Segoe UI Variable, Segoe UI";
+}
+
 namespace
 {
 using Microsoft::WRL::ComPtr;

@@ -1,43 +1,13 @@
 #pragma once
 
+#include "dock_window_types.h"
+
 #include <cstddef>
 #include <windows.h>
 
 namespace snowdesktop::dock_window_rules
 {
 
-enum class DockClickAction
-{
-    None,
-    Launch,
-    Activate,
-    Minimize,
-    Restore,
-};
-
-enum class DockWindowIconSource
-{
-    None,
-    AppUserModel,
-    Executable,
-    Window,
-    GenericExecutable,
-};
-
-enum class DockWindowActivationObservationAction
-{
-    Stop,
-    WaitForRestore,
-    Activate,
-};
-
-struct DockRunningIndicatorColor
-{
-    float red = 0.0f;
-    float green = 0.0f;
-    float blue = 0.0f;
-    float alpha = 1.0f;
-};
 
 /**
  * @brief Refresh an existing Dock item's indicator without rebuilding its slots.
@@ -273,13 +243,6 @@ constexpr bool ShouldDispatchDockDoubleClickPress(
     return !specialDoubleClickHandled;
 }
 
-enum class DockWindowMinimizeRequestRoute
-{
-    None,
-    PostedSystemCommand,
-    AsyncShowFallback,
-    DefaultSystemCommandFallback,
-};
 
 constexpr const wchar_t* DockWindowMinimizeRequestRouteName(
     DockWindowMinimizeRequestRoute route) noexcept
@@ -421,39 +384,7 @@ constexpr bool IsDockWindowActivationResponsive(
 
 // Host-private observation state. Both waiting for restore and retrying
 // foreground activation have a fixed deadline; polling never renews it.
-struct DockWindowActivationObservation
-{
-    static constexpr ULONGLONG RestoreTimeoutMs = 5000;
-    static constexpr ULONGLONG ActivationTimeoutMs = 1000;
 
-    bool awaitingRestore = false;
-    ULONGLONG deadline = 0;
-    DWORD processId = 0;
-    DWORD threadId = 0;
-
-    void Begin(bool restoring, ULONGLONG now, DWORD process, DWORD thread) noexcept
-    {
-        awaitingRestore = restoring;
-        deadline = now + (restoring ? RestoreTimeoutMs : ActivationTimeoutMs);
-        processId = process;
-        threadId = thread;
-    }
-
-    void Restored(ULONGLONG now) noexcept
-    {
-        if (awaitingRestore && now + ActivationTimeoutMs < deadline)
-            deadline = now + ActivationTimeoutMs;
-        awaitingRestore = false;
-    }
-
-    bool Expired(ULONGLONG now) const noexcept { return now >= deadline; }
-
-    bool Matches(DWORD process, DWORD thread) const noexcept
-    {
-        return processId != 0 && threadId != 0 &&
-            processId == process && threadId == thread;
-    }
-};
 
 /**
  * @brief 解析异步恢复/激活观察器的下一步动作。
@@ -546,10 +477,7 @@ constexpr bool IsTaskWindowStyleEligible(
  * task windows while deliberately having no taskbar button. AddTab clears the
  * marker, so query it on discovery rather than caching it by process or HWND.
  */
-inline bool IsTaskWindowExplicitlyExcluded(HWND window) noexcept
-{
-    return window && GetPropW(window, L"ITaskList_Deleted") != nullptr;
-}
+bool IsTaskWindowExplicitlyExcluded(HWND window) noexcept;
 
 /**
  * @brief 判断顶层窗口当前是否仍应显示在任务栏/Dock。
@@ -617,24 +545,7 @@ constexpr bool IsTaskbarDocumentProxyCandidateEligible(
  * this process. MediaPlayer and other worker-owned hidden windows need not pump
  * messages, so process and structural filters must precede that call.
  */
-inline bool IsTaskbarDocumentProxyCandidate(HWND window)
-{
-    DWORD processId = 0;
-    if (!window || !GetWindowThreadProcessId(window, &processId) ||
-        !processId || processId == GetCurrentProcessId())
-        return false;
-    if (!IsTaskbarDocumentProxyCandidateEligible(
-            GetAncestor(window, GA_ROOT) == window,
-            IsWindowVisible(window) != FALSE,
-            GetWindow(window, GW_OWNER) != nullptr,
-            true, GetWindowLongPtrW(window, GWL_STYLE),
-            GetWindowLongPtrW(window, GWL_EXSTYLE),
-            IsTaskWindowExplicitlyExcluded(window)))
-        return false;
-    // For a foreign top-level window User32 reads its cached caption, without
-    // waiting for the target's window procedure.
-    return GetWindowTextLengthW(window) > 0;
-}
+bool IsTaskbarDocumentProxyCandidate(HWND window);
 
 /**
  * @brief 判断同签名候选组是否足以代表多文档任务栏代理。

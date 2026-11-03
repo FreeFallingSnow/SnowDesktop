@@ -24,6 +24,9 @@ function(snowdesktop_add_runtime_module target)
     set_property(GLOBAL APPEND PROPERTY SNOWDESKTOP_RUNTIME_MODULES ${target})
 endfunction()
 
+snowdesktop_add_runtime_module(SnowDesktopRuntimePolicy
+    SOURCES src/platform/runtime_module_policy.cpp)
+
 snowdesktop_add_runtime_module(SnowDesktopAtomicFile
     SOURCES src/data/atomic_file.cpp)
 snowdesktop_add_runtime_module(SnowDesktopWidgetPermissions
@@ -60,7 +63,7 @@ snowdesktop_add_runtime_module(SnowDesktopRuntimeEnvironment
     SOURCES src/data/data_paths.cpp src/data/portable_data_migration.cpp
         src/diagnostics/debug_profile.cpp src/diagnostics/diagnostic_log.cpp
         src/platform/deployment_context.cpp src/platform/hook_entry_deployment.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopSteamRuntimeIdentity
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimePolicy
         advapi32 bcrypt ole32 runtimeobject shell32 shlwapi windowsapp)
 target_compile_definitions(SnowDesktopRuntimeEnvironment PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
@@ -70,34 +73,66 @@ target_compile_definitions(SnowDesktopRuntimeEnvironment PRIVATE
 # generated application types. NuGet restore remains target-local.
 set_target_properties(SnowDesktopRuntimeEnvironment PROPERTIES
     VS_PACKAGE_REFERENCES "Microsoft.Windows.CppWinRT_${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}")
+snowdesktop_add_runtime_module(SnowDesktopThemePolicy
+    SOURCES src/theme/personalization_presets.cpp src/theme/panel_gradient.cpp
+        src/theme/edge_light_settings.cpp src/theme/edge_light_codec.cpp
+        src/theme/surface_theme.cpp src/system/status_bar/status_bar_settings.cpp)
+snowdesktop_add_runtime_module(SnowDesktopSettingsPolicy
+    SOURCES src/settings/animation_settings.cpp src/settings/shell_extension_settings.cpp
+        src/desktop/desktop_idle_hide_preferences.cpp src/settings/bar_settings_rules.cpp
+        src/navigation/navigation_settings_rules.cpp
+    LINK_LIBRARIES SnowDesktopRuntimePolicy SnowDesktopThemePolicy user32)
+snowdesktop_add_runtime_module(SnowDesktopAppFonts
+    SOURCES src/ui/render/app_font.cpp
+    LINK_LIBRARIES dwrite gdi32 ole32)
 snowdesktop_add_runtime_module(SnowDesktopNativeUtilities
     SOURCES src/common/utils.cpp src/icons/shortcut_icon_resource.cpp
-    LINK_LIBRARIES SnowDesktopRuntimeEnvironment
+    LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopSettingsPolicy
         comctl32 d2d1 dwrite gdi32 ole32 shell32 shcore shlwapi windowscodecs xmllite)
 snowdesktop_add_runtime_module(SnowDesktopLocalization
     SOURCES src/common/l10n.cpp)
+# Runtime policy implementations stay out of the widely shared settings types.
+snowdesktop_add_runtime_module(SnowDesktopDockPolicy
+    SOURCES src/dock/dock_fullscreen_policy.cpp src/dock/dock_tray_rules.cpp
+        src/dock/dock_layout_settings.cpp src/dock/dock_attention_dot.cpp
+        src/dock/dock_settings_rules.cpp src/dock/dock_tray_targets.cpp
+        src/dock/floating_dock_rules.cpp src/dock/dock_magnification.cpp
+        src/dock/dock_running_animation.cpp src/dock/dock_rename_layout.cpp
+        src/dock/dock_window_rules.cpp
+    LINK_LIBRARIES user32 gdi32)
+snowdesktop_add_runtime_module(SnowDesktopFullscreen
+    SOURCES src/platform/foreground_fullscreen.cpp
+    LINK_LIBRARIES user32 dwmapi)
 snowdesktop_add_runtime_module(SnowDesktopSettingsPersistence
-    SOURCES src/settings/settings_controller.cpp src/settings/settings_route.cpp
+    SOURCES src/settings/settings_controller.cpp src/settings/settings_action_result.cpp
+        src/settings/settings_route.cpp src/settings/settings_update_rules.cpp
         src/settings/settings_store_native.cpp src/settings/general_settings.cpp
         src/settings/category_settings.cpp src/dock/dock_settings.cpp
+        src/dock/dock_fullscreen_storage.cpp src/dock/dock_tray_storage.cpp
+        src/dock/dock_gradient_storage.cpp
         src/navigation/navigation_settings.cpp src/theme/personalization.cpp
-        src/theme/personalization_path.cpp
+        src/theme/personalization_path.cpp src/theme/theme_library.cpp
+        src/theme/theme_library_settings.cpp
+        src/ui/render/native_tooltip_preferences.cpp
     LINK_LIBRARIES SnowDesktopRuntimeEnvironment SnowDesktopNativeUtilities
-        SnowDesktopLocalization SnowDesktopPerfetto dwmapi)
+        SnowDesktopLocalization SnowDesktopPerfetto SnowDesktopDockPolicy
+        SnowDesktopSettingsPolicy SnowDesktopThemePolicy dwmapi)
 snowdesktop_add_runtime_module(SnowDesktopLayoutStorage
     SOURCES src/data/layout_storage.cpp
-    LINK_LIBRARIES SnowDesktopAtomicFile)
+    LINK_LIBRARIES SnowDesktopAtomicFile SnowDesktopDockPolicy)
 snowdesktop_add_runtime_module(SnowDesktopWidgetTasks
     SOURCES src/widget/tasks/widget_task_broker.cpp
     LINK_LIBRARIES SnowDesktopPerfetto)
 snowdesktop_add_runtime_module(SnowDesktopDockWindowPin
     SOURCES src/dock/dock_window_pin.cpp
-    LINK_LIBRARIES SnowDesktopWindowSupport d2d1 dwmapi)
+    LINK_LIBRARIES SnowDesktopWindowSupport SnowDesktopThemePolicy d2d1 dwmapi)
 if(MSVC)
     target_compile_options(SnowDesktopRuntimeEnvironment PRIVATE /bigobj)
     foreach(module IN ITEMS SnowDesktopSteamRuntimeIdentity SnowDesktopRuntimeEnvironment
             SnowDesktopNativeUtilities SnowDesktopLocalization SnowDesktopSettingsPersistence
-            SnowDesktopLayoutStorage SnowDesktopWidgetTasks SnowDesktopDockWindowPin)
+            SnowDesktopLayoutStorage SnowDesktopWidgetTasks SnowDesktopDockWindowPin
+            SnowDesktopDockPolicy SnowDesktopFullscreen SnowDesktopSettingsPolicy SnowDesktopAppFonts
+            SnowDesktopRuntimePolicy SnowDesktopThemePolicy)
         # These sources previously used the host's Windows 10 platform and CRT
         # compatibility definitions. Keep them explicit on their new owners.
         target_compile_definitions(${module} PRIVATE
@@ -130,5 +165,10 @@ endfunction()
 snowdesktop_use_runtime_modules(SnowDesktop)
 snowdesktop_use_runtime_modules(snowwidget)
 snowdesktop_use_runtime_modules(SnowDesktopLauncher)
+
+# These independent owners consume runtime animation/module policy without
+# selecting its source inventory, so declare the link edge explicitly.
+target_link_libraries(SnowDesktopWindowHelper PRIVATE SnowDesktopSettingsPolicy SnowDesktopThemePolicy)
+target_link_libraries(SnowDesktopWindowSupport PUBLIC SnowDesktopRuntimePolicy)
 # The independent window helper supplies its own platform service providers;
 # retain that build variant instead of linking the host runtime environment.

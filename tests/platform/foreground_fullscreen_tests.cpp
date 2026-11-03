@@ -1,4 +1,7 @@
 #include "platform/foreground_fullscreen.h"
+#include "platform/fullscreen_rules.h"
+#include "dock/dock_fullscreen_policy.h"
+#include "system/status_bar/status_bar_appbar.h"
 
 #include <iostream>
 
@@ -90,6 +93,39 @@ int main()
     });
     require(sources[0] && !sources[0]->window,
         "ordinary foreground app still obscures a background fullscreen source");
+    // Focus can remain on an ordinary app on the other monitor. Protection
+    // follows the monitor observation, not that global keyboard target.
+    auto ordinary = foreground;
+    ordinary.client = ordinary.frame = {-2400, -1300, -100, -100};
+    sources = ScanMonitors(monitors, [&](const auto& visit) {
+        if (visit(ordinary)) visit(steam);
+        return true;
+    });
+    const bool steamFullscreen = sources[0] && sources[0]->window;
+    const bool ordinaryFullscreen = sources[1] && sources[1]->window;
+    for (const auto source : {DockRevealSource::Gesture, DockRevealSource::Hotkey,
+        DockRevealSource::AssociatedSurface, DockRevealSource::WindowAction})
+    {
+        require(snowdesktop::dock_fullscreen::BlocksReveal(DockFullscreenPolicy::FullProtection,
+            source, steamFullscreen), "full protection blocks each reveal on the Steam monitor");
+        require(!snowdesktop::dock_fullscreen::BlocksReveal(DockFullscreenPolicy::FullProtection,
+            source, ordinaryFullscreen), "fullscreen on another monitor does not block this Dock");
+        require(!snowdesktop::dock_fullscreen::BlocksReveal(DockFullscreenPolicy::Allow,
+            source, steamFullscreen), "application exception can allow its monitor reveal");
+        require(snowdesktop::dock_fullscreen::BlocksReveal(DockFullscreenPolicy::BlockGestures,
+            source, steamFullscreen) == (source == DockRevealSource::Gesture),
+            "gesture-only protection leaves explicit invocations available on the monitor");
+    }
+    snowdesktop::StatusBarFullscreenState bar;
+    require(bar.Observe(steam.window, false, false, false), "bar detects Steam without foreground focus");
+    bar.BeginDockReveal(true);
+    require(!bar.ShouldHide(false), "allowed Dock invocation reveals the independent bar");
+    bar.Observe(steam.window, false, false, true);
+    require(bar.Revealed(), "independent bar can outlive Dock promotion until outside dismissal");
+    bar.DismissReveal();
+    require(bar.ShouldHide(false), "outside dismissal hides the bar while Steam remains fullscreen");
+    require(!bar.Observe(HWND{}, false, false, false) && !bar.ShouldHide(false),
+        "bar restores ordinary visibility after fullscreen ends");
     bool activated = false;
     require(!GuardFocusRequest(false, [&] { return IsFullscreen(steam, monitor); },
         [&] { activated = true; }) && !activated,

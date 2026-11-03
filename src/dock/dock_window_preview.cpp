@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "dock_window_preview.h"
 #include "dock_window_preview_layout.h"
+
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "diagnostics/performance_trace.h"
 #include <commctrl.h>
@@ -13,6 +14,24 @@
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+
+const std::wstring& DockPreviewHoverController::CurrentTarget() const
+{ return currentTarget_; }
+
+const std::wstring& DockPreviewHoverController::SuppressedTarget() const
+{ return suppressedTarget_; }
+
+bool DockPreviewHoverController::TimerArmed() const
+{ return timerArmed_; }
+
+bool DockPreviewHoverController::IsIdle() const
+{
+    return currentTarget_.empty() &&
+        pendingTarget_.empty() &&
+        shownTarget_.empty() &&
+        suppressedTarget_.empty() &&
+        !timerArmed_;
+}
 
 namespace
 {

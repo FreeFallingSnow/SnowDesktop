@@ -481,9 +481,40 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/ui_animation_scheduler.cpp
     src/theme/personalization.cpp
     src/theme/personalization_path.cpp
+    src/theme/theme_library_settings.cpp
     src/theme/theme_library.cpp
     src/theme/theme_preview.cpp
     src/theme/theme_workshop.cpp
+    src/platform/foreground_fullscreen.cpp
+    src/dock/dock_fullscreen_policy.cpp
+    src/dock/dock_tray_rules.cpp
+    src/dock/dock_layout_settings.cpp
+    src/dock/dock_attention_dot.cpp
+    src/dock/dock_settings_rules.cpp
+    src/dock/dock_fullscreen_storage.cpp
+    src/dock/dock_tray_storage.cpp
+    src/dock/dock_tray_targets.cpp
+    src/dock/dock_gradient_storage.cpp
+    src/desktop/desktop_idle_hide_preferences.cpp
+    src/settings/settings_action_result.cpp
+    src/settings/animation_settings.cpp
+    src/settings/shell_extension_settings.cpp
+    src/platform/runtime_module_policy.cpp
+    src/ui/render/native_tooltip_preferences.cpp
+    src/dock/dock_magnification.cpp
+    src/dock/dock_running_animation.cpp
+    src/dock/dock_rename_layout.cpp
+    src/dock/floating_dock_rules.cpp
+    src/settings/settings_update_rules.cpp
+    src/settings/bar_settings_rules.cpp
+    src/theme/personalization_presets.cpp
+    src/theme/panel_gradient.cpp
+    src/theme/edge_light_settings.cpp
+    src/theme/edge_light_codec.cpp
+    src/theme/surface_theme.cpp
+    src/system/status_bar/status_bar_settings.cpp
+    src/navigation/navigation_settings_rules.cpp
+    src/dock/dock_window_rules.cpp
     src/dock/dock_settings.cpp
     src/dock/dock_attention_dot.h
     src/taskbar_hook/taskbar_symbol_resolver.cpp
@@ -602,4 +633,57 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/lua_script.cpp
     src/widgets/lua_logical_slot.cpp
     src/widgets/guide_widget.cpp
+    # Lightweight contracts and state declarations.
+    src/layout/collection_popup_types.h
+    src/app/dock/persistent_dock_host.h
+    src/app/features/recycle_bin_poll_state.h
+    src/app/features/steam_workshop_subscription_poll_state.h
+    src/app/shell/icon_load_task.h
+    src/desktop/desktop_idle_hide_preferences.h
+    src/dock/dock_fullscreen_applications.h
+    src/dock/dock_fullscreen_types.h
+    src/dock/dock_settings_defaults.h
+    src/dock/dock_settings_types.h
+    src/dock/dock_tray_types.h
+    src/platform/fullscreen_rules.h
+    src/platform/runtime_module_types.h
+    src/settings/animation_preferences.h
+    src/settings/category_settings_types.h
+    src/settings/general_settings_types.h
+    src/settings/settings_action_result.h
+    src/settings/settings_controller_interface.h
+    src/settings/settings_domain.h
+    src/settings/settings_fwd.h
+    src/settings/settings_host_actions.h
+    src/settings/settings_snapshot.h
+    src/settings/settings_store.h
+    src/settings/settings_values.h
+    src/settings/shell_extension_settings_types.h
+    src/ui/render/app_font_types.h
+    src/ui/render/native_tooltip_settings.h
+    src/widget/runtime/widget_host_requests.h
+    src/widget/view/widget_interaction_types.h
+    src/widget/view/widget_native_marquee.h
+    src/winui/backup_data_page_model.h
+    src/winui/calendar_page_actions.h
+    src/winui/desktop_page_actions.h
+    src/winui/dock_page_actions.h
+    src/winui/general_page_actions.h
+    src/winui/general_page_types.h
+    src/winui/home_about_page_actions.h
+    src/winui/hotkey_recorder_types.h
+    src/winui/page_layout_page_actions.h
+    src/winui/personalization_page_actions.h
+    src/winui/runtime_modules_query.h
+    src/winui/settings_window_host_options.h
+    src/winui/start_page_actions.h
+    src/winui/widgets_page_model.h
+    src/dock/dock_window_preview_types.h
+    src/dock/dock_window_types.h
+    src/navigation/navigation_settings_types.h
+    src/system/status_bar/status_bar_settings_types.h
+    src/theme/edge_light_types.h
+    src/theme/panel_gradient_types.h
+    src/theme/personalization_types.h
+    src/theme/surface_theme_types.h
 )
