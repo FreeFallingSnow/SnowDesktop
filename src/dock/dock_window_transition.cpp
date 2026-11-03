@@ -1110,11 +1110,17 @@ bool DockWindowTransition::Start(
     RefreshOcclusion();
     if (!presenting_)
         return false;
-    if (diagnosticCallback_)
-        diagnosticCallback_(L"Dock taskbar phase: overlay-before-show");
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    if (diagnosticCallback_)
-        diagnosticCallback_(L"Dock taskbar phase: overlay-after-show");
+    // A restore still references the iconic image here. Keep its HWND hidden
+    // until the restored image and first frame have completed composition;
+    // submitting an opacity-zero Commit alone is not a presentation barrier.
+    if (direction_ == DockWindowTransitionDirection::Minimize)
+    {
+        if (diagnosticCallback_)
+            diagnosticCallback_(L"Dock taskbar phase: overlay-before-show");
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        if (diagnosticCallback_)
+            diagnosticCallback_(L"Dock taskbar phase: overlay-after-show");
+    }
     if (RequiresDockWindowTransitionCompositionBarrier(direction_))
     {
         // Keep the source visible and the overlay at its exact first frame.
@@ -1410,6 +1416,10 @@ bool DockWindowTransition::Reverse(
         // old cloak can be released before submitting an ordinary restore.
         return false;
     }
+    // A restore can be reversed before its prepared image is exposed. That
+    // scene still owns an active but hidden HWND; retain the minimize entry.
+    if (direction_ == DockWindowTransitionDirection::Minimize && !IsWindowVisible(hwnd_))
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     if (!ScheduleAnimationWake())
     {
         CompleteRestoreAfterRenderFailure();
@@ -2635,6 +2645,14 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
             CompleteRestoreAfterRenderFailure();
             Finish();
             return false;
+        }
+        if (!IsWindowVisible(hwnd_))
+        {
+            if (diagnosticCallback_)
+                diagnosticCallback_(L"Dock taskbar phase: overlay-before-show");
+            ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+            if (diagnosticCallback_)
+                diagnosticCallback_(L"Dock taskbar phase: overlay-after-show");
         }
         animationStartTimeMs_ = MonotonicTimeMilliseconds();
         preparingRestore_ = false;
