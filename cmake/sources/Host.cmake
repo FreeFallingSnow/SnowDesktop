@@ -332,6 +332,7 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_window_pin.cpp
     src/dock/dock_window_transition.cpp
     src/dock/dock_window_source_cloak.h
+    src/dock/dock_window_trace.h
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
     src/core/dock.cpp

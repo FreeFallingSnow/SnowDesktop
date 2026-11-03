@@ -623,12 +623,15 @@ inline bool RequestDockWindowMinimize(HWND window,
         [window](WPARAM command) {
             // Match the system minimize command path so the application can
             // handle foreground succession. A successful post is not completion.
+            snowdesktop::dock_window_trace::Write(window, "host-post-minimize", static_cast<UINT>(command));
             return PostMessageW(window, WM_SYSCOMMAND, command, 0) != FALSE;
         },
         [window](int showCommand) {
+            snowdesktop::dock_window_trace::Write(window, "host-show-minimize", showCommand);
             return ShowWindowAsync(window, showCommand) != FALSE;
         },
         [window](WPARAM command) {
+            snowdesktop::dock_window_trace::Write(window, "host-default-minimize", static_cast<UINT>(command));
             DefWindowProcW(window, WM_SYSCOMMAND, command, 0);
         });
     if (route)

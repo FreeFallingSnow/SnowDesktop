@@ -158,6 +158,8 @@ struct DockWindowTransition::RetiredScene
     HWND window = nullptr;
     HANDLE token = nullptr;
     HWND source = nullptr;
+    HWND traceSource = nullptr;
+    ULONG traceRestore = 0, traceWindowRestore = 0;
     snowdesktop::dock_source_cloak::Owner owner;
     Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> device;
     Microsoft::WRL::ComPtr<IDCompositionTarget> target;
@@ -174,6 +176,9 @@ struct DockWindowTransition::RetiredScene
 
     void ReleaseResources() noexcept
     {
+        const HWND traced = std::exchange(traceSource, nullptr);
+        snowdesktop::dock_window_trace::Write(traced, "thumbnail-retire-before", 0, false, 0,
+            traceRestore, traceWindowRestore);
         // Thumbnail unregistration and COM release belong to this worker too.
         // Keep the resource budget until those releases have finished.
         image.Reset(); previousImage.Reset();
@@ -181,6 +186,8 @@ struct DockWindowTransition::RetiredScene
         strips.clear(); triangles.clear();
         clip.Reset(); effect.Reset(); scale.Reset(); visual.Reset();
         target.Reset(); device.Reset();
+        snowdesktop::dock_window_trace::Write(traced, "thumbnail-retire-after", 0, false, 0,
+            traceRestore, traceWindowRestore);
     }
     void Release() noexcept
     {
@@ -840,6 +847,11 @@ bool DockWindowTransition::StartRestore(
     RestoreCallback restoreCallback,
     HWND keepBelowWindow)
 {
+    if (helperRouting_)
+    {
+        const HWND root = GetAncestor(sourceWindow, GA_ROOT);
+        snowdesktop::dock_window_trace::Begin(root ? root : sourceWindow, true);
+    }
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, true, restoreCallback)) return true;
     if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
@@ -1133,7 +1145,10 @@ bool DockWindowTransition::AcquireSourceCloak()
     // the source's setter-only native transition policy, which cannot be read
     // reliably and may already have been disabled by the application.
     bool acquired = false;
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "acquire-cloak-before");
     const HRESULT cloakHr = snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired);
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "acquire-cloak-after", acquired, false,
+        static_cast<DWORD>(cloakHr));
     if (acquired)
     {
         sourceCloaked_ = true;
@@ -2491,7 +2506,9 @@ void DockWindowTransition::RequestRestoreForAnimation()
     // Request the native restore while the source is cloaked and our first
     // (collapsed, transparent) frame is already committed. This gives native
     // geometry and application painting the whole Genie timeline to settle.
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "native-restore-before");
     restoreCallback_(sourceWindow_, DockWindowRestoreTransitionPhase::RequestRestore);
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "native-restore-after");
 }
 
 bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
@@ -2659,12 +2676,16 @@ ActivateRestoredWindowForHandoff()
     if (!restoreCallback_ || !sourceWindow_ ||
         !IsWindow(sourceWindow_) || IsIconic(sourceWindow_))
         return;
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "handoff-before-uncloak");
     ReleaseSourceCloak();
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "handoff-after-uncloak");
     if (sourceCloaked_ || restoreActivated_) return;
     restoreActivated_ = true;
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "handoff-activate-before");
     restoreCallback_(
         sourceWindow_,
         DockWindowRestoreTransitionPhase::ActivateRestored);
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "handoff-activate-after");
 }
 
 void DockWindowTransition::ReleaseSourceCloak()
@@ -2673,8 +2694,11 @@ void DockWindowTransition::ReleaseSourceCloak()
     if (!sourceCloaked_) return;
     if (sourceCloakWindow_ && IsWindow(sourceCloakWindow_))
     {
+        snowdesktop::dock_window_trace::Write(sourceCloakWindow_, "release-cloak-before");
         const HRESULT hr = sourceRelease_ ? sourceRelease_(sourceCloakWindow_, hwnd_) :
             snowdesktop::dock_source_cloak::Release(sourceCloakWindow_, hwnd_);
+        snowdesktop::dock_window_trace::Write(sourceCloakWindow_, "release-cloak-after", 0, false,
+            static_cast<DWORD>(hr));
         if (FAILED(hr))
         {
             if (diagnosticCallback_) diagnosticCallback_(L"Dock source uncloak failed");
@@ -2688,6 +2712,7 @@ void DockWindowTransition::ReleaseSourceCloak()
 void DockWindowTransition::Finish()
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "scene.retire");
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "finish-before");
     ClearExternalPresentationWait();
     awaitingMinimizePresentation_ = false;
     pendingExternalRestore_ = false;
@@ -2724,6 +2749,7 @@ void DockWindowTransition::Finish()
     if (presenting_ && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-after-hide");
     const bool wasPresenting = std::exchange(presenting_, false);
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "overlay-hidden");
     hasOcclusionRegion_ = false;
     occlusionRects_.clear();
     occlusionHostBounds_ = {};
@@ -2735,6 +2761,9 @@ void DockWindowTransition::Finish()
     if (sceneRetirement_)
     {
         auto state = std::move(sceneRetirement_);
+        state->traceSource = sourceWindow_;
+        state->traceRestore = HandleToULong(GetPropW(sourceWindow_, snowdesktop::dock_window_trace::RestoreProperty));
+        state->traceWindowRestore = HandleToULong(GetPropW(sourceWindow_, snowdesktop::dock_window_trace::WindowRestoreProperty));
         state->device = compositionDevice_;
         state->target = std::move(compositionTarget_);
         state->visual = std::move(compositionVisual_);
@@ -2777,6 +2806,7 @@ void DockWindowTransition::Finish()
     compositionSourceRegion_ = {};
     compositionImageActive_ = false;
     compositionTimelineActive_ = false;
+    snowdesktop::dock_window_trace::Write(sourceWindow_, "finish-after");
     sourceWindow_ = nullptr;
     sourceProcess_ = sourceThread_ = 0;
     fromRect_ = {};

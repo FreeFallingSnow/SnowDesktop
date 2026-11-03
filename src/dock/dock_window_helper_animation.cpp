@@ -2,6 +2,7 @@
 #include "dock_external_minimize.h"
 #include "dock_minimize_protocol.h"
 #include "dock_window_transition.h"
+#include "dock_window_trace.h"
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "settings/animation_settings.h"
@@ -148,6 +149,7 @@ bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
     const HWND window = wire::Window(target.identity);
     const HWND below = reinterpret_cast<HWND>(static_cast<UINT_PTR>(target.keepBelow));
     if (!restore) return impl_->transition.StartMinimize(window, target.anchor, below, [](HWND source) {
+        snowdesktop::dock_window_trace::Write(source, "helper-animation-minimize", SC_MINIMIZE, true);
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     });
     return impl_->transition.StartRestore(window, target.anchor, [](HWND source, DockWindowRestoreTransitionPhase phase) {

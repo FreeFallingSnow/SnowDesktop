@@ -19,6 +19,8 @@ constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
 
 void IssueDockNativeMinimize(HWND target)
 {
+    snowdesktop::dock_window_trace::Begin(target, false);
+    snowdesktop::dock_window_trace::Write(target, "host-native-minimize", SC_MINIMIZE, true);
     snowdesktop::dock_taskbar_diagnostics::Record(L"before-native-minimize", target);
     snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute minimizeRoute{};
     const bool minimizeAccepted = RequestDockWindowMinimize(target, &minimizeRoute);
@@ -40,6 +42,10 @@ bool IsDockConsentActivationProxy(HWND window)
 void LogDockWindowActivation(HWND target, const wchar_t* phase,
     int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
 {
+    char tracePhase[48]{};
+    for (std::size_t i = 0; phase[i] && i + 1 < std::size(tracePhase); ++i)
+        tracePhase[i] = phase[i] < 128 ? static_cast<char>(phase[i]) : '?';
+    snowdesktop::dock_window_trace::Write(target, tracePhase, showCommand, false, error);
     if (!snowdesktop::diagnostics::IsLogEnabled(DiagnosticLogModule::Dock)) return;
     DWORD process = 0, foregroundProcess = 0;
     const DWORD thread = GetWindowThreadProcessId(target, &process);
@@ -515,6 +521,9 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    if (event == EVENT_SYSTEM_MINIMIZESTART || event == EVENT_SYSTEM_MINIMIZEEND ||
+        event == EVENT_SYSTEM_FOREGROUND || event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_SHOW)
+        snowdesktop::dock_window_trace::Write(window, "host-winevent", event);
     // A create notification begins a new HWND lifetime, including a recycled
     // handle whose previous window had an accepted close request.
     if (event == EVENT_OBJECT_CREATE) dockPendingCloseWindows_.erase(window);

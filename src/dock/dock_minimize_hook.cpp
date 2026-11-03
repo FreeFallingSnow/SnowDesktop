@@ -31,6 +31,9 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook
 extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockMinimizeHook(
     int code, WPARAM wParam, LPARAM lParam)
 {
+    if (code == HCBT_MINMAX)
+        snowdesktop::dock_window_trace::Write(reinterpret_cast<HWND>(wParam),
+            "target-cbt-minmax", LOWORD(lParam), true);
     if (code != HCBT_MINMAX ||
         !snowdesktop::dock_minimize::IsMinimizeCommand(LOWORD(lParam)))
         return CallNextHookEx(nullptr, code, wParam, lParam);

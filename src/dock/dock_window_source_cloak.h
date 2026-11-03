@@ -4,6 +4,7 @@
 #include <dwmapi.h>
 #include <mutex>
 #include "dock_cloak_dispatcher.h"
+#include "dock_window_trace.h"
 
 namespace snowdesktop::dock_source_cloak
 {
@@ -101,7 +102,11 @@ inline void CALLBACK RecoverOnSourceThread(HWND source, UINT, UINT_PTR timer, DW
     }
     if (GetPropW(source, RecoveryProperty) != owner.token && IsLiveOwner(owner)) return;
     const BOOL cloak = FALSE;
-    if (SUCCEEDED(DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak))) &&
+    dock_window_trace::Write(source, "target-recovery-uncloak-before");
+    const HRESULT hr = dock_window_trace::SkipCloak(source) ? S_OK :
+        DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    dock_window_trace::Write(source, "target-recovery-uncloak-after", 0, false, static_cast<DWORD>(hr));
+    if (SUCCEEDED(hr) &&
         SameOwner(source, owner))
     {
         StopRecoveryTimer(source);
@@ -149,7 +154,11 @@ inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& reques
     if (!GetWindowThreadProcessId(source, &process) || process != GetCurrentProcessId()) return;
     const BOOL cloak = request.cloak != 0;
     HRESULT hr = cloak ? StartRecoveryTimer(source) : S_OK;
-    if (SUCCEEDED(hr)) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    const bool skip = dock_window_trace::SkipCloak(source);
+    dock_window_trace::Write(source, "target-cloak-before", cloak);
+    if (SUCCEEDED(hr) && !skip) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    dock_window_trace::Write(source, skip ? "target-cloak-skipped" : "target-cloak-after",
+        cloak, false, static_cast<DWORD>(hr));
     if ((cloak && FAILED(hr)) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
     if (!SameOwner(source, owner)) return;
     SetPropW(source, ResultProperty, ULongToHandle(static_cast<ULONG>(hr)));
@@ -163,7 +172,13 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
     if (!GetWindowThreadProcessId(source, &process)) return E_INVALIDARG;
     if (!SameOwner(source, owner)) return E_ABORT;
     if (process == GetCurrentProcessId())
-        return DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    {
+        dock_window_trace::Write(source, "local-cloak-before", cloak);
+        const HRESULT hr = dock_window_trace::SkipCloak(source) ? S_OK :
+            DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        dock_window_trace::Write(source, "local-cloak-after", cloak, false, static_cast<DWORD>(hr));
+        return hr;
+    }
     RemovePropW(source, AckProperty);
     RemovePropW(source, ResultProperty);
     DWORD_PTR ignored = 0;
