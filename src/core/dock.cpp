@@ -31,6 +31,22 @@
 
 namespace
 {
+int ClampPointerAxisToCenters(
+    int pointerAxis, const std::vector<RECT>& rects, bool vertical)
+{
+    if (rects.empty()) return pointerAxis;
+    int first = std::numeric_limits<int>::max();
+    int last = std::numeric_limits<int>::min();
+    for (const RECT& rect : rects)
+    {
+        const int center = vertical
+            ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2;
+        first = std::min(first, center);
+        last = std::max(last, center);
+    }
+    return std::clamp(pointerAxis, first, last);
+}
+
 float DockPreviewScale(const RECT& base, const RECT& visual, int iconSize)
 {
     return static_cast<float>(snowdesktop::dock_magnification::
@@ -1224,6 +1240,7 @@ float DockContainer::GetMagnificationScale(
         return GetSingleMagnificationGeometry(baseRect).ScaleFor(baseRect, ItemIconSize());
     if (IsRectEmpty(&focusRect))
         return 1.0f;
+    int pointerAxis = IsVertical() ? pointer.y : pointer.x;
     if (GetMaxScrollOffset(GetBounds()) > 0)
     {
         const RECT start = GetWindowsButtonRect();
@@ -1239,6 +1256,12 @@ float DockContainer::GetMagnificationScale(
         if (baseZone == MagnificationZone::None ||
             baseZone != focusZone)
             return 1.0f;
+        // Keep the fixed file lane expanded while the pointer crosses its
+        // painted leading edge, rather than exposing applications beneath it.
+        if (baseZone == MagnificationZone::Trailing &&
+            GetMaxScrollOffset(GetBounds()) > 0)
+            pointerAxis = ClampPointerAxisToCenters(
+                pointerAxis, GetTrailingMagnificationRects(), IsVertical());
     }
     const int baseCenter = IsVertical()
         ? (baseRect.top + baseRect.bottom) / 2
@@ -1247,9 +1270,7 @@ float DockContainer::GetMagnificationScale(
         app_->dockSettings_.hoverEffect,
         EqualRect(&baseRect, &focusRect) != FALSE,
         static_cast<float>(
-            baseCenter -
-            (IsVertical()
-                ? pointer.y : pointer.x)),
+            baseCenter - pointerAxis),
         ItemPitch(), GetCurrentMagnificationScale());
 }
 
@@ -1294,8 +1315,12 @@ int DockContainer::GetMagnificationAxisShift(
         if (baseIt == zoneRects.end())
             return 0;
 
-        const int pointerAxis =
+        int pointerAxis =
             IsVertical() ? pointer.y : pointer.x;
+        if (baseZone == MagnificationZone::Trailing &&
+            GetMaxScrollOffset(GetBounds()) > 0)
+            pointerAxis = ClampPointerAxisToCenters(
+                pointerAxis, zoneRects, IsVertical());
         std::vector<float> scales;
         scales.reserve(zoneRects.size());
         for (const RECT& candidate : zoneRects)
