@@ -703,6 +703,12 @@ bool DockWindowTransition::StartMinimize(
     HWND sourceWindow, RECT dockRect,
     HWND keepBelowWindow, std::function<void(HWND)> minimizeRequest)
 {
+    if (helperRouting_)
+    {
+        // Freeze diagnostic control before Start() can acquire a real cloak.
+        const HWND root = GetAncestor(sourceWindow, GA_ROOT);
+        snowdesktop::dock_window_trace::Begin(root ? root : sourceWindow, false);
+    }
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false)) return true;
     if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=

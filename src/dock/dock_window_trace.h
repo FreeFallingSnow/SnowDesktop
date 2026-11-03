@@ -70,6 +70,8 @@ struct View
     View& operator=(const View&) = delete;
 };
 
+// CBT stacks show target-thread execution, including events processed inside
+// PeekMessage. They do not identify an asynchronous cross-process initiator.
 inline void Write(HWND window, const char* phase, UINT command = 0,
     bool captureStack = false, DWORD result = 0,
     ULONG restore = MAXDWORD, ULONG windowRestore = MAXDWORD) noexcept

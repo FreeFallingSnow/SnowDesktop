@@ -84,6 +84,17 @@ inline UINT CommandMessage() noexcept
 
 inline void RemoveOwner(HWND source, Owner owner) noexcept;
 
+inline bool SkipDiagnosticCloakWrite(HWND source, BOOL cloak) noexcept
+{
+    if (!dock_window_trace::SkipCloak(source)) return false;
+    if (cloak) return true;
+    // A lease may predate diagnostic initialization. A no-op release must
+    // never acknowledge and discard ownership of a real app-cloaked window.
+    DWORD flags = 0;
+    return SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
+        (flags & DWM_CLOAKED_APP) == 0;
+}
+
 inline void StopRecoveryTimer(HWND source) noexcept
 {
     const auto timer = reinterpret_cast<UINT_PTR>(RemovePropW(source, TimerProperty));
@@ -103,7 +114,7 @@ inline void CALLBACK RecoverOnSourceThread(HWND source, UINT, UINT_PTR timer, DW
     if (GetPropW(source, RecoveryProperty) != owner.token && IsLiveOwner(owner)) return;
     const BOOL cloak = FALSE;
     dock_window_trace::Write(source, "target-recovery-uncloak-before");
-    const HRESULT hr = dock_window_trace::SkipCloak(source) ? S_OK :
+    const HRESULT hr = SkipDiagnosticCloakWrite(source, cloak) ? S_OK :
         DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
     dock_window_trace::Write(source, "target-recovery-uncloak-after", 0, false, static_cast<DWORD>(hr));
     if (SUCCEEDED(hr) &&
@@ -154,7 +165,7 @@ inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& reques
     if (!GetWindowThreadProcessId(source, &process) || process != GetCurrentProcessId()) return;
     const BOOL cloak = request.cloak != 0;
     HRESULT hr = cloak ? StartRecoveryTimer(source) : S_OK;
-    const bool skip = dock_window_trace::SkipCloak(source);
+    const bool skip = SkipDiagnosticCloakWrite(source, cloak);
     dock_window_trace::Write(source, "target-cloak-before", cloak);
     if (SUCCEEDED(hr) && !skip) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
     dock_window_trace::Write(source, skip ? "target-cloak-skipped" : "target-cloak-after",
@@ -174,7 +185,7 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
     if (process == GetCurrentProcessId())
     {
         dock_window_trace::Write(source, "local-cloak-before", cloak);
-        const HRESULT hr = dock_window_trace::SkipCloak(source) ? S_OK :
+        const HRESULT hr = SkipDiagnosticCloakWrite(source, cloak) ? S_OK :
             DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
         dock_window_trace::Write(source, "local-cloak-after", cloak, false, static_cast<DWORD>(hr));
         return hr;
