@@ -1,3 +1,4 @@
+#include "app/render/desktop_backdrop_update_rules.h"
 // SPDX-FileCopyrightText: TranslucentTB contributors
 // SPDX-FileCopyrightText: 2026 SnowDesktop contributors
 // SPDX-License-Identifier: GPL-3.0-only

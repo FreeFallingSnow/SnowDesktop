@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/view/widget_surface_retention.h"

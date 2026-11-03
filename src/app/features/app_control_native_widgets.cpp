@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "settings/animation_settings.h"
+#include "common/utils.h"
 #include "settings/control_native_widget_settings.h"
 #include "platform/demo_collection_rules.h"
 #include "widgets/single_cell_widget_rules.h"

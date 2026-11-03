@@ -1,5 +1,8 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "navigation/navigation_settings.h"
+#include "common/l10n.h"
+#include "common/utils.h"
 #include "foreground_paint_region.h"
 #include "layout/page_navigation_rules.h"
 

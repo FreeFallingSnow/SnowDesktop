@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "app/dock/dock_tray_popup_state.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "navigation/quick_navigation_rules.h"
 

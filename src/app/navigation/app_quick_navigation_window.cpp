@@ -1,6 +1,15 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "settings/animation_settings.h"
+#include "shell/native_start_menu.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
+#include "shell/shell_item_visibility.h"
+#include "navigation/everything_search.h"
+#include "app/dock/persistent_dock_host.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 #include "platform/shell_overlay_window.h"
@@ -976,7 +985,6 @@ void DesktopApp::OpenQuickNavigation(
 {
     // Hotkeys and Dock search share the same boundary as the status bar.
     if (statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())) return;
-    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, nullptr)) return;
     if (dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive())
         return;
@@ -987,6 +995,8 @@ void DesktopApp::OpenQuickNavigation(
         snowdesktop::private_pointer::CursorPosition(&point);
         invocationScreenPoint = point;
     }
+    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface,
+        MonitorFromPoint(*invocationScreenPoint, MONITOR_DEFAULTTONEAREST))) return;
     if (dockStartMenu_ && dockStartMenu_->DismissThen([this, source, invocationScreenPoint] {
             OpenQuickNavigation(source, invocationScreenPoint);
         })) return;

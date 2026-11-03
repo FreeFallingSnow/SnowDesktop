@@ -14,6 +14,9 @@
 #include "widget_chrome_rules.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "widget/runtime/widget_engine.h"
 #include "widget/preview/widget_preview_scene.h"
 
 namespace

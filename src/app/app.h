@@ -19,7 +19,6 @@
 #include "ui/render/native_tooltip.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
-#include "ui/input/text_input_window.h"
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "data/layout_save_queue.h"
@@ -27,20 +26,16 @@
 #include "app/render/widget_icon_backdrops.h"
 #include "app/render/item_text_layout_cache.h"
 #include "platform/operation_feedback.h"
-#include "shell/native_start_menu.h"
 #include "ui/render/graphics_device_recovery.h"
 #include "common/background_work.h"
 #include "data/data_cleanup.h"
 #include "platform/single_instance.h"
 #include "platform/control/control_server.h"
 #include "app/shell/shell_icon_work.h"
-#include "app/shell/shell_icon_request.h"
 #include "icons/icon_styled_pixels.h"
 #include "dock/dock_refresh_cache.h"
-#include "app/dock/dock_tray_popup_state.h"
 #include "dock/dock_running_animation.h"
 #include "dock/dock_window_attention.h"
-#include "dock/dock_external_minimize.h"
 #include "common/bounded_lru_cache.h"
 #include "icons/icon_row_index.h"
 #include "app/dock/dock_icon_work.h"
@@ -57,48 +52,68 @@
 #include "app/widgets/widget_group_transition.h"
 #include "core/drop_model.h"
 #include "core/drag_session.h"
-#include "core/drag_target_resolver.h"
 #include "core/owned_transient_drag_target.h"
-#include "settings/settings_window.h"
 #include "settings/settings_window_open_rules.h"
-#include "settings/settings_controller.h"
-#include "platform/usage_guide.h"
+#include "settings/settings_route.h"
+#include "settings/settings_host_actions.h"
+#include "settings/settings_action_result.h"
+#include "settings/settings_search_index.h"
+#include "winui/home_about_page_model.h"
 #include "platform/usage_guide_panel.h"
 #include "icons/large_icon_settings.h"
-#include "icons/large_icon_assets.h"
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
+class SettingsWindow;
+class WidgetEngine;
+struct LuaApplicationCatalogSnapshot;
+class DockExternalMinimize;
+class DockWindowTransition;
+class DockWindowPreview;
+enum class DockWindowRestoreTransitionPhase;
+class SearchVisibilityDetector;
+struct DockTrayPopupState;
+namespace snowdesktop
+{
+class SettingsController;
+class SystemPanel;
+class NativeStartMenu;
+class DockAppBars;
+class WidgetAccessibilityProviderHost;
+class LargeIconAssets;
+struct LargeIconAsset;
+class WidgetPreviewScene;
+namespace steam_entitlement { class Service; }
+namespace steam_presence { class Service; }
+namespace winui { struct LayoutRestorePayload; }
+}
+namespace snowdesktop::usage_guide { enum class Topic; }
+namespace snowdesktop::page_management { struct RemovalPlan; }
 namespace snowdesktop::page_mapping { struct State; struct Services; }
 namespace snowdesktop::app_control { struct Runtime; }
 namespace snowdesktop::control { struct ElementSnapshot; }
+namespace snowdesktop::component_preview { struct Model; struct ApplySettings; struct Bitmap; struct StagePlacement; }
+namespace snowdesktop::native_component_preview { struct Request; struct Result; }
 namespace snowdesktop::control_settings { struct NativeWidgetSettingsState; struct NativeWidgetSettingsPatch; }
 namespace snowdesktop::dock_drop_model { struct Services; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
+namespace snowdesktop::widget_runtime { struct PackageImageSource; class WidgetSystemDataProvider; }
 namespace snowdesktop::tray { struct Icon; class Service; }
-#include "navigation/navigation_settings.h"
-#include "settings/general_settings.h"
+#include "navigation/navigation_settings_types.h"
+#include "settings/general_settings_types.h"
+#include "theme/personalization_types.h"
 #include "system/status_bar/status_bar.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
-#include "dock/dock_appbar.h"
-#include "system/panel/system_panel.h"
 #include "app/input/desktop_passthrough_indicator.h"
 #include "shell/shell_extension_menu.h"
 #include "desktop/display_topology_refresh.h"
 #include "desktop/explorer_icon_visibility.h"
-#include "dock/dock_settings.h"
-#include "theme/taskbar_appearance.h"
+#include "dock/dock_settings_types.h"
+#include "dock/dock_fullscreen_types.h"
 #include "dock/dock_drop_rules.h"
-#include "dock/dock_folder_rules.h"
-#include "dock/dock_collection_icon_rules.h"
-#include "layout/collection_popup_layout.h"
-#include "layout/folder_sort_rules.h"
-#include "shell/shell_item_visibility.h"
-#include "layout/popup_drag_rules.h"
+#include "layout/collection_popup_types.h"
 #include "layout/popup_animation_rules.h"
 #include "navigation/quick_navigation_animation_rules.h"
-#include "layout/item_layout_rules.h"
-#include "icons/icon_render_rules.h"
 #include "icons/icon_beautify.h"
 #include "icons/icon_appearance.h"
 #include "icons/icon_appearance_rules.h"
@@ -107,15 +122,11 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include <map>
 #include <set>
 #include "icons/icon_image_codec.h"
-#include "platform/demo_collection_rules.h"
-#include "platform/demo_asset_paths.h"
-#include "dock/dock_window_rules.h"
-#include "dock/dock_window_preview.h"
-#include "dock/dock_window_transition.h"
-#include "dock/dock_launch_animation.h"
-#include "dock/dock_rename_layout.h"
+#include "platform/demo_mode_rules.h"
+namespace snowdesktop::demo_collection_rules { struct Category; }
+#include "dock/dock_window_types.h"
+#include "dock/dock_window_preview_types.h"
 #include "dock/floating_dock_rules.h"
-#include "layout/floating_popup_rules.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "desktop/desktop_hover_types.h"
 #include "desktop/desktop_drop_cache.h"
@@ -125,30 +136,21 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "drag_drop/url_drop_download_worker.h"
 #include "drag_drop/drop_text_rules.h"
 #include "drag_drop/virtual_file_drop.h"
-#include "desktop/desktop_item_reference_migration.h"
 #include "settings/category_settings.h"
 #include "ui/menu/menu_quick_icon.h"
 #include "ui/menu/menu_builtin_icon.h"
 #include "ui/menu/modern_menu.h"
-#include "ui/preview/component_preview.h"
-#include "ui/preview/native_component_preview_export.h"
-#include "widget/preview/widget_preview_scene.h"
 #include "shell/shell_file_operation_worker.h"
 #include "shell/shell_file_operation_completion.h"
 #include "ui/input/low_level_mouse_hook.h"
-#include "navigation/everything_search.h"
 #include "navigation/quick_navigation_search_async.h"
-#include "data/data_paths.h"
-#include "common/utils.h"
-#include "widget/runtime/widget_engine.h"
-#include "widget/view/widget_accessibility_provider.h"
-#include "common/l10n.h"
+#include "widget/runtime/widget_host_requests.h"
+#include "widget/view/widget_native_marquee.h"
+#include "widget/packages/widget_package.h"
 #include "layout/item_location.h"
 #include "common/types.h"
 #include "common/constants.h"
-#include "resources/resource.h"
 #include "app/render/desktop_backdrop_compositor.h"
-#include "app/render/desktop_backdrop_update_rules.h"
 #include "app/drag_drop/drag_drop_controller.h"
 #include "app/layout/grid_geometry.h"
 #include "layout/layout_spacing_rules.h"
@@ -168,14 +170,8 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "app/tray/tray_icon_controller.h"
 #include "app/widgets/widget_notification_presenter.h"
 #include "ui/render/ui_animation_scheduler.h"
-#include "taskbar_dynamic/search_visibility_detector.h"
-#include "diagnostics/crashlog.h"
 #include "platform/auto_start_rules.h"
-#include "platform/deployment_context.h"
-#include "steam/steam_entitlement.h"
-#include "steam/steam_presence.h"
 #include "layout/page_layout_settings.h"
-#include "layout/page_management_rules.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -205,6 +201,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include <cstring>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <fstream>
 #include <filesystem>
 #include <iterator>
@@ -220,7 +217,6 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include <unordered_set>
 #include <vector>
 
-#include "desktop/desktop_source.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -279,53 +275,9 @@ std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& color);
 D2D1_COLOR_F ToD2DColor(COLORREF color, float alpha = 1.0f);
 std::wstring DockItemWindowKey(const DesktopItem& item);
 
-using IconLoadPhase = snowdesktop::shell_icon_request::Phase;
-
-struct IconLoadTask {
-    std::wstring sourceStamp;
-    uint64_t serial = 0;
-    uint64_t popupGeneration = 0;
-    std::wstring requestKey;
-    std::wstring layoutKey;
-    std::wstring widgetId;
-    Pidl absolutePidl;
-    int sysIconIndex = -1;
-    std::wstring parsingName;
-    bool isDesktopItem = true;
-    std::wstring folderPath;
-    IconLoadPhase phase = IconLoadPhase::Phase1;
-    int requestedSize = 0;
-};
-struct RecycleBinPollState {
-    std::atomic<int64_t> hasItems{ -1 };   ///< -1 未知，0 空，1 非空
-    std::atomic<bool> queryInFlight{ false };
-    std::atomic<DWORD> lastQueryDurationMs{ 0 };
-};
-struct SteamWorkshopSubscriptionPollState {
-    struct ReadyQuery
-    {
-        std::uint64_t queryId = 0;
-        snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
-    };
-    struct SettingsCompletion
-    {
-        std::uint64_t generation = 0;
-        std::uint64_t taskId = 0;
-        std::uint64_t queryId = 0;
-        std::string expectedUnsubscribedPublishedFileId;
-        std::vector<std::string> expectedRemovedPackageIds;
-        // Starts on the first pending reconciliation, after any host deferral.
-        std::chrono::steady_clock::time_point reconciliationDeadline{};
-        snowdesktop::winui::WidgetsPageBackendOptions::AsyncCompletion done;
-    };
-    std::atomic<bool> queryInFlight{ false };
-    std::atomic<bool> refreshPending{ false };
-    std::mutex mutex;
-    std::optional<ReadyQuery> ready;
-    std::vector<SettingsCompletion> settingsCompletions;
-    std::uint64_t nextQueryId = 1;
-    std::uint64_t activeQueryId = 0;
-};
+struct IconLoadTask;
+struct RecycleBinPollState;
+struct SteamWorkshopSubscriptionPollState;
 enum class DockWindowVisualState
 {
     Closed,
@@ -395,27 +347,6 @@ struct DockRunningAppInfo
     bool foreground = false;
     bool selected = false;
     std::vector<HWND> trackedWindows;
-};
-
-struct IconLoadResult {
-    int sysIconIndex = -1;
-    std::wstring typeName;
-    uint64_t serial = 0;
-    uint64_t popupGeneration = 0;
-    std::wstring requestKey;
-    std::wstring layoutKey;
-    std::wstring widgetId;
-    HBITMAP bitmap = nullptr;
-    std::shared_ptr<const snowdesktop::icon_styled_pixels::Prepared> preparedPixels;
-    SIZE bitmapSize{};
-    bool shortcutArrow = false;
-    bool isShortcut = false;
-    bool isApplicationShortcut = false;
-    snowdesktop::category_collection_rules::ShortcutTarget shortcutTarget;
-    bool iconIsMediaThumbnail = false;
-    IconLoadPhase phase = IconLoadPhase::Phase1;
-    bool isDesktopItem = true;
-    std::wstring folderPath;
 };
 
 struct DemoIconDecodeResult {
@@ -529,7 +460,7 @@ struct WidgetMarqueeCompositionItem
 
 struct PendingWidgetMarqueeComposition
 {
-    std::vector<LuaWidget::NativeMarqueeText> marquees;
+    std::vector<snowdesktop::widget_runtime::NativeMarqueeText> marquees;
     bool reducedMotion = false;
 };
 
@@ -821,71 +752,7 @@ public:
 
 private:
     // ── Window ──────────────────────────────────────────────
-    struct PersistentDockHost
-    {
-        DesktopApp* owner = nullptr;
-        DockContainer* container = nullptr;
-        HMONITOR monitor = nullptr;
-        HWND hwnd = nullptr;
-        RECT sourceRect{};
-        RECT dockRect{};
-        RECT animationVisualRect{};
-        RECT popupRect{};
-        RECT tooltipRect{};
-        snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;
-        RECT guideOcclusionRect{};
-        bool active = false;
-        snowdesktop::desktop_hover_rules::RetainedDockLeaveTracking retainedLeaveTracking;
-        // Promotion is per monitor. Selection only identifies the Host that
-        // currently owns pointer/keyboard-associated actions.
-        bool promoted = false;
-        bool explicitDismissAvailable = false;
-        RECT explicitDismissRect{};
-        bool promotionInputVisible = false;
-        bool promotionInputBlocked = false;
-        HWND promotionInputForeground = nullptr;
-        DWORD promotionInputProcess = 0;
-        std::optional<bool> promotionInputCapabilityMissing;
-        bool promotionInputBorrowedFocus = false;
-        ULONGLONG promotionInputFocusPendingUntil = 0;
-        std::optional<DWORD> promotionInputRequestInputTime;
-        bool promotionInputPointerRetryUsed = false;
-        snowdesktop::floating_dock_rules::WindowActionPromotion windowActionPromotion;
-        // Passive drag-edge reveal is intentionally separate from manual
-        // promotion. It may borrow the floating Z band without starting a
-        // keyboard session, and its leave timer must never collapse a Host
-        // that the user summoned explicitly.
-        bool passivelyRevealed = false;
-        bool edgeHoverRequested = false;
-        ULONGLONG passiveRevealTick = 0;
-        ULONGLONG passiveLeaveStartTick = 0;
-        bool revealPending = false;
-        bool frameReady = false;
-        snowdesktop::quick_navigation_animation_rules::State mergedAnimation;
-        snowdesktop::UiScheduleToken mergedAnimationToken = 0;
-        snowdesktop::StatusBarDockPresentation mergedPresentation;
-        // Shared visibility timeline for merged bars and summon-only Docks.
-        bool mergedPresentationActive = false, updatingMergedPresentation = false;
-        bool presentationMerged = false;
-        bool mergedInteractionHeld = false, mergedCloseAfterInteraction = false;
-        ComPtr<IDCompositionEffectGroup> mergedOpacity;
-        bool compositionRenderRecoveryPending = false;
-        bool compositionPaintInProgress = false;
-        bool immediatePaintDeferred = false;
-        bool windowRegionPending = false;
-        bool backdropRecoveryPending = false;
-        bool desktopLayerRestorePending = false;
-        ULONGLONG desktopLayerRestoreRetryTick = 0;
-        HWND desktopLayerForegroundWindow = nullptr;
-        std::uint64_t presentationRevision = 0;
-        bool dropTargetRegistered = false;
-        DesktopBackdropCompositor backdrop;
-        ComPtr<IDCompositionTarget> dcompTarget;
-        ComPtr<IDCompositionVisual2> dcompVisual;
-        ComPtr<IDCompositionSurface> dcompSurface;
-        UINT compWidth = 0;
-        UINT compHeight = 0;
-    };
+    struct PersistentDockHost;
     /**
      * @brief 主窗口过程。
      * @param hwnd 窗口句柄
@@ -1720,10 +1587,7 @@ private:
     /** @brief 从 Windows 读取任务栏系统设置并同步到软件配置。 */
     void SyncSystemTaskbarSettingsFromWindows();
     PersonalizationSettings ResolveSystemTaskbarAppearance(
-        const DockSettings& settings) const
-    {
-        return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
-    }
+        const DockSettings& settings) const;
     /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */
     bool IsLightContentTheme() const
     {
@@ -1745,10 +1609,7 @@ private:
     /** Application-owned appearance mirror, independent of settings UI. */
     const PersonalizationSettings& CurrentPersonalization() const noexcept
     { return personalizationSettings_; }
-    PersonalizationSettings CurrentDockAppearance() const
-    {
-        return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
-    }
+    PersonalizationSettings CurrentDockAppearance() const;
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility(bool automatic = false);
     void UpdateDesktopIdleHide();
@@ -3108,7 +2969,7 @@ private:
         const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr);
     bool QueueWidgetMarqueeComposition(
         const std::wstring& widgetId,
-        const std::vector<LuaWidget::NativeMarqueeText>& marquees,
+        const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
         bool reducedMotion);
     bool FlushPendingWidgetMarqueeComposition();
     bool SyncWidgetMarqueeCompositionVisibility();
@@ -3255,11 +3116,7 @@ private:
         std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
-    bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
-    {
-        return snowdesktop::icon_render_rules::ShouldBeautify(
-            iconBeautifySettings_.enabled, iconIsMediaThumbnail, beautifyFileThumbnails_);
-    }
+    bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const;
 
     /**
      * @brief 在指定矩形上绘制快捷方式箭头叠加层。
@@ -4008,8 +3865,7 @@ private:
     std::optional<PendingLuaWidgetConsent> pendingLuaWidgetConsent_;
     std::uint64_t nextLuaWidgetConsentSessionId_ = 0;
     std::shared_ptr<SteamWorkshopSubscriptionPollState>
-        steamWorkshopSubscriptionPollState_ =
-            std::make_shared<SteamWorkshopSubscriptionPollState>();
+        steamWorkshopSubscriptionPollState_;
     DWORD steamWorkshopSubscriptionLastQueryTick_ = 0;
     std::string steamWorkshopSubscriptionLastError_;
     HANDLE steamWorkshopWatcherThread_ = nullptr;
@@ -4677,7 +4533,7 @@ private:
         size_t insertIndex = 0;
         bool dockFolderPopup = false;
         bool volumeDefault = false;
-        std::optional<WidgetEngine::FileDropTarget> fileDropTarget;
+        std::optional<snowdesktop::widget_runtime::WidgetFileDropTarget> fileDropTarget;
     };
     std::optional<ExternalSlotDestination> CaptureExternalSlotDestination(
         POINT point, DWORD keyState);
@@ -4727,8 +4583,7 @@ private:
     DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) const;
 
     /** @brief 回收站状态异步查询共享状态（防并发查询） */
-    std::shared_ptr<RecycleBinPollState> recycleBinPollState_ =
-        std::make_shared<RecycleBinPollState>();
+    std::shared_ptr<RecycleBinPollState> recycleBinPollState_;
     /** @brief 回收站轮询当前生效间隔（按查询耗时自适应调整） */
     UINT recycleBinPollIntervalMs_ = kRecycleBinPollIntervalMs;
     /** @brief 回收站目录文件系统监听（事件驱动即时刷新，轮询仅作兜底） */

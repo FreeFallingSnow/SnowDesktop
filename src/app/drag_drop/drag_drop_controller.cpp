@@ -1,3 +1,4 @@
+#include "core/drag_target_resolver.h"
 #include "drag_drop_controller.h"
 #include "drag_drop/ole_drag_rules.h"
 

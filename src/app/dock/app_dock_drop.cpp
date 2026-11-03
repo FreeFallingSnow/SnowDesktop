@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "common/utils.h"
 #include "widgets/collection_group_rules.h"
 #include "desktop/desktop_source.h"
 #include "dock/dock_drop_model.h"

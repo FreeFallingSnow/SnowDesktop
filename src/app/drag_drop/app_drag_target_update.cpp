@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "layout/collection_popup_layout.h"
+#include "common/utils.h"
+#include "core/drag_target_resolver.h"
+#include "layout/popup_drag_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "core/drag_source_rebind.h"

@@ -2,6 +2,28 @@
 #include "platform/force_restart_hotkey.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "common/l10n.h"
+#include "taskbar_dynamic/search_visibility_detector.h"
+#include "shell/native_start_menu.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "common/utils.h"
+#include "dock/dock_settings.h"
+#include "system/panel/system_panel.h"
+#include "dock/dock_appbar.h"
+#include "dock/dock_external_minimize.h"
+#include "widget/view/widget_accessibility_provider.h"
+#include "icons/large_icon_assets.h"
+#include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
+#include "settings/settings_window.h"
+#include "settings/settings_controller.h"
+#include "app/features/recycle_bin_poll_state.h"
+#include "app/features/steam_workshop_subscription_poll_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -19,7 +41,12 @@
 
 // Desktop host lifecycle.
 
-DesktopApp::DesktopApp() = default;
+DesktopApp::DesktopApp()
+    : steamWorkshopSubscriptionPollState_(
+        std::make_shared<SteamWorkshopSubscriptionPollState>()),
+      recycleBinPollState_(std::make_shared<RecycleBinPollState>())
+{
+}
 
 DesktopApp::~DesktopApp()
 {
@@ -491,7 +518,9 @@ bool DesktopApp::FocusKeyboardWindow(
                                   requestForeground, deliberateFullscreenExit,
                                   &foregroundAttempted, &foregroundAccepted]() {
         const bool deliberateExitAllowed = deliberateFullscreenExit &&
-            !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr);
+            !FullscreenBlocksDockReveal(DockRevealSource::Hotkey,
+                floatingDockHost_ ? floatingDockHost_->monitor :
+                    MonitorFromWindow(activationWindow, MONITOR_DEFAULTTONULL));
         return snowdesktop::fullscreen::GuardFocusRequest(deliberateExitAllowed,
             snowdesktop::fullscreen::ObserveForeground, [=, &foregroundAttempted, &foregroundAccepted]() {
                 if (requestForeground)
@@ -570,7 +599,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
     for (const auto& host : persistentDockHosts_) if (host) host->promotionInputBorrowedFocus = false;
     floatingDockInputDeactivated_ = false;
-    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
+    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey,
+        floatingDockHost_ ? floatingDockHost_->monitor : nullptr)) return;
     if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
         return;
     if (floatingDockKeyboardSessionActive_)
@@ -631,7 +661,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 
 void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
-    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
+    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey,
+        floatingDockHost_ ? floatingDockHost_->monitor : nullptr)) return;
     // Menu/file-operation completions must not reclaim the keyboard after the
     // user returned to a fullscreen application. Only an allowed explicit
     // Dock hotkey can deliberately exit fullscreen at the start of a session.

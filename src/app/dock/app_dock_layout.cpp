@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "dock/dock_settings_rules.h"
+#include "common/utils.h"
+#include "dock/dock_appbar.h"
 #include "dock/dock_work_area_reservation.h"
 #include "system/status_bar/status_bar_appbar.h"
 #include <algorithm>

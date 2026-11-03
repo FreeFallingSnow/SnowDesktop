@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget_interaction_types.h"
+
 #include <map>
 #include <cstdint>
 #include <chrono>
@@ -12,45 +14,6 @@ namespace snowdesktop::widget_runtime
 {
 bool ShouldShowInteractionFocusCue(std::string_view source,
     bool textEntry = false) noexcept;
-
-struct InteractionValue
-{
-    enum class Type
-    {
-        Null,
-        Boolean,
-        Integer,
-        Number,
-        String,
-        Array,
-        Object,
-    };
-
-    Type type = Type::Null;
-    bool boolean = false;
-    long long integer = 0;
-    double number = 0.0;
-    std::string string;
-    std::vector<InteractionValue> array;
-    std::map<std::string, InteractionValue, std::less<>> object;
-
-    bool operator==(const InteractionValue&) const = default;
-};
-
-struct InteractionAction
-{
-    enum class ContextMenuScope
-    {
-        Element,
-        Component,
-    };
-
-    std::string id;
-    InteractionValue value;
-    ContextMenuScope contextMenuScope = ContextMenuScope::Element;
-
-    bool operator==(const InteractionAction&) const = default;
-};
 
 enum class InteractionControlKind
 {

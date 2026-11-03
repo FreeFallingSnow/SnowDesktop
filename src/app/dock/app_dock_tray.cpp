@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "platform/runtime_module_policy.h"
+#include "app/dock/dock_tray_popup_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "dock/dock_tray_targets.h"
 #include "app/navigation/quick_navigation_theme.h"
 

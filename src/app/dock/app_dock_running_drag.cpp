@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "dock/dock_folder_rules.h"
 #include "dock_explorer_pin.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"

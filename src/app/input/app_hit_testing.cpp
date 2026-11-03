@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/utils.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "widgets/single_cell_widget_rules.h"

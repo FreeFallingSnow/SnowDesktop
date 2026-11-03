@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "shell/native_start_menu.h"
+#include "dock/dock_settings.h"
+#include "app/dock/persistent_dock_host.h"
 
 bool DesktopApp::IsDockStartMenuActive(HMONITOR monitor) const
 {

@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "app/shell/icon_load_task.h"
+#include "common/utils.h"
+#include "shell/shell_item_visibility.h"
 #include "widgets/folder_member_order.h"
 #include "app/shell/shell_icon_request.h"
 #include "layout/folder_mapping_rules.h"

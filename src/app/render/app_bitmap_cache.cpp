@@ -1,6 +1,10 @@
 #include "icons/icon_hbitmap_pixels.h"
 #include "icons/icon_bitmap_renderer.h"
 #include "app/app.h"
+#include "common/utils.h"
+#include "app/render/desktop_backdrop_update_rules.h"
+#include "icons/large_icon_assets.h"
+#include "app/dock/persistent_dock_host.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
 

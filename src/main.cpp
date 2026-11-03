@@ -12,6 +12,8 @@
  */
 
 #include "app/app.h"
+#include "common/utils.h"
+#include "diagnostics/diagnostic_log.h"
 #include "platform/auto_start_elevation.h"
 #include "platform/auto_start_launch.h"
 #include "settings/settings_process.h"

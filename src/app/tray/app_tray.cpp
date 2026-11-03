@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "dock/dock_settings.h"
+#include "shell/shell_item_visibility.h"
 
 #include "desktop/desktop_namespace_registry.h"
 

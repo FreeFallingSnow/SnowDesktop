@@ -19,6 +19,7 @@
 #include "common/constants.h"
 #include "common/utils.h"
 #include "app/app.h"
+#include "ui/input/text_input_window.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "single_cell_widget_rules.h"

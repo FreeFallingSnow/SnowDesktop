@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
+#include "system/panel/system_panel.h"
+#include "app/dock/dock_tray_popup_state.h"
 
 std::wstring DesktopApp::GetSelectedFilePreviewPath()
 {

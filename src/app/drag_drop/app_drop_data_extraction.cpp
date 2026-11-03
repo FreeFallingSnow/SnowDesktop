@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "common/l10n.h"
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/drop_staging.h"
 #include "drag_drop/drop_data_url.h"

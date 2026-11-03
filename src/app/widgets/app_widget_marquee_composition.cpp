@@ -6,7 +6,7 @@ namespace
 constexpr UINT kMaximumMarqueeSurfaceDimension =
     D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
 
-bool IsFiniteMarquee(const LuaWidget::NativeMarqueeText& marquee)
+bool IsFiniteMarquee(const snowdesktop::widget_runtime::NativeMarqueeText& marquee)
 {
     const float viewportWidth =
         marquee.viewport.right - marquee.viewport.left;
@@ -50,7 +50,7 @@ D2D1_COLOR_F MarqueeColor(int rgb, float alpha)
 
 bool DesktopApp::QueueWidgetMarqueeComposition(
     const std::wstring& widgetId,
-    const std::vector<LuaWidget::NativeMarqueeText>& marquees,
+    const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
     bool reducedMotion)
 {
     if (widgetId.empty() || !dcompDevice_ || !dcompVisual_)

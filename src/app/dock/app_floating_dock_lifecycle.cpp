@@ -1,5 +1,15 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "navigation/navigation_settings.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "dock/dock_settings_rules.h"
+#include "diagnostics/diagnostic_log.h"
+#include "settings/animation_settings.h"
+#include "shell/native_start_menu.h"
+#include "system/panel/system_panel.h"
+#include "dock/dock_external_minimize.h"
+#include "app/dock/persistent_dock_host.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "dock_input_diagnostics.h"
@@ -10,7 +20,8 @@
 
 bool DesktopApp::FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const
 {
-    const auto fullscreen = snowdesktop::fullscreen::ObserveForeground();
+    if (!monitor) return false;
+    const auto fullscreen = snowdesktop::fullscreen::ObserveMonitor(monitor);
     auto policy = dockSettings_.fullscreenPolicy;
     if (fullscreen && !dockSettings_.fullscreenExceptions.empty())
     {
@@ -25,10 +36,16 @@ bool DesktopApp::FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR mo
         }
         // A failed process query retains the global protection level.
     }
-    // Never apply a stale player/browser exception to a newly foreground game.
-    if (fullscreen && snowdesktop::private_pointer::ForegroundWindow() != fullscreen->window) return true;
+    // Resolving an executable can cross a source change on this monitor.
+    // Do not apply the previous application's exception to the new source.
+    if (fullscreen && !dockSettings_.fullscreenExceptions.empty())
+    {
+        const auto current = snowdesktop::fullscreen::ObserveMonitor(monitor);
+        if (!current) return false;
+        if (current->window != fullscreen->window || current->process != fullscreen->process) return true;
+    }
     return snowdesktop::dock_fullscreen::BlocksReveal(policy,
-        source, fullscreen.has_value(), fullscreen && fullscreen->monitor == monitor);
+        source, fullscreen.has_value());
 }
 
 LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(
@@ -446,23 +463,26 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     // Otherwise its settle timer can tear down the recentered group later,
     // after the one-shot input receipt has already been consumed.
     if (previewInteractionMonitor) floatingDockOutsidePress_.Cancel();
-    if (trace.Observe(inputTrace::Gate::Fullscreen,
-            FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)))
+    std::vector<HWND> protectedHosts;
+    for (const auto& host : persistentDockHosts_)
+        if (host && host->active && (host->promoted || host->passivelyRevealed) &&
+            FullscreenBlocksDockReveal(DockRevealSource::Hotkey, host->monitor))
+            protectedHosts.push_back(host->hwnd);
+    if (trace.Observe(inputTrace::Gate::Fullscreen, !protectedHosts.empty()))
     {
         trace.sample.outcome = L"fullscreen-policy";
-        // Also applies with both invocation triggers disabled. Relinquish an
-        // existing session without restoring its previous foreground window.
-        if (floatingDockVisible_ || floatingDockKeyboardSessionActive_)
+        // Protection is local to each host. Continue sampling outside clicks
+        // for independent bars and invocation gestures on the other monitors.
+        for (const HWND window : protectedHosts)
         {
-            inputTrace::RecordLayer(L"fullscreen-close", nullptr, floatingDockVisible_);
-            CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+            auto* host = FindPersistentDockHost(window);
+            if (!host) continue;
+            const HMONITOR monitor = host->monitor;
+            if (statusBar_) statusBar_->DismissTemporaryReveal(monitor);
+            CancelStatusBarActivation(monitor, false);
+            inputTrace::RecordLayer(L"fullscreen-close", window, host->promoted);
+            CloseFloatingDock(*host, FloatingDockCloseFocusPolicy::PreserveCurrent);
         }
-        if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) HideDockWindowPreview();
-        POINT cursor{};
-        if (snowdesktop::private_pointer::CursorPosition(&cursor)) UpdatePassiveDragRevealHosts(cursor);
-        floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
-        floatingDockExternalPointerDrag_.Reset();
-        return;
     }
     const ULONGLONG layerNow = GetTickCount64();
     (void)ObserveDockPromotionActivation(snowdesktop::private_pointer::ForegroundWindow());
@@ -496,6 +516,12 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         // poll's proxy sample, and does not depend on cursor/button queries.
         floatingDockInputDeactivated_ = false;
         inputTrace::RecordLayer(L"focus-loss-close", nullptr, floatingDockVisible_);
+        for (const auto& host : persistentDockHosts_)
+            if (host && host->active && host->promoted)
+            {
+                if (statusBar_) statusBar_->DismissTemporaryReveal(host->monitor);
+                CancelStatusBarActivation(host->monitor, false);
+            }
         CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
         floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
         return;

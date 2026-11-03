@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "dock/dock_window_preview.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
 #include "drag_drop/ole_drag_rules.h"
 
 // OLE surface classification, effect choice and coordinate conversion.

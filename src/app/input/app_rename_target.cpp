@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/utils.h"
 
 DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
 {

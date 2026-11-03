@@ -1,6 +1,8 @@
 #include "ui/render/app_font.h"
 #include "layout/item_title_layout.h"
 #include "app/app.h"
+#include "common/utils.h"
+#include "layout/item_layout_rules.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "app/navigation/quick_navigation_helpers.h"
 

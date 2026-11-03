@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "common/utils.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
 #include "dock/dock_window_order.h"

@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "settings/shell_extension_settings.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
 #include "widgets/widget_folder_search.h"
 #include "shell/shell_extension_service.h"
 #include "drag_drop/drag_input_rules.h"

@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "layout/folder_sort_rules.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "layout/desktop_item_sort_rules.h"
 #include "shell/item_sort_metadata.h"

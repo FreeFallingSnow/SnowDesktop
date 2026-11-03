@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "settings/settings_window.h"
 #include "app_control_runtime.h"
 #include "platform/control/control_elements.h"
 #include "layout/widget_displacement.h"

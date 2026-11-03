@@ -1,4 +1,12 @@
 #include "app/app.h"
+#include "dock/dock_window_transition.h"
+#include "layout/collection_popup_layout.h"
+#include "platform/runtime_module_policy.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/general_settings.h"
+#include "settings/animation_settings.h"
+#include "app/dock/persistent_dock_host.h"
+#include "dock/dock_settings.h"
 
 namespace
 {

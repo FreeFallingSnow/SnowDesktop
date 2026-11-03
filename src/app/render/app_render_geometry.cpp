@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "layout/item_layout_rules.h"
+#include "icons/icon_render_rules.h"
 #include "app/navigation/quick_navigation_helpers.h"
 
 // Render geometry and item layout metrics.

@@ -1,4 +1,9 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "platform/demo_asset_paths.h"
+#include "data/data_paths.h"
+#include "icons/icon_render_rules.h"
 #include "icons/icon_loading_placeholder.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
@@ -725,4 +730,10 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             InvalidateFloatingPopupWindow(false);
             InvalidateQuickNavigationWindow();
         }, hwnd_, kBackgroundShellReadyMessage);
+}
+
+bool DesktopApp::ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
+{
+    return snowdesktop::icon_render_rules::ShouldBeautify(
+        iconBeautifySettings_.enabled, iconIsMediaThumbnail, beautifyFileThumbnails_);
 }

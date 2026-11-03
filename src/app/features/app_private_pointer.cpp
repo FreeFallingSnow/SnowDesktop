@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app_control_runtime.h"
 #include "ui/menu/menu_control_snapshot.h"
 #include "ui/input/text_input_window.h"

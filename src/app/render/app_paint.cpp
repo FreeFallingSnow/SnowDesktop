@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "app/render/desktop_backdrop_update_rules.h"
+#include "widget/view/widget_accessibility_provider.h"
 #include "diagnostics/performance_trace.h"
 #include "desktop_backdrop_update_rules.h"
 

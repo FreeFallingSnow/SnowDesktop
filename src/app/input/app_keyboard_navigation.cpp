@@ -1,5 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/utils.h"
+#include "diagnostics/crashlog.h"
 #include "widget/runtime/widget_item_layout.h"
 
 // Keyboard drag hints, Shell verbs and desktop-grid navigation.

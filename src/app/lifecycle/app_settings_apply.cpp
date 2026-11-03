@@ -1,6 +1,27 @@
 #include "platform/force_restart_hotkey.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "platform/usage_guide.h"
+#include "navigation/navigation_settings.h"
+#include "theme/surface_theme.h"
+#include "dock/dock_window_preview.h"
+#include "common/l10n.h"
+#include "ui/render/app_font.h"
+#include "ui/render/native_tooltip_preferences.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/settings_snapshot.h"
+#include "settings/settings_store.h"
+#include "settings/general_settings.h"
+#include "common/utils.h"
+#include "data/data_paths.h"
+#include "diagnostics/crashlog.h"
+#include "desktop/desktop_source.h"
+#include "theme/taskbar_appearance.h"
+#include "settings/settings_window.h"
+#include "settings/settings_controller.h"
+#include "app/dock/persistent_dock_host.h"
+#include "dock/dock_settings.h"
 #include "system/tray/tray_service.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
@@ -2246,6 +2267,17 @@ void DesktopApp::ApplyCollectionPopupAppearance()
     UpdateCollectionPopupBackdrop();
     if (GetOpenPopupWidget() || !luaWidgetPanelRequest_.widgetId.empty())
         InvalidateFloatingPopupWindow(true);
+}
+
+PersonalizationSettings DesktopApp::ResolveSystemTaskbarAppearance(
+    const DockSettings& settings) const
+{
+    return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
+}
+
+PersonalizationSettings DesktopApp::CurrentDockAppearance() const
+{
+    return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
 }
 
 void DesktopApp::LoadDockSettingsAndApply()

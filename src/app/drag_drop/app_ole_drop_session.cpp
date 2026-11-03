@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "desktop/desktop_source.h"
 #include "drag_drop/drop_image_data.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "drag_drop/drag_input_rules.h"

@@ -3,6 +3,25 @@
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "dock/dock_window_preview.h"
+#include "common/l10n.h"
+#include "ui/render/app_font.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/settings_snapshot.h"
+#include "settings/general_settings.h"
+#include "settings/animation_settings.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
+#include "layout/floating_popup_rules.h"
+#include "system/panel/system_panel.h"
+#include "widget/view/widget_accessibility_provider.h"
+#include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
+#include "settings/settings_window.h"
+#include "settings/settings_controller.h"
+#include "app/features/steam_workshop_subscription_poll_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "ui/input/private_pointer.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
@@ -1490,7 +1509,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetNativeMarqueeSyncCallback([this](
                 const std::wstring& widgetId,
-                const std::vector<LuaWidget::NativeMarqueeText>& marquees,
+                const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
                 bool reducedMotion) {
             return QueueWidgetMarqueeComposition(
                 widgetId, marquees, reducedMotion);

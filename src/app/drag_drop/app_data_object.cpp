@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "common/utils.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "drag_drop/desktop_landings.h"

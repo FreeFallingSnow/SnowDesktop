@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "layout/page_management_rules.h"
+#include "common/l10n.h"
 #include "layout/page_navigation_rules.h"
 #include "layout/page_mapping.h"
 #include "widgets/collection_group_rules.h"

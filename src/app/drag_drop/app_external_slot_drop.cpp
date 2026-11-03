@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "desktop/desktop_source.h"
 #include "drag_drop/external_drop_resources.h"
 #include "drag_drop/external_slot_transfer.h"
 #include "drag_drop/external_file_destination.h"

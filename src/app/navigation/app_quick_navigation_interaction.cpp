@@ -1,6 +1,11 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
+#include "desktop/desktop_source.h"
+#include "app/dock/persistent_dock_host.h"
 #include "shell/shell_call_diagnostics.h"
 
 #include "ui/menu/menu_fluent_glyphs.h"

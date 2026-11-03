@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "layout/floating_popup_rules.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
 #include "app/menus/native_menu_presentation_rules.h"

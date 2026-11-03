@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "theme/personalization.h"
+#include "common/l10n.h"
+#include "ui/preview/native_component_preview_export.h"
 #include "ui/preview/preview_png_writer.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "common/utils.h"

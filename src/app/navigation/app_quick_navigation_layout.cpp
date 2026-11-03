@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "navigation/navigation_settings.h"
+#include "common/utils.h"
+#include "settings/settings_controller.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 

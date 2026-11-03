@@ -1,6 +1,10 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
+#include "dock/dock_rename_layout.h"
 #include "ui/render/file_search_result_row.h"
 
 // Native rename editor creation.

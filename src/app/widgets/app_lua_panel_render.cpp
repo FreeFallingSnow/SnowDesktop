@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
 #include "app/popup/popup_opacity_scope.h"
 
 // Lua-widget panel layout and rendering.

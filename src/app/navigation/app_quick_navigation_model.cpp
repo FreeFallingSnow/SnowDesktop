@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "icons/icon_render_rules.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 #include "navigation/search_match.h"

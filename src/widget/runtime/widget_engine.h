@@ -20,6 +20,8 @@
  */
 #pragma once
 #include "ui/input/text_input_state.h"
+#include "widget_host_requests.h"
+#include "widget/view/widget_native_marquee.h"
 
 #include <windows.h>
 #include <d2d1_1.h>
@@ -210,22 +212,7 @@ struct LuaWidgetManifest
     std::vector<std::string> optionalPermissions; ///< 可拒绝并降级的权限列表
 };
 
-/**
- * @struct LuaDesktopItemInfo
- * @brief 桌面项目基本信息，由宿主提供给 Lua 沙箱的快照条目
- *
- * 当 Lua 脚本调用桌面查询 API 时，宿主通过回调返回该项目列表，
- * 用于支持小部件内的文件浏览、快速启动等功能。
- */
-struct LuaDesktopItemInfo
-{
-    std::string id;         ///< 项目唯一标识符
-    std::string title;      ///< 项目显示标题
-    std::string path;       ///< 项目完整路径
-    std::string source;     ///< 来源标识（如 "desktop", "startmenu", "custom"）
-    std::string type;       ///< 项目类型（如 "file", "folder", "shortcut"）
-    bool selected = false;  ///< 当前是否处于选中状态
-};
+
 
 /**
  * @struct LuaWidgetMenuItem
@@ -291,44 +278,9 @@ struct WidgetDiagnosticEntry
     std::string auxiliarySurface;
 };
 
-/**
- * @struct LuaInlineTextEditRequest
- * @brief 内联文本编辑请求，由 Lua 脚本发起，宿主编排文本输入
- *
- * 当 Lua 小部件需要就地编辑文本时（如重命名文件），引擎通过回调将此结构
- * 传递给宿主，由宿主显示内联输入框并将结果写回存储。
- */
-struct LuaInlineTextEditRequest
-{
-    std::wstring widgetId;   ///< 发起请求的小部件 ID
-    std::string storageKey;  ///< 存储键名，宿主完成编辑后通过该键写回
-    std::string text;        ///< 初始文本内容
-    RECT localRect{};        ///< 输入框在小部件本地坐标系中的位置和尺寸
-    bool multiline = false;  ///< 是否支持多行输入
-    bool selectAll = true;   ///< 是否自动全选文本
-    bool liveUpdate = false; ///< 输入过程中是否实时写回存储
-    int textColor = 0x000000; ///< 文本颜色（ARGB 格式，默认黑色）
-    int backgroundColor = 0xFFFFFF; ///< 编辑框背景颜色（RGB，默认白色）
-    float fontSize = 15.0f;  ///< 编辑框字号（像素，默认 15）
-};
 
-struct LuaWidgetPanelRequest
-{
-    std::wstring widgetId;
-    std::wstring title;
-    std::string surface = "panel";
-    std::string placement = "auto";
-    std::string anchorKey;
-    RECT anchorRect{};
-    bool hasAnchor = false;
-    bool showHeader = true;
-    int width = 520;
-    int height = 620;
-    bool dismissOnOutside = true;
-    bool dismissOnEscape = true;
-    bool modal = false;
-    bool desktopGesture = false;
-};
+
+
 
 enum class LuaWidgetFilePickerKind
 {
@@ -599,22 +551,7 @@ struct LuaWidget
         std::string itemId;
     };
 
-    struct NativeMarqueeText
-    {
-        std::string key;
-        D2D1_RECT_F viewport{};
-        ComPtr<IDWriteTextLayout> layout;
-        float originX = 0.0f;
-        float originY = 0.0f;
-        float textWidth = 0.0f;
-        float textHeight = 0.0f;
-        float speed = 24.0f;
-        float gap = 24.0f;
-        float offset = 0.0f;
-        int color = 0xFFFFFF;
-        float alpha = 1.0f;
-        bool scrolling = false;
-    };
+    using NativeMarqueeText = snowdesktop::widget_runtime::NativeMarqueeText;
 
     struct NativeMarqueeSurface
     {
@@ -757,17 +694,7 @@ struct LogicalSlotHostSurface
     std::vector<ItemRegion> items;
 };
 
-struct LogicalSlotPickerRequest
-{
-    std::wstring widgetId;
-    std::uint64_t ownerToken = 0;
-    std::string slotId;
-    snowdesktop::widget_runtime::LogicalSlotKind kind =
-        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
-    std::vector<std::string> accepts;
-    std::string referenceType;
-    std::size_t targetIndex = 0;
-};
+
 
 class WidgetEngine
 {
@@ -1051,14 +978,7 @@ public:
     void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
         int button = 0, int delta = 0);
     bool HasFileDropTarget(const std::wstring& widgetId, int x, int y) const;
-    struct FileDropTarget
-    {
-        std::wstring widgetId;
-        std::string packageId;
-        std::string targetKey;
-        std::uint64_t runtimeToken = 0;
-        snowdesktop::widget_runtime::InteractionAction action;
-    };
+    using FileDropTarget = snowdesktop::widget_runtime::WidgetFileDropTarget;
     std::optional<FileDropTarget> CaptureFileDropTarget(
         const std::wstring& widgetId, int x, int y) const;
     bool InvokeFileDrop(const std::wstring& widgetId, int x, int y,

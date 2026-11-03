@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "theme/personalization.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
 #include "navigation/quick_navigation_rules.h"
 
 // Quick-navigation window and search-edit message dispatch.

@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "core/drag_target_resolver.h"
 #include "drag_drop/drop_pipeline.h"
 #include "widgets/collection_group_rules.h"
 #include "drag_drop/empty_group_drop_rules.h"

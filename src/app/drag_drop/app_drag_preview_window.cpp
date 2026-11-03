@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "dock/dock_window_transition.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "system/tray/tray_service.h"
 #include "app/popup/popup_window_pair_z_order.h"

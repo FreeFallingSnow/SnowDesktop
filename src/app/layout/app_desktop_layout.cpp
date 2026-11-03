@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "settings/animation_settings.h"

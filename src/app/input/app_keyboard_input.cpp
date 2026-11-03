@@ -1,5 +1,8 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/runtime/widget_engine.h"
+#include "desktop/desktop_source.h"
+#include "system/panel/system_panel.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_keyboard_rules.h"
 #include "app/popup/categorized_popup_scope.h"

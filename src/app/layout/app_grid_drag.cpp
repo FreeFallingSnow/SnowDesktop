@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "dock/dock_appbar.h"
 #include "layout/page_mapping.h"
 #include "desktop/desktop_drop_search.h"
 #include "layout/selected_desktop_move.h"
