@@ -444,7 +444,9 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             dockFolderPopupContainer_.get();
         targetSlot = nullptr;
         targetRegion = HitRegion::None;
-        if (!PtInRect(&content, client))
+        // Side padding belongs to the nearest insertion edge. Keep headers,
+        // controls and the bottom chrome outside the item viewport.
+        if (client.y < content.top || client.y >= content.bottom)
             return true;
 
         if (dockFolderPopupWidget_.
@@ -616,7 +618,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         targetRegion = HitRegion::Blocked;
         return true;
     }
-    if (!PtInRect(&content, client))
+    if (client.y < content.top || client.y >= content.bottom)
         return true;
 
     size_t slotIndex = 0;

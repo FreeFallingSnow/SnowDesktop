@@ -64,6 +64,75 @@ static void CleanPreviewResources(DesktopApp& app)
     app.instance_ = nullptr;
 }
 static HWND PreviewWindow(const DesktopApp& app) { return app.dragPreviewHwnd_; }
+static WidgetContainer* PreparePaddingWidget(DesktopApp& app,
+    const std::vector<std::filesystem::path>& files, bool scrolling, bool list)
+{
+    app.items_oo_.clear(); app.containers_.clear(); app.widgets_.clear();
+    PopulateModel(app, files, 1);
+    app.ClearSelection();
+    auto* widget = MemberContainer(app, L"native-origin");
+    auto* data = widget->GetWidgetData();
+    data->gridSpan = {3, 3};
+    data->scrollContainerMode = scrolling;
+    data->listMode = list;
+    data->listColumns = 1;
+    const RECT frame{100, 100, 700, 640};
+    widget->SetHostedFrame(&frame);
+    widget->InvalidateSlots();
+    return widget;
+}
+static RECT PreparePaddingPopup(DesktopApp& app,
+    const std::vector<std::filesystem::path>& files, bool folder, bool list)
+{
+    PreparePaddingWidget(app, files, true, list);
+    Select(app, {files.front()});
+    BeginMembers(app, L"native-origin");
+    app.gridPages_.front().workArea = {0, 0, 1200, 900};
+    app.popupWidgetIndex_ = 0;
+    app.popupAnchoredToDock_ = false;
+    app.popupScrollOffset_ = 0;
+    app.dockFolderPopupOpen_ = folder;
+    if (folder)
+    {
+        app.dockFolderPopupWidget_ = app.widgets_.front();
+        auto& data = app.dockFolderPopupWidget_;
+        data.type = DesktopWidgetType::FolderMapping;
+        data.itemKeys.clear();
+        data.folderEntries.clear();
+        for (const auto& file : files)
+        {
+            FolderEntry entry;
+            entry.fullPath = file.wstring();
+            entry.name = file.filename().wstring();
+            data.folderEntries.push_back(std::move(entry));
+        }
+        app.dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&data, &app);
+    }
+    app.popupAnimation_.ShowImmediately();
+    app.popupRect_ = app.GetCollectionPopupRect(*app.GetOpenPopupWidget());
+    return app.popupRect_;
+}
+static RECT PaddingPopupContent(DesktopApp& app, RECT popup)
+{ return app.GetCollectionPopupContentRect(popup); }
+static RECT PaddingPopupItem(DesktopApp& app, RECT popup, size_t index)
+{ return app.GetCollectionPopupItemRect(popup, index); }
+static int PaddingPopupColumns(DesktopApp& app, RECT popup)
+{ return app.GetCollectionPopupColumnCount(popup); }
+static DragTargetResolution HitPaddingPopup(DesktopApp& app, POINT point)
+{
+    DragTargetResolution result;
+    app.HitTestPopupForDrag(point, result.container, result.slot, result.region);
+    return result;
+}
+static void ResetPaddingPopup(DesktopApp& app)
+{
+    app.EndDragSession();
+    app.ClearPopupDragTarget();
+    app.dockFolderPopupContainer_.reset();
+    app.dockFolderPopupOpen_ = false;
+    app.popupWidgetIndex_ = static_cast<size_t>(-1);
+    app.popupAnimation_.ResetHidden();
+}
 static void ApplyPreviewLayers(DesktopApp& app, HWND hint)
 {
     app.hintHwnd_ = hint;

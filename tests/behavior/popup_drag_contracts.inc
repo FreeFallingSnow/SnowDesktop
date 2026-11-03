@@ -1,8 +1,77 @@
 namespace behavior
 {
+void DragPadding(HostProfile& profile)
+{
+    std::vector<std::filesystem::path> files;
+    for (int i = 0; i < 6; ++i)
+    {
+        files.push_back(profile.desktop / (L"padding-" + std::to_wstring(i) + L".txt"));
+        Write(files.back(), "padding-source-intact");
+    }
+    std::string failures;
+    const auto check = [&](bool ok, const std::string& message) {
+        if (!ok) { std::cerr << "padding: " << message << '\n'; failures += message + "; "; }
+    };
+    // Invoke real container/popup hit routing. Expected positions follow the
+    // visible row order, independently of the distance implementation.
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        auto* widget = Access::PreparePaddingWidget(*profile.app, files, mode != 0, mode == 2);
+        const auto& slots = widget->GetSlots();
+        Require(slots.size() >= 3, "padding fixture exposes multiple real items");
+        const RECT frame = widget->GetFrameRect();
+        const bool list = mode == 2;
+        const size_t first = list ? 1 : 0;
+        size_t last = first;
+        const RECT row = slots[first]->GetBounds();
+        if (!list) while (last + 1 < slots.size() && slots[last + 1]->GetBounds().top == row.top) ++last;
+        for (bool right : {false, true})
+        {
+            const POINT point{right ? frame.right - 1 : frame.left + 1,
+                list ? row.top + (row.bottom - row.top) / 4 : (row.top + row.bottom) / 2};
+            Slot* slot = nullptr;
+            const auto region = widget->HitTestDrag(point, slot);
+            const size_t expected = list ? first : right ? last + 1 : first;
+            check(slot && (region == HitRegion::SortBefore || region == HitRegion::SortAfter) &&
+                widget->GetDropInsertIndex(slot, region) == expected,
+                "widget mode " + std::to_string(mode) + (right ? " right" : " left") + " selects nearest row insertion");
+        }
+        const RECT viewport = widget->GetContentViewportRect();
+        Slot* terminal = nullptr;
+        const auto terminalRegion = widget->HitTestDrag(
+            {frame.right - 1, viewport.bottom - 1}, terminal);
+        check(terminal && widget->GetDropInsertIndex(terminal, terminalRegion) == files.size(),
+            "widget mode " + std::to_string(mode) + " distant blank retains a drawable final insertion");
+    }
+    for (bool folder : {false, true}) for (bool list : {false, true})
+    {
+        const RECT popup = Access::PreparePaddingPopup(*profile.app, files, folder, list);
+        const RECT content = Access::PaddingPopupContent(*profile.app, popup);
+        const size_t columns = static_cast<size_t>(Access::PaddingPopupColumns(*profile.app, popup));
+        const size_t first = list ? 1 : 0;
+        const RECT row = Access::PaddingPopupItem(*profile.app, popup, first);
+        for (bool right : {false, true})
+        {
+            const POINT point{right ? popup.right - 1 : popup.left + 1,
+                list ? row.top + (row.bottom - row.top) / 4 : (row.top + row.bottom) / 2};
+            Require(point.y >= content.top && point.y < content.bottom, "popup padding fixture lies within visible row");
+            const auto hit = Access::HitPaddingPopup(*profile.app, point);
+            const size_t expected = list ? first : right ? std::min(columns, files.size()) : first;
+            check(hit.slot && (hit.region == HitRegion::SortBefore || hit.region == HitRegion::SortAfter) &&
+                hit.slot->GetIndex() + (hit.region == HitRegion::SortAfter ? 1 : 0) == expected,
+                std::string(folder ? "folder popup" : "collection popup") + (list ? " list" : " grid") +
+                    (right ? " right" : " left") + " selects nearest row insertion");
+        }
+        const auto header = Access::HitPaddingPopup(*profile.app, {popup.left + 1, popup.top + 1});
+        check(!header.slot, "popup header remains outside item insertion targets");
+        Access::ResetPaddingPopup(*profile.app);
+    }
+    Require(failures.empty(), failures);
+}
 void DragPopup()
 {
     HostProfile profile;
+    DragPadding(profile);
     WindowOwner popup, hint;
     const auto createWindow = [](const wchar_t* title) {
         return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,

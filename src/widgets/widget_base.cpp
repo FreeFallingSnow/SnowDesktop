@@ -23,6 +23,7 @@
 #include "widget_chrome_rules.h"
 #include "single_cell_widget_rules.h"
 #include "layout/popup_scrollbar_layout.h"
+#include "layout/popup_drag_rules.h"
 #include "storage_title_bar_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widget/preview/widget_preview_scene.h"
@@ -35,6 +36,7 @@
 #include "common/l10n.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -959,7 +961,48 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         }
     }
 
-    // Mouse in frame but not on any slot — sort at end
+    // Padding and distant blank space still need an actual drawable target.
+    // Compare against visible insertion edges using the same gap midpoint as
+    // DrawDropPreview; never promote blank space into an icon handoff.
+    const RECT viewport = GetContentViewportRect();
+    if (pt.y >= viewport.top && pt.y < viewport.bottom)
+    {
+        auto bestDistance = std::numeric_limits<long long>::max();
+        HitRegion nearestRegion = HitRegion::SortAfter;
+        for (size_t i = 0; i < slots.size(); ++i)
+        {
+            const RECT bounds = slots[i]->GetBounds();
+            RECT visible{};
+            if (!IntersectRect(&visible, &bounds, &viewport)) continue;
+            for (bool after : {false, true})
+            {
+                float pad = 0.0f;
+                if (after && i + 1 < slots.size())
+                    pad = snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                        bounds, slots[i + 1]->GetBounds(), verticalBar);
+                else if (!after && i > 0)
+                    pad = snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                        slots[i - 1]->GetBounds(), bounds, verticalBar);
+                const auto distance = snowdesktop::popup_drag_rules::InsertionEdgeDistanceSquared(
+                    bounds, visible, pt, !verticalBar, after, static_cast<long>(std::ceil(pad)));
+                if (distance >= bestDistance) continue;
+                bestDistance = distance;
+                outSlot = slots[i].get();
+                nearestRegion = outSlot->IsEmpty() ? HitRegion::Empty
+                    : after ? HitRegion::SortAfter : HitRegion::SortBefore;
+                if (nearestRegion == HitRegion::SortAfter && i + 1 < slots.size() &&
+                    snowdesktop::widget_item_layout::SharesInsertionBoundary(
+                        bounds, slots[i + 1]->GetBounds(), verticalBar))
+                {
+                    outSlot = slots[i + 1].get();
+                    nearestRegion = outSlot->IsEmpty() ? HitRegion::Empty : HitRegion::SortBefore;
+                }
+            }
+        }
+        if (outSlot) return nearestRegion;
+    }
+
+    // Chrome and containers without visible items retain container append.
     return HitRegion::SortAfter;
 }
 

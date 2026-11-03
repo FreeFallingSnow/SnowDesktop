@@ -248,12 +248,15 @@ void Slot::DrawDropIndicatorWithStyle(ID2D1DeviceContext* ctx,
         D2D1_RECT_F rf = D2D1::RectF(
             static_cast<float>(r.left), static_cast<float>(r.top),
             static_cast<float>(r.right), static_cast<float>(r.bottom));
+        const float radius = std::max(0.0f, std::min(6.0f,
+            std::min(rf.right - rf.left, rf.bottom - rf.top) * 0.5f));
+        const auto rounded = D2D1::RoundedRect(rf, radius, radius);
 
         ComPtr<ID2D1SolidColorBrush> fillBrush;
         ctx->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.10f), &fillBrush);
         if (fillBrush)
-            ctx->FillRectangle(rf, fillBrush.Get());
-        ctx->DrawRectangle(rf, brush.Get(), 2.0f);
+            ctx->FillRoundedRectangle(rounded, fillBrush.Get());
+        ctx->DrawRoundedRectangle(rounded, brush.Get(), 2.0f);
     }
     else if (insertionStyle == BarStyle::VBar)
     {
