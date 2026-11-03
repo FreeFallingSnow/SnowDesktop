@@ -392,7 +392,7 @@ function Get-DefaultResourceRequest($Policy,[long]$AvailableMemoryMiB=-1) {
     $memoryCapacity=[int][Math]::Min($Policy.memoryCapacityMiB,[Math]::Max(256,[Math]::Floor($Policy.physicalMemoryMiB*0.50/256)*256))
     # Account for applications already open when submitting. Leave a further
     # quarter of available headroom for changes between submission/admission.
-    $availableBudget=[Math]::Max(1024,[Math]::Floor(($AvailableMemoryMiB-$Policy.headroomMiB)*0.75/256)*256)
+    $availableBudget=[Math]::Max(3072,[Math]::Floor(($AvailableMemoryMiB-$Policy.headroomMiB)*0.75/256)*256)
     $budget=[pscustomobject]@{
         cpuSlots=[int][Math]::Min($Policy.cpuCapacity,[Math]::Max(1,[Math]::Floor($Policy.logicalProcessors*0.75)))
         memoryMiB=[int][Math]::Min($memoryCapacity,$availableBudget)

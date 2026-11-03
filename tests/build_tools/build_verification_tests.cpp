@@ -25,7 +25,8 @@ void scenario(const fs::path& repo,const std::string& control){
     // tiny stand-ins. Host memory pressure is an external input, exercised
     // separately by the resource-budget fixture's admission probes.
     auto entry=read(c.scripts/L"build_entry.ps1");
-    replace(entry,"[SnowDesktop.Build.Job]::AvailableMemoryBytes()","([ulong]68719476736)");
+    const std::string memorySample="[SnowDesktop.Build.Job]::AvailableMemoryBytes()";
+    while(entry.find(memorySample)!=std::string::npos)replace(entry,memorySample,"([ulong]68719476736)");
     write(c.scripts/L"build_entry.ps1",entry,true);
     // Keep the real skipped/selected batch router. Only the external Python
     // enhancement is unavailable; CMake/CTest remain the stand-in boundary.

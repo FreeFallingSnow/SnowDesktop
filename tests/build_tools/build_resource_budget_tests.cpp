@@ -119,9 +119,11 @@ try {@{reason=$first.BusyKind;firstAdmitted=[bool]$first.Lease;afterFailureAdmit
 )PS",true);
     const auto headroom=h.bridge(0).call(h.root(0)/L"headroom-probe.ps1",{});
     require(headroom.at("reason").str()=="memory-headroom"&&!headroom.at("firstAdmitted").boolean&&headroom.at("afterFailureAdmitted").boolean,"Insufficient available memory admitted work or leaked partial reservation tokens");
-    require(headroom.at("busy").at("memoryMiB").integer()<headroom.at("idle").at("memoryMiB").integer()&&
-        headroom.at("busy").at("compileJobs").integer()<headroom.at("idle").at("compileJobs").integer()&&
-        headroom.at("low").at("memoryMiB").integer()>=1024&&headroom.at("low").at("compileJobs").integer()==1,
+    const auto idleMemory=headroom.at("idle").at("memoryMiB").integer();
+    require(headroom.at("busy").at("memoryMiB").integer()<=idleMemory&&
+        (idleMemory<=3072||headroom.at("busy").at("memoryMiB").integer()<idleMemory)&&
+        headroom.at("busy").at("compileJobs").integer()<=headroom.at("idle").at("compileJobs").integer()&&
+        headroom.at("low").at("memoryMiB").integer()==std::min(3072,idleMemory)&&headroom.at("low").at("compileJobs").integer()==1,
         "Default budget failed to reduce compiler pressure under existing application load or keep a bounded low-memory request");
     if(h.cpuCapacity>=2){
         const auto a=h.start(0);const auto ownerA=h.running(0,a);const auto b=h.start(1);h.running(1,b);
