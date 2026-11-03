@@ -255,6 +255,16 @@ WidgetFilesystemTaskRunResult RunImage(
     if (FAILED(frame.As(&source))) return fail("imageDecodeFailed");
     if (orientation >= 2 && orientation <= 8)
     {
+        // Rotated reads need random access. Materialize the decoder once so
+        // the scaler cannot repeatedly decompress JPEG scanlines through it.
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+        ComPtr<IWICBitmap> decoded;
+        if (FAILED(factory->CreateBitmapFromSource(source.Get(),
+                WICBitmapCacheOnLoad, &decoded)) ||
+            FAILED(decoded.As(&source)))
+            return fail("imageDecodeFailed");
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+
         ComPtr<IWICBitmapFlipRotator> rotated;
         if (FAILED(factory->CreateBitmapFlipRotator(&rotated)) ||
             FAILED(rotated->Initialize(source.Get(), transforms[orientation])) ||
