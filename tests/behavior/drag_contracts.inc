@@ -2,6 +2,7 @@
 #include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "drag_drop/external_drop_resources.h"
 #include "layout/item_location.h"
+#include "common/l10n.h"
 #include <wrl/implements.h>
 #include <shldisp.h>
 #include <atomic>
@@ -217,6 +218,8 @@ void DragRelease()
             "occupied gap grid cell must choose the adjacent left vacancy instead of a distant wrapped row");
         if (!mods)
         {
+            Require(Access::GapDragHint(*gapProfile.app, mods) == _LW("core.drag.release_move_here"),
+                "component gap hint agrees that the advertised adjacent landing accepts the move");
             Access::ReleaseDrag(*gapProfile.app, {300, 150});
             Require(SameCell(Access::Cell(*gapProfile.app, source), preview.landings.front().cell),
                 "actual gap release commits the same adjacent cell advertised by the preview");

@@ -126,6 +126,12 @@ static DropPreviewList GapDesktopPreview(DesktopApp& app, const std::filesystem:
         app.dragSession_.TargetContainer(), app.dragSession_.TargetSlot(),
         app.dragSession_.TargetRegion(), mods, gap);
 }
+static std::wstring GapDragHint(DesktopApp& app, int mods)
+{
+    return app.dragSession_.TargetContainer()->GetDragHint(
+        app.dragSession_.TargetSlot(), app.dragSession_.TargetRegion(),
+        app.dragSession_.Items(), app.dragSession_.Source(), mods);
+}
 static bool QueuePartial(DesktopApp& app, snowdesktop::ShellFileOperationRequest request,
     DesktopApp::FileOperationCompletion done)
 { return app.QueueShellFileOperation(std::move(request),std::move(done)); }
