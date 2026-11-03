@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "theme/personalization.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
@@ -87,7 +88,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         CancelPopupHover(true);
         return;
     }
-    if (quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty() ||
+    if (quickNavigation_->open || !luaWidgetPanelRequest_.widgetId.empty() ||
         IsPointInUsageGuide(point))
     {
         CancelPopupHover();

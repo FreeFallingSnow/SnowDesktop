@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/utils.h"
 #include "layout/item_layout_rules.h"
 #include "icons/icon_render_rules.h"
@@ -116,7 +117,7 @@ RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
     const int cellW = std::max<LONG>(1, bounds.right - bounds.left);
     const int cellH = std::max<LONG>(1, bounds.bottom - bounds.top);
     const int inset = std::max(1, QuickNavScale(2));
-    const float fontSize = quickNavItemTextFormat_ ? quickNavItemTextFormat_->GetFontSize()
+    const float fontSize = quickNavigation_->itemTextFormat ? quickNavigation_->itemTextFormat->GetFontSize()
         : static_cast<float>(QuickNavScale(navigationSettings_.layout.fontSize));
     const int titleBandH = QuickNavigationItemTextHeight(fontSize, navigationSettings_.layout.labelLines);
     const int titleGap = std::max(1, QuickNavScale(10));

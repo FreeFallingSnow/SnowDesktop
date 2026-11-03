@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "ui/input/text_input_window.h"
@@ -104,7 +105,7 @@ DesktopApp::BuildLuaApplicationSearch(
         return result;
 
     StartQuickNavigationAppIndexing();
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return result;
 
     const size_t resultLimit = static_cast<size_t>(
@@ -112,11 +113,11 @@ DesktopApp::BuildLuaApplicationSearch(
     std::array<std::vector<size_t>,
         kNameSearchNoMatchRank> buckets;
     for (size_t index = 0;
-        index < quickNavigationAppEntries_.size();
+        index < quickNavigation_->appEntries.size();
         ++index)
     {
         const int rank = NameSearchMatchRank(
-            quickNavigationAppEntries_[index].name,
+            quickNavigation_->appEntries[index].name,
             queryWide);
         if (rank >= 0 &&
             rank < kNameSearchNoMatchRank)
@@ -128,13 +129,13 @@ DesktopApp::BuildLuaApplicationSearch(
 
     result.reserve(std::min(
         resultLimit,
-        quickNavigationAppEntries_.size()));
+        quickNavigation_->appEntries.size()));
     for (const auto& bucket : buckets)
     {
         for (const size_t index : bucket)
         {
             const QuickNavigationAppEntry& entry =
-                quickNavigationAppEntries_[index];
+                quickNavigation_->appEntries[index];
             if (entry.parsingName.empty())
                 continue;
             const std::wstring launchPath = snowdesktop::
@@ -161,9 +162,9 @@ LuaApplicationCatalogSnapshot DesktopApp::BuildLuaApplicationCatalog()
 {
     LuaApplicationCatalogSnapshot snapshot;
     StartQuickNavigationAppIndexing();
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
     {
-        snapshot.state = quickNavigationAppIndexing_.load()
+        snapshot.state = quickNavigation_->appIndexing.load()
             ? "indexing" : "unavailable";
         return snapshot;
     }
@@ -171,8 +172,8 @@ LuaApplicationCatalogSnapshot DesktopApp::BuildLuaApplicationCatalog()
     snapshot.state = "ready";
     constexpr std::size_t MaximumEntries = 20000;
     snapshot.entries.reserve(std::min(
-        quickNavigationAppEntries_.size(), MaximumEntries));
-    for (const auto& entry : quickNavigationAppEntries_)
+        quickNavigation_->appEntries.size(), MaximumEntries));
+    for (const auto& entry : quickNavigation_->appEntries)
     {
         if (snapshot.entries.size() >= MaximumEntries)
             break;
@@ -200,8 +201,8 @@ LuaApplicationCatalogSnapshot DesktopApp::BuildLuaApplicationCatalog()
 std::string DesktopApp::BuildLuaApplicationIndexStatus()
 {
     StartQuickNavigationAppIndexing();
-    if (quickNavigationAppsIndexed_) return "ready";
-    return quickNavigationAppIndexing_.load()
+    if (quickNavigation_->appsIndexed) return "ready";
+    return quickNavigation_->appIndexing.load()
         ? "indexing" : "unavailable";
 }
 
@@ -249,14 +250,14 @@ std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaEverythingSearch(const std::
 
 bool DesktopApp::IsLuaLogicalSlotPickerOpen() const
 {
-    return !logicalSlotPickerRequest_.widgetId.empty();
+    return !quickNavigation_->slotPickerRequest.widgetId.empty();
 }
 
 bool DesktopApp::LuaLogicalSlotPickerAccepts(std::string_view kind) const
 {
     return IsLuaLogicalSlotPickerOpen() &&
         snowdesktop::logical_slot_picker_rules::Accepts(
-            logicalSlotPickerRequest_.accepts, kind);
+            quickNavigation_->slotPickerRequest.accepts, kind);
 }
 
 bool DesktopApp::LuaLogicalSlotPickerAcceptsType(
@@ -264,7 +265,7 @@ bool DesktopApp::LuaLogicalSlotPickerAcceptsType(
 {
     return IsLuaLogicalSlotPickerOpen() &&
         snowdesktop::logical_slot_picker_rules::MatchesType(
-            logicalSlotPickerRequest_.referenceType, type);
+            quickNavigation_->slotPickerRequest.referenceType, type);
 }
 
 bool DesktopApp::OpenLuaLogicalSlotPicker(
@@ -290,15 +291,15 @@ bool DesktopApp::OpenLuaLogicalSlotPicker(
         return false;
     request.ownerToken = runtime->runtimeToken;
 
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
-        const auto& open = logicalSlotPickerRequest_;
+        const auto& open = quickNavigation_->slotPickerRequest;
         if (open.widgetId == request.widgetId && open.ownerToken == request.ownerToken &&
             open.slotId == request.slotId && open.referenceType == request.referenceType &&
             open.accepts == request.accepts && open.targetIndex == request.targetIndex)
         {
-            const HWND target = quickNavigationSearchEdit_
-                ? quickNavigationSearchEdit_ : quickNavigationHwnd_;
+            const HWND target = quickNavigation_->searchEdit
+                ? quickNavigation_->searchEdit : quickNavigation_->hwnd;
             if (target && IsWindow(target))
             {
                 (void)FocusKeyboardWindow(target, true, L"Logical slot picker", true);
@@ -310,22 +311,22 @@ bool DesktopApp::OpenLuaLogicalSlotPicker(
         });
         return true;
     }
-    if (quickNavigationHwnd_ && !quickNavigationAnimation_.IsHidden())
+    if (quickNavigation_->hwnd && !quickNavigation_->animation.IsHidden())
     {
-        auto pending = std::move(quickNavigationPostCloseAction_);
-        quickNavigationPostCloseAction_ = [this, request, pending = std::move(pending)] {
+        auto pending = std::move(quickNavigation_->postCloseAction);
+        quickNavigation_->postCloseAction = [this, request, pending = std::move(pending)] {
             if (pending) pending();
             (void)OpenLuaLogicalSlotPicker(request);
         };
         return true;
     }
 
-    logicalSlotPickerRequest_ = request;
-    quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
+    quickNavigation_->slotPickerRequest = request;
+    quickNavigation_->activeWidgetIndex = static_cast<size_t>(-1);
     OpenQuickNavigation(QuickNavigationInvocationSource::Pointer);
-    if (!quickNavigationOpen_)
+    if (!quickNavigation_->open)
     {
-        logicalSlotPickerRequest_ = {};
+        quickNavigation_->slotPickerRequest = {};
         return false;
     }
     return true;
@@ -407,7 +408,7 @@ DesktopApp::BuildLuaLogicalSlotPickerCandidate(
                 : item.desktopIconClsid);
         const std::string_view kind = snowdesktop::
             logical_slot_picker_rules::DesktopCandidateKind(
-                logicalSlotPickerRequest_.accepts,
+                quickNavigation_->slotPickerRequest.accepts,
                 item.isApplicationShortcut,
                 !item.parsingName.empty());
         if (kind.empty() || target.empty()) return std::nullopt;
@@ -453,8 +454,8 @@ bool DesktopApp::CommitLuaLogicalSlotPickerCandidate(
     snowdesktop::widget_runtime::LogicalSlotItem candidate)
 {
     if (!widgetEngine_ || !IsLuaLogicalSlotPickerOpen()) return false;
-    const LogicalSlotPickerRequest request = logicalSlotPickerRequest_;
-    logicalSlotPickerRequest_ = {};
+    const LogicalSlotPickerRequest request = quickNavigation_->slotPickerRequest;
+    quickNavigation_->slotPickerRequest = {};
     CloseQuickNavigationThen(
         [this, request, candidate = std::move(candidate)]() mutable {
             if (!widgetEngine_) return;

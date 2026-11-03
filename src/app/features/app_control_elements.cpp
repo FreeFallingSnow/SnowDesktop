@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -235,18 +236,18 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
                 {"click", "doubleClick", "contextMenu", "hover", "drag", "drop"});
         }
     }
-    if (quickNavigationOpen_ && IsWindowVisible(quickNavigationHwnd_))
+    if (quickNavigation_->open && IsWindowVisible(quickNavigation_->hwnd))
     {
-        const auto frame = quickNavigationRect_;
-        add("navigation", {}, "navigation", "pane", L"Quick Navigation", frame, frame, quickNavigationHwnd_, {"hover", "scroll"});
+        const auto frame = quickNavigation_->rect;
+        add("navigation", {}, "navigation", "pane", L"Quick Navigation", frame, frame, quickNavigation_->hwnd, {"hover", "scroll"});
         auto& edit = add("navigation/search", "navigation", "navigation", "edit", L"Search",
-            GetQuickNavigationInputRect(frame), frame, quickNavigationHwnd_, {"click", "hover", "setValue"});
+            GetQuickNavigationInputRect(frame), frame, quickNavigation_->hwnd, {"click", "hover", "setValue"});
         edit.backend = ElementBackend::NavigationSearch;
-        edit.value = WideToUtf8(snowdesktop::text_input::DisplayText(quickNavigationSearchEdit_));
+        edit.value = WideToUtf8(snowdesktop::text_input::DisplayText(quickNavigation_->searchEdit));
         for (int button = 0; button < 3; ++button)
             add("navigation/toolbar/" + std::to_string(button), "navigation", "navigation", "button",
                 button == 0 ? L"Search scope" : button == 1 ? L"Settings" : L"Expand or collapse",
-                GetQuickNavigationToolbarRect(frame, button), frame, quickNavigationHwnd_, {"click", "hover"});
+                GetQuickNavigationToolbarRect(frame, button), frame, quickNavigation_->hwnd, {"click", "hover"});
         if (UseQuickNavigationList())
         {
             const auto rows = BuildQuickNavigationListRows();
@@ -256,7 +257,7 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
                 const auto& row = rows[index];
                 const auto key = std::to_string(static_cast<int>(row.kind)) + "/" + Key(row.title) + "/" + Key(row.value);
                 auto& element = add("navigation/row/" + key + "/" + std::to_string(occurrences[key]++), "navigation", "navigation", "item",
-                    row.title, GetQuickNavigationListRowRect(index), GetQuickNavigationContentRect(frame), quickNavigationHwnd_, {"click", "hover", "contextMenu"});
+                    row.title, GetQuickNavigationListRowRect(index), GetQuickNavigationContentRect(frame), quickNavigation_->hwnd, {"click", "hover", "contextMenu"});
                 element.enabled = row.enabled && row.kind != QuickNavigationListRow::Kind::Header && row.kind != QuickNavigationListRow::Kind::Notice;
             }
         }
@@ -264,7 +265,7 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
         {
             const auto entries = GetQuickNavigationEntries();
             std::unordered_map<std::string, unsigned> occurrences;
-            for (const auto& region : quickNavigationHoverRegions_)
+            for (const auto& region : quickNavigation_->hoverRegions)
             {
                 const auto& target = region.target;
                 auto key = std::to_string(static_cast<int>(target.kind)) + "/" + std::to_string(target.index);
@@ -281,7 +282,7 @@ snowdesktop::control::ElementSnapshot DesktopApp::ApplicationControlElements()
                 // A result may have several painted hit regions. They share
                 // its model identity but need distinct addressable references.
                 add("navigation/control/" + key + "/" + std::to_string(occurrences[key]++), "navigation", "navigation", "button", name,
-                    region.bounds, frame, quickNavigationHwnd_, {"click", "hover", "contextMenu"});
+                    region.bounds, frame, quickNavigation_->hwnd, {"click", "hover", "contextMenu"});
             }
         }
     }

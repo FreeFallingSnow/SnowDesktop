@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
@@ -258,10 +259,10 @@ void DesktopApp::ResetCompositionRenderCaches()
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });
     dockIconWork_.Cancel(L"dock-folder:");
-    quickNavSysIconCache_.clear();
-    quickNavAppIconCache_.clear();
-    for (auto& icon : quickNavActionIconCache_) icon.Reset();
-    quickNavActionIconContext_ = nullptr;
+    quickNavigation_->sysIconCache.clear();
+    quickNavigation_->appIconCache.clear();
+    for (auto& icon : quickNavigation_->actionIconCache) icon.Reset();
+    quickNavigation_->actionIconContext = nullptr;
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
@@ -554,11 +555,11 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
     floatingPopupCompositionRenderRecoveryPending_ = false;
     releaseRoot(dragPreviewDcompTarget_, dragPreviewDcompVisual_);
     ResetQuickNavCompositionResources();
-    releaseRoot(quickNavDcompTarget_, quickNavDcompVisual_);
-    quickNavDcompEffect_.Reset();
-    quickNavDcompScaleTransform_.Reset();
-    quickNavDcompDevice_.Reset();
-    quickNavCompositionRenderRecoveryPending_ = false;
+    releaseRoot(quickNavigation_->dcompTarget, quickNavigation_->dcompVisual);
+    quickNavigation_->dcompEffect.Reset();
+    quickNavigation_->dcompScaleTransform.Reset();
+    quickNavigation_->dcompDevice.Reset();
+    quickNavigation_->compositionRenderRecoveryPending = false;
     if (widgetEngine_) widgetEngine_->ResetGraphicsResources(nullptr);
     if (d3dImmediateContext_) d3dImmediateContext_->ClearState();
 }
@@ -587,7 +588,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
         desktopWidgetCompositionDrawInProgress_ ||
         dragPreviewCompositionPaintInProgress_ ||
         floatingPopupCompositionPaintInProgress_ ||
-        quickNavCompositionPaintInProgress_ || IsAnyPersistentDockHostPainting();
+        quickNavigation_->compositionPaintInProgress || IsAnyPersistentDockHostPainting();
     if (!graphicsDeviceRecovery_.Ready(GetTickCount64(), drawing)) return;
 
     ReleaseGraphicsDeviceResources();
@@ -641,7 +642,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     // A failed popup frame now hides its native input surface. Hidden windows
     // cannot recover through WM_PAINT alone after the bounded retry expires.
     if (ShouldShowFloatingPopupWindow()) UpdateFloatingPopupWindowBounds(true);
-    repaint(quickNavigationHwnd_);
+    repaint(quickNavigation_->hwnd);
     repaint(dragPreviewHwnd_);
     EnsureUiAnimationFrame();
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, L"Graphics devices recreated; surface repaints requested");

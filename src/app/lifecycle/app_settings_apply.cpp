@@ -1,6 +1,7 @@
 #include "platform/force_restart_hotkey.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "platform/usage_guide.h"
 #include "navigation/navigation_settings.h"
 #include "theme/surface_theme.h"
@@ -1151,7 +1152,7 @@ public:
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
-            if (app_.quickNavigationOpen_)
+            if (app_.quickNavigation_->open)
             {
                 app_.RefreshQuickNavigationTypedResults();
                 app_.PositionQuickNavigationWindow();
@@ -1277,7 +1278,7 @@ public:
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
-            if (app_.quickNavigationOpen_)
+            if (app_.quickNavigation_->open)
             {
                 app_.RefreshQuickNavigationTypedResults();
                 app_.PositionQuickNavigationWindow();
@@ -1426,7 +1427,7 @@ public:
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
-            if (app_.quickNavigationOpen_)
+            if (app_.quickNavigation_->open)
             {
                 app_.RefreshQuickNavigationTypedResults();
                 app_.PositionQuickNavigationWindow();
@@ -2105,7 +2106,7 @@ void DesktopApp::ToggleDesktopPassthrough()
     }
 
     desktopPassthroughActive_ = true;
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
         CloseQuickNavigation();
         FinalizeCloseQuickNavigation();
@@ -2228,11 +2229,11 @@ void DesktopApp::ApplyQuickNavigationAppearance()
     const PersonalizationSettings appearance = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.quickNavigationAppearance, globalAppearance,
         generalSettings_.quickNavTheme, true, &generalSettings_.globalQuickNavigationAppearance);
-    quickNavLightTheme_ = appearance.contentTheme == 1;
-    quickNavGlassTheme_ = appearance.glassEnabled;
-    quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
-    quickNavAppearance_ = appearance;
-    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+    quickNavigation_->lightTheme = appearance.contentTheme == 1;
+    quickNavigation_->glassTheme = appearance.glassEnabled;
+    quickNavigation_->blurRadius = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
+    quickNavigation_->appearance = appearance;
+    if (quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd))
         UpdateQuickNavigationBackdrop();
 }
 
@@ -2369,11 +2370,11 @@ void DesktopApp::ApplyLanguageChange()
     const bool widgetRuntimeReloadAllowed = !settingsWindow_ ||
         settingsWindow_->PrepareLanguageChange();
     PublishHomeAboutStatus();
-    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
-        SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
-    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    if (quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd))
+        SetWindowTextW(quickNavigation_->hwnd, _LW("app.interact.snow_nav_title"));
+    if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
     {
-        SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
+        SendMessageW(quickNavigation_->searchEdit, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(_LW("app.nav.search_hint")));
     }
 
@@ -2443,7 +2444,7 @@ void DesktopApp::ApplyLanguageChange()
 
     if (titleChanged)
         SaveLayoutSlots();
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
         RefreshQuickNavigationTypedResults();
         InvalidateQuickNavigationWindow();

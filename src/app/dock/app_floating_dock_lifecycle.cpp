@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "navigation/navigation_settings.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
@@ -752,8 +753,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             }
         }
         const RECT quickNavigationInteractionRect =
-            quickNavigationOpen_
-                ? quickNavigationRect_
+            quickNavigation_->open
+                ? quickNavigation_->rect
                 : RECT{};
         const RECT dockPopupInteractionRect =
             snowdesktop::floating_dock_rules::
@@ -770,7 +771,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             for (unsigned depth = 0; target && depth < 16; ++depth, target = GetWindow(target, GW_OWNER))
                 if (target == menu) { onOwnedMenu = true; break; }
         }
-        const bool onNavigation = quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
+        const bool onNavigation = quickNavigation_->invocationSource == QuickNavigationInvocationSource::StatusBar &&
             PtInRect(&quickNavigationInteractionRect, desktopPoint);
         bool barSession = false;
         bool onRevealedDockSurface = false;

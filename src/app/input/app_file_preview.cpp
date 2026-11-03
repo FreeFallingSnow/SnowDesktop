@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "widget/runtime/widget_engine.h"
 #include "system/panel/system_panel.h"
 #include "app/dock/dock_tray_popup_state.h"
@@ -83,7 +84,7 @@ bool DesktopApp::TryHandleFilePreviewKey(WPARAM key, bool repeated)
     for (const auto& container : containers_)
         if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
             view && view->IsSearchFocused()) context.textInput = true;
-    context.overlay = quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty() ||
+    context.overlay = quickNavigation_->open || !luaWidgetPanelRequest_.widgetId.empty() ||
         dockTrayPopup_ || HasActiveContextMenuSession() || (systemPanel_ && systemPanel_->IsOpen()) ||
         (widgetEngine_ && widgetEngine_->HasHostViewKeyboardFocus());
     context.gesture = mouseDown_ || dragSession_.HasContext() || dragDropController_.IsTransportActive() ||

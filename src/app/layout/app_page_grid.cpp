@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "layout/page_management_rules.h"
 #include "common/l10n.h"
 #include "layout/page_navigation_rules.h"
@@ -1236,7 +1237,7 @@ void DesktopApp::SetShortcutArrowMode(int mode)
     InvalidateDragStaticScene();
     SaveLayoutSlots();
     InvalidateRect(hwnd_, nullptr, TRUE);
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
         InvalidateQuickNavigationWindow();
 }
 
@@ -1289,8 +1290,8 @@ void DesktopApp::SetIconBeautifySettings(
     placeholderIconCache_.clear();
     // Dock folder sources are uploaded without beautification and can be
     // reused when only their derived appearance changes.
-    quickNavSysIconCache_.clear();
-    quickNavAppIconCache_.clear();
+    quickNavigation_->sysIconCache.clear();
+    quickNavigation_->appIconCache.clear();
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     InvalidateDragStaticScene();
@@ -1311,7 +1312,7 @@ void DesktopApp::SetIconBeautifySettings(
         PresentDesktopPointerUpdate();
         FlushPendingCompositionCommit();
     }
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
         InvalidateQuickNavigationWindow();
 }
 

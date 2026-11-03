@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
@@ -710,15 +711,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.
         PollDisplayTopology();
-        if (quickNavigationOpen_ && quickNavigationSearchType_ == QuickNavigationSearchType::Settings &&
-            GetTickCount64() - quickNavigationSettingsRefreshTick_ >= 1000)
+        if (quickNavigation_->open && quickNavigation_->searchType == QuickNavigationSearchType::Settings &&
+            GetTickCount64() - quickNavigation_->settingsRefreshTick >= 1000)
         {
-            quickNavigationSettingsRefreshTick_ = GetTickCount64();
-            const auto previous = quickNavigationSettingsResults_;
-            const auto selection = quickNavigationListSelection_;
+            quickNavigation_->settingsRefreshTick = GetTickCount64();
+            const auto previous = quickNavigation_->settingsResults;
+            const auto selection = quickNavigation_->listSelection;
             RefreshQuickNavigationTypedResults();
-            if (previous == quickNavigationSettingsResults_) quickNavigationListSelection_ = selection;
-            else { if (quickNavigationCollapsed_) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
+            if (previous == quickNavigation_->settingsResults) quickNavigation_->listSelection = selection;
+            else { if (quickNavigation_->collapsed) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
         }
         if (widgetEngine_)
         {

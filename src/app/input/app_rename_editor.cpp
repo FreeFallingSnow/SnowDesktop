@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "ui/input/text_input_window.h"
@@ -404,10 +405,10 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
                 reinterpret_cast<HWND>(lParam);
             const bool remainsInQuickNavigation =
                 activatedWindow ==
-                    app->quickNavigationHwnd_ ||
+                    app->quickNavigation_->hwnd ||
                 activatedWindow ==
-                    app->quickNavigationSearchEdit_ ||
-                app->quickNavBackdropCompositor_.
+                    app->quickNavigation_->searchEdit ||
+                app->quickNavigation_->backdropCompositor.
                     IsBackdropWindow(
                         activatedWindow);
             if (!remainsInQuickNavigation)

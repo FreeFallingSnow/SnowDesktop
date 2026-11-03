@@ -4,10 +4,10 @@ static std::vector<std::wstring> QuickNavigationNames(DesktopApp& app,
     const std::vector<std::filesystem::path>& files, const std::wstring& query)
 {
     PopulateModel(app, files, 0);
-    app.quickNavigationSearchType_ = QuickNavigationSearchType::All;
-    app.quickNavigationActiveWidgetIndex_ = static_cast<std::size_t>(-1);
-    app.quickNavigationSearchText_ = app.quickNavigationEffectiveSearchText_ = query;
-    app.quickNavigationSearchCompositionText_.clear();
+    app.quickNavigation_->searchType = QuickNavigationSearchType::All;
+    app.quickNavigation_->activeWidgetIndex = static_cast<std::size_t>(-1);
+    app.quickNavigation_->searchText = app.quickNavigation_->effectiveSearchText = query;
+    app.quickNavigation_->searchCompositionText.clear();
     app.dockEntries_.clear();
     std::vector<std::wstring> names;
     for (const auto& entry : app.BuildQuickNavigationContentModel().entries)

@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "layout/collection_popup_layout.h"
 #include "diagnostics/diagnostic_log.h"
@@ -40,7 +41,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
         return;
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-    if (quickNavigationOpen_) return;
+    if (quickNavigation_->open) return;
     if (GetDockContainerAtPoint(pt)) return;
     if (IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size())

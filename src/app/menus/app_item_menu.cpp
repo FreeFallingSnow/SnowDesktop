@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
@@ -638,9 +639,9 @@ void DesktopApp::ShowItemContextMenu(
             L"");
 
     HWND menuOwner = keepQuickNavigationOpen &&
-        quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
+        quickNavigation_->hwnd &&
+        IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd
         : hwnd_;
     snowdesktop::private_pointer::SetInputForeground(menuOwner);
     const bool placeOutsideDock = dockRenameAnchor.has_value() ||
@@ -1227,9 +1228,9 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
     // actual source surface, including its edit/popup deactivation ownership.
     const POINT navigationPoint{point.x - virtualLeft_, point.y - virtualTop_};
     keepQuickNavigationOpen = keepQuickNavigationOpen ||
-        (quickNavigationOpen_ && PtInRect(&quickNavigationRect_, navigationPoint));
-    const HWND menuOwner = keepQuickNavigationOpen && quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_ : ShellDialogOwnerHwnd();
+        (quickNavigation_->open && PtInRect(&quickNavigation_->rect, navigationPoint));
+    const HWND menuOwner = keepQuickNavigationOpen && quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd : ShellDialogOwnerHwnd();
     DismissActiveContextMenuForPopupTransition();
     try
     {

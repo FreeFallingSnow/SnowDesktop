@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "app/dock/dock_tray_popup_state.h"
@@ -88,13 +89,13 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
-        RECT overlay = quickNavigationRect_;
+        RECT overlay = quickNavigation_->rect;
         if (PtInRect(&overlay, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
-            if (quickNavigationInitialJumpOpen_)
+            if (quickNavigation_->initialJumpOpen)
             {
                 InvalidateQuickNavigationWindow(true);
                 return;
@@ -112,19 +113,19 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                             overlay);
                     snowdesktop::quick_navigation_rules::SetTabScrollOffset(
                         std::clamp(
-                            quickNavigationTabScrollOffset_ -
+                            quickNavigation_->tabScrollOffset -
                                 delta / 2,
                             0, maxTabScroll),
-                        quickNavigationTabScrollOffset_,
-                        quickNavTabDragIndex_ != static_cast<size_t>(-1),
-                        quickNavTabDragStartPoint_,
-                        quickNavTabDragDeltaX_);
+                        quickNavigation_->tabScrollOffset,
+                        quickNavigation_->tabDragIndex != static_cast<size_t>(-1),
+                        quickNavigation_->tabDragStartPoint,
+                        quickNavigation_->tabDragDeltaX);
                 }
             }
             else
             {
                 int maxScroll = GetQuickNavigationMaxScrollOffset(overlay);
-                quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_ - delta / 2, 0, maxScroll);
+                quickNavigation_->scrollOffset = std::clamp(quickNavigation_->scrollOffset - delta / 2, 0, maxScroll);
             }
             InvalidateQuickNavigationWindow(true);
             return;

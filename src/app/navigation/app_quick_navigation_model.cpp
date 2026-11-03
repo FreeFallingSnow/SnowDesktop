@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -121,10 +122,10 @@ DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd,
 
 void DesktopApp::StartQuickNavigationAppIndexing()
 {
-    if (quickNavigationAppsIndexed_ || quickNavigationAppIndexing_) return;
-    const auto serial = ++quickNavigationAppIndexSerial_;
+    if (quickNavigation_->appsIndexed || quickNavigation_->appIndexing) return;
+    const auto serial = ++quickNavigation_->appIndexSerial;
     const int size = QuickNavScale(28);
-    quickNavigationAppIndexing_ = appIndexWork_.Submit(L"apps", [serial, size] {
+    quickNavigation_->appIndexing = appIndexWork_.Submit(L"apps", [serial, size] {
         auto result = std::make_shared<QuickNavigationAppIndexResult>();
         result->serial = serial;
         result->entries = BuildQuickNavigationAppIndex(nullptr,
@@ -133,15 +134,15 @@ void DesktopApp::StartQuickNavigationAppIndexing()
     }, [this](std::shared_ptr<QuickNavigationAppIndexResult> result) {
         if (result) OnQuickNavigationAppsIndexed(0,
             reinterpret_cast<LPARAM>(new QuickNavigationAppIndexResult(std::move(*result))));
-        else quickNavigationAppIndexing_ = false;
+        else quickNavigation_->appIndexing = false;
     }, hwnd_, kBackgroundShellReadyMessage);
 }
 
 void DesktopApp::StopQuickNavigationAppIndexing()
 {
-    ++quickNavigationAppIndexSerial_;
+    ++quickNavigation_->appIndexSerial;
     appIndexWork_.Stop();
-    quickNavigationAppIndexing_ = false;
+    quickNavigation_->appIndexing = false;
 }
 
 void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
@@ -150,28 +151,28 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
         reinterpret_cast<QuickNavigationAppIndexResult*>(lParam));
 
 
-    quickNavigationAppIndexing_ = false;
+    quickNavigation_->appIndexing = false;
 
-    if (!result || result->serial != quickNavigationAppIndexSerial_)
+    if (!result || result->serial != quickNavigation_->appIndexSerial)
         return;
 
-    quickNavAppIconCache_.clear();
-    quickNavigationAppEntries_ = std::move(result->entries);
+    quickNavigation_->appIconCache.clear();
+    quickNavigation_->appEntries = std::move(result->entries);
     if (result->systemImageListSmall)
-        quickNavigationSystemImageListSmall_ = result->systemImageListSmall;
-    quickNavigationAppsIndexed_ = true;
-    quickNavigationAppsExpanded_ = false;
+        quickNavigation_->systemImageListSmall = result->systemImageListSmall;
+    quickNavigation_->appsIndexed = true;
+    quickNavigation_->appsExpanded = false;
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("applications");
 
     if (!GetQuickNavigationEffectiveSearchText().empty())
     {
         RefreshQuickNavigationAppResults();
-        quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
-            GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
-        if (quickNavigationOpen_)
+        quickNavigation_->scrollOffset = std::clamp(quickNavigation_->scrollOffset, 0,
+            GetQuickNavigationMaxScrollOffset(quickNavigation_->rect));
+        if (quickNavigation_->open)
         {
-            if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
+            if (quickNavigation_->collapsed) PositionQuickNavigationWindow();
             InvalidateQuickNavigationWindow();
         }
     }
@@ -179,9 +180,9 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
 
 void DesktopApp::RefreshQuickNavigationAppResults()
 {
-    quickNavigationAppResultIndices_.clear();
+    quickNavigation_->appResultIndices.clear();
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
-    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::App) return;
+    if (quickNavigation_->searchType != QuickNavigationSearchType::All && quickNavigation_->searchType != QuickNavigationSearchType::App) return;
     if (query.empty())
         return;
     if (IsLuaLogicalSlotPickerOpen() &&
@@ -189,12 +190,12 @@ void DesktopApp::RefreshQuickNavigationAppResults()
         return;
 
     StartQuickNavigationAppIndexing();
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return;
 
-    for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i)
+    for (size_t i = 0; i < quickNavigation_->appEntries.size(); ++i)
     {
-        const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
+        const QuickNavigationAppEntry& entry = quickNavigation_->appEntries[i];
         const std::wstring displayName =
             !IsLuaLogicalSlotPickerOpen() &&
             generalSettings_.demoModeEnabled &&
@@ -203,13 +204,13 @@ void DesktopApp::RefreshQuickNavigationAppResults()
             : entry.name;
         if (!NameMatchesQuery(displayName, query))
             continue;
-        quickNavigationAppResultIndices_.push_back(i);
+        quickNavigation_->appResultIndices.push_back(i);
     }
 
-    std::stable_sort(quickNavigationAppResultIndices_.begin(), quickNavigationAppResultIndices_.end(),
+    std::stable_sort(quickNavigation_->appResultIndices.begin(), quickNavigation_->appResultIndices.end(),
         [&](size_t a, size_t b) {
             const auto displayName = [&](size_t index) {
-                const auto& entry = quickNavigationAppEntries_[index];
+                const auto& entry = quickNavigation_->appEntries[index];
                 return !IsLuaLogicalSlotPickerOpen() &&
                     generalSettings_.demoModeEnabled &&
                     demoIdentityAssetsAvailable_
@@ -220,19 +221,19 @@ void DesktopApp::RefreshQuickNavigationAppResults()
                 NameSearchMatchRank(displayName(b), query);
         });
 
-    if (quickNavigationAppResultIndices_.size() > kQuickNavigationAppResultLimit)
-        quickNavigationAppResultIndices_.resize(kQuickNavigationAppResultLimit);
+    if (quickNavigation_->appResultIndices.size() > kQuickNavigationAppResultLimit)
+        quickNavigation_->appResultIndices.resize(kQuickNavigationAppResultLimit);
 }
 
 const DesktopApp::QuickNavigationAppEntry*
 DesktopApp::FindQuickNavigationEverythingAppEntry() const
 {
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return nullptr;
 
     const QuickNavigationAppEntry* bestEntry = nullptr;
     int bestRank = kNameSearchNoMatchRank;
-    for (const auto& entry : quickNavigationAppEntries_)
+    for (const auto& entry : quickNavigation_->appEntries)
     {
         const int rank = NameSearchMatchRank(entry.name, L"Everything");
         if (rank < bestRank)
@@ -248,7 +249,7 @@ DesktopApp::FindQuickNavigationEverythingAppEntry() const
 
 std::wstring DesktopApp::GetQuickNavigationEverythingNoticeText() const
 {
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return _LW("app.interact.everything_not_running");
     return FindQuickNavigationEverythingAppEntry()
         ? _LW("app.interact.everything_click_start")
@@ -265,7 +266,7 @@ bool DesktopApp::TryLaunchQuickNavigationEverythingApp()
 std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
 {
     return snowdesktop::quick_navigation_rules::
-        OrderTabWidgetIndices(navTabOrder_, widgets_);
+        OrderTabWidgetIndices(quickNavigation_->tabOrder, widgets_);
 }
 
 std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
@@ -282,7 +283,7 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         result.push_back(key);
     };
 
-    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+    if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-1))
     {
         std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
         for (size_t ci : collectionIndices)
@@ -294,7 +295,7 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         }
         return result;
     }
-    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+    if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-2))
     {
         std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
         for (size_t ci : collectionIndices)
@@ -306,19 +307,19 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         return result;
     }
 
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        (widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::Collection ||
-         widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FileCategories))
+    if (quickNavigation_->activeWidgetIndex < widgets_.size() &&
+        (widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::Collection ||
+         widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::FileCategories))
     {
-        const auto& widget = widgets_[quickNavigationActiveWidgetIndex_];
+        const auto& widget = widgets_[quickNavigation_->activeWidgetIndex];
         for (const auto& itemKey : widget.itemKeys)
             appendKey(itemKey);
         return result;
     }
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
+    if (quickNavigation_->activeWidgetIndex < widgets_.size() &&
+        widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::FolderMapping)
     {
-        for (const auto& fe : widgets_[quickNavigationActiveWidgetIndex_].folderEntries)
+        for (const auto& fe : widgets_[quickNavigation_->activeWidgetIndex].folderEntries)
             appendKey(fe.fullPath);
         return result;
     }
@@ -345,7 +346,7 @@ DesktopApp::QuickNavigationContentModel
 DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
 {
     QuickNavigationContentModel model;
-    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::File) return model;
+    if (quickNavigation_->searchType != QuickNavigationSearchType::All && quickNavigation_->searchType != QuickNavigationSearchType::File) return model;
     std::unordered_set<std::wstring> seenDesktop;
     std::unordered_set<std::wstring> dockDesktopKeys;
     for (const DockEntry& dockEntry : dockEntries_)
@@ -461,7 +462,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
         }
         return snowdesktop::quick_navigation_rules::
             OrderIndicesByTabIds(
-                navTabOrder_, widgetIds, eligible);
+                quickNavigation_->tabOrder, widgetIds, eligible);
     };
     const auto groupByInitial = [&] {
         auto entries = std::move(model.entries);
@@ -490,7 +491,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
 
     if (query.empty())
     {
-        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-1))
         {
             const auto mode = navigationSettings_.desktopViewMode;
             const bool showSuggestions = snowdesktop::quick_navigation_rules::ShowAppSuggestions(
@@ -574,7 +575,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 if (!showSuggestions) return content;
                 const auto order = snowdesktop::quick_navigation_rules::LaunchFrequencyOrder(
                     launchCounts, true, static_cast<size_t>(GetQuickNavigationColumnCount(
-                        overlay ? *overlay : quickNavigationRect_)));
+                        overlay ? *overlay : quickNavigation_->rect)));
                 if (order.empty()) return content;
                 const size_t count = order.size();
                 std::vector<QuickNavigationEntry> suggestions;
@@ -732,7 +733,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             return finishDesktop(std::move(model));
         }
 
-        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+        if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-2))
         {
             const auto mappingWidgets =
                 orderedWidgetIndices(
@@ -771,17 +772,17 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             return model;
         }
 
-        if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-            widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
+        if (quickNavigation_->activeWidgetIndex < widgets_.size() &&
+            widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::FolderMapping)
         {
-            const DesktopWidget& widget = widgets_[quickNavigationActiveWidgetIndex_];
+            const DesktopWidget& widget = widgets_[quickNavigation_->activeWidgetIndex];
             std::wstring source = widget.title.empty() ? _LW("widget.folder_mapping") : widget.title;
             for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
             {
                 const FolderEntry& entryData = widget.folderEntries[ei];
                 QuickNavigationEntry entry;
                 entry.kind = QuickNavigationEntry::Kind::FolderEntry;
-                entry.widgetIndex = quickNavigationActiveWidgetIndex_;
+                entry.widgetIndex = quickNavigation_->activeWidgetIndex;
                 entry.folderEntryIndex = ei;
                 entry.name = entryData.DisplayName();
                 entry.path = entryData.fullPath;
@@ -798,8 +799,8 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 model.entries,
                 FindItemIndexByKey(key),
                 _LW("widget.collection"),
-                quickNavigationActiveWidgetIndex_ < widgets_.size()
-                    ? quickNavigationActiveWidgetIndex_
+                quickNavigation_->activeWidgetIndex < widgets_.size()
+                    ? quickNavigation_->activeWidgetIndex
                     : static_cast<size_t>(-1));
         groupWidgetEntriesByInitial();
         return model;

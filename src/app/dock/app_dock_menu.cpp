@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "settings/settings_snapshot.h"
 #include "common/utils.h"
@@ -809,9 +810,9 @@ void DesktopApp::ShowDockRunningAppContextMenu(
     }
 
     auto applications = std::make_shared<std::vector<QuickNavigationAppEntry>>();
-    if (!explorer && quickNavigationAppsIndexed_)
+    if (!explorer && quickNavigation_->appsIndexed)
     {
-        for (const auto& entry : quickNavigationAppEntries_)
+        for (const auto& entry : quickNavigation_->appEntries)
         {
             QuickNavigationAppEntry copy;
             copy.name = entry.name;
@@ -820,7 +821,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             if (copy.absolutePidl.get()) applications->push_back(std::move(copy));
         }
     }
-    const bool indexed = quickNavigationAppsIndexed_;
+    const bool indexed = quickNavigation_->appsIndexed;
     const std::wstring explorerName = _LW("app.dock.explorer_name");
     const auto pinSources = readPinSources();
     const bool submitted = shellVisualWork_.Submit(

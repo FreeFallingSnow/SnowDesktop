@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_rules.h"
 #include "layout/collection_popup_layout.h"
 #include "diagnostics/diagnostic_log.h"
@@ -330,7 +331,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     }
 
     const bool quickNavigationWasOpen =
-        quickNavigationOpen_;
+        quickNavigation_->open;
     if (HandleQuickNavigationClick(pt))
     {
         mouseDown_ = false;
@@ -338,7 +339,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     }
     const bool quickNavigationDismissedByThisPress =
         quickNavigationWasOpen &&
-        !quickNavigationOpen_;
+        !quickNavigation_->open;
 
     if (HandlePageNavClick(pt)) return;
 

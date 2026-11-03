@@ -2,12 +2,8 @@
  * @file app.h
  * @brief SnowDesktop 主应用程序类的声明头文件。
  *
- * 该文件定义了桌面应用程序的核心结构，包括：
- * - 拖拽渲染缓存 DragRenderCache，用于高效缓存拖拽过程中的静态场景
- * - 主应用类 DesktopApp，封装了窗口管理、图形渲染、数据模型、
- *   拖放交互、托盘图标、上下文菜单、快速导航、部件系统等核心功能
- * - 快速导航条目 QuickNavigationEntry，用于在快速导航面板中展示
- *   桌面项、文件夹条目等快捷入口
+ * 本文件保留 DesktopApp 的组合根和应用协调接口。快捷导航运行态、
+ * 导航模型、渲染缓存及模块值类型由对应功能头声明和持有。
  *
  * Windows OLE 拖放协议由 OleDragDropAdapter 适配，DesktopApp 只处理
  * 应用级拖放事件，不再承担 COM 身份与引用计数。
@@ -16,6 +12,12 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "app/render/composition_state_types.h"
+#include "app/render/demo_icon_load_types.h"
+#include "app/dock/dock_runtime_types.h"
+#include "app/lifecycle/auto_start_result.h"
+#include "app/render/drag_render_cache.h"
+#include "app/navigation/quick_navigation_models.h"
 #include "ui/render/native_tooltip.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
@@ -34,10 +36,8 @@
 #include "app/shell/shell_icon_work.h"
 #include "icons/icon_styled_pixels.h"
 #include "dock/dock_refresh_cache.h"
-#include "dock/dock_running_animation.h"
 #include "dock/dock_window_attention.h"
 #include "common/bounded_lru_cache.h"
-#include "icons/icon_row_index.h"
 #include "app/dock/dock_icon_work.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "desktop/desktop_idle_hide.h"
@@ -57,7 +57,6 @@
 #include "settings/settings_route.h"
 #include "settings/settings_host_actions.h"
 #include "settings/settings_action_result.h"
-#include "settings/settings_search_index.h"
 #include "winui/home_about_page_model.h"
 #include "platform/usage_guide_panel.h"
 #include "icons/large_icon_settings.h"
@@ -75,6 +74,7 @@ struct DockTrayPopupState;
 namespace snowdesktop
 {
 class SettingsController;
+struct SettingsSearchIndexInput;
 class SystemPanel;
 class NativeStartMenu;
 class DockAppBars;
@@ -86,7 +86,9 @@ namespace steam_entitlement { class Service; }
 namespace steam_presence { class Service; }
 namespace winui { struct LayoutRestorePayload; }
 }
+namespace snowdesktop::quick_navigation { struct State; }
 namespace snowdesktop::usage_guide { enum class Topic; }
+namespace snowdesktop { struct QuickNavigationEverythingSearchResult; }
 namespace snowdesktop::page_management { struct RemovalPlan; }
 namespace snowdesktop::page_mapping { struct State; struct Services; }
 namespace snowdesktop::app_control { struct Runtime; }
@@ -113,7 +115,6 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "dock/dock_drop_rules.h"
 #include "layout/collection_popup_types.h"
 #include "layout/popup_animation_rules.h"
-#include "navigation/quick_navigation_animation_rules.h"
 #include "icons/icon_beautify.h"
 #include "icons/icon_appearance.h"
 #include "icons/icon_appearance_rules.h"
@@ -130,7 +131,6 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include "widget/view/widget_composition_layer_rules.h"
 #include "desktop/desktop_hover_types.h"
 #include "desktop/desktop_drop_cache.h"
-#include "dock/dock_app_identity_rules.h"
 #include "shell/shell_launch_worker.h"
 #include "shell/file_preview.h"
 #include "drag_drop/url_drop_download_worker.h"
@@ -143,7 +143,6 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include "shell/shell_file_operation_worker.h"
 #include "shell/shell_file_operation_completion.h"
 #include "ui/input/low_level_mouse_hook.h"
-#include "navigation/quick_navigation_search_async.h"
 #include "widget/runtime/widget_host_requests.h"
 #include "widget/view/widget_native_marquee.h"
 #include "widget/packages/widget_package.h"
@@ -217,7 +216,6 @@ namespace snowdesktop::demo_collection_rules { struct Category; }
 #include <unordered_set>
 #include <vector>
 
-
 using Microsoft::WRL::ComPtr;
 
 namespace snowdesktop::widget_runtime
@@ -226,46 +224,12 @@ class IWidgetSettingsBackend;
 class WidgetSettingsService;
 }
 
-
 namespace snowdesktop
 {
 class ShellContextMenuSite;
 class ShellNewMenu;
 class ShellNewItemCapture;
-struct AutoStartQueryResult
-{
-    bool packaged = false;
-    bool stateKnown = false;
-    bool enabled = false;
-    bool taskOwnedByCurrentDeployment = false;
-    UnifiedAutoStartTaskState taskStatus =
-        UnifiedAutoStartTaskState::Unavailable;
-    UnifiedAutoStartOwner taskOwner = UnifiedAutoStartOwner::Unknown;
-    std::wstring ownerCommand;
-};
 
-enum class AutoStartApplyStatus : std::uint8_t
-{
-    Applied,
-    ManualEnableRequired,
-    BlockedByPolicy,
-    PortableRegistrationConflict,
-    InstalledRegistrationConflict,
-    StateUnavailable,
-    Failed,
-};
-
-struct AutoStartApplyResult
-{
-    AutoStartApplyStatus status = AutoStartApplyStatus::Failed;
-    AutoStartQueryResult state;
-    std::wstring message;
-
-    [[nodiscard]] bool Succeeded() const noexcept
-    {
-        return status == AutoStartApplyStatus::Applied;
-    }
-};
 } // namespace snowdesktop
 
 // Shared render helpers used by both the remaining inline render code and the
@@ -278,208 +242,6 @@ std::wstring DockItemWindowKey(const DesktopItem& item);
 struct IconLoadTask;
 struct RecycleBinPollState;
 struct SteamWorkshopSubscriptionPollState;
-enum class DockWindowVisualState
-{
-    Closed,
-    Running,
-    Foreground,
-    Minimized,
-};
-
-enum class FloatingDockCloseFocusPolicy
-{
-    RestorePrevious,
-    PreserveCurrent,
-};
-
-enum class QuickNavigationInvocationSource
-{
-    Pointer,
-    DockSearch,
-    Hotkey,
-    StatusBar,
-};
-
-struct DockAppIdentity
-{
-    DockAppIdentityKind kind = DockAppIdentityKind::None;
-    std::wstring sourceParsingName;
-    std::wstring executablePath;
-    std::wstring appUserModelId;
-    std::wstring steamAppId;
-    std::wstring steamInstallDirectory;
-    std::vector<std::wstring> validatedPayloadPaths;
-};
-
-struct DockWindowPreviewTarget
-{
-    DockAppIdentity identity;
-    std::wstring identityKey;
-    std::wstring targetToken;
-    RECT anchorScreen{};
-    bool floatingLayer = false;
-};
-
-struct DockWindowInfo
-{
-    HWND window = nullptr;
-    bool minimized = false;
-    bool running = false;
-    bool foreground = false;
-    // All identity-matched task windows, including non-representative siblings.
-    std::vector<HWND> trackedWindows;
-};
-
-struct DockRunningAppInfo
-{
-    snowdesktop::dock_running_animation::Presence presence;
-    std::wstring identityKey;
-    std::wstring title;
-    std::wstring executablePath;
-    std::wstring appUserModelId;
-    std::vector<std::wstring>
-        ancestorExecutablePaths;
-    HWND window = nullptr;
-    HBITMAP iconBitmap = nullptr;
-    SIZE iconBitmapSize{};
-    int iconRequestedSize = 0;
-    bool minimized = false;
-    bool foreground = false;
-    bool selected = false;
-    std::vector<HWND> trackedWindows;
-};
-
-struct DemoIconDecodeResult {
-    std::uint64_t generation = 0;
-    std::size_t visualIndex = 0;
-    int width = 0;
-    int height = 0;
-    std::vector<std::uint32_t> pixels;
-    bool needsGlassBackdrop = false;
-};
-
-struct DemoIconLoadTask {
-    std::uint64_t generation = 0;
-    std::size_t visualIndex = 0;
-    std::filesystem::path path;
-    snowdesktop::IconBeautifySettings beautify;
-};
-
-/**
- * @brief 拖拽渲染缓存，用于缓存拖拽操作期间的静态场景位图。
- *
- * 在拖拽过程中，桌面背景的静态部分只需绘制一次并缓存为位图，
- * 后续帧只需要将动态内容（如拖拽图标、放置预览）叠加绘制到
- * 缓存的静态位图上，从而大幅减少每帧的绘制开销。
- */
-class DragRenderCache
-{
-public:
-    /** @brief 重置缓存，释放所有 GPU 资源。在窗口尺寸变化或设备丢失时调用。 */
-    void Reset();
-
-    /** @brief 丢弃旧内容，保留有界的同尺寸存储供下一次绘制复用。 */
-    void Invalidate();
-    [[nodiscard]] std::uint64_t BitmapAllocationCount() const { return bitmapAllocationCount_; }
-
-    /**
-     * @brief 确保缓存已创建且为最新版本。
-     * @param device     D2D 设备对象
-     * @param pixelSize  所需的像素尺寸
-     * @param revision   场景修订号，修订号未变时跳过重绘以提高性能
-     * @param drawStatic 用于绘制静态场景的回调函数
-     * @return true 表示缓存已就绪；false 表示创建失败
-     */
-    bool Ensure(ID2D1Device* device, D2D1_SIZE_U pixelSize, std::uint64_t revision,
-        const std::function<void(ID2D1DeviceContext*)>& drawStatic);
-
-    /** @brief 将缓存的静态场景绘制到指定设备上下文中。 @param ctx D2D 设备上下文 */
-    void Draw(ID2D1DeviceContext* ctx) const;
-    /**
-     * @brief 将缓存绘制到指定坐标。
-     * @return 缓存存在并完成绘制时返回 true。
-     */
-    bool DrawAt(
-        ID2D1DeviceContext* ctx,
-        D2D1_POINT_2F destination,
-        D2D1_INTERPOLATION_MODE interpolation =
-            D2D1_INTERPOLATION_MODE_LINEAR) const;
-
-private:
-    ComPtr<ID2D1Bitmap1> bitmap_;      /**< 缓存的静态场景位图 */
-    ComPtr<ID2D1DeviceContext> context_; /**< 离屏渲染设备上下文 */
-    ComPtr<ID2D1Device> device_;
-    bool contentValid_ = false;
-    std::uint64_t bitmapAllocationCount_ = 0;
-    UINT width_ = 0;                   /**< 缓存位图宽度 */
-    UINT height_ = 0;                  /**< 缓存位图高度 */
-    std::uint64_t revision_ = 0;       /**< 当前缓存的修订号，用于判断是否需要重绘 */
-};
-
-using UiCompositionAnimationHost =
-    snowdesktop::widget_composition_layer_rules::CompositionHost;
-
-struct UiCompositionAnimationOverlay
-{
-    ComPtr<IDCompositionVisual2> visual;
-    ComPtr<IDCompositionEffectGroup> effect;
-    ComPtr<IDCompositionScaleTransform> scaleTransform;
-    ComPtr<IDCompositionSurface> surface;
-    UINT surfaceWidth = 0, surfaceHeight = 0;
-    RECT bounds{};
-    UiCompositionAnimationHost host =
-        UiCompositionAnimationHost::Desktop;
-    bool active = false;
-};
-
-struct PopupFanIconDrawing
-{
-    ComPtr<ID2D1CommandList> commands;
-    ComPtr<ID2D1Effect> shadow;
-    ComPtr<ID2D1Image> shadowImage;
-    D2D1_RECT_F shadowBounds{};
-};
-
-struct WidgetMarqueeCompositionItem
-{
-    ComPtr<IDCompositionVisual2> clipVisual;
-    ComPtr<IDCompositionVisual2> textVisual;
-    ComPtr<IDCompositionRectangleClip> clip;
-    ComPtr<IDCompositionSurface> surface;
-    UINT surfaceWidth = 0;
-    UINT surfaceHeight = 0;
-    float cycle = 0.0f;
-    float speed = 0.0f;
-    float phase = 0.0f;
-    float clipWidth = 0.0f;
-    float clipHeight = 0.0f;
-    std::chrono::steady_clock::time_point phaseTime{};
-    bool scrolling = false;
-    bool visible = true;
-};
-
-struct PendingWidgetMarqueeComposition
-{
-    std::vector<snowdesktop::widget_runtime::NativeMarqueeText> marquees;
-    bool reducedMotion = false;
-};
-
-struct DesktopWidgetCompositionItem
-{
-    ComPtr<IDCompositionVisual2> visual;
-    ComPtr<IDCompositionRectangleClip> clip;
-    ComPtr<IDCompositionSurface> surface;
-    RECT bounds{};
-    UINT width = 0;
-    UINT height = 0;
-    std::uint64_t hiddenSince = 0;
-    bool visible = false;
-    bool backdropRequested = false;
-    bool backdropRegistered = false;
-    int backdropCornerRadius = 0;
-    int backdropBlurRadius = 0;
-    snowdesktop::WidgetIconBackdrops iconBackdrops;
-};
 
 /**
  * @brief SnowDesktop 主应用程序类。
@@ -550,177 +312,27 @@ public:
     friend struct NativeDragIntegrationAccess;
     friend struct DockFolderIconCompletionTestAccess;
 
-    /**
-     * @brief 快速导航面板中的条目结构体。
-     *
-     * 表示快速导航面板中的一个可操作项，可以是桌面图标项（DesktopItem）
-     * 或文件夹部件中的条目（FolderEntry），包含图标、名称、路径等信息，
-     * 供导航面板渲染和交互使用。
-     */
-    struct QuickNavigationEntry
-    {
-        /**
-         * @brief 条目来源类型。
-         * @var DesktopItem  来自桌面图标
-         * @var FolderEntry  来自文件夹映射部件的条目
-         */
-        enum class Kind
-        {
-            DesktopItem,
-            FolderEntry,
-        };
+        using QuickNavigationEntry = snowdesktop::quick_navigation::Entry;
 
-        Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
-        size_t itemIndex = static_cast<size_t>(-1);   /**< 在桌面项列表中的索引（DesktopItem 类型时有效） */
-        size_t widgetIndex = static_cast<size_t>(-1); /**< 所在部件的索引 */
-        size_t demoCollectionIndex = static_cast<size_t>(-1); /**< 演示模式下提供虚拟身份的集合 */
-        size_t folderEntryIndex = static_cast<size_t>(-1); /**< 在文件夹条目列表中的索引（FolderEntry 类型时有效） */
-        std::wstring name;           /**< 显示名称 */
-        std::wstring path;           /**< 完整路径 */
-        std::wstring source;         /**< 来源标识 */
-    };
+    using QuickNavigationSection = snowdesktop::quick_navigation::Section;
 
-    struct QuickNavigationSection
-    {
-        std::wstring label;
-        size_t firstEntryIndex = 0;
-        size_t entryCount = 0;
-    };
+    using QuickNavigationContentModel = snowdesktop::quick_navigation::ContentModel;
 
-    struct QuickNavigationContentModel
-    {
-        std::vector<QuickNavigationEntry> entries;
-        std::vector<QuickNavigationSection> sections;
+    using QuickNavigationEverythingEntry = snowdesktop::quick_navigation::EverythingEntry;
 
-        bool IsSectioned() const
-        {
-            return !sections.empty();
-        }
-    };
+    using QuickNavigationAppEntry = snowdesktop::quick_navigation::AppEntry;
 
-    struct QuickNavigationEverythingEntry
-    {
-        std::wstring name;
-        std::wstring path;
-        FILETIME dateModified{};
-        std::wstring modifiedText;
-        bool isDirectory = false;
-        int systemIconIndex = -1;
-        std::wstring iconCacheKey;
-    };
+    using QuickNavigationAppIndexResult = snowdesktop::quick_navigation::AppIndexResult;
 
-    struct QuickNavigationAppEntry
-    {
-        std::wstring name;
-        std::wstring parsingName;
-        std::wstring iconCacheIdentity;
-        Pidl absolutePidl;
-        HBITMAP iconBitmap = nullptr;
-        SIZE iconBitmapSize{};
-        int systemIconIndex = -1;
+    using QuickNavigationKeyboardTargetKind = snowdesktop::quick_navigation::KeyboardTargetKind;
 
-        QuickNavigationAppEntry() = default;
-        QuickNavigationAppEntry(const QuickNavigationAppEntry&) = delete;
-        QuickNavigationAppEntry& operator=(
-            const QuickNavigationAppEntry&) = delete;
+    using QuickNavigationKeyboardTarget = snowdesktop::quick_navigation::KeyboardTarget;
 
-        QuickNavigationAppEntry(
-            QuickNavigationAppEntry&& other) noexcept
-            : name(std::move(other.name)),
-              parsingName(std::move(other.parsingName)),
-              iconCacheIdentity(
-                  std::move(other.iconCacheIdentity)),
-              absolutePidl(std::move(other.absolutePidl)),
-              iconBitmap(other.iconBitmap),
-              iconBitmapSize(other.iconBitmapSize),
-              systemIconIndex(other.systemIconIndex)
-        {
-            other.iconBitmap = nullptr;
-            other.iconBitmapSize = {};
-        }
+    using QuickNavigationPointerTargetKind = snowdesktop::quick_navigation::PointerTargetKind;
 
-        QuickNavigationAppEntry& operator=(
-            QuickNavigationAppEntry&& other) noexcept
-        {
-            if (this == &other)
-                return *this;
-            if (iconBitmap)
-                DeleteObject(iconBitmap);
-            name = std::move(other.name);
-            parsingName = std::move(other.parsingName);
-            iconCacheIdentity =
-                std::move(other.iconCacheIdentity);
-            absolutePidl = std::move(other.absolutePidl);
-            iconBitmap = other.iconBitmap;
-            iconBitmapSize = other.iconBitmapSize;
-            systemIconIndex = other.systemIconIndex;
-            other.iconBitmap = nullptr;
-            other.iconBitmapSize = {};
-            return *this;
-        }
+    using QuickNavigationPointerTarget = snowdesktop::quick_navigation::PointerTarget;
 
-        ~QuickNavigationAppEntry()
-        {
-            if (iconBitmap)
-                DeleteObject(iconBitmap);
-        }
-    };
-
-    struct QuickNavigationAppIndexResult
-    {
-        uint64_t serial = 0;
-        std::vector<QuickNavigationAppEntry> entries;
-        HIMAGELIST systemImageListSmall = nullptr;
-    };
-
-    enum class QuickNavigationKeyboardTargetKind
-    {
-        None,
-        Item,
-        App,
-        Everything,
-        ExpandApps,
-        LoadMoreEverything,
-    };
-
-    struct QuickNavigationKeyboardTarget
-    {
-        QuickNavigationKeyboardTargetKind kind = QuickNavigationKeyboardTargetKind::None;
-        size_t index = 0;
-        RECT rect{};
-    };
-
-    enum class QuickNavigationPointerTargetKind
-    {
-        None,
-        Tab,
-        ViewMode,
-        InitialBack,
-        InitialBucket,
-        SectionHeader,
-        Item,
-        App,
-        ExpandApps,
-        Everything,
-        LoadMoreEverything,
-        Scrollbar,
-    };
-
-    struct QuickNavigationPointerTarget
-    {
-        QuickNavigationPointerTargetKind kind =
-            QuickNavigationPointerTargetKind::None;
-        size_t index = 0;
-
-        bool operator==(
-            const QuickNavigationPointerTarget&) const = default;
-    };
-
-    struct QuickNavigationHoverRegion
-    {
-        RECT bounds{};
-        QuickNavigationPointerTarget target{};
-    };
+    using QuickNavigationHoverRegion = snowdesktop::quick_navigation::HoverRegion;
 
     // ── OO 系统访问器（Object-Oriented System Accessors）────
     /** @brief 获取所有容器的引用（网格、部件等）。 @return 容器指针的 vector 引用 */
@@ -3628,7 +3240,8 @@ private:
     snowdesktop::UiAnimationScheduler uiAnimationScheduler_;
     snowdesktop::UiScheduleToken popupAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken luaPanelAnimationFrameToken_ = 0;
-    snowdesktop::UiScheduleToken quickNavigationAnimationFrameToken_ = 0;
+    std::unique_ptr<snowdesktop::quick_navigation::State> quickNavigation_;
+
     snowdesktop::UiScheduleToken dockBounceAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockRunningAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
@@ -3645,7 +3258,7 @@ private:
     ULONGLONG desktopInteractionTraceUntil_ = 0;
     unsigned desktopInteractionTraceEvents_ = 0;
     unsigned desktopInteractionTraceFrames_ = 0;
-    bool quickNavCompositionCommitPending_ = false;
+
     // 指针反馈同步提交的兜底：仅当当前 WM_PAINT/合成绘制重入时，才把帧交给
     // UiAnimationScheduler 补绘。常规指针路径必须直接 UpdateWindow，不能把
     // 拖拽/Dock hover 也改成异步调度（f29a882 曾引入该回归）。
@@ -3872,30 +3485,16 @@ private:
     HANDLE steamWorkshopWatcherStopEvent_ = nullptr;
     std::atomic<bool> steamWorkshopWatcherActive_{ false };
     NavigationSettings navigationSettings_;
-    bool quickNavigationCollapsed_ = false;
-    bool quickNavigationFixedTop_ = false;
-    int quickNavigationAnchorTop_ = 0;
-    QuickNavigationSearchType quickNavigationSearchType_ = QuickNavigationSearchType::All;
-    std::string quickNavigationSearchEngine_;
-    enum class QuickNavigationMenu { None, Types, Views };
-    QuickNavigationMenu quickNavigationMenu_ = QuickNavigationMenu::None;
-    int quickNavigationMenuSelection_ = 0;
-    int quickNavigationListSelection_ = -1;
-    std::vector<snowdesktop::SettingsSearchResult> quickNavigationSettingsResults_;
-    std::wstring quickNavigationActionNotice_;
-    bool quickNavigationPreview_ = false;
-    ULONGLONG quickNavigationSettingsRefreshTick_ = 0;
+
+    using QuickNavigationMenu = snowdesktop::quick_navigation::Menu;
+
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;
     PersonalizationSettings personalizationSettings_ =
         PersonalizationSettings::DarkPreset();
     bool dockSettingsLayoutCommitPending_ = false;
     CategorySettings categorySettings_ = CategorySettings::Defaults();
-    bool quickNavLightTheme_ = false;
-    bool quickNavGlassTheme_ = false;
-    float quickNavBlurRadius_ = 24.0f;
-    PersonalizationSettings quickNavAppearance_ =
-        MakeQuickNavigationAppearancePreset(kAppearancePresetLight);
+
     bool collectionPopupLightTheme_ = false;
     bool collectionPopupGlassTheme_ = false;
     float collectionPopupBlurRadius_ = 24.0f;
@@ -4169,7 +3768,7 @@ private:
     std::optional<WebsiteIconCompletion> websiteIconCompletion_;
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;
-    HWND quickNavigationHwnd_ = nullptr;
+
     // Convenience aliases for the selected interaction Host. Each display
     // owns an independent PersistentDockHost and never transfers resources.
     HWND floatingDockHwnd_ = nullptr;
@@ -4307,44 +3906,7 @@ private:
         floatingPopupMouseHookActiveGeneration_{ 0 };
     /** @brief 集合组件与 Dock 弹窗窗口下方的原生毛玻璃层。 */
     DesktopBackdropCompositor collectionPopupBackdropCompositor_;
-    /** @brief 快捷导航顶层窗口下方的原生毛玻璃层。 */
-    DesktopBackdropCompositor quickNavBackdropCompositor_;
-    HWND quickNavigationSearchEdit_ = nullptr;
-    HFONT quickNavigationSearchFont_ = nullptr;
 
-    // 快捷导航与桌面共享 D2D 渲染设备，但使用独立 DComp device。
-    // 否则面板的逐帧变换与桌面/Dock hover 会进入同一 Commit 批次，
-    // 在 DWM 合并事务时造成指针反馈的队头阻塞。
-    ComPtr<IDCompositionDesktopDevice> quickNavDcompDevice_;
-    ComPtr<IDCompositionTarget> quickNavDcompTarget_;
-    ComPtr<IDCompositionVisual2> quickNavDcompVisual_;
-    ComPtr<IDCompositionEffectGroup> quickNavDcompEffect_;
-    ComPtr<IDCompositionScaleTransform> quickNavDcompScaleTransform_;
-    ComPtr<IDCompositionSurface> quickNavDcompSurface_;
-    std::vector<ComPtr<IDCompositionVisual2>> quickNavGenieStrips_;
-    ComPtr<ID2D1Bitmap1> quickNavAttractionBitmap_;
-    ComPtr<IDCompositionSurface> quickNavAttractionSurface_;
-    SIZE quickNavAttractionSurfaceSize_{};
-    int quickNavGenieStripEdge_ = -1;
-    UINT quickNavCompWidth_ = 0;
-    UINT quickNavCompHeight_ = 0;
-    bool quickNavCompositionRenderRecoveryPending_ = false;
-    bool quickNavCompositionPaintInProgress_ = false;
-    // 快捷导航 DirectWrite 文本格式（替代 GDI HFONT）
-    ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
-    ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
-    ComPtr<IDWriteTextFormat> quickNavSearchTextFormat_;
-    ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
-    ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
-    snowdesktop::ScrollContentFadeCache quickNavScrollFadeCache_;
-    /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按索引和源尺寸）。 */
-    std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
-    /** @brief 应用图标快照的 D2D 缓存；键为 AppsFolder 稳定解析身份。 */
-    std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap>> quickNavAppIconCache_;
-    std::array<ComPtr<ID2D1Bitmap>, 7> quickNavActionIconCache_;
-    ID2D1DeviceContext* quickNavActionIconContext_ = nullptr;
-    std::vector<int> quickNavTabWidths_;
-    int quickNavViewModeSlotWidth_ = 0;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -4822,86 +4384,12 @@ private:
 
     /** @name 快速导航 */
     /** @{ */
-    bool quickNavigationOpen_ = false;
-    LogicalSlotPickerRequest logicalSlotPickerRequest_{};
-    bool quickNavigationTopmost_ = true;
-    snowdesktop::quick_navigation_animation_rules::State
-        quickNavigationAnimation_;
-    snowdesktop::UiScheduleToken
-        quickNavigationAnimationCompletionToken_ = 0;
-    bool quickNavigationAnimationCompositorDriven_ = false;
-    QuickNavigationInvocationSource quickNavigationInvocationSource_ =
-        QuickNavigationInvocationSource::Pointer;
+
     // Dock-search sessions retain their source Host so a press on another
     // monitor can retarget the shared panel instead of merely dismissing it.
     PersistentDockHost* quickNavigationDockHost_ = nullptr;
-    std::function<void()> quickNavigationPostCloseAction_;
-    RECT quickNavigationRenameItemRect_{};
-    size_t quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
-    int quickNavigationScrollOffset_ = 0;
-    int quickNavigationTabScrollOffset_ = 0;
-    bool quickNavigationInitialJumpOpen_ = false;
-    size_t quickNavigationInitialJumpSelection_ = 0;
-    POINT quickNavigationOpenPoint_{};
-    /** @brief 快速导航缩放动画锚点（app 坐标；Dock 搜索入口固定到搜索图标中心）。 */
-    POINT quickNavigationAnimationAnchorPoint_{};
-    RECT quickNavigationAnimationDockRect_{};
-    int quickNavigationAnimationDockEdge_ = 0;
-    bool quickNavigationDeformationFailed_ = false;
-    BYTE quickNavigationLastEditAnimationOpacity_ = 0;
-    bool quickNavigationHasLastEditAnimationFrame_ = false;
-    RECT quickNavigationRect_{};
-    /** @brief 快速导航合成宿主范围，覆盖目标面板与当前会话动画锚点。 */
-    RECT quickNavigationHostRect_{};
-    bool quickNavigationWindowRegionExpanded_ = false;
-    std::wstring quickNavigationSearchText_;
-    std::wstring quickNavigationEffectiveSearchText_;
-    std::wstring quickNavigationSearchCompositionText_;
-    std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
-    DWORD quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
-    bool quickNavigationEverythingHasMore_ = false;
-    bool quickNavigationEverythingSearchPending_ = false;
-    std::uint64_t quickNavigationEverythingSearchGeneration_ = 0;
-    std::wstring quickNavigationEverythingResultsQuery_;
-    std::vector<size_t> quickNavigationAppResultIndices_;
-    std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
-    bool quickNavigationAppsIndexed_ = false;
-    std::atomic<bool> quickNavigationAppIndexing_{false};
 
-    uint64_t quickNavigationAppIndexSerial_ = 0;
-    bool quickNavigationAppsExpanded_ = false;
-    QuickNavigationKeyboardTargetKind quickNavigationKeyboardTargetKind_ =
-        QuickNavigationKeyboardTargetKind::None;
-    size_t quickNavigationKeyboardTargetIndex_ = 0;
-    float quickNavDpiScale_ = 1.0f;
-    std::vector<std::wstring> navTabOrder_;
-    size_t quickNavTabDragIndex_ = static_cast<size_t>(-1);
-    int quickNavTabDragDeltaX_ = 0;
-    POINT quickNavTabDragStartPoint_{};
-    bool quickNavTabDragging_ = false;
-    bool quickNavScrollbarDragging_ = false;
-    int quickNavScrollbarDragStartY_ = 0;
-    int quickNavScrollbarDragThumbTop_ = 0;
-    int quickNavScrollbarDragStartOffset_ = 0;
-    bool quickNavScrollbarHovered_ = false;
-    // Quick Navigation is a separate pointer surface. Sharing lastMousePoint_
-    // with the desktop/Dock makes its animated HWND overwrite passive hover
-    // state and replay that transition after the window moves away.
-    POINT quickNavigationLastMousePoint_{ LONG_MIN, LONG_MIN };
-    std::vector<QuickNavigationHoverRegion>
-        quickNavigationHoverRegions_;
-    QuickNavigationPointerTarget
-        quickNavigationPointerTarget_{};
-    PopupHoverController quickNavigationTabHoverController_;
-    bool quickNavigationTabHoverTimerArmed_ = false;
-    HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
-    snowdesktop::BoundedLruCache<std::wstring, int> quickNavigationEverythingIconCache_{512};
-    snowdesktop::IconRowIndex<std::wstring> quickNavigationEverythingIconRows_;
-    snowdesktop::QuickNavigationEverythingSearchAsync
-        quickNavigationEverythingSearch_;
-    bool everythingSearchAvailable_ = true;
-
-    int QuickNavScale(int px) const { return static_cast<int>(px * quickNavDpiScale_); }
+    int QuickNavScale(int px) const;
     void BeginQuickNavigationDesktopItemRename(size_t itemIndex);
     void BeginQuickNavigationFolderEntryRename(
         size_t widgetIndex, size_t entryIndex);

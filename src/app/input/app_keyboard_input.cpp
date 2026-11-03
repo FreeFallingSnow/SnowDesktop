@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "widget/runtime/widget_engine.h"
 #include "desktop/desktop_source.h"
 #include "system/panel/system_panel.h"
@@ -32,7 +33,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
     const auto navigationAction =
         snowdesktop::page_navigation_rules::ResolveKeyboardNavigationAction(
             generalSettings_.pageNavigationKeyboardEnabled, textInputActive,
-            quickNavigationOpen_ || IsCollectionPopupInteractive() ||
+            quickNavigation_->open || IsCollectionPopupInteractive() ||
                 !luaWidgetPanelRequest_.widgetId.empty() ||
                 (systemPanel_ && systemPanel_->IsOpen()) ||
                 keyboardNavInsideWidget_ ||
@@ -143,7 +144,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
 void DesktopApp::DispatchLuaWidgetViewKeyEvent(
     WPARAM key, bool pressed, bool repeated)
 {
-    if (!widgetEngine_ || quickNavigationOpen_ ||
+    if (!widgetEngine_ || quickNavigation_->open ||
         IsCollectionPopupInteractive())
         return;
     const bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -237,7 +238,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
     }
 
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
         if (key == VK_ESCAPE)
         {
@@ -319,7 +320,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
     }
 
-    if (widgetEngine_ && !quickNavigationOpen_ &&
+    if (widgetEngine_ && !quickNavigation_->open &&
         !luaWidgetPanelRequest_.widgetId.empty() &&
         widgetEngine_->HandleHostViewKey(
             luaWidgetPanelRequest_.widgetId,
@@ -434,7 +435,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             })) return true;
     }
 
-    if (widgetEngine_ && !quickNavigationOpen_ &&
+    if (widgetEngine_ && !quickNavigation_->open &&
         luaWidgetPanelRequest_.widgetId.empty() &&
         !IsCollectionPopupInteractive())
     {
@@ -482,7 +483,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     {
     case 'Z':
     case 'Y':
-        if (!ctrl || quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty()) break;
+        if (!ctrl || quickNavigation_->open || !luaWidgetPanelRequest_.widgetId.empty()) break;
         if (!repeated && !QueueFileHistory(key == 'Y' || shift)) MessageBeep(MB_ICONWARNING);
         return true;
     case 'N':
@@ -885,7 +886,7 @@ bool DesktopApp::TryDismissPopupForEscape()
 {
     using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
     const auto action = snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction(
-        quickNavigationOpen_, !luaWidgetPanelRequest_.widgetId.empty(),
+        quickNavigation_->open, !luaWidgetPanelRequest_.widgetId.empty(),
         luaWidgetPanelRequest_.dismissOnEscape, GetOpenPopupWidget() != nullptr);
     switch (action)
     {

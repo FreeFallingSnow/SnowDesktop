@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
@@ -197,10 +198,10 @@ void DesktopApp::OnRightButtonDown(
         return;
     }
     POINT cursor{};
-    if (quickNavigationOpen_ && snowdesktop::private_pointer::CursorPosition(&cursor))
+    if (quickNavigation_->open && snowdesktop::private_pointer::CursorPosition(&cursor))
     {
         const POINT quickNavigationPoint{cursor.x - virtualLeft_, cursor.y - virtualTop_};
-        if (!PtInRect(&quickNavigationRect_, quickNavigationPoint)) CloseQuickNavigation(false);
+        if (!PtInRect(&quickNavigation_->rect, quickNavigationPoint)) CloseQuickNavigation(false);
     }
     CancelPopupHover(true);
     CancelRenameClick();

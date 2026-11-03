@@ -1,10 +1,11 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/utils.h"
 
 DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
 {
-    if (renameController_.IsActive() || quickNavigationOpen_ || largeIconGesture_ ||
+    if (renameController_.IsActive() || quickNavigation_->open || largeIconGesture_ ||
         !luaWidgetPanelRequest_.widgetId.empty() || HasActiveContextMenuSession() ||
         IsPointInUsageGuide(point))
         return {};

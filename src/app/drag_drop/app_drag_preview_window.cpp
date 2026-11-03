@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "common/utils.h"
 #include "app/dock/persistent_dock_host.h"
@@ -696,7 +697,7 @@ bool DesktopApp::IsDragPresentationOnlyWindow(HWND window) const
         desktopBackdropCompositor_.IsBackdropWindow(window) ||
         IsPersistentDockBackdropWindow(window) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(window) ||
-        quickNavBackdropCompositor_.IsBackdropWindow(window) ||
+        quickNavigation_->backdropCompositor.IsBackdropWindow(window) ||
         (dockWindowTransition_ &&
             dockWindowTransition_->IsPresentationWindow(window)))
         return true;

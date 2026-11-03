@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "layout/item_title_layout.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/utils.h"
 #include "layout/item_layout_rules.h"
 #include "app/navigation/quick_navigation_theme.h"
@@ -437,10 +438,10 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     const std::wstring& text, bool selected, bool lightTheme)
 {
-    if (!ctx || !dwriteFactory_ || !quickNavItemTextFormat_ || text.empty())
+    if (!ctx || !dwriteFactory_ || !quickNavigation_->itemTextFormat || text.empty())
         return;
 
-    const float fontSize = quickNavItemTextFormat_->GetFontSize();
+    const float fontSize = quickNavigation_->itemTextFormat->GetFontSize();
     const float lineSpacing = QuickNavigationItemTextLineSpacing(fontSize);
     const float baseline = std::max(1.0f, std::floor(fontSize * 0.84f));
     const int textHeight = QuickNavigationItemTextHeight(fontSize, navigationSettings_.layout.labelLines);
@@ -455,7 +456,7 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     const float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(dwriteFactory_->CreateTextLayout(text.c_str(),
-        static_cast<UINT32>(text.size()), quickNavItemTextFormat_.Get(),
+        static_cast<UINT32>(text.size()), quickNavigation_->itemTextFormat.Get(),
         tw, th, &layout)) || !layout)
         return;
 
@@ -466,7 +467,7 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     DWRITE_TRIMMING trimming{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
     ComPtr<IDWriteInlineObject> trimmingSign;
     if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(
-        quickNavItemTextFormat_.Get(), &trimmingSign)) && trimmingSign)
+        quickNavigation_->itemTextFormat.Get(), &trimmingSign)) && trimmingSign)
         layout->SetTrimming(&trimming, trimmingSign.Get());
 
     // Match desktop titles: a short label is centered in the reserved title

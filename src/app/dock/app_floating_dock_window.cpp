@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
@@ -253,14 +254,14 @@ void DesktopApp::DestroyPersistentDockHost(
     {
         quickNavigationDockHost_ = nullptr;
         StopQuickNavigationAnimationTimeline();
-        if (quickNavigationAnimation_.IsClosing())
+        if (quickNavigation_->animation.IsClosing())
             FinalizeCloseQuickNavigation();
-        else if (quickNavigationOpen_)
+        else if (quickNavigation_->open)
         {
-            quickNavigationAnimation_.ShowImmediately();
+            quickNavigation_->animation.ShowImmediately();
             ApplyQuickNavigationAnimationFrame();
         }
-        quickNavigationAnimationDockRect_ = {};
+        quickNavigation_->animationDockRect = {};
         ConfigureQuickNavigationAnimation();
     }
     host.active = false;

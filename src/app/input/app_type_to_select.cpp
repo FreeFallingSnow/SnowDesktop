@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "widget/runtime/widget_engine.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -17,7 +18,7 @@ bool DesktopApp::TryHandleTypeToSelectChar(wchar_t ch, bool repeated)
         if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
             view && view->IsSearchFocused())
             context.textInput = true;
-    context.overlay = quickNavigationOpen_ ||
+    context.overlay = quickNavigation_->open ||
         !luaWidgetPanelRequest_.widgetId.empty() || dockTrayPopup_ ||
         HasActiveContextMenuSession() || typeToSelectSuppressChar_;
     context.gesture = mouseDown_ || dragSession_.HasContext() ||

@@ -3,6 +3,7 @@
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "settings/settings_search_index.h"
 #include "dock/dock_window_preview.h"
 #include "common/l10n.h"
 #include "ui/render/app_font.h"

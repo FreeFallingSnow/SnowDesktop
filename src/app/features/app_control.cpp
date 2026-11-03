@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
@@ -229,12 +230,12 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             {"desktopEnabled", Boolean(generalSettings_.softwareDesktopEnabled)},
             {"desktopVisible", Boolean(customDesktopVisible_)},
             {"presentationReady", Boolean(!desktopStartupPresentationPending_)},
-            {"navigationOpen", Boolean(quickNavigationOpen_)},
+            {"navigationOpen", Boolean(quickNavigation_->open)},
             {"menuOpen", Boolean(snowdesktop::modern_menu::IsActive())},
             {"floatingDockVisible", Boolean(floatingDockVisible_)},
             {"popupWidgetId", String(popupId)},
             {"popupAnimating", Boolean(popupAnimation_.IsAnimating())},
-            {"navigationAnimating", Boolean(quickNavigationAnimation_.IsAnimating())},
+            {"navigationAnimating", Boolean(quickNavigation_->animation.IsAnimating())},
             {"layoutRevision", ApplicationControlLayout().object.at("layoutRevision")}});
     }
     if (method == "desktop.getLayout" || method == "widgets.list")
@@ -263,7 +264,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     {
         Fields(params, {"id", "pageId", "column", "row", "columns", "rows", "ifLayoutRevision"});
         if (!generalSettings_.softwareDesktopEnabled) throw Error("disabled", "Software desktop is disabled");
-        if (GetOpenPopupWidget() || quickNavigationOpen_)
+        if (GetOpenPopupWidget() || quickNavigation_->open)
             throw Error("busy", "Close popups and Quick Navigation before changing the layout");
         if (Text(params, "ifLayoutRevision") != ApplicationControlLayout().object.at("layoutRevision").string)
             throw Error("stale_layout", "Query the current layout before applying this placement");
@@ -314,10 +315,10 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     else if (method == "navigation.open")
     {
         Fields(params, {});
-        if (!quickNavigationOpen_) OpenQuickNavigation();
-        if (!quickNavigationOpen_) throw Error("unavailable", "Quick Navigation could not be opened");
+        if (!quickNavigation_->open) OpenQuickNavigation();
+        if (!quickNavigation_->open) throw Error("unavailable", "Quick Navigation could not be opened");
     }
-    else if (method == "navigation.close") { Fields(params, {}); if (quickNavigationOpen_) CloseQuickNavigation(); }
+    else if (method == "navigation.close") { Fields(params, {}); if (quickNavigation_->open) CloseQuickNavigation(); }
     else if (method == "dock.show")
     {
         Fields(params, {});

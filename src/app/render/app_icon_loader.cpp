@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
@@ -260,7 +261,7 @@ void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidateFloatingDockWindow(false);
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
         InvalidateQuickNavigationWindow();
 }
 

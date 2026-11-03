@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/utils.h"
 #include "data/data_paths.h"
 #include "icons/icon_render_rules.h"
@@ -159,7 +160,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
         InvalidateDragStaticScene(); InvalidateDockRects(TRUE);
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
-        if (quickNavigationOpen_) InvalidateQuickNavigationWindow();
+        if (quickNavigation_->open) InvalidateQuickNavigationWindow();
         if (preview && hwnd_) { PresentDesktopPointerUpdate(); FlushPendingCompositionCommit(); }
     };
     // Teardown must discard the overlay even if the theme library is missing

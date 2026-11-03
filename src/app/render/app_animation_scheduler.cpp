@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
 #include "layout/collection_popup_layout.h"
 #include "platform/runtime_module_policy.h"
@@ -73,13 +74,13 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
     }
     if (windowChanged)
     {
-        if (quickNavigationAnimation_.IsAnimating())
+        if (quickNavigation_->animation.IsAnimating())
         {
             StopQuickNavigationAnimationTimeline();
-            if (quickNavigationAnimation_.IsClosing()) FinalizeCloseQuickNavigation();
+            if (quickNavigation_->animation.IsClosing()) FinalizeCloseQuickNavigation();
             else
             {
-                quickNavigationAnimation_.ShowImmediately();
+                quickNavigation_->animation.ShowImmediately();
                 ApplyQuickNavigationAnimationFrame();
                 ApplyFloatingDockLayerPolicy();
             }
@@ -245,41 +246,41 @@ void DesktopApp::EnsureUiAnimationFrame()
                 });
     }
 
-    if (!quickNavigationAnimationFrameToken_ &&
-        ((quickNavigationAnimation_.IsAnimating() &&
-            !quickNavigationAnimationCompositorDriven_) ||
-            quickNavigationAnimation_.Resize().IsAnimating()))
+    if (!quickNavigation_->animationFrameToken &&
+        ((quickNavigation_->animation.IsAnimating() &&
+            !quickNavigation_->animationCompositorDriven) ||
+            quickNavigation_->animation.Resize().IsAnimating()))
     {
-        quickNavigationAnimationFrameToken_ =
+        quickNavigation_->animationFrameToken =
             uiAnimationScheduler_.StartAnimation(
                 snowdesktop::UiAnimationSurface::QuickNavigation,
                 [this](double nowMilliseconds) {
-                    quickNavigationAnimation_.Advance(
+                    quickNavigation_->animation.Advance(
                         AnimationTick(nowMilliseconds));
-                    if (quickNavigationAnimation_.Resize().IsAnimating())
+                    if (quickNavigation_->animation.Resize().IsAnimating())
                     {
                         PositionQuickNavigationWindow();
-                        if (!quickNavigationAnimation_.Resize().IsAnimating() &&
-                            UseQuickNavigationList() && quickNavigationListSelection_ >= 0)
+                        if (!quickNavigation_->animation.Resize().IsAnimating() &&
+                            UseQuickNavigationList() && quickNavigation_->listSelection >= 0)
                         {
                             EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(
-                                static_cast<size_t>(quickNavigationListSelection_)));
+                                static_cast<size_t>(quickNavigation_->listSelection)));
                             InvalidateQuickNavigationWindow();
                         }
                     }
                     else
                         ApplyQuickNavigationAnimationFrame();
-                    if (!quickNavigationAnimation_.IsAnimating() &&
-                        quickNavigationAnimation_.IsHidden())
+                    if (!quickNavigation_->animation.IsAnimating() &&
+                        quickNavigation_->animation.IsHidden())
                     {
                         FinalizeCloseQuickNavigation();
                     }
                     const bool keep =
-                        quickNavigationAnimation_.IsAnimating() ||
-                        quickNavigationAnimation_.Resize().IsAnimating();
+                        quickNavigation_->animation.IsAnimating() ||
+                        quickNavigation_->animation.Resize().IsAnimating();
                     if (!keep)
                     {
-                        quickNavigationAnimationFrameToken_ = 0;
+                        quickNavigation_->animationFrameToken = 0;
                         ApplyFloatingDockLayerPolicy();
                     }
                     return keep;
@@ -607,7 +608,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &popupAnimationFrameToken_,
         &popupFanScrollFrameToken_,
         &luaPanelAnimationFrameToken_,
-        &quickNavigationAnimationFrameToken_,
+        &quickNavigation_->animationFrameToken,
         &dockBounceAnimationFrameToken_,
         &dockRunningAnimationFrameToken_,
         &dockMagnificationAnimationFrameToken_,

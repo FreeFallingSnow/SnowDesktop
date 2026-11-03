@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "layout/page_management_rules.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
@@ -799,10 +800,10 @@ void DesktopApp::LoadLayoutSlots()
         savedPageRows_.erase(candidate);
     }
 
-    navTabOrder_.clear();
-    navTabOrder_.reserve(document.navTabOrder.size());
+    quickNavigation_->tabOrder.clear();
+    quickNavigation_->tabOrder.reserve(document.navTabOrder.size());
     for (const auto& id : document.navTabOrder)
-        navTabOrder_.push_back(Utf8ToWide(id));
+        quickNavigation_->tabOrder.push_back(Utf8ToWide(id));
     EnsureNavTabOrder();
     NormalizePageIds();
     releasePreservedEntries();
@@ -1202,10 +1203,10 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
         file << (i + 1 == orderedDockEntries.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";
-    for (size_t i = 0; i < navTabOrder_.size(); ++i)
+    for (size_t i = 0; i < quickNavigation_->tabOrder.size(); ++i)
     {
-        file << "\"" << JsonEscapeUtf8(navTabOrder_[i]) << "\"";
-        if (i + 1 != navTabOrder_.size()) file << ", ";
+        file << "\"" << JsonEscapeUtf8(quickNavigation_->tabOrder[i]) << "\"";
+        if (i + 1 != quickNavigation_->tabOrder.size()) file << ", ";
     }
     file << "]\n}\n";
     std::string saveError;

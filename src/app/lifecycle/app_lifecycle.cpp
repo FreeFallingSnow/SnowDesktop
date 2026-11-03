@@ -2,6 +2,7 @@
 #include "platform/force_restart_hotkey.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
@@ -42,7 +43,8 @@
 // Desktop host lifecycle.
 
 DesktopApp::DesktopApp()
-    : steamWorkshopSubscriptionPollState_(
+    : quickNavigation_(std::make_unique<snowdesktop::quick_navigation::State>()),
+      steamWorkshopSubscriptionPollState_(
         std::make_shared<SteamWorkshopSubscriptionPollState>()),
       recycleBinPollState_(std::make_shared<RecycleBinPollState>())
 {
@@ -79,7 +81,7 @@ DesktopApp::~DesktopApp()
     popupAnimationFrameToken_ = 0;
     popupFanScrollFrameToken_ = 0;
     luaPanelAnimationFrameToken_ = 0;
-    quickNavigationAnimationFrameToken_ = 0;
+    quickNavigation_->animationFrameToken = 0;
     dockBounceAnimationFrameToken_ = 0;
     pageNotifyAnimationFrameToken_ = 0;
     navHotEdgeHintToken_ = 0;
@@ -109,7 +111,7 @@ DesktopApp::~DesktopApp()
     UnregisterFloatingDockHotkey();
     DestroyDragPreviewWindow();
     DestroyFloatingDockWindow();
-    quickNavigationEverythingSearch_.Stop();
+    quickNavigation_->everythingSearch.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();
@@ -1201,7 +1203,7 @@ void DesktopApp::CompleteExitRequest()
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
     StopWebsiteIconWorker();
-    quickNavigationEverythingSearch_.Stop();
+    quickNavigation_->everythingSearch.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();

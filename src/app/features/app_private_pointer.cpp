@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/utils.h"
 #include "app/dock/persistent_dock_host.h"
 #include "app_control_runtime.h"
@@ -45,7 +46,7 @@ bool DesktopApp::OwnsPrivatePointerWindow(HWND window) const
     DWORD process = 0;
     if (GetWindowThreadProcessId(window, &process) != GetCurrentThreadId() || process != GetCurrentProcessId()) return false;
     if (window == hwnd_ || window == inputHwnd_ || window == floatingDockInputHwnd_ ||
-        window == floatingPopupHwnd_ || window == quickNavigationHwnd_) return true;
+        window == floatingPopupHwnd_ || window == quickNavigation_->hwnd) return true;
     // The desktop host is a child of Explorer's WorkerW. Windows promotes a
     // popup's native owner to that top-level window, so parent recursion is
     // not an ownership proof for this exact, application-created editor.
@@ -79,7 +80,7 @@ HWND DesktopApp::PrivatePointerWindowAt(POINT point) const
         if (control.depth > hitDepth && Contains(control.window, point)) { hit = control.window; hitDepth = control.depth; }
     }
     if (modal) return hit ? hit : modal;
-    for (const HWND window : {renameInputWindow_, quickNavigationHwnd_, floatingPopupHwnd_})
+    for (const HWND window : {renameInputWindow_, quickNavigation_->hwnd, floatingPopupHwnd_})
         if (Contains(window, point)) return window;
     for (auto it = persistentDockHosts_.rbegin(); it != persistentDockHosts_.rend(); ++it)
         if (*it && Contains((*it)->hwnd, point)) return (*it)->hwnd;
@@ -156,7 +157,7 @@ snowdesktop::control::Value DesktopApp::HandlePrivatePointer(std::string_view me
         if (device.Current().enabled || snowdesktop::private_pointer::Active() || mouseDown_ || dragSession_.IsActive() ||
             widgetAction_ != WidgetAction::None || HasActiveContextMenuSession() || runtime.settings.Current().status == "running")
             throw Error("busy", "Another input session or native interaction is active");
-        if (desktopStartupPresentationPending_ || popupAnimation_.IsAnimating() || quickNavigationAnimation_.IsAnimating())
+        if (desktopStartupPresentationPending_ || popupAnimation_.IsAnimating() || quickNavigation_->animation.IsAnimating())
             throw Error("not_ready", "Wait for the native presentation to settle");
         const auto monitorId = Utf8ToWide(Text(params, "monitorId"));
         const auto monitors = snowdesktop::screen_capture::Monitors();

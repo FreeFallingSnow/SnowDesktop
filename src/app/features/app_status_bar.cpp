@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "platform/runtime_module_policy.h"
 #include "diagnostics/diagnostic_log.h"
@@ -116,7 +117,7 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
         menu && GetWindow(menu, GW_OWNER) == statusBarMenuOwner_)
         snowdesktop::modern_menu::DismissActive();
     if ((!monitor || monitor == statusBarQuickNavigationMonitor_) &&
-        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar)
+        quickNavigation_->invocationSource == QuickNavigationInvocationSource::StatusBar)
         // Cancellation also runs from WA_INACTIVE. It must not turn into an
         // explicit dismissal and reactivate the desktop before that returns.
         CloseQuickNavigation(false);
@@ -161,7 +162,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     if (action == Action::Dismiss)
     {
         if (dockStartMenu_) dockStartMenu_->DismissThen({});
-        quickNavigationPostCloseAction_ = {};
+        quickNavigation_->postCloseAction = {};
         DismissActiveContextMenuForPopupTransition();
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
@@ -375,11 +376,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         });
         return;
     }
-    if (action != Action::QuickSearch && (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden()))
+    if (action != Action::QuickSearch && (quickNavigation_->open || !quickNavigation_->animation.IsHidden()))
     {
         TraceStatusBarShellActivation(action, generation, L"wait-quick-navigation", hold->shortcutStartedMilliseconds);
-        quickNavigationPostCloseAction_ = resume;
-        if (quickNavigationOpen_) CloseQuickNavigation();
+        quickNavigation_->postCloseAction = resume;
+        if (quickNavigation_->open) CloseQuickNavigation();
         return;
     }
     if (action == Action::InputMethodPanel && systemPanel_ && systemPanel_->IsInputMethodOpen())
@@ -981,7 +982,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     else if (action == Action::QuickSearch)
     {
         if (systemPanel_) systemPanel_->Hide();
-        if (quickNavigationOpen_) CloseQuickNavigation();
+        if (quickNavigation_->open) CloseQuickNavigation();
         else
         {
             statusBarQuickNavigationMonitor_ = monitor;
@@ -1171,8 +1172,8 @@ void DesktopApp::SyncStatusBar()
                 (statusBarMenuMonitor_ == monitor && statusBarMenuOwner_ && menu &&
                     GetWindow(menu, GW_OWNER) == statusBarMenuOwner_) ||
                 (statusBarQuickNavigationMonitor_ == monitor &&
-                    quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
-                    (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden())) ||
+                    quickNavigation_->invocationSource == QuickNavigationInvocationSource::StatusBar &&
+                    (quickNavigation_->open || !quickNavigation_->animation.IsHidden())) ||
                 (systemPanel_ && systemPanel_->IsOpenForMonitor(monitor)) ||
                 (statusBar_ && statusBar_->HasTrayMenuSession(monitor));
         });

@@ -1,5 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "navigation/quick_navigation_animation_rules.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "theme/personalization.h"
 #include "common/utils.h"
 #include "ui/input/text_input_window.h"
@@ -44,22 +46,22 @@ bool IsWindowOwnedBy(
 
 void DesktopApp::CancelQuickNavigationTabHover()
 {
-    if (quickNavigationTabHoverTimerArmed_ && quickNavigationHwnd_)
-        KillTimer(quickNavigationHwnd_, kQuickNavigationTabHoverTimerId);
-    quickNavigationTabHoverTimerArmed_ = false;
-    quickNavigationTabHoverController_.Reset();
+    if (quickNavigation_->tabHoverTimerArmed && quickNavigation_->hwnd)
+        KillTimer(quickNavigation_->hwnd, kQuickNavigationTabHoverTimerId);
+    quickNavigation_->tabHoverTimerArmed = false;
+    quickNavigation_->tabHoverController.Reset();
 }
 
 void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
 {
-    if (!personalizationSettings_.groupTabHoverSwitch || !quickNavigationOpen_ ||
-        quickNavigationPreview_ || quickNavigationAnimation_.IsAnimating() ||
-        quickNavTabDragIndex_ != static_cast<size_t>(-1) || quickNavScrollbarDragging_ ||
-        quickNavigationKeyboardTargetKind_ != QuickNavigationKeyboardTargetKind::None ||
+    if (!personalizationSettings_.groupTabHoverSwitch || !quickNavigation_->open ||
+        quickNavigation_->preview || quickNavigation_->animation.IsAnimating() ||
+        quickNavigation_->tabDragIndex != static_cast<size_t>(-1) || quickNavigation_->scrollbarDragging ||
+        quickNavigation_->keyboardTargetKind != QuickNavigationKeyboardTargetKind::None ||
         renameController_.IsActive() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive() || snowdesktop::private_pointer::Capture() ||
         HasActiveContextMenuSession() ||
-        snowdesktop::text_input::HasEditingMenu(quickNavigationSearchEdit_) ||
+        snowdesktop::text_input::HasEditingMenu(quickNavigation_->searchEdit) ||
         ((snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) | snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) |
             snowdesktop::private_pointer::AsyncKeyState(VK_MBUTTON)) & 0x8000))
     {
@@ -70,7 +72,7 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
     if (allowSwitch)
     {
         POINT screenPoint{};
-        if (!snowdesktop::private_pointer::CursorPosition(&screenPoint) || snowdesktop::private_pointer::WindowAtPoint(screenPoint) != quickNavigationHwnd_)
+        if (!snowdesktop::private_pointer::CursorPosition(&screenPoint) || snowdesktop::private_pointer::WindowAtPoint(screenPoint) != quickNavigation_->hwnd)
         {
             CancelQuickNavigationTabHover();
             return;
@@ -87,7 +89,7 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
     const auto indices = GetQuickNavigationCollectionIndices();
     const size_t target = *tab == 0 ? static_cast<size_t>(-1) :
         *tab == 1 ? static_cast<size_t>(-2) : indices[*tab - 2];
-    if (target == quickNavigationActiveWidgetIndex_)
+    if (target == quickNavigation_->activeWidgetIndex)
     {
         CancelQuickNavigationTabHover();
         return;
@@ -95,22 +97,22 @@ void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
 
     // Stable identity prevents a reordered/rebuilt tab from inheriting dwell.
     const DWORD delay = static_cast<DWORD>(NormalizeTabHoverDelayMs(personalizationSettings_.tabHoverDelayMs));
-    const RECT bounds = GetQuickNavigationTabRect(quickNavigationRect_, *tab);
+    const RECT bounds = GetQuickNavigationTabRect(quickNavigation_->rect, *tab);
     const std::wstring identity = *tab < 2 ? (*tab == 0 ? L"desktop" : L"mapping") :
         L"widget:" + widgets_[target].id;
     const std::wstring token = std::to_wstring(identity.size()) + L":" + identity + L":" +
-        std::to_wstring(quickNavigationActiveWidgetIndex_) + L":" + std::to_wstring(pageMutationRevision_) + L":" +
-        std::to_wstring(quickNavigationTabScrollOffset_) + L":" + std::to_wstring(bounds.left) + L":" +
+        std::to_wstring(quickNavigation_->activeWidgetIndex) + L":" + std::to_wstring(pageMutationRevision_) + L":" +
+        std::to_wstring(quickNavigation_->tabScrollOffset) + L":" + std::to_wstring(bounds.left) + L":" +
         std::to_wstring(bounds.top) + L":" + std::to_wstring(bounds.right) + L":" + std::to_wstring(delay);
     const DWORD now = GetTickCount();
-    quickNavigationTabHoverController_.Track(token, now);
-    if (allowSwitch && quickNavigationTabHoverController_.Consume(now, delay))
+    quickNavigation_->tabHoverController.Track(token, now);
+    if (allowSwitch && quickNavigation_->tabHoverController.Consume(now, delay))
     {
         (void)ActivateQuickNavigationTab(*tab);
         return;
     }
-    if (!quickNavigationTabHoverTimerArmed_ && quickNavigationHwnd_)
-        quickNavigationTabHoverTimerArmed_ = SetTimer(quickNavigationHwnd_,
+    if (!quickNavigation_->tabHoverTimerArmed && quickNavigation_->hwnd)
+        quickNavigation_->tabHoverTimerArmed = SetTimer(quickNavigation_->hwnd,
             kQuickNavigationTabHoverTimerId, kPopupHoverPollIntervalMs, nullptr) != 0;
 }
 
@@ -134,21 +136,21 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             msg, wp, lp, shellMenuResult))
         return shellMenuResult;
 
-    if (!quickNavigationAnimation_.IsAnimating() &&
-        snowdesktop::text_input::RoutePointer(quickNavigationSearchEdit_, msg, wp,
+    if (!quickNavigation_->animation.IsAnimating() &&
+        snowdesktop::text_input::RoutePointer(quickNavigation_->searchEdit, msg, wp,
             {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}))
         return 0;
 
     switch (msg)
     {
     case WM_NCHITTEST:
-        if (!quickNavigationOpen_)
+        if (!quickNavigation_->open)
             return HTTRANSPARENT;
         // During the warp, controls are not at their final hit rectangles.
         // Keep keyboard focus in the hidden edit, but let Dock clicks through.
-        if (quickNavigationAnimation_.IsAnimating() &&
+        if (quickNavigation_->animation.IsAnimating() &&
             snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-                quickNavigationAnimation_.GetEffect()))
+                quickNavigation_->animation.GetEffect()))
             return HTTRANSPARENT;
         {
             POINT point{
@@ -156,7 +158,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 GET_Y_LPARAM(lp) - virtualTop_
             };
             const auto visual =
-                quickNavigationAnimation_.GetVisual();
+                quickNavigation_->animation.GetVisual();
             const auto scaled = [scale = visual.scale](
                 LONG value, LONG anchor) {
                 return static_cast<LONG>(std::lround(
@@ -166,23 +168,23 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             };
             RECT visible{
                 scaled(
-                    quickNavigationRect_.left,
-                    quickNavigationAnimationAnchorPoint_.x),
+                    quickNavigation_->rect.left,
+                    quickNavigation_->animationAnchorPoint.x),
                 scaled(
-                    quickNavigationRect_.top,
-                    quickNavigationAnimationAnchorPoint_.y),
+                    quickNavigation_->rect.top,
+                    quickNavigation_->animationAnchorPoint.y),
                 scaled(
-                    quickNavigationRect_.right,
-                    quickNavigationAnimationAnchorPoint_.x),
+                    quickNavigation_->rect.right,
+                    quickNavigation_->animationAnchorPoint.x),
                 scaled(
-                    quickNavigationRect_.bottom,
-                    quickNavigationAnimationAnchorPoint_.y)
+                    quickNavigation_->rect.bottom,
+                    quickNavigation_->animationAnchorPoint.y)
             };
             if (!snowdesktop::quick_navigation_rules::
                     ShouldAcceptPointerHit(
-                        quickNavigationOpen_,
+                        quickNavigation_->open,
                         point,
-                        quickNavigationRect_,
+                        quickNavigation_->rect,
                         visible))
                 return HTTRANSPARENT;
         }
@@ -195,8 +197,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_TIMER:
         if (wp == kQuickNavigationTabHoverTimerId)
         {
-            if (quickNavigationTabHoverTimerArmed_)
-                UpdateQuickNavigationTabHover(quickNavigationLastMousePoint_, true);
+            if (quickNavigation_->tabHoverTimerArmed)
+                UpdateQuickNavigationTabHover(quickNavigation_->lastMousePoint, true);
             return 0;
         }
         if (wp ==
@@ -207,7 +209,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         }
         break;
     case WM_CTLCOLOREDIT:
-        if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_)
+        if (reinterpret_cast<HWND>(lp) == quickNavigation_->searchEdit)
         {
             HDC hdcEdit = reinterpret_cast<HDC>(wp);
             SetBkMode(hdcEdit, OPAQUE);
@@ -223,17 +225,17 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         ResetQuickNavigationKeyboardTarget();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{
-            pt.x + quickNavigationHostRect_.left,
-            pt.y + quickNavigationHostRect_.top
+            pt.x + quickNavigation_->hostRect.left,
+            pt.y + quickNavigation_->hostRect.top
         };
         if (DismissQuickNavigationMenuAtPoint(appPoint)) return 0;
 
         {
-            RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
+            RECT content = GetQuickNavigationContentRect(quickNavigation_->rect);
             RECT track{}, thumb{};
             int maxScroll = 0, contentHeight = 0;
-            if (!quickNavigationInitialJumpOpen_ &&
-                GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+            if (!quickNavigation_->initialJumpOpen &&
+                GetQuickNavigationScrollbarGeometry(quickNavigation_->rect,
                     track, thumb, maxScroll, contentHeight) && PtInRect(&track, appPoint))
             {
                 if (renameController_.BlocksScrolling())
@@ -242,10 +244,10 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 {
                     if (PtInRect(&thumb, appPoint))
                     {
-                        quickNavScrollbarDragging_ = true;
-                        quickNavScrollbarDragStartY_ = appPoint.y;
-                        quickNavScrollbarDragThumbTop_ = static_cast<int>(thumb.top);
-                        quickNavScrollbarDragStartOffset_ = quickNavigationScrollOffset_;
+                        quickNavigation_->scrollbarDragging = true;
+                        quickNavigation_->scrollbarDragStartY = appPoint.y;
+                        quickNavigation_->scrollbarDragThumbTop = static_cast<int>(thumb.top);
+                        quickNavigation_->scrollbarDragStartOffset = quickNavigation_->scrollOffset;
                         snowdesktop::private_pointer::SetPointerCapture(hwnd);
                         return 0;
                     }
@@ -255,11 +257,11 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                             QuickNavScale(kQuickNavigationCellHeight + kQuickNavigationItemRowGap),
                             static_cast<int>(content.bottom - content.top) - QuickNavScale(28));
                         if (appPoint.y < thumb.top)
-                            quickNavigationScrollOffset_ = std::max(0,
-                                quickNavigationScrollOffset_ - pageSize);
+                            quickNavigation_->scrollOffset = std::max(0,
+                                quickNavigation_->scrollOffset - pageSize);
                         else
-                            quickNavigationScrollOffset_ = std::min(maxScroll,
-                                quickNavigationScrollOffset_ + pageSize);
+                            quickNavigation_->scrollOffset = std::min(maxScroll,
+                                quickNavigation_->scrollOffset + pageSize);
                         InvalidateQuickNavigationWindow();
                         return 0;
                     }
@@ -268,15 +270,15 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             }
         }
 
-        if (!UseQuickNavigationList() && quickNavigationMenu_ == QuickNavigationMenu::None && GetQuickNavigationEffectiveSearchText().empty())
+        if (!UseQuickNavigationList() && quickNavigation_->menu == QuickNavigationMenu::None && GetQuickNavigationEffectiveSearchText().empty())
         {
-            RECT overlay = quickNavigationRect_;
+            RECT overlay = quickNavigation_->rect;
             std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
             RECT tabs = GetQuickNavigationTabsRect(overlay);
             const int gap = QuickNavScale(8);
             const int sepGap = QuickNavScale(6);
-            const int fixedWidth = quickNavTabWidths_.size() >= 2
-                ? quickNavTabWidths_[0] + gap + quickNavTabWidths_[1]
+            const int fixedWidth = quickNavigation_->tabWidths.size() >= 2
+                ? quickNavigation_->tabWidths[0] + gap + quickNavigation_->tabWidths[1]
                 : 0;
             const int scrollPad = sepGap + QuickNavScale(1) + gap;
             const int tabsStart =
@@ -295,10 +297,10 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 if (IntersectRect(&visibleTabRect, &tabRect, &scrollHitBounds) &&
                     PtInRect(&visibleTabRect, appPoint))
                 {
-                    quickNavTabDragIndex_ = tab;
-                    quickNavTabDragStartPoint_ = appPoint;
-                    quickNavTabDragDeltaX_ = 0;
-                    quickNavTabDragging_ = false;
+                    quickNavigation_->tabDragIndex = tab;
+                    quickNavigation_->tabDragStartPoint = appPoint;
+                    quickNavigation_->tabDragDeltaX = 0;
+                    quickNavigation_->tabDragging = false;
                     snowdesktop::private_pointer::SetPointerCapture(hwnd);
                     return 0;
                 }
@@ -317,8 +319,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{
-            pt.x + quickNavigationHostRect_.left,
-            pt.y + quickNavigationHostRect_.top
+            pt.x + quickNavigation_->hostRect.left,
+            pt.y + quickNavigation_->hostRect.top
         };
         POINT screenPoint{ pt.x, pt.y };
         ClientToScreen(hwnd, &screenPoint);
@@ -336,21 +338,21 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         if (screenPoint.x == -1 && screenPoint.y == -1)
         {
             clientPoint =
-                quickNavigationLastMousePoint_;
+                quickNavigation_->lastMousePoint;
             screenPoint = clientPoint;
             screenPoint.x -=
-                quickNavigationHostRect_.left;
+                quickNavigation_->hostRect.left;
             screenPoint.y -=
-                quickNavigationHostRect_.top;
+                quickNavigation_->hostRect.top;
             ClientToScreen(hwnd, &screenPoint);
         }
         else
         {
             ScreenToClient(hwnd, &clientPoint);
             clientPoint.x +=
-                quickNavigationHostRect_.left;
+                quickNavigation_->hostRect.left;
             clientPoint.y +=
-                quickNavigationHostRect_.top;
+                quickNavigation_->hostRect.top;
         }
         if (HandleQuickNavigationRightClick(clientPoint, screenPoint))
             return 0;
@@ -360,16 +362,16 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{
-            pt.x + quickNavigationHostRect_.left,
-            pt.y + quickNavigationHostRect_.top
+            pt.x + quickNavigation_->hostRect.left,
+            pt.y + quickNavigation_->hostRect.top
         };
         POINT previousMouse =
-            quickNavigationLastMousePoint_;
-        quickNavigationLastMousePoint_ = appPoint;
+            quickNavigation_->lastMousePoint;
+        quickNavigation_->lastMousePoint = appPoint;
         const bool keyboardHoverCleared =
             (previousMouse.x != appPoint.x ||
                 previousMouse.y != appPoint.y) &&
-            quickNavigationKeyboardTargetKind_ !=
+            quickNavigation_->keyboardTargetKind !=
                 QuickNavigationKeyboardTargetKind::None;
         if (keyboardHoverCleared)
             ResetQuickNavigationKeyboardTarget();
@@ -383,65 +385,65 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             InvalidateQuickNavigationWindow(true);
         };
 
-        if (quickNavScrollbarDragging_)
+        if (quickNavigation_->scrollbarDragging)
         {
             RECT track{}, thumb{};
             int maxScroll = 0, contentHeight = 0;
-            if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+            if (GetQuickNavigationScrollbarGeometry(quickNavigation_->rect,
                 track, thumb, maxScroll, contentHeight))
             {
                 const int trackH = std::max<LONG>(1, track.bottom - track.top);
                 const int thumbH = std::max<LONG>(1, thumb.bottom - thumb.top);
-                int newThumbTop = appPoint.y - (quickNavScrollbarDragStartY_ -
-                    quickNavScrollbarDragThumbTop_);
+                int newThumbTop = appPoint.y - (quickNavigation_->scrollbarDragStartY -
+                    quickNavigation_->scrollbarDragThumbTop);
                 newThumbTop = std::clamp(newThumbTop, static_cast<int>(track.top),
                     static_cast<int>(track.bottom - thumbH));
                 const int rangeH = std::max(1, trackH - thumbH);
-                quickNavigationScrollOffset_ = (newThumbTop - static_cast<int>(track.top))
+                quickNavigation_->scrollOffset = (newThumbTop - static_cast<int>(track.top))
                     * maxScroll / rangeH;
-                quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0, maxScroll);
+                quickNavigation_->scrollOffset = std::clamp(quickNavigation_->scrollOffset, 0, maxScroll);
                 queuePointerFrame();
             }
             return 0;
         }
 
-        if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+        if (quickNavigation_->tabDragIndex != static_cast<size_t>(-1))
         {
-            int dx = appPoint.x - quickNavTabDragStartPoint_.x;
-            if (!quickNavTabDragging_ &&
+            int dx = appPoint.x - quickNavigation_->tabDragStartPoint.x;
+            if (!quickNavigation_->tabDragging &&
                 snowdesktop::quick_navigation_rules::TabDragExceededThreshold(
-                    dx, quickNavTabDragDeltaX_, 4))
-                quickNavTabDragging_ = true;
-            if (quickNavTabDragging_)
-                quickNavTabDragDeltaX_ = dx;
+                    dx, quickNavigation_->tabDragDeltaX, 4))
+                quickNavigation_->tabDragging = true;
+            if (quickNavigation_->tabDragging)
+                quickNavigation_->tabDragDeltaX = dx;
             queuePointerFrame();
             return 0;
         }
 
-        bool wasHovered = quickNavScrollbarHovered_;
-        quickNavScrollbarHovered_ = false;
+        bool wasHovered = quickNavigation_->scrollbarHovered;
+        quickNavigation_->scrollbarHovered = false;
         {
             RECT track{}, thumb{};
             int maxScroll = 0, contentHeight = 0;
-            if (!quickNavigationInitialJumpOpen_ &&
-                GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+            if (!quickNavigation_->initialJumpOpen &&
+                GetQuickNavigationScrollbarGeometry(quickNavigation_->rect,
                     track, thumb, maxScroll, contentHeight))
-                quickNavScrollbarHovered_ = PtInRect(&thumb, appPoint) != FALSE;
+                quickNavigation_->scrollbarHovered = PtInRect(&thumb, appPoint) != FALSE;
         }
         const QuickNavigationPointerTarget pointerTarget =
             HitTestQuickNavigationPointerTarget(
                 appPoint);
         const bool hoverChanged =
             pointerTarget !=
-                quickNavigationPointerTarget_;
+                quickNavigation_->pointerTarget;
         const bool hoverMapMissing =
-            quickNavigationHoverRegions_.empty();
-        quickNavigationPointerTarget_ =
+            quickNavigation_->hoverRegions.empty();
+        quickNavigation_->pointerTarget =
             pointerTarget;
         UpdateQuickNavigationTabHover(appPoint);
-        if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None ||
-            (appPoint.y < GetQuickNavigationSearchRect(quickNavigationRect_).bottom) ||
-            wasHovered != quickNavScrollbarHovered_ ||
+        if (UseQuickNavigationList() || quickNavigation_->menu != QuickNavigationMenu::None ||
+            (appPoint.y < GetQuickNavigationSearchRect(quickNavigation_->rect).bottom) ||
+            wasHovered != quickNavigation_->scrollbarHovered ||
             hoverChanged || keyboardHoverCleared ||
             hoverMapMissing)
             queuePointerFrame();
@@ -450,32 +452,32 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_MOUSELEAVE:
     {
         CancelQuickNavigationTabHover();
-        quickNavigationLastMousePoint_ = {
+        quickNavigation_->lastMousePoint = {
             LONG_MIN, LONG_MIN };
-        quickNavScrollbarHovered_ = false;
-        quickNavigationPointerTarget_ = {};
+        quickNavigation_->scrollbarHovered = false;
+        quickNavigation_->pointerTarget = {};
         InvalidateQuickNavigationWindow(true);
         return 0;
     }
     case WM_LBUTTONUP:
     {
-        if (quickNavScrollbarDragging_)
+        if (quickNavigation_->scrollbarDragging)
         {
             snowdesktop::private_pointer::ReleasePointerCapture();
-            quickNavScrollbarDragging_ = false;
+            quickNavigation_->scrollbarDragging = false;
             InvalidateQuickNavigationWindow();
             return 0;
         }
 
-        if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+        if (quickNavigation_->tabDragIndex != static_cast<size_t>(-1))
         {
             snowdesktop::private_pointer::ReleasePointerCapture();
-            size_t dragTab = quickNavTabDragIndex_;
+            size_t dragTab = quickNavigation_->tabDragIndex;
 
-            if (quickNavTabDragging_)
+            if (quickNavigation_->tabDragging)
             {
                 std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-                int targetTab = GetQuickNavTabDragTarget(dragTab, quickNavTabDragDeltaX_);
+                int targetTab = GetQuickNavTabDragTarget(dragTab, quickNavigation_->tabDragDeltaX);
 
                 if (targetTab != static_cast<int>(dragTab) && targetTab >= 2 &&
                     static_cast<size_t>(targetTab) >= 2 &&
@@ -485,14 +487,14 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                     size_t dstIdx = static_cast<size_t>(targetTab) - 2;
                     EnsureNavTabOrder();
 
-                    if (srcIdx < navTabOrder_.size() && dstIdx < navTabOrder_.size())
+                    if (srcIdx < quickNavigation_->tabOrder.size() && dstIdx < quickNavigation_->tabOrder.size())
                     {
-                        std::wstring id = navTabOrder_[srcIdx];
-                        navTabOrder_.erase(navTabOrder_.begin() + srcIdx);
-                        navTabOrder_.insert(navTabOrder_.begin() + dstIdx, id);
-                        quickNavigationActiveWidgetIndex_ = ci[srcIdx];
-                        quickNavigationScrollOffset_ = 0;
-                        quickNavigationInitialJumpOpen_ = false;
+                        std::wstring id = quickNavigation_->tabOrder[srcIdx];
+                        quickNavigation_->tabOrder.erase(quickNavigation_->tabOrder.begin() + srcIdx);
+                        quickNavigation_->tabOrder.insert(quickNavigation_->tabOrder.begin() + dstIdx, id);
+                        quickNavigation_->activeWidgetIndex = ci[srcIdx];
+                        quickNavigation_->scrollOffset = 0;
+                        quickNavigation_->initialJumpOpen = false;
                         SaveLayoutSlots();
                     }
                 }
@@ -502,9 +504,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 (void)ActivateQuickNavigationTab(dragTab);
             }
 
-            quickNavTabDragIndex_ = static_cast<size_t>(-1);
-            quickNavTabDragDeltaX_ = 0;
-            quickNavTabDragging_ = false;
+            quickNavigation_->tabDragIndex = static_cast<size_t>(-1);
+            quickNavigation_->tabDragDeltaX = 0;
+            quickNavigation_->tabDragging = false;
             InvalidateQuickNavigationWindow();
             return 0;
         }
@@ -525,36 +527,36 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             renameEditLayout_.Update(renameInputWindow_);
             return 0;
         }
-        if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_ && HIWORD(wp) == EN_CHANGE)
+        if (reinterpret_cast<HWND>(lp) == quickNavigation_->searchEdit && HIWORD(wp) == EN_CHANGE)
         {
             RefreshQuickNavigationSearchText();
-            quickNavigationScrollOffset_ = 0;
+            quickNavigation_->scrollOffset = 0;
             InvalidateQuickNavigationWindow();
             return 0;
         }
         break;
     case WM_KEYDOWN:
         CancelQuickNavigationTabHover();
-        if (snowdesktop::text_input::IsComposing(quickNavigationSearchEdit_) || !quickNavigationSearchCompositionText_.empty()) break;
+        if (snowdesktop::text_input::IsComposing(quickNavigation_->searchEdit) || !quickNavigation_->searchCompositionText.empty()) break;
         if (HandleQuickNavigationSearchKey(wp)) return 0;
         if (HandleQuickNavigationKeyboardInput(wp))
             return 0;
         if (wp == VK_ESCAPE)
         {
-            if (quickNavScrollbarDragging_)
+            if (quickNavigation_->scrollbarDragging)
             {
                 snowdesktop::private_pointer::ReleasePointerCapture();
-                quickNavScrollbarDragging_ = false;
-                quickNavigationScrollOffset_ = quickNavScrollbarDragStartOffset_;
+                quickNavigation_->scrollbarDragging = false;
+                quickNavigation_->scrollOffset = quickNavigation_->scrollbarDragStartOffset;
                 InvalidateQuickNavigationWindow();
                 return 0;
             }
-            if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+            if (quickNavigation_->tabDragIndex != static_cast<size_t>(-1))
             {
                 snowdesktop::private_pointer::ReleasePointerCapture();
-                quickNavTabDragIndex_ = static_cast<size_t>(-1);
-                quickNavTabDragDeltaX_ = 0;
-                quickNavTabDragging_ = false;
+                quickNavigation_->tabDragIndex = static_cast<size_t>(-1);
+                quickNavigation_->tabDragDeltaX = 0;
+                quickNavigation_->tabDragging = false;
                 InvalidateQuickNavigationWindow();
                 return 0;
             }
@@ -567,32 +569,32 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         {
             const HWND activatedWindow = reinterpret_cast<HWND>(lp);
             const bool retainedInteraction =
-                activatedWindow == quickNavigationSearchEdit_ ||
+                activatedWindow == quickNavigation_->searchEdit ||
                 (renameController_.
                     IsQuickNavigationPresentation() &&
                     activatedWindow == renameInputWindow_) ||
-                quickNavBackdropCompositor_.IsBackdropWindow(
+                quickNavigation_->backdropCompositor.IsBackdropWindow(
                     activatedWindow) ||
                 IsWindowOwnedBy(
                     activatedWindow,
-                    quickNavigationHwnd_) ||
+                    quickNavigation_->hwnd) ||
                 (IsCurrentProcessWindow(activatedWindow) &&
                     !IsSettingsApplicationWindow(activatedWindow));
             if (!snowdesktop::quick_navigation_rules::
                     ShouldCloseOnDeactivate(
                         retainedInteraction))
                 return 0;
-            if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
+            if (quickNavigation_->tabDragIndex != static_cast<size_t>(-1))
             {
                 snowdesktop::private_pointer::ReleasePointerCapture();
-                quickNavTabDragIndex_ = static_cast<size_t>(-1);
-                quickNavTabDragDeltaX_ = 0;
-                quickNavTabDragging_ = false;
+                quickNavigation_->tabDragIndex = static_cast<size_t>(-1);
+                quickNavigation_->tabDragDeltaX = 0;
+                quickNavigation_->tabDragging = false;
             }
             // A bar action may be waiting for this surface's closing animation.
             // An external activation cancels that handoff even when open_ is
             // already false and CloseQuickNavigation would otherwise do nothing.
-            if (statusBarActivationMonitor_ && quickNavigationPostCloseAction_)
+            if (statusBarActivationMonitor_ && quickNavigation_->postCloseAction)
                 CancelStatusBarActivation(statusBarActivationMonitor_);
             CloseQuickNavigation(false);
             return 0;
@@ -603,8 +605,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         return 0;
     case WM_DESTROY:
         CancelQuickNavigationTabHover();
-        if (quickNavigationHwnd_ == hwnd)
-            quickNavigationHwnd_ = nullptr;
+        if (quickNavigation_->hwnd == hwnd)
+            quickNavigation_->hwnd = nullptr;
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -642,13 +644,13 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     }
     if (message == WM_NCHITTEST)
     {
-        if (app->quickNavigationAnimation_.IsAnimating())
+        if (app->quickNavigation_->animation.IsAnimating())
             return HTTRANSPARENT;
         const POINT desktopPoint{
             GET_X_LPARAM(lParam) - app->virtualLeft_,
             GET_Y_LPARAM(lParam) - app->virtualTop_
         };
-        const RECT targetEdit = app->GetQuickNavigationInputRect(app->quickNavigationRect_);
+        const RECT targetEdit = app->GetQuickNavigationInputRect(app->quickNavigation_->rect);
         RECT animatedEdit{};
         GetWindowRect(hwnd, &animatedEdit);
         OffsetRect(
@@ -657,7 +659,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             -app->virtualTop_);
         if (!snowdesktop::quick_navigation_rules::
                 ShouldAcceptPointerHit(
-                    app->quickNavigationOpen_,
+                    app->quickNavigation_->open,
                     desktopPoint,
                     targetEdit,
                     animatedEdit))
@@ -672,19 +674,19 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             return DefSubclassProc(hwnd,message,wParam,lParam);
         const HWND activatedWindow = reinterpret_cast<HWND>(lParam);
         const bool retainedInteraction =
-            activatedWindow == app->quickNavigationHwnd_ ||
-            app->quickNavBackdropCompositor_.IsBackdropWindow(
+            activatedWindow == app->quickNavigation_->hwnd ||
+            app->quickNavigation_->backdropCompositor.IsBackdropWindow(
                 activatedWindow) ||
             IsWindowOwnedBy(
                 activatedWindow,
-                app->quickNavigationHwnd_) ||
+                app->quickNavigation_->hwnd) ||
             (IsCurrentProcessWindow(activatedWindow) &&
                 !app->IsSettingsApplicationWindow(activatedWindow));
         if (snowdesktop::quick_navigation_rules::
                 ShouldCloseOnDeactivate(
                     retainedInteraction))
         {
-            if (app->statusBarActivationMonitor_ && app->quickNavigationPostCloseAction_)
+            if (app->statusBarActivationMonitor_ && app->quickNavigation_->postCloseAction)
                 app->CancelStatusBarActivation(app->statusBarActivationMonitor_);
             app->CloseQuickNavigation(false);
             return 0;
@@ -692,10 +694,10 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     }
 
     if (message == WM_KEYDOWN && !snowdesktop::text_input::IsComposing(hwnd) &&
-        app->quickNavigationSearchCompositionText_.empty() && app->HandleQuickNavigationSearchKey(wParam)) return 0;
+        app->quickNavigation_->searchCompositionText.empty() && app->HandleQuickNavigationSearchKey(wParam)) return 0;
 
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
-        !snowdesktop::text_input::IsComposing(hwnd) && app->quickNavigationSearchCompositionText_.empty())
+        !snowdesktop::text_input::IsComposing(hwnd) && app->quickNavigation_->searchCompositionText.empty())
     {
         if (app->
             HandleQuickNavigationInitialJumpKeyboardInput(
@@ -709,7 +711,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             ShouldRouteSearchEditKeyToResults(
                 wParam) &&
         !snowdesktop::text_input::IsComposing(hwnd) &&
-        app->quickNavigationSearchCompositionText_.empty() &&
+        app->quickNavigation_->searchCompositionText.empty() &&
         app->HandleQuickNavigationKeyboardInput(wParam))
     {
         return 0;

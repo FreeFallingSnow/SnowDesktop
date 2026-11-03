@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
@@ -370,9 +371,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
     const HWND navigationWindow =
-        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::DockSearch &&
-        quickNavigationAnimation_.IsAnimating()
-            ? quickNavigationHwnd_ : nullptr;
+        quickNavigation_->invocationSource == QuickNavigationInvocationSource::DockSearch &&
+        quickNavigation_->animation.IsAnimating()
+            ? quickNavigation_->hwnd : nullptr;
     RECT dockBounds{};
     const bool hasDockBounds = GetWindowRect(host.hwnd, &dockBounds) != FALSE;
     const auto intersectsPresentation = [&dockBounds, hasDockBounds](HWND window) {
@@ -420,7 +421,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             // pair, only when necessary, so another Dock already above it is
             // never crossed while processing a later host. Reordering leaves
             // keyboard focus alone; the native edit is transparent in motion.
-            quickNavBackdropCompositor_.SetPopupWindowPairZOrder(
+            quickNavigation_->backdropCompositor.SetPopupWindowPairZOrder(
                 navigationWindow, pairEnd, true);
         }
         ApplyDragPreviewLayerPolicy();

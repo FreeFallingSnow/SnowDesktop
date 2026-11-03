@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_preview.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -113,7 +114,7 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         IsPersistentDockHostWindow(root) ||
         belongsTo(floatingPopupHwnd_) ||
         belongsTo(dragPreviewHwnd_) ||
-        belongsTo(quickNavigationHwnd_))
+        belongsTo(quickNavigation_->hwnd))
         return true;
     if (dockWindowPreview_)
         for (const HWND popup : dockWindowPreview_->GetWindows())
@@ -124,8 +125,8 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         IsPersistentDockBackdropWindow(root) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(window) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(root) ||
-        quickNavBackdropCompositor_.IsBackdropWindow(window) ||
-        quickNavBackdropCompositor_.IsBackdropWindow(root);
+        quickNavigation_->backdropCompositor.IsBackdropWindow(window) ||
+        quickNavigation_->backdropCompositor.IsBackdropWindow(root);
 }
 
 bool DesktopApp::TryGetDesktopHoverPointFromCursor(

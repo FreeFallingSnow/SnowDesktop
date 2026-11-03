@@ -1,4 +1,5 @@
-#include "app/app.h"
+#include "app/render/drag_render_cache.h"
+#include <d2d1_1helper.h>
 
 // Cached off-screen surface used while rendering a drag preview.
 

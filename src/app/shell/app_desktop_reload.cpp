@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
 #include "app/shell/icon_load_task.h"
@@ -419,8 +420,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 app->RecordIconTextResources();
                 snowdesktop::app_resource_statistics::Record(app->items_, app->widgets_,
                     app->dockFolderPopupWidget_, app->gridPages_, app->dockEntries_,
-                    app->quickNavigationAppEntries_, app->quickNavigationEverythingResults_,
-                    app->quickNavigationAppResultIndices_, app->layoutRecords_, app->itemIndexByKeyCache_);
+                    app->quickNavigation_->appEntries, app->quickNavigation_->everythingResults,
+                    app->quickNavigation_->appResultIndices, app->layoutRecords_, app->itemIndexByKeyCache_);
                 Value("host.model.memory", "desktop_app_inline_bytes", {}, static_cast<double>(sizeof(DesktopApp)));
                 if (app->widgetEngine_)
                 {
@@ -464,7 +465,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 };
                 recordBackdrop(app->desktopBackdropCompositor_, L"desktop");
                 recordBackdrop(app->collectionPopupBackdropCompositor_, L"collection_popup");
-                recordBackdrop(app->quickNavBackdropCompositor_, L"quick_navigation");
+                recordBackdrop(app->quickNavigation_->backdropCompositor, L"quick_navigation");
                 for (const auto& host : app->persistentDockHosts_)
                     if (host)
                         recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
@@ -1211,7 +1212,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     EnqueueIconLoad(std::move(phase2));
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                if (quickNavigationOpen_)
+                if (quickNavigation_->open)
                     InvalidateQuickNavigationWindow();
                 break;
             }
@@ -1257,7 +1258,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         EnqueueIconLoad(std::move(phase2));
                     }
                     InvalidateRect(hwnd_, nullptr, FALSE);
-                    if (quickNavigationOpen_)
+                    if (quickNavigation_->open)
                         InvalidateQuickNavigationWindow();
                     if (dockFolderPopup)
                     {

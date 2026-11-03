@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
@@ -178,7 +179,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 HasActiveContextMenuSession(), point, RECT{},
                 snowdesktop::floating_dock_rules::DockAssociatedPopupInteractionRect(
                     popupAnchoredToDock_, floatingPopupCollectionRegion_),
-                preview, quickNavigationOpen_ ? quickNavigationRect_ : RECT{}))
+                preview, quickNavigation_->open ? quickNavigation_->rect : RECT{}))
         {
             snowdesktop::dock_input_diagnostics::RecordLayer(L"desktop-down-close", hwnd_, floatingDockVisible_,
                 static_cast<UINT>(msg));
@@ -752,7 +753,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
 
-        if (quickNavigationOpen_)
+        if (quickNavigation_->open)
         {
             if (HandleQuickNavigationClick(pt))
                 return 0;

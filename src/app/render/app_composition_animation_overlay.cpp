@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "navigation/quick_navigation_animation_rules.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "diagnostics/diagnostic_log.h"
 #include "layout/floating_popup_rules.h"
 #include "app/dock/persistent_dock_host.h"
@@ -394,9 +396,9 @@ bool DesktopApp::WaitForCompositionPresentation(
 
 bool DesktopApp::CommitQuickNavigationCompositionFrame()
 {
-    if (!quickNavDcompDevice_)
+    if (!quickNavigation_->dcompDevice)
         return false;
-    quickNavCompositionCommitPending_ = true;
+    quickNavigation_->compositionCommitPending = true;
     return true;
 }
 
@@ -404,18 +406,18 @@ bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
 {
     if (graphicsDeviceRecovery_.Pending())
         return false;
-    if (!quickNavCompositionCommitPending_)
+    if (!quickNavigation_->compositionCommitPending)
         return true;
-    if (!quickNavDcompDevice_)
+    if (!quickNavigation_->dcompDevice)
     {
-        quickNavCompositionCommitPending_ = false;
+        quickNavigation_->compositionCommitPending = false;
         return false;
     }
 
     const double commitStart =
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    const HRESULT hr = quickNavDcompDevice_->Commit();
-    quickNavCompositionCommitPending_ = false;
+    const HRESULT hr = quickNavigation_->dcompDevice->Commit();
+    quickNavigation_->compositionCommitPending = false;
     uiAnimationScheduler_.RecordCommitDuration(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
         commitStart);
@@ -430,22 +432,22 @@ bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
 
 bool DesktopApp::StartQuickNavigationCompositionAnimation()
 {
-    if (!quickNavigationAnimation_.IsAnimating())
+    if (!quickNavigation_->animation.IsAnimating())
         return false;
 
-    if (quickNavigationAnimationCompletionToken_)
+    if (quickNavigation_->animationCompletionToken)
     {
         uiAnimationScheduler_.Cancel(
-            quickNavigationAnimationCompletionToken_);
+            quickNavigation_->animationCompletionToken);
     }
-    quickNavigationAnimationCompletionToken_ = 0;
-    if (quickNavigationAnimationFrameToken_)
+    quickNavigation_->animationCompletionToken = 0;
+    if (quickNavigation_->animationFrameToken)
     {
         uiAnimationScheduler_.Cancel(
-            quickNavigationAnimationFrameToken_);
+            quickNavigation_->animationFrameToken);
     }
-    quickNavigationAnimationFrameToken_ = 0;
-    quickNavigationAnimationCompositorDriven_ = false;
+    quickNavigation_->animationFrameToken = 0;
+    quickNavigation_->animationCompositorDriven = false;
 
     // Snap both compositor trees to the same logical frame before attaching
     // native animations. This also disconnects a previous animation during a
@@ -453,28 +455,28 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     ApplyQuickNavigationAnimationFrame();
     ApplyFloatingDockLayerPolicy();
     if (snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
-            quickNavigationAnimation_.GetEffect()))
+            quickNavigation_->animation.GetEffect()))
     {
         // Content and native glass share the scheduler's progress and warp;
         // a separate uniform compositor timeline would separate the layers.
         return false;
     }
-    if (!quickNavDcompDevice_ || !quickNavDcompVisual_ ||
-        !quickNavDcompEffect_ || !quickNavDcompScaleTransform_)
+    if (!quickNavigation_->dcompDevice || !quickNavigation_->dcompVisual ||
+        !quickNavigation_->dcompEffect || !quickNavigation_->dcompScaleTransform)
     {
         return false;
     }
 
-    const auto visual = quickNavigationAnimation_.GetVisual();
-    const bool opening = quickNavigationAnimation_.IsOpening();
+    const auto visual = quickNavigation_->animation.GetVisual();
+    const bool opening = quickNavigation_->animation.IsOpening();
     const float targetScale = opening
         ? 1.0f
-        : quickNavigationAnimation_.HiddenScale();
+        : quickNavigation_->animation.HiddenScale();
     const float targetOpacity = opening ? 1.0f : 0.0f;
-    const bool responsive = quickNavigationAnimation_.UsesResponsiveMotion();
-    const auto revealTimeline = responsive ? quickNavigationAnimation_.RemainingTimeline()
+    const bool responsive = quickNavigation_->animation.UsesResponsiveMotion();
+    const auto revealTimeline = responsive ? quickNavigation_->animation.RemainingTimeline()
         : snowdesktop::popup_motion_curve::Timeline{};
-    const auto scaleTimeline = responsive ? quickNavigationAnimation_.RemainingScaleTimeline()
+    const auto scaleTimeline = responsive ? quickNavigation_->animation.RemainingScaleTimeline()
         : snowdesktop::popup_motion_curve::Timeline{};
     const float normalizedStartSlope =
         snowdesktop::quick_navigation_animation_rules::
@@ -484,31 +486,31 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = responsive ? std::max<UINT>(1, static_cast<UINT>(std::ceil(revealTimeline.durationMilliseconds))) : std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(quickNavigationAnimation_.DurationMilliseconds(opening)))));
+            remaining * static_cast<float>(quickNavigation_->animation.DurationMilliseconds(opening)))));
 
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
-    HRESULT hr = responsive ? CreatePopupSpringAnimation(quickNavDcompDevice_.Get(), scaleTimeline, &scaleAnimation) : CreateSmoothStepAnimation(
-        quickNavDcompDevice_.Get(), visual.scale, targetScale,
+    HRESULT hr = responsive ? CreatePopupSpringAnimation(quickNavigation_->dcompDevice.Get(), scaleTimeline, &scaleAnimation) : CreateSmoothStepAnimation(
+        quickNavigation_->dcompDevice.Get(), visual.scale, targetScale,
         duration, &scaleAnimation, normalizedStartSlope);
     if (SUCCEEDED(hr))
     {
-        hr = responsive ? CreatePopupSpringAnimation(quickNavDcompDevice_.Get(), revealTimeline, &opacityAnimation) : CreateSmoothStepAnimation(
-            quickNavDcompDevice_.Get(), visual.opacity, targetOpacity,
+        hr = responsive ? CreatePopupSpringAnimation(quickNavigation_->dcompDevice.Get(), revealTimeline, &opacityAnimation) : CreateSmoothStepAnimation(
+            quickNavigation_->dcompDevice.Get(), visual.opacity, targetOpacity,
             duration, &opacityAnimation, normalizedStartSlope);
     }
     if (SUCCEEDED(hr))
     {
-        hr = quickNavDcompScaleTransform_->SetScaleX(
+        hr = quickNavigation_->dcompScaleTransform->SetScaleX(
             scaleAnimation.Get());
     }
     if (SUCCEEDED(hr))
     {
-        hr = quickNavDcompScaleTransform_->SetScaleY(
+        hr = quickNavigation_->dcompScaleTransform->SetScaleY(
             scaleAnimation.Get());
     }
     if (SUCCEEDED(hr))
-        hr = quickNavDcompEffect_->SetOpacity(opacityAnimation.Get());
+        hr = quickNavigation_->dcompEffect->SetOpacity(opacityAnimation.Get());
     if (FAILED(hr) || !CommitQuickNavigationCompositionFrame())
     {
         ApplyQuickNavigationAnimationFrame();
@@ -518,13 +520,13 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // Prepare content before starting the glass timeline, then submit both
     // channels together at this call site. Deferring the DComp half until the
     // message returns lets unrelated UI work separate the two start times.
-    if (quickNavGlassTheme_ && quickNavBackdropCompositor_.IsAvailable() &&
-        !quickNavBackdropCompositor_.StartVisualTransformAnimation(
+    if (quickNavigation_->glassTheme && quickNavigation_->backdropCompositor.IsAvailable() &&
+        !quickNavigation_->backdropCompositor.StartVisualTransformAnimation(
             visual.scale, targetScale, visual.opacity, targetOpacity,
-            static_cast<float>(quickNavigationAnimationAnchorPoint_.x -
-                quickNavigationHostRect_.left),
-            static_cast<float>(quickNavigationAnimationAnchorPoint_.y -
-                quickNavigationHostRect_.top), duration, normalizedStartSlope,
+            static_cast<float>(quickNavigation_->animationAnchorPoint.x -
+                quickNavigation_->hostRect.left),
+            static_cast<float>(quickNavigation_->animationAnchorPoint.y -
+                quickNavigation_->hostRect.top), duration, normalizedStartSlope,
             responsive ? &scaleTimeline : nullptr, responsive ? &revealTimeline : nullptr))
     {
         ApplyQuickNavigationAnimationFrame();
@@ -536,26 +538,26 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         return false;
     }
 
-    quickNavigationAnimationCompositorDriven_ = true;
-    quickNavigationAnimationCompletionToken_ =
+    quickNavigation_->animationCompositorDriven = true;
+    quickNavigation_->animationCompletionToken =
         uiAnimationScheduler_.ScheduleOnce(
             duration + 2,
             [this](snowdesktop::UiScheduleToken token) {
-                if (quickNavigationAnimationCompletionToken_ != token)
+                if (quickNavigation_->animationCompletionToken != token)
                     return;
-                quickNavigationAnimationCompletionToken_ = 0;
-                quickNavigationAnimationCompositorDriven_ = false;
-                quickNavigationAnimation_.Advance(
+                quickNavigation_->animationCompletionToken = 0;
+                quickNavigation_->animationCompositorDriven = false;
+                quickNavigation_->animation.Advance(
                     static_cast<std::uint64_t>(
                         snowdesktop::UiAnimationScheduler::
                             MonotonicMilliseconds()));
-                if (!quickNavigationAnimation_.IsAnimating() &&
-                    quickNavigationAnimation_.IsHidden())
+                if (!quickNavigation_->animation.IsAnimating() &&
+                    quickNavigation_->animation.IsHidden())
                 {
                     FinalizeCloseQuickNavigation();
                     return;
                 }
-                if (quickNavigationAnimation_.IsAnimating())
+                if (quickNavigation_->animation.IsAnimating())
                 {
                     if (StartQuickNavigationCompositionAnimation())
                         return;
@@ -566,9 +568,9 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
                 ApplyQuickNavigationAnimationFrame();
                 ApplyFloatingDockLayerPolicy();
             });
-    if (!quickNavigationAnimationCompletionToken_)
+    if (!quickNavigation_->animationCompletionToken)
     {
-        quickNavigationAnimationCompositorDriven_ = false;
+        quickNavigation_->animationCompositorDriven = false;
         ApplyQuickNavigationAnimationFrame();
         return false;
     }
@@ -581,7 +583,7 @@ void DesktopApp::FlushNativeMenuPresentation()
             ShouldFlushAfterOwnerMessage(
                 shellPopupMenuLayerDepth_ > 0,
                 compositionPaintInProgress_,
-                quickNavCompositionPaintInProgress_,
+                quickNavigation_->compositionPaintInProgress,
                 IsAnyPersistentDockHostPainting()))
         return;
 

@@ -636,6 +636,13 @@ set(SNOWDESKTOP_SOURCES
     # Lightweight contracts and state declarations.
     src/layout/collection_popup_types.h
     src/app/dock/persistent_dock_host.h
+    src/app/dock/dock_runtime_types.h
+    src/app/lifecycle/auto_start_result.h
+    src/app/navigation/quick_navigation_models.h
+    src/app/navigation/quick_navigation_state.h
+    src/app/render/composition_state_types.h
+    src/app/render/demo_icon_load_types.h
+    src/app/render/drag_render_cache.h
     src/app/features/recycle_bin_poll_state.h
     src/app/features/steam_workshop_subscription_poll_state.h
     src/app/shell/icon_load_task.h

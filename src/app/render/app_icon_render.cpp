@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "platform/demo_asset_paths.h"
@@ -638,8 +639,8 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         (static_cast<std::uint64_t>(
             static_cast<std::uint32_t>(sysIconIndex)) << 32) |
         static_cast<std::uint64_t>(sourceSize);
-    auto cached = quickNavSysIconCache_.find(cacheKey);
-    if (cached == quickNavSysIconCache_.end())
+    auto cached = quickNavigation_->sysIconCache.find(cacheKey);
+    if (cached == quickNavigation_->sysIconCache.end())
     {
         QueueSystemIconBitmap(sysIconIndex, sourceSize, iconBeautifySettings_.enabled, cacheKey, true);
         snowdesktop::icon_loading_placeholder::Draw(ctx, dstRect, 1.0f,
@@ -658,9 +659,9 @@ void DesktopApp::DrawQuickNavAppIcon(
     if (ctx && entry.iconBitmap &&
         !entry.iconCacheIdentity.empty())
     {
-        auto cached = quickNavAppIconCache_.find(
+        auto cached = quickNavigation_->appIconCache.find(
             entry.iconCacheIdentity);
-        if (cached == quickNavAppIconCache_.end())
+        if (cached == quickNavigation_->appIconCache.end())
         {
             ComPtr<ID2D1Bitmap1> iconBitmap =
                 CreateD2DBitmapFromHBitmap(
@@ -670,12 +671,12 @@ void DesktopApp::DrawQuickNavAppIcon(
             if (iconBitmap &&
                 SUCCEEDED(iconBitmap.As(&bitmap)) && bitmap)
             {
-                cached = quickNavAppIconCache_.emplace(
+                cached = quickNavigation_->appIconCache.emplace(
                     entry.iconCacheIdentity,
                     std::move(bitmap)).first;
             }
         }
-        if (cached != quickNavAppIconCache_.end())
+        if (cached != quickNavigation_->appIconCache.end())
         {
             DrawIconBitmap(
                 ctx, cached->second.Get(), dstRect);
@@ -714,7 +715,7 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             auto bitmap = CreateD2DBitmapFromHBitmap(result->bitmap, beautify);
             ComPtr<ID2D1Bitmap> converted;
             if (!bitmap || FAILED(bitmap.As(&converted))) return;
-            (quick ? quickNavSysIconCache_ : placeholderIconCache_)[key] = std::move(converted);
+            (quick ? quickNavigation_->sysIconCache : placeholderIconCache_)[key] = std::move(converted);
             if (quick)
             {
                 // Only navigation reads this cache. Its new bitmap does not
