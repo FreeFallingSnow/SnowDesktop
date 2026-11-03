@@ -8,6 +8,7 @@
 #include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
 #include "dock/dock_process_discovery.h"
+#include "dock/dock_window_rules.h"
 #include "dock/dock_window_source_cloak.h"
 #include "platform/window_support/window_support_runtime.h"
 

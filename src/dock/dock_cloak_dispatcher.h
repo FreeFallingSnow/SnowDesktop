@@ -11,9 +11,6 @@
 namespace snowdesktop::dock_minimize
 {
 inline constexpr ULONG_PTR kCloakRequestTag = 0x53444332;
-// Private v3 operation: restore on the source thread before acquiring its cloak.
-// Ordinary acquire/release retain v2 so older recovery paths remain usable.
-inline constexpr std::uint32_t kPrepareRestoreCloak = 2;
 struct CloakRequest
 {
     std::uint32_t version = 2;
@@ -29,9 +26,7 @@ inline bool ReadCloakRequest(const COPYDATASTRUCT* data, CloakRequest& request) 
     if (!data || data->dwData != kCloakRequestTag || data->cbData != sizeof(request) || !data->lpData) return false;
     std::memcpy(&request, data->lpData, sizeof(request));
     const auto maximum = static_cast<std::uint64_t>((std::numeric_limits<UINT_PTR>::max)());
-    const bool knownOperation = (request.version == 2 && request.cloak <= 1) ||
-        (request.version == 3 && request.cloak == kPrepareRestoreCloak);
-    return knownOperation && request.source && request.owner && request.process && request.token &&
+    return request.version == 2 && request.cloak <= 1 && request.source && request.owner && request.process && request.token &&
         request.source <= maximum && request.owner <= maximum && request.process <= MAXDWORD && request.token <= maximum;
 }
 inline bool SendCloakRequest(HWND target, const CloakRequest& request, DWORD timeout, DWORD_PTR& result) noexcept

@@ -2,7 +2,6 @@
 #include "dock_external_minimize.h"
 #include "dock_minimize_protocol.h"
 #include "dock_window_transition.h"
-#include "dock_window_source_cloak.h"
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "settings/animation_settings.h"
@@ -152,10 +151,7 @@ bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     });
     return impl_->transition.StartRestore(window, target.anchor, [](HWND source, DockWindowRestoreTransitionPhase phase) {
-        if (phase == DockWindowRestoreTransitionPhase::RequestRestore &&
-            (IsIconic(source) || !snowdesktop::dock_source_cloak::ReadOwner(source).window))
-            ShowWindowAsync(source, SW_RESTORE);
-        if (phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
+        if (phase == DockWindowRestoreTransitionPhase::RequestRestore || phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
             ShowWindowAsync(source, SW_RESTORE);
         if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) SetForegroundWindow(source);
     }, below);

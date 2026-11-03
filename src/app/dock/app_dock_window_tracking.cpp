@@ -1588,20 +1588,15 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            DockWindowActivationOutcome outcome;
-            if (IsIconic(target) || !snowdesktop::dock_source_cloak::ReadOwner(target).window)
-                outcome = RequestDockWindowActivation(target, true);
-            else
-            {
-                // The source-thread repair already restored this window.
-                // Retain the original activation timing without restoring twice.
-                CancelAllDockWindowActivationObservations();
-                BeginDockWindowActivationObservation(target, true);
-                outcome = ActivateDockWindowAfterShow(target, true);
-                UpdateDockWindowActivationObservation(target, outcome);
-            }
+            // Only submit the maximized/normal restore here. The transition
+            // restores the cloaked source before its visual timeline starts,
+            // letting the application finish its native restore underneath the
+            // animation. This remains asynchronous and submits no second restore.
+            const DockWindowActivationOutcome outcome =
+                RequestDockWindowActivation(target, true);
             UpdateDockWindowActivationState(
-                target, outcome.restored, outcome.foreground);
+                target, outcome.restored,
+                outcome.foreground);
         }
         return;
     }
