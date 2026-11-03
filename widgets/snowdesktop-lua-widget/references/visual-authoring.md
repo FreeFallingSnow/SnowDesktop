@@ -1,8 +1,9 @@
 # Visual authoring and preview review
 
-Use this reference when a SnowDesktop widget needs custom style values,
-foreground colors, internal surfaces, image composition or final catalog
-previews.
+Use this reference for materials, foreground colors, internal surfaces, glyphs,
+image composition and real preview review. For geometry, density, lists, forms,
+scrolling and popup budgets, first read [layout-system.md](layout-system.md);
+use [layout-patterns.md](layout-patterns.md) for concrete view structures.
 
 ## Surface ownership
 
@@ -40,7 +41,8 @@ Keep content rendering inside that host surface:
   comment `-- snowwidget: allow-full-surface-content` only for this intentional
   case so the quality gate records the exception explicitly.
 
-Set `followPersonalizationDefault = true` for ordinary components. Fallback
+Set `useCustomStyle = true` when supplying fallback style values and
+`followPersonalizationDefault = true` for ordinary components. Fallback
 style values remain useful when personalization is disabled. A deliberately
 independent sticky-note material or artwork can default to false when the
 product concept requires it.
@@ -133,22 +135,6 @@ alongside its label, before accepting the change. Confirm that it is the chosen
 symbol, remains legible and has appropriate visual weight. Code review or a
 check that `icon` is nonempty cannot replace this visual check.
 
-## Scrollable auxiliary surfaces
-
-Keep a panel, dialog or popover's outer `view.scroll` at `width="fill"` and
-`height="fill"`. Put content padding on its child column/list, so the scroll
-viewport reaches the host content boundary. The host can then place the outer
-scrollbar in the popup's edge gutter while preserving content insets. Avoid an
-extra padded wrapper around the scroll viewport: it makes the track follow the
-inset content edge. Local and nested scrolling areas keep tracks at their own
-viewport edges. Do not imitate an outer track with drawing or pointer offsets;
-the host owns track rendering, clipping and dragging.
-
-Review an overflowing device list or playlist as well as a short list. Check
-that the track stays near the popup border, clear of rounded corners, while
-content retains its intended spacing. Verify wheel and thumb dragging at that
-same edge; a routed desktop preview cannot establish popup-gutter hit testing.
-
 ## Real preview contract
 
 `snowwidget preview` launches the installed SnowDesktop renderer out of process
@@ -171,8 +157,23 @@ For an ordinary component that follows personalization, exercise each supported
 host appearance with `followPersonalization=1`; include both `glass-light` and
 `acrylic-light` so the two different default foregrounds remain visible. Only
 force `__contentTheme=0` and `1` with `followPersonalization=0` when the
-component exposes an independent foreground selector. For every materially
-different state:
+component exposes an independent foreground selector. For example:
+
+```powershell
+bin\snowwidget.exe preview <directory> <light-fg.png> `
+  --appearance acrylic-light `
+  --storage followPersonalization=0 `
+  --storage __contentTheme=0
+
+bin\snowwidget.exe preview <directory> <dark-fg.png> `
+  --appearance acrylic-light `
+  --storage followPersonalization=0 `
+  --storage __contentTheme=1
+```
+
+Repeat the applicable cases for supported dark materials. Select materially
+different states and affected dimensions rather than every unrelated
+combination; reuse valid evidence when inputs relevant to it are unchanged.
 
 1. Render the actual supported span, DPI, locale, appearance, foreground theme
    and data state.
@@ -185,33 +186,11 @@ different state:
    intent or treat centering as a universal rule.
 5. Check that the host outer surface remains visible and is not duplicated by a
    widget-drawn full-size card.
-6. For a proportional visual component, compare small and large previews with
-   the same aspect ratio: structure must stay the same and every visible metric
-   must scale uniformly. Check each intentional aspect-ratio branch, or verify
-   that a single-structure composition remains centered across its supported
-   range. Center the complete group of currently visible parts.
-   For an information component, test a different invariant instead. Agendas,
-   calendars, lists, search and RSS should use
-   `ui.metrics().layoutRowHeight` as a shared content-height unit. Search fields,
-   inputs, ordinary buttons and single-line items use `1x`; exterior insets,
-   inter-row gaps, fonts, icons and strokes are separate component choices
-   derived as stable proportions of that row height. Multi-line body items use
-   intentional multiples. Compare components with the same row span to confirm
-   equal row units, and verify that changing only width does not resize them.
-   Taller spans grow the unit slowly and should normally expose more content
-   instead of scaling the whole composition linearly. Do not apply a second
-   `rpxY` scale to those values, and never let width determine vertical controls
-   or rows.
-   Reserve grid-density
-   checks for components that explicitly align
-   information units to host grid metrics, such as a system-status card matrix.
-   For a short critical value such as a timer, price or counter, opt out of an
-   ellipsis with `overflowText="clip"` and reserve its complete single-line box
-   with `width="auto"`, `minWidth` and `flexShrink=0`. Preserve the same minimum
-   on a shrinking parent column, then take that width from adjacent flexible
-   content. A minimum width does not enlarge the widget surface; reduce the
-   value font or change the intentional aspect-ratio layout if the whole row no
-   longer fits. Keep ordinary localized labels on wrap or ellipsis behavior.
+6. Apply the selected model's invariants and the affected
+   [layout acceptance cases](layout-system.md#layout-acceptance). Inspect the
+   actual overflow, long text, constrained popup bounds and whole-form fallback
+   when those structures changed. Geometry and density defaults live in that
+   reference, not in a second preview-specific sizing system.
 7. Fix the smallest failing area, render again and repeat.
 
 Do not treat CLI success as visual acceptance. Preview time is deterministic;

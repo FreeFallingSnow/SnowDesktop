@@ -65,14 +65,27 @@ source of truth:
 | Data topics, tasks and their typed arguments | `snowwidget system-contract` |
 | Function signatures for the editor | `library/snowdesktop-v2.lua` |
 | Detailed behavior for one selected feature | Search the matching heading in `references/api-v2.md` |
-| Visual ownership, themes and preview review | `references/visual-authoring.md` |
+| Any new or changed layout, text sizing, list, form or popup | Read `references/layout-system.md` before editing |
+| List rows, search/results, settings forms or management popups | Select the matching structure in `references/layout-patterns.md` |
+| Materials, foreground themes, glyphs and preview mechanics | `references/visual-authoring.md` |
 | Evaluate component CPU, allocations, timers, rendering or idle cost | `references/performance-evaluation.md`; check `snowwidget capabilities` first |
 | Steam Workshop planning and publishing | `references/workshop-publishing.md` |
 | Suspected host/API defect or contract mismatch | `references/api-troubleshooting.md`, then the matching implementation in the official source |
 
-## Classify before creating
+## Choose the workflow
 
-For a new widget, infer a compact internal brief before writing code:
+| Task | Required focus |
+| --- | --- |
+| Create a component or add a surface | Establish its task/content brief, choose a model per surface, then use the initializer or matching layout pattern |
+| Refine an existing interface | Inspect its current structure and representative content; preserve identity and behavior outside the requested change |
+| Fix a list, form, sizing or overflow defect | Reproduce the failing surface/bounds; identify scale, space ownership and scroll owner before changing values |
+| Review an interface | Apply the layout acceptance cases and visual reference; report each issue with surface, location and observable evidence |
+| Diagnose an API/runtime failure | Use the installed contracts and `references/api-troubleshooting.md`; distinguish host behavior from component layout |
+| Package or publish an unchanged design | Verify package identity and artifacts; follow the publishing reference only when publication is requested |
+
+## Plan the changed surfaces
+
+For a new widget or changed surface, infer a compact internal brief before code:
 
 - the user's primary task and the information that must be visible first;
 - recommended starting spans, and whether the content has a real functional
@@ -91,75 +104,16 @@ Choose one rendering path:
 - Do not mix the two desktop rendering paths. A descriptor must expose exactly
   one local `view` or `render` function.
 
-Choose the sizing model before writing geometry:
+Read [the layout system](references/layout-system.md) before writing geometry.
+Choose a model for each actual surface: proportional visual for a composition,
+proportional information for lists/forms, and grid density only for intentional
+grid-aligned content. A canvas widget's management popup normally uses the
+information model independently of its desktop artwork.
 
-- **Proportional visual model — the default for visually composed widgets.**
-  Use it for artwork, media players, clocks, instruments, custom controls and
-  other components whose parts form one visual composition. Read
-  `layout.contentWidth()` and `layout.contentHeight()`, and derive every visible
-  length from width, height, `vw`, `vh` or `vmin`. Choose structural variants
-  from the aspect ratio only when the content relationship benefits from a
-  different arrangement. A vertically composed instrument may keep one
-  structure at every ratio, while a spectrum may declare a horizontal-only
-  grid range. Do not invent horizontal or vertical branches merely because the
-  widget is resizable. If two surfaces have the same aspect ratio and one is
-  scaled by `k`, every geometric metric should also scale by `k`.
-  Avoid `sizeClass`, grid-span breakpoints, absolute minima and scale caps in
-  this model. Recalculate and center the group of children that are actually
-  visible when optional content disappears.
-- **Proportional information model — the default for desktop information
-  tools.** Use `ui.metrics().layoutRowHeight` as the shared semantic row unit.
-  It is the visible content height of a search field, input, ordinary button or
-  single-line item; exterior insets and gaps are not included. Use `1x` for
-  those controls and items. Derive component-owned fonts, spacing, icons,
-  radii and strokes as stable proportions of that row height, then add the
-  derived gaps separately. Multi-line body items use an explicit multiple of
-  the same row unit. The host keeps the row unit at the page baseline
-  for one- and two-row widgets, then grows it slowly with vertical span. All
-  component-derived metrics grow with it. Horizontal span never changes them,
-  so components with the same row span stay aligned.
-  `panel`, `dialog` and `popover` callbacks use the page baseline row unit
-  without desktop-span growth; their controls must not grow with the source
-  widget. Page row settings and system text scaling still apply. Use
-  `layout.rpxX()` and `layout.rpxY()` only for component-specific axis geometry, and never derive
-  vertical controls or rows from width. Require `ui.semanticMetrics.rowUnit`
-  and use `layoutRowHeight`. Use `layout.rpx()` or `vmin` for isotropic
-  decoration.
-- **Grid-density model — only for content that explicitly aligns to host grid
-  metrics.** Use `layout.cu()` and `layout.fontCu()` for a system-status card
-  matrix or another component whose information units intentionally track the
-  host grid. Grid metrics and size classes may drive those card boundaries.
-- Mix the models only for an intentional fixed-density overlay. `cu` and
-  `fontCu` do not grow linearly with the whole widget, so using them for a
-  proportional component's main geometry breaks same-ratio rendering.
-
-For a proportional plan, prefer `layout.rpxX(value)` and `layout.rpxY(value)`
-when axis-specific values come from a design at the manifest default span.
-Use `layout.rpx(value)` for isotropic artwork. Homogeneous formulas such as
-`short * 0.08`, `width * 0.3` and `math.min(width * 0.4, height * 0.6)` are
-also appropriate.
-Constants used only as ratios are fine. Output clamps such as
-`math.max(layout.cu(40), ...)`, fixed pixel floors, or a capped global scale
-make two equal-aspect surfaces render differently and should be avoided.
-
-In the proportional information model, use
-`ui.metrics().layoutRowHeight` as the only host-owned visual scale. Derive
-ordinary body text, for example, as `row * 12 / 28`, captions as
-`row * 10 / 28`, and component spacing from the same ratio. A component font
-preference is a percentage multiplier over the derived font. The row already
-includes page and accessibility scaling; do not apply a second span scale.
-In the proportional visual model, derive text and geometry from `rpx`, the
-surface axes or `vmin` so equal-aspect surfaces remain fully proportional.
-Read surface-dependent layout metrics in `view` or `render`; do not cache them
-in `setup`, because later resizes can differ from the initial load-time
-surface.
-
-Choose text and icon alignment according to each element's role and the intended
-composition. Declarative text defaults to `textAlign="start"` and
-`verticalAlign="center"`; do not assume a control label is horizontally centered.
-Set alignment explicitly when the intended placement differs from the default,
-and check the rendered label together with its padding and any icon. This is an
-alignment reminder, not a requirement to center every control.
+Use the layout system's public-contract boundaries, default information roles,
+space budgets and override rules. Select a [layout pattern](references/layout-patterns.md)
+when composing lists, search or management tools. Keep layout rules in those
+references rather than inventing another scale for each component.
 
 ## Create a package
 
@@ -208,96 +162,25 @@ alignment reminder, not a requirement to center every control.
 
 ## Surface ownership and theme contract
 
-The SnowDesktop host owns the outer shape, material, border and selected state.
-By default:
+The host owns the outer shape, material, border and selected state. Set
+`useCustomStyle=true` for authored fallback values and normally keep
+`followPersonalizationDefault=true`. Draw content and intentional internal
+groups inside that surface; use the documented decorative `backgroundLayer`
+when a background composition is needed.
 
-- Let the host draw the component material, rounded shape, outer border,
-  gradient, glass or acrylic through `widget.define` style fields.
-- Set `useCustomStyle = true` when supplying fallback style values and set
-  `followPersonalizationDefault = true` unless the user's concept explicitly
-  requires an independent material.
-- Use `backgroundLayer={render=...}` with required feature
-  `widget.backgroundLayer` when a component deliberately needs images, color
-  blocks, gradients or paths above the host material tint and below foreground
-  content. The callback is
-  decorative, desktop-only and cannot register interactions or native
-  marquees. Full-surface drawing is expected inside this callback.
-- Do not draw a full-surface `draw.rect`, `draw.gradientRect`, image or view
-  background in the foreground callback to imitate the host material. Draw
-  only content and intentional internal surfaces. Full-canvas foreground
-  artwork remains an exception for a canvas-led widget such as a clock face;
-  document it with `-- snowwidget: allow-full-surface-content`.
-- Treat material/background and foreground theme as independent inputs. Never
-  infer foreground colors from background RGB, luminance, wallpaper, alpha or
-  a material name.
-- In declarative views, require `view.theme.tokens` and use semantic foreground
-  tokens such as `textPrimary`, `textSecondary`, `textDisabled` and `border`.
-- In immediate drawing, derive the foreground palette from
-  `widget.theme().contentTheme`: `0` selects light/white foregrounds and `1`
-  selects dark/black foregrounds. `widget.context().theme.mode == "dark"`
-  likewise means light foregrounds, while `"light"` means dark foregrounds.
-- Preserve the host preset defaults exactly: `dark`, `glass-dark`,
-  `glass-light` and `acrylic-dark` resolve to light/white foregrounds;
-  `light` and `acrylic-light` resolve to dark/black foregrounds. In particular,
-  the default `glass-light` pairing still uses light text. Do not infer this
-  mapping from the appearance name suffix; consume the resolved theme.
-- Keep ellipsis for ordinary labels. For a short timer, amount or counter that
-  must stay complete, set `overflowText="clip"`, use `width="auto"` with a
-  calculated `minWidth`, and set `flexShrink=0` on it and any shrinking parent
-  column. Reallocate the finite surface width from adjacent content; `minWidth`
-  cannot resize the widget window.
-- For rounded bitmap content in immediate mode, declare and probe
-  `draw.imageFit.roundedClip`, then pass `cornerRadius` after `originY`.
-  Drawing a rounded border alone does not clip the bitmap corners.
-- If the widget offers a custom foreground setting, use it only when the widget
-  is not following personalization. A component appearance preset may declare
-  `__contentTheme = 0` (light/white foreground) or `1` (dark/black foreground)
-  in its `values` so host titles and handles use the same foreground. Never
-  read or persist this host-owned key from component Lua.
+Material and foreground are independent. Require `view.theme.tokens` for
+declarative semantic colors; immediate drawing consumes the resolved
+`contentTheme`. Read [visual authoring](references/visual-authoring.md) before
+implementing materials, foreground choices, imagery, glyphs or preview images.
+That reference owns the exact theme mappings and surface exceptions.
 
-Read `references/visual-authoring.md` before implementing custom materials,
-foreground choices, internal surfaces or final preview images.
+## Entry callbacks
 
-## Required entry shape
-
-This immediate-mode example deliberately lets the host own the outer surface
-and resolves content colors independently:
-
-```lua
-local function foregroundPalette()
-    local theme = widget.theme()
-    local darkForeground = theme and theme.contentTheme == 1
-    return {
-        primary = darkForeground and 0x111827 or 0xFFFFFF,
-        secondary = darkForeground and 0x4B5563 or 0xD1D5DB,
-    }
-end
-
-local function render(_context, _model)
-    local colors = foregroundPalette()
-    local width = layout.contentWidth()
-    local height = layout.contentHeight()
-    local vertical = height > width * 1.05
-    local padding = math.min(width * 0.06, height * 0.10)
-    local fontSize = math.min(width * (vertical and 0.10 or 0.06),
-        height * (vertical and 0.06 or 0.12))
-    draw.text(padding, padding,
-        l10n.tr("lua_widget.my_widget.hello"),
-        fontSize, colors.primary, width - padding * 2)
-end
-
-return widget.define({
-    name = l10n.tr("lua_widget.my_widget.name"),
-    useCustomStyle = true,
-    followPersonalizationDefault = true,
-    bg = 0x18202A,
-    border = 0xFFFFFF,
-    alpha = 0.42,
-    borderAlpha = 0.18,
-    gradientEndA = 0.28,
-    render = render,
-})
-```
+Return one `widget.define` descriptor whose desktop entry is a local `view` or
+`render` function. The initializer contains a complete declarative entry;
+[layout patterns](references/layout-patterns.md) show reusable view builders.
+For immediate artwork, use the visual model and the foreground palette in
+[visual authoring](references/visual-authoring.md#foreground-theme).
 
 Do not define removed globals such as top-level `render`, `onClick`,
 `getContextMenu`, `imguiRender` or `onHttpResponse`. Optional `setup(context)`
@@ -387,10 +270,10 @@ Use the lowest-cost checks first:
    pure Lua tests. Tests are for behavior and logic, not formatting or copied
    implementation details.
 4. Run `snowwidget preview <directory> <output.png>` at the default span and at
-   every materially different aspect ratio or density state. For proportional
-   visual widgets, also preview two different sizes with the same aspect ratio
-   and verify that all geometry scales by the same factor. Exercise relevant DPI,
-   locale, appearance, foreground theme, data state and storage values.
+   the changed surfaces' materially different sizes or density states. Select
+   the affected cases from [layout acceptance](references/layout-system.md#layout-acceptance)
+   and follow [the real preview contract](references/visual-authoring.md#real-preview-contract)
+   for appearance, content fixtures and surface-specific evidence.
 5. Open and visually inspect every PNG. A JSON result with `ok=true` proves only
    that rendering completed. It does not prove readable contrast, correct
    hierarchy, unclipped content or a useful design. Fix defects, render again
@@ -407,36 +290,11 @@ The first meaningful preview must already show the widget's purpose, intended
 visual direction, representative content and primary affordance. Reject an
 untouched starter, placeholder copy, blank surface or loading-only handoff.
 
-For an ordinary component that follows personalization, preview the supported
-host appearances with `followPersonalization=1`. Include `glass-light` with its
-default light foreground and `acrylic-light` with its default dark foreground;
-they intentionally differ. If the component exposes an independent foreground
-selector, also verify both foreground choices with personalization disabled:
-
-```powershell
-bin\snowwidget.exe preview <directory> <light-fg.png> `
-  --appearance acrylic-light `
-  --storage followPersonalization=0 `
-  --storage __contentTheme=0
-
-bin\snowwidget.exe preview <directory> <dark-fg.png> `
-  --appearance acrylic-light `
-  --storage followPersonalization=0 `
-  --storage __contentTheme=1
-```
-
-Repeat the corresponding cases for dark material when the widget supports it.
-Check primary, secondary, disabled, icon, stroke and control text. Use
-`--data-state` for relevant ready, empty, loading, error, stale and
-permission-denied envelopes. For a square Workshop image, preserve the real
-component span and use `--canvas-size 512 --padding 48` rather than changing the
-widget to a square layout.
-
-In the SnowDesktop repository, a Lua-package-only change uses component-level
-lint, tests, validation, preview and packaging. Do not build the native host
-unless the change crosses the package boundary. Use
-`scripts\widget-dev.bat <directory>` when an observable desktop hot-reload
-check is required.
+Check each changed surface's parsing, layout and interaction separately. A
+desktop/catalog image does not verify a panel, dialog or popover. Keep temporary
+preview adapters and fixtures outside the delivered package and record their
+limits. Reuse applicable existing evidence instead of expanding unrelated
+combinations; an untested behavior remains unverified.
 
 Do not claim pointer interaction, context menus, declarative events,
 multi-monitor DPI or permission UX is verified from lint, validation or build
