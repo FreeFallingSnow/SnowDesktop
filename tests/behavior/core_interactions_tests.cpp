@@ -433,8 +433,22 @@ void DockOverflow()
                     if (vertical) overlap.y = (fileBegin + fileVisualBegin) / 2;
                     else overlap.x = (fileBegin + fileVisualBegin) / 2;
                     Access::DockPointer(*profile.app, overlap);
-                    Require(dock->EntryAtPoint(overlap) == scrolled[24]->GetItem(),
-                        "expanded fixed file owns input above clipped applications");
+                    const auto* hit = dock->EntryAtPoint(overlap);
+                    if (hit != scrolled[24]->GetItem())
+                    {
+                        const auto focus = dock->CapturePresentationState().focusRect;
+                        const RECT currentVisual = dock->GetElementVisualRect(file, overlap);
+                        const auto describe = [](const RECT& rect) {
+                            return std::to_string(rect.left) + "," + std::to_string(rect.top) + "," +
+                                std::to_string(rect.right) + "," + std::to_string(rect.bottom);
+                        };
+                        Require(false, "expanded fixed file owns input above clipped applications; position=" +
+                            std::to_string(static_cast<int>(position)) + " attached=" + std::to_string(attached) +
+                            " hover=" + std::to_string(hover) + " file=" + describe(file) +
+                            " painted=" + describe(fileVisual) + " current=" + describe(currentVisual) +
+                            " focus=" + describe(focus) + " pointer=" + std::to_string(overlap.x) + "," +
+                            std::to_string(overlap.y) + " hit=" + (hit ? std::to_string(hit->GetEntryIndex()) : "none"));
+                    }
                     Require(!dock->ScrollByWheelDelta(overlap, -120),
                         "expanded fixed file cannot scroll applications underneath it");
                 }
