@@ -91,9 +91,9 @@ if (request.component == "demo-scene")
             }
         } cleanup{this, fixture.get()};
         RefreshDesktopItemIndexCache(); EnsureNavTabOrder();
-        quickNavigationPreview_ = true; quickNavigationAppsIndexed_ = true;
-        quickNavDpiScale_ = 1; quickNavAppearance_ = appearance;
-        quickNavLightTheme_ = light; quickNavGlassTheme_ = appearance.glassEnabled; quickNavBlurRadius_ = appearance.glassBlurRadius;
+        quickNavigation_->preview = true; quickNavigation_->appsIndexed = true;
+        quickNavigation_->dpiScale = 1; quickNavigation_->appearance = appearance;
+        quickNavigation_->lightTheme = light; quickNavigation_->glassTheme = appearance.glassEnabled; quickNavigation_->blurRadius = appearance.glassBlurRadius;
         navigationSettings_ = {}; EnsureQuickNavTextFormats();
         dockSettings_ = {}; dockSettings_.followComponentAppearance = false;
         dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
@@ -224,17 +224,17 @@ if (request.component == "demo-scene")
                 }
                 else if (surface.kind == "navigation")
                 {
-                    quickNavigationOpen_ = true; quickNavigationCollapsed_ = surface.listMode;
-                    quickNavigationSearchText_ = quickNavigationEffectiveSearchText_ = demo::Wide(surface.search);
-                    quickNavigationOpenPoint_ = {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
-                    quickNavigationRect_ = GetQuickNavigationRect(); quickNavigationHostRect_ = quickNavigationRect_;
-                    const auto fitted = fitRect(quickNavigationRect_, rect);
-                    const float scale = static_cast<float>(fitted.right - fitted.left) / (quickNavigationRect_.right - quickNavigationRect_.left);
+                    quickNavigation_->open = true; quickNavigation_->collapsed = surface.listMode;
+                    quickNavigation_->searchText = quickNavigation_->effectiveSearchText = demo::Wide(surface.search);
+                    quickNavigation_->openPoint = {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+                    quickNavigation_->rect = GetQuickNavigationRect(); quickNavigation_->hostRect = quickNavigation_->rect;
+                    const auto fitted = fitRect(quickNavigation_->rect, rect);
+                    const float scale = static_cast<float>(fitted.right - fitted.left) / (quickNavigation_->rect.right - quickNavigation_->rect.left);
                     material(fitted, navigationSettings_.layout.cornerRadius * scale);
-                    const auto mapped = mapRect(quickNavigationRect_, fitted) * transform;
-                    quickNavigationLastMousePoint_ = pointerIn(mapped, frame.cursor); UpdateQuickNavTabWidths();
+                    const auto mapped = mapRect(quickNavigation_->rect, fitted) * transform;
+                    quickNavigation_->lastMousePoint = pointerIn(mapped, frame.cursor); UpdateQuickNavTabWidths();
                     context->SetTransform(mapped); DrawQuickNavigationSurface(context.Get());
-                    quickNavigationOpen_ = false;
+                    quickNavigation_->open = false;
                 }
                 else
                 {

@@ -1423,7 +1423,7 @@ private:
     void UpdateQuickNavTabWidths();
     /** @brief 根据拖拽位移计算目标标签索引（≥2）。 */
     int GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const;
-    /** @brief 确保 navTabOrder_ 包含所有集合组件 ID。 */
+    /** @brief 确保 quickNavigation_->tabOrder 包含所有集合组件 ID。 */
     void EnsureNavTabOrder();
 
     // ── Layout persistence ──────────────────────────────────
@@ -2477,7 +2477,7 @@ private:
     int ResolveItemTitleLines(const DesktopWidget* widget = nullptr, bool popupHosted = false) const;
     /**
      * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
-     * 使用 quickNavItemTextFormat_（变量字体 + 细字重），居中、可换行。
+     * 使用 quickNavigation_->itemTextFormat（变量字体 + 细字重），居中、可换行。
      */
     void DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, bool lightTheme);

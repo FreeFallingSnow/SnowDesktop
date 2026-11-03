@@ -912,7 +912,7 @@ std::wstring DesktopApp::GetQuickNavTabLabel(size_t tab) const
 }
 
 /**
- * @brief 根据文字测量宽度，更新 quickNavTabWidths_
+ * @brief 根据文字测量宽度，更新 quickNavigation_->tabWidths
  */
 void DesktopApp::UpdateQuickNavTabWidths()
 {

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "ui/preview/native_component_preview_export.h"
 #include "common/utils.h"
