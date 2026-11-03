@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "dock/dock_tray_rules.h"
 #include "app/app.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"

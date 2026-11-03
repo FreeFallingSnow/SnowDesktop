@@ -1,4 +1,6 @@
 #include "platform/force_restart_hotkey.h"
+#include "dock/dock_fullscreen_applications.h"
+#include "dock/dock_fullscreen_policy.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"

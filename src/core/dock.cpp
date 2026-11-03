@@ -11,6 +11,8 @@
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_launch_animation.h"
 #include "dock/dock_magnification.h"
+#include "dock/dock_settings.h"
+#include "dock/dock_window_preview.h"
 #include "dock/merged_dock_presentation.h"
 #include "drag_drop/drag_hint_rules.h"
 #include "system/status_bar/status_bar_appearance.h"

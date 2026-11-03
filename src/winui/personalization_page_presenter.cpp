@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "dock/dock_settings.h"
 #include "theme/personalization.h"
 #include "theme/surface_theme.h"
 #include "ui/render/native_tooltip_settings.h"

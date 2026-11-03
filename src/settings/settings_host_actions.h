@@ -3,7 +3,7 @@
 #include "settings_action_result.h"
 #include "settings_fwd.h"
 #include "dock/dock_layout_settings.h"
-#include <minwindef.h>
+#include <windows.h>
 
 #include <cstdint>
 #include <string>

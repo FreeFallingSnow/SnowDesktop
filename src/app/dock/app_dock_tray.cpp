@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "dock/dock_tray_rules.h"
 #include "app/app.h"
 #include "common/l10n.h"
 #include "platform/runtime_module_policy.h"

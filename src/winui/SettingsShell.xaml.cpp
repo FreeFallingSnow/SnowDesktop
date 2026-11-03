@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "diagnostics/diagnostic_log_modules.h"
 #include "settings/settings_snapshot.h"
 
 #include "SettingsShell.xaml.h"

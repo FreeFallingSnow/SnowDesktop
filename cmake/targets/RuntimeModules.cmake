@@ -175,3 +175,12 @@ target_link_libraries(SnowDesktopWindowHelper PRIVATE SnowDesktopSettingsPolicy 
 target_link_libraries(SnowDesktopWindowSupport PUBLIC SnowDesktopRuntimePolicy)
 # The independent window helper supplies its own platform service providers;
 # retain that build variant instead of linking the host runtime environment.
+
+# Standalone owners also consume the definitions moved out of public headers.
+if(TARGET SnowDesktopTaskbarHook)
+    target_link_libraries(SnowDesktopTaskbarHook PRIVATE SnowDesktopThemePolicy)
+endif()
+target_link_libraries(SnowDesktopTextInput PUBLIC SnowDesktopAppFonts)
+
+# Compute helper identity after production dependency edges are complete.
+snowdesktop_window_support_build_identity()

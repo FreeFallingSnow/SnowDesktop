@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "ui/render/font_weight_rules.h"
 #include "ui/render/app_font.h"
 /**
  * @file widget_base.cpp

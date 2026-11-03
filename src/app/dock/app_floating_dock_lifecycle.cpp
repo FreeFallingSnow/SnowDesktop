@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "dock/dock_fullscreen_policy.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "navigation/navigation_settings.h"

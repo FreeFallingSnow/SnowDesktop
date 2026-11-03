@@ -1,4 +1,6 @@
 #include "pch.h"
+#include "dock/dock_settings_rules.h"
+#include "dock/dock_fullscreen_policy.h"
 #include "theme/personalization.h"
 #include "icons/icon_library.h"
 #include "settings/settings_snapshot.h"

@@ -1,4 +1,5 @@
 #include "platform/force_restart_hotkey.h"
+#include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"

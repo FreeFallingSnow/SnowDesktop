@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "system_panel_preview.h"
+#include "system/controls/system_quick_controls.h"
 #include "system_panel_model.h"
 #include "system/calendar/system_calendar_editor.h"
 #include "system/controls/system_control_prompt.h"

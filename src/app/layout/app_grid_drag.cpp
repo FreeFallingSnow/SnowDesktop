@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "diagnostics/debug_profile.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "dock/dock_appbar.h"

@@ -1,4 +1,6 @@
 #include "native_component_preview_export.h"
+#include "ui/preview/component_preview.h"
+#include "data/data_paths.h"
 
 #include "app/app.h"
 #include "common/constants.h"

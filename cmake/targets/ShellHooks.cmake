@@ -27,7 +27,6 @@ ExternalProject_Add(SnowDesktopDockMinimize32
     INSTALL_COMMAND "")
 add_dependencies(SnowDesktop SnowDesktopDockMinimizeHook SnowDesktopDockMinimize32)
 include(cmake/SnowDesktop.WindowSupport.cmake)
-snowdesktop_window_support_build_identity()
 foreach(target SnowDesktopTaskbarHook SnowDesktopWallpaperHook SnowDesktopHookEntry SnowDesktopDockMinimizeHook)
     if(TARGET ${target})
         snowdesktop_private_runtime_target(${target} "${CMAKE_BINARY_DIR}/$<CONFIG>")

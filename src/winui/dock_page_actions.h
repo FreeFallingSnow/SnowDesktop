@@ -10,6 +10,7 @@
 #include <vector>
 #include "settings/settings_host_actions.h"
 #include "theme_library_actions.h"
+#include "icons/icon_library.h"
 
 namespace snowdesktop::winui
 {

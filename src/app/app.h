@@ -12,6 +12,7 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
 #include "app/render/demo_icon_load_types.h"
 #include "app/dock/dock_runtime_types.h"

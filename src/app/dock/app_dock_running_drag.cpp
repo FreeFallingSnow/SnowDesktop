@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/shell/shell_icon_request.h"
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "dock/dock_folder_rules.h"

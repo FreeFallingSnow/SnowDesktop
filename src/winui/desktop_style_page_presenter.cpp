@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "dock/dock_settings_rules.h"
 #include <algorithm>
 #include "settings/settings_snapshot.h"
 #include "desktop_style_page_presenter.h"

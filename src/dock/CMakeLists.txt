@@ -11,7 +11,9 @@ if (NOT DEFINED SNOWDESKTOP_OUTPUT_DIR)
 endif()
 add_library(SnowDesktopDockMinimizeHook32 SHARED dock_minimize_hook.cpp)
 add_library(SnowDesktopHookEntry32 SHARED ../taskbar_hook/hook_entry.cpp)
-add_executable(SnowDesktopDockMinimizeHost32 WIN32 dock_minimize_hook_host.cpp dock_cloak_dispatcher.cpp)
+add_executable(SnowDesktopDockMinimizeHost32 WIN32
+    dock_minimize_hook_host.cpp dock_cloak_dispatcher.cpp
+    ../platform/runtime_module_policy.cpp)
 snowdesktop_add_executable_version_resource(SnowDesktopDockMinimizeHost32
     "SnowDesktop 32-bit Dock minimize animation host")
 target_link_libraries(SnowDesktopDockMinimizeHost32 PRIVATE shell32 user32)

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "diagnostics/debug_profile.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "layout/page_management_rules.h"
 #include "common/l10n.h"
