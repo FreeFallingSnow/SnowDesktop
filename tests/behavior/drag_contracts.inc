@@ -209,6 +209,7 @@ void DragRelease()
     for (int mods : {MK_ALT, 0})
     {
         HostProfile gapProfile;
+        DragInput gapInput;
         const auto source = gapProfile.root / L"gap-source.txt";
         Write(source, "gap-source-intact");
         const auto preview = Access::GapDesktopPreview(*gapProfile.app, source, mods);
@@ -220,6 +221,7 @@ void DragRelease()
         {
             Require(Access::GapDragHint(*gapProfile.app, mods) == _LW("core.drag.release_move_here"),
                 "component gap hint agrees that the advertised adjacent landing accepts the move");
+            gapInput.Move({300, 150});
             Access::ReleaseDrag(*gapProfile.app, {300, 150});
             Require(SameCell(Access::Cell(*gapProfile.app, source), preview.landings.front().cell),
                 "actual gap release commits the same adjacent cell advertised by the preview");
