@@ -588,13 +588,17 @@ inline bool IsDockTaskbarDocumentProxyCandidate(HWND window)
         IsTaskbarDocumentProxyCandidate(window);
 }
 
-inline int DockRestoreShowCommand(HWND window)
+inline int DockRestoreShowCommand(HWND window, bool preparingAnimation = false)
 {
     WINDOWPLACEMENT placement{};
     placement.length = sizeof(placement);
     if (!window ||
         !GetWindowPlacement(window, &placement))
-        return SW_RESTORE;
+        return preparingAnimation ? SW_SHOWNOACTIVATE : SW_RESTORE;
+    if (preparingAnimation)
+        return snowdesktop::dock_window_rules::
+            ResolveDockAnimatedRestoreShowCommand(
+                placement.flags, placement.showCmd);
     return snowdesktop::dock_window_rules::
         ResolveDockRestoreShowCommand(
             placement.flags, placement.showCmd);

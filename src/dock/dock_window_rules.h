@@ -511,6 +511,18 @@ constexpr int ResolveDockRestoreShowCommand(
         : SW_RESTORE;
 }
 
+// Animation preparation happens while the real source is cloaked. Use a
+// non-activating normal show, retaining the native maximized command when needed.
+// Explicit foreground requests and retries belong to the exposed-window handoff.
+constexpr int ResolveDockAnimatedRestoreShowCommand(
+    UINT placementFlags, UINT placementShowCommand) noexcept
+{
+    return ShouldRestoreDockWindowMaximized(
+            placementFlags, placementShowCommand)
+        ? SW_SHOWMAXIMIZED
+        : SW_SHOWNOACTIVATE;
+}
+
 /**
  * @brief 判断顶层窗口的扩展样式与 Owner 关系是否允许显示在任务栏/Dock。
  *

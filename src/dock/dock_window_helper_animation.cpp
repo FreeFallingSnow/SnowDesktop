@@ -3,6 +3,7 @@
 #include "dock_minimize_protocol.h"
 #include "dock_window_transition.h"
 #include "dock_window_trace.h"
+#include "dock_window_rules.h"
 #include "platform/window_support/window_support_security.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "settings/animation_settings.h"
@@ -153,7 +154,16 @@ bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     });
     return impl_->transition.StartRestore(window, target.anchor, [](HWND source, DockWindowRestoreTransitionPhase phase) {
-        if (phase == DockWindowRestoreTransitionPhase::RequestRestore || phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
+        if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+        {
+            WINDOWPLACEMENT placement{sizeof(placement)};
+            const bool known = GetWindowPlacement(source, &placement) != FALSE;
+            const int command = known ? snowdesktop::dock_window_rules::
+                ResolveDockAnimatedRestoreShowCommand(placement.flags, placement.showCmd)
+                : SW_SHOWNOACTIVATE;
+            ShowWindowAsync(source, command);
+        }
+        if (phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
             ShowWindowAsync(source, SW_RESTORE);
         if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) SetForegroundWindow(source);
     }, below);

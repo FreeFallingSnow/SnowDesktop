@@ -114,11 +114,13 @@ bool ActivateDockWindowForeground(HWND target, HWND activationTarget)
             });
 }
 
-void RequestDockWindowShow(HWND target, bool wasMinimized)
+void RequestDockWindowShow(HWND target, bool wasMinimized,
+    bool preparingAnimation = false)
 {
     if (!target || !IsWindow(target))
         return;
-    const int showCommand = wasMinimized ? DockRestoreShowCommand(target) : SW_SHOW;
+    const int showCommand = wasMinimized
+        ? DockRestoreShowCommand(target, preparingAnimation) : SW_SHOW;
     LogDockWindowActivation(target, L"show-request", showCommand);
     SetLastError(ERROR_SUCCESS);
     const BOOL showAccepted = ShowWindowAsync(target, showCommand);
@@ -1588,19 +1590,18 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            // Only submit the maximized/normal restore here. The transition
-            // restores the cloaked source before its visual timeline starts,
-            // letting the application finish its native restore underneath the
-            // animation. This remains asynchronous and submits no second restore.
-            const DockWindowActivationOutcome outcome =
-                RequestDockWindowActivation(target, true);
+            // Prepare the real source without starting the ordinary activation
+            // observer: its retries would foreground a still-cloaked window.
+            // The handoff starts activation after the source has been exposed.
+            CancelAllDockWindowActivationObservations();
+            RequestDockWindowShow(target, true, true);
             UpdateDockWindowActivationState(
-                target, outcome.restored,
-                outcome.foreground);
+                target, !IsIconic(target), false);
         }
         return;
     }
 
+    BeginDockWindowActivationObservation(target, true);
     const DockWindowActivationOutcome outcome =
         ActivateDockWindowAfterShow(target, true);
     UpdateDockWindowActivationState(
