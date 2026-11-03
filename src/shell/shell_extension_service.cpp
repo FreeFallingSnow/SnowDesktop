@@ -1200,6 +1200,30 @@ struct MenuService::Impl
         }
         return owners;
     }
+    void ProjectCommandOwnership(Reply& reply, const Request& request, unsigned contexts) const
+    {
+        // A fresh aggregate can have multiple applicable registrations for one
+        // verb (for example Directory/Background and DesktopBackground). Use
+        // the same unique recorded ownership for display and click filtering;
+        // executable tokens still belong exclusively to the fresh aggregate.
+        for (auto& entry : reply.entries) if (entry.registration.empty())
+        {
+            const auto owners = CurrentSourceOwners(request, entry, contexts);
+            if (owners.size() > 1) continue;
+            if (owners.size() == 1) { entry.registration = *owners.begin(); continue; }
+            std::string registration;
+            bool ambiguous = false;
+            unsigned associatedContexts = 0;
+            for (const auto& association : catalogue.associations)
+                if (association.provider == entry.provider && (ContextBit(association.context) & contexts))
+                {
+                    if (!registration.empty() && registration != association.registration) ambiguous = true;
+                    registration = association.registration;
+                    associatedContexts |= ContextBit(association.context);
+                }
+            if (!ambiguous && associatedContexts == contexts) entry.registration = std::move(registration);
+        }
+    }
     void FillDisplayIcons(std::vector<Entry>& entries, unsigned contexts, const Registration* inherited = nullptr) const
     {
         for (auto& entry : entries)
@@ -1333,12 +1357,7 @@ struct MenuService::Impl
             // Apply the same current, unique proof to this fresh executable
             // copy. Tokens still come exclusively from the fresh aggregate;
             // derived ownership never enters the durable display snapshot.
-            if (request.sourceClsid.empty())
-                for (auto& entry : executable.entries) if (entry.registration.empty())
-                {
-                    const auto owners = CurrentSourceOwners(request, entry, contexts);
-                    if (owners.size() == 1) entry.registration = *owners.begin();
-                }
+            if (request.sourceClsid.empty()) ProjectCommandOwnership(executable, request, contexts);
         }
         if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, executable, contexts);
         bool invoked = false;
@@ -2198,25 +2217,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         view.pending = false; view.error.clear();
     }
     const auto project = [&](Reply &reply) {
-        // Snapshots created before attribution still use provider IDs. Apply
-        // only a unique, proven association when consulting current rules.
-        for (auto &entry : reply.entries) if (entry.registration.empty())
-        {
-            const auto owners = impl_->CurrentSourceOwners(row.request, entry, view.contexts);
-            if (owners.size() > 1) continue;
-            if (owners.size() == 1) { entry.registration = *owners.begin(); continue; }
-            std::string registration;
-            bool ambiguous = false;
-            unsigned associatedContexts = 0;
-            for (const auto &a : impl_->catalogue.associations)
-                if (a.provider == entry.provider && (ContextBit(a.context) & view.contexts))
-                {
-                    if (!registration.empty() && registration != a.registration) ambiguous = true;
-                    registration = a.registration;
-                    associatedContexts |= ContextBit(a.context);
-                }
-            if (!ambiguous && associatedContexts == view.contexts) entry.registration = std::move(registration);
-        }
+        impl_->ProjectCommandOwnership(reply, row.request, view.contexts);
         reply.entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, reply, view.contexts);
         // Reuse the same command/application artwork already shown by settings.
         // This is a memory-only display copy; stored snapshots and commands stay unchanged.
