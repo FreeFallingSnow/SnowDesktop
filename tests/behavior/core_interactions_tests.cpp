@@ -246,6 +246,7 @@ struct NativeDragIntegrationAccess
             running.presence.SetVisible(true, 0, false);
             app.dockUnpinnedRunningApps_.push_back(std::move(running));
         }
+        app.RefreshDesktopItemIndexCache();
         app.dockEntries_.clear();
         for (int i = 0; i < 24; ++i)
             app.dockEntries_.push_back({DockEntryType::DesktopItem,
