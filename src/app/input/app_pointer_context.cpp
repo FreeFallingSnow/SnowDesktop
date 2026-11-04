@@ -2,7 +2,6 @@
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
-#include "shell/power_user_menu.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -787,26 +786,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             InvalidateRect(hwnd_, nullptr, FALSE);
             if (dock->IsWindowsButtonPoint(pt) && !dock->IsMergedWithStatusBar())
             {
-                PrepareMenuIconsForPoint(screenPt);
-                const HMENU dockMenu = CreateDockContextMenu(false);
-                const HMENU menu = snowdesktop::power_user_menu::Create(dockMenu,
-                    [this](HMENU parent, UINT_PTR command, const wchar_t* glyph) {
-                        SetMenuItemIcon(parent, command, glyph, MenuIconFont::FluentRegular);
-                    });
-                if (!menu)
-                {
-                    if (dockMenu) DestroyMenu(dockMenu);
-                    ClearMenuIcons();
-                    return;
-                }
-                RestoreInteractionInputFocus();
-                const UINT command = ShowModernMenu(menu, screenPt, hwnd_, true);
-                DestroyMenu(menu);
-                ClearMenuIcons();
-                RestoreDesktopWindowLayer();
-                if (command != kContextDockDetailedSettings) RestoreInteractionInputFocus();
-                if (!snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(hwnd_)))
-                    ExecuteDockContextMenuCommand(command, hwnd_);
+                ShowDockContextMenu(screenPt, true);
                 return;
             }
             ShowDockContextMenu(screenPt);

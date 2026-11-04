@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <atomic>
 #include <future>
+#include <initializer_list>
 #include <span>
 #include <thread>
 
@@ -35,6 +36,7 @@ public:
         decltype(&UnhookWindowsHookEx) uninstall = &UnhookWindowsHookEx;
         decltype(&WindowFromPoint) windowAt = &WindowFromPoint;
         decltype(&GetForegroundWindow) foreground = &GetForegroundWindow;
+        decltype(&GetAsyncKeyState) keyState = &GetAsyncKeyState;
     };
 
     TaskbarMinimizeInput() = default;
@@ -118,6 +120,8 @@ public:
         active_.compare_exchange_strong(expected, nullptr);
         // No callbacks remain when resetting the published event.
         Publish({});
+        powerMenuTime_.store(0);
+        powerMenuForeground_.store(nullptr);
     }
 
     MinimizeInput Read() const noexcept
@@ -136,6 +140,22 @@ public:
     HWND Recipient(const MinimizeInput& input) const noexcept
     {
         return input.kind == MinimizeInputKind::Pointer ? api_.windowAt(input.point) : input.foreground;
+    }
+
+    // Consume one explicit command on the host thread after the physical
+    // chord is released. Hook callbacks still perform no UI dispatch.
+    bool TakePowerUserMenu(HWND& foreground) noexcept
+    {
+        DWORD time = powerMenuTime_.load(std::memory_order_acquire);
+        if (!time) return false;
+        if (GetTickCount() - time > 5000)
+        { powerMenuTime_.compare_exchange_strong(time, 0); return false; }
+        for (const int key : {VK_LWIN, VK_RWIN, static_cast<int>('X')})
+            if (api_.keyState(key) & 0x8000) return false;
+        const HWND source = powerMenuForeground_.load();
+        if (!powerMenuTime_.compare_exchange_strong(time, 0)) return false;
+        foreground = source;
+        return true;
     }
 
     static bool BelongsToTaskbar(HWND recipient, std::span<const HWND> taskbars) noexcept
@@ -179,6 +199,14 @@ private:
             if (auto* self = active_.load())
             {
                 const auto& input = *reinterpret_cast<const KBDLLHOOKSTRUCT*>(data);
+                if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && input.vkCode == 'X' &&
+                    ((self->api_.keyState(VK_LWIN) | self->api_.keyState(VK_RWIN)) & 0x8000) &&
+                    !(self->api_.keyState(VK_CONTROL) & 0x8000) &&
+                    !(self->api_.keyState(VK_MENU) & 0x8000) && !(self->api_.keyState(VK_SHIFT) & 0x8000))
+                {
+                    self->powerMenuForeground_.store(self->api_.foreground());
+                    self->powerMenuTime_.store(input.time, std::memory_order_release);
+                }
                 // A constant-time foreground handle query; never ask another
                 // UI thread to process a message from an input callback.
                 self->Publish({MinimizeInputKind::Keyboard, input.time, {}, self->api_.foreground()});
@@ -194,6 +222,8 @@ private:
     std::atomic<MinimizeInputKind> kind_{MinimizeInputKind::None};
     std::atomic<LONG> x_{0}, y_{0};
     std::atomic<HWND> foreground_{nullptr};
+    std::atomic<HWND> powerMenuForeground_{nullptr};
+    std::atomic<DWORD> powerMenuTime_{0};
     inline static std::atomic<TaskbarMinimizeInput*> active_{nullptr};
 };
 }

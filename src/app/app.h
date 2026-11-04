@@ -1751,7 +1751,7 @@ private:
         const snowdesktop::component_preview::StagePlacement& stage,
         bool hovered, std::string_view creationPresetId = {});
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
-    void ShowDockContextMenu(POINT screenPoint);
+    void ShowDockContextMenu(POINT screenPoint, bool powerUserMenu = false);
     HMENU CreateDockContextMenu(bool includeStatusBar);
     void ExecuteDockContextMenuCommand(UINT command, HWND owner);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */

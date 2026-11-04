@@ -6,6 +6,7 @@
 #include "common/utils.h"
 #include "settings/settings_controller.h"
 #include "dock/dock_settings.h"
+#include "shell/power_user_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "settings/bar_settings_rules.h"
 #include "dock/dock_settings_rules.h"
@@ -337,10 +338,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     return menu;
 }
 
-void DesktopApp::ShowDockContextMenu(POINT screenPoint)
+void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
 {
     POINT clientPoint = screenPoint;
-    if (statusBar_ && hwnd_ && ScreenToClient(hwnd_, &clientPoint))
+    if (!powerUserMenu && statusBar_ && hwnd_ && ScreenToClient(hwnd_, &clientPoint))
     {
         const DockContainer* dock = GetDockContainerAtPoint(clientPoint);
         if (dock && dock->IsMergedWithStatusBar())
@@ -359,6 +360,15 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     PrepareMenuIconsForPoint(screenPoint);
     HMENU menu = CreateDockContextMenu(false);
     if (!menu) return;
+    if (powerUserMenu)
+    {
+        const HMENU root = snowdesktop::power_user_menu::Create(menu,
+            [this](HMENU parent, UINT_PTR command, const wchar_t* glyph) {
+                SetMenuItemIcon(parent, command, glyph, MenuIconFont::FluentRegular);
+            });
+        if (!root) { DestroyMenu(menu); ClearMenuIcons(); return; }
+        menu = root;
+    }
     RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     DestroyMenu(menu);
@@ -366,7 +376,8 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     RestoreDesktopWindowLayer();
     if (command != kContextDockDetailedSettings)
         RestoreInteractionInputFocus();
-    ExecuteDockContextMenuCommand(command, hwnd_);
+    if (!powerUserMenu || !snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(hwnd_)))
+        ExecuteDockContextMenuCommand(command, hwnd_);
 }
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)

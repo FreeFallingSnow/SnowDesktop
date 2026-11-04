@@ -22,6 +22,7 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
 #include "taskbar_minimize_input.h"
+#include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "diagnostics/diagnostic_log.h"
@@ -733,9 +734,9 @@ public:
         InterlockedIncrement(&state_->generation); // even: snapshot complete
         snowdesktop::performance::Value("shared.taskbar", "publish", {}, 1);
 
-        const bool watchMinimizeInput = hookEnabled && std::any_of(targets.begin(), targets.end(), [](const auto& target) {
+        const bool watchMinimizeInput = hookEnabled && (suppressTaskbar || std::any_of(targets.begin(), targets.end(), [](const auto& target) {
             return target.protectAutoHideActivation;
-        });
+        }));
         if (!watchMinimizeInput)
         {
             minimizeInput_.Stop();
@@ -971,6 +972,21 @@ public:
         if (state_->status < snowdesktop::taskbar_hook::kStatusIdle)
             return SystemTaskbarBackdropRuntimeState::Failed;
         return SystemTaskbarBackdropRuntimeState::Loading;
+    }
+
+    bool TakePowerUserMenuRequest(HWND& foreground)
+    {
+        if (!minimizeInput_.TakePowerUserMenu(foreground)) return false;
+        std::lock_guard lock(mutex_);
+        snowdesktop::taskbar_hook::Snapshot snapshot;
+        if (!snowdesktop::taskbar_hook::ReadSharedSnapshot(state_, snapshot) ||
+            !snapshot.enabled || !snapshot.suppressTaskbar) return false;
+        const HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY);
+        return std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount,
+            [monitor](const auto& target) {
+                return target.suppressTaskbar && snowdesktop::taskbar_monitor::Resolve(
+                    reinterpret_cast<HWND>(target.taskbar)) == monitor;
+            });
     }
 
     LONG DrainAutoHideTrace(std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
@@ -1321,6 +1337,11 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState()
 void NotifySystemTaskbarCreated()
 {
     GetTaskbarBackdropController().NotifyTaskbarCreated();
+}
+
+bool TakeSystemPowerUserMenuRequest(HWND& foreground)
+{
+    return GetTaskbarBackdropController().TakePowerUserMenuRequest(foreground);
 }
 
 LONG DrainSystemTaskbarAutoHideTrace(

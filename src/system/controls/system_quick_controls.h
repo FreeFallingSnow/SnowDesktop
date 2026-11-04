@@ -11,7 +11,7 @@ inline constexpr wchar_t terminal[] = L"\uEE6F"; // window_console_20
 inline constexpr wchar_t terminalAdmin[] = L"\uF6BE"; // shield_20
 inline constexpr wchar_t settings[] = L"\uF6A9"; // settings_20
 inline constexpr wchar_t sleep[] = L"\uF87D"; // weather_moon_20
-inline constexpr wchar_t hibernate[] = L"\uEB0C"; // sleep_20
+inline constexpr wchar_t hibernate[] = L"\uF2DD"; // clock_20
 }
 // Host-only control identifiers; these are not widget topics or capabilities.
 struct SystemQuickControl

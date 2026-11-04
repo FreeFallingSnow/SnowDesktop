@@ -295,6 +295,9 @@ struct SystemPanel::Impl
     bool ApplyDismissRequest()
     {
         if(!model||!model->TakeDismissRequest())return false;
+        // A selected shortcut already owns this close and its continuation.
+        // Acknowledge the model's dismissal without cancelling that command.
+        if(closing&&afterClose)return true;
         transition.Cancel();afterClose={};++closeGeneration;
         if(showing&&!closing)Animate(false);
         return true;

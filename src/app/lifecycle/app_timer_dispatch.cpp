@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_transition.h"
+#include "dock/dock_settings.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
@@ -763,6 +764,17 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
+        HWND powerMenuSource = nullptr;
+        if (TakeSystemPowerUserMenuRequest(powerMenuSource))
+        {
+            if (HasActiveContextMenuSession()) DismissActiveContextMenuForPopupTransition();
+            else
+            {
+                MONITORINFO monitor{sizeof(monitor)};
+                if (GetMonitorInfoW(MonitorFromWindow(powerMenuSource, MONITOR_DEFAULTTOPRIMARY), &monitor))
+                    ShowDockContextMenu({monitor.rcWork.left + 8, monitor.rcWork.bottom - 8}, true);
+            }
+        }
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "dock.start_menu");
             UpdateDockStartMenu();
