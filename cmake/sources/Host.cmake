@@ -1,6 +1,8 @@
 set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
     src/system/controls/system_controls.cpp
     src/system/controls/system_control_hotspot_cache.h
+    src/system/controls/system_control_vpn.h
+    src/system/controls/system_control_vpn.cpp
     src/system/controls/system_control_windows.cpp
     src/system/controls/system_control_audio.cpp
     src/system/controls/system_control_power.cpp
@@ -10,7 +12,7 @@ set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
     src/system/controls/system_control_media.cpp
     src/system/controls/system_control_quick_actions.cpp)
 set(SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES
-    dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid)
+    dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid rasapi32)
 
 set(SNOWDESKTOP_SOURCES
     ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}

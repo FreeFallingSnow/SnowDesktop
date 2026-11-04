@@ -51,6 +51,7 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("bluetoothControls", &StatusBarSettings::bluetoothControls);
     visit("mediaControls", &StatusBarSettings::mediaControls);
     visit("powerControls", &StatusBarSettings::powerControls);
+    visit("vpnControls", &StatusBarSettings::vpnControls);
 }
 
 void NormalizeStatusBarSettings(StatusBarSettings& value);

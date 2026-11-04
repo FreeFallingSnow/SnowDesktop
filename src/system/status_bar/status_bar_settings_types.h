@@ -46,9 +46,12 @@ struct StatusBarSettings
     bool cpu = false, memory = false, gpu = false, traffic = false;
     bool audioControls = true, brightnessControls = true, wifiControls = true;
     bool bluetoothControls = true, mediaControls = true, powerControls = true;
+    // The system VPN entry ships hidden: environments without a configured RAS
+    // phone-book VPN should not gain an empty control-center button implicitly.
+    bool vpnControls = false;
     std::vector<std::string> pinnedTrayItems;
     std::vector<std::string> trayOrder;
-    std::vector<std::string> quickControlOrder = {"projection", "hotspot", "airplane", "microphone", "awake", "power"};
+    std::vector<std::string> quickControlOrder = {"projection", "hotspot", "airplane", "microphone", "awake", "vpn", "power"};
     std::vector<std::string> hiddenQuickControls;
     std::vector<std::string> leftOrder = {"menu", "quickSearch", "taskView"};
     std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};

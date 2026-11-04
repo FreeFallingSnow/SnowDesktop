@@ -21,6 +21,7 @@ inline constexpr std::array SystemQuickControls{
     SystemQuickControl{"airplane", "controlCenter.airplane", L"\uE709", "host.airplane", "host.airplane.set", L"ms-settings:network-airplanemode", false},
     SystemQuickControl{"microphone", "controlCenter.microphoneMute", L"\uF781", "audio.input.volume", "audio.input.setMute", L"ms-settings:sound", false},
     SystemQuickControl{"awake", "controlCenter.keepAwake", L"\uE708", "host.awake", "host.awake.set", L"ms-settings:powersleep", true},
+    SystemQuickControl{"vpn", "controlCenter.vpn", L"\uE705", "host.vpn", "", L"ms-settings:network-vpn", true},
     SystemQuickControl{"power", "controlCenter.powerMode", L"\uE945", "system.power.plans", "", L"ms-settings:powersleep", true}
 };
 inline const SystemQuickControl* FindSystemQuickControl(std::string_view id)

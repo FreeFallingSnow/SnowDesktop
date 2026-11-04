@@ -175,6 +175,10 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         if(topic=="host.airplane")ParseJson(R"({"enabled":false})",value);
         if(topic=="host.awake")ParseJson(state->awakeTimed?R"({"enabled":true,"mode":"timed","keepScreenOn":false,"durationSeconds":3600,"remainingSeconds":3540})":R"({"enabled":false,"mode":"plan","keepScreenOn":false,"durationSeconds":0,"remainingSeconds":0})",value);
         if(topic=="host.power.actions")ParseJson(R"({"hibernateSupported":true})",value);
+        if(topic=="host.vpn")ParseJson(R"({"entries":[
+            {"id":"Snow VPN","name":"Snow VPN","state":"connected","connected":true,"busy":false,"canConnect":false,"canDisconnect":true},
+            {"id":"Office VPN","name":"Office VPN","state":"disconnected","connected":false,"busy":false,"canConnect":true,"canDisconnect":false}],
+            "enabled":true,"busy":false})",value);
         if (topic == "bluetooth.devices" && !state->unavailable && !state->bluetoothOn)
         {
             value.object["radios"].array.front().object["enabled"] = j::Boolean(false);
@@ -1519,7 +1523,8 @@ void CheckQuickControls()
     source.completions=[&]{return std::exchange(completions,{});};
     source.trayChanged=[&](const StatusBarSettings& settings){saved=settings;++saves;};
     source.settings=[&](const wchar_t* uri){opened=uri;};
-    SystemPanelModel model(source,{},StatusBarAction::ControlCenter);
+    StatusBarSettings quickSettings;quickSettings.vpnControls=true;
+    SystemPanelModel model(source,quickSettings,StatusBarAction::ControlCenter);
     CheckLayout(model.View());
     Require(!model.View().Find("hotspot.note"),"overview contains no redundant hotspot explanation");
     Require(Node(model.View(),"quick:projection").bounds.top>Node(model.View(),"brightness.value").bounds.bottom&&
@@ -1574,6 +1579,66 @@ void CheckQuickControls()
     missing=true;model.Refresh();Require(Node(model.View(),"quick:airplane").role==ui::Role::Button&&model.Invoke("quick:airplane")&&
         model.Page()=="airplane"&&requests.size()==mutationCount&&model.Invoke("quick.settings")&&opened==L"ms-settings:network-airplanemode",
         "an unavailable system switch routes to settings without inferring radio state or submitting a write");
+    model.Close();
+}
+void CheckVpnPage()
+{
+    // Hidden by default. The settings master switch reveals the production page
+    // without touching a real RAS phone-book entry.
+    auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+    auto source=FixtureSource(state);const auto read=source.current;
+    bool officeConnected=false;
+    std::vector<std::pair<std::string,system_control::Arguments>> requests;
+    std::vector<system_control::Completion> completions;
+    source.current=[&](std::string_view topic) {
+        auto value=read(topic);
+        if(value&&topic=="host.vpn")
+        {
+            auto& entries=value->value.object["entries"].array;entries.clear();
+            const auto add=[&](const char* id,bool connected) {
+                auto item=j::Object();item.object["id"]=j::Text(id);item.object["name"]=j::Text(id);
+                item.object["state"]=j::Text(connected?"connected":"disconnected");
+                item.object["connected"]=j::Boolean(connected);item.object["busy"]=j::Boolean(false);
+                item.object["canConnect"]=j::Boolean(!connected);item.object["canDisconnect"]=j::Boolean(connected);
+                entries.push_back(std::move(item));
+            };
+            add("Snow VPN",true);add("Office VPN",officeConnected);
+            value->value.object["enabled"]=j::Boolean(true);
+        }
+        return value;
+    };
+    source.start=[&](system_control::Request request) {
+        Require(system_control::ValidateRequest(request),"VPN page submitted an invalid native request");
+        requests.emplace_back(request.name,request.arguments);return static_cast<std::uint64_t>(requests.size());
+    };
+    source.completions=[&]{return std::exchange(completions,{});};
+    SystemPanelModel hidden(source,StatusBarSettings{},StatusBarAction::ControlCenter);
+    Require(!hidden.View().Find("quick:vpn")&&!hidden.View().Find("vpn.entry:Snow VPN"),
+        "the system VPN button was visible without opting in");
+    hidden.Select("quick-manage");
+    Require(!hidden.View().Find("quick.manage:vpn.visible"),
+        "the hidden VPN master switch exposed an unusable management row");
+    StatusBarSettings settings;settings.vpnControls=true;
+    SystemPanelModel model(source,settings,StatusBarAction::ControlCenter);
+    Require(Node(model.View(),"quick:vpn").role==ui::Role::Button,"the enabled VPN quick control is not a menu button");
+    Require(model.Invoke("quick:vpn")&&model.Page()=="vpn","the VPN quick control did not open its page");
+    Require(Node(model.View(),"vpn.entry:Snow VPN").detail==_LW("controlCenter.connected")&&
+        Node(model.View(),"vpn.entry:Office VPN").detail==_LW("controlCenter.disconnected"),
+        "the VPN page did not show the sampled connection states");
+    Require(model.Invoke("vpn.entry:Office VPN")&&model.View().Find("vpn.connect:Office VPN"),
+        "a VPN row did not expand its own action");
+    Require(model.Invoke("vpn.connect:Office VPN")&&requests.size()==1&&
+        requests.front().first=="host.vpn.connect"&&requests.front().second.at("entryName")=="Office VPN",
+        "connecting a VPN entry dispatched the wrong native request");
+    system_control::Completion credentials;credentials.id=1;credentials.error="credentialsRequired";
+    completions.push_back(credentials);model.Refresh();
+    Require(model.View().Find("status")&&Node(model.View(),"status").text==_LW("controlCenter.vpnCredentials"),
+        "missing VPN credentials gave no actionable page hint");
+    officeConnected=true;system_control::Completion done;done.id=1;done.ok=true;completions.push_back(done);model.Refresh();
+    Require(Node(model.View(),"vpn.entry:Office VPN").detail==_LW("controlCenter.connected"),
+        "a successful VPN request did not display the read back state");
+    Require(model.Invoke("vpn.connect:Office VPN")&&requests.size()==2&&requests.back().first=="host.vpn.disconnect",
+        "a connected VPN entry did not offer disconnect");
     model.Close();
 }
 void CheckFeedbackLayouts()
@@ -2515,7 +2580,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width)*stage.height); }
         Require(!stage.pixels.empty(), "cannot create system panel preview background");
         const std::vector<std::string> presets = controls ?
-            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","quick-manage",
+            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","vpn","quick-manage",
                 "audio-many","wifi-many","bluetooth-many","media-empty","overview-bottom","audio-many-bottom","system-menu","system-menu-confirmation"} :
             trayPanel ? std::vector<std::string>{"grid","updated","manage","empty","connecting","unavailable"} :
             resources ? std::vector<std::string>{"cpu","memory","gpu","traffic","idle","warming","unavailable","gap","gpu-partial"} :
@@ -2531,6 +2596,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             auto state = std::make_shared<PreviewState>(); StatusBarSettings settings;
             if(bottom)settings.position=DockPosition::Bottom;
             state->unavailable = controls && preset == "unavailable";
+            if(preset=="vpn")settings.vpnControls=true;
             state->bluetoothOn = preset != "bluetooth-off"; state->emptyMedia = preset == "media-empty";
             state->agenda = calendarPanel && preset == "agenda";
             state->awakeTimed=preset=="awake";
@@ -2579,6 +2645,19 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                         button.bounds.left>card.bounds.left+48&&button.hoverGroup==card.id,
                         "Bluetooth preview lost its compact right-aligned action or shared whole-card hover");
                     renderedHover=row;
+                }
+                if(preset=="vpn")
+                {
+                    Require(Node(model.View(),"vpn.entry:Snow VPN").detail==_LW("controlCenter.connected")&&
+                        Node(model.View(),"vpn.entry:Office VPN").detail==_LW("controlCenter.disconnected"),
+                        "VPN preview did not show each sampled connection state");
+                    Require(model.Invoke("vpn.entry:Office VPN"),"VPN visual fixture did not expand its entry");
+                    const auto& card=Node(model.View(),"vpn.card:Office VPN");
+                    const auto& button=Node(model.View(),"vpn.connect:Office VPN");
+                    Require(button.bounds.right==card.bounds.right-8&&button.bounds.right-button.bounds.left<=196&&
+                        button.bounds.left>card.bounds.left+48&&button.hoverGroup==card.id,
+                        "VPN preview lost its compact right-aligned action or shared whole-card hover");
+                    renderedHover="vpn.entry:Office VPN";
                 }
             }
             if (resources && preset == "gpu-partial")
@@ -2658,6 +2737,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && preset == "overview" && !bottom)
             {
                 CheckQuickControls();
+                CheckVpnPage();
                 CheckClosedCallbacks();
                 CheckInputMethodPanel(device,text,request,result,appearance,background,stage);
                 CheckControlPromptVisuals(request,result,appearance);

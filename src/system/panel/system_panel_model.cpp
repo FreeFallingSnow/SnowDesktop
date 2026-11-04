@@ -201,6 +201,7 @@ void SystemPanelModel::SubmitControl(system_control::Request request,const std::
         const auto argument=[&](const char* field){const auto at=request.arguments.find(field);return at==request.arguments.end()?std::string{}:at->second;};
         if(request.name.starts_with("network.wifi.")){pending.topic="network.wifi";pending.collection="interfaces";pending.device=argument("interfaceId");}
         else if(request.name.starts_with("bluetooth.")){pending.topic="bluetooth.devices";pending.collection=request.name=="bluetooth.setRadio"?"radios":"devices";pending.device=argument(request.name=="bluetooth.setRadio"?"radioId":"deviceId");}
+        else if(request.name.starts_with("host.vpn.")){pending.topic="host.vpn";pending.collection="entries";pending.device=argument("entryName");}
         else if(request.name.starts_with("audio.")){pending.topic="audio.devices";pending.collection="devices";pending.device=binding->target;}
         else if(request.name.starts_with("media.")){pending.topic="media.sessions";pending.device=argument("sessionId");}
         else if(request.name=="system.power.setPlan"){pending.topic="system.power.plans";pending.collection="plans";pending.device=argument("planId");}
@@ -698,6 +699,7 @@ void SystemPanelModel::Overview(float& y)
 }
 bool SystemPanelModel::QuickControlVisible(std::string_view id) const
 {
+    if(id=="vpn"&&!settings_.vpnControls)return false;
     return FindSystemQuickControl(id)&&std::find(settings_.hiddenQuickControls.begin(),settings_.hiddenQuickControls.end(),id)==settings_.hiddenQuickControls.end();
 }
 void SystemPanelModel::SaveQuickControls()
@@ -730,6 +732,7 @@ void SystemPanelModel::QuickControls(float& y)
         const auto name=std::wstring(_LW(control.label));
         std::wstring status=_LW(!snapshot?"controlCenter.loading":!usable?"controlCenter.unavailable":busy?"controlCenter.working":enabled?"controlCenter.on":"controlCenter.off");
         if(id=="projection"&&available)status=_LW(("controlCenter.projection."+j::String(state,"mode")).c_str());
+        if(id=="vpn"&&available)status=_LW(enabled?"controlCenter.connected":"controlCenter.disconnected");
         if(id=="power"&&available)status=_LW("controlCenter.openMenu");
         if(id=="awake"&&available)status=_LW(j::String(state,"mode")=="timed"?"controlCenter.awake.timed":enabled?"controlCenter.awake.indefinite":"controlCenter.awake.plan");
         const auto nodeId="quick:"+id;
@@ -827,6 +830,7 @@ void SystemPanelModel::QuickControlMenu(float& y)
             Add("awake.remaining",ui::Role::Text,Rect(16,y,scene_.width-32,30),std::wstring(_LW("controlCenter.awake.remaining"))+L": "+two(remaining/3600)+L":"+two(remaining/60%60)+L":"+two(remaining%60)).fontSize=12;y+=36;
         }
     }
+    else if(page_=="vpn")VpnPage(y);
     else
     {
         auto& reason=Add("quick.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,64),_LW("controlCenter.systemControlUnavailable"));
@@ -841,6 +845,9 @@ void SystemPanelModel::ManageQuickControls(float& y)
     for(std::size_t index=0;index<settings_.quickControlOrder.size();++index)
     {
         const auto id=settings_.quickControlOrder[index];const auto* control=FindSystemQuickControl(id);if(!control)continue;
+        // A master switch that is off must not advertise a show/hide toggle that
+        // cannot make the button visible.
+        if(id=="vpn"&&!settings_.vpnControls)continue;
         const auto name=std::wstring(_LW(control->label));const auto prefix="quick.manage:"+id;
         const float right=scene_.width-16;
         auto& label=Add(prefix+".label",ui::Role::Text,Rect(16,y,scene_.width-136,40),name,control->glyph);label.fontSize=12;
@@ -996,6 +1003,49 @@ void SystemPanelModel::Bluetooth(float& y)
     }
     if(devices.empty()){Add("bluetooth.empty",ui::Role::Text,Rect(16,y,scene_.width-32,52),_LW(!available?"controlCenter.unavailable":!powered?"controlCenter.off":"controlCenter.noDevices"));y+=60;}
 }
+void SystemPanelModel::VpnPage(float& y)
+{
+    const auto snapshot=source_.current?source_.current("host.vpn"):std::nullopt;
+    const auto value=snapshot&&snapshot->available?snapshot->value:j::Object();
+    const auto& entries=Items(value,"entries");
+    if(!snapshot||!snapshot->available)
+    {
+        auto& unavailable=Add("vpn.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,56),
+            _LW(snapshot&&snapshot->error=="accessDenied"?"controlCenter.accessDenied":"controlCenter.unavailable"));
+        unavailable.wrap=true;y+=64;return;
+    }
+    for(const auto& entry:entries)
+    {
+        const auto id=j::String(entry,"id");if(id.empty())continue;
+        const auto name=j::String(entry,"name");
+        const bool connected=j::Flag(entry,"connected"),busy=j::Flag(entry,"busy"),open=id==vpn_;
+        const auto card="vpn.card:"+id;
+        Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?98.f:54.f)).hoverGroup=card;
+        auto& row=Add("vpn.entry:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,54),Wide(name.empty()?id:name),L"\uE705");
+        row.hoverGroup=card;row.enabled=!busy;
+        row.detail=connected?std::wstring(_LW("controlCenter.connected")):
+            busy?std::wstring(_LW("controlCenter.working")):std::wstring(_LW("controlCenter.disconnected"));
+        Command(row.id,[this,id]{vpn_=vpn_==id?std::string{}:id;});y+=54;
+        if(open)
+        {
+            const bool canConnect=j::Flag(entry,"canConnect"),canDisconnect=j::Flag(entry,"canDisconnect");
+            auto& button=Add("vpn.connect:"+id,ui::Role::Button,Rect(scene_.width-158,y,134,36),
+                _LW(connected?"controlCenter.disconnect":"controlCenter.connect"));
+            button.hoverGroup=card;button.enabled=connected?canDisconnect:canConnect;
+            BindAction(button.id,"vpn.connection:"+id,id);
+            Command(button.id,[this,id,connected]{
+                Start(connected?"host.vpn.disconnect":"host.vpn.connect",{{"entryName",id}});
+            });
+            y+=44;
+        }
+        y+=8;
+    }
+    if(entries.empty())
+    {
+        auto& empty=Add("vpn.empty",ui::Role::Text,Rect(16,y,scene_.width-32,64),_LW("controlCenter.noVpnProfiles"));
+        empty.wrap=true;empty.fontSize=12;y+=72;
+    }
+}
 void SystemPanelModel::Power(float& y)
 {
     const auto value=Current("system.power.plans");
@@ -1129,7 +1179,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
     for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
     if(page_=="media"||(page_=="audio"&&!settings_.audioControls)||(page_=="brightness"&&!settings_.brightnessControls)||
-        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls&&!QuickControlVisible("power")&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
+        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="vpn"&&!settings_.vpnControls)||(page_=="power"&&!settings_.powerControls&&!QuickControlVisible("power")&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
     SyncSubscriptions();
     if(subscriptions_.contains("network.wifi"))
     {
@@ -1208,6 +1258,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
             // device state without adding a banner or replacing its details.
             if(completion.error=="accessDenied")error_=_LW("controlCenter.accessDenied");
             else if(completion.error=="timeout")error_=_LW("controlCenter.timeout");
+            else if(origin&&origin->topic=="host.vpn")error_=_LW(completion.error=="credentialsRequired"?"controlCenter.vpnCredentials":"controlCenter.vpnFailed");
             if(!error_.empty()&&origin){errorControl_=origin->control;errorTarget_=origin->target;errorGroup_=actionBindings_.at(errorControl_).group;}
         }
     }

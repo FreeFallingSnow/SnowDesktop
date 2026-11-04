@@ -132,7 +132,7 @@ private:
     bool calendarStacked_=false;
     bool calendarDisplaySecondary_=false;
     native_ui::Scene scene_;
-    std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
+    std::string page_, interface_, network_, bluetooth_, vpn_, gpu_, media_, date_, month_;
     std::string calendarAnnotationKey_;
     std::string calendarDetailsRevision_;
     std::map<std::string,std::string> calendarAnnotations_;
@@ -221,6 +221,7 @@ private:
     void Brightness(float&);
     void WifiPage(float&);
     void Bluetooth(float&);
+    void VpnPage(float&);
     void Power(float&);
     void PowerActions(float&);
     void SystemMenu(float&);
