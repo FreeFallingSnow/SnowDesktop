@@ -1789,7 +1789,6 @@
     "statusBar.bluetoothControls": "Bluetooth",
     "statusBar.mediaControls": "Medienwiedergabe",
     "statusBar.powerControls": "Energie",
-    "statusBar.vpnControls": "System-VPN",
     "statusBar.registrationFailed": "Die Statusleiste konnte keinen Bildschirmbereich reservieren und bleibt ausgeblendet. Versuchen Sie es erneut, sobald der Windows-Explorer bereit ist.",
     "statusBar.muted": "Stumm",
   "statusBar.trayUnavailable": "Einige Symbole sind hier möglicherweise nicht verfügbar. Verwenden Sie den Windows-Infobereich.",

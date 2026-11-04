@@ -1789,7 +1789,6 @@
     "statusBar.bluetoothControls": "Bluetooth",
     "statusBar.mediaControls": "Reproducción multimedia",
     "statusBar.powerControls": "Energía",
-    "statusBar.vpnControls": "VPN del sistema",
     "statusBar.registrationFailed": "La barra de estado no pudo reservar espacio en la pantalla y permanecerá oculta. Intenta de nuevo cuando el Explorador de Windows esté listo.",
     "statusBar.muted": "Silenciado",
   "statusBar.trayUnavailable": "Es posible que algunos íconos no estén disponibles aquí. Puedes usar el área de notificación de Windows.",

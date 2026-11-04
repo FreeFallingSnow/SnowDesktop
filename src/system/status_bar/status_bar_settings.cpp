@@ -31,7 +31,17 @@ void NormalizeStatusBarSettings(StatusBarSettings& value)
     };
     normalizeOrder(value.leftOrder, defaults.leftOrder);
     normalizeOrder(value.rightOrder, defaults.rightOrder);
-    normalizeOrder(value.quickControlOrder, defaults.quickControlOrder);
+    // Quick controls are opted into through the control-center visibility
+    // editor. Never append a supported-but-missing control: new controls stay
+    // hidden instead of appearing in every existing layout.
+    const auto normalizeQuickOrder = [](std::vector<std::string>& items) {
+        std::vector<std::string> result;
+        for (const auto& item : items)
+            if (FindSystemQuickControl(item) && std::find(result.begin(), result.end(), item) == result.end())
+                result.push_back(item);
+        items = std::move(result);
+    };
+    normalizeQuickOrder(value.quickControlOrder);
     std::vector<std::string> hidden;
     for (const auto& id : value.hiddenQuickControls)
         if (FindSystemQuickControl(id) && std::find(hidden.begin(), hidden.end(), id) == hidden.end()) hidden.push_back(id);

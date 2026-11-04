@@ -1789,7 +1789,6 @@
     "statusBar.bluetoothControls": "Bluetooth",
     "statusBar.mediaControls": "Media playback",
     "statusBar.powerControls": "Power",
-    "statusBar.vpnControls": "System VPN",
     "statusBar.registrationFailed": "The status bar could not reserve screen space. It will remain hidden. Please try again after Windows Explorer is ready.",
     "statusBar.muted": "Muted",
   "statusBar.trayUnavailable": "Some icons may be unavailable here. You can use the Windows notification area.",

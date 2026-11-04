@@ -1523,7 +1523,7 @@ void CheckQuickControls()
     source.completions=[&]{return std::exchange(completions,{});};
     source.trayChanged=[&](const StatusBarSettings& settings){saved=settings;++saves;};
     source.settings=[&](const wchar_t* uri){opened=uri;};
-    StatusBarSettings quickSettings;quickSettings.vpnControls=true;
+    StatusBarSettings quickSettings;
     SystemPanelModel model(source,quickSettings,StatusBarAction::ControlCenter);
     CheckLayout(model.View());
     Require(!model.View().Find("hotspot.note"),"overview contains no redundant hotspot explanation");
@@ -1563,7 +1563,13 @@ void CheckQuickControls()
     Require(model.Invoke("quick.manage")&&model.Invoke("quick.manage:awake.up")&&saves==1&&saved.quickControlOrder[3]=="awake",
         "management moves buttons and saves their order immediately");
     const auto mutationCount=requests.size();
-    for(const auto& control:SystemQuickControls)Require(model.Invoke("quick.manage:"+std::string(control.id)+".visible"),"management can hide every quick button");
+    // Hide only buttons that are currently visible; the default-hidden VPN
+    // control must keep its visibility switch off so quick.empty can appear.
+    for(const auto& control:SystemQuickControls)
+    {
+        const auto id="quick.manage:"+std::string(control.id)+".visible";
+        if(Node(model.View(),id).selected)Require(model.Invoke(id),"management can hide every visible quick button");
+    }
     model.Select("");Require(model.View().Find("quick.manage")&&model.View().Find("quick.empty")&&!model.View().Find("quick:awake")&&
         requests.size()==mutationCount&&!fixture->subscriptions.contains("host.awake"),
         "hiding all buttons retains management, drops unused demand and does not disable active features");
@@ -1583,13 +1589,14 @@ void CheckQuickControls()
 }
 void CheckVpnPage()
 {
-    // Hidden by default. The settings master switch reveals the production page
-    // without touching a real RAS phone-book entry.
+    // Hidden by default. The control-center visibility editor is the only opt-in
+    // for the system VPN quick control; no real RAS phone-book entry is touched.
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
     auto source=FixtureSource(state);const auto read=source.current;
     bool officeConnected=false;
     std::vector<std::pair<std::string,system_control::Arguments>> requests;
     std::vector<system_control::Completion> completions;
+    StatusBarSettings saved;unsigned saves=0;
     source.current=[&](std::string_view topic) {
         auto value=read(topic);
         if(value&&topic=="host.vpn")
@@ -1612,14 +1619,22 @@ void CheckVpnPage()
         requests.emplace_back(request.name,request.arguments);return static_cast<std::uint64_t>(requests.size());
     };
     source.completions=[&]{return std::exchange(completions,{});};
-    SystemPanelModel hidden(source,StatusBarSettings{},StatusBarAction::ControlCenter);
-    Require(!hidden.View().Find("quick:vpn")&&!hidden.View().Find("vpn.entry:Snow VPN"),
+    source.trayChanged=[&](const StatusBarSettings& settings){saved=settings;++saves;};
+    SystemPanelModel model(source,StatusBarSettings{},StatusBarAction::ControlCenter);
+    Require(!model.View().Find("quick:vpn")&&!model.View().Find("vpn.entry:Snow VPN"),
         "the system VPN button was visible without opting in");
-    hidden.Select("quick-manage");
-    Require(!hidden.View().Find("quick.manage:vpn.visible"),
-        "the hidden VPN master switch exposed an unusable management row");
-    StatusBarSettings settings;settings.vpnControls=true;
-    SystemPanelModel model(source,settings,StatusBarAction::ControlCenter);
+    model.Select("quick-manage");
+    Require(model.View().Find("quick.manage:vpn.visible")&&!Node(model.View(),"quick.manage:vpn.visible").selected,
+        "the default-hidden VPN control has no off visibility row in the management page");
+    Require(!Node(model.View(),"quick.manage:vpn.up").enabled&&!Node(model.View(),"quick.manage:vpn.down").enabled,
+        "a control outside the order exposed ordering buttons");
+    Require(model.Invoke("quick.manage:vpn.visible")&&saves==1&&
+        std::find(saved.quickControlOrder.begin(),saved.quickControlOrder.end(),"vpn")!=saved.quickControlOrder.end()&&
+        saved.quickControlOrder.back()=="vpn"&&
+        std::find(saved.hiddenQuickControls.begin(),saved.hiddenQuickControls.end(),"vpn")==saved.hiddenQuickControls.end(),
+        "showing the VPN control did not append it to the visible order");
+    Require(Node(model.View(),"quick.manage:vpn.up").enabled,"the appended VPN control cannot be reordered");
+    model.Select("");
     Require(Node(model.View(),"quick:vpn").role==ui::Role::Button,"the enabled VPN quick control is not a menu button");
     Require(model.Invoke("quick:vpn")&&model.Page()=="vpn","the VPN quick control did not open its page");
     Require(Node(model.View(),"vpn.entry:Snow VPN").detail==_LW("controlCenter.connected")&&
@@ -1639,6 +1654,13 @@ void CheckVpnPage()
         "a successful VPN request did not display the read back state");
     Require(model.Invoke("vpn.connect:Office VPN")&&requests.size()==2&&requests.back().first=="host.vpn.disconnect",
         "a connected VPN entry did not offer disconnect");
+    model.Select("");Require(model.Invoke("quick.manage")&&Node(model.View(),"quick.manage:vpn.visible").selected,
+        "the shown VPN control is not selected in the management page");
+    Require(model.Invoke("quick.manage:vpn.visible")&&saves==2&&
+        std::find(saved.quickControlOrder.begin(),saved.quickControlOrder.end(),"vpn")!=saved.quickControlOrder.end()&&
+        std::find(saved.hiddenQuickControls.begin(),saved.hiddenQuickControls.end(),"vpn")!=saved.hiddenQuickControls.end(),
+        "hiding the VPN control did not keep its order slot");
+    model.Select("");Require(!model.View().Find("quick:vpn"),"the hidden VPN control stayed in the quick grid");
     model.Close();
 }
 void CheckFeedbackLayouts()
@@ -2596,7 +2618,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             auto state = std::make_shared<PreviewState>(); StatusBarSettings settings;
             if(bottom)settings.position=DockPosition::Bottom;
             state->unavailable = controls && preset == "unavailable";
-            if(preset=="vpn")settings.vpnControls=true;
+            if(preset=="vpn")settings.quickControlOrder.push_back("vpn");
             state->bluetoothOn = preset != "bluetooth-off"; state->emptyMedia = preset == "media-empty";
             state->agenda = calendarPanel && preset == "agenda";
             state->awakeTimed=preset=="awake";

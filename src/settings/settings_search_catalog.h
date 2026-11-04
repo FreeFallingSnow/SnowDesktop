@@ -92,7 +92,6 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::StatusBar, "statusBar.bluetoothControls", "statusBar.bluetoothControls", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.mediaControls", "statusBar.mediaControls", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.powerControls", "statusBar.powerControls", "statusBar.controlCenter"},
-    {SettingsPage::StatusBar, "statusBar.vpnControls", "statusBar.vpnControls", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.batteryPercentage", "statusBar.batteryPercentage", "statusBar.controlCenter"},
     {SettingsPage::DesktopStyle, "desktopStyle", "settings.desktopStyle.title", "settings.desktopStyle.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.native", "settings.desktopStyle.native.title", "settings.desktopStyle.native.description"},

@@ -699,8 +699,12 @@ void SystemPanelModel::Overview(float& y)
 }
 bool SystemPanelModel::QuickControlVisible(std::string_view id) const
 {
-    if(id=="vpn"&&!settings_.vpnControls)return false;
-    return FindSystemQuickControl(id)&&std::find(settings_.hiddenQuickControls.begin(),settings_.hiddenQuickControls.end(),id)==settings_.hiddenQuickControls.end();
+    // Visibility is opt-in: the control must be in the saved order and not
+    // explicitly hidden. Controls outside the order (for example the system VPN)
+    // stay out of the grid until the management page adds them.
+    if(!FindSystemQuickControl(id))return false;
+    if(std::find(settings_.quickControlOrder.begin(),settings_.quickControlOrder.end(),id)==settings_.quickControlOrder.end())return false;
+    return std::find(settings_.hiddenQuickControls.begin(),settings_.hiddenQuickControls.end(),id)==settings_.hiddenQuickControls.end();
 }
 void SystemPanelModel::SaveQuickControls()
 {
@@ -842,12 +846,18 @@ void SystemPanelModel::QuickControlMenu(float& y)
 }
 void SystemPanelModel::ManageQuickControls(float& y)
 {
-    for(std::size_t index=0;index<settings_.quickControlOrder.size();++index)
+    // Configured buttons keep their order; every other supported control is
+    // listed after them so it can be shown without a separate settings switch.
+    std::vector<std::string> ids=settings_.quickControlOrder;
+    for(const auto& control:SystemQuickControls)
+        if(std::find(ids.begin(),ids.end(),control.id)==ids.end())ids.emplace_back(control.id);
+    for(const auto& id:ids)
     {
-        const auto id=settings_.quickControlOrder[index];const auto* control=FindSystemQuickControl(id);if(!control)continue;
-        // A master switch that is off must not advertise a show/hide toggle that
-        // cannot make the button visible.
-        if(id=="vpn"&&!settings_.vpnControls)continue;
+        const auto* control=FindSystemQuickControl(id);if(!control)continue;
+        const auto found=std::find(settings_.quickControlOrder.begin(),settings_.quickControlOrder.end(),id);
+        const bool configured=found!=settings_.quickControlOrder.end();
+        const auto position=configured?static_cast<std::size_t>(found-settings_.quickControlOrder.begin()):0;
+        const bool visible=QuickControlVisible(id);
         const auto name=std::wstring(_LW(control->label));const auto prefix="quick.manage:"+id;
         const float right=scene_.width-16;
         auto& label=Add(prefix+".label",ui::Role::Text,Rect(16,y,scene_.width-136,40),name,control->glyph);label.fontSize=12;
@@ -855,13 +865,27 @@ void SystemPanelModel::ManageQuickControls(float& y)
         {
             const auto nodeId=prefix+(delta<0?".up":".down");
             auto& move=Add(nodeId,ui::Role::Icon,Rect(right-(delta<0?100.f:68.f),y+4,28,32),L"",delta<0?L"\uE70E":L"\uE70D");
-            move.enabled=delta<0?index>0:index+1<settings_.quickControlOrder.size();
+            // A control outside the order has no slot to reorder yet.
+            move.enabled=configured&&(delta<0?position>0:position+1<settings_.quickControlOrder.size());
             move.tooltip=move.accessibilityLabel=name+L" · "+_LW(delta<0?"controlCenter.moveUp":"controlCenter.moveDown");
-            Command(nodeId,[this,id,delta]{auto& order=settings_.quickControlOrder;const auto found=std::find(order.begin(),order.end(),id);if(found==order.end())return;const auto at=found-order.begin();const auto next=at+delta;if(next<0||next>=static_cast<std::ptrdiff_t>(order.size()))return;std::swap(order[static_cast<std::size_t>(at)],order[static_cast<std::size_t>(next)]);SaveQuickControls();});
+            Command(nodeId,[this,id,delta]{auto& order=settings_.quickControlOrder;const auto at=std::find(order.begin(),order.end(),id);if(at==order.end())return;const auto next=at-order.begin()+delta;if(next<0||next>=static_cast<std::ptrdiff_t>(order.size()))return;std::swap(order[static_cast<std::size_t>(at-order.begin())],order[static_cast<std::size_t>(next)]);SaveQuickControls();});
         }
-        auto& show=Add(prefix+".visible",ui::Role::Toggle,Rect(right-36,y+4,36,32),L"",QuickControlVisible(id)?L"\uE73E":L"\uE739");
-        show.selected=QuickControlVisible(id);show.tooltip=show.accessibilityLabel=name+L" · "+_LW(show.selected?"controlCenter.hideButton":"controlCenter.showButton");
-        Command(show.id,[this,id]{auto& hidden=settings_.hiddenQuickControls;const auto found=std::find(hidden.begin(),hidden.end(),id);if(found==hidden.end())hidden.push_back(id);else hidden.erase(found);SaveQuickControls();});y+=48;
+        auto& show=Add(prefix+".visible",ui::Role::Toggle,Rect(right-36,y+4,36,32),L"",visible?L"\uE73E":L"\uE739");
+        show.selected=visible;show.tooltip=show.accessibilityLabel=name+L" · "+_LW(visible?"controlCenter.hideButton":"controlCenter.showButton");
+        Command(show.id,[this,id]{
+            if(QuickControlVisible(id))
+            {
+                auto& hidden=settings_.hiddenQuickControls;
+                if(std::find(hidden.begin(),hidden.end(),id)==hidden.end())hidden.push_back(id);
+            }
+            else
+            {
+                auto& order=settings_.quickControlOrder;
+                if(std::find(order.begin(),order.end(),id)==order.end())order.push_back(id);
+                std::erase(settings_.hiddenQuickControls,id);
+            }
+            SaveQuickControls();
+        });y+=48;
     }
     y+=8;Add("quick.restore",ui::Role::Button,Rect(16,y,scene_.width-32,38),_LW("controlCenter.restoreButtons"));
     Command("quick.restore",[this]{const StatusBarSettings defaults;settings_.quickControlOrder=defaults.quickControlOrder;settings_.hiddenQuickControls.clear();SaveQuickControls();});y+=46;
@@ -1179,7 +1203,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
     for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
     if(page_=="media"||(page_=="audio"&&!settings_.audioControls)||(page_=="brightness"&&!settings_.brightnessControls)||
-        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="vpn"&&!settings_.vpnControls)||(page_=="power"&&!settings_.powerControls&&!QuickControlVisible("power")&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
+        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls&&!QuickControlVisible("power")&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
     SyncSubscriptions();
     if(subscriptions_.contains("network.wifi"))
     {

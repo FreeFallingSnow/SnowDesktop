@@ -1789,7 +1789,6 @@
     "statusBar.bluetoothControls": "蓝牙",
     "statusBar.mediaControls": "媒体播放",
     "statusBar.powerControls": "电源",
-    "statusBar.vpnControls": "系统 VPN",
     "statusBar.registrationFailed": "状态栏无法注册屏幕占位，已保持隐藏。请在 Windows 资源管理器就绪后重试。",
     "statusBar.muted": "已静音",
   "statusBar.trayUnavailable": "部分图标可能尚未接入，可使用 Windows 原生托盘。",
