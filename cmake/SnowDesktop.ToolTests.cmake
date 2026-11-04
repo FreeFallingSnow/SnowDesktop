@@ -311,4 +311,20 @@ if(BUILD_TESTING AND WIN32)
     add_test(NAME build_configuration COMMAND SnowDesktopBuildTelemetryTests "${CMAKE_CURRENT_SOURCE_DIR}" --configuration-cache)
     set_tests_properties(build_configuration PROPERTIES TIMEOUT 180 LABELS "tools;integration"
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildTelemetryTests>")
+
+    # Temporary detection controls inject former implementation faults to
+    # validate the positive regression's assertions. Keep them explicitly
+    # selectable, outside automatic tools runs; see tests/build_tools/README.md.
+    # These entries share the long-term candidate driver. Labels do not remove
+    # their C++ code from that driver's compilation or change its dependencies.
+    foreach(temporary_control IN ITEMS
+            build_candidate_checkout_lock
+            build_candidate_source_lock
+            build_candidate_batches_control
+            build_candidate_tool_verification_control
+            build_completed_verification_control
+            build_compatible_verification_control
+            build_automatic_selection_control)
+        set_property(TEST ${temporary_control} APPEND PROPERTY LABELS temporary manual)
+    endforeach()
 endif()

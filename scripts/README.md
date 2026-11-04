@@ -791,6 +791,7 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 无参数只显示用法；显式 `full` 只运行应用产品测试，`core` 和 `fast` 也排除 `tools` 标签。
 协作构建、计划、筛选、PowerShell 启动、等待、重试、共享资源和看板通过 `scripts/test.bat tools`
 单独回归，默认排除工具的 manual 诊断。`name`/`label` 可显式选择任何组和手动条目。
+已有一次性检出能力对照标为 `temporary;manual`，目的、正常回归对应项及仍参与编译的边界见[工具测试生命周期](../tests/build_tools/README.md)。标签不等于退出构建图，已有驱动与产物保留复用。
 `SnowDesktopTests` 仍保存统一原生目标清单，应用、工具、核心和快速聚合从声明标签派生：
 常规测试使用 `SnowDesktopAppTests`，工具回归使用 `SnowDesktopBuildToolTests`；
 协作计划合并应用与显式工具需求时使用完整聚合，不让常规 full 隐式加入工具用例。
