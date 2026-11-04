@@ -10,16 +10,17 @@
 
 namespace snowdesktop::dock_minimize
 {
-inline constexpr ULONG_PTR kCloakRequestTag = 0x53444334;
+inline constexpr ULONG_PTR kCloakRequestTag = 0x53444335;
+inline constexpr std::uint32_t kPrepareRestoreCloak = 2;
 struct CloakRequest
 {
-    std::uint32_t version = 4;
+    std::uint32_t version = 5;
     std::uint32_t cloak = 0;
     std::uint64_t source = 0;
     std::uint64_t owner = 0;
     std::uint64_t process = 0;
     std::uint64_t token = 0;
-    // Nonzero, never reused by this sender. The low bit also binds the operation.
+    // Nonzero, never reused by this sender. The low two bits bind the operation.
     std::uint64_t requestId = 0;
 };
 static_assert(sizeof(CloakRequest) == 48);
@@ -28,9 +29,9 @@ inline bool ReadCloakRequest(const COPYDATASTRUCT* data, CloakRequest& request) 
     if (!data || data->dwData != kCloakRequestTag || data->cbData != sizeof(request) || !data->lpData) return false;
     std::memcpy(&request, data->lpData, sizeof(request));
     const auto maximum = static_cast<std::uint64_t>((std::numeric_limits<UINT_PTR>::max)());
-    return request.version == 4 && request.cloak <= 1 && request.source && request.owner && request.process && request.token &&
+    return request.version == 5 && request.cloak <= kPrepareRestoreCloak && request.source && request.owner && request.process && request.token &&
         request.source <= maximum && request.owner <= maximum && request.process <= MAXDWORD && request.token <= maximum &&
-        request.requestId && request.requestId <= MAXDWORD && (request.requestId & 1u) == request.cloak;
+        request.requestId && request.requestId <= MAXDWORD && (request.requestId & 3u) == request.cloak;
 }
 inline bool SendCloakRequest(HWND target, const CloakRequest& request, DWORD timeout, DWORD_PTR& result) noexcept
 {

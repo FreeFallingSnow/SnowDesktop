@@ -1588,12 +1588,18 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            // Only submit the maximized/normal restore here. The transition
-            // restores the cloaked source before its visual timeline starts,
-            // letting the application finish its native restore underneath the
-            // animation. This remains asynchronous and submits no second restore.
-            const DockWindowActivationOutcome outcome =
-                RequestDockWindowActivation(target, true);
+            // The transition normally restores on the source thread before
+            // expansion. A second SW_RESTORE can undo maximized placement.
+            const bool minimized = IsIconic(target) != FALSE;
+            const DockWindowActivationOutcome outcome = minimized
+                ? RequestDockWindowActivation(target, true)
+                : ActivateDockWindowAfterShow(target, true);
+            if (!minimized)
+            {
+                CancelAllDockWindowActivationObservations();
+                BeginDockWindowActivationObservation(target, false);
+                UpdateDockWindowActivationObservation(target, outcome);
+            }
             UpdateDockWindowActivationState(
                 target, outcome.restored,
                 outcome.foreground);

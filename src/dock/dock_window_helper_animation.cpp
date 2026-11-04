@@ -151,7 +151,7 @@ bool DockWindowHelperAnimation::Start(const wire::Target& target, bool restore)
         PostMessageW(source, WM_SYSCOMMAND, SC_MINIMIZE, 0);
     });
     return impl_->transition.StartRestore(window, target.anchor, [](HWND source, DockWindowRestoreTransitionPhase phase) {
-        if (phase == DockWindowRestoreTransitionPhase::RequestRestore || phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
+        if ((phase == DockWindowRestoreTransitionPhase::RequestRestore || phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation) && IsIconic(source))
             ShowWindowAsync(source, SW_RESTORE);
         if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) SetForegroundWindow(source);
     }, below);

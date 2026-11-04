@@ -1133,7 +1133,8 @@ bool DockWindowTransition::AcquireSourceCloak()
     // the source's setter-only native transition policy, which cannot be read
     // reliably and may already have been disabled by the application.
     bool acquired = false;
-    const HRESULT cloakHr = snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired);
+    const HRESULT cloakHr = snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired,
+        direction_ == DockWindowTransitionDirection::Restore && IsIconic(sourceWindow_));
     if (acquired)
     {
         sourceCloaked_ = true;
@@ -1341,6 +1342,11 @@ bool DockWindowTransition::Reverse(
     presentationBarrier_.reset();
     restorePresentationPhase_ = RestorePresentationPhase::None;
     restorePresentationAcknowledged_ = false;
+    if (direction_ == DockWindowTransitionDirection::Restore && IsIconic(sourceWindow_) && !AcquireSourceCloak())
+    {
+        Finish();
+        return false;
+    }
     RequestRestoreForAnimation();
     if (!ScheduleAnimationWake())
     {
@@ -2488,9 +2494,9 @@ void DockWindowTransition::RequestRestoreForAnimation()
     preparingRestore_ = true;
     restoreGeometryStableTimeMs_ = 0.0;
     restoreCleanupDeadlineMs_ = MonotonicTimeMilliseconds() + kRestoreCleanupTimeoutMs;
-    // Request the native restore while the source is cloaked and our first
-    // (collapsed, transparent) frame is already committed. This gives native
-    // geometry and application painting the whole Genie timeline to settle.
+    // Source-thread preparation has already submitted the native restore and
+    // cloaked it before expansion. The callback updates activation/observation;
+    // it must not issue another restore to an already restored/maximized source.
     restoreCallback_(sourceWindow_, DockWindowRestoreTransitionPhase::RequestRestore);
 }
 
