@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-new', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$ExecutionRun,
@@ -13,7 +13,7 @@ param(
     [long]$Revision = -1,
     [ValidateSet('unknown','module','docs','component','tool','test','public','infrastructure')][string]$Scope = 'unknown',
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
-    [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
+    [switch]$AdoptExistingChanges, [switch]$Add, [switch]$DeferBatchResult, [switch]$Compact, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
     [ValidateRange(0,4096)][int]$ResourceCpuSlots=0,[ValidateRange(0,1048576)][int]$ResourceMemoryMiB=0,
     [switch]$ResourceShared,
@@ -340,6 +340,10 @@ try {
     if ($Command -in 'ready','check','plan','claim','commit','repair' -and $Revision -lt 0) { throw "$Command requires -Revision from begin; stale commands must not finish a new edit round." }
     if($Command -eq 'status') {
         $state=Read-State;$current=if($Batch){Find-BoundBatch $state $Batch}else{$state.current};$result=if($Batch){Read-Result $Batch}else{$null}
+        if($Compact){
+            if($Batch -and -not $current -and -not $result){throw 'Unknown batch.'}
+            Get-CompactCollaborationStatus $state $Participant $current $result|ConvertTo-Json -Depth 12;exit 0
+        }
         if($result){$result|ConvertTo-Json -Depth 20;exit 0}
         if($Batch -and (-not $current -or $current.id -ne $Batch)){throw 'Unknown batch.'}
         $diagnostic=if($current){[pscustomobject]@{batch=$current;ownerState=(Owner-State $current.owner);persistedResult=(Read-Result $current.id);
@@ -396,7 +400,7 @@ try {
         }
         exit 0
     }
-    if($Command -in 'task-open','task-stage','task-close','event-post','event-wait','event-ack','edit-verify' -and -not $Participant){throw "$Command requires a task ID."}
+    if($Command -in 'task-open','task-new','task-stage','task-close','event-post','event-wait','event-ack','edit-verify' -and -not $Participant){throw "$Command requires a task ID."}
     if($Command -eq 'event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=30}
     [void][IO.Directory]::CreateDirectory($stateRoot)
     while ($true) {
@@ -410,9 +414,11 @@ try {
             $state = Read-State
             $current = $state.current
             if($Batch -and (-not $current -or $current.id -ne $Batch)){$bound=Find-BoundBatch $state $Batch;if($bound){$current=$bound}}
-            if($Command -in 'task-open','task-stage','task-close','event-post','event-wait','event-ack') {
+            if($Command -in 'task-open','task-new','task-stage','task-close','event-post','event-wait','event-ack') {
                 $ledger=Get-TaskLedger $state
-                if($Command -eq 'task-open') {
+                if($Command -eq 'task-new') {
+                    $task=New-VisibleTask $ledger $Participant $TaskName
+                } elseif($Command -eq 'task-open') {
                     $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'task-open'
                     if($PSBoundParameters.ContainsKey('Capabilities')){
                         if($task.adapter -ne $Adapter){throw 'Capability declaration must name the registered adapter.'}
@@ -442,8 +448,17 @@ try {
                         }
                         if($Command -eq 'task-close') {
                             if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
-                            if($state.current -and @($state.current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
-                            if(@(Get-Field $state 'activeCandidates' @()|ForEach-Object participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the captured candidate attempts have ended; task-close never cancels their Runs.'}
+                            $associatedBatches=@($(if($state.current){$state.current});@(Get-Field $state 'activeCandidates' @()))
+                            $pendingBatches=@($associatedBatches | Where-Object {
+                                @($_.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count
+                            })
+                            if($pendingBatches.Count -and -not $DeferBatchResult){throw 'Close only after the edit batch and captured candidate attempts have ended, or use -DeferBatchResult after finishing your own edit/check. task-close never cancels their Runs.'}
+                            foreach($pendingBatch in $pendingBatches){
+                                $member=@($pendingBatch.participants|Where-Object id -eq $Participant)[0]
+                                $memberCheck=Get-Field $member 'check'
+                                if($member.state -ne 'finished' -or ($memberCheck -and $memberCheck.status -ne 'passed')){throw 'Deferred closure requires your own finished edit and passed check; no editing authority was removed.'}
+                            }
+                            if($pendingBatches.Count){Set-Field $task 'deferredBatchIds' @($pendingBatches|ForEach-Object id)}
                             if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
                             $task.closedUtc=[DateTime]::UtcNow.ToString('o')
                         } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
@@ -731,11 +746,14 @@ try {
                     if($Command -eq 'claim'){
                         $claimLease=Try-Lease 'git.lock';if(-not $claimLease){throw 'Git checkpoint is active; retry claim. No ownership was changed.'}
                         try {
-                            Set-Ownership $current $entry $Files $AdoptExistingChanges
+                            Set-Ownership $current $entry $Files $AdoptExistingChanges ([bool]$Add)
                             Register-SourceOwnership $state $entry $Batch
                             Write-AtomicJson $state $statePath
                         } finally {$claimLease.Dispose()}
-                        $entry | ConvertTo-Json -Depth 10; exit 0
+                        $receipt=$entry.PSObject.Copy()
+                        Set-Field $receipt 'claimMode' $(if($Add){'add'}else{'set'})
+                        Set-Field $receipt 'claimInstruction' 'ownedFiles is the complete current set. Default claim replaces it; -Add retains previous paths.'
+                        $receipt | ConvertTo-Json -Depth 10; exit 0
                     }
                 } else {
 
@@ -990,7 +1008,13 @@ try {
                             $reserved=Get-Field $ownedBatch 'runId'
                             $runRecord=if($reserved){Read-EntryJson (Join-Path $stateRoot ('runs/'+$reserved+'.json'))}else{$null}
                             if($runRecord -and $runRecord.status -ne 'start-failed'){throw ('Run '+$reserved+' is already reserved; inspect its owner and saved result. Submission observation failed, so no replacement outcome was published.')}
-                            $result=New-Result $ownedBatch 'failed' 2 $submissionError;Publish-Result $state $result
+                            $result=New-Result $ownedBatch 'failed' 2 $submissionError
+                            if($runRecord -and $runRecord.status -eq 'start-failed'){
+                                Set-Field $result 'recovery' ([pscustomobject]@{diagnose='scripts/build.bat diagnose';begin=('scripts/build.bat begin '+$Participant);
+                                    next='Fix the launch context, begin, claim reviewed paths with -AdoptExistingChanges, plan, then ready-and-wait using the NEW batch/revision. The unchanged frozen checkpoint remains committable through the OLD batch/revision.';
+                                    details='scripts/README.md#构建环境诊断与启动恢复'})
+                            }
+                            Publish-Result $state $result
                         }
                     }
                     finally {$metadata.Dispose()}
@@ -1082,5 +1106,8 @@ try {
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
+    if($_.Exception.GetBaseException() -is [UnauthorizedAccessException] -or $_.Exception.Message -match 'access.*denied|拒绝访问|unauthorized|EACCES|EPERM'){
+        [Console]::Error.WriteLine('Check scripts/build.bat diagnose in this same caller context. Sandbox policy and ACL permissions are separate; do not automatically edit ACLs. An authorized full-access context, capable adapter Host, or external terminal may be required.')
+    }
     exit 2
 }

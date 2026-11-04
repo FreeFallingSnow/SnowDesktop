@@ -194,6 +194,24 @@ if(mode==='scope'){
  const registration=await bridge.operate(agent,{action:'begin'});
  const claim=await bridge.operate(agent,{action:'claim',files:'src/a.txt'});
  result={registration,claim,write:await attempt(),id};
+}else if(mode==='continuation'){
+ const initial=await bridge.open('continuing-agent','First task');
+ await bridge.operate('continuing-agent',{action:'close',text:'First summary'});
+ const inactive=await bridge.operate('continuing-agent',{action:'progress',text:'Too late'});
+ const heartbeat=await bridge.open('continuing-agent');
+ const next=await bridge.open('continuing-agent','Second task');
+ const reloaded=new CollaborationBridge(root),resolved=reloaded.taskId('continuing-agent');
+ const before=await reloaded.operate('continuing-agent',{action:'status'});
+ const registration=await reloaded.operate('continuing-agent',{action:'begin'});
+ await reloaded.operate('continuing-agent',{action:'claim',files:'src/a.txt',adoptExistingChanges:true});
+ const additive=await reloaded.operate('continuing-agent',{action:'claim',files:'src/b.txt'});
+ const replaced=await reloaded.operate('continuing-agent',{action:'claim',files:'src/a.txt',claimMode:'set'});
+ await reloaded.operate('continuing-agent',{action:'plan',scope:'tool',suites:'none',inputs:'src/a.txt',reason:'task continuation gate fixture; no product build'});
+ const ready=await reloaded.operate('continuing-agent',{action:'ready'});
+ const deadline=Date.now()+10000;while(reloaded.state().current&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+ if(reloaded.state().current)throw new Error('Host-submitted standard ready waiter did not complete');
+ let denied=false;try{await reloaded.verifyWrite('continuing-agent',target);}catch{denied=true;}
+ result={initial,inactive,heartbeat,next,resolved,before,registration,additive,replaced,ready,denied};
 }else if(mode==='write'){
  result={write:await attempt(),id};
 }else if(mode==='rebind'){
@@ -303,6 +321,15 @@ console.log(JSON.stringify(result));
     c.ready(id,batch,1);c.finish("peer",batch);
     require(!node("write").at("write").at("allowed").boolean,"Retired grant permitted later source mutation");
     require(node("escape").at("denied").boolean&&read(fs::path(c.root.wstring()+L"-escape")/L"keep.txt")=="outside original","Repository junction bypassed the write gate or changed external data");
+    const auto continuation=node("continuation");
+    require(continuation.at("initial").at("task").at("id").str()!=continuation.at("next").at("task").at("id").str()&&
+        continuation.at("resolved").str()==continuation.at("next").at("task").at("id").str()&&continuation.at("next").at("task").at("generation").integer()==2,
+        "DSH adapter did not follow the generic continuation after reload");
+    require(continuation.at("inactive").at("status").str()=="closed"&&!continuation.at("inactive").at("progressSaved").boolean&&continuation.at("heartbeat").at("status").str()=="closed",
+        "Closed progress returned a non-JSON value or automatic presence created a new task");
+    require(continuation.at("before").at("detail").str()=="compact"&&continuation.at("additive").at("ownedFiles").items.size()==2&&
+        continuation.at("replaced").at("ownedFiles").items.size()==1&&continuation.at("ready").at("executionContext").str()=="DSH Host"&&continuation.at("denied").boolean,
+        "Adapter lost generic compact status, claim modes, Host ready or ready write revocation");
     // Execute the production Host module against a small public-API carrier;
     // the actual state and write decisions still cross the real coordinator.
     // This is not a DSH runtime or UI acceptance fixture.
@@ -371,13 +398,14 @@ try{
  // admission both dereference source.kind, including when a notice is replayed.
  const replayed=JSON.parse(JSON.stringify(notices));
  const consumerKinds=replayed.map(message=>message.source.kind);
- result={unnamedRejected,nameUpdate,denied,kept,ready,stale,rebound,heartbeat,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name};
+ result={unnamedRejected,nameUpdate,denied,kept,ready,stale,rebound,heartbeat,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name,pluginVersion:JSON.parse(output.json).pluginVersion};
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
     const auto host=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"host.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring()},c.root,40);
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
+    require(observed.at("pluginVersion").str()==Json::parse(read(repo/L"tools/dsh-collaboration/package.json")).at("version").str(),"Tool response did not report the actual loaded plugin version");
     require(observed.at("unnamedRejected").boolean,"Host allowed ordinary tools while the task still had a session placeholder name");
     const auto& nameUpdate=observed.at("nameUpdate");
     require(nameUpdate.at("name").str()=="修复宿主写入权限"&&nameUpdate.at("idPreserved").boolean&&nameUpdate.at("progressPreserved").boolean&&nameUpdate.at("phasePreserved").boolean&&nameUpdate.at("progressTimePreserved").boolean,

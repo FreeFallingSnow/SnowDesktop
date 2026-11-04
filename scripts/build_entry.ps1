@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([Alias('Action')][ValidateSet('release','debug','ide','tests','verify')][string]$EntryAction='verify', [Alias('ReloadShell')][switch]$EntryReloadShell,
     [Alias('CloseApplication')][switch]$EntryCloseApplication,
     [Alias('Configuration')][ValidateSet('Release','Debug')][string]$EntryConfiguration='Release', [Alias('Targets')][string[]]$EntryTargets=@(),
@@ -163,7 +163,7 @@ namespace SnowDesktop.Entry {
             [Console]::Error.WriteLine('PowerShell initialization failed before target execution; evidence: '+$OutputPath+'.startup-'+($attempt+1)+'.json')
             $failure=$_.Exception.GetBaseException()
             if($Breakaway -and $failure -is [ComponentModel.Win32Exception] -and $failure.NativeErrorCode -eq 5){
-                throw 'Persistent worker launch was refused by the parent Job. No non-persistent fallback or build was started; the request is retained.'
+                throw 'Persistent worker launch was refused by the parent Job. No non-persistent fallback or build was started; the request is retained. Next: scripts/build.bat diagnose in this context. In DSH use snow_collaboration ready from the Host after begin/claim/plan, or retry from an external terminal that permits Job breakaway. See scripts/README.md#构建环境诊断与启动恢复; do not change ACLs for a Job refusal.'
             }
         } finally {
             # Never remove the permit while the granted child is still reading it.

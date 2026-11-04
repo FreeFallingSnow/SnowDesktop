@@ -115,7 +115,13 @@ function Get-RunView([string]$Id){
             $references=@($ledger.entries|Where-Object runId -eq $Id|ForEach-Object {Get-Field $_ 'references' @()})
         }
     }
-    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;
+    $recovery=$null
+    if($observed -eq 'start-failed'){
+        $recovery=[pscustomobject]@{diagnose='scripts/build.bat diagnose';requestRetained=$true;automaticReplay=$false;
+            next='Fix the launch context first. For a retired batch use begin, claim reviewed paths with -AdoptExistingChanges, plan, then ready-and-wait with the NEW batch/revision. DSH may explicitly use ready from its Host. An unchanged frozen checkpoint can still be committed through the OLD batch/revision.';
+            begin=('scripts/build.bat begin '+$request.task);details='scripts/README.md#构建环境诊断与启动恢复'}
+    }
+    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;recovery=$recovery;
         request=$request;record=$record;resources=$metrics;stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
 }
 function Run-CancellationRequested($Request){

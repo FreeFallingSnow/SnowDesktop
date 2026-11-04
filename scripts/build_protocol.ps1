@@ -72,6 +72,58 @@ function Set-TaskCapabilities($Task,[string]$Names) {
     # Adapter declarations are metadata, never an edit grant or message receipt.
     $Task.capabilities=[pscustomobject]$value
 }
+function New-VisibleTask($Ledger,[string]$PreviousId,[string]$Name) {
+    $previous=Find-VisibleTask $Ledger $PreviousId
+    if($previous.phase -notin 'completed','cancelled'){throw 'Finish the current task before task-new; use task-stage to rename an active task.'}
+    if([string]::IsNullOrWhiteSpace($Name) -or $Name -match '[\r\n]'){throw 'task-new requires a specific, nonempty single-line TaskName.'}
+    $root=Get-Field $previous 'continuationRoot' $previous.id
+    $generation=[long](Get-Field $previous 'generation' 1)
+    if(@($Ledger.tasks|Where-Object {(Get-Field $_ 'continuationRoot') -eq $root -and (Get-Field $_ 'generation' 1) -gt $generation}).Count){throw 'A later task already exists in this task series; read task-list and use its current ID.'}
+    $task=Open-VisibleTask $Ledger ('task-'+[Guid]::NewGuid().ToString('N')) $Name.Trim() $previous.adapter 'task-new'
+    Set-Field $task 'previousTask' $previous.id
+    Set-Field $task 'continuationRoot' $root
+    Set-Field $task 'generation' ($generation+1)
+    return $task
+}
+function Get-CompactBatch($Batch,[string]$Participant) {
+    if(-not $Batch){return $null}
+    $members=@($Batch.participants)
+    $own=@($members|Where-Object id -eq $Participant|Select-Object -First 1)
+    $member=$null
+    if($own.Count){
+        $entry=$own[0];$files=@(Get-Field $entry 'ownedFiles' @())
+        $member=[pscustomobject]@{id=$entry.id;state=$entry.state;editRevision=(Get-EditRevision $entry);
+            ownedFiles=@($files|Select-Object -First 32);ownedFileCount=$files.Count;ownedFilesTruncated=($files.Count -gt 32);
+            checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiterStatus=(Get-Field (Get-Field $entry 'waiter') 'status')}
+    }
+    return [pscustomobject]@{id=$Batch.id;phase=$Batch.phase;runId=(Get-Field $Batch 'runId');participant=$member;
+        participantCount=$members.Count;participants=@($members|Select-Object -First 32|ForEach-Object {[pscustomobject]@{id=$_.id;state=$_.state;editRevision=(Get-EditRevision $_)}});
+        participantsTruncated=($members.Count -gt 32)}
+}
+function Get-CompactCollaborationStatus($State,[string]$Participant,$Current,$Result) {
+    $ledger=Get-Field $State 'taskLedger';$tasks=@(Get-Field $ledger 'tasks' @())
+    $own=@($tasks|Where-Object id -eq $Participant|Select-Object -First 1)
+    $candidates=@(Get-Field $State 'activeCandidates' @())
+    $events=@(Get-TaskEvents $ledger $Participant)
+    $recent=@($events|Select-Object -Last 8|ForEach-Object {
+        [pscustomobject]@{sequence=$_.sequence;sender=$_.sender;kind=$_.kind;importance=$_.importance;
+            text=$_.text.Substring(0,[Math]::Min(400,$_.text.Length));textTruncated=($_.text.Length -gt 400);createdUtc=$_.createdUtc;
+            agentAcknowledged=(@($_.receipts|Where-Object {$_.task -eq $Participant -and $_.level -eq 'agent'}).Count -gt 0)}
+    })
+    $task=$null
+    if($own.Count){
+        $entry=$own[0]
+        $task=[pscustomobject]@{id=$entry.id;displayName=$entry.displayName;phase=$entry.phase;revision=$entry.revision;requirementsRevision=$entry.requirementsRevision;
+            lastHeartbeatUtc=$entry.lastHeartbeatUtc;lastProgressUtc=$entry.lastProgressUtc;progress=$entry.progress;blocker=$entry.blocker;closedUtc=$entry.closedUtc;
+            previousTask=(Get-Field $entry 'previousTask');continuationRoot=(Get-Field $entry 'continuationRoot');generation=(Get-Field $entry 'generation' 1);
+            deferredBatchIds=@(Get-Field $entry 'deferredBatchIds' @()|Select-Object -First 32)}
+    }
+    return [pscustomobject]@{schemaVersion=1;detail='compact';taskId=$Participant;task=$task;
+        current=(Get-CompactBatch $Current $Participant);activeCandidates=@($candidates|Select-Object -Last 8|ForEach-Object {Get-CompactBatch $_ $Participant});
+        activeCandidateCount=$candidates.Count;activeCandidatesTruncated=($candidates.Count -gt 8);recentEvents=$recent;recentEventsTruncated=($events.Count -gt 8);
+        result=$(if($Result){[pscustomobject]@{batchId=$Result.batchId;outcome=$Result.outcome;exitCode=$Result.exitCode;runId=(Get-Field $Result 'runId');recovery=(Get-Field $Result 'recovery')}}else{$null});
+        observation='Atomic read-only summary; use status without -Compact for full details, event-read for event text. Reading does not acknowledge events.'}
+}
 function Get-TaskEvents($Ledger, [string]$Id, [long]$After=0, [switch]$UrgentUnacknowledged) {
     if(-not $Ledger){return @()}
     return @($Ledger.events | Where-Object {

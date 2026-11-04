@@ -26,8 +26,9 @@ function dashboardPortAt(root,configured){
   return preference.port;
  }finally{fs.closeSync(fd);}
 }
-const allowedCommands=new Set(['task-open','task-stage','task-list','event-read','event-wait','event-ack','begin','claim','edit-verify','plan','status']);
+const allowedCommands=new Set(['task-open','task-new','task-stage','task-close','task-list','event-read','event-wait','event-ack','begin','claim','edit-verify','plan','ready','status']);
 export function taskId(agentId){return 'dsh-'+createHash('sha256').update(agentId).digest('hex').slice(0,24);}
+const closed=task=>Boolean(task?.closedUtc)||['completed','cancelled'].includes(task?.phase);
 // Historical broadcasts remain readable, but cannot activate sessions outside
 // their still-active batch. Explicitly addressed events retain their target.
 export function eventInScope(state,event,id){
@@ -73,6 +74,10 @@ export class CollaborationBridge{
   if(!fs.existsSync(this.script)||!fs.existsSync(path.join(this.root,'.git')))throw new Error('Not a SnowDesktop coordinator checkout');
  }
  state(){return stateAt(this.root);}
+ taskId(agentId,state=this.state()){
+  const base=taskId(agentId),tasks=(state.taskLedger?.tasks||[]).filter(task=>task.adapter==='dsh'&&(task.id===base||task.continuationRoot===base));
+  return tasks.sort((a,b)=>(b.generation||1)-(a.generation||1))[0]?.id||base;
+ }
  grant(id,files=[]){
   const current=grantFor(this.state(),id,files),accepted=this.grants.get(id);
   if(!accepted)throw new Error('This plugin has not acquired a grant; call begin before claim or write.');
@@ -86,7 +91,7 @@ export class CollaborationBridge{
   for(let index=0;index<args.length;index++){
    if(!/^-[A-Za-z][A-Za-z0-9]*$/.test(args[index])||/^-(Command|Participant)$/i.test(args[index]))throw new Error('Invalid coordinator argument name');
    const name=args[index].slice(1);
-   if(name==='AdoptExistingChanges')parameters[name]=true;
+   if(['AdoptExistingChanges','Add','DeferBatchResult','Compact'].includes(name))parameters[name]=true;
    else{if(index+1>=args.length)throw new Error('Missing coordinator argument value');parameters[name]=args[++index];}
   }
   const invocation={script:this.script,parameters};
@@ -96,17 +101,27 @@ export class CollaborationBridge{
    return JSON.parse(result.stdout.replace(/^\uFEFF/,''));
   }catch(error){
    if(error.code===6&&error.stdout){return JSON.parse(error.stdout.replace(/^\uFEFF/,''));}
-   throw new Error(String(error.stderr||error.message).trim());
+   const message=String(error.stderr||error.message).trim();
+   throw new Error(message+(/access.*denied|拒绝访问|unauthorized|EACCES|EPERM/i.test(message)?'\nCheck scripts/build.bat diagnose in the failing tool context. Host and tool sandbox permissions can differ; ACL changes do not establish sandbox write permission. Use an authorized full-access context or external terminal; preserve the request and logs.':''));
   }
  }
  async open(agentId,name){
   if(name!==undefined&&(typeof name!=='string'||!name.trim()||name.trim().length>160||/[\r\n]/.test(name)))throw new Error('open text must be a nonempty single-line task name of at most 160 characters.');
-  const title=name?.trim(),opened=await this.call('task-open',taskId(agentId),['-TaskName',title||'DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);
+  const title=name?.trim(),state=this.state();let id=this.taskId(agentId,state);
+  const previous=state.taskLedger?.tasks?.find(task=>task.id===id);
+  if(closed(previous)){
+   this.grants.delete(id);
+   if(!title)return {task:previous,status:'closed',editingAuthority:false,next:'Use open with text to register the next task in this session.'};
+   const next=await this.call('task-new',id,['-TaskName',title]);
+   id=next.task.id;
+  }
+  const opened=await this.call('task-open',id,['-TaskName',title||'DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);
   if(!title||opened.task.displayName===title)return opened;
   return this.call('task-stage',opened.task.id,['-TaskRevision',String(opened.task.revision),'-TaskName',title]);
  }
  requireTaskName(agentId){
-  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));
+  const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));
+  if(closed(task))throw new Error('The task is closed. Use snow_collaboration action="open", text="<next task goal>" before continuing in this session.');
   if(!task?.displayName?.trim()||task.displayName===task.id||task.displayName==='DSH '+agentId.slice(0,12))throw new Error('Set a specific task name before continuing: snow_collaboration action="open", text="<task goal>". A session ID is not a task name.');
  }
  async verifyWrite(agentId,file){
@@ -117,15 +132,16 @@ export class CollaborationBridge{
   }
   const relative=path.relative(this.root,target).replaceAll('\\','/');
   if(!relative)throw new Error('Writing the repository root is not supported');
-  const id=taskId(agentId),grant=this.grant(id,[relative]);
+  const id=this.taskId(agentId),grant=this.grant(id,[relative]);
   return this.call('edit-verify',id,['-Batch',grant.batchId,'-Revision',String(grant.revision),'-Files',relative]);
  }
  async progress(agentId,text){
-  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
+  const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));
+  if(!task||closed(task))return {status:task?'closed':'not-registered',task:task||null,progressSaved:false,next:'Use open with text for the next task; include the final summary in close text before closing.'};
   return this.call('task-stage',task.id,['-TaskRevision',String(task.revision),'-TaskPhase',task.phase,'-Progress',text.slice(0,2000)]);
  }
  async heartbeat(agentId){
-  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
+  const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));if(!task||closed(task))return {status:'inactive'};
   return this.open(agentId);
  }
  async snapshot(){return this.read('/api/status');}
@@ -149,10 +165,17 @@ export class CollaborationBridge{
   return read(route);
  }
  async operate(agentId,args){
-  const id=taskId(agentId),action=args.action;
-  if(action==='status')return this.call('status');
+  const id=this.taskId(agentId),action=args.action;
+  if(action==='status')return this.call('status',id,args.detail==='full'?[]:['-Compact']);
   if(action==='open')return this.open(agentId,args.text);
   if(action==='progress')return this.progress(agentId,args.text||'');
+  if(action==='close'){
+   const task=this.state().taskLedger?.tasks?.find(task=>task.id===id);
+   if(!task)throw new Error('Open a task first.');
+   if(closed(task))return {status:'closed',task,editingAuthority:false};
+   const result=await this.call('task-close',id,['-TaskRevision',String(task.revision),'-TaskPhase','completed','-Progress',args.text||'',...(args.deferBatchResult?['-DeferBatchResult']:[])]);
+   this.grants.delete(id);return result;
+  }
   if(action==='begin'){
    const registered=await this.call('begin',id,['-WaitSeconds','1']);
    this.grants.set(id,{batchId:registered.batchId,revision:registered.editRevision});return registered;
@@ -161,9 +184,14 @@ export class CollaborationBridge{
   if(action==='wait-messages')return this.call('event-wait',id,['-AfterSequence',String(args.afterSequence||0),'-WaitSeconds','30'],{timeout:35000});
   if(action==='acknowledge')return this.call('event-ack',id,['-Sequence',String(args.sequence),'-AckLevel','agent']);
   const grant=this.grant(id),bound=['-Batch',grant.batchId,'-Revision',String(grant.revision)];
+  if(action==='ready'){
+   const result=await this.call('ready',id,bound,{timeout:35000});
+   this.grants.delete(id);return {...result,executionContext:'DSH Host',next:'Observe status/messages; ready explicitly selects background waiting. A start-failed attempt requires begin/claim/plan with the new revision before retry.'};
+  }
   if(action==='claim'){
    if(!args.files)throw new Error('Explicit files are required');
-   return this.call('claim',id,[...bound,'-Files',args.files,...(args.adoptExistingChanges?['-AdoptExistingChanges']:[])]);
+   if(args.claimMode!==undefined&&!['add','set'].includes(args.claimMode))throw new Error('claimMode must be add or set');
+   return this.call('claim',id,[...bound,'-Files',args.files,...(args.claimMode!=='set'?['-Add']:[]),...(args.adoptExistingChanges?['-AdoptExistingChanges']:[])]);
   }
   if(action==='plan'){
    if(!args.inputs||!args.reason)throw new Error('Inputs and reviewed test mapping are required');

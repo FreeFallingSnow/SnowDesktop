@@ -1,8 +1,8 @@
 # SnowDesktop DSH 协作插件
 
-此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.24` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，插件、工具、文件写入与 Typert API 通过该版本随包的真实 SDK 集成测试核对；其他版本须重新核对接口。
+此目录是通用协作系统的 DSH 适配器，以独立 Cordis bundle 提供面板和能力补强。任务生命周期、认领、执行权、恢复和证据语义由[通用协调器](../../scripts/README.md)维护；效率问题统一写入[协作系统反馈](../../scripts/COLLABORATION_FEEDBACK.md)。插件不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.25` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，其他版本须重新核对接口。
 
-插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
+插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/ready/close/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
 
 协作页注册到 DSH 的 `conversation.view`，使用宿主 React、语言和主题，顺序位于 chat（0）与 trajectory（10）之后（20）。旧版位置、尺寸和收起偏好不再生效，活动、轮次、筛选和展开偏好继续保留。导航用蓝色，执行、等待和结果使用宿主语义色；强调色按宿主实际 `color-scheme` 选择，手动主题切换不依赖系统外观偏好。不加载 iframe，不在浏览器访问其他 localhost 服务，不提供执行或确认按钮。Host 读取前核对本仓库服务回执中的实例 nonce，拒绝模拟服务、错误监听者和重定向。
 
@@ -39,7 +39,7 @@
 
 ## 任务和消息
 
-自动登记的会话名只用于占位。Agent 确定任务目标后，先调用 `snow_collaboration` 的 `{"action":"open","text":"修复 Win+D 隐藏状态栏"}` 设置具体任务名；目标变化时通过同一操作更新。普通工具执行前会拒绝仍使用自动占位名的任务，协作工具保持可用。名称限制为 1–160 个字符的单行文本；更新既有任务时通过 `task-stage -TaskName` 校验最新 Task 修订，只更新名称和元数据修订，保留进展正文、进展时间、阶段、需求修订与编辑权。省略 `text` 的 open 及自动心跳保持幂等，不覆盖名称；此入口不替代任务结束后的新任务登记。
+自动登记的会话名只用于占位。Agent 确定任务目标后，先调用 `snow_collaboration` 的 `{"action":"open","text":"修复 Win+D 隐藏状态栏"}` 设置具体任务名；目标变化时通过同一操作更新。普通工具执行前会拒绝仍使用自动占位名的任务，协作工具保持可用。名称限制为 1–160 个字符的单行文本；更新既有任务时通过 `task-stage -TaskName` 校验最新 Task 修订，只更新名称和元数据修订，保留进展正文、进展时间、阶段、需求修订与编辑权。省略 `text` 的 open 及自动心跳保持幂等，不覆盖名称。已关闭任务用带明确 `text` 的 open 调用通用 `task-new`，在同一会话创建下一任务；无需新建 Agent，旧任务和消息保留。活动任务的 open 只改名。
 
 Client 先通过 `ctx.remote.$mount` 注册自定义 snapshot namespace，再在显式注入该 namespace 的子作用域注册悬浮窗；仅依赖 `api-remotes` 不会自动挂载第三方贡献。snapshot 读取 Gateway 的 `RemoteResult` 成功或错误分支。卸载撤销挂载和进行中的调用；断线保留上次快照及时间，不把旧数据写成当前成功状态。
 
@@ -61,7 +61,9 @@ Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使�
 
 广播只投递给事件创建时的任务接收者。Session Controller 依赖移除后停止该依赖中尚未完成的恢复；插件卸载后停止投递。已经受理的会话恢复归宿主管理，插件不擅自销毁用户 Agent。插件重载可能再次提示尚未获 Agent 确认的事件，接收者应按序号读取并明确确认；adapter 确认仍不代表模型已启动或已读取。开关通过正常插件配置/重新组合生效，不手改 profile 或宿主文件。
 
-插件当前只观察执行结果，不通过短超时 execFile 启动构建，避免关闭等待工具时误杀编译所有者。执行仍走标准 ready-and-wait。等待消息默认 30 秒，不重复创建消费者。
+`claim` 默认向通用协调器传入 `-Add`，`claimMode=set` 显式替换。`status` 默认调用 `status ID -Compact`；`detail=full` 读取完整状态。`close text` 保存最终摘要，`deferBatchResult=true` 对应通用的显式延后归档选项；关闭后的 progress 返回结构化 `closed`，不会伪造一次已保存的进展。
+
+`ready` 从 DSH Host 显式调用通用后台就绪入口，仅提交标准等待者；后续构建仍由原协调器取得执行权、记录日志并创建持久 Run。它不使用短超时工具进程承载编译，不自动回退或取消编译所有者。默认 CLI 前台流程仍为 ready-and-wait；Host 的 Job 若也拒绝持久启动，按[诊断与恢复](../../scripts/README.md#构建环境诊断与启动恢复)处理。等待消息默认 30 秒，不重复创建消费者。每次工具回执包含模块加载时读取的 `pluginVersion`，据此核对实际生效版本；包版本更新不代表旧 Host 已重载。
 
 ## 验证边界
 

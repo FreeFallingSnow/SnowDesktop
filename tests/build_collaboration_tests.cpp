@@ -181,6 +181,45 @@ void run_presence(const fs::path& repo,bool legacy,bool fixedCapabilities=false)
 }
 void run_contracts(const fs::path& repo){
     {
+        Coordinator c(repo,"task-continuation-claims");
+        c.call({"task-open","series","-TaskName","First task"});
+        c.call({"task-close","series","-TaskRevision","0","-TaskPhase","completed"});
+        const auto next=c.call({"task-new","series","-TaskName","Next task"}).at("task");
+        const auto id=next.at("id").str();
+        require(id!="series"&&next.at("previousTask").str()=="series"&&next.at("continuationRoot").str()=="series"&&next.at("generation").integer()==2,
+            "Generic task-new lost its closed predecessor or reused the old identity");
+        c.call({"task-new","series","-TaskName","Stale duplicate"},2);
+        c.call({"task-new",id,"-TaskName","Still active"},2);
+        const auto batch=c.begin(id).at("batchId").str();
+        auto claim=c.bound("claim",id,batch);claim.insert(claim.end(),{"-Files","src/a.txt"});
+        require(c.call(claim).at("claimMode").str()=="set","Default CLI claim no longer declares replacement");
+        claim.back()="src/b.txt";claim.push_back("-Add");
+        require(c.call(claim).at("ownedFiles").items.size()==2,"Additive claim dropped the earlier path");
+        write(c.root/L"src/other.txt","other task changes");
+        auto dirty=c.bound("claim",id,batch);dirty.insert(dirty.end(),{"-Files","src/other.txt","-Add"});c.call(dirty,2);
+        require(c.state().at("current").at("participants").items[0].at("ownedFiles").items.size()==2,"Failed dirty adoption changed ownership");
+        dirty.push_back("-AdoptExistingChanges");require(c.call(dirty).at("ownedFiles").items.size()==3,"Explicit dirty adoption failed");
+        write(c.root/L"src/other.txt","original\n");
+        auto replaceClaim=c.bound("claim",id,batch);replaceClaim.insert(replaceClaim.end(),{"-Files","src/a.txt"});
+        require(c.call(replaceClaim).at("ownedFiles").items.size()==1,"Explicit replacement retained obsolete claims");
+        c.begin("peer");
+        const auto summary=c.call({"status",id,"-Compact"});
+        require(summary.at("detail").str()=="compact"&&summary.at("current").at("participantCount").integer()==2&&
+            summary.at("current").at("participant").at("ownedFileCount").integer()==1&&!summary.at("current").at("participant").has("testPlan"),
+            "Generic compact status lost the current participant or copied its heavy plan");
+        c.call({"task-close",id,"-TaskRevision","1","-TaskPhase","completed","-DeferBatchResult"},2);
+        c.plan(id,batch,0,"none","","tool","src/a.txt");
+        c.ready(id,batch);
+        until([&]{const auto own=c.state().at("current").at("participants").items[0];return own.has("check")&&own.at("check").at("status").str()=="passed";});
+        c.call({"task-close",id,"-TaskRevision","1","-TaskPhase","completed"},2);
+        const auto closed=c.call({"task-close",id,"-TaskRevision","1","-TaskPhase","completed","-DeferBatchResult","-Progress","Work saved; shared result pending"});
+        require(closed.at("task").at("deferredBatchIds").items[0].str()==batch&&c.state().at("current").at("participants").items.size()==2,
+            "Deferred task closure removed a shared participant or lost its pending result");
+        const auto third=c.call({"task-new",id,"-TaskName","Third task"}).at("task");
+        require(third.at("generation").integer()==3&&third.at("continuationRoot").str()=="series","Task continuation did not survive another closed generation");
+        require(c.finish("peer",batch).at("outcome").str()=="passed","Closed participant cancelled or blocked its shared batch");
+    }
+    {
         Coordinator unplanned(repo,"explicit-selection");
         const auto registration=unplanned.call({"begin","missing-plan"});
         const auto id=registration.at("batchId").str();

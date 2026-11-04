@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <shellapi.h>
 
 using namespace build_test;
 namespace {
@@ -436,6 +437,23 @@ void test_default_entry(const fs::path& repo) {
 }
 void test_process_lifetime(const fs::path& repo) {
     {
+        const auto root=temporary("preview-argv");
+        for(const bool legacy:{false,true}){
+            const auto output=root/(legacy?L"ps5 output with spaces":L"ps7 output with spaces");
+            const auto wrapper=repo/L"scripts/preview.ps1";
+            const auto native=run({powershell(legacy).wstring(),L"-NoProfile",L"-File",wrapper.wstring(),L"native",L"-Executable",executable().wstring(),L"-Out",output.wstring()},root,15);
+            require(native.code==0,"Named native preview wrapper failed: "+native.out+native.err);
+            auto captured=Json::parse(read(output/L"captured.json"));
+            require(captured.items.size()==19&&captured.items[2].str()=="control-panel"&&captured.items[7].str().empty()&&
+                captured.items[14].str().empty()&&captured.items[15].str().empty()&&captured.items[18].str()=="top",
+                "Preview wrapper lost its required empty positional arguments across the process boundary");
+            const auto settings=run({powershell(legacy).wstring(),L"-NoProfile",L"-File",wrapper.wstring(),L"settings",L"-Executable",executable().wstring(),L"-Out",output.wstring(),L"-Focus",L"focus with spaces and \"quotes\""},root,15);
+            require(settings.code==0,"Named settings preview wrapper failed: "+settings.out+settings.err);
+            captured=Json::parse(read(output/L"captured.json"));
+            require(captured.items.size()==10&&captured.items[9].str()=="focus with spaces and \"quotes\"","Settings wrapper split or reinterpreted its named focus argument");
+        }
+    }
+    {
         Coordinator c(repo,"run-cancel");setup_run(c,repo);
         ParentJob parent(c.root/L"launch-run.ps1",c.root,true);
         const int launchCode=parent.wait();
@@ -479,6 +497,19 @@ void test_process_lifetime(const fs::path& repo) {
         require(parent.wait()==2,"A restrictive parent Job silently launched a non-persistent worker");
         const auto receipt=Json::parse(read(c.root/L"submitted.json"));const auto id=receipt.at("id").str();
         require(receipt.at("status").str()=="start-failed"&&!fs::exists(c.root/L"build-started")&&fs::exists(c.stateRoot/L"runs"/wide(id+".request.json")),"Refused launch lost the request or started build work");
+        require(receipt.at("recovery").at("requestRetained").boolean&&!receipt.at("recovery").at("automaticReplay").boolean&&
+            receipt.at("recovery").at("diagnose").str()=="scripts/build.bat diagnose"&&receipt.at("recovery").at("begin").str()=="scripts/build.bat begin runner",
+            "Refused persistent launch omitted the concrete non-replaying recovery path");
+        copy(repo,c.root,{"scripts/build_diagnose.ps1"});
+        write(c.root/L"diagnose.ps1","$value=& "+ps_literal(c.scripts/L"build_diagnose.ps1")+"\n$code=$LASTEXITCODE\n[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'diagnosis.json'),($value -join [Environment]::NewLine))\nexit $code\n",true);
+        ParentJob restricted(c.root/L"diagnose.ps1",c.root,false,"diagnostic-refused");
+        require(restricted.wait()==2,"Diagnostic hid a parent Job refusal");
+        const auto diagnosis=Json::parse(read(c.root/L"diagnosis.json"));
+        require(diagnosis.at("writeProbe").at("status").str()=="passed"&&diagnosis.at("persistentLaunch").at("status").str()=="failed"&&!fs::exists(c.root/L"build-started"),
+            "Diagnostic confused writable files with persistent launch permission or started build work");
+        ParentJob permitted(c.root/L"diagnose.ps1",c.root,true,"diagnostic-permitted");
+        require(permitted.wait()==0&&Json::parse(read(c.root/L"diagnosis.json")).at("persistentLaunch").at("status").str()=="passed",
+            "Diagnostic did not recognize an allowed persistent launch context");
         std::cout<<"PASS restrictive parent Job refuses execution and retains its request\n";
     }
     {
@@ -494,7 +525,15 @@ void test_process_lifetime(const fs::path& repo) {
     }
 }
 }
-int main(int argc,char** argv){return test_main(argc,argv,[&](const fs::path& repo){
+int main(int argc,char** argv){
+    // Exercise the wrapper's real native argv boundary without starting the desktop host.
+    if(argc>1&&(std::string(argv[1])=="--native-component-preview"||std::string(argv[1])=="--settings-visual-preview")){
+        int count=0;auto arguments=CommandLineToArgvW(GetCommandLineW(),&count);if(!arguments)return 98;
+        Json captured=Json::array({});for(int index=0;index<count;++index)captured.items.emplace_back(utf8(arguments[index]));
+        const bool native=std::wstring_view(arguments[1])==L"--native-component-preview";
+        const auto output=fs::path(arguments[native?3:2])/L"captured.json";LocalFree(arguments);write(output,captured.dump());return 0;
+    }
+    return test_main(argc,argv,[&](const fs::path& repo){
     require(argc<=3,"Unexpected build Run fixture arguments");
     const std::string mode=argc>2?argv[2]:"";
     if(mode=="--project-resources"||mode=="--project-resources-old-default")project_resources(repo,mode=="--project-resources-old-default");

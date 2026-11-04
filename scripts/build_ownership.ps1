@@ -29,9 +29,10 @@ function Normalize-OwnedPath([string]$Path) {
     }
     return $absolute.Substring($repositoryRoot.Length+1).Replace('\','/')
 }
-function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt) {
+function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt,[bool]$Add=$false) {
     $paths=@($Files.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_} | Sort-Object -Unique)
     if($paths.Count -eq 0){throw 'Claim requires at least one explicit path.'}
+    if($Add){$paths=@($paths+@(Get-Field $Entry 'ownedFiles' @())|Sort-Object -Unique)}
     $shared=@(Get-SharedResourcePaths)
     $handoffs=@()
     foreach($other in $Current.participants) {
@@ -47,9 +48,16 @@ function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt) {
     if(-not $Adopt){
         Push-Location $repositoryRoot
         try {
-            $dirty=@(& git.exe status --porcelain -- @paths)
-            if($LASTEXITCODE -ne 0){throw 'Cannot inspect claimed paths.'}
-            if($dirty.Count -and @(Get-Field $Entry 'ownedFiles' @()).Count -eq 0){throw 'Claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.'}
+            $newPaths=@($paths|Where-Object {
+                $candidate=$_
+                @((Get-Field $Entry 'ownedFiles' @())|Where-Object {$candidate -ieq $_ -or $candidate.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0
+            })
+            $dirty=@()
+            if($newPaths.Count){
+                $dirty=@(& git.exe --literal-pathspecs status --porcelain -- @newPaths)
+                if($LASTEXITCODE -ne 0){throw 'Cannot inspect claimed paths.'}
+            }
+            if($dirty.Count){throw 'Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.'}
         } finally {Pop-Location}
     }
     foreach($handoff in $handoffs){Request-HandoffCheck $Current $handoff.other $Entry.id $handoff.file}

@@ -309,7 +309,7 @@ Visual Studio/MSVC 下可在本地配置预设的 `cacheVariables` 中指定正�
 `core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；显式 `full` 运行完整自动测试集合。
 无参数只显示用法，不配置、构建或执行测试；直接调用 PowerShell 测试入口而未指定模式时只列清单。
 这些自动模式与对应 CTest 预设都排除 `manual` 手动诊断。当前文件操作行为测试及覆盖边界见
-[核心拖放行为矩阵](../tests/drag_drop/README.md)；外部 Shell 兼容性与阻塞场景按实际问题定向验证。
+[核心拖放行为矩阵](../.agents/rules/validation.md#核心拖放矩阵)；外部 Shell 兼容性与阻塞场景按实际问题定向验证。
 `name` / `label` 的显式筛选可以包含手动条目，`list` 会显示全部条目及标签。
 直接使用 CTest 时，`tests` 是自动全量，`all-tests` 包含手动诊断；自动全量通过不代表手动条目已执行。
 筛选参数是 CTest 正则表达式。跨模块、公共 API、异步和基础设施改动也按调用链与依赖选择相关项目；
@@ -366,6 +366,36 @@ CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capa
 携带版和 MSIX 均不分发该管理器。
 
 发布流程的完整说明见 `packaging\README.md`。
+
+## 构建环境诊断与启动恢复
+
+协作流程由通用协调器维护，CLI、看板和 DSH 等适配器共享任务、执行权、批次与证据。适配器只补充所在环境的面板、写入拦截、通知和调用能力。效率与 token 成本问题统一记入[协作系统反馈](COLLABORATION_FEEDBACK.md)，反馈义务见 [AGENTS.md](../AGENTS.md#任务与协作)。
+
+```bat
+scripts\build.bat diagnose
+scripts\build.bat diagnose -Help
+scripts\build.bat status MY_TASK -Compact
+```
+
+`diagnose` 在**当前调用上下文**向 `.build/collaboration/diagnose-<id>/` 写入唯一临时文件，再用标准持久启动器运行一个只写完成标记的子进程；不配置、不编译、不修改 Task 或 ACL。返回 0 表示这两个环境探测通过，返回 2 附失败原因和下一步；探测日志保留在该独立目录。它不检查应用功能、编译能力或激活结果，也不证明另一个 Host/沙箱上下文可用。
+
+目录拒写时先区分沙箱 writable roots 与实际文件权限。完整权限上下文成功而 confined 调用失败时，应修正调用环境的目录放行；ACL 修复后仍须重试原 confined 操作，不能依据外部写入成功认定恢复。生成目录不可写时提示使用已获授权的完整权限上下文或外部终端，不自动改变用户 ACL。
+
+父 Job 拒绝 `CREATE_BREAKAWAY_FROM_JOB` 时，原请求保留为 `start-failed`，不自动退化成依附聊天的执行。用允许持久启动的调用上下文重新诊断；支持的适配器可显式调用通用 `ready`，从其 Host 启动标准后台等待者。DSH 对应 `snow_collaboration action=ready`，仍需先 begin/claim/plan，且明确选择后台模式；Host 自身受同一 Job 限制时仍会失败。外部终端继续时也复用同一协调状态、租约和日志。
+
+启动失败的 Run 与共同结果回执提供 `recovery`。原批次已退役时：先修复启动环境，再 `begin ID`，保存**新** batchId/editRevision，审阅后 `claim ... -AdoptExistingChanges`，重新 plan 和 ready-and-wait。DSH 重开也须显式 begin，不能沿用旧编辑许可。源码未变且冻结 checkpoint 仍匹配时，原**旧**批次/修订仍可 commit；这不等于重跑构建或验证通过。各参与者不为同一失败重复提交新候选，先核对是否已有共同续修或活动 Run。
+
+### 预览与本地化诊断
+
+```bat
+scripts\preview.bat -Help
+scripts\preview.bat native -Component control-panel -Out .codex-probes\control-panel -Appearance dark
+scripts\preview.bat settings -Page all -Out .codex-probes\settings -Appearance light -State collapsed
+scripts\preview.bat native -Out .codex-probes\argv -DryRun
+scripts\preview.bat localization
+```
+
+包装入口使用命名参数，将空背景、主题等参数原样传入现有预览协议；PowerShell 7 使用 `ProcessStartInfo.ArgumentList`，5.1 使用对应 Windows argv 转义。`-Help` 列出支持项，`-DryRun` 只显示 EXE 和实际参数数组。默认复用本检出 `.build/Release` 中已有应用或 `tests/SnowDesktopLocalizationContractTests.exe`；`-Executable` 可选取已验证匹配的候选运行文件。缺少产物时报错，不自动编译。预览使用隔离示例数据，不能替代桌面视觉与交互实测。
 
 ## 本地执行权与通用终端
 
@@ -488,11 +518,12 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 ## 协作协议 v2：登记、计划与阻塞等待
 
 `begin` 返回 `batchId` 与 `editRevision`。开始写文件前登记；各对话使用独立 ID。
-`claim` 用同一状态锁检查路径及父目录冲突，不会解决同文件的修改合并。已有脏文件必须先审阅，再显式 `-AdoptExistingChanges`；没有声明的老参与者会显示为未确定所有权。
+`claim` 用同一状态锁检查路径及父目录冲突，不会解决同文件的修改合并。默认整组替换 `ownedFiles`；`-Add` 追加并保留已有集合。回执的 `claimMode` 与完整 `ownedFiles` 说明本次结果。新增脏路径必须先审阅，再显式 `-AdoptExistingChanges`；已持有路径的自身修改不要求重复接手。没有声明的老参与者会显示为未确定所有权。
 
 ```bat
 scripts\build.bat begin task-a
 scripts\build.bat claim task-a -Batch <batchId> -Revision <editRevision> -Files src/my_module.cpp,tests/my_module_tests.cpp
+scripts\build.bat claim task-a -Batch <batchId> -Revision <editRevision> -Add -Files src/another_module.cpp
 scripts\build.bat plan task-a -Batch <batchId> -Revision <editRevision> -Scope module -Suites selected -Tests my_module -Inputs src/my_module.cpp,tests/my_module_tests.cpp -Reason "reviewed independent module; dependency mapping to my_module"
 scripts\build.bat ready-and-wait task-a -Batch <batchId> -Revision <editRevision>
 scripts\build.bat status -Batch <batchId>
@@ -714,6 +745,12 @@ scripts\build.bat event-ack target-task -Sequence 1 -AckLevel agent
 消息以 EventKey 幂等，重用键但改内容会拒绝。普通 `Target=*` 广播固定投递给当时已登记且未关闭的任务；紧急广播只投递给指定活动批次中未关闭、未撤回的参与者，并持久记录 `batchId`。可显式传 `-Batch`，省略时只允许从发送者唯一的活动批次推断；没有关联或关联不唯一时拒绝，不回退到全项目。批次可以是当前编辑窗口或仍在执行的捕获候选，二者不混发；后来加入者不追收旧广播。显式 `-Target task-id` 保留定向语义，调查任务无需为接收定向消息申请编辑权。DSH 仅自动投递仍关联活动批次的紧急广播；历史广播和缺少批次信息的旧广播保留可读，不再自动唤起。事件写入、适配器收到、智能体确认分别记录。read/wait 不代替确认；单次返回至多 100 条，续读以最后实际返回的事件 sequence 为游标，不用顶层高水位跳过后续页。event-wait 默认最多等待 30 秒，超时返回空事件和 timedOut，不取消任务或构建。finish/wait 在等待阶段收到未确认紧急事件时返回 6，保留编辑登记和批次；执行中的编译不会因观察者退出而在此接口里取消。只在安全等待边界检查事件，持久 Run 的独立执行在后续批次实现。
 
 任务上限 2000、事件上限 4096，达到上限明确拒绝新增，保留全部未消费消息；不静默淘汰。需要通过审阅后的迁移归档。当前 CLI 能力声明不含 DSH 写入拦截或 idleWake；DSH 插件会通过宿主能力接入，悬浮窗读取同一接口，网页保持只读。普通编辑器和任意 shell 写入不能被单独的 edit-verify 校验强制拦截。
+
+同一会话开始下一项工作时用 `task-new CLOSED_ID -TaskName "下一项具体目标"`。协调器返回新 `task.id`，保存 `previousTask/continuationRoot/generation`；旧任务保留关闭状态、证据和消息，新的任务重新 begin/claim，适配器不接收旧许可。活动任务改目标继续 task-stage 改名；自动心跳不创建下一任务。对旧的前序 ID 再次 task-new 会拒绝并提示查当前任务。
+
+已结束自身编辑、检查通过且路径已提交/交接时，可显式 `task-close ID -TaskRevision N -TaskPhase completed -DeferBatchResult -Progress "最终摘要"`，在共同候选尚未结束时关闭 Task。回执任务中的 `deferredBatchIds` 保留待归档批次；共同批次、参与者来源、Run 和结果照常保留。仍在编辑、检查未通过或人工验收区间未结束时拒绝，不撤回成员或取消其他执行。Task 完成与候选最终验证结果分开报告。
+
+`status ID -Compact` 是同一通用只读接口的有界投影：当前任务、批次与自身成员摘要，最多 32 名成员/路径、8 个活动候选和 8 条最近消息摘要，附总数及截断标记；历史批次可加 `-Batch B`。去掉 `-Compact` 保留完整状态。消息正文通过 event-read 读取后显式确认，摘要不代替急件处理。
 
 ### 运行时依赖
 
