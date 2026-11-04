@@ -773,7 +773,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         }
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "show_desktop.guard");
-            UpdateSystemShowDesktopDockLayerGuard();
+            UpdateSystemShowDesktopLayerGuard();
         }
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "taskbar.diagnostics.drain");

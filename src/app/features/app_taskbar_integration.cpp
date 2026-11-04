@@ -51,8 +51,10 @@ void DesktopApp::StartDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(GetTickCount());
     dockSystemMinimizeStartedTick_.store(0);
-    systemShowDesktopDockLayerGuardActive_ = false;
+    systemShowDesktopLayerGuardActive_ = false;
     systemShowDesktopLastProtectedForegroundTick_ = 0;
+    // A monitor restart must not leave the bar in a stale protected band.
+    if (statusBar_) statusBar_->SetSystemShowDesktopActive(false);
     dockForegroundEventHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
         EVENT_SYSTEM_FOREGROUND, nullptr, &DesktopApp::DockForegroundWinEventProc,
         0, 0, WINEVENT_OUTOFCONTEXT);
@@ -111,8 +113,11 @@ void DesktopApp::StopDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(0);
     dockSystemMinimizeStartedTick_.store(0);
-    systemShowDesktopDockLayerGuardActive_ = false;
+    systemShowDesktopLayerGuardActive_ = false;
     systemShowDesktopLastProtectedForegroundTick_ = 0;
+    // The bar outlives this monitor across Explorer/topology recovery; drop its
+    // protection instead of leaving a stale TOPMOST/visible guard behind.
+    if (statusBar_) statusBar_->SetSystemShowDesktopActive(false);
     systemTaskbarWindowStateChangedTick_.store(0);
     dockWindowListChangedTick_.store(0);
     systemTaskbarWindowStateObservedTick_ = 0;
@@ -152,11 +157,11 @@ void DesktopApp::HandleDockForegroundInteractionChanged()
 {
     ClearSelectionForExternalWindow(GetForegroundWindow());
     ReconcileDesktopHoverState();
-    UpdateSystemShowDesktopDockLayerGuard();
+    UpdateSystemShowDesktopLayerGuard();
     RefreshDockForegroundState();
 }
 
-void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
+void DesktopApp::UpdateSystemShowDesktopLayerGuard()
 {
     using GuardAction = snowdesktop::floating_dock_rules::
         SystemShowDesktopLayerGuardAction;
@@ -185,11 +190,19 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     if (foregroundKind == Foreground::ShellDesktop ||
         foregroundKind == Foreground::DesktopSurface)
         systemShowDesktopLastProtectedForegroundTick_ = now;
+    // One Shell transition protects every presented surface: the Dock layer and
+    // an independent status bar that Explorer would otherwise take with the
+    // other top-level windows.
+    const bool statusBarPresentation =
+        statusBar_ && statusBar_->HasIndependentPresentation();
+    const bool protectedSurface =
+        (generalSettings_.dockEnabled && floatingDockHostActive_) ||
+        statusBarPresentation;
     const GuardAction action =
         snowdesktop::floating_dock_rules::
             ResolveSystemShowDesktopLayerGuardAction(
-                systemShowDesktopDockLayerGuardActive_,
-                generalSettings_.dockEnabled && floatingDockHostActive_,
+                systemShowDesktopLayerGuardActive_,
+                protectedSurface,
                 foregroundKind,
                 evidenceTick,
                 now,
@@ -197,7 +210,7 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     if (action == GuardAction::None)
         return;
 
-    systemShowDesktopDockLayerGuardActive_ =
+    systemShowDesktopLayerGuardActive_ =
         action == GuardAction::Start;
     if (action == GuardAction::Stop)
     {
@@ -210,15 +223,18 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     }
     wchar_t guardTrace[256]{};
     swprintf_s(guardTrace,
-        L"System Show Desktop Dock layer guard %ls foreground=%p "
+        L"System Show Desktop layer guard %ls foreground=%p "
         L"foregroundKind=%d evidenceTick=%llu now=%llu",
-        systemShowDesktopDockLayerGuardActive_ ? L"started" : L"completed",
+        systemShowDesktopLayerGuardActive_ ? L"started" : L"completed",
         static_cast<void*>(foreground),
         static_cast<int>(foregroundKind),
         evidenceTick, now);
     snowdesktop::dock_taskbar_diagnostics::Record(
         guardTrace, foreground);
     ApplyFloatingDockLayerPolicy();
+    if (statusBar_)
+        statusBar_->SetSystemShowDesktopActive(
+            systemShowDesktopLayerGuardActive_);
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, guardTrace);
 }
 

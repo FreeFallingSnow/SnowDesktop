@@ -73,6 +73,13 @@ public:
     // Host startup gate: reserve and prepare geometry while the desktop's
     // first frame is hidden. Merged strips still follow Dock presentation.
     void SetPresentationEnabled(bool enabled);
+    // Shell Show Desktop (Win+D) transition, owned by the host's shared
+    // foreground evidence. While active the bar refuses external hides and
+    // keeps its presentation band instead of following the other windows.
+    void SetSystemShowDesktopActive(bool active);
+    // Policy-owned presentation for an independently shown bar: true while it
+    // should be presented, independent of a physical hide Explorer requested.
+    bool HasIndependentPresentation() const;
     // Release a lost device without unregistering the AppBar or sampling demands.
     void ReleaseGraphicsResources();
     bool IsFullscreen(HMONITOR monitor) const;

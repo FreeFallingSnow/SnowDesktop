@@ -234,8 +234,10 @@ bool ShouldSummonForDockSurface(
     bool sourceBelongsToDock,
     bool floatingDockVisible);
 
+// The evidence belongs to the Shell transition, not to one consumer: the Dock
+// layer policy and an independently presented status bar both consume it.
 bool ShouldStartSystemShowDesktopLayerGuard(
-    bool persistentDockHostActive,
+    bool protectedSurfaceActive,
     bool shellDesktopForeground,
     ULONGLONG lastSystemMinimizeStartTick,
     ULONGLONG currentTick,
@@ -260,7 +262,7 @@ enum class SystemShowDesktopForeground
 SystemShowDesktopLayerGuardAction
 ResolveSystemShowDesktopLayerGuardAction(
     bool layerGuardActive,
-    bool persistentDockHostActive,
+    bool protectedSurfaceActive,
     SystemShowDesktopForeground foreground,
     ULONGLONG lastSystemMinimizeStartTick,
     ULONGLONG currentTick,

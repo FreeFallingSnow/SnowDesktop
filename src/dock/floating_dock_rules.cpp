@@ -169,13 +169,13 @@ bool ShouldSummonForDockSurface(
 }
 
 bool ShouldStartSystemShowDesktopLayerGuard(
-    bool persistentDockHostActive,
+    bool protectedSurfaceActive,
     bool shellDesktopForeground,
     ULONGLONG lastSystemMinimizeStartTick,
     ULONGLONG currentTick,
     ULONGLONG evidenceWindowMs)
 {
-    return persistentDockHostActive &&
+    return protectedSurfaceActive &&
         shellDesktopForeground &&
         lastSystemMinimizeStartTick != 0 &&
         currentTick >= lastSystemMinimizeStartTick &&
@@ -186,7 +186,7 @@ bool ShouldStartSystemShowDesktopLayerGuard(
 SystemShowDesktopLayerGuardAction
 ResolveSystemShowDesktopLayerGuardAction(
     bool layerGuardActive,
-    bool persistentDockHostActive,
+    bool protectedSurfaceActive,
     SystemShowDesktopForeground foreground,
     ULONGLONG lastSystemMinimizeStartTick,
     ULONGLONG currentTick,
@@ -197,7 +197,7 @@ ResolveSystemShowDesktopLayerGuardAction(
         // MINIMIZEEND means a window is about to restore, not that its
         // minimize animation finished. Actual foreground ownership ends the
         // guard even when no previously minimized window has been restored.
-        if (!persistentDockHostActive ||
+        if (!protectedSurfaceActive ||
             foreground == SystemShowDesktopForeground::Application)
             return SystemShowDesktopLayerGuardAction::Stop;
         if (foreground == SystemShowDesktopForeground::Unavailable &&
@@ -209,7 +209,7 @@ ResolveSystemShowDesktopLayerGuardAction(
         return SystemShowDesktopLayerGuardAction::None;
     }
     return ShouldStartSystemShowDesktopLayerGuard(
-        persistentDockHostActive,
+        protectedSurfaceActive,
         foreground == SystemShowDesktopForeground::ShellDesktop,
         lastSystemMinimizeStartTick,
         currentTick)

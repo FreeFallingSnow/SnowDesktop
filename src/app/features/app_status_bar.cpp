@@ -1287,4 +1287,7 @@ void DesktopApp::SyncStatusBar()
                 false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
             brushCache_.clear(); brushCacheContext_ = nullptr;
         });
+    // Re-apply the host-owned Show Desktop guard to bars created or replaced
+    // by this configuration pass.
+    statusBar_->SetSystemShowDesktopActive(systemShowDesktopLayerGuardActive_);
 }

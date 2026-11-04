@@ -1051,7 +1051,7 @@ private:
     bool HandleDockExternalMinimize(HWND window, DWORD deadline);
     void PrepareDockWindowMinimize(HWND window, const wchar_t* origin);
     void HandleDockForegroundInteractionChanged();
-    void UpdateSystemShowDesktopDockLayerGuard();
+    void UpdateSystemShowDesktopLayerGuard();
     bool IsShellDesktopForegroundWindow(HWND window) const;
     bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
     PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
@@ -3601,7 +3601,9 @@ private:
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
     DWORD dockRunningWindowsRefreshTick_ = 0;
-    bool systemShowDesktopDockLayerGuardActive_ = false;
+    // Shell Show Desktop transition, consumed by the Dock layer policy and the
+    // independent status bar presentation guard.
+    bool systemShowDesktopLayerGuardActive_ = false;
     ULONGLONG systemShowDesktopLastProtectedForegroundTick_ = 0;
     struct SystemTaskbarMonitorWindowState
     {

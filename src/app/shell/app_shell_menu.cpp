@@ -438,7 +438,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         hostsCollectionPopup ||
         (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
     const bool systemShowDesktopGuard =
-        systemShowDesktopDockLayerGuardActive_ &&
+        systemShowDesktopLayerGuardActive_ &&
         ShouldShowPersistentDockHost(host);
 
     if (!promoted && !systemShowDesktopGuard)

@@ -3,7 +3,9 @@
 #include "dock/dock_fullscreen_policy.h"
 #include "system/status_bar/status_bar_appbar.h"
 
+#include <array>
 #include <iostream>
+#include <optional>
 
 int main()
 {

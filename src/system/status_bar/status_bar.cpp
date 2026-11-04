@@ -47,7 +47,7 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
-    kActivate = WM_APP + 45;
+    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
     kRevealTimer = 6;
 const char* StatusBarTimerPhase(WPARAM timer) noexcept
@@ -153,6 +153,10 @@ struct StatusBar::Impl
         RECT placedBounds{};
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
+        // Only the bar's own hide may take the surface away. WM_WINDOWPOSCHANGING
+        // uses this to tell an external Shell request apart.
+        bool hidingWindow = false;
+        ULONGLONG showDesktopTraceTick = 0;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
         bool checkingFullscreen = false, clockTimerActive = false;
         bool lastDockInteraction = false, lastDockPromoted = false;
@@ -391,11 +395,101 @@ struct StatusBar::Impl
                 const auto removed = StatusBarTrayGeometries(items, [](RECT&) {}, true);
                 if (!removed.empty()) owner.tray->SetGeometries(removed);
             }
-            backdrop.HidePopupWindowPair(hwnd);
-            backdrop.SetPopupTopmost(false);
-            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+            {
+                struct HideScope
+                {
+                    bool& flag;
+                    explicit HideScope(bool& value) : flag(value) { flag = true; }
+                    ~HideScope() { flag = false; }
+                } scope{hidingWindow};
+                backdrop.HidePopupWindowPair(hwnd);
+                backdrop.SetPopupTopmost(false);
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+            }
             if (notify && owner.hidden) owner.hidden(monitor);
+        }
+        // Policy-owned presentation: true while this bar should be shown, even
+        // when Explorer has already physically hidden it for Show Desktop.
+        bool WantsPresentation() const
+        {
+            return hwnd && IsWindow(hwnd) && !closing && !failed && positioned &&
+                owner.presentationEnabled && !fullscreen;
+        }
+        void TraceSystemShowDesktop(const wchar_t* event, bool visible,
+            bool topmost, bool iconic,
+            DiagnosticLogLevel level = DiagnosticLogLevel::Info) const
+        {
+            wchar_t message[320]{};
+            swprintf_s(message,
+                L"StatusBar Show Desktop %ls monitor=%p bar=%p visible=%d topmost=%d iconic=%d",
+                event, monitor, hwnd, visible, topmost, iconic);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, level);
+        }
+        // Explorer's Show Desktop takes top-level windows with the desktop
+        // transition. The bar reserves a taskbar-like strip, so an external
+        // hide must not remove a surface its own policy still presents. The
+        // guard state is deliberately not required: the Shell's hide can
+        // precede the foreground evidence that starts it; the guard only adds
+        // band repair and minimize recovery.
+        void RejectExternalHide(WINDOWPOS& position)
+        {
+            if (!(position.flags & SWP_HIDEWINDOW) || hidingWindow ||
+                !WantsPresentation()) return;
+            position.flags = (position.flags & ~SWP_HIDEWINDOW) | SWP_NOACTIVATE;
+            // A hide request can carry the same transition's band change (for
+            // example HWND_BOTTOM). Refusing only the hide would leave the bar
+            // visible but demoted, so independent bars keep their TOPMOST band
+            // in the same request; the glass helper keeps its own band and is
+            // re-paired by EnsureSystemShowDesktopPresentation. Merged strips
+            // stay under Dock policy.
+            if (!mergedDockHeight && !(position.flags & SWP_NOZORDER))
+                position.hwndInsertAfter = HWND_TOPMOST;
+            const ULONGLONG now = GetTickCount64();
+            if (now - showDesktopTraceTick < 1000) return;
+            showDesktopTraceTick = now;
+            TraceSystemShowDesktop(L"hide-refused",
+                IsWindowVisible(hwnd) != FALSE,
+                (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
+                IsIconic(hwnd) != FALSE);
+        }
+        // Rejoin the presented band after Explorer's transition: restore a
+        // minimized window, repaint a discarded surface and re-promote the pair.
+        void EnsureSystemShowDesktopPresentation()
+        {
+            if (!WantsPresentation()) return;
+            if (mergedDockHeight) return; // Dock owns the merged pair's band.
+            const bool visible = IsWindowVisible(hwnd) != FALSE;
+            const bool topmost =
+                (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+            const bool iconic = IsIconic(hwnd) != FALSE;
+            const bool glass = appearance.glassEnabled && !HighContrast();
+            // The glass helper is a separate top-level HWND; Explorer can hide
+            // or cover it independently of the content window.
+            backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
+            if (visible && topmost && !iconic)
+            {
+                if (glass) backdrop.ShowPopupWindowPair(hwnd);
+                return;
+            }
+            if (iconic) ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            Paint(true);
+            if (paintDirty || !surface || !backgroundSurface)
+            {
+                const ULONGLONG now = GetTickCount64();
+                if (now - showDesktopTraceTick >= 1000)
+                {
+                    showDesktopTraceTick = now;
+                    TraceSystemShowDesktop(L"restore-pending", visible, topmost,
+                        iconic, DiagnosticLogLevel::Warning);
+                }
+                return;
+            }
+            backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            if (glass) backdrop.ShowPopupWindowPair(hwnd);
+            TraceSystemShowDesktop(L"restored", visible, topmost, iconic);
         }
         void CheckFullscreen(std::optional<HWND> observed = {}, bool collect = true)
         {
@@ -436,7 +530,16 @@ struct StatusBar::Impl
             // Shell/Dock restacks can reveal a popup without a new fullscreen
             // transition. Reconcile physical visibility as well as state.
             if (fullscreen || !owner.presentationEnabled) { if (changed || shown || topmost) Hide(); }
-            else if (positioned && !failed && (changed || !shown || !topmost)) Show();
+            else if (positioned && !failed && (changed || !shown || !topmost ||
+                IsIconic(hwnd)))
+            {
+                // Show Desktop keeps the strip presented instead of letting the
+                // Shell leave it minimized or outside the TOPMOST band. The bar
+                // is never minimized by its own policy, so restoring an iconic
+                // surface is unconditional.
+                if (owner.systemShowDesktopActive) EnsureSystemShowDesktopPresentation();
+                else { if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOWNOACTIVATE); Show(); }
+            }
         }
         void PollReveal()
         {
@@ -1300,6 +1403,10 @@ struct StatusBar::Impl
                 // Activation may destroy the bar or enter a modal window loop.
                 return 0;
             }
+            case kEnsurePresentation:
+                if (self->owner.systemShowDesktopActive)
+                    self->EnsureSystemShowDesktopPresentation();
+                return 0;
             case kPlace: self->Place(); return 0;
             case kForeground:
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
@@ -1364,11 +1471,20 @@ struct StatusBar::Impl
                     (reinterpret_cast<WINDOWPOS*>(lp)->flags & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
                     self->appbar.Notify(ABM_WINDOWPOSCHANGED);
                 break;
+            case WM_SHOWWINDOW:
+                // ShowWindow(SW_HIDE) delivers this notification before the
+                // WM_WINDOWPOSCHANGING veto decides the hide. Repair after the
+                // request settles instead of inside its notification.
+                if (!wp && !self->hidingWindow && self->owner.systemShowDesktopActive &&
+                    self->WantsPresentation())
+                    PostMessageW(window, kEnsurePresentation, 0, 0);
+                break;
             case WM_WINDOWPOSCHANGING:
                 if (lp)
                 {
                     auto& position = *reinterpret_cast<WINDOWPOS*>(lp);
                     ConstrainHiddenStatusBarPosition(!self->owner.presentationEnabled || self->fullscreen, position);
+                    self->RejectExternalHide(position);
                     // Shell can raise a registered AppBar when another window
                     // gains focus without activating the bar itself. Its opaque
                     // surface must remain behind the merged Dock icon HWND.
@@ -1644,6 +1760,9 @@ struct StatusBar::Impl
     StatusBarFullscreenRequest fullscreenRequest;
     bool removingWindows = false;
     bool presentationEnabled = true;
+    // Host-owned Shell Show Desktop transition; see StatusBar::
+    // SetSystemShowDesktopActive.
+    bool systemShowDesktopActive = false;
     std::vector<HWINEVENTHOOK> hooks;
     UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     bool IsFullscreenClock(HWND receiver) const
@@ -2262,5 +2381,33 @@ void StatusBar::SetPresentationEnabled(bool enabled)
         if (!enabled) { window->revealState.Reset(); window->Hide(false); }
         else window->CheckFullscreen();
     }
+}
+
+void StatusBar::SetSystemShowDesktopActive(bool active)
+{
+    auto& self = *impl_;
+    self.systemShowDesktopActive = active;
+    // Also called after a configure rebuild: idempotent repair keeps a bar that
+    // was created or replaced during the Shell transition presented.
+    if (!active || self.removingWindows) return;
+    for (const auto& [id, window] : self.windows)
+    {
+        (void)id;
+        if (window && !window->closing)
+            window->EnsureSystemShowDesktopPresentation();
+    }
+}
+
+bool StatusBar::HasIndependentPresentation() const
+{
+    const auto& self = *impl_;
+    if (!self.presentationEnabled) return false;
+    for (const auto& [id, window] : self.windows)
+    {
+        (void)id;
+        if (window && window->WantsPresentation() && !window->mergedDockHeight)
+            return true;
+    }
+    return false;
 }
 }
