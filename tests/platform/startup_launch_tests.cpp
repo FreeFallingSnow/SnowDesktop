@@ -1,8 +1,11 @@
 #include "platform/auto_start_launch.h"
 
+#include <cstddef>
 #include <cwchar>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -14,8 +17,8 @@ void Require(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
-// Only identity discovery and Shell execution are replaced. Production
-// quoting, owner conversion, event creation, signalling and waiting run intact.
+// Identity discovery, privilege state and Shell execution are replaced. Production
+// quoting, normalization, event creation, signalling and waiting run intact.
 LONG identityResult = ERROR_SUCCESS;
 std::wstring applicationId;
 struct Capture
@@ -51,7 +54,18 @@ void Execute(const std::wstring& target, const std::wstring& parameters,
     captured.parameters = parameters;
     captured.directory = directory;
     if (captured.acknowledge)
-        launch::AcknowledgeExplorerLaunch(L"fixture.exe " + parameters);
+    {
+        struct OrdinaryChild
+        {
+            bool IsElevated() { return false; }
+            bool IsExplorerElevated() { throw launch::Failure{ERROR_INVALID_FUNCTION, L"Ordinary child Explorer lookup"}; }
+            bool ConfirmContinue(const launch::Failure&) { return false; }
+            DWORD Relaunch(std::wstring_view) { throw std::runtime_error("ordinary child must continue directly"); }
+        } child;
+        const auto result = launch::Normalize(L"fixture.exe " + parameters, child);
+        Require(!result.handled && result.error == ERROR_SUCCESS,
+            "the ordinary child acknowledges and continues through production startup normalization");
+    }
 }
 
 DWORD WINAPI WaitForAck(HANDLE event, DWORD timeout)
@@ -100,8 +114,8 @@ void PackagedLaunch()
         Require(captured.directory == CurrentDirectory(), "preserve working directory");
         const launch::Arguments arguments(L"fixture.exe " + captured.parameters);
         Require(arguments.count == static_cast<int>(inputs.size()) + 4, "retain all startup arguments and receipt");
-        Require(std::wstring_view(arguments.value[1]) == snowdesktop::kAutoStartBackgroundArgument,
-            "autostart ownership becomes background intent");
+        Require(std::wstring_view(arguments.value[1]) == L"--snowdesktop-autostart-owner=packaged",
+            "the generic privilege handoff preserves the caller's startup intent verbatim");
         for (std::size_t index = 0; index < inputs.size(); ++index)
             Require(arguments.value[index + 2] == inputs[index], "startup argument round trip");
         Require(std::wstring_view(arguments.value[arguments.count - 2]) == launch::kExplorerRelaunchArgument,
@@ -112,27 +126,93 @@ void PackagedLaunch()
     std::cout << "PASS packaged activation, arguments and acknowledgement\n";
 }
 
-void AutoStartRouting()
+void StartupPrivilegeRouting()
 {
     struct StartupPlatform
     {
+        bool elevated = false;
+        bool explorerElevated = false;
+        bool explorerAvailable = true;
+        unsigned elevationChecks = 0;
+        unsigned explorerChecks = 0;
         unsigned confirmations = 0;
-        bool IsElevated() { return false; }
-        bool IsExplorerElevated() { return false; }
+        bool IsElevated() { ++elevationChecks; return elevated; }
+        bool IsExplorerElevated()
+        {
+            ++explorerChecks;
+            if (!explorerAvailable) throw launch::Failure{ERROR_TIMEOUT, L"Fixture Explorer unavailable"};
+            return explorerElevated;
+        }
         bool ConfirmContinue(const launch::Failure&) { ++confirmations; return false; }
         DWORD Relaunch(std::wstring_view command) { return Platform().Relaunch(command); }
-    } platform;
-    captured = {};
+    };
+    const std::vector<std::wstring> commands{
+        L"fixture.exe",
+        L"fixture.exe --snowdesktop-autostart-owner=portable",
+        L"fixture.exe --snowdesktop-autostart-owner=packaged",
+        L"fixture.exe --snowdesktop-autostart-owner=steam",
+        L"fixture.exe --snowdesktop-autostart",
+        L"fixture.exe --snowdesktop-explorer-relaunch"};
     identityResult = ERROR_SUCCESS;
     applicationId = L"SnowDesktop.Dev_testpublisher!SnowDesktop";
-    const auto manual = launch::Normalize(L"fixture.exe", platform);
-    Require(!manual.handled && manual.error == ERROR_SUCCESS && captured.calls == 0,
-        "an ordinary manual launch starts directly");
-    const auto startup = launch::Normalize(L"fixture.exe --snowdesktop-autostart-owner=packaged", platform);
-    Require(startup.handled && startup.error == ERROR_SUCCESS && captured.calls == 1 &&
-        captured.target == L"shell:AppsFolder\\" + applicationId && platform.confirmations == 0,
-        "a Limited scheduled autostart must hand off through its packaged identity");
-    std::cout << "PASS ordinary scheduled startup routing\n";
+    for (const auto& command : commands)
+    {
+        for (const bool explorerAvailable : {true, false})
+        {
+            captured = {};
+            StartupPlatform platform;
+            platform.explorerAvailable = explorerAvailable;
+            const auto result = launch::Normalize(command, platform);
+            Require(!result.handled && result.error == ERROR_SUCCESS && captured.calls == 0 &&
+                captured.waits == 0 && platform.confirmations == 0 && platform.explorerChecks == 0 &&
+                platform.elevationChecks == 1,
+                "non-elevated startup must continue without Explorer lookup, relaunch or confirmation");
+        }
+    }
+    std::cout << "PASS ordinary manual/autostart launches continue directly, even without Explorer\n";
+
+    // The same permission check controls interactive and all three autostart
+    // owners. Their startup intent cannot substitute for an elevated token.
+    for (std::size_t index = 0; index < 5; ++index)
+    {
+        for (const bool explorerElevated : {false, true})
+        {
+            captured = {};
+            StartupPlatform platform;
+            platform.elevated = true;
+            platform.explorerElevated = explorerElevated;
+            const auto result = launch::Normalize(commands[index], platform);
+            Require(result.error == ERROR_SUCCESS && result.handled == !explorerElevated &&
+                captured.calls == (explorerElevated ? 0u : 1u) && platform.explorerChecks == 1 &&
+                platform.elevationChecks == 1 && platform.confirmations == 0,
+                "only elevated launches use an ordinary Explorer for handoff");
+            if (!explorerElevated)
+                Require(captured.target == L"shell:AppsFolder\\" + applicationId && captured.waits == 1,
+                    "an elevated packaged launch retains identity activation and acknowledgement");
+        }
+    }
+    std::cout << "PASS elevated launches share the same Explorer handoff policy\n";
+
+    captured = {};
+    StartupPlatform repeated;
+    repeated.elevated = true;
+    const auto denied = launch::Normalize(commands.back(), repeated);
+    Require(denied.handled && denied.error == ERROR_CANCELLED && captured.calls == 0 &&
+        repeated.confirmations == 1, "a still-elevated handed-off child must not loop");
+
+    StartupPlatform helper;
+    helper.elevated = true;
+    const auto auxiliary = launch::Normalize(commands[2], helper, false);
+    Require(!auxiliary.handled && auxiliary.error == ERROR_SUCCESS && helper.elevationChecks == 0 &&
+        helper.explorerChecks == 0 && captured.calls == 0, "inherited-handle helpers bypass desktop handoff");
+
+    StartupPlatform accepted;
+    accepted.elevated = true;
+    const auto consented = launch::Normalize(commands[2], accepted, true, true);
+    Require(!consented.handled && consented.error == ERROR_SUCCESS && consented.currentPrivilegesAccepted &&
+        accepted.elevationChecks == 0 && accepted.explorerChecks == 0 && captured.calls == 0,
+        "explicit startup consent must remain effective without another handoff");
+    std::cout << "PASS repeated-child, helper and explicit-consent guards\n";
 }
 
 void OrdinaryLaunch()
@@ -206,7 +286,7 @@ int main()
     try
     {
         PackagedLaunch();
-        AutoStartRouting();
+        StartupPrivilegeRouting();
         OrdinaryLaunch();
         IdentityFailure();
         MissingAcknowledgement();

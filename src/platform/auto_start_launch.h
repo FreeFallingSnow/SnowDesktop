@@ -1,6 +1,5 @@
 #pragma once
 
-#include "auto_start_rules.h"
 #include "startup_privileges_dialog.h"
 
 #include <windows.h>
@@ -14,6 +13,8 @@
 #include <wrl/client.h>
 #include <sddl.h>
 
+#include <cstddef>
+#include <iterator>
 #include <new>
 #include <string>
 #include <string_view>
@@ -79,21 +80,6 @@ inline void AcknowledgeExplorerLaunch(std::wstring_view command) noexcept
         }
     }
     catch (...) {} // An optional receipt must never prevent the child from starting.
-}
-
-inline bool IsOwnerArgument(std::wstring_view value)
-{
-    return value == L"--snowdesktop-autostart-owner=portable" ||
-        value == L"--snowdesktop-autostart-owner=packaged" ||
-        value == L"--snowdesktop-autostart-owner=steam";
-}
-
-inline bool IsAutoStartCommand(std::wstring_view command)
-{
-    const Arguments arguments(command);
-    for (int index = 1; index < arguments.count; ++index)
-        if (IsOwnerArgument(arguments.value[index])) return true;
-    return false;
 }
 
 inline bool IsPreviewHostCommand(std::wstring_view command) noexcept
@@ -323,9 +309,7 @@ public:
         for (int index = 1; index < arguments.count; ++index)
         {
             if (!parameters.empty()) parameters.push_back(L' ');
-            // Retain background intent, but do not delegate the child again.
-            parameters += QuoteArgument(IsOwnerArgument(arguments.value[index]) ?
-                kAutoStartBackgroundArgument : arguments.value[index]);
+            parameters += QuoteArgument(arguments.value[index]);
         }
         if (!parameters.empty()) parameters.push_back(L' ');
         parameters += QuoteArgument(kExplorerRelaunchArgument);
@@ -403,22 +387,21 @@ Result Normalize(std::wstring_view command, Platform& platform,
         // Helpers with inherited handles cannot survive an Explorer handoff.
         // Their real dispatch/validation runs separately from desktop startup.
         if (!desktopLaunch) return {};
+        // Signal the parent before an ordinary child takes the direct path.
         AcknowledgeExplorerLaunch(command);
         // Only the supervising launcher's PID-bound startup channel supplies
         // this decision. It is not a persistent setting or a command-line flag.
         if (currentPrivilegesAccepted) return {false, ERROR_SUCCESS, 0, L"Startup privileges accepted", true};
-        const bool elevated = platform.IsElevated();
+        // Every ordinary desktop launch continues in this process. Startup
+        // intent belongs to the caller and does not require a privilege handoff.
+        if (!platform.IsElevated()) return {};
         const Arguments arguments(command);
-        bool autoStart = false;
         bool relaunched = false;
         for (int index = 1; index < arguments.count; ++index)
         {
-            autoStart = autoStart || IsOwnerArgument(arguments.value[index]);
             relaunched = relaunched || arguments.value[index] ==
                 std::wstring_view(kExplorerRelaunchArgument);
         }
-        if (relaunched && !elevated) return {};
-        if (!autoStart && !elevated) return {};
         // A high-privilege Explorer cannot lower us. Match that desktop
         // without another process, including login and already-handed-off launches.
         if (platform.IsExplorerElevated()) return {};
