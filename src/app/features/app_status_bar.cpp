@@ -6,6 +6,7 @@
 #include "widget/runtime/widget_engine.h"
 #include "settings/settings_snapshot.h"
 #include "shell/native_start_menu.h"
+#include "shell/power_user_menu.h"
 #include "common/utils.h"
 #include "dock/dock_settings.h"
 #include "system/panel/system_panel.h"
@@ -686,6 +687,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (systemPanel_) systemPanel_->Hide();
         PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
         const bool merged = statusBar_ && statusBar_->MergedStripBounds(monitor).has_value();
+        POINT dockPoint{anchor.left, anchor.top};
+        const DockContainer* contextDock = merged && hwnd_ && ScreenToClient(hwnd_, &dockPoint)
+            ? GetDockContainerAtPoint(dockPoint) : nullptr;
+        const bool powerUserMenu = contextDock && contextDock->IsWindowsButtonPoint(dockPoint);
         HMENU menu = merged ? CreateDockContextMenu(true) : CreatePopupMenu();
         if (!menu) { ClearMenuIcons(); return; }
         if (!merged)
@@ -914,6 +919,12 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             AppendMenuW(settingsMenu, MF_STRING, detailedCommand, _LW("statusBar.menu.detailed"));
             SetMenuItemIcon(settingsMenu, detailedCommand, L"\uF6A9", MenuIconFont::FluentRegular);
         }
+        if (powerUserMenu)
+        {
+            const HMENU root = snowdesktop::power_user_menu::Create(menu);
+            if (!root) { DestroyMenu(menu); ClearMenuIcons(); return; }
+            menu = root;
+        }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
         statusBarMenuAction_ = action;
@@ -924,6 +935,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
+        if (snowdesktop::power_user_menu::Execute(command, owner)) return;
         if (settingsController_)
         {
             auto settings = settingsController_->Snapshot()->values.general;

@@ -6,6 +6,13 @@
 
 namespace snowdesktop::taskbar_hook
 {
+inline bool IsPowerUserMenuHotkey(UINT message, LPARAM parameters) noexcept
+{
+    constexpr WORD modifiers = MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN;
+    return message == WM_HOTKEY && HIWORD(parameters) == 'X' &&
+        (LOWORD(parameters) & modifiers) == MOD_WIN;
+}
+
 inline bool IsRecentTaskbarInput(DWORD recorded, DWORD lastInput, DWORD now) noexcept
 {
     // A pointer merely resting over the taskbar is not an input-origin signal.

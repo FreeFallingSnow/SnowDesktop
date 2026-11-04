@@ -308,6 +308,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_taskbar_integration.cpp
     src/app/dock/app_dock_start_menu.cpp
     src/shell/native_start_menu.cpp
+    src/shell/power_user_menu.cpp
+    src/shell/power_user_menu.h
     src/app/features/app_steam_workshop.cpp
     src/app/lifecycle/app_timer_dispatch.cpp
     src/app/tray/app_tray.cpp

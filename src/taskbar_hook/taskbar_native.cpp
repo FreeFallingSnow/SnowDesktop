@@ -296,6 +296,18 @@ LRESULT CALLBACK InputMessageProc(int code, WPARAM removed, LPARAM data) try
     if (code == HC_ACTION && removed == PM_REMOVE && data)
     {
         const auto* message = reinterpret_cast<const MSG*>(data);
+        if (IsPowerUserMenuHotkey(message->message, message->lParam))
+        {
+            // A thread hotkey can target Explorer's hidden dispatcher instead
+            // of the tray HWND. Establish access before its message is handled.
+            std::vector<HWND> taskbars;
+            { std::lock_guard lock(windowsMutex);
+              for (const auto& [window, state] : windows)
+                  if (GetWindowThreadProcessId(window, nullptr) == GetCurrentThreadId() &&
+                      (state->primary || IsTrayOrigin(message->hwnd, window)))
+                      taskbars.push_back(window); }
+            for (const HWND taskbar : taskbars) ObserveMenuMessage(taskbar, WM_CONTEXTMENU);
+        }
         switch (message->message)
         {
         case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
@@ -758,7 +770,9 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     }
     // These are explicit taskbar keyboard/mouse operations, not passive
     // WM_ACTIVATE/WM_SETFOCUS caused by another application minimizing.
-    const bool explicitReveal = message == WM_MOUSEACTIVATE ||
+    const bool powerUserMenu = IsPowerUserMenuHotkey(message, lParam);
+    if (powerUserMenu) ArmContextMenu(window, state);
+    const bool explicitReveal = powerUserMenu || message == WM_MOUSEACTIVATE ||
         (message == WM_HOTKEY && (wParam == 0x1fe || wParam == 0x1ff || wParam == 0x24e)) ||
         (message == WM_SYSCOMMAND && (wParam & 0xfff0) == SC_TASKLIST) ||
         ((message == 0x55c || message == 0x55d) && wParam != 0);
