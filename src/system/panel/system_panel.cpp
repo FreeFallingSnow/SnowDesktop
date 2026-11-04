@@ -63,6 +63,7 @@ struct SystemPanel::Impl
     };
     SettingsChanged changed;SystemCalendarActions calendar;std::function<bool(std::string_view,POINT)> dropOutside;Background background;
     TrayDragFeedback dragFeedback;std::function<void(HWND,RECT)> nativeControls;
+    std::function<void(SystemPanelShortcut,HWND)> launchShortcut;
     std::function<void(HMONITOR,bool)> trayStateChanged;HMONITOR expandedTrayMonitor=nullptr;
     std::function<UINT(POINT,HWND,bool)> calendarMenuHandler;
     std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)> calendarChoiceMenuHandler;
@@ -268,6 +269,9 @@ struct SystemPanel::Impl
         if(modal||transition.Releasing()){transition.Defer(std::move(request));return;}
         if(!Ensure())return;current=std::move(request);const auto& r=*current;monitor=MonitorFromRect(&r.anchor,MONITOR_DEFAULTTONEAREST);scale=GetDpiForWindow(r.owner)/96.f;
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
+        if(launchShortcut)source.launchShortcut=[this](SystemPanelShortcut shortcut){
+            if(current&&launchShortcut){const auto launch=launchShortcut;launch(shortcut,current->owner);}
+        };
         source.inputMethod=r.inputMethod;
         if(r.inputMethod.settings)source.settings=r.inputMethod.settings;
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
@@ -930,6 +934,7 @@ bool SystemPanel::PreviewTrayDrop(std::string_view key,POINT p)
 void SystemPanel::SetTrayDragFeedback(TrayDragFeedback feedback){impl_->dragFeedback=std::move(feedback);}
 void SystemPanel::SetTrayStateChanged(std::function<void(HMONITOR,bool)> callback){impl_->trayStateChanged=std::move(callback);}
 void SystemPanel::SetNativeControlsHandler(std::function<void(HWND,RECT)> callback){impl_->nativeControls=std::move(callback);}
+void SystemPanel::SetShortcutHandler(std::function<void(SystemPanelShortcut,HWND)> callback){impl_->launchShortcut=std::move(callback);}
 void SystemPanel::SetCalendarMenuHandler(std::function<UINT(POINT,HWND,bool)> callback){impl_->calendarMenuHandler=std::move(callback);}
 void SystemPanel::SetCalendarChoiceMenuHandler(std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)> callback)
 {impl_->calendarChoiceMenuHandler=std::move(callback);}

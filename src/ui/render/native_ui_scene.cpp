@@ -1,5 +1,6 @@
 #include "native_ui_scene.h"
 #include "app_font.h"
+#include "common/utils.h"
 #include <d2d1_1helper.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -79,7 +80,7 @@ bool Scene::SameContent(const Scene& other)const
         const auto& a=nodes[i];const auto& b=other.nodes[i];
         if(a.id!=b.id||a.hoverGroup!=b.hoverGroup||a.role!=b.role||!SameRect(a.bounds,b.bounds)||!SameRect(a.clip,b.clip)||
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
-            a.fontSize!=b.fontSize||a.value!=b.value||a.glyphSize!=b.glyphSize||a.enabled!=b.enabled||a.selected!=b.selected||
+            a.fontSize!=b.fontSize||a.value!=b.value||a.glyphSize!=b.glyphSize||a.fluentGlyph!=b.fluentGlyph||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.trailing!=b.trailing||a.bold!=b.bold||a.outlined!=b.outlined||
             a.secondary!=b.secondary||a.charging!=b.charging||a.pluggedIn!=b.pluggedIn||a.positiveGlyph!=b.positiveGlyph||a.marked!=b.marked||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
             a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.batteryStyle!=b.batteryStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
@@ -252,15 +253,17 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
     ComPtr<ID2D1SolidColorBrush> brush; HRESULT hr = dc->CreateSolidColorBrush(p.text, &brush); if (FAILED(hr)) return hr;
     ComPtr<ID2D1Factory> geometryFactory;dc->GetFactory(&geometryFactory);
     ComPtr<ID2D1StrokeStyle> dashed;
-    std::map<std::tuple<float,bool,bool,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
+    std::map<std::tuple<float,bool,bool,bool,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
     auto color = [&](D2D1_COLOR_F value, bool enabled = true) { if (!enabled) value.a *= .4f; brush->SetColor(value); };
-    auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph, bool wrap=false, bool trailing=false) {
+    auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph, bool wrap=false, bool trailing=false, bool fluent=false) {
         if (value.empty() || r.right <= r.left || r.bottom <= r.top) return;
-        auto& format=formats[{size,bold,center,glyph,wrap,trailing}];
+        auto& format=formats[{size,bold,center,glyph,wrap,trailing,fluent}];
         if(!format)
         {
         const auto weight = bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
-        const HRESULT result = glyph
+        HRESULT result = S_OK;
+        if(glyph&&fluent){format.Attach(CreateFluentTextFormat(factory,size));if(!format)result=E_FAIL;}
+        else result = glyph
             ? factory->CreateTextFormat(L"Segoe MDL2 Assets", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL, size, L"", &format)
             : app_fonts::CreateTextFormat(factory, L"Segoe UI", weight, DWRITE_FONT_STYLE_NORMAL,
@@ -421,7 +424,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 // below device/action icons without shrinking the hit target.
                 const bool chevron=n.glyph==L"\uE76B"||n.glyph==L"\uE76C"||n.glyph==L"\uE70D"||n.glyph==L"\uE70E";
                 const float glyphSize=std::isfinite(n.glyphSize)&&n.glyphSize>0?std::clamp(n.glyphSize,6.f,48.f):chevron?12.f:18.f;
-                text(n.glyph,glyphRect,glyphSize,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true);
+                text(n.glyph,glyphRect,glyphSize,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true,false,false,n.fluentGlyph);
                 if (!iconOnly) label.left += 44;
             }
             else if (n.role != Role::Text && !n.centered) label.left += 12;

@@ -10,4 +10,6 @@ using IconSetter = std::function<void(HMENU, UINT_PTR, const wchar_t*)>;
 HMENU Create(HMENU dockMenu, const IconSetter& setIcon);
 // Returns false for commands belonging to the nested Dock menu.
 bool Execute(UINT command, HWND owner);
+// Shared host entry for the status-bar system menu; owner must be durable.
+bool OpenTerminal(HWND owner, bool administrator);
 }

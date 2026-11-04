@@ -4,6 +4,7 @@
 #include "shell_launch_worker.h"
 #include "system/status_bar/status_bar_shell_shortcut_relay.h"
 #include "system/controls/system_control_windows.h"
+#include "system/controls/system_quick_controls.h"
 
 #include <powrprof.h>
 #include <shellapi.h>
@@ -40,12 +41,12 @@ constexpr Entry management[]{
     {NetworkConnections, L10N_KEY("winx.networkConnections"), L"\ue999"},
     {DiskManagement, L10N_KEY("winx.diskManagement"), L"\ue6e3"},
     {ComputerManagement, L10N_KEY("winx.computerManagement"), L"\ue4aa"},
-    {Terminal, L10N_KEY("winx.terminal"), L"\uee6f"},
-    {TerminalAdmin, L10N_KEY("winx.terminalAdmin"), L"\uf6be"}
+    {Terminal, L10N_KEY("winx.terminal"), system_menu_icon::terminal},
+    {TerminalAdmin, L10N_KEY("winx.terminalAdmin"), system_menu_icon::terminalAdmin}
 };
 constexpr Entry common[]{
-    {TaskManager, L10N_KEY("statusBar.taskManager"), L"\uf33f"},
-    {Settings, L10N_KEY("winx.settings"), L"\uf6a9"},
+    {TaskManager, L10N_KEY("statusBar.taskManager"), system_menu_icon::taskManager},
+    {Settings, L10N_KEY("winx.settings"), system_menu_icon::settings},
     {FileExplorer, L10N_KEY("winx.fileExplorer"), L"\uf418"},
     {Search, L10N_KEY("winx.search"), L"\uf68f"},
     {Run, L10N_KEY("winx.run"), L"\uf605"}
@@ -145,10 +146,9 @@ HMENU Create(HMENU dockMenu, const IconSetter& setIcon)
         if (!append(root.get(), entry)) return nullptr;
     if (!AppendMenuW(root.get(), MF_SEPARATOR, 0, nullptr) ||
         !append(power.get(), {SignOut, L10N_KEY("winx.signOut"), L"\ueafa"})) return nullptr;
-    if (IsPwrSuspendAllowed() &&
-        !append(power.get(), {Sleep, L10N_KEY("controlCenter.sleep"), L"\ueb2d"})) return nullptr;
+    if (!append(power.get(), {Sleep, L10N_KEY("controlCenter.sleep"), system_menu_icon::sleep})) return nullptr;
     if (IsPwrHibernateAllowed() &&
-        !append(power.get(), {Hibernate, L10N_KEY("controlCenter.hibernate"), L"\uf87d"})) return nullptr;
+        !append(power.get(), {Hibernate, L10N_KEY("controlCenter.hibernate"), system_menu_icon::hibernate})) return nullptr;
     if (!append(power.get(), {ShutDown, L10N_KEY("controlCenter.shutdown"), L"\uf60e"}) ||
         !append(power.get(), {Restart, L10N_KEY("controlCenter.restart"), L"\uf13d"})) return nullptr;
     const HMENU powerMenu = power.get();
@@ -162,6 +162,13 @@ HMENU Create(HMENU dockMenu, const IconSetter& setIcon)
             _LW("winx.dockSettings"))) return nullptr;
     if (setIcon) setIcon(root.get(), reinterpret_cast<UINT_PTR>(dockMenu), L"\ue8ac");
     return root.release();
+}
+
+bool OpenTerminal(HWND owner, bool administrator)
+{
+    const DWORD error = LaunchTerminal(owner, administrator);
+    if (error != ERROR_SUCCESS && error != ERROR_CANCELLED) MessageBeep(MB_ICONWARNING);
+    return error == ERROR_SUCCESS;
 }
 
 bool Execute(UINT command, HWND owner)

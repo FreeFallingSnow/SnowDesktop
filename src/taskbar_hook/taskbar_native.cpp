@@ -70,6 +70,7 @@ struct WindowState
     HHOOK inputMessageHook = nullptr;
     // Installed and removed on this taskbar's owner thread, before teardown.
     HWINEVENTHOOK powerMenuEventHook = nullptr;
+    HHOOK powerMenuKeyboardHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
     DWORD externalMenuToken = 0;
@@ -607,6 +608,11 @@ bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroy
         UnhookWinEvent(state->powerMenuEventHook);
         state->powerMenuEventHook = nullptr;
     }
+    if (state->powerMenuKeyboardHook)
+    {
+        UnhookWindowsHookEx(state->powerMenuKeyboardHook);
+        state->powerMenuKeyboardHook = nullptr;
+    }
     const bool cloakRestored = Restore(window, state);
     // If Shell has not accepted the restore yet, retain the owner-thread timer
     // to retry after normal shutdown or owner death. Never retain a dead HWND.
@@ -787,6 +793,46 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     { Detach(window, state); return false; }
     return true;
 }
+
+LRESULT CALLBACK PowerMenuKeyboardProc(int code, WPARAM message, LPARAM data) try
+{
+    if (!hookInstanceRetired.load() && code == HC_ACTION && data &&
+        (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) &&
+        reinterpret_cast<const KBDLLHOOKSTRUCT*>(data)->vkCode == 'X' &&
+        ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000) &&
+        !(GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
+        !(GetAsyncKeyState(VK_MENU) & 0x8000) && !(GetAsyncKeyState(VK_SHIFT) & 0x8000))
+    {
+        std::vector<std::pair<HWND, std::shared_ptr<WindowState>>> targets;
+        { std::lock_guard lock(windowsMutex);
+          for (const auto& entry : windows)
+              if (entry.second->primary &&
+                  GetWindowThreadProcessId(entry.first, nullptr) == GetCurrentThreadId())
+                  targets.push_back(entry); }
+        for (const auto& [window, state] : targets)
+        {
+            if (state->detaching || state->updatingCloak ||
+                WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) continue;
+            BOOL restore = FALSE;
+            bool cloaked = false;
+            // No Shell calls, window enumeration, foreground changes,
+            // input injection or cross-thread dispatch in the input path.
+            { std::lock_guard lock(state->mutex);
+              state->contextMenuUntil = GetTickCount64() + 1500;
+              state->contextMenuThread = 0;
+              state->contextMenuPopup = nullptr;
+              state->externalMenuToken = 0;
+              restore = state->restoreCloak; cloaked = state->cloaked; }
+            // The native launcher can reject a cloaked tray before it creates
+            // LauncherTipWnd. Restore our cloak before forwarding the X key.
+            if (cloaked && SUCCEEDED(WriteCloak(window, state, restore, true)))
+            { std::lock_guard lock(state->mutex); state->cloaked = false; }
+            PostMessageW(window, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+        }
+    }
+    return CallNextHookEx(nullptr, code, message, data);
+}
+catch (...) { return CallNextHookEx(nullptr, code, message, data); }
 
 void CALLBACK PowerMenuEventProc(HWINEVENTHOOK, DWORD event, HWND source,
     LONG, LONG, DWORD eventThread, DWORD) try
@@ -1042,11 +1088,15 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
     state->inputMessageHook = SetWindowsHookExW(WH_GETMESSAGE, InputMessageProc, nullptr, GetCurrentThreadId());
     if (state->primary)
+    {
         state->powerMenuEventHook = SetWinEventHook(EVENT_SYSTEM_MENUSTART,
             EVENT_SYSTEM_MENUPOPUPSTART, pinned, PowerMenuEventProc,
             GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
+        state->powerMenuKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL,
+            PowerMenuKeyboardProc, pinned, 0);
+    }
     if (!state->menuMouseHook || !state->menuMessageHook || !state->inputMessageHook ||
-        (state->primary && !state->powerMenuEventHook) ||
+        (state->primary && (!state->powerMenuEventHook || !state->powerMenuKeyboardHook)) ||
         !SetPropW(window, kHookOwnerProperty, pinned) ||
         !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))

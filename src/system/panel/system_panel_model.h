@@ -51,7 +51,7 @@ struct SystemPanelInputMethodActions
     std::function<void(const wchar_t*)> settings;
     bool menuAvailable = false;
 };
-enum class SystemPanelShortcut { TaskManager, Terminal, Settings };
+enum class SystemPanelShortcut { TaskManager, Terminal, Settings, TerminalAdmin };
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
 {

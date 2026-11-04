@@ -79,14 +79,6 @@ SystemPanelSource LiveSystemPanelSource(std::shared_ptr<wr::WidgetSystemDataProv
     s.unsubscribe=[data](auto topic){data->StopTopic("nativeSystemPanel",topic);};
     s.close=[data,service]{data->RemoveConsumer("nativeSystemPanel");service->RemoveConsumer("nativeSystemPanel");};
     s.settings=[](const wchar_t* uri){ShellExecuteW(nullptr,L"open",uri,nullptr,nullptr,SW_SHOWNORMAL);};
-    s.launchShortcut=[](SystemPanelShortcut shortcut) {
-        const wchar_t* target=shortcut==SystemPanelShortcut::TaskManager?L"taskmgr.exe":
-            shortcut==SystemPanelShortcut::Terminal?L"wt.exe":L"ms-settings:";
-        auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",target,nullptr,nullptr,SW_SHOWNORMAL));
-        if(result<=32&&shortcut==SystemPanelShortcut::Terminal)
-            result=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",L"powershell.exe",nullptr,nullptr,SW_SHOWNORMAL));
-        if(result<=32)MessageBeep(MB_ICONWARNING);
-    };
     s.media=[data]{return data->MediaSessions();};s.artwork=[data]{return data->MediaArtwork();};
     s.cpu=[data]{return data->Cpu();};s.memory=[data]{return data->Memory();};s.gpu=[data]{return data->Gpu(true);};s.traffic=[data]{return data->NetworkTraffic();};
     s.history=[data](auto topic,auto id){return data->ResourceHistory(topic,id);};
@@ -1093,16 +1085,14 @@ void SystemPanelModel::PowerActions(float& y)
 {
     const auto capabilities=Current("host.power.actions");
     const bool compact=action_==StatusBarAction::SystemMenu;
-    // Segoe MDL2 glyphs used by the native panel renderer.
-    constexpr const wchar_t* glyphs[]{L"\uE72E",L"\uE708",L"\uE8AC",L"\uE777",L"\uE7E8"};
     for(std::size_t index=0;index<SystemPowerActions.size();++index)
     {
         const auto& action=SystemPowerActions[index];
         const std::string id="power."+std::string(action.id);
         const float inset=compact?4.f:16.f;
         auto& item=Add(id,ui::Role::ListItem,Rect(inset,y,scene_.width-2*inset,compact?32.f:44.f),_LW(action.label),
-            compact?glyphs[index]:L"");
-        if(compact)item.glyphSize=16;
+            compact?action.glyph:L"");
+        if(compact){item.glyphSize=16;item.fluentGlyph=true;}
         item.enabled=std::string_view(action.id)!="hibernate"||j::Flag(capabilities,"hibernateSupported");
         BindAction(id,"power.action",action.id);const std::string task=action.task;
         Command(id,[this,task]{
@@ -1116,13 +1106,14 @@ void SystemPanelModel::SystemMenu(float& y)
 {
     struct Shortcut { const char* id; const char* label; const wchar_t* glyph; SystemPanelShortcut target; };
     const Shortcut shortcuts[]{
-        {"system.taskManager","statusBar.taskManager",L"\uE9D9",SystemPanelShortcut::TaskManager},
-        {"system.terminal","statusBar.terminal",L"\uE756",SystemPanelShortcut::Terminal},
-        {"system.settings","statusBar.systemSettings",L"\uE713",SystemPanelShortcut::Settings}};
+        {"system.taskManager","statusBar.taskManager",system_menu_icon::taskManager,SystemPanelShortcut::TaskManager},
+        {"system.terminal","statusBar.terminal",system_menu_icon::terminal,SystemPanelShortcut::Terminal},
+        {"system.terminalAdmin","winx.terminalAdmin",system_menu_icon::terminalAdmin,SystemPanelShortcut::TerminalAdmin},
+        {"system.settings","statusBar.systemSettings",system_menu_icon::settings,SystemPanelShortcut::Settings}};
     for(const auto& shortcut:shortcuts)
     {
         auto& item=Add(shortcut.id,ui::Role::ListItem,Rect(4,y,scene_.width-8,32),_LW(shortcut.label),shortcut.glyph);
-        item.glyphSize=16;
+        item.glyphSize=16;item.fluentGlyph=true;
         item.enabled=static_cast<bool>(source_.launchShortcut);
         Command(item.id,[this,target=shortcut.target]{
             const auto launch=source_.launchShortcut;

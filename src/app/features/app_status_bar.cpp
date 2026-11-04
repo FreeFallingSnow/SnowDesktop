@@ -15,6 +15,7 @@
 #include "system/panel/system_panel_model.h"
 #include "system/calendar/system_calendar_editor.h"
 #include "system/controls/system_controls.h"
+#include "system/controls/system_quick_controls.h"
 #include "ui/menu/modern_menu.h"
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
@@ -337,6 +338,20 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             return command;
         });
         systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
+        systemPanel_->SetShortcutHandler([this](snowdesktop::SystemPanelShortcut shortcut, HWND source) {
+            if(exitRequested_||!systemPanel_)return;
+            const HWND launchOwner=ShellLaunchOwnerHwnd(source);
+            const std::weak_ptr<std::uint64_t> life=statusBarActivationGeneration_;
+            systemPanel_->CloseThen([this,life,shortcut,launchOwner] {
+                if(life.expired()||exitRequested_)return;
+                RestoreInteractionInputFocus();
+                using Shortcut=snowdesktop::SystemPanelShortcut;
+                if(shortcut==Shortcut::Terminal||shortcut==Shortcut::TerminalAdmin)
+                    (void)snowdesktop::power_user_menu::OpenTerminal(launchOwner,shortcut==Shortcut::TerminalAdmin);
+                else ShellExecuteW(launchOwner,L"open",shortcut==Shortcut::TaskManager?L"taskmgr.exe":L"ms-settings:",
+                    nullptr,nullptr,SW_SHOWNORMAL);
+            },launchOwner);
+        });
         systemPanel_->SetTrayStateChanged([this](HMONITOR monitor,bool expanded) {
             if(statusBar_)statusBar_->SetTrayExpanded(monitor,expanded);
         });
@@ -698,7 +713,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             AppendMenuW(menu, MF_STRING, 1, _LW("statusBar.menu.settings"));
             AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
             SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
-            SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
+            SetMenuItemIcon(menu,2,snowdesktop::system_menu_icon::taskManager,MenuIconFont::FluentRegular);
         }
         // Use the clicked item's identity for direct quick settings. All changes
         // go through the same controller as the settings window, after dismissal.
