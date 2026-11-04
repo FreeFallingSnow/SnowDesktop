@@ -63,7 +63,6 @@ bool RestartWindowsExplorer();
 PersonalizationSettings MakeTransparentTaskbarAppearance();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState();
-bool TakeSystemPowerUserMenuRequest(HWND& foreground);
 bool IsClassicSystemTaskbar();
 void NotifySystemTaskbarCreated();
 LONG DrainSystemTaskbarAutoHideTrace(

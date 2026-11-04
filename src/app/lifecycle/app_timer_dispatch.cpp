@@ -764,17 +764,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
-        HWND powerMenuSource = nullptr;
-        if (TakeSystemPowerUserMenuRequest(powerMenuSource))
-        {
-            if (HasActiveContextMenuSession()) DismissActiveContextMenuForPopupTransition();
-            else
-            {
-                MONITORINFO monitor{sizeof(monitor)};
-                if (GetMonitorInfoW(MonitorFromWindow(powerMenuSource, MONITOR_DEFAULTTOPRIMARY), &monitor))
-                    ShowDockContextMenu({monitor.rcWork.left + 8, monitor.rcWork.bottom - 8}, true);
-            }
-        }
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "dock.start_menu");
             UpdateDockStartMenu();

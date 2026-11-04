@@ -974,21 +974,6 @@ public:
         return SystemTaskbarBackdropRuntimeState::Loading;
     }
 
-    bool TakePowerUserMenuRequest(HWND& foreground)
-    {
-        if (!minimizeInput_.TakePowerUserMenu(foreground)) return false;
-        std::lock_guard lock(mutex_);
-        snowdesktop::taskbar_hook::Snapshot snapshot;
-        if (!snowdesktop::taskbar_hook::ReadSharedSnapshot(state_, snapshot) ||
-            !snapshot.enabled || !snapshot.suppressTaskbar) return false;
-        const HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY);
-        return std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount,
-            [monitor](const auto& target) {
-                return target.suppressTaskbar && snowdesktop::taskbar_monitor::Resolve(
-                    reinterpret_cast<HWND>(target.taskbar)) == monitor;
-            });
-    }
-
     LONG DrainAutoHideTrace(std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
         snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped)
     {
@@ -1337,11 +1322,6 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState()
 void NotifySystemTaskbarCreated()
 {
     GetTaskbarBackdropController().NotifyTaskbarCreated();
-}
-
-bool TakeSystemPowerUserMenuRequest(HWND& foreground)
-{
-    return GetTaskbarBackdropController().TakePowerUserMenuRequest(foreground);
 }
 
 LONG DrainSystemTaskbarAutoHideTrace(

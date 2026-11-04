@@ -135,6 +135,7 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **编译前检查入口的新证据**：Task `winx-start-context-menu`、批次 `687b59aa338844a4bd422c7f3c899789` 修订0，移除自绘 Win+X 兜底后尝试通过 `Enter-BuildEntry` 和 `RunLeasedCommand` 执行临时 `/Zs /W4 /WX` 头文件检查；因本任务仍处 editing 被拒绝，未启动编译。此为通用入口按现有协议正常拒绝，Agent 选用入口不适配，并非执行器故障；现有批次轻检查只接受 `builtin-basic`，尚无手册化的编辑期临时前端检查入口。本次不绕过租约、不反复重试，以后续标准构建覆盖消费者编译，保留该项前置检查未执行记录。建议统一临时检查与当前任务编辑许可、独立输出及执行权的衔接，避免前置检查只能延后。
 - **来源与证据**：2026-11-04，Task `task-8071ca0eeffa4e399782658dd729d837`，批次 `19f0476bc15c467f97f9d12daf5d6906` 修订0。Shell 参数局部修正有临时 C++ 生产入口探针，无对应正式 CTest；`plan -Scope module -Suites none` 返回 `Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.`。`build_protocol.ps1` 的 `New-TaskPlan` 确认此限制。
 - **影响与本次处理**：规则默认一次性验证不扩展正式测试工程，计划入口却要求模块选择正式条目。本次增加选择 `behavior_manifest` 检查产品部署契约，参数本身仍由临时探针检查；Run `2afc920a0b284917acbca709a3e597fa` 的标准产品构建、激活和该条目通过，临时探针随后通过。没有新增永久测试或全量测试，额外编译与等待成本未单独测量。记录位于 `.codex-probes/powerrename-background/`。
 - **下一步**：允许模块声明“产品构建加临时定向验证”及可审查的正式测试豁免理由，继续绑定源码、执行权、命令和结果，避免为满足计划准入选择间接条目或新增永久测试。当前只登记，未修改准入实现，也未为反馈重复构建。
