@@ -35,6 +35,25 @@ struct QuickNavigationSearchEngine
     bool operator==(const QuickNavigationSearchEngine&) const = default;
 };
 
+enum class QuickNavigationFavoriteType
+{
+    File,
+    Folder,
+    DesktopItem,
+    Application,
+};
+
+struct QuickNavigationFavorite
+{
+    QuickNavigationFavoriteType type = QuickNavigationFavoriteType::File;
+    // File/folder path, desktop parsing name, or application parsing name.
+    std::string target;
+    // Stable desktop layout key when the favorite came from a desktop item.
+    std::string desktopKey;
+    std::string name;
+    bool operator==(const QuickNavigationFavorite&) const = default;
+};
+
 struct QuickNavigationLayout
 {
     int expandedWidth = 860, collapsedWidth = 640, maximumHeight = 640;
@@ -60,6 +79,8 @@ struct NavigationSettings
     std::map<std::string, bool> widgetSortByInitial;
     bool lastCollapsed = false;
     bool appSuggestionsEnabled = false;
+    bool favoritesEnabled = false;
+    std::vector<QuickNavigationFavorite> favorites;
     QuickNavigationLayout layout;
     std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "="};
     std::string defaultEngine = "bing";

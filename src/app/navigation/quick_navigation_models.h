@@ -37,6 +37,8 @@ struct Entry
     {
         DesktopItem,
         FolderEntry,
+        PathFavorite,
+        ApplicationFavorite,
     };
 
     Kind kind = Kind::DesktopItem;            /**< 条目来源类型 */
@@ -47,6 +49,7 @@ struct Entry
     std::wstring name;           /**< 显示名称 */
     std::wstring path;           /**< 完整路径 */
     std::wstring source;         /**< 来源标识 */
+    bool isDirectory = false;    /**< 路径收藏是否为目录 */
 };
 
 struct Section
@@ -54,6 +57,8 @@ struct Section
     std::wstring label;
     size_t firstEntryIndex = 0;
     size_t entryCount = 0;
+    bool showWhenEmpty = false;
+    bool favoriteSection = false;
 };
 
 struct ContentModel
@@ -167,6 +172,7 @@ enum class PointerTargetKind
     InitialBack,
     InitialBucket,
     SectionHeader,
+    SectionAdd,
     Item,
     App,
     ExpandApps,

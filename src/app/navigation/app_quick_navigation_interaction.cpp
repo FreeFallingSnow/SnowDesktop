@@ -263,6 +263,25 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
             point))
         return true;
 
+    if (!searching)
+    {
+        const QuickNavigationContentModel model =
+            BuildQuickNavigationContentModel();
+        for (size_t sectionIndex = 0;
+            sectionIndex < model.sections.size();
+            ++sectionIndex)
+        {
+            const RECT add = GetQuickNavigationSectionAddRect(
+                overlay, sectionIndex, model);
+            if (!PtInRect(&add, point))
+                continue;
+            ShowQuickNavigationFavoriteAddMenu({
+                point.x + virtualLeft_,
+                point.y + virtualTop_});
+            return true;
+        }
+    }
+
     if (!searching &&
         GetQuickNavigationViewMode() ==
             QuickNavigationDesktopViewMode::Initial)
@@ -447,6 +466,24 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                         nullptr, launchPath);
                 });
         }
+        else if (entry.kind == QuickNavigationEntry::Kind::PathFavorite &&
+            !entry.path.empty())
+        {
+            const std::wstring launchPath = entry.path;
+            CloseQuickNavigationThen(
+                [this, launchPath]() {
+                    LaunchPathWithShortcutPolicy(
+                        nullptr, launchPath);
+                });
+        }
+        else if (entry.kind ==
+            QuickNavigationEntry::Kind::ApplicationFavorite)
+        {
+            const auto* favoriteAppEntry =
+                FindQuickNavigationAppEntryByParsingName(entry.path);
+            if (favoriteAppEntry)
+                CloseQuickNavigationThenLaunchApp(*favoriteAppEntry);
+        }
         return true;
     }
 
@@ -535,6 +572,34 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
                 selectedEntry.widgetIndex,
                 selectedEntry.folderEntryIndex,
                 true);
+            return true;
+        }
+
+        if (selectedEntry.kind ==
+            QuickNavigationEntry::Kind::PathFavorite)
+        {
+            QuickNavigationEverythingEntry favoriteEntry;
+            favoriteEntry.name = selectedEntry.name;
+            favoriteEntry.path = selectedEntry.path;
+            favoriteEntry.isDirectory = selectedEntry.isDirectory;
+            favoriteEntry.systemIconIndex =
+                GetQuickNavigationEverythingIconIndex(
+                    favoriteEntry.path,
+                    favoriteEntry.isDirectory);
+            ShowQuickNavigationEverythingContextMenu(
+                favoriteEntry, screenPoint);
+            return true;
+        }
+
+        if (selectedEntry.kind ==
+            QuickNavigationEntry::Kind::ApplicationFavorite)
+        {
+            const auto* favoriteAppEntry =
+                FindQuickNavigationAppEntryByParsingName(
+                    selectedEntry.path);
+            if (favoriteAppEntry)
+                ShowQuickNavigationAppContextMenu(
+                    *favoriteAppEntry, screenPoint);
             return true;
         }
         return true;
@@ -894,6 +959,9 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
             : MF_STRING | MF_GRAYED,
         kAppReveal, _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kAppCreateShortcut, _LW("app.nav.send_to_desktop"));
+    const auto favorite =
+        CreateQuickNavigationFavoriteFromApp(entry);
+    AppendQuickNavigationFavoriteMenuItem(menu, favorite);
 
     SetMenuItemIcon(menu, kAppOpen, L"");
     SetMenuItemIcon(menu, kAppRunAsAdministrator,
@@ -936,6 +1004,10 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     case kAppReveal:
         snowdesktop::item_location::Reveal(
             hwnd_, entry.parsingName);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(favorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     default:
         break;
@@ -985,6 +1057,12 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, _LW("app.nav.send_to_desktop"));
     AppendMenuW(menu, MF_STRING, kEverythingCopyPath, _LW("app.nav.copy_path"));
+    auto favorite =
+        CreateQuickNavigationFavoriteFromPath(entry.path, entry.name);
+    favorite.type = entry.isDirectory
+        ? QuickNavigationFavoriteType::Folder
+        : QuickNavigationFavoriteType::File;
+    AppendQuickNavigationFavoriteMenuItem(menu, favorite);
 
     SetMenuItemIcon(menu, kEverythingOpen, L"");
     SetMenuItemIcon(menu, kEverythingRunAsAdministrator,
@@ -1037,6 +1115,10 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     case kEverythingCreateShortcut:
         CreateDesktopShortcutForPath(entry.path, entry.isDirectory,
             entry.name.empty() ? FileNameFromPath(entry.path) : entry.name);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(favorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     default:
         break;

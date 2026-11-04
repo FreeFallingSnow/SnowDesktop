@@ -90,6 +90,9 @@ struct State
     std::vector<int> tabWidths;
     int viewModeSlotWidth = 0;
     bool open = false;
+    // A native file/folder picker owns activation while it is open. The panel
+    // must stay open across that temporary deactivation.
+    bool externalDialogActive = false;
     LogicalSlotPickerRequest slotPickerRequest{};
     bool topmost = true;
     snowdesktop::quick_navigation_animation_rules::State

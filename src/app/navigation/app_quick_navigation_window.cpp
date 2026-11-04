@@ -97,6 +97,7 @@ _LW("app.interact.snow_nav_title"),
  */
 void DesktopApp::DestroyQuickNavigationWindow()
 {
+    quickNavigation_->externalDialogActive = false;
     if (quickNavigation_->hwnd) RemovePropW(quickNavigation_->hwnd, kQuickNavigationOutsidePress);
     CancelQuickNavigationTabHover();
     quickNavigation_->hasLastEditAnimationFrame = false;
@@ -432,7 +433,10 @@ int DesktopApp::GetQuickNavigationEverythingIconIndex(
                 entry.systemIconIndex = index;
                 changed = true;
             });
-        if (changed) InvalidateQuickNavigationWindow();
+        if (changed ||
+            (navigationSettings_.favoritesEnabled &&
+                quickNavigation_->open))
+            InvalidateQuickNavigationWindow();
     }, hwnd_, kBackgroundShellReadyMessage);
     return -1;
 }
@@ -1026,6 +1030,7 @@ void DesktopApp::OpenQuickNavigation(
                 foreground == quickNavigation_->searchEdit || IsChild(target, foreground));
             const bool retained = searchForeground || (dock && dock->ContainsInteractivePoint(point)) ||
                 (statusBar_ && statusBar_->ContainsPoint(screen)) || HasActiveContextMenuSession() ||
+                quickNavigation_->externalDialogActive ||
                 dragSession_.IsActive() || dragDropController_.IsTransportActive() ||
                 snowdesktop::text_input::HasEditingMenu(quickNavigation_->searchEdit) ||
                 (renameController_.IsQuickNavigationPresentation() &&
@@ -1335,6 +1340,7 @@ void DesktopApp::OpenQuickNavigation(
  */
 void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
+    quickNavigation_->externalDialogActive = false;
     if (quickNavigation_->hwnd) RemovePropW(quickNavigation_->hwnd, kQuickNavigationOutsidePress);
     const HWND captured = snowdesktop::private_pointer::Capture();
     if (captured && (captured == quickNavigation_->hwnd || captured == quickNavigation_->searchEdit ||

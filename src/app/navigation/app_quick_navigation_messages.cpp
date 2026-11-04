@@ -569,6 +569,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         {
             const HWND activatedWindow = reinterpret_cast<HWND>(lp);
             const bool retainedInteraction =
+                quickNavigation_->externalDialogActive ||
                 activatedWindow == quickNavigation_->searchEdit ||
                 (renameController_.
                     IsQuickNavigationPresentation() &&
@@ -674,6 +675,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             return DefSubclassProc(hwnd,message,wParam,lParam);
         const HWND activatedWindow = reinterpret_cast<HWND>(lParam);
         const bool retainedInteraction =
+            app->quickNavigation_->externalDialogActive ||
             activatedWindow == app->quickNavigation_->hwnd ||
             app->quickNavigation_->backdropCompositor.IsBackdropWindow(
                 activatedWindow) ||

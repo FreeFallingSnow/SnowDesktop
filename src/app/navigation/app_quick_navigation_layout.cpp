@@ -378,16 +378,22 @@ GetQuickNavigationItemRects(
     if (!searching && model.IsSectioned())
     {
         std::vector<size_t> counts;
+        std::vector<bool> includeEmpty;
         counts.reserve(model.sections.size());
+        includeEmpty.reserve(model.sections.size());
         for (const auto& section : model.sections)
+        {
             counts.push_back(section.entryCount);
+            includeEmpty.push_back(section.showWhenEmpty);
+        }
         sectionLayouts =
             snowdesktop::quick_navigation_rules::
                 BuildSectionLayouts(
                     counts, columns, cellH, rowGap,
                     QuickNavScale(28),
                     QuickNavScale(8),
-                    QuickNavScale(12));
+                    QuickNavScale(12),
+                    includeEmpty);
     }
 
     const int gap = GetQuickNavigationGap(overlay);
@@ -460,9 +466,14 @@ RECT DesktopApp::GetQuickNavigationSectionHeaderRect(
         return MakeRect(0, 0, 0, 0);
 
     std::vector<size_t> counts;
+    std::vector<bool> includeEmpty;
     counts.reserve(model.sections.size());
+    includeEmpty.reserve(model.sections.size());
     for (const auto& section : model.sections)
+    {
         counts.push_back(section.entryCount);
+        includeEmpty.push_back(section.showWhenEmpty);
+    }
     const auto layouts =
         snowdesktop::quick_navigation_rules::
             BuildSectionLayouts(
@@ -472,7 +483,8 @@ RECT DesktopApp::GetQuickNavigationSectionHeaderRect(
                 QuickNavScale(navigationSettings_.layout.rowGap),
                 QuickNavScale(28),
                 QuickNavScale(8),
-                QuickNavScale(12));
+                QuickNavScale(12),
+                includeEmpty);
     if (sectionIndex >= layouts.size())
         return MakeRect(0, 0, 0, 0);
 
@@ -483,6 +495,27 @@ RECT DesktopApp::GetQuickNavigationSectionHeaderRect(
         content.left + QuickNavScale(8), top,
         content.right - QuickNavScale(12),
         top + QuickNavScale(28));
+}
+
+RECT DesktopApp::GetQuickNavigationSectionAddRect(
+    const RECT& overlay, size_t sectionIndex,
+    const QuickNavigationContentModel& model) const
+{
+    if (sectionIndex >= model.sections.size() ||
+        !model.sections[sectionIndex].favoriteSection)
+        return MakeRect(0, 0, 0, 0);
+    const RECT header =
+        GetQuickNavigationSectionHeaderRect(
+            overlay, sectionIndex, model);
+    if (IsRectEmptyRect(header))
+        return header;
+    const int size = QuickNavScale(26);
+    const int right = header.right;
+    const int top = header.top +
+        (static_cast<int>(header.bottom - header.top) - size) / 2;
+    return MakeRect(
+        right - size - QuickNavScale(2), top,
+        right, top + size);
 }
 
 RECT DesktopApp::
@@ -1325,11 +1358,17 @@ int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,
         if (model.IsSectioned())
         {
             std::vector<size_t> counts;
+            std::vector<bool> includeEmpty;
             counts.reserve(model.sections.size());
+            includeEmpty.reserve(model.sections.size());
             for (const auto& section :
                 model.sections)
+            {
                 counts.push_back(
                     section.entryCount);
+                includeEmpty.push_back(
+                    section.showWhenEmpty);
+            }
             const auto layouts =
                 snowdesktop::quick_navigation_rules::
                     BuildSectionLayouts(
@@ -1338,7 +1377,8 @@ int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,
                         QuickNavScale(navigationSettings_.layout.rowGap),
                         QuickNavScale(28),
                         QuickNavScale(8),
-                        QuickNavScale(12));
+                        QuickNavScale(12),
+                        includeEmpty);
             return snowdesktop::
                 quick_navigation_rules::
                     SectionedContentHeight(

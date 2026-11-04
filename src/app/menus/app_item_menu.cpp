@@ -316,6 +316,11 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
+    const QuickNavigationFavorite quickNavigationFavorite =
+        selectedCount == 1
+        ? CreateQuickNavigationFavoriteFromDesktopItem(
+            static_cast<size_t>(itemIndex))
+        : QuickNavigationFavorite{};
     const auto largeIconKey = items_[itemIndex].layoutKey;
     std::vector<std::wstring> largeIconKeys{largeIconKey};
     for (const auto& item : items_)
@@ -412,6 +417,8 @@ void DesktopApp::ShowItemContextMenu(
         AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
             kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
     }
+    AppendQuickNavigationFavoriteMenuItem(
+        menu, quickNavigationFavorite);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!namespaceItem)
     {
@@ -931,6 +938,11 @@ void DesktopApp::ShowItemContextMenu(
     }
     case kContextRevealLocationCommand:
         snowdesktop::item_location::Reveal(hwnd_, itemPath);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(
+                quickNavigationFavorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     case kContextCopyPathCommand:
         CopyPathsToClipboard(selectedFilePaths);

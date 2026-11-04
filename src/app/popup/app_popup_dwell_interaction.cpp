@@ -990,6 +990,26 @@ ShowDockFolderPopupContextMenu(
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
+    auto quickNavigationFavorite =
+        singleSelection
+        ? CreateQuickNavigationFavoriteFromPath(
+            selectedPaths.front(),
+            (memberIndex &&
+                *memberIndex <
+                    dockFolderPopupWidget_.folderEntries.size())
+                ? dockFolderPopupWidget_.folderEntries[*memberIndex].DisplayName()
+                : std::wstring{})
+        : QuickNavigationFavorite{};
+    if (singleSelection)
+    {
+        const DWORD attributes =
+            GetFileAttributesW(selectedPaths.front().c_str());
+        quickNavigationFavorite.type =
+            attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            ? QuickNavigationFavoriteType::Folder
+            : QuickNavigationFavoriteType::File;
+    }
     HMENU sortMenu = nullptr;
     const std::wstring newItemDirectory = dockFolderPopupWidget_.sourceFolderPath;
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
@@ -1022,6 +1042,8 @@ ShowDockFolderPopupContextMenu(
             kContextRevealLocationCommand,
             _LW(
                 "app.menu.open_file_location"));
+        AppendQuickNavigationFavoriteMenuItem(
+            menu, quickNavigationFavorite);
         AppendMenuW(
             menu, MF_SEPARATOR,
             0, nullptr);
@@ -1220,6 +1242,11 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextCopyPathCommand:
         CopyPathsToClipboard(selectedPaths);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(
+                quickNavigationFavorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     case kContextRunAsAdministratorCommand:
         if (selectedPaths.size() == 1 &&

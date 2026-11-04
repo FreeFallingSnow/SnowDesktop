@@ -3,6 +3,30 @@
 #include <cctype>
 #include <unordered_set>
 
+namespace
+{
+std::wstring NormalizeFavoriteTarget(const std::string& value)
+{
+    if (value.empty())
+        return {};
+    const int size = MultiByteToWideChar(
+        CP_UTF8, 0, value.data(),
+        static_cast<int>(value.size()), nullptr, 0);
+    if (size <= 0)
+        return {};
+    std::wstring normalized(
+        static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, 0, value.data(),
+        static_cast<int>(value.size()),
+        normalized.data(), size);
+    CharUpperBuffW(
+        normalized.data(),
+        static_cast<DWORD>(normalized.size()));
+    return normalized;
+}
+}
+
 const char* QuickNavigationDesktopViewModeToJson(
     QuickNavigationDesktopViewMode mode)
 {
@@ -77,6 +101,24 @@ void NormalizeNavigationSettings(NavigationSettings& settings)
     l.resultRowHeight = std::max(l.resultRowHeight,l.fontSize + l.secondaryFontSize + 16);
     if (!ValidateNavigationSearchConfiguration(settings))
     { const NavigationSettings defaults; settings.prefixes = defaults.prefixes; settings.engines = defaults.engines; settings.defaultEngine = defaults.defaultEngine; }
+    std::unordered_set<std::wstring> favorites;
+    std::vector<QuickNavigationFavorite> normalizedFavorites;
+    normalizedFavorites.reserve(std::min<size_t>(settings.favorites.size(), 200));
+    for (auto& favorite : settings.favorites)
+    {
+        if (normalizedFavorites.size() >= 200 || favorite.target.empty() ||
+            favorite.name.empty() || favorite.target.size() > 32768 ||
+            favorite.desktopKey.size() > 32768 || favorite.name.size() > 1024 ||
+            favorite.target.find('\0') != std::string::npos ||
+            favorite.desktopKey.find('\0') != std::string::npos ||
+            favorite.name.find('\0') != std::string::npos)
+            continue;
+        const std::wstring key =
+            NormalizeFavoriteTarget(favorite.target);
+        if (key.empty() || !favorites.insert(key).second) continue;
+        normalizedFavorites.push_back(std::move(favorite));
+    }
+    settings.favorites = std::move(normalizedFavorites);
     for (auto it = settings.colors.begin(); it != settings.colors.end();)
     {
         bool valid = (it->second.size() == 7 || it->second.size() == 9) && it->second[0] == '#';

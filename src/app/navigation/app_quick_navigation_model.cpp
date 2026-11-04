@@ -165,7 +165,8 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("applications");
 
-    if (!GetQuickNavigationEffectiveSearchText().empty())
+    if (!GetQuickNavigationEffectiveSearchText().empty() ||
+        navigationSettings_.favoritesEnabled)
     {
         RefreshQuickNavigationAppResults();
         quickNavigation_->scrollOffset = std::clamp(quickNavigation_->scrollOffset, 0,
@@ -245,6 +246,21 @@ DesktopApp::FindQuickNavigationEverythingAppEntry() const
         }
     }
     return bestEntry;
+}
+
+const DesktopApp::QuickNavigationAppEntry*
+DesktopApp::FindQuickNavigationAppEntryByParsingName(
+    const std::wstring& parsingName) const
+{
+    if (!quickNavigation_->appsIndexed || parsingName.empty())
+        return nullptr;
+    const std::wstring normalized = ToUpperInvariant(parsingName);
+    for (const auto& entry : quickNavigation_->appEntries)
+    {
+        if (ToUpperInvariant(entry.parsingName) == normalized)
+            return &entry;
+    }
+    return nullptr;
 }
 
 std::wstring DesktopApp::GetQuickNavigationEverythingNoticeText() const
@@ -361,11 +377,13 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
     auto appendDesktop = [&](
         std::vector<QuickNavigationEntry>& destination,
         size_t itemIndex, const std::wstring& source,
-        size_t demoCollectionIndex = static_cast<size_t>(-1)) {
+        size_t demoCollectionIndex = static_cast<size_t>(-1),
+        std::unordered_set<std::wstring>* seen = nullptr) {
         if (itemIndex >= items_.size()) return;
+        auto& visibleKeys = seen ? *seen : seenDesktop;
         const DesktopItem& item = items_[itemIndex];
         std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
-        if (key.empty() || seenDesktop.contains(key)) return;
+        if (key.empty() || visibleKeys.contains(key)) return;
         if (demoCollectionIndex >= widgets_.size() &&
             generalSettings_.demoModeEnabled &&
             demoIdentityAssetsAvailable_)
@@ -399,7 +417,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             : (!IsLuaLogicalSlotPickerOpen() && ShouldUseDemoIdentity(item)
                 ? GetDemoIdentityTitle(identity) : item.name);
         if (!matches(displayName)) return;
-        seenDesktop.insert(std::move(key));
+        visibleKeys.insert(std::move(key));
 
         QuickNavigationEntry entry;
         entry.kind = QuickNavigationEntry::Kind::DesktopItem;
@@ -412,7 +430,8 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
         destination.push_back(std::move(entry));
     };
     auto appendDockDesktopItems =
-        [&](std::vector<QuickNavigationEntry>& destination) {
+        [&](std::vector<QuickNavigationEntry>& destination,
+            std::unordered_set<std::wstring>* seen = nullptr) {
         for (const DockEntry& dockEntry : dockEntries_)
         {
             if (dockEntry.type != DockEntryType::DesktopItem)
@@ -420,20 +439,24 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             appendDesktop(
                 destination,
                 FindItemIndexByKey(dockEntry.reference),
-                _LW("app.nav.source_dock"));
+                _LW("app.nav.source_dock"),
+                static_cast<size_t>(-1), seen);
         }
     };
     auto appendSection = [&](
         const std::wstring& label,
-        std::vector<QuickNavigationEntry>& entries) {
-        if (entries.empty()) return;
+        std::vector<QuickNavigationEntry>& entries,
+        bool showWhenEmpty = false,
+        bool favoriteSection = false) {
+        if (entries.empty() && !showWhenEmpty) return;
         const size_t first = model.entries.size();
         model.entries.insert(
             model.entries.end(),
             std::make_move_iterator(entries.begin()),
             std::make_move_iterator(entries.end()));
-        model.sections.push_back(
-            {label, first, model.entries.size() - first});
+        model.sections.push_back({
+            label, first, model.entries.size() - first,
+            showWhenEmpty, favoriteSection});
     };
     auto widgetTitle = [&](const DesktopWidget& widget) {
         if (ShouldUseDemoCollectionIdentity(&widget))
@@ -495,6 +518,8 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
         {
             const auto mode = navigationSettings_.desktopViewMode;
             const bool showSuggestions = snowdesktop::quick_navigation_rules::ShowAppSuggestions(
+                navigationSettings_, true, false, IsLuaLogicalSlotPickerOpen(), UseQuickNavigationList());
+            const bool showFavorites = snowdesktop::quick_navigation_rules::ShowFavorites(
                 navigationSettings_, true, false, IsLuaLogicalSlotPickerOpen(), UseQuickNavigationList());
             std::vector<QuickNavigationEntry> tileEntries;
             if (mode == QuickNavigationDesktopViewMode::Tile ||
@@ -572,22 +597,122 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 return model;
             }
             const auto finishDesktop = [&](QuickNavigationContentModel content) {
-                if (!showSuggestions) return content;
-                const auto order = snowdesktop::quick_navigation_rules::LaunchFrequencyOrder(
-                    launchCounts, true, static_cast<size_t>(GetQuickNavigationColumnCount(
-                        overlay ? *overlay : quickNavigation_->rect)));
-                if (order.empty()) return content;
-                const size_t count = order.size();
-                std::vector<QuickNavigationEntry> suggestions;
-                suggestions.reserve(count + content.entries.size());
-                for (size_t index : order) suggestions.push_back(tileEntries[index]);
-                suggestions.insert(suggestions.end(), std::make_move_iterator(content.entries.begin()),
-                    std::make_move_iterator(content.entries.end()));
+                std::vector<QuickNavigationEntry> prefixEntries;
+                std::vector<QuickNavigationSection> prefixSections;
+                if (showSuggestions)
+                {
+                    const auto order = snowdesktop::quick_navigation_rules::LaunchFrequencyOrder(
+                        launchCounts, true, static_cast<size_t>(GetQuickNavigationColumnCount(
+                            overlay ? *overlay : quickNavigation_->rect)));
+                    if (!order.empty())
+                    {
+                        const size_t first = prefixEntries.size();
+                        for (size_t index : order)
+                            prefixEntries.push_back(tileEntries[index]);
+                        prefixSections.push_back({
+                            _LW("app.nav.app_suggestions"),
+                            first, prefixEntries.size() - first});
+                    }
+                }
+                if (showFavorites)
+                {
+                    const size_t first = prefixEntries.size();
+                    const std::wstring favoriteLabel = _LW("app.nav.favorites");
+                    for (const auto& favorite : navigationSettings_.favorites)
+                    {
+                        QuickNavigationEntry entry;
+                        entry.source = favoriteLabel;
+                        const std::wstring target = Utf8ToWide(favorite.target);
+                        switch (favorite.type)
+                        {
+                        case QuickNavigationFavoriteType::File:
+                        case QuickNavigationFavoriteType::Folder:
+                            if (target.empty())
+                                break;
+                            entry.kind = QuickNavigationEntry::Kind::PathFavorite;
+                            entry.path = target;
+                            entry.isDirectory =
+                                favorite.type == QuickNavigationFavoriteType::Folder;
+                            entry.name = Utf8ToWide(favorite.name);
+                            if (entry.name.empty())
+                                entry.name = FileNameFromPath(target);
+                            if (!entry.name.empty())
+                                prefixEntries.push_back(std::move(entry));
+                            break;
+                        case QuickNavigationFavoriteType::DesktopItem:
+                        {
+                            size_t itemIndex = FindItemIndexByKey(
+                                Utf8ToWide(favorite.desktopKey));
+                            if (itemIndex >= items_.size())
+                            {
+                                const std::wstring normalizedTarget =
+                                    ToUpperInvariant(target);
+                                itemIndex = static_cast<size_t>(-1);
+                                for (size_t index = 0;
+                                    index < items_.size(); ++index)
+                                {
+                                    if (ToUpperInvariant(
+                                            items_[index].parsingName) ==
+                                        normalizedTarget)
+                                    {
+                                        itemIndex = index;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (itemIndex >= items_.size())
+                                break;
+                            entry.kind = QuickNavigationEntry::Kind::DesktopItem;
+                            entry.itemIndex = itemIndex;
+                            entry.name = items_[itemIndex].name;
+                            entry.path = items_[itemIndex].parsingName;
+                            if (entry.name.empty())
+                                entry.name = Utf8ToWide(favorite.name);
+                            if (!entry.name.empty())
+                                prefixEntries.push_back(std::move(entry));
+                            break;
+                        }
+                        case QuickNavigationFavoriteType::Application:
+                        {
+                            const auto* app =
+                                FindQuickNavigationAppEntryByParsingName(target);
+                            if (!app)
+                                break;
+                            entry.kind =
+                                QuickNavigationEntry::Kind::ApplicationFavorite;
+                            entry.name = app->name;
+                            entry.path = app->parsingName;
+                            if (entry.name.empty())
+                                entry.name = Utf8ToWide(favorite.name);
+                            if (!entry.name.empty())
+                                prefixEntries.push_back(std::move(entry));
+                            break;
+                        }
+                        }
+                    }
+                    prefixSections.push_back({
+                        favoriteLabel, first,
+                        prefixEntries.size() - first, true, true});
+                }
+                if (prefixSections.empty())
+                    return content;
                 if (content.sections.empty() && !content.entries.empty())
-                    content.sections.push_back({_LW("app.nav.tab_desktop"), 0, content.entries.size()});
-                for (auto& section : content.sections) section.firstEntryIndex += count;
-                content.sections.insert(content.sections.begin(), {_LW("app.nav.app_suggestions"), 0, count});
-                content.entries = std::move(suggestions);
+                    content.sections.push_back({
+                        _LW("app.nav.tab_desktop"), 0,
+                        content.entries.size()});
+                const size_t prefixCount = prefixEntries.size();
+                for (auto& section : content.sections)
+                    section.firstEntryIndex += prefixCount;
+                prefixEntries.insert(
+                    prefixEntries.end(),
+                    std::make_move_iterator(content.entries.begin()),
+                    std::make_move_iterator(content.entries.end()));
+                prefixSections.insert(
+                    prefixSections.end(),
+                    std::make_move_iterator(content.sections.begin()),
+                    std::make_move_iterator(content.sections.end()));
+                content.entries = std::move(prefixEntries);
+                content.sections = std::move(prefixSections);
                 return content;
             };
             if (navigationSettings_.desktopViewMode ==
@@ -602,68 +727,29 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                                     DesktopWidgetType::FileCategories;
                         });
 
-                std::vector<std::wstring>
-                    desktopKeys;
-                desktopKeys.reserve(items_.size());
-                for (const auto& item : items_)
-                    desktopKeys.push_back(
-                        ToUpperInvariant(
-                            item.layoutKey.empty()
-                            ? item.parsingName
-                            : item.layoutKey));
-                std::vector<std::vector<
-                    std::wstring>> sourceKeys(
-                        sourceWidgets.size() + 1);
-                for (const DockEntry& dockEntry :
-                    dockEntries_)
+                // Source view keeps one identity per source section. An item
+                // may intentionally appear in several sections, including
+                // both Dock and its original collection.
+                std::unordered_set<std::wstring> classifiedKeys;
+                for (const DockEntry& dockEntry : dockEntries_)
                 {
-                    if (dockEntry.type ==
-                        DockEntryType::DesktopItem)
-                        sourceKeys[0].push_back(
-                            ToUpperInvariant(
-                                dockEntry.reference));
+                    if (dockEntry.type == DockEntryType::DesktopItem)
+                        classifiedKeys.insert(
+                            ToUpperInvariant(dockEntry.reference));
                 }
                 for (size_t sourceIndex = 0;
-                    sourceIndex <
-                        sourceWidgets.size();
+                    sourceIndex < sourceWidgets.size();
                     ++sourceIndex)
                 {
-                    const auto& sourceWidget = widgets_[
-                        sourceWidgets[sourceIndex]];
-                    for (const auto& key : sourceWidget.itemKeys)
-                    {
-                        sourceKeys[
-                            sourceIndex + 1].
-                            push_back(
-                                ToUpperInvariant(
-                                    key));
-                    }
+                    for (const auto& key :
+                        widgets_[sourceWidgets[sourceIndex]].itemKeys)
+                        classifiedKeys.insert(ToUpperInvariant(key));
                 }
-                const std::vector<int> owners =
-                    snowdesktop::
-                        quick_navigation_rules::
-                            AssignSourceOwners(
-                                desktopKeys,
-                                sourceKeys);
 
                 std::vector<QuickNavigationEntry>
                     dockEntries;
-                for (const DockEntry& dockEntry :
-                    dockEntries_)
-                {
-                    if (dockEntry.type !=
-                        DockEntryType::DesktopItem)
-                        continue;
-                    const size_t itemIndex =
-                        FindItemIndexByKey(
-                            dockEntry.reference);
-                    if (itemIndex < owners.size() &&
-                        owners[itemIndex] == 0)
-                        appendDesktop(
-                            dockEntries, itemIndex,
-                            _LW(
-                                "app.nav.source_dock"));
-                }
+                std::unordered_set<std::wstring> dockSeen;
+                appendDockDesktopItems(dockEntries, &dockSeen);
                 appendSection(
                     _LW("app.nav.source_dock"),
                     dockEntries);
@@ -680,18 +766,15 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                     std::vector<
                         QuickNavigationEntry>
                         entries;
+                    std::unordered_set<std::wstring> widgetSeen;
                     for (const auto& key : widget.itemKeys)
                     {
                         const size_t itemIndex =
                             FindItemIndexByKey(key);
-                        if (itemIndex <
-                                owners.size() &&
-                            owners[itemIndex] ==
-                                static_cast<int>(
-                                    sourceIndex + 1))
-                            appendDesktop(
-                                entries, itemIndex,
-                                widgetTitle(widget), widgetIndex);
+                        appendDesktop(
+                            entries, itemIndex,
+                            widgetTitle(widget), widgetIndex,
+                            &widgetSeen);
                     }
                     appendSection(
                         widgetTitle(widget),
@@ -703,12 +786,16 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 for (size_t i = 0;
                     i < items_.size(); ++i)
                 {
-                    if (i < owners.size() &&
-                        owners[i] < 0)
-                        appendDesktop(
-                            looseEntries, i,
-                            _LW(
-                                "app.interact.free_desktop"));
+                    const DesktopItem& item = items_[i];
+                    const std::wstring key = ToUpperInvariant(
+                        item.layoutKey.empty()
+                            ? item.parsingName
+                            : item.layoutKey);
+                    if (classifiedKeys.contains(key))
+                        continue;
+                    appendDesktop(
+                        looseEntries, i,
+                        _LW("app.interact.free_desktop"));
                 }
                 appendSection(
                     _LW("app.interact.free_desktop"),

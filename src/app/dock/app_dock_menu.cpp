@@ -690,6 +690,33 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                     snowdesktop::menu_fluent_glyphs::kLinkAdd,
                     MenuIconFont::FluentRegular);
         }
+        QuickNavigationFavorite quickNavigationFavorite;
+        if (!matchingDesktopKey.empty())
+        {
+            const size_t itemIndex =
+                FindItemIndexByKey(matchingDesktopKey);
+            quickNavigationFavorite =
+                CreateQuickNavigationFavoriteFromDesktopItem(
+                    itemIndex);
+        }
+        else if (application)
+        {
+            quickNavigationFavorite =
+                CreateQuickNavigationFavoriteFromApp(
+                    application->entry);
+        }
+        else
+        {
+            quickNavigationFavorite =
+                CreateQuickNavigationFavoriteFromPath(
+                    running.executablePath,
+                    running.title.empty()
+                        ? FileNameFromPath(
+                            running.executablePath)
+                        : running.title);
+        }
+        AppendQuickNavigationFavoriteMenuItem(
+            menu, quickNavigationFavorite);
         AppendMenuW(
             menu, MF_STRING,
             kContextDockCloseApplication,
@@ -708,6 +735,13 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         if (!hwnd_ || !IsWindow(hwnd_) || dragSession_.HasContext() ||
             dragDropController_.IsTransportActive())
             return;
+        if (command == kContextFavoriteQuickNavigationCommand)
+        {
+            if (!ToggleQuickNavigationFavorite(
+                    quickNavigationFavorite))
+                MessageBeep(MB_ICONWARNING);
+            return;
+        }
 
         auto adoptRunning = [this, runningKey = running.identityKey](size_t itemIndex) {
             AdoptDockRunningPresentation(runningKey, itemIndex);

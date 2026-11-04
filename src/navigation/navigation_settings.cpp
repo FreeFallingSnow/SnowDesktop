@@ -23,6 +23,30 @@
 
 namespace
 {
+    bool FavoriteTypeFromJson(
+        const std::string& value,
+        QuickNavigationFavoriteType& type)
+    {
+        if (value == "file") type = QuickNavigationFavoriteType::File;
+        else if (value == "folder") type = QuickNavigationFavoriteType::Folder;
+        else if (value == "desktop") type = QuickNavigationFavoriteType::DesktopItem;
+        else if (value == "application") type = QuickNavigationFavoriteType::Application;
+        else return false;
+        return true;
+    }
+
+    const char* FavoriteTypeToJson(QuickNavigationFavoriteType type)
+    {
+        switch (type)
+        {
+        case QuickNavigationFavoriteType::Folder: return "folder";
+        case QuickNavigationFavoriteType::DesktopItem: return "desktop";
+        case QuickNavigationFavoriteType::Application: return "application";
+        case QuickNavigationFavoriteType::File:
+        default: return "file";
+        }
+    }
+
     bool IsExtendedKeyNameVirtualKey(UINT virtualKey)
     {
         switch (virtualKey)
@@ -225,6 +249,30 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
     if (collapsed && collapsed->IsBoolean()) settings.lastCollapsed = collapsed->boolean;
     if (const auto* value = document.Find("appSuggestionsEnabled"); value && value->IsBoolean())
         settings.appSuggestionsEnabled = value->boolean;
+    if (const auto* value = document.Find("favoritesEnabled"); value && value->IsBoolean())
+        settings.favoritesEnabled = value->boolean;
+    if (const auto* value = document.Find("favorites"); value && value->IsArray())
+    {
+        for (const auto& item : value->array)
+        {
+            if (!item.IsObject()) continue;
+            QuickNavigationFavorite favorite;
+            const auto* type = item.Find("type");
+            const auto* target = item.Find("target");
+            const auto* desktopKey = item.Find("desktopKey");
+            const auto* name = item.Find("name");
+            if (!type || !type->IsString() ||
+                !FavoriteTypeFromJson(type->string, favorite.type) ||
+                !target || !target->IsString() || target->string.empty() ||
+                !name || !name->IsString() || name->string.empty())
+                continue;
+            favorite.target = target->string;
+            favorite.name = name->string;
+            if (desktopKey && desktopKey->IsString())
+                favorite.desktopKey = desktopKey->string;
+            settings.favorites.push_back(std::move(favorite));
+        }
+    }
     if (const auto* layout = document.Find("layout"); layout && layout->IsObject())
     {
 #define SD_NAV_READ(name) if (const auto* value = layout->Find(#name); value && value->IsNumber() && std::isfinite(value->number) && value->number >= -32768 && value->number <= 32768) settings.layout.name = static_cast<int>(value->number)
@@ -290,6 +338,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
     file << "  \"virtualKey\": " << settings.virtualKey << ",\n";
     file << "  \"appSuggestionsEnabled\": " << (settings.appSuggestionsEnabled ? "true" : "false") << ",\n";
+    file << "  \"favoritesEnabled\": " << (settings.favoritesEnabled ? "true" : "false") << ",\n";
     file << "  \"desktopViewMode\": \""
          << QuickNavigationDesktopViewModeToJson(
                 settings.desktopViewMode)
@@ -317,7 +366,17 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
         }
         return out + '"';
     };
-    file << "},\n  \"widgetSortByInitial\": {";
+    file << "},\n  \"favorites\": [";
+    for (size_t i = 0; i < settings.favorites.size(); ++i)
+    {
+        if (i) file << ',';
+        const auto& favorite = settings.favorites[i];
+        file << "{\"type\":\"" << FavoriteTypeToJson(favorite.type)
+             << "\",\"target\":" << quoted(favorite.target)
+             << ",\"desktopKey\":" << quoted(favorite.desktopKey)
+             << ",\"name\":" << quoted(favorite.name) << '}';
+    }
+    file << "],\n  \"widgetSortByInitial\": {";
     first = true;
     for (const auto& [id, sort] : settings.widgetSortByInitial)
     {

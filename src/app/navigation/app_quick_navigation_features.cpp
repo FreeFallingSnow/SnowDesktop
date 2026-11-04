@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "settings/settings_search_index.h"
+#include "common/constants.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "navigation/navigation_settings.h"
 #include "common/l10n.h"
@@ -13,8 +14,11 @@
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_query.h"
 #include "navigation/quick_navigation_rules.h"
+#include "platform/operation_feedback.h"
 #include "shell/shell_launch_process.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 #include <wincodec.h>
+#include <shobjidl.h>
 
 namespace
 {
@@ -25,6 +29,55 @@ std::wstring ScopeLabel(QuickNavigationSearchType type)
 {
     return _LW(kScopeKeys[static_cast<size_t>(type)]);
 }
+
+std::optional<std::wstring> PickQuickNavigationFavoritePath(
+    HWND owner, bool pickFolders)
+{
+    ComPtr<IFileOpenDialog> dialog;
+    if (!owner || !IsWindow(owner) ||
+        FAILED(CoCreateInstance(
+            CLSID_FileOpenDialog, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) ||
+        !dialog)
+        return std::nullopt;
+
+    DWORD options = 0;
+    if (FAILED(dialog->GetOptions(&options)))
+        return std::nullopt;
+    options |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
+    options |= pickFolders ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST;
+    if (FAILED(dialog->SetOptions(options)))
+        return std::nullopt;
+    (void)dialog->SetTitle(_LW(pickFolders
+        ? "app.nav.favorite_folder_picker"
+        : "app.nav.favorite_file_picker"));
+
+    const HRESULT shown =
+        snowdesktop::operation_feedback::ShowModalWindow(
+            dialog.Get(), owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+        return std::nullopt;
+    if (FAILED(shown))
+        return std::nullopt;
+
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item)) || !item)
+        return std::nullopt;
+    PWSTR selected = nullptr;
+    if (FAILED(item->GetDisplayName(
+            SIGDN_FILESYSPATH, &selected)) ||
+        !selected)
+    {
+        if (selected)
+            CoTaskMemFree(selected);
+        return std::nullopt;
+    }
+    std::wstring path(selected);
+    CoTaskMemFree(selected);
+    return path.empty()
+        ? std::nullopt
+        : std::optional<std::wstring>(std::move(path));
+}
 }
 
 bool DesktopApp::UseQuickNavigationList() const
@@ -32,6 +85,232 @@ bool DesktopApp::UseQuickNavigationList() const
     return !IsLuaLogicalSlotPickerOpen() && (quickNavigation_->collapsed || quickNavigation_->searchType != QuickNavigationSearchType::All ||
         !snowdesktop::quick_navigation_query::PrefixCandidates(navigationSettings_, GetQuickNavigationEffectiveSearchText()).empty());
 }
+
+QuickNavigationFavorite DesktopApp::CreateQuickNavigationFavoriteFromPath(
+    const std::wstring& path, const std::wstring& displayName) const
+{
+    QuickNavigationFavorite favorite;
+    if (path.empty())
+        return favorite;
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    favorite.type = attributes != INVALID_FILE_ATTRIBUTES &&
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+        ? QuickNavigationFavoriteType::Folder
+        : QuickNavigationFavoriteType::File;
+    favorite.target = WideToUtf8(path);
+    favorite.name = WideToUtf8(
+        displayName.empty()
+            ? FileNameFromPath(path)
+            : displayName);
+    return favorite;
+}
+
+QuickNavigationFavorite
+DesktopApp::CreateQuickNavigationFavoriteFromDesktopItem(
+    size_t itemIndex) const
+{
+    QuickNavigationFavorite favorite;
+    if (itemIndex >= items_.size())
+        return favorite;
+    const DesktopItem& item = items_[itemIndex];
+    favorite.type = QuickNavigationFavoriteType::DesktopItem;
+    favorite.target = WideToUtf8(
+        item.parsingName.empty()
+            ? item.layoutKey
+            : item.parsingName);
+    favorite.desktopKey = WideToUtf8(item.layoutKey);
+    favorite.name = WideToUtf8(item.name);
+    return favorite;
+}
+
+QuickNavigationFavorite
+DesktopApp::CreateQuickNavigationFavoriteFromApp(
+    const QuickNavigationAppEntry& entry) const
+{
+    QuickNavigationFavorite favorite;
+    favorite.type = QuickNavigationFavoriteType::Application;
+    favorite.target = WideToUtf8(entry.parsingName);
+    favorite.name = WideToUtf8(entry.name);
+    return favorite;
+}
+
+bool DesktopApp::IsQuickNavigationFavorite(
+    const std::wstring& target) const
+{
+    if (target.empty())
+        return false;
+    const std::wstring normalized =
+        ToUpperInvariant(target);
+    return std::any_of(
+        navigationSettings_.favorites.begin(),
+        navigationSettings_.favorites.end(),
+        [&](const QuickNavigationFavorite& favorite) {
+            return ToUpperInvariant(
+                Utf8ToWide(favorite.target)) == normalized;
+        });
+}
+
+bool DesktopApp::AddQuickNavigationFavorite(
+    QuickNavigationFavorite favorite)
+{
+    if (favorite.target.empty() ||
+        favorite.name.empty() ||
+        navigationSettings_.favorites.size() >= 200)
+        return false;
+    if (IsQuickNavigationFavorite(
+            Utf8ToWide(favorite.target)))
+        return true;
+    navigationSettings_.favorites.push_back(
+        std::move(favorite));
+    NotifyQuickNavigationFavoritesChanged();
+    return true;
+}
+
+bool DesktopApp::ToggleQuickNavigationFavorite(
+    QuickNavigationFavorite favorite)
+{
+    if (favorite.target.empty())
+        return false;
+    const std::wstring normalized =
+        ToUpperInvariant(Utf8ToWide(favorite.target));
+    const auto it = std::find_if(
+        navigationSettings_.favorites.begin(),
+        navigationSettings_.favorites.end(),
+        [&](const QuickNavigationFavorite& current) {
+            return ToUpperInvariant(
+                Utf8ToWide(current.target)) == normalized;
+        });
+    if (it != navigationSettings_.favorites.end())
+    {
+        navigationSettings_.favorites.erase(it);
+        NotifyQuickNavigationFavoritesChanged();
+        return true;
+    }
+    return AddQuickNavigationFavorite(std::move(favorite));
+}
+
+void DesktopApp::AppendQuickNavigationFavoriteMenuItem(
+    HMENU menu, const QuickNavigationFavorite& favorite)
+{
+    if (!navigationSettings_.favoritesEnabled ||
+        !menu || favorite.target.empty())
+        return;
+    const bool exists = IsQuickNavigationFavorite(
+        Utf8ToWide(favorite.target));
+    AppendMenuW(
+        menu, MF_STRING,
+        kContextFavoriteQuickNavigationCommand,
+        exists
+            ? _LW("app.menu.unfavorite_quick_navigation")
+            : _LW("app.menu.favorite_quick_navigation"));
+    SetMenuItemIcon(
+        menu, kContextFavoriteQuickNavigationCommand,
+        snowdesktop::menu_fluent_glyphs::kPin,
+        MenuIconFont::FluentRegular);
+}
+
+void DesktopApp::NotifyQuickNavigationFavoritesChanged()
+{
+    SaveNavigationSettings(
+        GetNavigationSettingsPath().c_str(),
+        navigationSettings_);
+    if (settingsController_)
+        (void)settingsController_->SynchronizeNavigation(
+            navigationSettings_);
+    if (!quickNavigation_->open ||
+        !quickNavigation_->hwnd ||
+        !IsWindow(quickNavigation_->hwnd))
+        return;
+    PositionQuickNavigationWindow();
+    InvalidateQuickNavigationWindow();
+}
+
+void DesktopApp::ShowQuickNavigationFavoriteAddMenu(
+    POINT screenPoint)
+{
+    const HWND owner =
+        quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd : hwnd_;
+    if (!owner || !IsWindow(owner))
+        return;
+    PrepareMenuIconsForPoint(screenPoint);
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+    AppendMenuW(
+        menu, MF_STRING,
+        kQuickNavigationFavoriteFileCommand,
+        _LW("app.nav.favorite_file"));
+    AppendMenuW(
+        menu, MF_STRING,
+        kQuickNavigationFavoriteFolderCommand,
+        _LW("app.nav.favorite_folder"));
+    SetMenuItemIcon(
+        menu, kQuickNavigationFavoriteFileCommand,
+        L"\uF10C", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(
+        menu, kQuickNavigationFavoriteFolderCommand,
+        snowdesktop::menu_fluent_glyphs::kDesktopFiles,
+        MenuIconFont::FluentRegular);
+    snowdesktop::private_pointer::SetInputForeground(owner);
+    const UINT command = ShowModernMenu(
+        menu, screenPoint, owner);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+    if (command == kQuickNavigationFavoriteFileCommand)
+        ShowQuickNavigationFavoritePicker(false);
+    else if (command == kQuickNavigationFavoriteFolderCommand)
+        ShowQuickNavigationFavoritePicker(true);
+}
+
+void DesktopApp::ShowQuickNavigationFavoritePicker(bool pickFolders)
+{
+    const HWND owner =
+        quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd : hwnd_;
+    if (!owner || !IsWindow(owner))
+        return;
+
+    const bool previousDialogActive =
+        quickNavigation_->externalDialogActive;
+    quickNavigation_->externalDialogActive = true;
+    const auto selected = PickQuickNavigationFavoritePath(
+        owner, pickFolders);
+    quickNavigation_->externalDialogActive = previousDialogActive;
+
+    if (selected)
+    {
+        QuickNavigationFavorite favorite;
+        favorite.type = pickFolders
+            ? QuickNavigationFavoriteType::Folder
+            : QuickNavigationFavoriteType::File;
+        favorite.target = WideToUtf8(*selected);
+        favorite.name = WideToUtf8(
+            FileNameFromPath(*selected));
+        if (favorite.name.empty())
+            favorite.name = favorite.target;
+        if (!AddQuickNavigationFavorite(
+                std::move(favorite)))
+            MessageBeep(MB_ICONWARNING);
+    }
+
+    if (!quickNavigation_->open)
+        return;
+    (void)snowdesktop::private_pointer::SetInputForeground(
+        owner);
+    if (quickNavigation_->searchEdit &&
+        IsWindow(quickNavigation_->searchEdit))
+        (void)FocusKeyboardWindow(
+            quickNavigation_->searchEdit, true,
+            L"Quick navigation favorite picker", true);
+    else
+        (void)FocusKeyboardWindow(
+            owner, true,
+            L"Quick navigation favorite picker", true);
+    InvalidateQuickNavigationWindow();
+}
+
 int DesktopApp::QuickNavigationGridCellWidth() const
 {
     return std::max(96, navigationSettings_.layout.iconSize + navigationSettings_.layout.gridGap * 2);
@@ -373,6 +652,25 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
                 if (item.iconBitmap) DrawIconBitmap(context, GetTargetIconBitmap(context, item.iconBitmap, item.fullPath, item.iconIsMediaThumbnail), icon);
                 else DrawQuickNavSysIcon(context,item.sysIconIndex,icon);
             }
+            else if (entry.kind ==
+                QuickNavigationEntry::Kind::PathFavorite)
+            {
+                DrawQuickNavSysIcon(
+                    context,
+                    GetQuickNavigationEverythingIconIndex(
+                        entry.path, entry.isDirectory),
+                    icon);
+            }
+            else if (entry.kind ==
+                QuickNavigationEntry::Kind::ApplicationFavorite)
+            {
+                const auto* appEntry =
+                    FindQuickNavigationAppEntryByParsingName(
+                        entry.path);
+                if (appEntry)
+                    DrawQuickNavAppIcon(
+                        context, *appEntry, icon);
+            }
         }
         else if (row.kind == Kind::Scope)
             DrawQuickNavigationActionIcon(context, static_cast<QuickNavigationSearchType>(row.index), icon, 28);
@@ -671,6 +969,25 @@ bool DesktopApp::HandleQuickNavigationListClick(POINT point, bool contextMenu, P
             { items_[entry.itemIndex].selected = true; ShowItemContextMenu(screenPoint,static_cast<int>(entry.itemIndex),false,true); }
             else if (entry.widgetIndex < widgets_.size() && entry.folderEntryIndex < widgets_[entry.widgetIndex].folderEntries.size())
             { widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex].selected = true; ShowFolderEntryContextMenu(screenPoint,entry.widgetIndex,entry.folderEntryIndex,true); }
+            else if (entry.kind == QuickNavigationEntry::Kind::PathFavorite)
+            {
+                QuickNavigationEverythingEntry favoriteEntry;
+                favoriteEntry.name = entry.name;
+                favoriteEntry.path = entry.path;
+                favoriteEntry.isDirectory = entry.isDirectory;
+                ShowQuickNavigationEverythingContextMenu(
+                    favoriteEntry, screenPoint);
+            }
+            else if (entry.kind ==
+                QuickNavigationEntry::Kind::ApplicationFavorite)
+            {
+                const auto* appEntry =
+                    FindQuickNavigationAppEntryByParsingName(
+                        entry.path);
+                if (appEntry)
+                    ShowQuickNavigationAppContextMenu(
+                        *appEntry, screenPoint);
+            }
         }
         return true;
     }
@@ -717,6 +1034,23 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
                 const auto currentIndex = FindItemIndexByKey(key);
                 if (currentIndex < items_.size()) LaunchDesktopItem(currentIndex, true);
             });
+        }
+        else if (entry.kind ==
+            QuickNavigationEntry::Kind::PathFavorite)
+        {
+            CloseQuickNavigationThen(
+                [this, path = entry.path]() {
+                    LaunchPathWithShortcutPolicy(nullptr, path);
+                });
+        }
+        else if (entry.kind ==
+            QuickNavigationEntry::Kind::ApplicationFavorite)
+        {
+            const auto* appEntry =
+                FindQuickNavigationAppEntryByParsingName(
+                    entry.path);
+            if (appEntry)
+                CloseQuickNavigationThenLaunchApp(*appEntry);
         }
         else CloseQuickNavigationThen([this, path = entry.path]() { LaunchPathWithShortcutPolicy(nullptr, path); });
     }

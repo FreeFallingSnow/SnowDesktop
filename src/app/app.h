@@ -1352,6 +1352,8 @@ private:
     int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory,
         std::wstring* outKey = nullptr);
     const QuickNavigationAppEntry* FindQuickNavigationEverythingAppEntry() const;
+    const QuickNavigationAppEntry* FindQuickNavigationAppEntryByParsingName(
+        const std::wstring& parsingName) const;
     std::wstring GetQuickNavigationEverythingNoticeText() const;
     bool TryLaunchQuickNavigationEverythingApp();
     void StartQuickNavigationAppIndexing();
@@ -1388,8 +1390,24 @@ private:
     static bool IsApplicationsShellLinkTarget(
         IShellLinkW* shellLink,
         const std::wstring& shortcutPath = {});
+    QuickNavigationFavorite CreateQuickNavigationFavoriteFromDesktopItem(size_t itemIndex) const;
+    QuickNavigationFavorite CreateQuickNavigationFavoriteFromPath(
+        const std::wstring& path, const std::wstring& displayName = {}) const;
+    QuickNavigationFavorite CreateQuickNavigationFavoriteFromApp(
+        const QuickNavigationAppEntry& entry) const;
+    bool IsQuickNavigationFavorite(const std::wstring& target) const;
+    bool AddQuickNavigationFavorite(QuickNavigationFavorite favorite);
+    bool ToggleQuickNavigationFavorite(QuickNavigationFavorite favorite);
+    void NotifyQuickNavigationFavoritesChanged();
+    void AppendQuickNavigationFavoriteMenuItem(
+        HMENU menu, const QuickNavigationFavorite& favorite);
+    void ShowQuickNavigationFavoriteAddMenu(POINT screenPoint);
+    void ShowQuickNavigationFavoritePicker(bool pickFolders);
     QuickNavigationContentModel BuildQuickNavigationContentModel(const RECT* overlay = nullptr) const;
     RECT GetQuickNavigationSectionHeaderRect(
+        const RECT& overlay, size_t sectionIndex,
+        const QuickNavigationContentModel& model) const;
+    RECT GetQuickNavigationSectionAddRect(
         const RECT& overlay, size_t sectionIndex,
         const QuickNavigationContentModel& model) const;
     RECT GetQuickNavigationViewModeButtonRect(

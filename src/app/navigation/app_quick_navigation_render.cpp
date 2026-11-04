@@ -1102,7 +1102,10 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
-    else if (entries.empty() && quickNavigation_->appResultIndices.empty() &&
+    else if (entries.empty() &&
+        std::none_of(contentModel.sections.begin(), contentModel.sections.end(),
+            [](const auto& section) { return section.showWhenEmpty; }) &&
+        quickNavigation_->appResultIndices.empty() &&
         (!searching || quickNavigation_->everythingResults.empty()))
     {
         RECT emptyRect = contentApp;
@@ -1178,17 +1181,46 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         ToD2DColor(
                             t.tabDefaultStroke,
                             0.62f));
+                const RECT add = GetQuickNavigationSectionAddRect(
+                    overlay, sectionIndex, contentModel);
+                RECT labelRect = header;
+                if (!IsRectEmptyRect(add))
+                    labelRect.right = add.left - QuickNavScale(6);
                 const std::wstring label = _LFW(
                     "app.nav.section_header",
                     section.label,
                     std::to_wstring(
                         section.entryCount));
                 DrawD2DTextEllipsis(
-                    ctx.Get(), label, header,
+                    ctx.Get(), label, labelRect,
                     quickNavigation_->tabTextFormat.Get(),
                     ToD2DColor(t.headerText),
                     DWRITE_TEXT_ALIGNMENT_LEADING,
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                if (!IsRectEmptyRect(add))
+                {
+                    registerClippedHoverRegion(
+                        add, contentApp,
+                        QuickNavigationPointerTargetKind::SectionAdd,
+                        sectionIndex);
+                    const bool hovered = PtInRect(
+                        &add, contentMousePoint) != FALSE;
+                    if (hovered)
+                        DrawD2DRoundedRectangle(
+                            ctx.Get(), add,
+                            static_cast<float>(
+                                QuickNavScale(6)),
+                            ToD2DColor(t.tabHoverFill, 0.78f),
+                            ToD2DColor(
+                                t.tabDefaultStroke,
+                                0.62f));
+                    DrawQuickNavigationCenteredText(
+                        ctx.Get(), L"\uF10C", add,
+                        quickNavigation_->fluentTextFormat.Get(),
+                        ToD2DColor(
+                            hovered ? t.headerText : t.emptyText),
+                        static_cast<float>(QuickNavScale(16)));
+                }
                 const RECT separator = MakeRect(
                     header.left,
                     header.bottom -
@@ -1251,6 +1283,40 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 if (!IsRenamingItem(&folderEntry))
                     DrawQuickNavItemText(ctx.Get(), itemRectApp, folderEntry.name,
                         IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Item, i), quickNavigation_->lightTheme);
+            }
+            else if (entry.kind == QuickNavigationEntry::Kind::PathFavorite)
+            {
+                const int iconIndex = GetQuickNavigationEverythingIconIndex(
+                    entry.path, entry.isDirectory);
+                const RECT iconRect = GetQuickNavItemIconRect(itemRectApp);
+                if (iconIndex >= 0)
+                    DrawQuickNavSysIcon(ctx.Get(), iconIndex, iconRect);
+                else
+                    DrawQuickNavSysIcon(
+                        ctx.Get(),
+                        GetQuickNavigationEverythingIconIndex(
+                            entry.isDirectory ? L"folder" : L"file",
+                            entry.isDirectory),
+                        iconRect);
+                DrawQuickNavItemText(
+                    ctx.Get(), itemRectApp, entry.name,
+                    IsQuickNavigationKeyboardTarget(
+                        QuickNavigationKeyboardTargetKind::Item, i),
+                    quickNavigation_->lightTheme);
+            }
+            else if (entry.kind == QuickNavigationEntry::Kind::ApplicationFavorite)
+            {
+                const auto* appEntry =
+                    FindQuickNavigationAppEntryByParsingName(entry.path);
+                if (appEntry)
+                    DrawQuickNavAppIcon(
+                        ctx.Get(), *appEntry,
+                        GetQuickNavItemIconRect(itemRectApp));
+                DrawQuickNavItemText(
+                    ctx.Get(), itemRectApp, entry.name,
+                    IsQuickNavigationKeyboardTarget(
+                        QuickNavigationKeyboardTargetKind::Item, i),
+                    quickNavigation_->lightTheme);
             }
         }
 
