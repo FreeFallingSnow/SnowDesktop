@@ -29,6 +29,10 @@ function Start-Process {param($FilePath,$WindowStyle)
 if($MyInvocation.InvocationName -ne '.')
 )PS");write(root/L"scripts/build_preflight.ps1",preflight,true);
         copy_persistent_entry(repo,root);write(root/L".gitignore","/*\n!/scripts/\n!/.gitignore\n");init_git(root);
+        // The stand-in configure does not generate CMake metadata. Preserve
+        // the production budget/scheduling path with an explicit fake generator.
+        write(root/L"CMakePresets.json",R"JSON({"version":3,"configurePresets":[{"name":"release","generator":"Ninja","binaryDir":"${sourceDir}/.build"}],"buildPresets":[{"name":"release","configurePreset":"release"}]})JSON");
+        write(root/L".build/CMakeCache.txt","CMAKE_GENERATOR:INTERNAL=Ninja\n");
         Env env{{L"PATH",(root/L"bin").wstring()+L";"+environment(L"PATH")},{L"SNOWDESKTOP_STANDIN_MODE",mode=="configure-failure"?L"configure-failure":L"shell"}};
         if(mode=="interrupted")write(root/L"hold-native","hold");
         Child process({powershell().wstring(),L"-NoProfile",L"-File",(root/L"scripts/build_entry.ps1").wstring(),L"-Action",L"release",L"-ReloadShell"},root,env,false,false,true);

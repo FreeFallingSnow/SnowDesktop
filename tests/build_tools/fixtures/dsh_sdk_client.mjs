@@ -67,10 +67,15 @@ try{
 const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'SnowDesktop-dsh-cold-'+process.pid+'-'));
 const profile=path.join(temporary,'profile'),repository=path.join(temporary,'repository'),link=path.join(profile,'node_modules/@local/snowdesktop-collaboration');
 process.env.DSH_HOME=path.join(temporary,'home');process.env.DSH_AGENTS_HOME=path.join(temporary,'agents');
-fs.mkdirSync(path.dirname(link),{recursive:true});fs.symlinkSync(path.dirname(process.argv[2]),link,'junction');
+const bundleRoot=path.dirname(process.argv[2]);
+fs.mkdirSync(path.dirname(link),{recursive:true});
+fs.cpSync(bundleRoot,link,{recursive:true,filter:file=>!path.relative(bundleRoot,file).split(path.sep).includes('node_modules')});
 fs.mkdirSync(path.join(repository,'scripts'),{recursive:true});fs.mkdirSync(path.join(repository,'.git'));
 fs.writeFileSync(path.join(repository,'scripts/build_manager.ps1'),'# No coordinator operations in this empty startup fixture\n');
-fs.writeFileSync(path.join(profile,'package.json'),JSON.stringify({name:'dsh-cold-start-fixture',private:true,dependencies:{'@local/snowdesktop-collaboration':'link:'+path.dirname(process.argv[2])},dsh:{profile:{bundles:['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@local/snowdesktop-collaboration']}}}));
+// Isolate the bundle's own default config as well as the profile override;
+// a loader-order change must never point this fixture at the developer checkout.
+fs.writeFileSync(path.join(link,'cordis.patch.yml'),JSON.stringify([{insert:[{id:'snowdesktop-collaboration',name:'@local/snowdesktop-collaboration',config:{repositoryRoot:repository,dashboardPort:18765,wakeResidentAgents:false}}]}]));
+fs.writeFileSync(path.join(profile,'package.json'),JSON.stringify({name:'dsh-cold-start-fixture',private:true,dependencies:{'@local/snowdesktop-collaboration':'link:'+link},dsh:{profile:{bundles:['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@local/snowdesktop-collaboration']}}}));
 fs.writeFileSync(path.join(profile,'cordis.yml'),'[]\n');
 fs.writeFileSync(path.join(profile,'cordis.patch.yml'),JSON.stringify([{id:'snowdesktop-collaboration',config:{repositoryRoot:repository,dashboardPort:18765,wakeResidentAgents:false}},{id:'desktop-product-telemetry',disabled:true},{id:'product-analytics',disabled:true}]));
 let app,cold,requestedPort,actualPort;
@@ -99,6 +104,8 @@ try{
  const method='settings/describe',rpcId='cold-start-welcome';
  const response=await fetch(new URL('/api/'+method,address),{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({type:'client-request',rpcId,method,payload:{args:{}}})});
  const envelope=await response.json();
+ const readyDeadline=Date.now()+5000;
+ while(!app.ctx.get('snowCollaboration')&&Date.now()<readyDeadline)await new Promise(resolve=>setTimeout(resolve,20));
  const configuredRoot=app.ctx.get('snowCollaboration')?.bridge.root;
  // Exercise the installed registry, tools and first-wins observation policy,
  // rather than invoking a captured collaboration callback directly.
@@ -118,13 +125,12 @@ try{
  try{const target=await app.ctx.get('fs').resolve(created,{signal});const intent=await app.ctx.waterfall('fs/write-intent',target,{},()=>undefined);observationPolicyPreserved=intent?.kind==='createIfAbsent';}catch{}
  const collaborationDenial=result=>result.isError===true&&result.content.some(item=>item.type==='text'&&item.text.includes('SnowDesktop writes require an owning agent'));
  const fileGate={readAllowed:readResult.isError!==true,readError:readResult.isError?readResult.content.filter(item=>item.type==='text').map(item=>item.text).join('\n'):null,writeDenied:collaborationDenial(writeResult),editDenied:collaborationDenial(editResult),observationPolicyPreserved,newFileAbsent:!fs.existsSync(created),existingUnchanged:fs.readFileSync(existing,'utf8')==='original',errors:[writeResult,editResult].map(result=>result.content.filter(item=>item.type==='text').map(item=>item.text).join('\n'))};
- cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository),requestedPort,actualPort,fileGate,recoveryApi};
+ cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository),requestedPort,actualPort,fileGate,recoveryApi,...(!configuredRoot?{bootOutput}:{})};
 }catch(error){cold={ok:false,error:String(error.stack||error),cause:String(error.cause?.message||''),bootOutput,requestedPort,actualPort};}
 finally{
  try{if(app)await app.shutdown.shutdown(0);}finally{
   process.stdout.write=originalWrite;
-  // Remove the junction itself before recursively cleaning only the verified owned root.
-  fs.unlinkSync(link);
+  // Recursively clean only this verified owned fixture, including its copied bundle.
   const relative=path.relative(os.tmpdir(),temporary);
   if(!relative.startsWith('..')&&!path.isAbsolute(relative)&&path.basename(temporary).startsWith('SnowDesktop-dsh-cold-'+process.pid+'-'))fs.rmSync(temporary,{recursive:true,force:true});
  }

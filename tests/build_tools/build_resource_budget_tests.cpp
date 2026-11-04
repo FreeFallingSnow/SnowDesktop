@@ -23,6 +23,10 @@ struct BudgetHarness {
         call(0,{"-Command","budget","-Task","runner","-CpuCapacity",std::to_string(cpuCapacity),"-MemoryCapacityMiB","1024","-Reason","controlled small capacity"});
         require(first.git({L"worktree",L"add",L"--detach",secondRoot.wstring(),L"HEAD"}).code==0,"Resource worktree creation failed");
         fs::copy(first.scripts,secondRoot/L"scripts",fs::copy_options::recursive|fs::copy_options::overwrite_existing);
+        // Only this actor's unweighted requests model the former exclusive
+        // protocol. Never rewrite a script while its persistent worker reads it.
+        const auto legacyEntry=secondRoot/L"scripts/build_entry.ps1";
+        write(legacyEntry,read(legacyEntry)+"\nfunction Get-DefaultProjectResourceBinding([string]$Root) { Get-ProjectResourceBinding $Root $true }\n",true);
         second=std::make_unique<Bridge>(repo,secondRoot,false,true);
         second->call(secondRoot/L"scripts/build_manager.ps1",{"task-open","runner","-TaskName","second weighted resource owner"});
         gate(0,true);gate(1,true);
@@ -43,11 +47,7 @@ struct BudgetHarness {
     std::string start(int side,int cpu=1,int memory=512,bool legacy=false){
         std::vector<std::string> args={"-Command","start","-Task","runner","-Action","release"};
         if(!legacy)args.insert(args.end(),{"-CpuSlots",std::to_string(cpu),"-MemoryMiB",std::to_string(memory)});
-        const auto script=root(side)/L"scripts/build_run.ps1";
-        const auto original=read(script);
-        if(legacy){auto old=original;replace(old,"Get-DefaultProjectResourceBinding $root","Get-ProjectResourceBinding $root $true");write(script,old,true);}
         const auto id=call(side,args).at("id").str();
-        if(legacy)write(script,original,true);
         const auto launched=root(side)/L".build/collaboration/runs"/wide(id+".launch.json");until([&]{return fs::exists(launched);},15);
         first.workers.push_back(Json::parse(read(launched)));return id;
     }

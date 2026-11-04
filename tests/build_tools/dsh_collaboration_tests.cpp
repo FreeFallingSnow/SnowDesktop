@@ -169,6 +169,8 @@ void run_tests(const fs::path& repo,const fs::path& preferredModule={}) {
 import path from 'node:path';
 import http from 'node:http';
 import {pathToFileURL} from 'node:url';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 const [moduleFile,root,mode]=process.argv.slice(2);
 const {CollaborationBridge,taskId,eventInScope}=await import(pathToFileURL(moduleFile));
 const bridge=new CollaborationBridge(root),agent='fixture-agent',id=taskId(agent);
@@ -198,7 +200,8 @@ if(mode==='scope'){
  const cancelled=bridge.operate(agent,{action:'wait-messages',afterSequence:cursor},{signal:abort.signal}).then(()=>false,()=>true);
  abort.abort();const aborted=await cancelled;
  const waiting=bridge.operate(agent,{action:'wait-messages',afterSequence:cursor,waitSeconds:0});
- const event=await originalCall('event-post',id,['-Target',id,'-EventKey','wait-event','-Text','Next event']);
+ const posted=await promisify(execFile)(bridge.powershell,['-NoProfile','-File',bridge.script,'event-post',id,'-Target',id,'-EventKey','wait-event','-Text','Next event'],{cwd:root,windowsHide:true,env:{...process.env,PSExecutionPolicyPreference:'Bypass'}});
+ const event=JSON.parse(posted.stdout);
  const observed=await waiting;
  const bounded=await bridge.operate(agent,{action:'wait-messages',afterSequence:event.sequence,waitSeconds:1});
  result={aborted,options,observed,bounded,stateUnchanged:JSON.stringify(stateBefore)===JSON.stringify(bridge.state().current)};
@@ -617,7 +620,7 @@ void installed_sdk(const fs::path& repo){
     for(const auto& projection:observed.at("projections").items)require(!projection.has("error")&&projection.at("schema").at("type").str()=="object","Generated Host input codec failed normal or strict projection");
     require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
     require(observed.at("cold").at("requestedPort").integer()>=49152&&observed.at("cold").at("actualPort").integer()==observed.at("cold").at("requestedPort").integer(),"Isolated SDK cold-start ignored its reserved browser-compatible high port");
-    require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration");
+    require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration: "+observed.at("cold").dump());
     const auto& recoveryApi=observed.at("cold").at("recoveryApi");
     require(recoveryApi.at("available").boolean&&recoveryApi.at("coldListIsArray").boolean&&recoveryApi.at("agentsPreserved").boolean,"Installed Session Controller lacks the public cold-list/resolution contract or activated an Agent while listing");
     const auto& gate=observed.at("cold").at("fileGate");
