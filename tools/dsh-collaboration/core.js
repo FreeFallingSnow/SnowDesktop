@@ -99,7 +99,16 @@ export class CollaborationBridge{
    throw new Error(String(error.stderr||error.message).trim());
   }
  }
- async open(agentId){return this.call('task-open',taskId(agentId),['-TaskName','DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);}
+ async open(agentId,name){
+  if(name!==undefined&&(typeof name!=='string'||!name.trim()||name.trim().length>160||/[\r\n]/.test(name)))throw new Error('open text must be a nonempty single-line task name of at most 160 characters.');
+  const title=name?.trim(),opened=await this.call('task-open',taskId(agentId),['-TaskName',title||'DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);
+  if(!title||opened.task.displayName===title)return opened;
+  return this.call('task-stage',opened.task.id,['-TaskRevision',String(opened.task.revision),'-TaskName',title]);
+ }
+ requireTaskName(agentId){
+  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));
+  if(!task?.displayName?.trim()||task.displayName===task.id||task.displayName==='DSH '+agentId.slice(0,12))throw new Error('Set a specific task name before continuing: snow_collaboration action="open", text="<task goal>". A session ID is not a task name.');
+ }
  async verifyWrite(agentId,file){
   const target=canonicalTarget(file);
   if(!inside(this.root,target)){
@@ -142,7 +151,7 @@ export class CollaborationBridge{
  async operate(agentId,args){
   const id=taskId(agentId),action=args.action;
   if(action==='status')return this.call('status');
-  if(action==='open')return this.open(agentId);
+  if(action==='open')return this.open(agentId,args.text);
   if(action==='progress')return this.progress(agentId,args.text||'');
   if(action==='begin'){
    const registered=await this.call('begin',id,['-WaitSeconds','1']);

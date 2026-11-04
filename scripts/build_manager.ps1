@@ -423,29 +423,39 @@ try {
                 if($Command -in 'task-stage','task-close') {
                     Assert-TaskRevision $task $TaskRevision
                     if($task.phase -in 'completed','cancelled'){throw 'Closed task cannot change phase.'}
-                    if($TaskPhase -in 'completed','awaiting_input','cancelled') {
-                        $sourceLease=Try-Lease 'git.lock';if(-not $sourceLease){throw 'Git transaction is active; retry task closure without changing its revision.'}
-                        try {
-                            $audit=Get-SourceChangeAudit $state
-                            $pending=@($audit.changes|Where-Object task -eq $Participant)
-                            if($pending.Count -and $TaskPhase -ne 'cancelled'){throw ('Uncommitted task paths: '+(($pending|ForEach-Object path) -join ', ')+'. Commit or explicitly hand off these paths before awaiting input/completion.')}
-                            Set-Field $task 'sourceChanges' ([pscustomobject]@{checkedUtc=$audit.checkedUtc;pending=$pending})
-                        } finally {$sourceLease.Dispose()}
+                    $now=[DateTime]::UtcNow.ToString('o')
+                    $naming=$Command -eq 'task-stage' -and $PSBoundParameters.ContainsKey('TaskName')
+                    if($naming){
+                        if([string]::IsNullOrWhiteSpace($TaskName) -or $TaskName -match '[\r\n]'){throw 'TaskName must be a nonempty single-line task label.'}
+                        $task.displayName=$TaskName.Trim()
                     }
-                    if($Command -eq 'task-close') {
-                        if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
-                        if($state.current -and @($state.current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
-                        if(@(Get-Field $state 'activeCandidates' @()|ForEach-Object participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the captured candidate attempts have ended; task-close never cancels their Runs.'}
-                        if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
-                        $task.closedUtc=[DateTime]::UtcNow.ToString('o')
-                    } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
-                    $task.phase=$TaskPhase;$task.progress=$Progress;$task.blocker=$Blocker
-                    $task.lastHeartbeatUtc=[DateTime]::UtcNow.ToString('o');$task.lastProgressUtc=$task.lastHeartbeatUtc
+                    $nameOnly=$naming -and -not ($PSBoundParameters.ContainsKey('TaskPhase') -or $PSBoundParameters.ContainsKey('Progress') -or $PSBoundParameters.ContainsKey('Blocker') -or $PSBoundParameters.ContainsKey('RequirementsRevision'))
+                    if(-not $nameOnly){
+                        if($TaskPhase -in 'completed','awaiting_input','cancelled') {
+                            $sourceLease=Try-Lease 'git.lock';if(-not $sourceLease){throw 'Git transaction is active; retry task closure without changing its revision.'}
+                            try {
+                                $audit=Get-SourceChangeAudit $state
+                                $pending=@($audit.changes|Where-Object task -eq $Participant)
+                                if($pending.Count -and $TaskPhase -ne 'cancelled'){throw ('Uncommitted task paths: '+(($pending|ForEach-Object path) -join ', ')+'. Commit or explicitly hand off these paths before awaiting input/completion.')}
+                                Set-Field $task 'sourceChanges' ([pscustomobject]@{checkedUtc=$audit.checkedUtc;pending=$pending})
+                            } finally {$sourceLease.Dispose()}
+                        }
+                        if($Command -eq 'task-close') {
+                            if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
+                            if($state.current -and @($state.current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
+                            if(@(Get-Field $state 'activeCandidates' @()|ForEach-Object participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the captured candidate attempts have ended; task-close never cancels their Runs.'}
+                            if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
+                            $task.closedUtc=[DateTime]::UtcNow.ToString('o')
+                        } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
+                        $task.phase=$TaskPhase;$task.progress=$Progress;$task.blocker=$Blocker
+                        $task.lastProgressUtc=$now
+                        if($RequirementsRevision -ge 0){
+                            if($RequirementsRevision -lt $task.requirementsRevision){throw 'Requirements revision cannot move backwards.'}
+                            $task.requirementsRevision=$RequirementsRevision
+                        }
+                    }
+                    $task.lastHeartbeatUtc=$now
                     $task.revision=[long]$task.revision+1
-                    if($RequirementsRevision -ge 0){
-                        if($RequirementsRevision -lt $task.requirementsRevision){throw 'Requirements revision cannot move backwards.'}
-                        $task.requirementsRevision=$RequirementsRevision
-                    }
                 }
                 if($Command -eq 'event-post') {
                     if(-not $EventKey -or [string]::IsNullOrWhiteSpace($Text)){throw 'event-post requires EventKey and Text.'}

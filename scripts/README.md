@@ -687,7 +687,8 @@ prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有
 
 ```bat
 scripts\build.bat task-open task-unique -TaskName "调查构建等待" -Adapter dsh
-scripts\build.bat task-stage task-unique -TaskRevision 0 -TaskPhase investigating -Progress "已找到等待入口" -RequirementsRevision 1
+scripts\build.bat task-stage task-unique -TaskRevision 0 -TaskName "定位编译槽等待原因"
+scripts\build.bat task-stage task-unique -TaskRevision 1 -TaskPhase investigating -Progress "已找到等待入口" -RequirementsRevision 1
 scripts\build.bat task-list
 scripts\build.bat begin task-unique
 scripts\build.bat claim task-unique -Batch BATCH -Revision EDIT_REVISION -Files scripts/example.ps1
@@ -695,6 +696,8 @@ scripts\build.bat edit-verify task-unique -Batch BATCH -Revision EDIT_REVISION -
 ```
 
 `task-open` 对未关闭 ID 幂等；重复调用只刷新 `lastHeartbeatUtc`，保留 progress、lastProgressUtc、任务/需求修订、阶段、名称及编辑许可，不复活已关闭 ID。每个任务用独立 ID。`task-stage` 支持 investigating/editing/waiting/awaiting_input/blocked/validating，进展为任务自身报告，不能作为编辑授权或验证证据。汇报时机遵循[任务与协作](../AGENTS.md#任务与协作)的事件条件；存活心跳不代替有意义进展。Task 与事件保存在现有 state.json 的 taskLedger 中，沿用短时原子事务，不维护另一套调度状态。`begin` 对旧调用补录，来源为 begin-compatibility，不伪造调查起点。批次结束后显式 `task-close ID -TaskRevision N -TaskPhase completed/cancelled`；关闭不能清除活动编辑登记。
+
+更新既有任务名使用 `task-stage ID -TaskRevision N -TaskName "具体任务目标"`。名称为 1–160 个字符的单行文本；只传名称时，保留原阶段、进展、进展时间、阻塞、需求修订和编辑权，只增加 Task 修订并刷新心跳。与 `TaskPhase/Progress/Blocker/RequirementsRevision` 同传时也按原规则更新对应任务状态。自动 task-open 不改名；名称与任务 ID 的职责及汇报时机见[任务与协作](../AGENTS.md#任务与协作)。
 
 适配器可在 `task-open` 显式传入 `-Capabilities beforeWriteGate,boundedWait,liveProgress,activeTurnSteering,idleWake`，只声明已实现且配置可用的名称；`none` 撤回声明。声明须与登记的 `-Adapter` 一致，未知名称拒绝。省略参数保留既有声明；更新声明不改变业务修订、业务进展时间或编辑许可。这是适配器最近声明的功能范围，不是在线探测、实机验收或授权，仍结合心跳时间与实际证据判断。
 

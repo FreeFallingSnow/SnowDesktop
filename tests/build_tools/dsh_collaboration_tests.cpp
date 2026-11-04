@@ -327,13 +327,21 @@ apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:false});
 const mutate=(name,next=()=>null)=>hooks.get('tools/execute')({name,arguments:{file_path:'src/a.txt'},agent},next);
 let result;
 try{
+ let unnamedRejected=false;
+ try{await hooks.get('tools/pre-execute')({agent,name:'read'},()=>({kind:'allow'}));}catch(error){unnamedRejected=String(error.message).includes('specific task name');}
+ const named=JSON.parse((await tool.execute({action:'open',text:'调查宿主写入权限'},{agent})).json);
  await hooks.get('tools/pre-execute')({agent,name:'read'},()=>({kind:'allow'}));
  const denied=[];for(const name of ['write','edit']){try{await mutate(name,()=>({sentinel:'kept'}));denied.push(false);}catch{denied.push(true);}}
  const registration=JSON.parse((await tool.execute({action:'begin'},{agent})).json);await tool.execute({action:'claim',files:'src/a.txt',adoptExistingChanges:true},{agent});
  const kept=[];for(const name of ['write','edit'])kept.push(await mutate(name,()=>({sentinel:'kept'})));
  const bridge=services.snowCollaboration.bridge;
  await tool.execute({action:'progress',text:'Meaningful progress 中文'},{agent});
- const beforeHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id.startsWith('dsh-')&&task.displayName.startsWith('DSH host-fixture'));
+ const utcKey=value=>value.replace(/(\.\d*?)0+Z$/,'$1Z').replace(/\.Z$/,'Z');
+ const beforeName=bridge.state().taskLedger.tasks.find(task=>task.id===named.task.id);
+ const renamed=JSON.parse((await tool.execute({action:'open',text:'修复宿主写入权限'},{agent})).json).task;
+ const nameUpdate={name:renamed.displayName,idPreserved:renamed.id===beforeName.id,progressPreserved:renamed.progress===beforeName.progress,
+  phasePreserved:renamed.phase===beforeName.phase,progressTimePreserved:utcKey(renamed.lastProgressUtc)===utcKey(beforeName.lastProgressUtc)};
+ const beforeHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id===named.task.id);
  const realNow=Date.now,originalCall=bridge.call;let heartbeatCall;
  bridge.call=(...args)=>{heartbeatCall=originalCall.apply(bridge,args);return heartbeatCall;};
  try{
@@ -342,8 +350,8 @@ try{
   await heartbeatCall;
  }finally{Date.now=realNow;agent.status='idle';bridge.call=originalCall;}
  const afterHeartbeat=bridge.state().taskLedger.tasks.find(task=>task.id===beforeHeartbeat.id);
- const utcKey=value=>value.replace(/(\.\d*?)0+Z$/,'$1Z').replace(/\.Z$/,'Z');
  const heartbeat={capabilities:afterHeartbeat.capabilities,progress:afterHeartbeat.progress,revisionPreserved:afterHeartbeat.revision===beforeHeartbeat.revision,
+  namePreserved:afterHeartbeat.displayName===beforeHeartbeat.displayName,
   progressTimePreserved:utcKey(afterHeartbeat.lastProgressUtc)===utcKey(beforeHeartbeat.lastProgressUtc),
   refreshed:afterHeartbeat.lastHeartbeatUtc!==beforeHeartbeat.lastHeartbeatUtc};
  await bridge.call('begin','synthetic-peer');
@@ -363,17 +371,21 @@ try{
  // admission both dereference source.kind, including when a notice is replayed.
  const replayed=JSON.parse(JSON.stringify(notices));
  const consumerKinds=replayed.map(message=>message.source.kind);
- result={denied,kept,ready,stale,rebound,heartbeat,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name};
+ result={unnamedRejected,nameUpdate,denied,kept,ready,stale,rebound,heartbeat,notices:replayed,consumerKinds,rendered:tool.output.render({},output),tool:tool.name};
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
     const auto host=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"host.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring()},c.root,40);
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
+    require(observed.at("unnamedRejected").boolean,"Host allowed ordinary tools while the task still had a session placeholder name");
+    const auto& nameUpdate=observed.at("nameUpdate");
+    require(nameUpdate.at("name").str()=="修复宿主写入权限"&&nameUpdate.at("idPreserved").boolean&&nameUpdate.at("progressPreserved").boolean&&nameUpdate.at("phasePreserved").boolean&&nameUpdate.at("progressTimePreserved").boolean,
+        "Explicit Host task naming failed or overwrote task identity, state or meaningful progress");
     const auto& heartbeat=observed.at("heartbeat");
     for(const auto& capability:{"beforeWriteGate","boundedWait","liveProgress","activeTurnSteering"})require(heartbeat.at("capabilities").at(capability).boolean,"Production Host failed to declare an installed adapter capability");
     require(!heartbeat.at("capabilities").at("idleWake").boolean,"Disabled cold wake was advertised as available");
-    require(heartbeat.at("progress").str()=="Meaningful progress 中文"&&heartbeat.at("revisionPreserved").boolean&&heartbeat.at("progressTimePreserved").boolean&&heartbeat.at("refreshed").boolean,
+    require(heartbeat.at("progress").str()=="Meaningful progress 中文"&&heartbeat.at("namePreserved").boolean&&heartbeat.at("revisionPreserved").boolean&&heartbeat.at("progressTimePreserved").boolean&&heartbeat.at("refreshed").boolean,
             "Production Host heartbeat overwrote meaningful progress or failed to refresh liveness");
     require(observed.at("denied").items.size()==2&&observed.at("denied").items[0].boolean&&observed.at("denied").items[1].boolean,"Host write/edit hooks did not deny missing grants");
     require(observed.at("notices").items.size()==2&&observed.at("kept").items[0].at("sentinel").str()=="kept"&&observed.at("kept").items[1].at("sentinel").str()=="kept","Plugin lost registration/event delivery or another policy's write intent");

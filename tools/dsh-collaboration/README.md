@@ -1,6 +1,6 @@
 # SnowDesktop DSH 协作插件
 
-此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.23` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，插件、工具、文件写入与 Typert API 通过该版本随包的真实 SDK 集成测试核对；其他版本须重新核对接口。
+此目录是独立 Cordis bundle。它不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.24` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，插件、工具、文件写入与 Typert API 通过该版本随包的真实 SDK 集成测试核对；其他版本须重新核对接口。
 
 插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
 
@@ -38,6 +38,8 @@
 本地链接包改动后，可通过现有 `plugin_manager` 先 `list_bundles` 核对包名，再以 `set_bundle`、`enabled=true` 重新应用该 bundle。该操作通过宿主重新组合加载变更文件，不要求先关闭或卸载插件；返回 `applied` 后仍分别核对悬浮窗版本及实际工具行为。返回 `restart-required` 时按 `nextStep` 正常退出并重开 DSH，不反复读取旧 Host 作为新版验收，不手改 HMR 或 profile 配置。
 
 ## 任务和消息
+
+自动登记的会话名只用于占位。Agent 确定任务目标后，先调用 `snow_collaboration` 的 `{"action":"open","text":"修复 Win+D 隐藏状态栏"}` 设置具体任务名；目标变化时通过同一操作更新。普通工具执行前会拒绝仍使用自动占位名的任务，协作工具保持可用。名称限制为 1–160 个字符的单行文本；更新既有任务时通过 `task-stage -TaskName` 校验最新 Task 修订，只更新名称和元数据修订，保留进展正文、进展时间、阶段、需求修订与编辑权。省略 `text` 的 open 及自动心跳保持幂等，不覆盖名称；此入口不替代任务结束后的新任务登记。
 
 Client 先通过 `ctx.remote.$mount` 注册自定义 snapshot namespace，再在显式注入该 namespace 的子作用域注册悬浮窗；仅依赖 `api-remotes` 不会自动挂载第三方贡献。snapshot 读取 Gateway 的 `RemoteResult` 成功或错误分支。卸载撤销挂载和进行中的调用；断线保留上次快照及时间，不把旧数据写成当前成功状态。
 
