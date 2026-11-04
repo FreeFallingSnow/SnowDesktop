@@ -124,6 +124,12 @@ bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& output)
     readList("pinnedTrayItems", value.pinnedTrayItems);
     readList("trayOrder", value.trayOrder);
     readList("quickControlOrder", value.quickControlOrder);
+    // The intermediate VPN try build appended "vpn" to every saved quick-control
+    // order automatically and never let the management page add it, while the
+    // current schema stops writing "vpnControls". Migrate such legacy files back
+    // to the default-hidden state; an order from a current-schema file (no
+    // "vpnControls" key) lists "vpn" only after the user added it there.
+    if (input.Find("vpnControls")) std::erase(value.quickControlOrder, std::string("vpn"));
     readList("hiddenQuickControls", value.hiddenQuickControls);
     readList("leftOrder", value.leftOrder);
     readList("rightOrder", value.rightOrder);

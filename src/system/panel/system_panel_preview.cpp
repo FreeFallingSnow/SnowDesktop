@@ -1663,6 +1663,28 @@ void CheckVpnPage()
     model.Select("");Require(!model.View().Find("quick:vpn"),"the hidden VPN control stayed in the quick grid");
     model.Close();
 }
+void CheckLegacyVpnOrderMigration()
+{
+    // The intermediate VPN try build always appended "vpn" to the saved
+    // quick-control order, and its management page never added it explicitly,
+    // so a file that still stores "vpnControls" returns to the default-hidden
+    // state. Current-schema settings no longer write that key; their order
+    // lists "vpn" only after the user enabled it from the management page and
+    // must keep it.
+    JsonValue legacy;StatusBarSettings migrated;
+    Require(ParseJson(R"({"vpnControls":false,"quickControlOrder":["projection","hotspot","airplane","power","microphone","awake","vpn"]})",legacy)&&
+        DecodeStatusBarSettings(legacy,migrated),"the legacy VPN settings fixture did not decode");
+    Require(std::find(migrated.quickControlOrder.begin(),migrated.quickControlOrder.end(),"vpn")==migrated.quickControlOrder.end(),
+        "legacy VPN settings kept the automatically appended quick control");
+    Require(std::find(migrated.quickControlOrder.begin(),migrated.quickControlOrder.end(),"projection")!=migrated.quickControlOrder.end()&&
+        std::find(migrated.quickControlOrder.begin(),migrated.quickControlOrder.end(),"power")!=migrated.quickControlOrder.end(),
+        "legacy VPN migration discarded the stored quick-control order");
+    JsonValue current;StatusBarSettings kept;
+    Require(ParseJson(R"({"quickControlOrder":["projection","vpn"]})",current)&&
+        DecodeStatusBarSettings(current,kept),"the current VPN settings fixture did not decode");
+    Require(std::find(kept.quickControlOrder.begin(),kept.quickControlOrder.end(),"vpn")!=kept.quickControlOrder.end(),
+        "an explicitly added VPN quick control was removed without the legacy key");
+}
 void CheckFeedbackLayouts()
 {
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
@@ -2760,6 +2782,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             {
                 CheckQuickControls();
                 CheckVpnPage();
+                CheckLegacyVpnOrderMigration();
                 CheckClosedCallbacks();
                 CheckInputMethodPanel(device,text,request,result,appearance,background,stage);
                 CheckControlPromptVisuals(request,result,appearance);
