@@ -77,7 +77,7 @@ export function apply(ctx,config){
    text:{type:'string'},files:{type:'string'},adoptExistingChanges:{type:'boolean'},claimMode:{type:'string',enum:['add','set']},
    detail:{type:'string',enum:['compact','full']},deferBatchResult:{type:'boolean'},
    inputs:{type:'string'},reason:{type:'string'},scope:{type:'string'},suites:{type:'string'},tests:{type:'string'},
-   afterSequence:{type:'integer'},sequence:{type:'integer'},waitSeconds:{type:'integer',minimum:0,maximum:86400}
+   afterSequence:{type:'integer'},sequence:{type:'integer'},waitSeconds:{type:'integer'}
   },
   output:{schema:{type:'object',properties:{json:{type:'string',required:true}},additionalProperties:false},render:(_args,value)=>[{type:'text',text:value.json}]},
   async execute(args,exec){

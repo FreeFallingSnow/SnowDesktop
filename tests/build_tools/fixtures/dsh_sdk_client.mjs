@@ -104,13 +104,15 @@ try{
  const method='settings/describe',rpcId='cold-start-welcome';
  const response=await fetch(new URL('/api/'+method,address),{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie},body:JSON.stringify({type:'client-request',rpcId,method,payload:{args:{}}})});
  const envelope=await response.json();
- const readyDeadline=Date.now()+5000;
- while(!app.ctx.get('snowCollaboration')&&Date.now()<readyDeadline)await new Promise(resolve=>setTimeout(resolve,20));
- const configuredRoot=app.ctx.get('snowCollaboration')?.bridge.root;
  // Exercise the installed registry, tools and first-wins observation policy,
  // rather than invoking a captured collaboration callback directly.
  await app.ctx.plugin(await sdk('@deepseek-ai/dsh-tool-fs'),{read:true,readImage:false,write:true,edit:true,readLimit:2000,readMaxLineLength:2000,readMaxBytes:51200,readStreamMinSize:65536});
+ // Collaboration injects fs. Observe readiness after installing that dependency.
+ const readyDeadline=Date.now()+5000;
+ while(!app.ctx.get('snowCollaboration')&&Date.now()<readyDeadline)await new Promise(resolve=>setTimeout(resolve,20));
+ const configuredRoot=app.ctx.get('snowCollaboration')?.bridge.root;
  const tools=app.ctx.get('tools'),signal=new AbortController().signal;
+ const waitDefinition=tools.get('snow_collaboration');
  const recovery=app.ctx.get('sessionController'),agents=app.ctx.get('agents');
  const beforeColdList=agents.list().length;
  const coldList=recovery&&typeof recovery.list==='function'?await recovery.list({},signal):undefined;
@@ -125,7 +127,7 @@ try{
  try{const target=await app.ctx.get('fs').resolve(created,{signal});const intent=await app.ctx.waterfall('fs/write-intent',target,{},()=>undefined);observationPolicyPreserved=intent?.kind==='createIfAbsent';}catch{}
  const collaborationDenial=result=>result.isError===true&&result.content.some(item=>item.type==='text'&&item.text.includes('SnowDesktop writes require an owning agent'));
  const fileGate={readAllowed:readResult.isError!==true,readError:readResult.isError?readResult.content.filter(item=>item.type==='text').map(item=>item.text).join('\n'):null,writeDenied:collaborationDenial(writeResult),editDenied:collaborationDenial(editResult),observationPolicyPreserved,newFileAbsent:!fs.existsSync(created),existingUnchanged:fs.readFileSync(existing,'utf8')==='original',errors:[writeResult,editResult].map(result=>result.content.filter(item=>item.type==='text').map(item=>item.text).join('\n'))};
- cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository),requestedPort,actualPort,fileGate,recoveryApi,...(!configuredRoot?{bootOutput}:{})};
+ cold={http:response.status,ok:envelope.result?.ok,error:envelope.result?.error,names:(envelope.result?.value?.namespaces||[]).map(item=>item.ns),configuredRepositoryIsolated:configuredRoot===fs.realpathSync.native(repository),configuredRoot,isolatedRoot:fs.realpathSync.native(repository),requestedPort,actualPort,fileGate,recoveryApi,waitDefinitionNoDeadline:Boolean(waitDefinition)&&waitDefinition.timeoutMs===undefined,...(!configuredRoot?{bootOutput,services:Object.fromEntries(['tools','agents','workingDirectory','fs'].map(name=>[name,Boolean(app.ctx.get(name))]))}:{})};
 }catch(error){cold={ok:false,error:String(error.stack||error),cause:String(error.cause?.message||''),bootOutput,requestedPort,actualPort};}
 finally{
  try{if(app)await app.shutdown.shutdown(0);}finally{

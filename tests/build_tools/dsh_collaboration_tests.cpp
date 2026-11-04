@@ -487,7 +487,7 @@ try{
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
-    for(const std::wstring mode:{L"disabled",L"enabled"}){
+    const auto checkResident=[&](const std::wstring& mode){
         Coordinator wakeRoot(repo,"dsh-resident-wake");
         const auto execution=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"wake.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),wakeRoot.root.wstring(),mode},c.root,30);
         require(execution.code==0,"Production wake delivery carrier failed: "+execution.out+execution.err);
@@ -506,7 +506,10 @@ console.log(JSON.stringify(result));
         for(size_t index=0;index<2;++index)require(wake.at("receiptTasks").items[index].str()==wake.at("expectedTasks").items[index].str()&&wake.at("receiptLevels").items[index].str()=="adapter","Delivery manufactured Agent acknowledgement or acknowledged a wrong recipient");
         for(const auto& phase:{"duplicate","unloaded"})require(wake.at(phase).at("acks").integer()==0&&wake.at(phase).at("notices").integer()==0,"Repeated polling or unloaded plugin delivered an event");
         require(wake.at("errors").items.empty(),"Production delivery reported an unexpected error");
-    }
+    };
+    auto residentDisabled=std::async(std::launch::async,[&]{checkResident(L"disabled");});
+    auto residentEnabled=std::async(std::launch::async,[&]{checkResident(L"enabled");});
+    residentDisabled.get();residentEnabled.get();
     // Setup still calls the production coordinator, but one PowerShell owner
     // avoids twelve process startups per cold mode inside the shared budget.
     write(c.root/L"prepare-cold.ps1",R"PS(param([string]$Coordinator,[string]$TaskData)
@@ -587,21 +590,19 @@ console.log(JSON.stringify(result));
     auto residentOnly=read(repo/L"tools/dsh-collaboration/index.js");
     replace(residentOnly,"if(config.wakeResidentAgents&&cold&&await resumePending(state))state=bridge.state();","// Former resident-only path leaves cold recipients inactive.");
     write(c.root/L"cold-old/index.js",residentOnly);write(c.root/L"cold-old/core.js",read(repo/L"tools/dsh-collaboration/core.js"));write(c.root/L"cold-old/package.json","{\"type\":\"module\"}");
-    // Construct roots serially; run only independent process/state owners in
-    // three groups, matching this test's existing PROCESSORS3 reservation.
-    std::vector<std::unique_ptr<Coordinator>> recoveryRoots;
-    for(int index=0;index<4;++index)recoveryRoots.push_back(std::make_unique<Coordinator>(repo,"dsh-cold-recovery"));
-    Coordinator former(repo,"dsh-cold-former");
+    // Prepare and execute independent roots in the same three groups, matching
+    // the existing PROCESSORS3 reservation. No shared fixture state is written.
     auto coldPrimary=std::async(std::launch::async,[&]{
-        checkCold(L"enabled",recoveryRoots[0]->root);
+        Coordinator enabled(repo,"dsh-cold-recovery"),former(repo,"dsh-cold-former");
+        checkCold(L"enabled",enabled.root);
         const auto oldRun=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"cold-recovery.mjs").wstring(),(c.root/L"cold-old/index.js").wstring(),former.root.wstring(),L"legacy"},c.root,40);
         require(oldRun.code==0,"Former cold-session path did not reach its business observation: "+oldRun.out+oldRun.err);
         const auto oldCold=Json::parse(oldRun.out);bool oldRejected=false;
         try{requireRestored(oldCold);}catch(const std::exception& error){oldRejected=std::string(error.what())=="Addressed urgent event did not restore its persisted project session";}
         require(oldRejected&&oldCold.at("receipts").items.empty(),"Former resident-only path did not fail the same persisted-session wake assertion");
     });
-    auto coldDisabled=std::async(std::launch::async,[&]{checkCold(L"disabled",recoveryRoots[1]->root);});
-    auto coldOther=std::async(std::launch::async,[&]{checkCold(L"missing",recoveryRoots[2]->root);checkCold(L"unload",recoveryRoots[3]->root);});
+    auto coldDisabled=std::async(std::launch::async,[&]{Coordinator disabled(repo,"dsh-cold-recovery");checkCold(L"disabled",disabled.root);});
+    auto coldOther=std::async(std::launch::async,[&]{Coordinator missing(repo,"dsh-cold-recovery"),unload(repo,"dsh-cold-recovery");checkCold(L"missing",missing.root);checkCold(L"unload",unload.root);});
     coldPrimary.get();coldDisabled.get();coldOther.get();
     client_tests(repo,c.root);
     std::cout<<"PASS production DSH bridge: early presence, denied writes, claimed/reopened paths and retired grants; Host loading and overlay require DSH acceptance\n";
@@ -621,6 +622,7 @@ void installed_sdk(const fs::path& repo){
     require(observed.at("cold").at("ok").boolean&&observed.at("cold").at("http").integer()==200,"Cold-start welcome settings.describe RPC failed: "+result.out+result.err);
     require(observed.at("cold").at("requestedPort").integer()>=49152&&observed.at("cold").at("actualPort").integer()==observed.at("cold").at("requestedPort").integer(),"Isolated SDK cold-start ignored its reserved browser-compatible high port");
     require(observed.at("cold").at("configuredRepositoryIsolated").boolean,"Cold-start plugin did not bind its isolated repository configuration: "+observed.at("cold").dump());
+    require(observed.at("cold").at("waitDefinitionNoDeadline").boolean,"Installed SDK did not register the event wait without an outer tool deadline");
     const auto& recoveryApi=observed.at("cold").at("recoveryApi");
     require(recoveryApi.at("available").boolean&&recoveryApi.at("coldListIsArray").boolean&&recoveryApi.at("agentsPreserved").boolean,"Installed Session Controller lacks the public cold-list/resolution contract or activated an Agent while listing");
     const auto& gate=observed.at("cold").at("fileGate");
