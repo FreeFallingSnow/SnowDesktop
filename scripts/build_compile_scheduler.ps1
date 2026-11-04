@@ -35,7 +35,8 @@ function Get-AdaptiveCompileDecision($Budget,[string]$Workload,[long]$AvailableM
     # Available physical memory already excludes this Run's resident pages.
     # Never add private commit back as if it were free physical memory.
     $live=[long][Math]::Max(0,$AvailableMiB-$Budget.headroomMiB-$OtherReservedMiB-256)
-    $desired=[long][Math]::Min($Budget.memoryCapacityMiB,1024+[long]$Budget.cpuSlots*$perCompiler)
+    $remainingCapacity=[long][Math]::Max(0,$Budget.memoryCapacityMiB-$OtherReservedMiB)
+    $desired=[long][Math]::Min($remainingCapacity,1024+[long]$Budget.cpuSlots*$perCompiler)
     $memory=[int]([Math]::Floor([Math]::Min($desired,$live)/256)*256)
     $jobs=[int][Math]::Min($Budget.cpuSlots,[Math]::Max(1,[Math]::Floor(($memory-1024)/[double]$perCompiler)))
     return [pscustomobject]@{workload=$Workload;perCompilerMiB=$perCompiler;overheadMiB=1024;transitionMiB=256;
