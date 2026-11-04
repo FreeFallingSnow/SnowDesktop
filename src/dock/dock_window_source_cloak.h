@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include <mutex>
+#include <atomic>
 #include "dock_cloak_dispatcher.h"
 
 namespace snowdesktop::dock_source_cloak
@@ -12,8 +13,8 @@ inline constexpr wchar_t ProcessProperty[] = L"SnowDesktop.Dock.SourceCloak.Proc
 inline constexpr wchar_t TokenProperty[] = L"SnowDesktop.Dock.SourceCloak.Token.v1";
 inline constexpr wchar_t HostTokenProperty[] = L"SnowDesktop.Dock.SourceCloak.LeaseHost.v1";
 inline constexpr wchar_t CommandName[] = L"SnowDesktop.Dock.SourceCloak.Command.v1";
-inline constexpr wchar_t ResultProperty[] = L"SnowDesktop.Dock.SourceCloak.Result.v1";
-inline constexpr wchar_t AckProperty[] = L"SnowDesktop.Dock.SourceCloak.Ack.v1";
+inline constexpr wchar_t ResultProperty[] = L"SnowDesktop.Dock.SourceCloak.Result.v4";
+inline constexpr wchar_t AckProperty[] = L"SnowDesktop.Dock.SourceCloak.Ack.v4";
 inline constexpr wchar_t RecoveryProperty[] = L"SnowDesktop.Dock.SourceCloak.Recovery.v1";
 inline constexpr wchar_t TimerProperty[] = L"SnowDesktop.Dock.SourceCloak.Timer.v1";
 
@@ -34,11 +35,25 @@ inline Owner RequestOwner(const dock_minimize::CloakRequest& request) noexcept
         reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.process)),
         reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(request.token))};
 }
-inline dock_minimize::CloakRequest MakeRequest(HWND source, Owner owner, BOOL cloak) noexcept
+inline std::uint32_t NextRequestId(BOOL cloak) noexcept
 {
-    return {2, static_cast<std::uint32_t>(cloak != FALSE), reinterpret_cast<UINT_PTR>(source),
+    static std::atomic<std::uint32_t> serial{0};
+    auto current = serial.load(std::memory_order_relaxed);
+    // Keep IDs representable by an x86 window property. Exhaustion fails closed
+    // rather than accepting an ancient acknowledgement after wrapping.
+    while (current < 0x7fffffffu)
+    {
+        if (serial.compare_exchange_weak(current, current + 1, std::memory_order_relaxed))
+            return ((current + 1) << 1) | static_cast<std::uint32_t>(cloak != FALSE);
+    }
+    return 0;
+}
+inline dock_minimize::CloakRequest MakeRequest(HWND source, Owner owner, BOOL cloak,
+    std::uint32_t requestId) noexcept
+{
+    return {4, static_cast<std::uint32_t>(cloak != FALSE), reinterpret_cast<UINT_PTR>(source),
         reinterpret_cast<UINT_PTR>(owner.window), reinterpret_cast<UINT_PTR>(owner.process),
-        reinterpret_cast<UINT_PTR>(owner.token)};
+        reinterpret_cast<UINT_PTR>(owner.token), requestId};
 }
 
 inline Owner ReadOwner(HWND source) noexcept
@@ -138,7 +153,7 @@ inline HRESULT StartRecoveryTimer(HWND source) noexcept
 
 // DWMWA_CLOAK rejects a caller in a different process. The per-thread
 // CALLWNDPROC hook applies it inside the source process and acknowledges the
-// current lease; the source application's window procedure is unchanged.
+// exact request; the source application's window procedure is unchanged.
 inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& request) noexcept
 {
     const std::lock_guard lock(LocalLeaseMutex());
@@ -152,8 +167,11 @@ inline void HandleCommand(HWND source, const dock_minimize::CloakRequest& reques
     if (SUCCEEDED(hr)) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
     if ((cloak && FAILED(hr)) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
     if (!SameOwner(source, owner)) return;
-    SetPropW(source, ResultProperty, ULongToHandle(static_cast<ULONG>(hr)));
-    SetPropW(source, AckProperty, owner.token);
+    // Invalidate before changing the payload, then publish the request ID last.
+    // A reader checks the ID on both sides of its payload read.
+    RemovePropW(source, AckProperty);
+    if (SetPropW(source, ResultProperty, ULongToHandle(static_cast<ULONG>(hr))))
+        SetPropW(source, AckProperty, ULongToHandle(static_cast<ULONG>(request.requestId)));
 }
 
 inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed) noexcept
@@ -164,21 +182,27 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
     if (!SameOwner(source, owner)) return E_ABORT;
     if (process == GetCurrentProcessId())
         return DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    const auto requestId = NextRequestId(cloak);
+    if (!requestId) return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+    const auto acknowledgement = ULongToHandle(requestId);
     RemovePropW(source, AckProperty);
     RemovePropW(source, ResultProperty);
     DWORD_PTR ignored = 0;
     SetLastError(0);
     const HWND dispatcher = reinterpret_cast<HWND>(GetPropW(source, dock_minimize::kCloakDispatcherProperty));
-    const auto request = MakeRequest(source, owner, cloak);
+    const auto request = MakeRequest(source, owner, cloak, requestId);
     const bool sent = dock_minimize::SendCloakRequest(dispatcher ? dispatcher : source,
         request, dispatcher ? 180 : 120, ignored);
     const DWORD error = GetLastError();
-    if (SameOwner(source, owner) && GetPropW(source, AckProperty) == owner.token)
+    if (SameOwner(source, owner) && GetPropW(source, AckProperty) == acknowledgement)
     {
         const HRESULT hr = static_cast<HRESULT>(HandleToULong(GetPropW(source, ResultProperty)));
-        RemovePropW(source, AckProperty);
-        RemovePropW(source, ResultProperty);
-        return hr;
+        if (GetPropW(source, AckProperty) == acknowledgement && SameOwner(source, owner))
+        {
+            RemovePropW(source, AckProperty);
+            RemovePropW(source, ResultProperty);
+            return hr;
+        }
     }
     if (dispatcher && sent && FAILED(static_cast<HRESULT>(ignored)) &&
         static_cast<HRESULT>(ignored) != HRESULT_FROM_WIN32(ERROR_TIMEOUT))
