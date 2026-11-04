@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <wrl/client.h>
 
 namespace snowdesktop
 {
@@ -73,6 +74,27 @@ inline std::wstring ShellInvocationDirectoryForItem(
         return itemPath;
     }
     return std::filesystem::path(itemPath).parent_path().wstring();
+}
+
+inline HRESULT InvokeExplorerCommandForContext(
+    IExplorerCommand* command,
+    IShellItemArray* selection,
+    const std::wstring& backgroundDirectory)
+{
+    if (!command) return E_POINTER;
+    if (selection) return command->Invoke(selection, nullptr);
+    if (backgroundDirectory.empty()) return E_INVALIDARG;
+
+    // Background state queries have no selected items. At execution, the
+    // command acts on the containing folder, including the physical Desktop.
+    Microsoft::WRL::ComPtr<IShellItem> folder;
+    HRESULT hr = SHCreateItemFromParsingName(backgroundDirectory.c_str(), nullptr,
+        IID_PPV_ARGS(&folder));
+    if (FAILED(hr)) return hr;
+    Microsoft::WRL::ComPtr<IShellItemArray> items;
+    hr = SHCreateShellItemArrayFromShellItem(folder.Get(), IID_PPV_ARGS(&items));
+    if (FAILED(hr)) return hr;
+    return command->Invoke(items.Get(), nullptr);
 }
 
 inline void SetShellInvocationDirectory(

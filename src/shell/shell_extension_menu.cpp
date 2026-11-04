@@ -1702,7 +1702,8 @@ struct Host
             const HWND owner = invocationOwner.Resolve();
             source.site.SetInvocationOwner(owner ? owner : window);
             CoAllowSetForegroundWindow(command.explorer.Get(), nullptr);
-            return command.explorer->Invoke(command.selection.Get(), nullptr);
+            return InvokeExplorerCommandForContext(command.explorer.Get(),
+                command.selection.Get(), source.directory);
         }
         if (source.nvidiaApplication)
         {
