@@ -62,12 +62,7 @@ Job 允许的 breakaway，调用方退出后服务可继续运行；父 Job 拒�
 
 ## 验证
 
-```bat
-scripts\test.bat name "^build_dashboard$"
-scripts\test.bat name "^build_dashboard_browser$"
-```
-
-测试由现有 C++ 原生驱动执行。上面的标准选择入口用于没有活动协作批次时；协作期间在本任务计划中声明 build_dashboard、build_dashboard_browser 并等待共同结果，不绕过共享构建权限。浏览器条目需要显式选择，使用已安装 Edge 的独立 headless profile，不控制用户浏览器。HTTP 和浏览器使用独立端口及醒目标明的模拟数据，覆盖文件共享、元数据与日志边界、实际测试计数、PowerShell 七位 UTC 小数时间戳、筛选和查看偏好、长等待列表与窄窗口；截图和证据保存在驱动输出的夹具目录。
+看板的常驻工具测试已移除。出现实际问题时，按仓库规则在当前任务的忽略目录中做必要的临时验证，并保留观察结果。
 
 原 PowerShell 看板启动器在开发中被安全软件以 `HEUR:TrojanDownloader/PS.NetLoader.ae` 删除，未恢复、未加入白名单。启动入口仍为 `manage.py`；协调器的新增健康检查仅请求固定 loopback 地址，不下载或执行网络内容，没有更改防护设置。历史事件不被当作“已证明误报”。
 

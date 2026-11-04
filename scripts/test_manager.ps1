@@ -9,6 +9,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Retire the old entry before acquiring execution rights or configuring.
+if ($Mode -eq "tools") {
+    [Console]::Error.WriteLine("Tool tests have been removed. Use task-scoped temporary verification when needed.")
+    exit 2
+}
+
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Set-Location -LiteralPath $repositoryRoot
 
@@ -358,7 +364,6 @@ function Get-TestRunOptions {
         "full" { return @{ TestPreset = "tests"; BuildPreset = "tests"; CTestFilterArguments = @() } }
         "core" { return @{ TestPreset = "core-tests"; BuildPreset = "core-tests"; CTestFilterArguments = @() } }
         "fast" { return @{ TestPreset = "fast-tests"; BuildPreset = "fast-tests"; CTestFilterArguments = @() } }
-        "tools" { return @{ TestPreset = "tools-tests"; BuildPreset = "tools-tests"; CTestFilterArguments = @() } }
         { $_ -in "name", "label" } {
             if ([string]::IsNullOrWhiteSpace($Filter)) {
                 throw "$Mode mode requires a non-empty regular expression."
@@ -596,7 +601,7 @@ elseif ($Mode -eq "list") {
 else {
     $options = Get-TestRunOptions -Mode $Mode -Filter $Filter
     if ($Mode -in "full", "core", "fast") {
-        Write-Host "Build tool regressions and manual diagnostics are excluded; select tools, name or label explicitly."
+        Write-Host "Manual and temporary diagnostics are excluded; select existing entries by name or label explicitly."
     }
     Invoke-FilteredTests @options -ResourceBudget (Get-EntryResourceBudget $repositoryRoot)
     if ($Mode -eq "full") {

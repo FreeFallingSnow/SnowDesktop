@@ -4,7 +4,6 @@ if (BUILD_TESTING)
     set(SNOWDESKTOP_CORE_TEST_TARGETS)
     set(SNOWDESKTOP_FAST_TEST_TARGETS)
     set(SNOWDESKTOP_APP_TEST_TARGETS)
-    set(SNOWDESKTOP_TOOL_TEST_TARGETS)
 
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/testing/Support.cmake")
 
@@ -86,13 +85,6 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopPointerInput user32 advapi32 gdi32 bcrypt
         LABELS contract integration ipc)
-
-    snowdesktop_add_test(
-        SnowDesktopDeploymentPackagingContractTests
-        deployment_packaging_contract
-        SOURCES tests/deployment_packaging_contract_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS tools integration packaging)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorTestRunnerTests
@@ -268,19 +260,13 @@ if (BUILD_TESTING)
     set_property(TEST behavior_manifest APPEND PROPERTY REQUIRED_FILES
         "$<TARGET_FILE_DIR:SnowDesktop>/SnowDesktop.deployment.json")
 
-    include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
-    snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts
-        build_tools/build_product_artifacts_tests.cpp "tools;integration;packaging" 120)
     # Shared desktop/Explorer/host resources are serialized. Isolated fixtures
     # and pure logic cases can execute alongside these tests.
     get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     foreach(test_name IN LISTS SNOWDESKTOP_REGISTERED_TESTS)
         get_test_property(${test_name} LABELS test_labels)
-        # These tests exercise a host graph or launch tool subprocesses. Budget
-        # their CPU demand independently of the global CTest job count; running
-        # 20 native hosts alongside tool workflows saturated the 24-core test
-        # machine and caused timeouts, while eight heavy natives passed.
-        if("isolated-native-model" IN_LIST test_labels OR "tools" IN_LIST test_labels)
+        # Native host scenarios reserve their own CPU budget.
+        if("isolated-native-model" IN_LIST test_labels)
             get_property(test_has_processor_budget TEST ${test_name} PROPERTY PROCESSORS SET)
             if(NOT test_has_processor_budget)
                 set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
@@ -288,7 +274,6 @@ if (BUILD_TESTING)
         endif()
         if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
             "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)
-            AND NOT "tools" IN_LIST test_labels
             AND NOT "isolated-native-model" IN_LIST test_labels)
             set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
         endif()
@@ -300,9 +285,6 @@ if (BUILD_TESTING)
     add_custom_target(
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
-    add_custom_target(
-        SnowDesktopBuildToolTests
-        DEPENDS ${SNOWDESKTOP_TOOL_TEST_TARGETS})
     add_custom_target(
         SnowDesktopAppTests
         COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile

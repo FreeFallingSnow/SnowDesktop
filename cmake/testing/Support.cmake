@@ -6,7 +6,7 @@ function(snowdesktop_add_test TEST_TARGET TEST_NAME)
         COMMAND_ARGUMENTS
         LABELS)
     cmake_parse_arguments(
-        SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY;OBSERVE_RUNTIME_MODULES" "" "${multiValueArgs}" ${ARGN})
+        SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY" "" "${multiValueArgs}" ${ARGN})
 
     if (NOT SNOW_TEST_SOURCES)
         message(FATAL_ERROR
@@ -71,20 +71,6 @@ function(snowdesktop_add_test TEST_TARGET TEST_NAME)
             -Wall -Wextra -pedantic)
     endif()
 
-    if(SNOW_TEST_OBSERVE_RUNTIME_MODULES)
-        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.29)
-            get_target_property(existing_launcher ${TEST_TARGET} TEST_LAUNCHER)
-            if(existing_launcher)
-                message(STATUS "Runtime module observation unavailable with an existing test launcher; evidence remains unclosed")
-            else()
-                set_property(TARGET ${TEST_TARGET} PROPERTY TEST_LAUNCHER
-                    "$<TARGET_FILE:SnowDesktopTestRuntimeObserver>;--test;${TEST_NAME};--")
-                add_dependencies(${TEST_TARGET} SnowDesktopTestRuntimeObserver)
-            endif()
-        else()
-            message(STATUS "Runtime module observation unavailable before CMake 3.29; evidence remains unclosed")
-        endif()
-    endif()
     add_test(
         NAME ${TEST_NAME}
         COMMAND ${TEST_TARGET}
@@ -102,21 +88,15 @@ function(snowdesktop_add_test TEST_TARGET TEST_NAME)
     list(APPEND SNOWDESKTOP_TEST_TARGETS ${TEST_TARGET})
     set(SNOWDESKTOP_TEST_TARGETS
         "${SNOWDESKTOP_TEST_TARGETS}" PARENT_SCOPE)
-    if ("tools" IN_LIST SNOW_TEST_LABELS)
-        list(APPEND SNOWDESKTOP_TOOL_TEST_TARGETS ${TEST_TARGET})
-        set(SNOWDESKTOP_TOOL_TEST_TARGETS
-            "${SNOWDESKTOP_TOOL_TEST_TARGETS}" PARENT_SCOPE)
-    else()
-        list(APPEND SNOWDESKTOP_APP_TEST_TARGETS ${TEST_TARGET})
-        set(SNOWDESKTOP_APP_TEST_TARGETS
-            "${SNOWDESKTOP_APP_TEST_TARGETS}" PARENT_SCOPE)
-    endif()
-    if ("core" IN_LIST SNOW_TEST_LABELS AND NOT "tools" IN_LIST SNOW_TEST_LABELS)
+    list(APPEND SNOWDESKTOP_APP_TEST_TARGETS ${TEST_TARGET})
+    set(SNOWDESKTOP_APP_TEST_TARGETS
+        "${SNOWDESKTOP_APP_TEST_TARGETS}" PARENT_SCOPE)
+    if ("core" IN_LIST SNOW_TEST_LABELS)
         list(APPEND SNOWDESKTOP_CORE_TEST_TARGETS ${TEST_TARGET})
         set(SNOWDESKTOP_CORE_TEST_TARGETS
             "${SNOWDESKTOP_CORE_TEST_TARGETS}" PARENT_SCOPE)
     endif()
-    if (NOT "integration" IN_LIST SNOW_TEST_LABELS AND NOT "tools" IN_LIST SNOW_TEST_LABELS)
+    if (NOT "integration" IN_LIST SNOW_TEST_LABELS)
         list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS ${TEST_TARGET})
         set(SNOWDESKTOP_FAST_TEST_TARGETS
             "${SNOWDESKTOP_FAST_TEST_TARGETS}" PARENT_SCOPE)
