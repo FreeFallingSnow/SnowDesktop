@@ -221,7 +221,7 @@ def activation_view(record, run_id):
             **{key: redact(value.get(key) or "") for key in ("status", "path", "error")},
             "sha256": value.get("sha256") if re.fullmatch(r"[a-fA-F0-9]{64}", str(value.get("sha256"))) else None}
 
-def task_view(entry, observed=None):
+def task_view(entry, observed=None, names=None):
     check = entry.get("check") or {}
     state = entry.get("state", "unknown")
     check_status = check.get("status", "not-recorded")
@@ -233,7 +233,7 @@ def task_view(entry, observed=None):
     plan = entry.get("testPlan") or {}
     seconds = age(entry.get("registeredUtc"), observed)
     return {"id": redact(entry.get("id", "unknown")), "state": state, "display": display,
-            "name": redact(entry.get("displayName") or entry.get("id", "unknown")),
+            "name": redact(entry.get("displayName") or (names or {}).get(entry.get("id")) or entry.get("id", "unknown")),
             "registeredUtc": entry.get("registeredUtc"),
             "editRevision": entry.get("editRevision", 0), "ageSeconds": seconds,
             "stale": seconds is not None and seconds > 86400,
@@ -850,12 +850,14 @@ class Store:
                 result.append({"id": rid, "status": "unavailable", "error": redact(error)})
         return result
 
-    def batch(self, batch_id, current=None):
+    def batch(self, batch_id, current=None, state=None):
+        if state is None:
+            state = read_json(self.root, "state.json") or {}
+        task_names = {item.get("id"): item.get("displayName") for item in ((state.get("taskLedger") or {}).get("tasks") or [])}
         result = read_json(self.root, batch_id + ".json")
         if result and result.get("batchId") != batch_id:
             raise ValueError("Result batch mismatch")
         if current is None and result is None:
-            state = read_json(self.root, "state.json") or {}
             attempts = [state.get("current")] + (state.get("activeCandidates") or [])
             current = next((item for item in attempts if isinstance(item, dict) and item.get("id") == batch_id), None)
         data = result or current
@@ -878,7 +880,7 @@ class Store:
             raise ValueError("Coverage batch mismatch")
         references = compiled_references(self.root, coverage)
         issues = read_json(self.root, batch_id + ".issues.json") or {}
-        tasks = [task_view(x, data.get("completedUtc") if result else None) for x in data.get("participants", [])[:80]]
+        tasks = [task_view(x, data.get("completedUtc") if result else None, task_names) for x in data.get("participants", [])[:80]]
         if result:
             for task in tasks:
                 task["stale"] = False
@@ -918,7 +920,7 @@ class Store:
                 "runId": data.get("runId"),
                 "run": run,
                 "evidence": evidence_view(data.get("evidence")),
-                "acceptances": acceptance_view((read_json(self.root, "state.json") or {}).get("taskLedger"), batch_id),
+                "acceptances": acceptance_view(state.get("taskLedger"), batch_id),
                 "retry": self.retry_view(batch_id),
                 "log": log}
 
@@ -967,7 +969,7 @@ class Store:
             if current:
                 if not HEX.fullmatch(str(current.get("id", ""))):
                     raise ValueError("Invalid current batch identity")
-                active = self.batch(current["id"], current)
+                active = self.batch(current["id"], current, state)
             candidates = []
             attempts = state.get("activeCandidates", [])
             if not isinstance(attempts, list) or len(attempts) > 32:
@@ -997,7 +999,7 @@ class Store:
                 data = read_json(self.root, file.name) or {}
                 if data.get("batchId") == file.stem:
                     history.append({**{k: data.get(k) for k in ("batchId", "outcome", "createdUtc", "buildStartedUtc", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")},
-                                    "participants": [redact(x.get("displayName") or x.get("id", "unknown")) for x in data.get("participants", [])[:8]]})
+                                    "participants": [redact(x.get("displayName") or task_names.get(x.get("id")) or x.get("id", "unknown")) for x in data.get("participants", [])[:8]]})
             ledger = state.get("taskLedger") or {}
             presence = []
             for task in (ledger.get("tasks") or [])[-200:]:

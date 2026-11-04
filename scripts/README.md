@@ -694,7 +694,7 @@ scripts\build.bat claim task-unique -Batch BATCH -Revision EDIT_REVISION -Files 
 scripts\build.bat edit-verify task-unique -Batch BATCH -Revision EDIT_REVISION -Files scripts/example.ps1
 ```
 
-`task-open` 对未关闭 ID 幂等；重复调用只刷新 `lastHeartbeatUtc`，保留 progress、lastProgressUtc、任务/需求修订、阶段、名称及编辑许可，不复活已关闭 ID。每个任务用独立 ID。`task-stage` 支持 investigating/editing/waiting/awaiting_input/blocked/validating，进展为任务自身报告，不能作为编辑授权或验证证据。阶段变化和活动期间不超过 60 秒报告有意义进展；存活心跳不代替这项汇报。Task 与事件保存在现有 state.json 的 taskLedger 中，沿用短时原子事务，不维护另一套调度状态。`begin` 对旧调用补录，来源为 begin-compatibility，不伪造调查起点。批次结束后显式 `task-close ID -TaskRevision N -TaskPhase completed/cancelled`；关闭不能清除活动编辑登记。
+`task-open` 对未关闭 ID 幂等；重复调用只刷新 `lastHeartbeatUtc`，保留 progress、lastProgressUtc、任务/需求修订、阶段、名称及编辑许可，不复活已关闭 ID。每个任务用独立 ID。`task-stage` 支持 investigating/editing/waiting/awaiting_input/blocked/validating，进展为任务自身报告，不能作为编辑授权或验证证据。汇报时机遵循[任务与协作](../AGENTS.md#任务与协作)的事件条件；存活心跳不代替有意义进展。Task 与事件保存在现有 state.json 的 taskLedger 中，沿用短时原子事务，不维护另一套调度状态。`begin` 对旧调用补录，来源为 begin-compatibility，不伪造调查起点。批次结束后显式 `task-close ID -TaskRevision N -TaskPhase completed/cancelled`；关闭不能清除活动编辑登记。
 
 适配器可在 `task-open` 显式传入 `-Capabilities beforeWriteGate,boundedWait,liveProgress,activeTurnSteering,idleWake`，只声明已实现且配置可用的名称；`none` 撤回声明。声明须与登记的 `-Adapter` 一致，未知名称拒绝。省略参数保留既有声明；更新声明不改变业务修订、业务进展时间或编辑许可。这是适配器最近声明的功能范围，不是在线探测、实机验收或授权，仍结合心跳时间与实际证据判断。
 

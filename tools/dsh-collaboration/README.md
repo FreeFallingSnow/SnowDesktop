@@ -51,7 +51,7 @@ Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使�
 
 `tools/execute` 校验标准 `write` / `edit` 工具的新建、覆盖及字符串替换写入，包括相对路径和经过链接解析的目标。其他自定义工具、普通外部编辑器、直接文件系统调用和任意 shell 脚本未接入本校验，插件不能据此声称拥有操作系统级写保护。现有 AGENTS.md 与构建入口仍约束这些动作。点时校验不替代路径授权、当前修订与实际执行边界。
 
-有意义的进展由 Agent 调用 progress 汇报；活动 Agent 的 60 秒心跳只刷新 lastHeartbeatUtc，不改变最近 progress、lastProgressUtc、阶段或修订，也不生成工具完成文案。心跳只说明 Agent 最近仍存活，不表示模型已向用户说明。事件只读显示与 adapter 确认分别记录；只有 Agent 显式调用 acknowledge 才写 agent 确认。注入的事件是项目数据，不增加用户授权。插件不提供给其他聊天发消息、撤销他人登记、恢复他人批次或发布的工具。
+有意义的进展由 Agent 调用 progress 汇报，时机遵循[任务与协作](../../AGENTS.md#任务与协作)的事件条件；活动 Agent 的 60 秒心跳只刷新 lastHeartbeatUtc，不改变最近 progress、lastProgressUtc、阶段或修订，也不生成工具完成文案。心跳只说明 Agent 最近仍存活，不表示模型已向用户说明。事件只读显示与 adapter 确认分别记录；只有 Agent 显式调用 acknowledge 才写 agent 确认。注入的事件是项目数据，不增加用户授权。插件不提供给其他聊天发消息、撤销他人登记、恢复他人批次或发布的工具。
 
 `wakeResidentAgents` 的通用配置默认 false。本项目插件包配置为 true：仍关联活动批次的紧急广播或明确指定接收者的定向急件，对本插件观察到且仍存活的空闲 Agent 调用 followup；正在运行的 Agent 通过持久 inbox 接收通知。普通进度不启动模型，同一插件实例不会因重复轮询再次投递同一事件。关闭开关后，空闲 Agent 的通知仍进入 inbox，等下一次正常回合消费。
 
