@@ -26,19 +26,6 @@
 | `build_compatible_verification_control` | 只接受完全相同键，确认无关候选变化导致重复执行的断言能检出它 | `build_compatible_verification` |
 | `build_automatic_selection_control` | 撤掉已完成证据选择，确认混合计划重复运行已审阅测试的断言能检出它 | `build_automatic_selection` |
 
-## 混合驱动中已识别的临时片段
-
-下列 `temporary (embedded)` 片段用于检出能力证明或一次性能对照，所在正常回归仍有长期价值。它们尚未从主场景中分离，仍随主场景执行和编译；本轮只在此标出范围，未改驱动逻辑或为标注触发重编。不能将整个正常回归标为临时，也不能声称这些片段已停止自动执行。
-
-| 所在条目与源码 | 临时片段 | 继续保留的长期行为 |
-| --- | --- | --- |
-| `dsh_collaboration`；`dsh_collaboration_tests.cpp` | `scope-old` 广播旧路径及 `cold-old` 驻留会话旧路径的变异对照 | 任务/写入许可、事件范围、正常会话恢复及适配器接口 |
-| `build_collaboration`；`../build_collaboration_tests.cpp` | `run_progress_notices(..., former=true)` 恢复旧进展回执的对照 | 面向本任务的急件提示、显式确认和登记不变性 |
-| `build_verification`；`build_verification_tests.cpp` | `configure/duplicate/path/observations` 四种实现变异的递归对照 | 仅执行补验、活动意图去重、来源证据不变及输入失效 |
-| `build_compile_budget`；`build_compile_budget_tests.cpp` | `limit/observation` 撤掉限制或观测逻辑的递归对照 | 真实编译并发、增量/PCH失效和配置冲突边界 |
-| `build_resource_budget_compile`；`build_resource_budget_tests.cpp` | `--compile-no-scheduling` 撤掉调度的递归对照 | 已准入Run的真实编译调度、资源约束和产物正确性 |
-| `test_build_roots`；`build_test_build_roots_tests.cpp` | 三轮旧调用方式与新构建根的配对计时采样 | 所选测试不丢失、共享依赖变更被重建及确认缺失时的安全回退 |
-
 例如只查看临时条目而不执行、配置或编译：
 
 ```bat
