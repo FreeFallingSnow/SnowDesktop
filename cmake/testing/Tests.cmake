@@ -8,6 +8,14 @@ if (BUILD_TESTING)
 
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/testing/Support.cmake")
 
+    # Store activation and ordinary EXE relaunch share the real argument/receipt
+    # path. Keep Shell execution isolated from the user's running desktop.
+    snowdesktop_add_test(SnowDesktopStartupLaunchTests startup_launch
+        SOURCES tests/platform/startup_launch_tests.cpp
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        LINK_LIBRARIES shell32 user32 ole32 oleaut32 advapi32 comctl32
+        LABELS core contract security)
+
     # The shared fullscreen gate controls bar hiding, Dock reveal and focus.
     # Reproduce native geometry without touching the user's desktop windows.
     snowdesktop_add_test(SnowDesktopForegroundFullscreenTests foreground_fullscreen

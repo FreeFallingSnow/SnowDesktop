@@ -4,6 +4,7 @@
 #include "startup_privileges_dialog.h"
 
 #include <windows.h>
+#include <appmodel.h>
 #include <shellapi.h>
 #pragma push_macro("ShellExecute")
 #undef ShellExecute
@@ -215,13 +216,16 @@ inline void ExecuteThroughExplorer(const std::wstring& executable,
 using ShellExecutor = decltype(&ExecuteThroughExplorer);
 using AckEventCreator = decltype(&CreateEventW);
 using AckWaiter = decltype(&WaitForSingleObject);
+using ApplicationIdQuery = decltype(&GetCurrentApplicationUserModelId);
 
 class NativePlatform final
 {
 public:
     explicit NativePlatform(ShellExecutor execute = &ExecuteThroughExplorer, DWORD handoffTimeout = 15000,
-        AckEventCreator createAckEvent = &CreateEventW, AckWaiter waitForAck = &WaitForSingleObject)
-        : execute_(execute), handoffTimeout_(handoffTimeout), createAckEvent_(createAckEvent), waitForAck_(waitForAck) {}
+        AckEventCreator createAckEvent = &CreateEventW, AckWaiter waitForAck = &WaitForSingleObject,
+        ApplicationIdQuery queryApplicationId = &GetCurrentApplicationUserModelId)
+        : execute_(execute), handoffTimeout_(handoffTimeout), createAckEvent_(createAckEvent),
+          waitForAck_(waitForAck), queryApplicationId_(queryApplicationId) {}
 
     bool IsElevated()
     {
@@ -282,11 +286,32 @@ private:
 public:
     DWORD Relaunch(std::wstring_view command)
     {
-        std::wstring executable(32768, L'\0');
-        const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
-            static_cast<DWORD>(executable.size()));
-        Require(length != 0 && length < executable.size(), L"GetModuleFileNameW(autostart)");
-        executable.resize(length);
+        wchar_t applicationId[APPLICATION_USER_MODEL_ID_MAX_LENGTH]{};
+        UINT32 applicationIdLength = static_cast<UINT32>(std::size(applicationId));
+        const LONG identified = queryApplicationId_(&applicationIdLength, applicationId);
+        std::wstring executable;
+        if (identified == ERROR_SUCCESS)
+        {
+            if (applicationIdLength < 2 || applicationIdLength > std::size(applicationId) ||
+                applicationId[applicationIdLength - 1] != L'\0')
+                throw Failure{ERROR_INVALID_DATA, L"GetCurrentApplicationUserModelId(autostart)"};
+            // Activate the registered app through the ordinary Explorer. Opening
+            // the WindowsApps EXE directly can fail before a child can acknowledge.
+            executable = L"shell:AppsFolder\\";
+            executable.append(applicationId, applicationIdLength - 1);
+        }
+        else if (identified == APPMODEL_ERROR_NO_APPLICATION || identified == APPMODEL_ERROR_NO_PACKAGE)
+        {
+            executable.resize(32768, L'\0');
+            const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+                static_cast<DWORD>(executable.size()));
+            Require(length != 0 && length < executable.size(), L"GetModuleFileNameW(autostart)");
+            executable.resize(length);
+        }
+        else
+        {
+            throw Failure{static_cast<DWORD>(identified), L"GetCurrentApplicationUserModelId(autostart)"};
+        }
         const DWORD directorySize = GetCurrentDirectoryW(0, nullptr);
         Require(directorySize != 0, L"GetCurrentDirectoryW(size)");
         std::wstring directory(directorySize, L'\0');
@@ -357,6 +382,7 @@ private:
     DWORD handoffTimeout_;
     AckEventCreator createAckEvent_;
     AckWaiter waitForAck_;
+    ApplicationIdQuery queryApplicationId_;
 };
 
 template<typename Platform>
