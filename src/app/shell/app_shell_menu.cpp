@@ -452,19 +452,34 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
                 ? desktopWindows_.host : nullptr;
-        const bool restored = snowdesktop::floating_dock_rules::RestoreDesktopLayer(
-            host.hwnd, desktopHost,
-            [](HWND window) {
-                // Reject hidden/tool surfaces before the task-window query
-                // reaches DWM; background windows cannot cover this Dock.
-                return IsWindowVisible(window) && !IsIconic(window) &&
-                    snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
-                        GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
-                    IsDockTaskWindow(window);
-            },
-            [this](HWND window) {
-                return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
-            },
+        const auto isApplicationWindow = [](HWND window) {
+            // Reject hidden/tool surfaces before the task-window query
+            // reaches DWM; background windows cannot cover this Dock.
+            return IsWindowVisible(window) && !IsIconic(window) &&
+                snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
+                    GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
+                IsDockTaskWindow(window);
+        };
+        const auto isDockWindow = [this](HWND window) {
+            return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
+        };
+        const HWND desktopRoot = desktopHost ? GetAncestor(desktopHost, GA_ROOT) : nullptr;
+        const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
+        // The desktop-layer contract permits other non-application windows
+        // between the Dock and the lowest application. Requiring an exact
+        // predecessor in that case needlessly restacks the backdrop against
+        // an external HWND and can hide it during the fallback path.
+        RECT backdropBounds{};
+        const bool pairIntact = !host.backdrop.IsAvailable() ||
+            (host.backdrop.IsBackdropWindow(nextWindow) &&
+                !snowdesktop::popup_window_pair_z_order::IsTopmost(nextWindow) &&
+                hasDockBounds && GetWindowRect(nextWindow, &backdropBounds) &&
+                EqualRect(&dockBounds, &backdropBounds));
+        const bool alreadyRestored = pairIntact &&
+            snowdesktop::floating_dock_rules::IsDesktopLayerRestored(
+                host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+        const bool restored = alreadyRestored || snowdesktop::floating_dock_rules::RestoreDesktopLayer(
+            host.hwnd, desktopHost, isApplicationWindow, isDockWindow,
             [&host](HWND anchor) {
                 return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
             }, GetAncestor(snowdesktop::private_pointer::ForegroundWindow(), GA_ROOT));
