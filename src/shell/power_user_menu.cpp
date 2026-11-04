@@ -1,6 +1,8 @@
 #include "power_user_menu.h"
 
 #include "common/l10n.h"
+#include "shell_launch_worker.h"
+#include "system/status_bar/status_bar_shell_shortcut_relay.h"
 #include "system/controls/system_control_windows.h"
 
 #include <powrprof.h>
@@ -27,26 +29,26 @@ enum Command : UINT
 };
 struct MenuDeleter { void operator()(HMENU menu) const noexcept { DestroyMenu(menu); } };
 using Menu = std::unique_ptr<std::remove_pointer_t<HMENU>, MenuDeleter>;
-struct Entry { UINT command; const char* label; };
+struct Entry { UINT command; const char* label; const wchar_t* glyph; };
 constexpr Entry management[]{
-    {InstalledApps, L10N_KEY("winx.installedApps")},
-    {MobilityCenter, L10N_KEY("winx.mobilityCenter")},
-    {PowerOptions, L10N_KEY("winx.powerOptions")},
-    {EventViewer, L10N_KEY("winx.eventViewer")},
-    {System, L10N_KEY("winx.system")},
-    {DeviceManager, L10N_KEY("winx.deviceManager")},
-    {NetworkConnections, L10N_KEY("winx.networkConnections")},
-    {DiskManagement, L10N_KEY("winx.diskManagement")},
-    {ComputerManagement, L10N_KEY("winx.computerManagement")},
-    {Terminal, L10N_KEY("winx.terminal")},
-    {TerminalAdmin, L10N_KEY("winx.terminalAdmin")}
+    {InstalledApps, L10N_KEY("winx.installedApps"), L"\uf8cb"},
+    {MobilityCenter, L10N_KEY("winx.mobilityCenter"), L"\uf4c3"},
+    {PowerOptions, L10N_KEY("winx.powerOptions"), L"\uf60e"},
+    {EventViewer, L10N_KEY("winx.eventViewer"), L"\U000f028d"},
+    {System, L10N_KEY("winx.system"), L"\uf4a3"},
+    {DeviceManager, L10N_KEY("winx.deviceManager"), L"\U000f013c"},
+    {NetworkConnections, L10N_KEY("winx.networkConnections"), L"\ue999"},
+    {DiskManagement, L10N_KEY("winx.diskManagement"), L"\ue6e3"},
+    {ComputerManagement, L10N_KEY("winx.computerManagement"), L"\ue4aa"},
+    {Terminal, L10N_KEY("winx.terminal"), L"\uee6f"},
+    {TerminalAdmin, L10N_KEY("winx.terminalAdmin"), L"\uf6be"}
 };
 constexpr Entry common[]{
-    {TaskManager, L10N_KEY("statusBar.taskManager")},
-    {Settings, L10N_KEY("winx.settings")},
-    {FileExplorer, L10N_KEY("winx.fileExplorer")},
-    {Search, L10N_KEY("winx.search")},
-    {Run, L10N_KEY("winx.run")}
+    {TaskManager, L10N_KEY("statusBar.taskManager"), L"\uf33f"},
+    {Settings, L10N_KEY("winx.settings"), L"\uf6a9"},
+    {FileExplorer, L10N_KEY("winx.fileExplorer"), L"\uf418"},
+    {Search, L10N_KEY("winx.search"), L"\uf68f"},
+    {Run, L10N_KEY("winx.run"), L"\uf605"}
 };
 
 std::wstring SystemFile(const wchar_t* name)
@@ -74,7 +76,14 @@ DWORD Launch(HWND owner, const std::wstring& file, const wchar_t* parameters = n
 
 DWORD LaunchTerminal(HWND owner, bool administrator)
 {
-    const wchar_t* verb = administrator ? L"runas" : L"open";
+    const auto launch = [owner, administrator](const std::wstring& executable, const wchar_t* parameters) -> DWORD {
+        // The helper receives foreground permission before entering the consent
+        // broker. A desktop render child cannot be the UAC owner.
+        if (administrator)
+            return ShellLaunchWorker::ExecuteRunAsAdministrator(owner, executable, nullptr)
+                ? ERROR_SUCCESS : ERROR_GEN_FAILURE;
+        return Launch(owner, executable, parameters);
+    };
     PWSTR local = nullptr;
     DWORD result = ERROR_FILE_NOT_FOUND;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local)))
@@ -82,12 +91,12 @@ DWORD LaunchTerminal(HWND owner, bool administrator)
         const std::wstring terminal = std::wstring(local) + L"\\Microsoft\\WindowsApps\\wt.exe";
         CoTaskMemFree(local);
         if (GetFileAttributesW(terminal.c_str()) != INVALID_FILE_ATTRIBUTES)
-            result = Launch(owner, terminal, L"-w new", verb);
+            result = launch(terminal, L"-w new");
     }
     // Older Windows installations may have no Terminal execution alias.
     // Do not launch a second program after UAC cancellation or access denial.
     if (result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND)
-        result = Launch(owner, SystemFile(L"WindowsPowerShell\\v1.0\\powershell.exe"), nullptr, verb);
+        result = launch(SystemFile(L"WindowsPowerShell\\v1.0\\powershell.exe"), nullptr);
     return result;
 }
 
@@ -119,34 +128,39 @@ DWORD PowerCommand(UINT command)
 }
 }
 
-HMENU Create(HMENU dockMenu)
+HMENU Create(HMENU dockMenu, const IconSetter& setIcon)
 {
     if (!dockMenu) return nullptr;
     Menu root(CreatePopupMenu()), power(CreatePopupMenu());
     if (!root || !power) return nullptr;
-    const auto append = [&](const Entry& entry) {
-        return AppendMenuW(root.get(), MF_STRING, entry.command, _LW(entry.label)) != FALSE;
+    const auto append = [&](HMENU target, const Entry& entry) {
+        if (!AppendMenuW(target, MF_STRING, entry.command, _LW(entry.label))) return false;
+        if (setIcon) setIcon(target, entry.command, entry.glyph);
+        return true;
     };
     for (const auto& entry : management)
-        if (!append(entry)) return nullptr;
+        if (!append(root.get(), entry)) return nullptr;
     if (!AppendMenuW(root.get(), MF_SEPARATOR, 0, nullptr)) return nullptr;
     for (const auto& entry : common)
-        if (!append(entry)) return nullptr;
+        if (!append(root.get(), entry)) return nullptr;
     if (!AppendMenuW(root.get(), MF_SEPARATOR, 0, nullptr) ||
-        !AppendMenuW(power.get(), MF_STRING, SignOut, _LW("winx.signOut"))) return nullptr;
+        !append(power.get(), {SignOut, L10N_KEY("winx.signOut"), L"\ueafa"})) return nullptr;
     if (IsPwrSuspendAllowed() &&
-        !AppendMenuW(power.get(), MF_STRING, Sleep, _LW("controlCenter.sleep"))) return nullptr;
+        !append(power.get(), {Sleep, L10N_KEY("controlCenter.sleep"), L"\ueb2d"})) return nullptr;
     if (IsPwrHibernateAllowed() &&
-        !AppendMenuW(power.get(), MF_STRING, Hibernate, _LW("controlCenter.hibernate"))) return nullptr;
-    if (!AppendMenuW(power.get(), MF_STRING, ShutDown, _LW("controlCenter.shutdown")) ||
-        !AppendMenuW(power.get(), MF_STRING, Restart, _LW("controlCenter.restart")) ||
-        !AppendMenuW(root.get(), MF_POPUP, reinterpret_cast<UINT_PTR>(power.get()),
+        !append(power.get(), {Hibernate, L10N_KEY("controlCenter.hibernate"), L"\uf87d"})) return nullptr;
+    if (!append(power.get(), {ShutDown, L10N_KEY("controlCenter.shutdown"), L"\uf60e"}) ||
+        !append(power.get(), {Restart, L10N_KEY("controlCenter.restart"), L"\uf13d"})) return nullptr;
+    const HMENU powerMenu = power.get();
+    if (!AppendMenuW(root.get(), MF_POPUP, reinterpret_cast<UINT_PTR>(powerMenu),
             _LW("winx.shutdownOrSignOut"))) return nullptr;
     (void)power.release();
-    if (!AppendMenuW(root.get(), MF_STRING, Desktop, _LW("winx.desktop")) ||
+    if (setIcon) setIcon(root.get(), reinterpret_cast<UINT_PTR>(powerMenu), L"\uf60e");
+    if (!append(root.get(), {Desktop, L10N_KEY("winx.desktop"), L"\uf359"}) ||
         !AppendMenuW(root.get(), MF_SEPARATOR, 0, nullptr) ||
         !AppendMenuW(root.get(), MF_POPUP, reinterpret_cast<UINT_PTR>(dockMenu),
             _LW("winx.dockSettings"))) return nullptr;
+    if (setIcon) setIcon(root.get(), reinterpret_cast<UINT_PTR>(dockMenu), L"\ue8ac");
     return root.release();
 }
 
@@ -176,8 +190,10 @@ bool Execute(UINT command, HWND owner)
             ? Launch(owner, std::wstring(folder) + L"\\explorer.exe") : ERROR_PATH_NOT_FOUND;
         break;
     }
-    // Registered by Windows Search; this opens its system panel, not a file search.
-    case Search: error = Launch(owner, L"ms-search:"); break;
+    case Search:
+        error = StatusBarShellShortcutRelay::Invoke(GetForegroundWindow(), {'S', false, true})
+            ? ERROR_SUCCESS : ERROR_BUSY;
+        break;
     case Run: case Desktop: error = ShellCommand(command); break;
     case SignOut: case Sleep: case Hibernate: case ShutDown: case Restart: error = PowerCommand(command); break;
     }

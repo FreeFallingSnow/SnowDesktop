@@ -10,6 +10,7 @@
 #include <dwmapi.h>
 #include <MinHook.h>
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -32,6 +33,13 @@ std::mutex hooksMutex;
 RetainedHookSet<2> nativeHooks;
 constexpr UINT_PTR kSubclass = 0x5344544e;
 constexpr UINT_PTR kTimer = 0x5344544e;
+constexpr wchar_t kBeginPowerMenuAccess[] = L"SnowDesktop.Taskbar.BeginPowerMenuAccess.v1";
+
+UINT PowerMenuAccessMessage() noexcept
+{
+    static const UINT message = RegisterWindowMessageW(kBeginPowerMenuAccess);
+    return message;
+}
 
 struct WindowState
 {
@@ -60,6 +68,8 @@ struct WindowState
     HHOOK menuMouseHook = nullptr;
     HHOOK menuMessageHook = nullptr;
     HHOOK inputMessageHook = nullptr;
+    // Installed and removed on this taskbar's owner thread, before teardown.
+    HWINEVENTHOOK powerMenuEventHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
     DWORD externalMenuToken = 0;
@@ -109,6 +119,16 @@ bool ReadMenu(DWORD thread, GUITHREADINFO& info)
     info.cbSize = sizeof(info);
     return GetGUIThreadInfo(thread, &info) && info.hwndMenuOwner &&
         (info.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE));
+}
+
+bool IsPowerUserMenuOwner(HWND window) noexcept
+{
+    wchar_t name[96]{};
+    DWORD process = 0;
+    return window && GetWindowThreadProcessId(window, &process) &&
+        process == GetCurrentProcessId() &&
+        GetClassNameW(window, name, static_cast<int>(std::size(name))) &&
+        wcscmp(name, L"LauncherTipWnd") == 0;
 }
 
 bool IsVisibleMenuPopup(HWND window)
@@ -170,6 +190,9 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
     const bool threadMenu = ReadMenu(GetWindowThreadProcessId(taskbar, nullptr), info);
     const HWND threadMenuOwner = threadMenu ? info.hwndMenuOwner : nullptr;
     const bool ownedMenu = threadMenu && IsTrayOrigin(threadMenuOwner, taskbar);
+    GUITHREADINFO powerMenu{};
+    const bool powerMenuVisible = state->primary && ReadMenu(0, powerMenu) &&
+        IsPowerUserMenuOwner(powerMenu.hwndMenuOwner);
     bool overflowVisible = false;
     for (const auto* name : {L"NotifyIconOverflowWindow", L"TopLevelWindowForOverflowXamlIsland"})
     {
@@ -185,7 +208,7 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
         state->previousPopups = VisibleMenuPopups(taskbar);
     state->overflowWasVisible = overflowVisible;
     if (overflowVisible) state->contextMenuUntil = now + 1500;
-    if (state->menuLoop || ownedMenu) return true;
+    if (state->menuLoop || ownedMenu || powerMenuVisible) return true;
     if (state->contextMenuPopup)
     {
         if (IsVisibleMenuPopup(state->contextMenuPopup)) return true;
@@ -578,6 +601,12 @@ bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroy
 {
     state->detaching = true;
     if (!destroying && (state->updatingCloak || state->updatingAutoHide)) return false;
+    if (state->powerMenuEventHook)
+    {
+        // UnhookWinEvent must run on the thread that installed it.
+        UnhookWinEvent(state->powerMenuEventHook);
+        state->powerMenuEventHook = nullptr;
+    }
     const bool cloakRestored = Restore(window, state);
     // If Shell has not accepted the restore yet, retain the owner-thread timer
     // to retry after normal shutdown or owner death. Never retain a dead HWND.
@@ -759,6 +788,33 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     return true;
 }
 
+void CALLBACK PowerMenuEventProc(HWINEVENTHOOK, DWORD event, HWND source,
+    LONG, LONG, DWORD eventThread, DWORD) try
+{
+    if (hookInstanceRetired.load() ||
+        (event != EVENT_SYSTEM_MENUSTART && event != EVENT_SYSTEM_MENUPOPUPSTART)) return;
+    GUITHREADINFO info{};
+    HWND owner = ReadMenu(eventThread, info) ? info.hwndMenuOwner : nullptr;
+    if (!IsPowerUserMenuOwner(owner)) owner = source;
+    if (!IsPowerUserMenuOwner(owner)) owner = source ? GetWindow(source, GW_OWNER) : nullptr;
+    if (!IsPowerUserMenuOwner(owner)) return;
+    const UINT message = PowerMenuAccessMessage();
+    if (!message) return;
+    // Copy only handles/IDs. The event may come from another Explorer thread;
+    // shared mapping access and cloak changes stay on the taskbar owner thread.
+    std::vector<std::pair<HWND, DWORD>> targets;
+    { std::lock_guard lock(windowsMutex);
+      for (const auto& [window, state] : windows)
+          if (state->primary) targets.emplace_back(window, state->ownerId); }
+    for (const auto& [window, host] : targets)
+    {
+        DWORD_PTR accepted = 0;
+        SendMessageTimeoutW(window, message, host, reinterpret_cast<LPARAM>(owner),
+            SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 100, &accepted);
+    }
+}
+catch (...) {}
+
 LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) try
 {
     const auto state = Find(window);
@@ -792,16 +848,25 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         }
         Update(window, state, false);
     }
-    if (message == RegisterWindowMessageW(kBeginMenuAccess))
+    const bool powerMenuAccess = PowerMenuAccessMessage() != 0 && message == PowerMenuAccessMessage();
+    if (message == RegisterWindowMessageW(kBeginMenuAccess) || powerMenuAccess)
     {
         Snapshot snapshot;
-        if (wParam != state->ownerId || !lParam ||
+        const HWND powerMenuOwner = powerMenuAccess ? reinterpret_cast<HWND>(lParam) : nullptr;
+        if (state->detaching || wParam != state->ownerId || !lParam ||
+            (powerMenuAccess && !IsPowerUserMenuOwner(powerMenuOwner)) ||
             WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT ||
             !ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
             snapshot.ownerProcessId != state->ownerId) return 0;
         ArmContextMenu(window, state);
         { std::lock_guard lock(state->mutex);
-          state->externalMenuToken = static_cast<DWORD>(lParam); }
+          if (powerMenuAccess)
+          {
+              const DWORD thread = GetWindowThreadProcessId(powerMenuOwner, nullptr);
+              GUITHREADINFO info{};
+              if (ReadMenu(thread, info)) state->contextMenuThread = thread;
+          }
+          else state->externalMenuToken = static_cast<DWORD>(lParam); }
         // UIA does not send a mouse/WM_CONTEXTMENU gesture. Uncloak its owner
         // synchronously before the XAML provider creates an owned popup.
         if (!Update(window, state, false)) return 0;
@@ -976,7 +1041,12 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     state->menuMouseHook = SetWindowsHookExW(WH_MOUSE, MenuMouseProc, nullptr, GetCurrentThreadId());
     state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
     state->inputMessageHook = SetWindowsHookExW(WH_GETMESSAGE, InputMessageProc, nullptr, GetCurrentThreadId());
+    if (state->primary)
+        state->powerMenuEventHook = SetWinEventHook(EVENT_SYSTEM_MENUSTART,
+            EVENT_SYSTEM_MENUPOPUPSTART, pinned, PowerMenuEventProc,
+            GetCurrentProcessId(), 0, WINEVENT_INCONTEXT);
     if (!state->menuMouseHook || !state->menuMessageHook || !state->inputMessageHook ||
+        (state->primary && !state->powerMenuEventHook) ||
         !SetPropW(window, kHookOwnerProperty, pinned) ||
         !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))

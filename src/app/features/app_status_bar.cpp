@@ -921,7 +921,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         }
         if (powerUserMenu)
         {
-            const HMENU root = snowdesktop::power_user_menu::Create(menu);
+            const HMENU root = snowdesktop::power_user_menu::Create(menu,
+                [this](HMENU parent, UINT_PTR command, const wchar_t* glyph) {
+                    SetMenuItemIcon(parent, command, glyph, MenuIconFont::FluentRegular);
+                });
             if (!root) { DestroyMenu(menu); ClearMenuIcons(); return; }
             menu = root;
         }
@@ -935,7 +938,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
-        if (snowdesktop::power_user_menu::Execute(command, owner)) return;
+        if (snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(owner))) return;
         if (settingsController_)
         {
             auto settings = settingsController_->Snapshot()->values.general;

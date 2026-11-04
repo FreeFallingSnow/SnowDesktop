@@ -789,7 +789,10 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             {
                 PrepareMenuIconsForPoint(screenPt);
                 const HMENU dockMenu = CreateDockContextMenu(false);
-                const HMENU menu = snowdesktop::power_user_menu::Create(dockMenu);
+                const HMENU menu = snowdesktop::power_user_menu::Create(dockMenu,
+                    [this](HMENU parent, UINT_PTR command, const wchar_t* glyph) {
+                        SetMenuItemIcon(parent, command, glyph, MenuIconFont::FluentRegular);
+                    });
                 if (!menu)
                 {
                     if (dockMenu) DestroyMenu(dockMenu);
@@ -802,7 +805,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 ClearMenuIcons();
                 RestoreDesktopWindowLayer();
                 if (command != kContextDockDetailedSettings) RestoreInteractionInputFocus();
-                if (!snowdesktop::power_user_menu::Execute(command, hwnd_))
+                if (!snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(hwnd_)))
                     ExecuteDockContextMenuCommand(command, hwnd_);
                 return;
             }
