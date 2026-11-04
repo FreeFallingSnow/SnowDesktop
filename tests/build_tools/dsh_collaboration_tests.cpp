@@ -421,6 +421,9 @@ try{
 }finally{for(const dispose of disposers.reverse())if(typeof dispose==='function')await dispose();}
 console.log(JSON.stringify(result));
 )JS");
+    // Host owns c.root; resident scenarios below own separate roots. Overlap
+    // those three owners within PROCESSORS3 instead of serializing their setup.
+    auto hostCheck=std::async(std::launch::async,[&]{
     const auto host=run({L"node",L"--import",L"./register-loader.mjs",(c.root/L"host.mjs").wstring(),(repo/L"tools/dsh-collaboration/index.js").wstring(),c.root.wstring()},c.root,40);
     require(host.code==0,"Production Host hook fixture failed: "+host.out+host.err);
     const auto observed=Json::parse(host.out);
@@ -443,6 +446,7 @@ console.log(JSON.stringify(result));
     for(const auto& phase:{"ready","stale"})require(observed.at(phase).items[0].boolean&&observed.at(phase).items[1].boolean,"Host gate accepted a ready or superseded cached grant");
     require(observed.at("rebound").at("sentinel").str()=="fresh","Explicit Host reacquisition failed");
     require(observed.at("rendered").items[0].at("type").str()=="text"&&observed.at("tool").str()=="snow_collaboration","Plugin tool output violated the inspected content contract");
+    });
     // Keep the real coordinator and production delivery loop. Only the Agent
     // API is a carrier; actual idle-model startup is a separate live check.
     write(c.root/L"wake.mjs",R"JS(import path from 'node:path';import {pathToFileURL} from 'node:url';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
@@ -509,7 +513,7 @@ console.log(JSON.stringify(result));
     };
     auto residentDisabled=std::async(std::launch::async,[&]{checkResident(L"disabled");});
     auto residentEnabled=std::async(std::launch::async,[&]{checkResident(L"enabled");});
-    residentDisabled.get();residentEnabled.get();
+    residentDisabled.get();residentEnabled.get();hostCheck.get();
     // Setup still calls the production coordinator, but one PowerShell owner
     // avoids twelve process startups per cold mode inside the shared budget.
     write(c.root/L"prepare-cold.ps1",R"PS(param([string]$Coordinator,[string]$TaskData)
