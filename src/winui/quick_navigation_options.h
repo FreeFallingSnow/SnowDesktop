@@ -69,6 +69,7 @@ public:
         if (!appearanceOnly_)
         {
             Panel suggestions;
+            suggestions.Spacing(8);
             appSuggestions_.Toggled([this](auto&&, auto&&) {
                 if (!sync_) commit_([enabled = appSuggestions_.IsOn()](auto& value) {
                     value.appSuggestionsEnabled = enabled;
@@ -77,6 +78,7 @@ public:
             AddRow(suggestions, "quickNav.appSuggestions", appSuggestions_, [](auto& value) {
                 value.appSuggestionsEnabled = false;
             });
+            presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
             favorites_.Toggled([this](auto&&, auto&&) {
                 if (!sync_) commit_([enabled = favorites_.IsOn()](auto& value) {
                     value.favoritesEnabled = enabled;

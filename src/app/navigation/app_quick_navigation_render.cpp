@@ -1215,7 +1215,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                                 t.tabDefaultStroke,
                                 0.62f));
                     DrawQuickNavigationCenteredText(
-                        ctx.Get(), L"\uF10C", add,
+                        ctx.Get(), L"\uF108", add,
                         quickNavigation_->fluentTextFormat.Get(),
                         ToD2DColor(
                             hovered ? t.headerText : t.emptyText),
