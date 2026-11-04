@@ -10,6 +10,8 @@
 #include "modern_menu_appearance_rules.h"
 #include "modern_menu_scroll_hint.h"
 #include "modern_menu_dynamic_items_rules.h"
+#include "modern_menu_root_placement.h"
+#include "modern_menu_dismissal_rules.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -243,6 +245,7 @@ public:
 
     ~MenuController()
     {
+        StopOutsideClickObserver();
         CloseFromDepth(0);
         if (fontAwesomeIconFont_)
             DeleteObject(fontAwesomeIconFont_);
@@ -288,6 +291,7 @@ public:
             }
             snowdesktop::private_pointer::SetInputForeground(rootWindow);
             snowdesktop::private_pointer::SetInputFocus(rootWindow);
+            StartOutsideClickObserver();
             RestoreOwnedPopupZOrder();
             TraceOwnedPopupZOrder(
                 L"session-start", nullptr, true);
@@ -298,6 +302,13 @@ public:
         std::optional<std::vector<Item>> pendingItems;
         while (!done_ && !quitReceived)
         {
+            if (outsideClickHook_)
+            {
+                RECT companionBounds{};
+                const HWND companion = options_.zOrderCompanion ? options_.zOrderCompanion() : nullptr;
+                if (companion && IsWindowVisible(companion)) GetWindowRect(companion,&companionBounds);
+                outsideClickCompanionBounds_ = companionBounds;
+            }
             if (options_.pollItems)
             {
                 const bool pointerSafe = !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
@@ -651,6 +662,11 @@ public:
             // which drops every command selected from a submenu.
             return popup.depth > 0 ? MA_NOACTIVATE : MA_ACTIVATE;
         case kCancelMessage:
+            if (lParam)
+            {
+                const HWND foreground = reinterpret_cast<HWND>(lParam);
+                if (!IsSessionWindow(foreground) && !IsOwnerWindow(foreground)) externalActivation_ = true;
+            }
             if (wParam != 0)
                 superseded_ = true;
             Cancel();
@@ -968,6 +984,60 @@ public:
     }
 
 private:
+    static LRESULT CALLBACK OutsideMouseProc(int code, WPARAM message, LPARAM data) try
+    {
+        auto* self = outsideClickController_;
+        if (code == HC_ACTION && data && self && self->outsideClickHook_ &&
+            !snowdesktop::private_pointer::Active() && !self->done_ && !self->closing_ && !self->popups_.empty() &&
+            gActiveRootMenu.load() == self->popups_.front()->hwnd)
+        {
+            const POINT point = reinterpret_cast<const MSLLHOOKSTRUCT*>(data)->pt;
+            const RECT companion = self->outsideClickCompanionBounds_;
+            const bool overCompanion = point.x >= companion.left && point.x < companion.right &&
+                point.y >= companion.top && point.y < companion.bottom;
+            if (!overCompanion && dismissal_rules::OutsidePress(static_cast<UINT>(message),point,self->popups_,
+                [](const auto& popup) {
+                    return RECT{popup->panelScreenOrigin.x,popup->panelScreenOrigin.y,
+                        popup->panelScreenOrigin.x+popup->panelWidth,
+                        popup->panelScreenOrigin.y+popup->panelHeight};
+                }))
+            {
+                // The foreground may still belong to the same external app:
+                // a keyboard-opened menu need not receive WM_ACTIVATE then.
+                // Only post cancellation; keep the original click untouched.
+                PostMessageW(self->popups_.front()->hwnd,kCancelMessage,0,
+                    reinterpret_cast<LPARAM>(snowdesktop::private_pointer::ForegroundWindow()));
+            }
+        }
+        return CallNextHookEx(nullptr,code,message,data);
+    }
+    catch (...) { return CallNextHookEx(nullptr,code,message,data); }
+
+    void StartOutsideClickObserver()
+    {
+        if (snowdesktop::private_pointer::Active() || outsideClickHook_ || popups_.empty() ||
+            snowdesktop::private_pointer::ForegroundWindow() == popups_.front()->hwnd) return;
+        previousOutsideClickController_ = outsideClickController_;
+        outsideClickController_ = this;
+        outsideClickHook_ = SetWindowsHookExW(WH_MOUSE_LL,OutsideMouseProc,GetModuleHandleW(nullptr),0);
+        if (!outsideClickHook_)
+        {
+            outsideClickController_ = previousOutsideClickController_;
+            previousOutsideClickController_ = nullptr;
+            if (options_.eventPump.traceDiagnostic)
+                options_.eventPump.traceDiagnostic(L"Outside-click observer unavailable: "+std::to_wstring(GetLastError()));
+        }
+    }
+
+    void StopOutsideClickObserver() noexcept
+    {
+        if (!outsideClickHook_) return;
+        UnhookWindowsHookEx(outsideClickHook_);
+        outsideClickHook_ = nullptr;
+        if (outsideClickController_ == this) outsideClickController_ = previousOutsideClickController_;
+        previousOutsideClickController_ = nullptr;
+    }
+
     bool RegisterWindowClass()
     {
         static const bool registered = [] {
@@ -1375,6 +1445,12 @@ private:
                     static_cast<int>(options_.anchorRect.top -
                         popup.workArea.top));
             }
+            else if (options_.rootPlacement == RootPlacement::AboveCenteredAnchorRect)
+            {
+                const int above = static_cast<int>(options_.anchorRect.top - popup.workArea.top);
+                if (above >= metrics_.rowHeight + panelPadding_ * 2)
+                    availablePanelHeight = std::min(availablePanelHeight, above);
+            }
             else if (options_.rootPlacement ==
                 RootPlacement::BelowAnchorRect)
             {
@@ -1435,6 +1511,13 @@ private:
         {
             switch (options_.rootPlacement)
             {
+            case RootPlacement::AboveCenteredAnchorRect:
+            {
+                const POINT origin = root_placement::CenteredAbove(options_.anchorRect,
+                    {popup.panelWidth, popup.panelHeight}, popup.workArea);
+                left = origin.x; top = origin.y;
+                break;
+            }
             case RootPlacement::AboveAnchorRect:
                 top = options_.anchorRect.top - popup.panelHeight;
                 break;
@@ -2474,7 +2557,10 @@ private:
             // Async additions must not move existing actions under the cursor.
             // Grow downward from the visible origin; use the existing scrolling
             // viewport when the remaining work area cannot fit the new rows.
-            const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
+            const bool above = options_.rootPlacement == RootPlacement::AboveAnchorRect ||
+                (options_.rootPlacement == RootPlacement::AboveCenteredAnchorRect &&
+                    options_.anchorRect.top > popup.panelScreenOrigin.y);
+            const auto bottom = above
                                     ? std::min(popup.workArea.bottom, options_.anchorRect.top)
                                     : popup.workArea.bottom;
             popup.panelHeight =
@@ -3154,6 +3240,10 @@ private:
     size_t textInputCompositionCursor_ = 0;
     bool textCaretVisible_ = true;
     bool done_ = false;
+    HHOOK outsideClickHook_ = nullptr;
+    RECT outsideClickCompanionBounds_{};
+    MenuController* previousOutsideClickController_ = nullptr;
+    inline static thread_local MenuController* outsideClickController_ = nullptr;
     bool pointerPressed_ = false;
     bool closing_ = false;
     bool superseded_ = false;

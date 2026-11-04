@@ -541,6 +541,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/menu/menu_icon_render.cpp
     src/ui/menu/menu_builtin_icon.cpp
     src/ui/menu/modern_menu.cpp
+    src/ui/menu/modern_menu_root_placement.h
+    src/ui/menu/modern_menu_dismissal_rules.h
     src/ui/menu/menu_control_snapshot.h
     src/navigation/search_match.cpp
     src/navigation/everything_search.cpp

@@ -164,6 +164,11 @@ HMENU Create(HMENU dockMenu, const IconSetter& setIcon)
     return root.release();
 }
 
+bool IsRootMenu(HMENU menu) noexcept
+{
+    return menu && GetMenuItemID(menu, 0) == InstalledApps;
+}
+
 bool OpenTerminal(HWND owner, bool administrator)
 {
     const DWORD error = LaunchTerminal(owner, administrator);

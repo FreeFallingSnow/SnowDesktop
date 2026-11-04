@@ -27,6 +27,7 @@ enum class RootPlacement
     BelowAnchorRect,
     LeftOfAnchorRect,
     RightOfAnchorRect,
+    AboveCenteredAnchorRect,
 };
 
 /** 右键菜单的独立外观，不跟随组件主题。 */
