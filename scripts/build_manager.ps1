@@ -5,7 +5,7 @@ param(
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$ExecutionRun,
-    [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
+    [ValidateRange(0, 86400)][int]$WaitSeconds = 86400,
     [switch]$ConfirmStopped,
     [switch]$ReloadShell,
     [switch]$CloseApplication,
@@ -13,7 +13,7 @@ param(
     [long]$Revision = -1,
     [ValidateSet('unknown','module','docs','component','tool','test','public','infrastructure')][string]$Scope = 'unknown',
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
-    [switch]$AdoptExistingChanges, [switch]$Add, [switch]$DeferBatchResult, [switch]$Compact, [string]$Files = '', [string]$MessageFile = '',
+    [switch]$AdoptExistingChanges, [switch]$Add, [switch]$DeferBatchResult, [switch]$Compact, [switch]$FullResult, [switch]$CliSummary, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
     [ValidateRange(0,4096)][int]$ResourceCpuSlots=0,[ValidateRange(0,1048576)][int]$ResourceMemoryMiB=0,
     [switch]$ResourceShared,
@@ -42,10 +42,10 @@ param(
 
 # Foreground execution needs neither Python nor a hidden worker launch. It uses
 # the same finish/check/freeze/lease path and returns the original batch code.
+if($Command -in 'ready-and-wait','finish','wait','event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=0}
 if($Command -eq 'ready-and-wait') {
-    if(-not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=1800}
     if($Revision -lt 0){throw 'ready-and-wait requires the latest -Revision.'}
-    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell -CloseApplication:$CloseApplication
+    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell -CloseApplication:$CloseApplication -Compact:$Compact -FullResult:$FullResult -CliSummary:$CliSummary
     exit $LASTEXITCODE
 }
 Set-StrictMode -Version Latest
@@ -59,6 +59,7 @@ $stateRoot = Join-Path $repositoryRoot '.build\collaboration'
 $statePath = Join-Path $stateRoot 'state.json'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $lastNotice = -30
+$lastWaitMessage = $null
 $hasFinishedCurrentBatch = $false
 $finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -144,7 +145,7 @@ function Get-BatchWaitMessage($Current) {
 }
 
 function Wait-Again([string]$Message,$Current=$null) {
-    if ($clock.Elapsed.TotalSeconds -ge $WaitSeconds) {
+    if ($WaitSeconds -gt 0 -and $clock.Elapsed.TotalSeconds -ge $WaitSeconds) {
         if($Current){$Message=Get-BatchWaitMessage $Current}
         throw "Wait timed out. Registration was retained; use status and repeat the same command. $Message"
     }
@@ -152,7 +153,7 @@ function Wait-Again([string]$Message,$Current=$null) {
         # Stage reads happen only when reporting, after releasing the state
         # transaction. Observing must never relaunch or cancel the Run.
         if($Current){$Message=Get-BatchWaitMessage $Current}
-        [Console]::Error.WriteLine($Message)
+        if($Message -ne $script:lastWaitMessage){[Console]::Error.WriteLine($Message);$script:lastWaitMessage=$Message}
         $script:lastNotice = $clock.Elapsed.TotalSeconds
     }
     Start-Sleep -Milliseconds 200
@@ -323,7 +324,9 @@ function Complete-CheckRecord($Selection) {
     return [pscustomobject]@{ check=$report; exitCode=$code }
 }
 function Emit-Result($Result) {
-    ConvertTo-Json -InputObject $Result -Depth 20
+    if($Compact -or ($CliSummary -and -not $FullResult)){
+        Get-CompactBatchResult $Result (Result-Path $Result.batchId)|ConvertTo-Json -Depth 8
+    }else{ConvertTo-Json -InputObject $Result -Depth 20}
     exit $Result.exitCode
 }
 
@@ -401,7 +404,6 @@ try {
         exit 0
     }
     if($Command -in 'task-open','task-new','task-stage','task-close','event-post','event-wait','event-ack','edit-verify' -and -not $Participant){throw "$Command requires a task ID."}
-    if($Command -eq 'event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=30}
     [void][IO.Directory]::CreateDirectory($stateRoot)
     while ($true) {
         $metadata = Lock-State
@@ -457,6 +459,15 @@ try {
                                 $member=@($pendingBatch.participants|Where-Object id -eq $Participant)[0]
                                 $memberCheck=Get-Field $member 'check'
                                 if($member.state -ne 'finished' -or ($memberCheck -and $memberCheck.status -ne 'passed')){throw 'Deferred closure requires your own finished edit and passed check; no editing authority was removed.'}
+                                if(-not (Get-Field $pendingBatch 'runId')){
+                                    if($pendingBatch.phase -eq 'building'){throw 'Wait until the common Run reservation is published before deferring this task result.'}
+                                    $activePeers=@($pendingBatch.participants|Where-Object {
+                                        $peerId=$_.id
+                                        $peerId -ne $Participant -and $_.state -ne 'withdrawn' -and
+                                            @($ledger.tasks|Where-Object {$_.id -eq $peerId -and $_.phase -notin 'completed','cancelled' -and -not $_.closedUtc}).Count
+                                    })
+                                    if(-not $activePeers.Count){throw 'Keep one active participant until the common Run is submitted; deferred closure never abandons execution.'}
+                                }
                             }
                             if($pendingBatches.Count){Set-Field $task 'deferredBatchIds' @($pendingBatches|ForEach-Object id)}
                             if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
@@ -509,7 +520,7 @@ try {
                 }
                 if($Command -eq 'event-wait') {
                     $events=@(Get-TaskEvents $ledger $Participant $AfterSequence | Select-Object -First 100)
-                    if($events.Count -or $clock.Elapsed.TotalSeconds -ge $WaitSeconds){[pscustomobject]@{events=$events;sequence=$ledger.sequence;timedOut=($events.Count -eq 0);delivery='No automatic agent acknowledgement or host wake.'}|ConvertTo-Json -Depth 20;exit 0}
+                    if($events.Count -or ($WaitSeconds -gt 0 -and $clock.Elapsed.TotalSeconds -ge $WaitSeconds)){[pscustomobject]@{events=$events;sequence=$ledger.sequence;timedOut=($events.Count -eq 0);delivery='No automatic agent acknowledgement or host wake.'}|ConvertTo-Json -Depth 20;exit 0}
                 } else {
                     Write-AtomicJson $state $statePath
                     $response=[pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}
@@ -766,6 +777,20 @@ try {
                     if($ResourceCpuSlots -or $ResourceMemoryMiB){
                         if($entry.testPlan.suites -contains 'none'){throw 'An empty plan cannot reserve weighted resources.'}
                         Set-Field $entry.testPlan 'projectResources' (Get-ProjectResourceBinding $repositoryRoot $true $ResourceCpuSlots $ResourceMemoryMiB (-not $ResourceShared))
+                    }elseif($Scope -eq 'tool' -and $entry.testPlan.suites -notcontains 'none'){
+                        # Freeze the tool-sized default during planning so its
+                        # actual request is visible before ready/submission.
+                        Set-Field $entry.testPlan 'projectResources' (Get-DefaultProjectResourceBinding $repositoryRoot -Workload tools)
+                    }
+                    $requestBudget=Get-Field $entry.testPlan 'projectResources'
+                    if($requestBudget){
+                        Initialize-ResourceRuntime
+                        $availableMiB=[long][Math]::Floor([SnowDesktop.Build.Job]::AvailableMemoryBytes()/1048576.0)
+                        Set-Field $entry.testPlan 'resourceAdvice' ([pscustomobject]@{source=$(if($ResourceCpuSlots){'explicit'}else{'default-tools'});
+                            cpuSlots=$requestBudget.cpuSlots;memoryMiB=$requestBudget.memoryMiB;compileJobs=(Get-CompileResourceJobs $requestBudget);
+                            availableMemoryMiB=$availableMiB;headroomMiB=$requestBudget.headroomMiB;
+                            admission=$(if($availableMiB -lt $requestBudget.headroomMiB+$requestBudget.reservedMemoryMiB){'waiting-memory'}else{'memory-probe-fits'});
+                            observation='This member request is frozen. The shared batch takes the maximum declared needs; an unweighted/product member can require the normal build default. Actual admission rechecks memory and leases.'})
                     }
                     $visible=Find-VisibleTask (Get-TaskLedger $state) $Participant
                     Set-Field $entry.testPlan 'requirementsRevision' $visible.requirementsRevision
@@ -915,7 +940,9 @@ try {
                         [pscustomobject]@{status='attention';batchId=$Batch;participant=$Participant;editRevision=$observedRevision;reason='A declared check needs explicit repair/reopen; no automatic repeat was started.';checks=@($badChecks | ForEach-Object {[pscustomobject]@{participant=$_.id;check=$_.check}})} | ConvertTo-Json -Depth 10
                         exit 2
                     }
-                    if (@($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and -not (Checks-BlockFreeze $current) -and
+                    $observerTask=@(Get-Field (Get-Field $state 'taskLedger') 'tasks' @()|Where-Object id -eq $Participant|Select-Object -First 1)
+                    $closedObserver=$observerTask.Count -gt 0 -and ($observerTask[0].phase -in 'completed','cancelled' -or [bool]$observerTask[0].closedUtc)
+                    if (-not $closedObserver -and @($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and -not (Checks-BlockFreeze $current) -and
                         ((Get-Field $current 'protocolVersion' 1) -lt 4 -or @(Get-Field $state 'activeCandidates' @()).Count -lt 32)) {
                         $buildLease = Try-Lease 'build.lock'
                         if ($null -eq $buildLease) { throw 'Unexpected occupied build lease; inspect status without clearing registrations.' }

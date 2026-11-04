@@ -26,15 +26,15 @@ if /i "%~1"=="event-ack" goto collaboration
 if /i "%~1"=="edit-verify" goto collaboration
 if /i "%~1"=="watch" goto localwait
 if /i "%~1"=="resource" goto resource
-if /i "%~1"=="ready-and-wait" goto collaboration
+if /i "%~1"=="ready-and-wait" goto observation
 if /i "%~1"=="repair" goto collaboration
 if /i "%~1"=="repair-abandon" goto collaboration
 if /i "%~1"=="begin" goto collaboration
-if /i "%~1"=="finish" goto collaboration
+if /i "%~1"=="finish" goto observation
 if /i "%~1"=="status" goto collaboration
 if /i "%~1"=="recover" goto collaboration
 if /i "%~1"=="ready" goto collaboration
-if /i "%~1"=="wait" goto collaboration
+if /i "%~1"=="wait" goto observation
 if /i "%~1"=="check" goto collaboration
 if /i "%~1"=="plan" goto collaboration
 
@@ -153,6 +153,10 @@ exit /b %ERRORLEVEL%
 
 :collaboration
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_manager.ps1 %*
+exit /b %ERRORLEVEL%
+
+:observation
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_manager.ps1 %* -CliSummary
 exit /b %ERRORLEVEL%
 
 :diagnose

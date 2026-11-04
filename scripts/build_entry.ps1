@@ -385,7 +385,7 @@ function Get-CompileResourceJobs($Budget) {
     $memoryJobs=[int][Math]::Max(1,[Math]::Floor(($Budget.memoryMiB-1024)/2048.0))
     return [int][Math]::Min($Budget.cpuSlots,$memoryJobs)
 }
-function Get-DefaultResourceRequest($Policy,[long]$AvailableMemoryMiB=-1) {
+function Get-DefaultResourceRequest($Policy,[long]$AvailableMemoryMiB=-1,[ValidateSet('build','tools')][string]$Workload='build') {
     # Per-Run defaults leave at least a quarter of CPU capacity and half of RAM
     # for interactive work, within any stricter configured project capacity.
     if($AvailableMemoryMiB -lt 0){$AvailableMemoryMiB=[long][Math]::Floor([SnowDesktop.Build.Job]::AvailableMemoryBytes()/1048576.0)}
@@ -397,12 +397,21 @@ function Get-DefaultResourceRequest($Policy,[long]$AvailableMemoryMiB=-1) {
         cpuSlots=[int][Math]::Min($Policy.cpuCapacity,[Math]::Max(1,[Math]::Floor($Policy.logicalProcessors*0.75)))
         memoryMiB=[int][Math]::Min($memoryCapacity,$availableBudget)
     }
+    if($Workload -eq 'tools'){
+        # Targeted tool drivers compile one source at a time. Keep room for
+        # their subprocess fixtures without reserving a product-build floor.
+        # Retain the normal CPU ceiling: CTest PROCESSORS can exceed half the
+        # machine. Explicit CPU overrides remain subject to that contract.
+        $toolMemory=[Math]::Max(1024,[Math]::Floor(($AvailableMemoryMiB-$Policy.headroomMiB)*0.75/256)*256)
+        $budget.memoryMiB=[int][Math]::Min($memoryCapacity,[Math]::Min(2048,$toolMemory))
+    }
     $budget|Add-Member NoteProperty compileJobs (Get-CompileResourceJobs $budget)
+    $budget|Add-Member NoteProperty workload $Workload
     return $budget
 }
-function Get-DefaultProjectResourceBinding([string]$Root) {
+function Get-DefaultProjectResourceBinding([string]$Root,[ValidateSet('build','tools')][string]$Workload='build') {
     $state=Get-WeightedResourcePolicy $Root -Persist
-    $budget=Get-DefaultResourceRequest $state.policy
+    $budget=Get-DefaultResourceRequest $state.policy -Workload $Workload
     # Preserve the default single-heavy-Run lane. Sharing still needs an
     # explicit reviewed request; default resource protection does not opt in.
     return Get-ProjectResourceBinding $Root $true $budget.cpuSlots $budget.memoryMiB $true

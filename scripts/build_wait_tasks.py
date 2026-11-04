@@ -182,7 +182,7 @@ def worker(repo, directory, module, ticket_id):
         while True:
             if (directory/(ticket_id + '.wait-cancel')).exists():
                 status, reason = 'cancelled', 'Explicit cancellation; registrations were not changed.'
-            elif dt.datetime.now(dt.timezone.utc) >= dt.datetime.fromisoformat(ticket['deadlineUtc']):
+            elif ticket.get('deadlineUtc') and dt.datetime.now(dt.timezone.utc) >= dt.datetime.fromisoformat(ticket['deadlineUtc']):
                 status, reason = 'timed-out', 'Bounded wait expired; inspect/resume explicitly. Registrations were retained.'
             else:
                 try:
@@ -262,7 +262,7 @@ def main():
     p.add_argument('--revision', type=int, default=-1)
     p.add_argument('--files', default='')
     p.add_argument('--ticket', default='')
-    p.add_argument('--timeout', type=int, default=1800)
+    p.add_argument('--timeout', type=int, default=0, help='Seconds to wait; 0 (default) waits until an event or cancellation')
     p.add_argument('--next', default='When this wait returns, execute the saved next step using the latest begin/claim receipt.')
     p.add_argument('--reason', default='')
     p.add_argument('--new', action='store_true')
@@ -270,8 +270,8 @@ def main():
     args = p.parse_args()
     foreground=args.action=='wait'
     if foreground:args.action='status' if args.ticket else 'start'
-    if not 1 <= args.timeout <= 86400:
-        p.error('Timeout must be 1..86400 seconds')
+    if not 0 <= args.timeout <= 86400:
+        p.error('Timeout must be 0 (no deadline) or 1..86400 seconds')
     repo = args.root.resolve()
     directory = repo/'.build/collaboration'
     directory.mkdir(parents=True, exist_ok=True)
@@ -307,7 +307,7 @@ def main():
             ticket = {'schemaVersion': 1, 'id': secrets.token_hex(16), 'participant': args.participant,
                       'condition': args.condition, 'batchId': args.batch, 'editRevision': args.revision,
                       'files': requested, 'status': 'waiting', 'attempt': 1, 'createdUtc': utc(),
-                      'deadlineUtc': (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=args.timeout)).isoformat(),
+                      'deadlineUtc': (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=args.timeout)).isoformat() if args.timeout else None,
                       'next': args.next[:2000], 'owner': None, 'observations': 0, 'reason': 'Local worker queued.'}
             manifest=repo/'scripts/shared_resources.json'
             ticket['sharedFiles']=json.loads(manifest.read_text(encoding='utf-8-sig'))['languageFiles'] if manifest.is_file() else []
@@ -344,7 +344,7 @@ def main():
         if cancel.exists():
             cancel.unlink()
         ticket = dict(shown, status='waiting', attempt=shown['attempt'] + 1, owner=None,
-                      deadlineUtc=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=args.timeout)).isoformat(),
+                      deadlineUtc=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=args.timeout)).isoformat() if args.timeout else None,
                       reason=args.reason[:2000], observations=0)
         ticket.pop('completedUtc', None)
         atomic(directory/(args.ticket + '.wait.json'), ticket)

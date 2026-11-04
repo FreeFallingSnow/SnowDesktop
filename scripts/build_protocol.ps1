@@ -124,6 +124,21 @@ function Get-CompactCollaborationStatus($State,[string]$Participant,$Current,$Re
         result=$(if($Result){[pscustomobject]@{batchId=$Result.batchId;outcome=$Result.outcome;exitCode=$Result.exitCode;runId=(Get-Field $Result 'runId');recovery=(Get-Field $Result 'recovery')}}else{$null});
         observation='Atomic read-only summary; use status without -Compact for full details, event-read for event text. Reading does not acknowledge events.'}
 }
+function Get-CompactBatchResult($Result,[string]$ResultPath) {
+    $coverage=Get-Field $Result 'coverage';$completed=@(Get-Field $coverage 'completed' @())
+    $failures=@($completed|Where-Object {$_.status -in 'failed','invalidated','interrupted','cancelled'}|ForEach-Object name)
+    $selectedCount=@(Get-Field $coverage 'selected' @()).Count
+    $referencesCount=@(Get-Field $coverage 'references' @()).Count
+    return [pscustomobject]@{schemaVersion=1;detail='compact';batchId=$Result.batchId;runId=(Get-Field $Result 'runId');
+        outcome=$Result.outcome;exitCode=$Result.exitCode;error=(Get-Field $Result 'error' '');resultPath=$ResultPath;
+        inputCheck=(Get-Field $Result 'inputCheck');recovery=(Get-Field $Result 'recovery');
+        selectedCount=$selectedCount;completedCount=$completed.Count;
+        passedCount=@($completed|Where-Object status -eq 'passed').Count;failedCount=$failures.Count;
+        notRunCount=(@($completed|Where-Object status -eq 'not-run').Count+[Math]::Max(0,$selectedCount-$completed.Count-$referencesCount));
+        failedTests=@($failures|Select-Object -First 16);failedTestsTruncated=($failures.Count -gt 16);
+        referencesCount=$referencesCount;
+        observation='Full immutable plan, evidence and logs are retained at resultPath. -FullResult opts into full CLI output; compact output does not change execution or evidence.'}
+}
 function Get-TaskEvents($Ledger, [string]$Id, [long]$After=0, [switch]$UrgentUnacknowledged) {
     if(-not $Ledger){return @()}
     return @($Ledger.events | Where-Object {

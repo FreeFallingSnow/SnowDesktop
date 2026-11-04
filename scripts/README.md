@@ -112,7 +112,9 @@ PowerShell 7 启动器通过原生进程 API 启动 Windows PowerShell 5.1 时�
 
 Run 先取得本工作树的输出权，再等待共享项目名额；期间不做预检进程操作、配置、编译或测试。`waitingFor` 与 `waitIntervals` 记录实际阻塞及单调耗时，取消仍使用原 Task 和 nonce。操作系统文件句柄控制租约，正常完成、取消或执行者退出会释放；不按心跳或 PID 猜测回收。
 
-未声明额度的新 Run 默认申请不超过逻辑处理器的 75%（至少一个）和物理内存的 50%（向下取 256 MiB 的倍数），同时服从更小的项目策略容量。内存额度还按提交时可用内存降低：扣除策略的物理内存余量后取 75%，低端保留 3 GiB 运行额度（策略容量更小时服从策略）；预算冻结在请求中，不在排队后静默扩大。显式成对传入 `run start -CpuSlots N -MemoryMiB M` 可覆盖单次额度并按原条件选择共享。`run budget` 只读查询当前或尚未保存的建议容量，`defaultRequest` 同时显示默认 CPU、提交内存和编译进程数。以活动 Task 调用 `run budget -Task ID -CpuCapacity N -MemoryCapacityMiB M -Reason "调整依据"`，仅在没有任何项目执行租约时更新公共 Git 目录中的策略，保留旧策略；请求绑定策略代际与哈希，排队期间改变策略会失效退出 5，不自动换用新额度。缺失已初始化策略时拒绝自动重建，须显式在静止状态恢复配置。项目 CPU 总容量默认保留两个逻辑处理器，至少一个；内存总容量最多为物理内存的 70%，以 256 MiB 预留，并保留至少 1 GiB 或物理内存的八分之一。准入检查当时可用物理内存，保守计入其他预留；余量不足时排队，不取消保护。
+普通产品 Run 未声明额度时默认申请不超过逻辑处理器的 75%（至少一个）和物理内存的 50%（向下取 256 MiB 的倍数），同时服从更小的项目策略容量。内存额度还按提交时可用内存降低：扣除策略的物理内存余量后取 75%，低端保留 3 GiB 运行额度（策略容量更小时服从策略）。`plan -Scope tool` 的非空计划默认使用工具额度：最多 2 GiB 内存，低内存时可降到 1 GiB（仍服从更小的策略容量），编译并发为 1。CPU 保留既有默认以兼容 CTest 的 `PROCESSORS` 声明，较小计划可按已知测试需求显式降低。此默认保持独占执行；共享准入仍需显式声明。计划的 `projectResources/resourceAdvice` 在 ready 前给出冻结申报、编译并发、当时可用内存、系统余量及 `waiting-memory/memory-probe-fits`。共同批次按各成员真实需求合并，包含未申报或产品构建成员时保持普通产品预算。预算冻结后不静默扩大。
+
+显式成对传入 `run start -CpuSlots N -MemoryMiB M` 可覆盖单次额度并按原条件选择共享。`run budget` 只读查询当前或尚未保存的建议容量，`defaultRequest/defaultToolRequest` 分别显示产品和工具的默认 CPU、提交内存和编译进程数。以活动 Task 调用 `run budget -Task ID -CpuCapacity N -MemoryCapacityMiB M -Reason "调整依据"`，仅在没有任何项目执行租约时更新公共 Git 目录中的策略，保留旧策略；请求绑定策略代际与哈希，排队期间改变策略会失效退出 5，不自动换用新额度。缺失已初始化策略时拒绝自动重建，须显式在静止状态恢复配置。项目 CPU 总容量默认保留两个逻辑处理器，至少一个；内存总容量最多为物理内存的 70%，以 256 MiB 预留，并保留至少 1 GiB 或物理内存的八分之一。准入检查当时可用物理内存，保守计入其他预留；余量不足时排队，不取消保护。
 
 加权 Run 预留 CPU 和内存令牌，并对私有 Job 设置 CPU 硬上限；无法设置时拒绝执行。内存申报是准入与编译并发的估算，不设置为 Job 提交内存硬上限，实际峰值超过申报时继续执行。CPU 槽是整机逻辑处理器容量的份额，提交内存不同于工作集；外层 Job 或系统仍可能限制可用资源。编译总并行取 CPU 槽和内存估算的较小值：为构建工具留 1 GiB，每个编译进程按 2 GiB 规划，至少一个。Visual Studio 构建在本次命令中设置单 MSBuild 节点、MTT 和上述 `MultiProcMaxCount`，其他生成器使用相同的总并行数；不改变 CMake 缓存或 `SNOWDESKTOP_BUILD_TOOL_JOBS=0`。CTest 使用 CPU 槽数并核对测试的 `PROCESSORS`。带 Shell/应用进程操作、任意 IDE、需要配置的测试及含共享资源声明的补验保持独占。共同批次通过 `plan -ResourceCpuSlots N -ResourceMemoryMiB M` 声明，所有成员均明确加权时采用各项最大值作为共同 Run 申报；存在未声明成员则使用默认独占预算。不同额度的活动补验不合并订阅。
 
@@ -542,6 +544,8 @@ build is a separate activation step that gracefully exits and restores an alread
 
 示例测试名必须替换为 `scripts\test.bat list` 的实际名称。`ready-and-wait` 默认在原工具进程中标记就绪、执行计划中的轻量检查、等待屏障和共同结果；不依赖 Python 或隐藏后台启动。工具 yield 后续等同一 session。`wait` 仅观察；兼容 `finish -AutoCheck` 使用同一执行路径。`ready` 仅为明确选择的后台模式：同修订存活 worker 复用，启动失败保留 pending 登记、报告 unavailable 和前台接管命令，不假报已运行。Windows PowerShell 路径按系统目录解析，pwsh 调用可用。
 
+CLI 的 `ready-and-wait/finish/wait` 默认返回精简结束回执：batch/Run、结果、选择/完成/通过/失败/未运行/引用计数、最多 16 个失败名称及完整 `resultPath`，并保留原退出码。完整不可变 JSON、日志和证据仍保存原处；加 `-FullResult` 输出原完整对象。直接调用 `build_manager.ps1` 保持原输出兼容，可显式 `-Compact` 选择精简形式。精简输出不重写结果，也不将未运行或引用证据计为本次通过。
+
 等待阶段可只读审查接口、签名、夹具、测试名称、静态语法及已有可复用证据。内置 `check` 只做差异空白、变化的 PowerShell 和指定构建 JSON 语法及输出占用观察，不声称完成原生编译、接口语义审查或宿主 UI 验收。
 
 ```bat
@@ -608,7 +612,7 @@ scripts\build.bat watch cancel --ticket TICKET
 ```
 
 `window/files` 可在新任务 `begin` 前调用；`peers/result` 必须使用已有登记的批次和修订。
-票据观察每 2 秒在本地进行，不执行模型/API、检查、构建或编辑授权，默认半小时，最多一天。
+票据观察每 2 秒在本地进行，不执行模型/API、检查、构建或编辑授权。默认 `--timeout 0` 不设截止时间，等到条件满足、需要处理的故障或显式取消；有界等待可设为 1～86400 秒。无截止时间的票据记录 `deadlineUtc: null`，旧有截止时间仍有效。
 `start` 的相同条件复用票据；仅在旧票据终止后显式 `--new` 才创建新票据。超时/退出不清活动登记。
 结果先写不可变 `.build/collaboration/<ticket>.wait-attempt<N>.json`，再更新 `.wait.json`；进程身份和内核租约防止重复工作进程。
 明确退出的等待进程需显式 `resume`；陈旧编辑者和检查永远不自动完成。未知占用、检查失败、构建退出或自身登记阻止归属释放时返回 `attention`。
@@ -687,13 +691,13 @@ rem 各自 claim 实际文件、完成修改并重报 plan，再 ready-and-wait�
 ### 默认阻塞等待与共享语言条目
 
 ```bat
-scripts\build.bat ready-and-wait task-A -Batch BATCH -Revision REVISION -WaitSeconds 1800
-scripts\build.bat watch wait task-A --condition window --timeout 1800
-scripts\build.bat watch wait task-A --condition files --files src/example.cpp --timeout 1800
+scripts\build.bat ready-and-wait task-A -Batch BATCH -Revision REVISION
+scripts\build.bat watch wait task-A --condition window
+scripts\build.bat watch wait task-A --condition files --files src/example.cpp
 scripts\build.bat watch wait --ticket TICKET
 ```
 
-默认保持对话活动，执行阻塞 `ready-and-wait/watch wait`；脚本等待不重复向模型返回。工具因时限 yield 时继续同一 session，不重新启动 status 命令。后台结束回合仅是明确选择无人值守时的选项。
+默认保持对话活动，执行阻塞 `ready-and-wait/finish/wait/watch wait`，不设截止时间；`-WaitSeconds 0`（watch 为 `--timeout 0`）可显式表达同一语义，正数指定有界等待。脚本持续等待结果或需处理事件，无变化时不重复向模型返回；本地观察不产生模型请求。工具因传输时限 yield 时继续同一 session，不重新启动 status 命令或提交候选。取消观察不取消共享 Run。后台结束回合仅是明确选择无人值守时的选项；测试内部的故障兜底时限不随观察接口改变。
 
 完成者的文件声明保留为来源追溯；新任务可在活动编辑窗口 claim 接手，仍在编辑的代码文件需排队。接手只读检查在全体编辑结束后自动重验，原测试要求保留，不需要原会话修改文件。原会话旧轮次或 finished 状态不能再次写入。
 
@@ -737,18 +741,18 @@ scripts\build.bat edit-verify task-unique -Batch BATCH -Revision EDIT_REVISION -
 ```bat
 scripts\build.bat event-post task-unique -Target target-task -EventKey requirement-unique -EventKind requirements -Importance urgent -Text "需求已更新，请复核" -RequirementsRevision 2
 scripts\build.bat event-read target-task -AfterSequence 0
-scripts\build.bat event-wait target-task -AfterSequence 0 -WaitSeconds 30
+scripts\build.bat event-wait target-task -AfterSequence 0
 scripts\build.bat event-ack target-task -Sequence 1 -AckLevel adapter
 scripts\build.bat event-ack target-task -Sequence 1 -AckLevel agent
 ```
 
-消息以 EventKey 幂等，重用键但改内容会拒绝。普通 `Target=*` 广播固定投递给当时已登记且未关闭的任务；紧急广播只投递给指定活动批次中未关闭、未撤回的参与者，并持久记录 `batchId`。可显式传 `-Batch`，省略时只允许从发送者唯一的活动批次推断；没有关联或关联不唯一时拒绝，不回退到全项目。批次可以是当前编辑窗口或仍在执行的捕获候选，二者不混发；后来加入者不追收旧广播。显式 `-Target task-id` 保留定向语义，调查任务无需为接收定向消息申请编辑权。DSH 仅自动投递仍关联活动批次的紧急广播；历史广播和缺少批次信息的旧广播保留可读，不再自动唤起。事件写入、适配器收到、智能体确认分别记录。read/wait 不代替确认；单次返回至多 100 条，续读以最后实际返回的事件 sequence 为游标，不用顶层高水位跳过后续页。event-wait 默认最多等待 30 秒，超时返回空事件和 timedOut，不取消任务或构建。finish/wait 在等待阶段收到未确认紧急事件时返回 6，保留编辑登记和批次；执行中的编译不会因观察者退出而在此接口里取消。只在安全等待边界检查事件，持久 Run 的独立执行在后续批次实现。
+消息以 EventKey 幂等，重用键但改内容会拒绝。普通 `Target=*` 广播固定投递给当时已登记且未关闭的任务；紧急广播只投递给指定活动批次中未关闭、未撤回的参与者，并持久记录 `batchId`。可显式传 `-Batch`，省略时只允许从发送者唯一的活动批次推断；没有关联或关联不唯一时拒绝，不回退到全项目。批次可以是当前编辑窗口或仍在执行的捕获候选，二者不混发；后来加入者不追收旧广播。显式 `-Target task-id` 保留定向语义，调查任务无需为接收定向消息申请编辑权。DSH 仅自动投递仍关联活动批次的紧急广播；历史广播和缺少批次信息的旧广播保留可读，不再自动唤起。事件写入、适配器收到、智能体确认分别记录。read/wait 不代替确认；单次返回至多 100 条，续读以最后实际返回的事件 sequence 为游标，不用顶层高水位跳过后续页。event-wait 默认不设截止时间，等待游标后的下一事件；显式 `-WaitSeconds N` 可设有界等待，超时返回空事件和 timedOut，不取消任务或构建。finish/wait 在等待阶段收到未确认紧急事件时返回 6，保留编辑登记和批次；执行中的编译不会因观察者退出而在此接口里取消。只在安全等待边界检查事件，持久 Run 的独立执行在后续批次实现。
 
 任务上限 2000、事件上限 4096，达到上限明确拒绝新增，保留全部未消费消息；不静默淘汰。需要通过审阅后的迁移归档。当前 CLI 能力声明不含 DSH 写入拦截或 idleWake；DSH 插件会通过宿主能力接入，悬浮窗读取同一接口，网页保持只读。普通编辑器和任意 shell 写入不能被单独的 edit-verify 校验强制拦截。
 
 同一会话开始下一项工作时用 `task-new CLOSED_ID -TaskName "下一项具体目标"`。协调器返回新 `task.id`，保存 `previousTask/continuationRoot/generation`；旧任务保留关闭状态、证据和消息，新的任务重新 begin/claim，适配器不接收旧许可。活动任务改目标继续 task-stage 改名；自动心跳不创建下一任务。对旧的前序 ID 再次 task-new 会拒绝并提示查当前任务。
 
-已结束自身编辑、检查通过且路径已提交/交接时，可显式 `task-close ID -TaskRevision N -TaskPhase completed -DeferBatchResult -Progress "最终摘要"`，在共同候选尚未结束时关闭 Task。回执任务中的 `deferredBatchIds` 保留待归档批次；共同批次、参与者来源、Run 和结果照常保留。仍在编辑、检查未通过或人工验收区间未结束时拒绝，不撤回成员或取消其他执行。Task 完成与候选最终验证结果分开报告。
+已结束自身编辑、检查通过且路径已提交/交接时，可显式 `task-close ID -TaskRevision N -TaskPhase completed -DeferBatchResult -Progress "最终摘要"`，在共同候选尚未结束时关闭 Task。回执任务中的 `deferredBatchIds` 保留待归档批次；共同批次、参与者来源、Run 和结果照常保留。Run 提交前须保留至少一名活动参与者，构建预留尚未写出 Run 身份时稍后关闭；已关闭成员的等待者只观察，不竞争构建执行权。仍在编辑、检查未通过或人工验收区间未结束时拒绝，不撤回成员或取消其他执行。Task 完成与候选最终验证结果分开报告。
 
 `status ID -Compact` 是同一通用只读接口的有界投影：当前任务、批次与自身成员摘要，最多 32 名成员/路径、8 个活动候选和 8 条最近消息摘要，附总数及截断标记；历史批次可加 `-Batch B`。去掉 `-Compact` 保留完整状态。消息正文通过 event-read 读取后显式确认，摘要不代替急件处理。
 

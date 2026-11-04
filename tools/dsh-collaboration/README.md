@@ -1,6 +1,6 @@
 # SnowDesktop DSH 协作插件
 
-此目录是通用协作系统的 DSH 适配器，以独立 Cordis bundle 提供面板和能力补强。任务生命周期、认领、执行权、恢复和证据语义由[通用协调器](../../scripts/README.md)维护；效率问题统一写入[协作系统反馈](../../scripts/COLLABORATION_FEEDBACK.md)。插件不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.25` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，其他版本须重新核对接口。
+此目录是通用协作系统的 DSH 适配器，以独立 Cordis bundle 提供面板和能力补强。任务生命周期、认领、执行权、恢复和证据语义由[通用协调器](../../scripts/README.md)维护；效率问题统一写入[协作系统反馈](../../scripts/COLLABORATION_FEEDBACK.md)。插件不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.26` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，其他版本须重新核对接口。
 
 插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/ready/close/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
 
@@ -63,7 +63,7 @@ Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使�
 
 `claim` 默认向通用协调器传入 `-Add`，`claimMode=set` 显式替换。`status` 默认调用 `status ID -Compact`；`detail=full` 读取完整状态。`close text` 保存最终摘要，`deferBatchResult=true` 对应通用的显式延后归档选项；关闭后的 progress 返回结构化 `closed`，不会伪造一次已保存的进展。
 
-`ready` 从 DSH Host 显式调用通用后台就绪入口，仅提交标准等待者；后续构建仍由原协调器取得执行权、记录日志并创建持久 Run。它不使用短超时工具进程承载编译，不自动回退或取消编译所有者。默认 CLI 前台流程仍为 ready-and-wait；Host 的 Job 若也拒绝持久启动，按[诊断与恢复](../../scripts/README.md#构建环境诊断与启动恢复)处理。等待消息默认 30 秒，不重复创建消费者。每次工具回执包含模块加载时读取的 `pluginVersion`，据此核对实际生效版本；包版本更新不代表旧 Host 已重载。
+`ready` 从 DSH Host 显式调用通用后台就绪入口，仅提交标准等待者；后续构建仍由原协调器取得执行权、记录日志并创建持久 Run。它不使用短超时工具进程承载编译，不自动回退或取消编译所有者。默认 CLI 前台流程仍为 ready-and-wait；Host 的 Job 若也拒绝持久启动，按[诊断与恢复](../../scripts/README.md#构建环境诊断与启动恢复)处理。`wait-messages` 默认 `waitSeconds=0`，持续等待下一事件，不定时返回空状态；正数可显式设置秒数上限。工具不声明 Host 截止时间，其他操作保留各自子进程时限；`exec.signal` 取消只终止事件观察进程，保留登记和共享 Run。无变化时不唤醒模型，不重复创建消费者。每次工具回执包含模块加载时读取的 `pluginVersion`，据此核对实际生效版本；包版本更新不代表旧 Host 已重载。
 
 ## 验证边界
 

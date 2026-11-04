@@ -173,6 +173,7 @@ try {
         }else{
             $policy=Get-WeightedResourcePolicy $root
             $policy|Add-Member NoteProperty defaultRequest (Get-DefaultResourceRequest $policy.policy)
+            $policy|Add-Member NoteProperty defaultToolRequest (Get-DefaultResourceRequest $policy.policy -Workload tools)
             $policy|ConvertTo-Json -Depth 8
         }
         exit 0

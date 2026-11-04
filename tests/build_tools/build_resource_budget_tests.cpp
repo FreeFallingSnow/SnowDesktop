@@ -112,10 +112,17 @@ $directory=Join-Path $PSScriptRoot 'headroom-probe'
 $first=[SnowDesktop.Build.ResourceBroker]::TryReserve($directory,1,1,1,1,0,1073741824)
 $second=[SnowDesktop.Build.ResourceBroker]::TryReserve($directory,1,1,1,1,2147483648,1073741824)
 $policy=New-WeightedResourcePolicy
+$toolBudget=Get-DefaultResourceRequest $policy ($policy.headroomMiB+1536) tools
+[void][IO.Directory]::CreateDirectory($directory+'-tools')
+$toolAdmission=[SnowDesktop.Build.ResourceBroker]::TryReserve(($directory+'-tools'),1,8,1,[int]($toolBudget.memoryMiB/256),[ulong](([long]$policy.headroomMiB+1536)*1048576),[ulong]([long]$policy.headroomMiB*1048576))
 try {@{reason=$first.BusyKind;firstAdmitted=[bool]$first.Lease;afterFailureAdmitted=[bool]$second.Lease;
+ toolAdmitted=[bool]$toolAdmission.Lease;
  idle=(Get-DefaultResourceRequest $policy $policy.physicalMemoryMiB);
  busy=(Get-DefaultResourceRequest $policy ($policy.headroomMiB+4096));
- low=(Get-DefaultResourceRequest $policy 0)}|ConvertTo-Json}finally{if($second.Lease){$second.Lease.Dispose()}}
+ low=(Get-DefaultResourceRequest $policy 0);
+ toolIdle=(Get-DefaultResourceRequest $policy $policy.physicalMemoryMiB tools);
+ toolBusy=(Get-DefaultResourceRequest $policy ($policy.headroomMiB+1536) tools);
+ toolLow=(Get-DefaultResourceRequest $policy 0 tools)}|ConvertTo-Json}finally{if($second.Lease){$second.Lease.Dispose()};if($toolAdmission.Lease){$toolAdmission.Lease.Dispose()}}
 )PS",true);
     const auto headroom=h.bridge(0).call(h.root(0)/L"headroom-probe.ps1",{});
     require(headroom.at("reason").str()=="memory-headroom"&&!headroom.at("firstAdmitted").boolean&&headroom.at("afterFailureAdmitted").boolean,"Insufficient available memory admitted work or leaked partial reservation tokens");
@@ -125,6 +132,12 @@ try {@{reason=$first.BusyKind;firstAdmitted=[bool]$first.Lease;afterFailureAdmit
         headroom.at("busy").at("compileJobs").integer()<=headroom.at("idle").at("compileJobs").integer()&&
         headroom.at("low").at("memoryMiB").integer()==std::min(3072,idleMemory)&&headroom.at("low").at("compileJobs").integer()==1,
         "Default budget failed to reduce compiler pressure under existing application load or keep a bounded low-memory request");
+    const auto toolMemory=headroom.at("toolIdle").at("memoryMiB").integer();
+    require(headroom.at("toolAdmitted").boolean&&toolMemory<=2048&&headroom.at("toolIdle").at("compileJobs").integer()==1&&
+        headroom.at("toolBusy").at("memoryMiB").integer()<=toolMemory&&headroom.at("toolBusy").at("memoryMiB").integer()<=1536&&
+        headroom.at("toolLow").at("memoryMiB").integer()==std::min(1024,toolMemory)&&
+        headroom.at("toolIdle").at("cpuSlots").integer()==headroom.at("idle").at("cpuSlots").integer(),
+        "Small tool workload kept the product-build memory floor, changed CTest CPU compatibility or used multiple compiler processes");
     if(h.cpuCapacity>=2){
         const auto a=h.start(0);const auto ownerA=h.running(0,a);const auto b=h.start(1);h.running(1,b);
         require(owner_alive(ownerA.at("owner")),"Two small reservations failed to coexist");

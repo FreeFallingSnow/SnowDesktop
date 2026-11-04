@@ -84,7 +84,7 @@ export class CollaborationBridge{
   if(current.batchId!==accepted.batchId||current.revision!==accepted.revision){this.grants.delete(id);throw new Error('Edit grant was superseded; re-evaluate and explicitly begin again.');}
   return accepted;
  }
- async call(command,id,args=[],{timeout=15000}={}){
+ async call(command,id,args=[],{timeout=15000,signal}={}){
   if(!allowedCommands.has(command))throw new Error('Unsupported plugin coordinator operation');
   if(id&&!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(id))throw new Error('Invalid task ID');
   const parameters={Command:command,...(id?{Participant:id}:{})};
@@ -97,7 +97,7 @@ export class CollaborationBridge{
   const invocation={script:this.script,parameters};
   const argv=['-NoProfile','-EncodedCommand',coordinatorBootstrap];
   try{
-   const result=await execFileAsync(this.powershell,argv,{cwd:this.root,windowsHide:true,shell:false,timeout,maxBuffer:8*1024*1024,env:{...process.env,PSExecutionPolicyPreference:'Bypass',SNOWDESKTOP_DSH_COORDINATOR_ARGS:JSON.stringify(invocation)}});
+   const result=await execFileAsync(this.powershell,argv,{cwd:this.root,windowsHide:true,shell:false,timeout,signal,maxBuffer:8*1024*1024,env:{...process.env,PSExecutionPolicyPreference:'Bypass',SNOWDESKTOP_DSH_COORDINATOR_ARGS:JSON.stringify(invocation)}});
    return JSON.parse(result.stdout.replace(/^\uFEFF/,''));
   }catch(error){
    if(error.code===6&&error.stdout){return JSON.parse(error.stdout.replace(/^\uFEFF/,''));}
@@ -164,7 +164,7 @@ export class CollaborationBridge{
   if(health.service!=='SnowDesktop build dashboard'||health.instance!==receipt.instance||health.fixture!==false||receipt.fixture!==false)throw new Error('Dashboard listener identity did not match this checkout');
   return read(route);
  }
- async operate(agentId,args){
+ async operate(agentId,args,{signal}={}){
   const id=this.taskId(agentId),action=args.action;
   if(action==='status')return this.call('status',id,args.detail==='full'?[]:['-Compact']);
   if(action==='open')return this.open(agentId,args.text);
@@ -181,7 +181,11 @@ export class CollaborationBridge{
    this.grants.set(id,{batchId:registered.batchId,revision:registered.editRevision});return registered;
   }
   if(action==='messages')return this.call('event-read',id,['-AfterSequence',String(args.afterSequence||0)]);
-  if(action==='wait-messages')return this.call('event-wait',id,['-AfterSequence',String(args.afterSequence||0),'-WaitSeconds','30'],{timeout:35000});
+  if(action==='wait-messages'){
+   const seconds=args.waitSeconds??0;
+   if(!Number.isInteger(seconds)||seconds<0||seconds>86400)throw new Error('waitSeconds must be 0 (no deadline) or 1..86400');
+   return this.call('event-wait',id,['-AfterSequence',String(args.afterSequence||0),'-WaitSeconds',String(seconds)],{timeout:seconds?seconds*1000+5000:0,signal});
+  }
   if(action==='acknowledge')return this.call('event-ack',id,['-Sequence',String(args.sequence),'-AckLevel','agent']);
   const grant=this.grant(id),bound=['-Batch',grant.batchId,'-Revision',String(grant.revision)];
   if(action==='ready'){

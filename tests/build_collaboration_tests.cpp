@@ -167,9 +167,11 @@ void run_presence(const fs::path& repo,bool legacy,bool fixedCapabilities=false)
         presence.call({"event-ack","waiter","-Sequence","1","-AckLevel","agent"});
         auto timed=presence.call({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","1"});
         require(timed.at("timedOut").boolean&&timed.at("events").items.empty(),"Bounded idle wait returned false messages");
-        auto messageWait=presence.start({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","5"});
+        auto messageWait=presence.start({"event-wait","waiter","-AfterSequence","1"});
+        auto unlimitedWait=presence.start({"event-wait","waiter","-AfterSequence","1","-WaitSeconds","0"});
         auto broadcast=presence.call({"event-post","reader","-EventKey","broadcast-1","-Text","Project progress"});
         require(complete(*messageWait).at("events").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),"Message wait failed to release metadata for broadcast writer");
+        require(complete(*unlimitedWait).at("events").items[0].at("sequence").integer()==broadcast.at("sequence").integer(),"Unlimited message wait returned before the next event");
         presence.call({"task-open","late-reader"});
         require(presence.call({"event-read","late-reader"}).at("events").items.empty(),"Broadcast silently changed recipient scope");
         presence.call({"task-close","waiter","-TaskRevision","1","-TaskPhase","completed"},2);
@@ -182,6 +184,8 @@ void run_presence(const fs::path& repo,bool legacy,bool fixedCapabilities=false)
 void run_contracts(const fs::path& repo){
     {
         Coordinator c(repo,"task-continuation-claims");
+        copy(repo,c.root,{"scripts/powershell_runtime.bat"});
+        write(c.scripts/L"observe.bat",read(repo/L"scripts/build.bat"));
         c.call({"task-open","series","-TaskName","First task"});
         c.call({"task-close","series","-TaskRevision","0","-TaskPhase","completed"});
         const auto next=c.call({"task-new","series","-TaskName","Next task"}).at("task");
@@ -207,6 +211,11 @@ void run_contracts(const fs::path& repo){
         require(summary.at("detail").str()=="compact"&&summary.at("current").at("participantCount").integer()==2&&
             summary.at("current").at("participant").at("ownedFileCount").integer()==1&&!summary.at("current").at("participant").has("testPlan"),
             "Generic compact status lost the current participant or copied its heavy plan");
+        const auto toolPlan=c.plan(id,batch,0,"selected","Alpha","tool","src/a.txt").at("testPlan");
+        require(toolPlan.at("projectResources").at("memoryMiB").integer()<=2048&&
+            toolPlan.at("resourceAdvice").at("source").str()=="default-tools"&&toolPlan.at("resourceAdvice").at("compileJobs").integer()==1&&
+            toolPlan.at("resourceAdvice").has("availableMemoryMiB")&&toolPlan.at("resourceAdvice").has("admission"),
+            "Planning hid the actual tool default or waited until submission to size it");
         c.call({"task-close",id,"-TaskRevision","1","-TaskPhase","completed","-DeferBatchResult"},2);
         c.plan(id,batch,0,"none","","tool","src/a.txt");
         c.ready(id,batch);
@@ -218,6 +227,24 @@ void run_contracts(const fs::path& repo){
         const auto third=c.call({"task-new",id,"-TaskName","Third task"}).at("task");
         require(third.at("generation").integer()==3&&third.at("continuationRoot").str()=="series","Task continuation did not survive another closed generation");
         require(c.finish("peer",batch).at("outcome").str()=="passed","Closed participant cancelled or blocked its shared batch");
+        const auto original=read(c.stateRoot/wide(batch+".json"));
+        auto compact=c.bound("wait",id,batch);compact.push_back("-Compact");
+        const auto concise=c.call(compact);
+        require(concise.at("detail").str()=="compact"&&concise.at("outcome").str()=="passed"&&!concise.has("testingPlan")&&
+            concise.has("resultPath")&&read(c.stateRoot/wide(batch+".json"))==original,
+            "Compact finish result lost status, expanded its whole plan or rewrote full evidence");
+        const auto full=c.call(c.bound("wait",id,batch));
+        require(full.has("testingPlan")&&full.at("batchId").str()==concise.at("batchId").str(),"Full result compatibility or compact/full result identity was lost");
+        const auto cli=[&](const std::wstring& extra){
+            const auto result=run({powershell().wstring(),L"-NoProfile",L"-Command",wide("& "+ps_literal(c.scripts/L"observe.bat")+" wait "+id+" -Batch "+batch+" -Revision 0 ")+extra},c.root,15);
+            require(result.code==0,"CLI result wrapper failed: "+result.out+result.err);return Json::parse(result.out);
+        };
+        require(cli(L"").at("detail").str()=="compact"&&cli(L"-FullResult").has("testingPlan")&&read(c.stateRoot/wide(batch+".json"))==original,
+            "Default CLI result was verbose, FullResult was ignored, or observing changed persisted evidence");
+        write(c.root/L"cancelled-summary.ps1",". $PSScriptRoot/scripts/build_protocol.ps1\n$result=[pscustomobject]@{batchId='cancelled';outcome='cancelled';exitCode=4;coverage=[pscustomobject]@{selected=@('A','B');completed=@();references=@()}}\nGet-CompactBatchResult $result 'original.json'|ConvertTo-Json\n");
+        const auto notRun=c.bridge->call(c.root/L"cancelled-summary.ps1",{});
+        require(notRun.at("notRunCount").integer()==2&&notRun.at("passedCount").integer()==0&&notRun.at("completedCount").integer()==0,
+            "Compact cancellation counted selected but unexecuted checks as completed or omitted their not-run count");
     }
     {
         Coordinator unplanned(repo,"explicit-selection");

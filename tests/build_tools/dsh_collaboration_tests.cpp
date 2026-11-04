@@ -190,6 +190,18 @@ if(mode==='scope'){
   values.push({runtime,progress:updated.task.progress,event:received.events.find(event=>event.key==='fixture-unicode').text});
  }
  result={values};
+}else if(mode==='wait-event'){
+ await bridge.open(agent,'Wait for next event');
+ const stateBefore=bridge.state().current,cursor=bridge.state().taskLedger.sequence;
+ const abort=new AbortController(),originalCall=bridge.call.bind(bridge);let options;
+ bridge.call=(...values)=>{if(values[0]==='event-wait'&&!options)options={seconds:values[2].at(-1),timeout:values[3].timeout,signal:values[3].signal===abort.signal};return originalCall(...values);};
+ const cancelled=bridge.operate(agent,{action:'wait-messages',afterSequence:cursor},{signal:abort.signal}).then(()=>false,()=>true);
+ abort.abort();const aborted=await cancelled;
+ const waiting=bridge.operate(agent,{action:'wait-messages',afterSequence:cursor,waitSeconds:0});
+ const event=await originalCall('event-post',id,['-Target',id,'-EventKey','wait-event','-Text','Next event']);
+ const observed=await waiting;
+ const bounded=await bridge.operate(agent,{action:'wait-messages',afterSequence:event.sequence,waitSeconds:1});
+ result={aborted,options,observed,bounded,stateUnchanged:JSON.stringify(stateBefore)===JSON.stringify(bridge.state().current)};
 }else if(mode==='grant'){
  const registration=await bridge.operate(agent,{action:'begin'});
  const claim=await bridge.operate(agent,{action:'claim',files:'src/a.txt'});
@@ -321,6 +333,10 @@ console.log(JSON.stringify(result));
     c.ready(id,batch,1);c.finish("peer",batch);
     require(!node("write").at("write").at("allowed").boolean,"Retired grant permitted later source mutation");
     require(node("escape").at("denied").boolean&&read(fs::path(c.root.wstring()+L"-escape")/L"keep.txt")=="outside original","Repository junction bypassed the write gate or changed external data");
+    const auto waiting=node("wait-event");
+    require(waiting.at("aborted").boolean&&waiting.at("options").at("signal").boolean&&waiting.at("options").at("seconds").str()=="0"&&waiting.at("options").at("timeout").integer()==0&&
+        waiting.at("observed").at("events").items.size()==1&&waiting.at("bounded").at("timedOut").boolean&&waiting.at("stateUnchanged").boolean,
+        "DSH event wait lost unlimited/cancel/bounded semantics or changed editing authority");
     const auto continuation=node("continuation");
     require(continuation.at("initial").at("task").at("id").str()!=continuation.at("next").at("task").at("id").str()&&
         continuation.at("resolved").str()==continuation.at("next").at("task").at("id").str()&&continuation.at("next").at("task").at("generation").integer()==2,
@@ -430,18 +446,22 @@ console.log(JSON.stringify(result));
 const [moduleFile,root,mode]=process.argv.slice(2),enabled=mode==='enabled';
 const {apply}=await import(pathToFileURL(moduleFile));
 const {taskId}=await import(pathToFileURL(path.join(path.dirname(moduleFile),'core.js')));
-const hooks=new Map(),disposers=[],services={},notices=[],errors=[];let poll,notify,acks=0;
+const hooks=new Map(),disposers=[],services={},notices=[],errors=[];let poll,notify,tool,acks=0;
 const nativeSetInterval=globalThis.setInterval;
 globalThis.setInterval=(callback,delay,...args)=>{if(delay===2000){poll=callback;return {unref(){}};}return nativeSetInterval(callback,delay,...args);};
 const record=(agent,method,message)=>{notices.push({agent,method,message});notify?.();};
 const make=(name,status,cwd=root)=>({id:'wake-'+mode+'-'+name,session:{cwd},status,inject:message=>record(name,'inject',message),followup:message=>record(name,'followup',message)});
 const idle=make('idle','idle'),active=make('active','running'),released=make('released','idle'),outside=make('outside','idle',root+'-outside'),unrelated=make('unrelated','idle');
-const ctx={services,inject(){},logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside,unrelated]},tools:{register(){}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
+const ctx={services,inject(){},logger:{warn:error=>errors.push(String(error))},workingDirectory:{get:session=>session.cwd},fs:{},agents:{list:()=>[idle,active,released,outside,unrelated]},tools:{register:value=>{tool=value;}},on:(name,handler)=>{hooks.set(name,handler);return()=>hooks.delete(name);},effect:effect=>disposers.push(effect())};
 async function delivered(count){if(notices.length>=count)return;await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Production event delivery did not complete')),10000);notify=()=>{if(notices.length>=count){clearTimeout(timeout);notify=null;resolve();}};notify();});}
 let result;
 try{
  apply(ctx,{repositoryRoot:root,dashboardPort:8765,wakeResidentAgents:enabled});
- for(const agent of [idle,active,released,outside,unrelated])await hooks.get('tools/pre-execute')({agent,name:'read'},()=>null);
+ for(const agent of [idle,active,released,outside,unrelated]){
+  await hooks.get('tools/pre-execute')({agent,name:'snow_collaboration'},()=>null);
+  if(agent!==outside)await tool.execute({action:'open',text:'Verify resident coordination delivery for '+agent.id},{agent});
+  await hooks.get('tools/pre-execute')({agent,name:'read'},()=>null);
+ }
  hooks.get('agent/disposed')({agent:released});
  const bridge=services.snowCollaboration.bridge,call=bridge.call.bind(bridge);
  bridge.call=(...args)=>{if(args[0]==='event-ack')acks++;return call(...args);};

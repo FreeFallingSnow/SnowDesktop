@@ -71,19 +71,18 @@ export function apply(ctx,config){
   return next();
  },{prepend:true});
  ctx.tools.register(defineTool({
-  name:'snow_collaboration',description:'Manage this agent’s SnowDesktop task and edit grant. Use open text for a specific goal; after close, open text creates the next task in the same session. claim adds paths by default; claimMode=set replaces them. status is compact by default; detail=full expands it. ready explicitly starts the standard background waiter from the DSH Host context after begin/claim/plan. close text saves the final summary; deferBatchResult requires a finished edit/check and preserves shared Runs. Responses report the loaded pluginVersion.',
+  name:'snow_collaboration',description:'Manage this agent’s SnowDesktop task and edit grant. Use open text for a specific goal; after close, open text creates the next task in the same session. claim adds paths by default; claimMode=set replaces them. status is compact by default; detail=full expands it. wait-messages waits until the next event by default (waitSeconds=0); set a positive waitSeconds only for a bounded wait. ready explicitly starts the standard background waiter from the DSH Host context after begin/claim/plan. close text saves the final summary; deferBatchResult requires a finished edit/check and preserves shared Runs. Responses report the loaded pluginVersion.',
   parameters:{
    action:{type:'string',required:true,enum:['open','status','progress','begin','claim','plan','ready','close','messages','wait-messages','acknowledge']},
    text:{type:'string'},files:{type:'string'},adoptExistingChanges:{type:'boolean'},claimMode:{type:'string',enum:['add','set']},
    detail:{type:'string',enum:['compact','full']},deferBatchResult:{type:'boolean'},
    inputs:{type:'string'},reason:{type:'string'},scope:{type:'string'},suites:{type:'string'},tests:{type:'string'},
-   afterSequence:{type:'integer'},sequence:{type:'integer'}
+   afterSequence:{type:'integer'},sequence:{type:'integer'},waitSeconds:{type:'integer',minimum:0,maximum:86400}
   },
   output:{schema:{type:'object',properties:{json:{type:'string',required:true}},additionalProperties:false},render:(_args,value)=>[{type:'text',text:value.json}]},
-  timeoutMs:45000,
   async execute(args,exec){
    if(!exec.agent||!await ensure(exec.agent))throw new Error('Switch to the configured SnowDesktop working directory first.');
-   return {json:JSON.stringify({...await bridge.operate(exec.agent.id,args),pluginVersion})};
+   return {json:JSON.stringify({...await bridge.operate(exec.agent.id,args,{signal:exec.signal}),pluginVersion})};
   }
  }));
   const unconfirmed=(state,id)=>(state.taskLedger?.events||[]).filter(event=>event.importance==='urgent'&&event.recipients.includes(id)&&eventInScope(state,event,id)&&!event.receipts.some(receipt=>receipt.task===id&&receipt.level==='agent'));
