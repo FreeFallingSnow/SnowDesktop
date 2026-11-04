@@ -356,6 +356,13 @@ namespace SnowDesktop.Build
         { directory = folder; path = file; RunId = run; Sequence = order; lease = held; }
         static bool Sharing(IOException error)
         { int code = error.HResult & 0xffff; return code == 32 || code == 33; }
+        public static bool HasPending(string resourceDirectory)
+        {
+            string folder = Path.Combine(resourceDirectory, "admission");
+            if (!Directory.Exists(folder)) return false;
+            using (FileStream transaction = new FileStream(Path.Combine(folder, "queue.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+                return Active(folder, null).Count != 0;
+        }
         static List<string> Active(string folder, string own)
         {
             List<string> alive = new List<string>(); int inspected = 0;
@@ -462,6 +469,34 @@ namespace SnowDesktop.Build
     }
     public static class ResourceBroker
     {
+        // Caller holds the same budget.lock as initial admission. A stage
+        // supplement never acquires another CPU lane or releases base tokens.
+        public static int MemoryOccupancy(string directory, int capacity)
+        {
+            if (capacity < 1 || capacity > 4096) throw new ArgumentException("Invalid memory capacity");
+            int occupied; List<FileStream> free = Scan(directory, "memory", capacity, 0, out occupied);
+            foreach (FileStream stream in free) stream.Dispose();
+            return occupied;
+        }
+        public static ResourceAttempt TrySupplementMemory(string directory, int capacity, int baseSlots, int extraSlots,
+            ulong availableBytes, ulong headroomBytes)
+        {
+            if (capacity < 1 || capacity > 4096 || baseSlots < 1 || extraSlots < 1 || baseSlots + extraSlots > capacity)
+                throw new ArgumentException("Supplement exceeds validated memory capacity");
+            List<FileStream> memory = null;
+            try
+            {
+                int occupied; memory = Scan(directory, "memory", capacity, extraSlots, out occupied);
+                ResourceAttempt result = new ResourceAttempt { OccupiedMemorySlots = occupied, AvailablePhysicalBytes = availableBytes };
+                if (occupied < baseSlots) throw new InvalidOperationException("Admitted base memory reservation disappeared");
+                if (memory.Count < extraSlots) result.BusyKind = "memory-capacity";
+                else if (availableBytes < checked(headroomBytes + (ulong)(occupied + extraSlots) * 268435456UL))
+                    result.BusyKind = "memory-headroom";
+                else { result.Lease = new ResourceReservation(memory); memory = null; }
+                return result;
+            }
+            finally { if (memory != null) foreach (FileStream stream in memory) stream.Dispose(); }
+        }
         static List<FileStream> Scan(string directory, string kind, int capacity, int requested, out int occupied)
         {
             List<FileStream> held = new List<FileStream>(); occupied = 0;

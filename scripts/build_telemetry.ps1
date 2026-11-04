@@ -1,5 +1,7 @@
 # Execution observations are append-only and written by one process per file.
 # They do not grant build authority and never infer unobserved compiler phases.
+$compileScheduler=Join-Path $PSScriptRoot 'build_compile_scheduler.ps1'
+if([IO.File]::Exists($compileScheduler)){. $compileScheduler}
 function Write-BuildStageEvent([string]$Root,$Event) {
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
     if(-not $id){return}
@@ -56,6 +58,7 @@ function Read-BuildStageEvents([string]$Root,[string]$Id) {
 }
 
 function Get-ConfiguredBuildContext([string]$Root,[string[]]$Arguments){
+    $targets=@()
     $presetIndex=[Array]::IndexOf($Arguments,'--preset')
     if($presetIndex -ge 0){
         $presetFile=Join-Path $Root 'CMakePresets.json'
@@ -63,6 +66,7 @@ function Get-ConfiguredBuildContext([string]$Root,[string[]]$Arguments){
         $configuration=Get-Content -LiteralPath $presetFile -Raw|ConvertFrom-Json
         if(-not $configuration.PSObject.Properties['buildPresets']){return $null}
         $buildPreset=@($configuration.buildPresets|Where-Object name -eq $Arguments[$presetIndex+1])[0]
+        if($buildPreset.PSObject.Properties['targets']){$targets=@($buildPreset.targets)}
         $configurePreset=@($configuration.configurePresets|Where-Object name -eq $buildPreset.configurePreset)[0]
         $seen=@{}
         while(-not $configurePreset.PSObject.Properties['binaryDir']){
@@ -82,7 +86,7 @@ function Get-ConfiguredBuildContext([string]$Root,[string[]]$Arguments){
         if($line -match '^CMAKE_GENERATOR:INTERNAL=(.*)$'){$generator=$Matches[1]}
         if($line -match '^CMAKE_GENERATOR_INSTANCE:[^=]+=(.*)$'){$instance=$Matches[1]}
     }
-    return [pscustomobject]@{directory=$output;generator=$generator;instance=$instance}
+    return [pscustomobject]@{directory=$output;generator=$generator;instance=$instance;targets=$targets}
 }
 function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
     $id=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_RUN_ID','Process')
@@ -132,16 +136,21 @@ function Get-BuildLoggerArgument([string]$Root,[string[]]$Arguments){
 function Invoke-BuildStageCommand([string]$Root,[string]$Name,[string]$File,[string[]]$Arguments,[ref]$ExitCode){
     $stage=Start-BuildStage $Root $Name
     $previous=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT','Process')
-    $code=2
+    $code=2;$adaptive=$null
     try{
         if($stage){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$stage.id,'Process')}
         if($File -eq 'cmake' -and $Arguments -contains '--build'){
             if(Get-Command Get-EntryResourceBudget -ErrorAction SilentlyContinue){
                 $budget=Get-EntryResourceBudget $Root
                 if($budget){
-                    $compileJobs=Get-CompileResourceJobs $budget
                     $context=Get-ConfiguredBuildContext $Root $Arguments
                     if(-not $context){throw 'Configured generator is unavailable; weighted build scheduling was not applied.'}
+                    if(Get-Command Enter-AdaptiveCompileBudget -ErrorAction SilentlyContinue){
+                        $adaptive=Enter-AdaptiveCompileBudget $Root $budget $context $Arguments
+                        $compileJobs=$adaptive.decision.compileJobs
+                        Write-BuildStageEvent $Root ([pscustomobject]@{schemaVersion=1;kind='decision';id=$stage.id;name='compile-scheduling';state='active';budget=$adaptive.decision})
+                        Write-Output ('Compile scheduling: '+$adaptive.decision.workload+', '+$compileJobs+' compiler(s), '+$adaptive.decision.assignedMemoryMiB+' MiB assigned ('+$adaptive.decision.reason+').')
+                    }else{$compileJobs=Get-CompileResourceJobs $budget}
                     $separator=[Array]::IndexOf($Arguments,'--')
                     $native=@()
                     if($separator -ge 0){$native=@($Arguments|Select-Object -Skip ($separator+1));$Arguments=@($Arguments|Select-Object -First $separator)}
@@ -162,6 +171,10 @@ function Invoke-BuildStageCommand([string]$Root,[string]$Name,[string]$File,[str
         & $File @Arguments
         $code=$LASTEXITCODE
     }finally{
+        if($adaptive){
+            if($adaptive.lease){$adaptive.lease.Dispose()}
+            Write-BuildStageEvent $Root ([pscustomobject]@{schemaVersion=1;kind='decision';id=$stage.id;name='compile-scheduling';state='released';budget=$adaptive.decision})
+        }
         [Environment]::SetEnvironmentVariable('SNOWDESKTOP_STAGE_PARENT',$previous,'Process')
         Complete-BuildStage $Root $stage $code
         $ExitCode.Value=$code

@@ -380,8 +380,8 @@ function Initialize-ResourceRuntime {
     if(-not ('SnowDesktop.Build.ResourceBroker' -as [type])){throw 'This PowerShell process loaded an older resource runtime; start a new process before requesting weighted execution.'}
 }
 function Get-CompileResourceJobs($Budget) {
-    # Keep space for MSBuild, PowerShell, PCH and the linker. A CPU limit alone
-    # cannot prevent several memory-heavy translation units exhausting the Job.
+    # Conservative baseline for pre-plan advice and older frozen runtimes.
+    # Current commands re-evaluate live memory and workload at their boundary.
     $memoryJobs=[int][Math]::Max(1,[Math]::Floor(($Budget.memoryMiB-1024)/2048.0))
     return [int][Math]::Min($Budget.cpuSlots,$memoryJobs)
 }
@@ -398,8 +398,8 @@ function Get-DefaultResourceRequest($Policy,[long]$AvailableMemoryMiB=-1,[Valida
         memoryMiB=[int][Math]::Min($memoryCapacity,$availableBudget)
     }
     if($Workload -eq 'tools'){
-        # Targeted tool drivers compile one source at a time. Keep room for
-        # their subprocess fixtures without reserving a product-build floor.
+        # Start tool drivers with a small reservation; command-boundary
+        # scheduling may acquire more memory without a product-build floor.
         # Retain the normal CPU ceiling: CTest PROCESSORS can exceed half the
         # machine. Explicit CPU overrides remain subject to that contract.
         $toolMemory=[Math]::Max(1024,[Math]::Floor(($AvailableMemoryMiB-$Policy.headroomMiB)*0.75/256)*256)

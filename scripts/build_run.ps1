@@ -122,7 +122,7 @@ function Get-RunView([string]$Id){
             begin=('scripts/build.bat begin '+$request.task);details='scripts/README.md#构建环境诊断与启动恢复'}
     }
     return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;recovery=$recovery;
-        request=$request;record=$record;resources=$metrics;stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
+        request=$request;record=$record;resources=$metrics;compileScheduling=@($stages|Where-Object name -eq 'compile-scheduling'|Select-Object -Last 1);stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
 }
 function Run-CancellationRequested($Request){
     $path=Run-Path $Request.id '.cancel'
