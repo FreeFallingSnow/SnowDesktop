@@ -1810,7 +1810,7 @@
     "controlCenter.confirmSleep": "コンピューターをスリープ状態にしますか？実行中のタスクが一時停止する場合があります。",
     "controlCenter.connected": "接続済み",
     "controlCenter.noDevices": "表示するデバイスがありません",
-    "controlCenter.vpn": "システム VPN",
+    "controlCenter.vpn": "VPN",
     "controlCenter.disconnected": "未接続",
     "controlCenter.noVpnProfiles": "利用できる VPN 接続がありません。Windows の設定で VPN を追加してください。",
     "controlCenter.vpnFailed": "VPN に接続できませんでした。ネットワークと接続設定を確認してください。",

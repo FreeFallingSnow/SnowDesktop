@@ -1810,7 +1810,7 @@
     "controlCenter.confirmSleep": "¿Suspender el equipo? Las tareas en curso podrían pausarse.",
     "controlCenter.connected": "Conectado",
     "controlCenter.noDevices": "No hay dispositivos para mostrar",
-    "controlCenter.vpn": "VPN del sistema",
+    "controlCenter.vpn": "VPN",
     "controlCenter.disconnected": "No conectado",
     "controlCenter.noVpnProfiles": "No hay conexiones VPN disponibles. Añade una VPN en la configuración de Windows.",
     "controlCenter.vpnFailed": "No se pudo conectar a la VPN. Comprueba la red y la configuración de conexión.",

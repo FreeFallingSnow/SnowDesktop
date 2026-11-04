@@ -1810,7 +1810,7 @@
     "controlCenter.confirmSleep": "Mettre l'ordinateur en veille ? Les tâches en cours pourraient être suspendues.",
     "controlCenter.connected": "Connecté",
     "controlCenter.noDevices": "Aucun appareil à afficher",
-    "controlCenter.vpn": "VPN système",
+    "controlCenter.vpn": "VPN",
     "controlCenter.disconnected": "Non connecté",
     "controlCenter.noVpnProfiles": "Aucune connexion VPN disponible. Ajoutez un VPN dans les paramètres Windows.",
     "controlCenter.vpnFailed": "La connexion VPN a échoué. Vérifiez le réseau et les paramètres de connexion.",

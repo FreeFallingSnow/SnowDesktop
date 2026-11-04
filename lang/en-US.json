@@ -1810,7 +1810,7 @@
     "controlCenter.confirmSleep": "Put the computer to sleep? Running tasks may pause.",
     "controlCenter.connected": "Connected",
     "controlCenter.noDevices": "No devices to show",
-    "controlCenter.vpn": "System VPN",
+    "controlCenter.vpn": "VPN",
     "controlCenter.disconnected": "Not connected",
     "controlCenter.noVpnProfiles": "No VPN connections available. Add a VPN in Windows Settings.",
     "controlCenter.vpnFailed": "The VPN connection failed. Check the network and connection settings.",

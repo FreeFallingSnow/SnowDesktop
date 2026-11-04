@@ -1810,7 +1810,7 @@
     "controlCenter.confirmSleep": "Computer in den Energiesparmodus versetzen? Laufende Aufgaben werden möglicherweise angehalten.",
     "controlCenter.connected": "Verbunden",
     "controlCenter.noDevices": "Keine Geräte zum Anzeigen",
-    "controlCenter.vpn": "System-VPN",
+    "controlCenter.vpn": "VPN",
     "controlCenter.disconnected": "Nicht verbunden",
     "controlCenter.noVpnProfiles": "Keine VPN-Verbindungen verfügbar. Fügen Sie ein VPN in den Windows-Einstellungen hinzu.",
     "controlCenter.vpnFailed": "Die VPN-Verbindung ist fehlgeschlagen. Überprüfen Sie Netzwerk und Verbindungseinstellungen.",
