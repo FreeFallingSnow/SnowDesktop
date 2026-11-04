@@ -560,6 +560,7 @@ Includes adapted portions for taskbar integration and desktop backdrop compositi
 | --- | --- |
 | 上游 / Upstream | [TranslucentTB/TranslucentTB](https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b) |
 | 版本或提交 / Version or revision | `322e2b7395a51975150126276308b415970e080b` |
+| 任务栏关联修复 / Taskbar association fix | [`b8716c1207037013515a289c365918cb4aea109e`](https://github.com/TranslucentTB/TranslucentTB/commit/b8716c1207037013515a289c365918cb4aea109e) |
 | 版权 / Copyright | TranslucentTB contributors |
 | 许可证 / License | [GPL-3.0-only](LICENSE) |
 
