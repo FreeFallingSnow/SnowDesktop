@@ -195,7 +195,9 @@ bool DesktopApp::CommitLuaStackMemberDrag(GridCell targetCell)
             movingIndex, targetCell, span, false, services)) return false;
     proposed[movingIndex].minGridSpan = minimum;
     proposed[movingIndex].maxGridSpan = maximum;
-    widgets_ = std::move(proposed);
+    // Existing containers still point into the old model while LayoutItems
+    // saves their presentation state. Keep it alive in proposed until rebuild.
+    widgets_.swap(proposed);
     HideLuaStackIndicator();
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     ApplyPageMapping();
@@ -232,7 +234,11 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
         HideLuaStackIndicator();
         return;
     }
-    size_t target = HitTestStandaloneWidgetIndex(point);
+    // The outside popup and its bridge own hover before components underneath.
+    const bool indicatorHover = IsLuaStackIndicatorVisible() &&
+        (PtInRect(&luaStackIndicator_.bounds, point) || PtInRect(&luaStackIndicator_.bridge, point));
+    size_t target = indicatorHover ? FindWidgetIndexById(luaStackIndicator_.stackId)
+        : HitTestStandaloneWidgetIndex(point);
     if (target >= widgets_.size() || widgets_[target].type != DesktopWidgetType::LuaStack)
     {
         if (IsLuaStackIndicatorVisible() &&

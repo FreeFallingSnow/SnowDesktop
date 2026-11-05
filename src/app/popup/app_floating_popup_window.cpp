@@ -1445,6 +1445,14 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             ? HTCLIENT : HTTRANSPARENT;
     case WM_SETCURSOR:
     {
+        POINT point{};
+        if (IsLuaStackIndicatorVisible() &&
+            snowdesktop::private_pointer::CursorPosition(&point) &&
+            hwnd_ && ScreenToClient(hwnd_, &point) && PtInRect(&luaStackIndicator_.bounds, point))
+        {
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+            return TRUE;
+        }
         const snowdesktop::private_pointer::ForwardScope forward(hwnd_, msg);
         return HandleMessage(hwnd_, msg, wp, lp);
     }

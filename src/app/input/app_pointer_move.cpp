@@ -374,6 +374,11 @@ void DesktopApp::OnMouseMoveAt(
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
     UpdateLuaStackIndicator(current);
+    if (IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, current))
+    {
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+        return;
+    }
     UpdateListTitleHover();
     UpdatePopupHover(current);
     if (UpdateWidgetHoverExpansion(current))
