@@ -982,6 +982,7 @@ void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemQuickAction(menu, kContextWidgetEdit);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextWidgetRename);
+    SetMenuItemQuickAction(menu, kLuaStackRelease);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
     setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
     if (showExpandOnHoverOption)

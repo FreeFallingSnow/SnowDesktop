@@ -921,6 +921,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         }
     }
     widgetAction_ = WidgetAction::None;
+    luaStackMemberDrag_.Reset();
     snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;

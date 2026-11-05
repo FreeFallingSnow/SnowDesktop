@@ -5,6 +5,7 @@
 #include "common/l10n.h"
 #include "ui/input/private_pointer.h"
 #include "app/layout/grid_geometry.h"
+#include "layout/widget_displacement.h"
 
 #include <algorithm>
 #include <limits>
@@ -130,6 +131,8 @@ bool DesktopApp::ReleaseLuaStackMember(const std::wstring& stackId)
 {
     const size_t index = FindWidgetIndexById(stackId);
     if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaStack) return false;
+    snowdesktop::lua_stack::MemberDrag release;
+    if (!release.Begin(widgets_, index)) return false;
     auto* child = ResolveLuaWidgetContent(&widgets_[index]);
     if (!child) return false;
     const std::wstring childId = child->id;
@@ -147,17 +150,57 @@ bool DesktopApp::ReleaseLuaStackMember(const std::wstring& stackId)
         !FindDockReturnCell(occupied, preferred.pageId, start, span, landing)) return false;
     const size_t owner = FindWidgetIndexById(stackId);
     const size_t member = FindWidgetIndexById(childId);
-    if (owner >= widgets_.size() || member >= widgets_.size()) return false;
+    if (owner >= widgets_.size() || member >= widgets_.size() || release.MemberIndex(widgets_) != member) return false;
     HideLuaStackIndicator();
-    std::erase(widgets_[owner].childWidgetIds, childId);
-    widgets_[member].gridCell = landing;
-    widgets_[member].gridSpan = span;
-    widgets_[member].selected = true;
-    snowdesktop::lua_stack::Normalize(widgets_);
-    snowdesktop::lua_stack::Dissolve(widgets_);
+    if (!release.Detach(widgets_, landing)) return false;
     LayoutItems();
     RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool DesktopApp::CommitLuaStackMemberDrag(GridCell targetCell)
+{
+    const size_t owner = luaStackMemberDrag_.OwnerIndex(widgets_);
+    const size_t member = luaStackMemberDrag_.MemberIndex(widgets_);
+    if (owner >= widgets_.size() || member >= widgets_.size()) return false;
+    const GridSpan span = widgets_[owner].gridSpan;
+    if (span.columns != widgetPreviewSpan_.columns || span.rows != widgetPreviewSpan_.rows) return false;
+    const auto* page = FindGridPage(gridPages_, targetCell.pageId);
+    if (!page || !snowdesktop::grid_occupancy::Fits(*page, targetCell, span)) return false;
+    const std::wstring memberId = widgets_[member].id;
+    auto proposed = widgets_;
+    if (!luaStackMemberDrag_.Detach(proposed, targetCell)) return false;
+    const auto moving = std::find_if(proposed.begin(), proposed.end(), [&](const auto& widget) {
+        return widget.id == memberId;
+    });
+    if (moving == proposed.end()) return false;
+    const size_t movingIndex = static_cast<size_t>(moving - proposed.begin());
+    // Detaching preserves the stack size even when a package update now needs
+    // a placeholder. The general placement clamp must not silently resize it.
+    const auto minimum = moving->minGridSpan, maximum = moving->maxGridSpan;
+    moving->minGridSpan = moving->maxGridSpan = span;
+    const auto order = BuildMonitorRenderOrder();
+    snowdesktop::widget_displacement::Services services;
+    services.grouped = [&](const DesktopWidget& widget) {
+        return widget.type == DesktopWidgetType::LuaScript
+            ? snowdesktop::lua_stack::Owner(proposed, widget.id) < proposed.size()
+            : IsGroupedWidget(widget);
+    };
+    services.owned = [this](const auto& item) { return IsItemInAnyWidget(item); };
+    services.generatePageId = [this] { return GeneratePageId(); };
+    services.committed = [] {};
+    if (!snowdesktop::widget_displacement::Place(
+            {proposed, items_, gridPages_, order, savedPageIds_, savedPageColumns_, savedPageRows_},
+            movingIndex, targetCell, span, false, services)) return false;
+    proposed[movingIndex].minGridSpan = minimum;
+    proposed[movingIndex].maxGridSpan = maximum;
+    widgets_ = std::move(proposed);
+    HideLuaStackIndicator();
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    ApplyPageMapping();
+    LayoutItems();
+    RequestLayoutSave();
     return true;
 }
 

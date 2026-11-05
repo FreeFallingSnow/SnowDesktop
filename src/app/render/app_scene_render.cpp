@@ -446,7 +446,7 @@ void DesktopApp::DrawDynamicOverlays(
         bool widgetConflict = false;
         for (size_t i = 0; i < widgets_.size(); ++i)
         {
-            if (i == mouseDownWidgetIndex_) continue;
+            if (i == mouseDownWidgetIndex_ && !luaStackMemberDrag_.Armed()) continue;
             const auto& ow = widgets_[i];
             if (!snowdesktop::collection_group_rules::
                     ShouldOccupyDesktopGrid(

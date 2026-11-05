@@ -45,6 +45,48 @@ std::vector<std::wstring> Members(const DesktopWidget& widget)
         : std::vector<std::wstring>{widget.id};
 }
 
+bool MemberDrag::Begin(const std::vector<DesktopWidget>& widgets, size_t owner)
+{
+    Reset();
+    if (owner >= widgets.size() || widgets[owner].type != DesktopWidgetType::LuaStack ||
+        widgets[owner].childWidgetIds.size() < 2) return false;
+    const size_t member = Active(widgets, owner);
+    if (member >= widgets.size()) return false;
+    ownerId_ = widgets[owner].id;
+    memberId_ = widgets[member].id;
+    return true;
+}
+
+size_t MemberDrag::OwnerIndex(const std::vector<DesktopWidget>& widgets) const
+{
+    if (!Armed()) return widgets.size();
+    const size_t owner = Owner(widgets, memberId_);
+    return owner < widgets.size() && widgets[owner].id == ownerId_ ? owner : widgets.size();
+}
+
+size_t MemberDrag::MemberIndex(const std::vector<DesktopWidget>& widgets) const
+{
+    const size_t owner = OwnerIndex(widgets);
+    if (owner >= widgets.size()) return widgets.size();
+    const size_t member = Active(widgets, owner);
+    return member < widgets.size() && widgets[member].id == memberId_ ? member : widgets.size();
+}
+
+bool MemberDrag::Detach(std::vector<DesktopWidget>& widgets, GridCell landing) const
+{
+    const size_t owner = OwnerIndex(widgets), member = MemberIndex(widgets);
+    if (owner >= widgets.size() || member >= widgets.size() || landing.pageId.empty() ||
+        landing.column < 0 || landing.row < 0) return false;
+    widgets[member].gridCell = std::move(landing);
+    widgets[member].gridSpan = widgets[owner].gridSpan;
+    widgets[member].selected = true;
+    widgets[owner].selected = false;
+    std::erase(widgets[owner].childWidgetIds, memberId_);
+    Normalize(widgets);
+    Dissolve(widgets);
+    return true;
+}
+
 size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance)
 {
     const auto child = std::find_if(widgets.begin(), widgets.end(), [&](const auto& w) {

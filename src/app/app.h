@@ -2851,6 +2851,7 @@ private:
     bool SelectLuaStackMember(std::wstring stackId, std::wstring memberId);
     bool ScrollLuaWidgetStack(const std::wstring& stackId, int delta);
     bool ReleaseLuaStackMember(const std::wstring& stackId);
+    bool CommitLuaStackMemberDrag(GridCell targetCell);
     bool RemoveLuaStackMember(const std::wstring& stackId, POINT screenPoint);
     bool IsLuaStackIndicatorVisible() const;
     void UpdateLuaStackIndicator(POINT point);
@@ -2870,6 +2871,7 @@ private:
         ULONGLONG hideAfter = 0;
     } luaStackIndicator_;
     snowdesktop::lua_stack::WheelGesture luaStackWheel_;
+    snowdesktop::lua_stack::MemberDrag luaStackMemberDrag_;
     void BeginLuaWidgetConsent(POINT screenPoint,
         const std::wstring& packageId,
         const std::wstring& targetWidgetId);

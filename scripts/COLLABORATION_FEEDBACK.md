@@ -102,6 +102,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **证据读取的输出边界（2026-11-05）**：Task `lua-widget-stacks` 的 Run `7be495bde67348b5b4b7b88f10ff1d15` 精简结束回执正常；随后 Agent 自行投影整个 `evidence` 并 `ConvertTo-Json -Depth 5`，其中逐测试依赖 observation.issues 重复列出大量 `source-report-not-in-generated-project`，输出仍被截断。此处不是精简 CLI 回归失败，未确认依赖采集根因，也未估填成本。后续只投影 tests 的 test/status/seconds 和 activation 的身份字段；完整依赖证据留在不可变结果中。可考虑提供窄字段证据摘要；未为记录追加构建或复现。
+
 - **剩余输出证据（2026-11-05）**：Task `lua-widget-stacks` 在续修 `c6fc2053fdb343579fd8efcbd627e7d8` 修订2调用 claim 时，回执仍带完整继承 testPlan、originalRequirement 和输入身份，普通工具输出发生截断。CLI 等待结束回执已精简，本证据只涉及 claim；当前用 ConvertFrom-Json 投影 id/state/editRevision/ownedFiles 避免重复读取。建议为认领回执补同类精简投影，保留完整原件；未为该反馈另开任务或执行测试。
 
 

@@ -837,6 +837,13 @@ void DesktopApp::OnMouseMoveAt(
     {
         if (widgetAction_ == WidgetAction::PendingMove)
         {
+            luaStackMemberDrag_.Reset();
+            const bool shiftOnly =
+                (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0 &&
+                (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) == 0 &&
+                (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) == 0;
+            if (!rightButtonItemDrag_ && shiftOnly)
+                (void)luaStackMemberDrag_.Begin(widgets_, mouseDownWidgetIndex_);
             widgetAction_ = WidgetAction::Move;
             if (rightButtonItemDrag_) suppressRightButtonUp_ = true;
             if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
@@ -896,6 +903,27 @@ void DesktopApp::OnMouseMoveAt(
         namespace pair = snowdesktop::widget_pair_drop;
         widgetPairTargetIndex_ = static_cast<size_t>(-1);
         widgetPairAction_ = pair::Action::None;
+        if (luaStackMemberDrag_.Armed())
+        {
+            const size_t owner = luaStackMemberDrag_.OwnerIndex(widgets_);
+            if (owner >= widgets_.size() || luaStackMemberDrag_.MemberIndex(widgets_) >= widgets_.size())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+                snowdesktop::private_pointer::ReleasePointerCapture();
+                return;
+            }
+            mouseDownWidgetIndex_ = owner;
+            widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
+            widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
+            widgetDockTarget_ = false;
+            widgetDockTargetContainer_ = nullptr;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            UpdateWidgetDragPageNavigation(current);
+            widgetPreviewCell_ = ResolveGridSpanDragCell(gridPages_, current,
+                widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
+            ShowDragHintWindow(current, _LW("app.lua_stack.release"));
+            return;
+        }
         const auto movingPayload = snowdesktop::slot_contract::
             PayloadForWidgetType(movingType);
         const bool movingCollection =

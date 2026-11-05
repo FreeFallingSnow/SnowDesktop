@@ -23,6 +23,23 @@ void Normalize(std::vector<DesktopWidget>& widgets);
 // Dissolution inherits the wrapper's geometry; no member settings/storage are copied.
 void Dissolve(std::vector<DesktopWidget>& widgets);
 
+// A drag keeps membership intact until the host has a valid placement plan.
+// Resolve identities again on every update/commit; indices can change on reload.
+class MemberDrag
+{
+public:
+    bool Begin(const std::vector<DesktopWidget>& widgets, size_t owner);
+    bool Armed() const noexcept { return !memberId_.empty(); }
+    void Reset() { ownerId_.clear(); memberId_.clear(); }
+    size_t OwnerIndex(const std::vector<DesktopWidget>& widgets) const;
+    size_t MemberIndex(const std::vector<DesktopWidget>& widgets) const;
+    bool Detach(std::vector<DesktopWidget>& widgets, GridCell landing) const;
+
+private:
+    std::wstring ownerId_;
+    std::wstring memberId_;
+};
+
 class WheelGesture
 {
 public:

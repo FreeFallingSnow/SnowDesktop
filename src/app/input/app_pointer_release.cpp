@@ -1225,7 +1225,14 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             const bool commitMove = !rightDrop || ChooseRightDragDropAction(upPoint,
                 menuKeyState, DROPEFFECT_MOVE | DROPEFFECT_COPY, false);
             const auto menuPairAction = widgetPairAction_;
-            if (commitMove && mouseDownWidgetIndex_ < widgets_.size())
+            if (commitMove && mouseDownWidgetIndex_ < widgets_.size() && luaStackMemberDrag_.Armed())
+            {
+                widgetAction_ = WidgetAction::None;
+                if (IsPointOccludedByOpenPopup(upPoint) || IsExternalDropWindowAt(upPoint) ||
+                    !CommitLuaStackMemberDrag(widgetPreviewCell_))
+                    MessageBeep(MB_ICONWARNING);
+            }
+            else if (commitMove && mouseDownWidgetIndex_ < widgets_.size())
             {
                 if (rightDrop)
                 {
@@ -1335,6 +1342,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
         }
         // PendingMove/PendingResize: just cancel without displacement
+        luaStackMemberDrag_.Reset();
         widgetAction_ = WidgetAction::None;
         rightButtonItemDrag_ = false;
         snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
