@@ -77,10 +77,12 @@ struct WidgetSurfaceRenderer::Impl
         context->DrawImage(frame.commands.Get());
         context.Reset();
         result = target.surface->EndDraw();
-        gpuFrame.Complete(SUCCEEDED(result));
         if (FAILED(result) || !target.active.load()) return result;
         result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
+        // DComp submits the D2D surface work at Commit. An earlier timestamp
+        // only measures an empty command range, despite valid query readback.
+        gpuFrame.Complete(SUCCEEDED(result));
         return result;
     }
 

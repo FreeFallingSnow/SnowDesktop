@@ -72,8 +72,10 @@ struct WidgetGpuTiming::Impl
             const bool failed = FAILED(clockResult) || FAILED(startResult) || FAILED(endResult);
             if (!failed && (clockResult == S_FALSE || startResult == S_FALSE || endResult == S_FALSE)) break;
             auto& value = totals.at(query.owner);
-            if (FAILED(clockResult) || FAILED(startResult) || FAILED(endResult) || !query.successful)
+            if (failed)
                 ++value.errors;
+            else if (!query.successful)
+                ++value.skipped;
             else if (clock.Disjoint || !clock.Frequency || end < start)
                 ++value.disjoint;
             else

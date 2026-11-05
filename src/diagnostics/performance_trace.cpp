@@ -418,9 +418,9 @@ TraceQuality DeactivateTrace() noexcept
     activeGeneration.store(0, std::memory_order_release);
     const auto state = context.exchange(nullptr);
     if (!state) return {};
+    std::lock_guard lock(state->drawMutex);
     TraceQuality quality{ state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load(),
         state->filteredProbeCalls.load(), state->inputOperationsObserved.load(), state->inputOperationsSelected.load(), state->ownerFilteredProbeCalls.load() };
-    std::lock_guard lock(state->drawMutex);
     quality.drawRequests = state->drawRequests;
     quality.drawCoalesced = state->drawCoalesced;
     quality.drawConsumed = state->drawConsumed;
