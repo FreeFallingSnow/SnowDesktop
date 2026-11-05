@@ -1325,18 +1325,18 @@ struct StatusBar::Impl
             const auto hit = HitTestStatusBarItems(items, point);
             if (!hit || !items[*hit].icon)
             { lastMiddleTray.reset(); return; }
-            const auto identity = items[*hit].icon->identity;
+            const auto iconIdentity = items[*hit].icon->identity;
             const auto key = items[*hit].icon->key;
             RECT geometry = items[*hit].bounds;
-            if (release && !tray::SameFocusIdentity(*pressed, identity))
+            if (release && !tray::SameFocusIdentity(*pressed, iconIdentity))
             { lastMiddleTray.reset(); return; }
             const auto action = release ? tray::Activation::MiddleUp :
-                message == WM_MBUTTONDBLCLK && lastMiddleTray && tray::SameFocusIdentity(*lastMiddleTray, identity) ?
+                message == WM_MBUTTONDBLCLK && lastMiddleTray && tray::SameFocusIdentity(*lastMiddleTray, iconIdentity) ?
                     tray::Activation::MiddleDoubleClick : tray::Activation::MiddleDown;
-            if (release) lastMiddleTray = identity;
+            if (release) lastMiddleTray = iconIdentity;
             else
             {
-                middleTrayPress = identity;
+                middleTrayPress = iconIdentity;
                 owner.tray->CancelFocusReturn();
                 if (owner.pointerPressed) owner.pointerPressed();
                 UpdateInteraction([&] { ClearHover(); keyboardFocusVisible = false; });
@@ -1346,7 +1346,7 @@ struct StatusBar::Impl
             MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&geometry), 2);
             owner.tray->SetGeometry(key, geometry);
             ClientToScreen(hwnd, &point);
-            ActivateTray(key, action, point, false, identity);
+            ActivateTray(key, action, point, false, iconIdentity);
         }
         void ReturnTrayFocus(std::uint64_t serial)
         {
