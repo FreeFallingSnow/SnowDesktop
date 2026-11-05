@@ -1639,6 +1639,20 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 static_cast<snowdesktop::UiScheduleToken>(timerId));
             widgetTimerIds_.erase(timerId);
         });
+        widgetEngine_->SetWidgetAnimationTimerRequestCallback(
+            [this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
+                if (!hwnd_) return 0;
+                const auto token = uiAnimationScheduler_.ScheduleAnimationFrame(
+                    intervalMs, [this, widgetId](snowdesktop::UiScheduleToken dueToken) {
+                        if (widgetEngine_)
+                            widgetEngine_->OnWidgetTimer(widgetId,
+                                static_cast<UINT_PTR>(dueToken));
+                    });
+                if (!token) return 0;
+                const auto timerId = static_cast<UINT_PTR>(token);
+                widgetTimerIds_[timerId] = widgetId;
+                return timerId;
+            });
         widgetEngine_->SetOpenWidgetSettingsCallback([this](const std::wstring& widgetId, const std::wstring&) {
             for (size_t i = 0; i < widgets_.size(); ++i)
             {
@@ -1814,6 +1828,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     MSG msg{};
     bool running = true;
+    bool preferInput = true;
+    const auto peekNextMessage = [&preferInput](MSG& message) {
+        // Posted audio/data work precedes hardware input in an unfiltered
+        // PeekMessage. Alternate queue classes so neither a replenished data
+        // queue nor a continuous pointer stream can starve the other. Keep
+        // this turn across bounded message batches, including slow handlers.
+        const bool inputTurn = preferInput;
+        preferInput = !preferInput;
+        if (inputTurn && PeekMessageW(&message, nullptr, 0, 0,
+                PM_REMOVE | PM_QS_INPUT))
+            return true;
+        return PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE;
+    };
     while (running && !exitRequested_)
     {
         ProcessGraphicsDeviceRecovery();
@@ -1844,7 +1871,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 processedMessages,
                 snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
                     messageBatchStarted) &&
-            PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+            peekNextMessage(msg))
         {
             if (!snowdesktop::private_pointer::MessageAllowed(msg.hwnd, msg.message, msg.wParam, msg.lParam))
             { ++processedMessages; continue; }

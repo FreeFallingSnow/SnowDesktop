@@ -96,6 +96,10 @@ public:
         UINT intervalMilliseconds, TimerCallback callback);
     UiScheduleToken ScheduleOnce(
         UINT delayMilliseconds, TimerCallback callback);
+    // One-shot component frames share a presentation boundary and yield UI
+    // time after costly draws. Ordinary timers retain their own deadlines.
+    UiScheduleToken ScheduleAnimationFrame(
+        UINT minimumDelayMilliseconds, TimerCallback callback);
     void Cancel(UiScheduleToken token);
     void CancelAll();
 
@@ -138,6 +142,7 @@ private:
         double intervalMilliseconds = 0.0;
         bool repeating = false;
         TimerCallback callback;
+        bool componentFrame = false;
     };
 
     static constexpr std::size_t kMetricSampleCapacity = 240;
@@ -164,6 +169,7 @@ private:
     unsigned consecutiveOverBudgetFrames_ = 0;
     double recoveryStartMilliseconds_ = 0.0;
     double lastPresentationMilliseconds_ = 0.0;
+    double nextComponentFrameMilliseconds_ = 0.0;
     bool softwareRendering_ = false;
     bool diagnosticsEnabled_ = false;
     bool dispatching_ = false;

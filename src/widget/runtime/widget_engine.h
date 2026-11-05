@@ -834,6 +834,10 @@ public:
     }
     /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
+    // Desktop hosts can pace animation/data frames independently of named
+    // timers. Preview hosts may keep the ordinary timer fallback.
+    void SetWidgetAnimationTimerRequestCallback(WidgetTimerRequestCallback callback)
+    { widgetAnimationTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
     /** @brief 设置音频分析线程发布新快照时的 UI 线程唤醒回调。 */
@@ -1834,6 +1838,7 @@ private:
     FilePickerCallback filePickerCallback_;             ///< 系统文件选择器回调
     LogicalSlotPickerCallback logicalSlotPickerCallback_;
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
+    WidgetTimerRequestCallback widgetAnimationTimerRequestCallback_;
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
     TaskWakeCallback taskWakeCallback_;

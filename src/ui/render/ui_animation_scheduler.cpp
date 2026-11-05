@@ -233,6 +233,25 @@ UiScheduleToken UiAnimationScheduler::ScheduleOnce(
     return token;
 }
 
+UiScheduleToken UiAnimationScheduler::ScheduleAnimationFrame(
+    UINT minimumDelayMilliseconds, TimerCallback callback)
+{
+    if (!callback || (!timer_ && !Initialize()))
+        return 0;
+
+    const UiScheduleToken token = NextToken();
+    timerEntries_.emplace(token, TimerEntry{
+        MonotonicMilliseconds() + static_cast<double>(
+            std::max<UINT>(1, minimumDelayMilliseconds)),
+        0.0,
+        false,
+        std::move(callback),
+        true,
+    });
+    ArmNextWakeup();
+    return token;
+}
+
 void UiAnimationScheduler::Cancel(UiScheduleToken token)
 {
     if (!token)
@@ -266,6 +285,7 @@ void UiAnimationScheduler::CancelAll()
     nextFrameMilliseconds_ = 0.0;
     lastDeliveredFrameMilliseconds_ = 0.0;
     lastPresentationMilliseconds_ = 0.0;
+    nextComponentFrameMilliseconds_ = 0.0;
     consecutiveOverBudgetFrames_ = 0;
     recoveryStartMilliseconds_ = 0.0;
     adaptiveDivisor_ = 1;
@@ -288,12 +308,16 @@ void UiAnimationScheduler::DispatchDue()
     } guard{dispatching_, advancingFrame_, dispatchingTimers_};
 
     const double now = MonotonicMilliseconds();
+    const auto cancellation = presentationCancellation_;
+    bool componentFrameDispatched = false;
     performance::Scope dispatchTrace("animation.scheduler", "dispatch");
     std::vector<UiScheduleToken> dueTimers;
     dueTimers.reserve(timerEntries_.size());
     for (const auto& [token, entry] : timerEntries_)
     {
-        if (entry.dueMilliseconds <= now + 0.05)
+        if (entry.dueMilliseconds <= now + 0.05 &&
+            (!entry.componentFrame ||
+                nextComponentFrameMilliseconds_ <= now + 0.05))
             dueTimers.push_back(token);
     }
 
@@ -305,6 +329,7 @@ void UiAnimationScheduler::DispatchDue()
             continue;
 
         TimerCallback callback = found->second.callback;
+        componentFrameDispatched |= found->second.componentFrame;
         if (found->second.repeating)
         {
             const double interval = std::max(
@@ -430,6 +455,19 @@ void UiAnimationScheduler::DispatchDue()
     // Deadline-only snapshots need the same boundary even with no animation
     // registered; otherwise queued component surfaces would never be drawn.
     FlushPresentations();
+    if (componentFrameDispatched &&
+        presentationCancellation_ == cancellation)
+    {
+        // Several visible components can fill the UI thread even when each
+        // callback is short. Leave as much time for input as this batch spent
+        // updating/drawing, capped at one minimum-rate frame after a modal or
+        // unusually slow callback. Named timers and native animations remain
+        // independently runnable during this component-only cooldown.
+        const double completed = MonotonicMilliseconds();
+        const double inputWindow = std::clamp(completed - now,
+            0.0, 1000.0 / kMinimumRefreshHz);
+        nextComponentFrameMilliseconds_ = completed + inputWindow;
+    }
     ArmNextWakeup();
     traceFrame_ = 0;
 }
@@ -596,7 +634,10 @@ void UiAnimationScheduler::ArmNextWakeup()
     if (!frameEntries_.empty())
         next = nextFrameMilliseconds_;
     for (const auto& [_, entry] : timerEntries_)
-        next = std::min(next, entry.dueMilliseconds);
+        next = std::min(next, entry.componentFrame
+            ? std::max(entry.dueMilliseconds,
+                nextComponentFrameMilliseconds_)
+            : entry.dueMilliseconds);
 
     if (!std::isfinite(next))
     {

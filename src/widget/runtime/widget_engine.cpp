@@ -27673,7 +27673,9 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
     const UINT interval = frameLimit > 0
         ? std::max(baseInterval, static_cast<UINT>((1000 + frameLimit - 1) / frameLimit))
         : baseInterval;
-    widget.animationTimerId = widgetTimerRequestCallback_(widget.widgetId, interval);
+    const auto& requestFrame = widgetAnimationTimerRequestCallback_
+        ? widgetAnimationTimerRequestCallback_ : widgetTimerRequestCallback_;
+    widget.animationTimerId = requestFrame(widget.widgetId, interval);
     return widget.animationTimerId != 0;
 }
 
