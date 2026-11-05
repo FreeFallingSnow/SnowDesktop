@@ -12,6 +12,7 @@
 #include "desktop/display_color_mode.h"
 #include "desktop_composition_effect.h"
 #include "platform/window_support/window_support_runtime.h"
+#include <d3d11_4.h>
 
 // Graphics-device and composition-surface lifecycle.
 
@@ -46,13 +47,17 @@ HRESULT DesktopApp::InitGraphicsDevices()
     if (FAILED(hr)) return hr;
     d3dDevice->GetImmediateContext(&d3dImmediateContext);
     if (!d3dImmediateContext) return E_FAIL;
+    ComPtr<ID3D11Multithread> multithread;
+    hr = d3dImmediateContext.As(&multithread);
+    if (FAILED(hr)) return hr;
+    multithread->SetMultithreadProtected(TRUE);
 
     // The factory and its geometries are device-independent. Keep their
     // identity across GPU loss; only the D2D device/context must be replaced.
     if (!d2dFactory)
     {
         D2D1_FACTORY_OPTIONS factoryOptions{};
-        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED,
             __uuidof(ID2D1Factory1), &factoryOptions,
             reinterpret_cast<void**>(d2dFactory.GetAddressOf()));
         if (FAILED(hr)) return hr;

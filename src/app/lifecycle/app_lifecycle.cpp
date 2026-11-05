@@ -17,6 +17,7 @@
 #include "dock/dock_appbar.h"
 #include "dock/dock_external_minimize.h"
 #include "widget/view/widget_accessibility_provider.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "icons/large_icon_assets.h"
 #include "steam/steam_entitlement.h"
 #include "steam/steam_presence.h"
@@ -52,6 +53,9 @@ DesktopApp::DesktopApp()
 
 DesktopApp::~DesktopApp()
 {
+    // Closed draw lists retain images and fonts. Join before releasing any
+    // graphics/runtime caches, not just before the final device teardown.
+    widgetSurfaceRenderer_.reset();
     applicationControl_.Stop();
     if (applicationControlRuntime_) applicationControlRuntime_->Stop();
     filePreview_.Stop();

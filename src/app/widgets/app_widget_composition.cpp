@@ -4,6 +4,7 @@
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/view/widget_surface_retention.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "ui/render/ui_presentation_scope.h"
 
 namespace
@@ -23,6 +24,21 @@ struct DesktopWidgetSurfaceFailure
     HRESULT hr = E_FAIL;
     bool retry = true;
 };
+
+HRESULT RetireRenderedSurface(
+    snowdesktop::widget_runtime::WidgetSurfaceRenderer* renderer,
+    DesktopWidgetCompositionItem& item)
+{
+    if (renderer) renderer->Cancel(item.renderTarget);
+    HRESULT result = S_OK;
+    if (item.renderedVisualAttached && item.visual && item.renderedVisual)
+        result = item.visual->RemoveVisual(item.renderedVisual.Get());
+    item.renderedVisualAttached = false;
+    item.renderTarget.reset();
+    item.renderedVisual.Reset();
+    item.renderedContentId.clear();
+    return result;
+}
 }
 
 // Every desktop widget owns a compact DirectComposition child surface. The
@@ -203,6 +219,21 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         return false;
     }
 
+    if (startupInitializationComplete_ && !widgetSurfaceRenderer_ &&
+        !widgetSurfaceRendererUnavailable_)
+    {
+        auto renderer = std::make_unique<snowdesktop::widget_runtime::WidgetSurfaceRenderer>();
+        if (renderer->Initialize(d2dDevice_.Get(), hwnd_))
+            widgetSurfaceRenderer_ = std::move(renderer);
+        else
+        {
+            widgetSurfaceRendererUnavailable_ = true;
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering,
+                L"Widget render worker unavailable; using synchronous surfaces",
+                DiagnosticLogLevel::Warning);
+        }
+    }
+
     desktopWidgetLastPointerPresentTick_ = GetTickCount64();
     auto pending = std::move(pendingDesktopWidgetCompositions_);
     snowdesktop::performance::Scope performanceScope("composition.shared", "widgets.flush");
@@ -305,8 +336,36 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         auto& item = composition->second;
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
+        auto* luaWidget = dynamic_cast<LuaScript*>(widgetItem);
+        const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed;
+        const auto* content = luaWidget ? ResolveLuaWidgetContent(widgetData) : nullptr;
+        const std::wstring contentId = content ? content->id : widgetId;
+        if (item.renderTarget && (!asynchronous || item.width != width ||
+            item.height != height || item.renderedContentId != contentId))
+        {
+            const HRESULT retired = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            if (FAILED(retired))
+            {
+                surfaceFailures.push_back({widgetId, L"Retire worker visual", retired, true});
+                continue;
+            }
+        }
+        if (asynchronous && !item.renderTarget)
+        {
+            item.renderTarget = widgetSurfaceRenderer_->CreateTarget(
+                widgetId, width, height, &item.renderedVisual);
+            if (!item.renderTarget)
+            {
+                item.renderFailed = true;
+                surfaceFailures.push_back({widgetId, L"Create worker visual", E_FAIL, true});
+                continue;
+            }
+            item.renderedContentId = contentId;
+            item.width = width;
+            item.height = height;
+        }
 
-        if (!item.surface || item.width != width || item.height != height)
+        if (!asynchronous && (!item.surface || item.width != width || item.height != height))
         {
             ComPtr<IDCompositionSurface> surface;
             HRESULT hr = dcompDevice_->CreateSurface(
@@ -329,10 +388,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         ID2D1DeviceContext* rawContext = nullptr;
+        ComPtr<ID2D1CommandList> commands;
         POINT updateOffset{};
-        HRESULT hr = item.surface->BeginDraw(
-            nullptr, __uuidof(ID2D1DeviceContext),
-            reinterpret_cast<void**>(&rawContext), &updateOffset);
+        HRESULT hr = asynchronous
+            ? widgetSurfaceRenderer_->BeginRecording(&rawContext, &commands)
+            : item.surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+                reinterpret_cast<void**>(&rawContext), &updateOffset);
         if (FAILED(hr) || !rawContext)
         {
             surfaceFailures.push_back({
@@ -345,10 +406,13 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         context.Attach(rawContext);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-        context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(updateOffset.x - surfaceLeft),
-            static_cast<float>(updateOffset.y - surfaceTop)));
-        context->Clear(D2D1::ColorF(0, 0, 0, 0));
+        if (!asynchronous)
+        {
+            context->SetTransform(D2D1::Matrix3x2F::Translation(
+                static_cast<float>(updateOffset.x - surfaceLeft),
+                static_cast<float>(updateOffset.y - surfaceTop)));
+            context->Clear(D2D1::ColorF(0, 0, 0, 0));
+        }
 
         desktopWidgetCompositionDrawInProgress_ = true;
         item.iconBackdrops.BeginDraw();
@@ -366,7 +430,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             widgetContainer->DrawChrome(context.Get(), lastMousePoint_);
         }
-        else if (auto* luaWidget = dynamic_cast<LuaScript*>(widgetItem))
+        else if (luaWidget)
         {
             // The child draw captures its base material request; the owning
             // surface registers the native panel after EndDraw succeeds.
@@ -395,11 +459,20 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
 
         context->SetTransform(D2D1::Matrix3x2F::Identity());
         context.Reset();
-        const HRESULT endDrawHr = item.surface->EndDraw();
+        HRESULT endDrawHr = asynchronous
+            ? widgetSurfaceRenderer_->EndRecording(commands.Get()) : item.surface->EndDraw();
+        if (asynchronous && SUCCEEDED(endDrawHr))
+        {
+            const RECT surfaceBounds{surfaceLeft, surfaceTop,
+                surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
+            if (!widgetSurfaceRenderer_->Submit(item.renderTarget, commands.Get(), surfaceBounds))
+                endDrawHr = E_FAIL;
+        }
         brushCache_.clear();
         brushCacheContext_ = nullptr;
         if (FAILED(endDrawHr))
         {
+            if (asynchronous) item.renderFailed = true;
             item.iconBackdrops.DiscardDraw();
             surfaceFailures.push_back({
                 widgetId, L"EndDraw", endDrawHr, true });
@@ -436,17 +509,19 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         item.bounds = bounds;
-        hr = item.visual->SetContent(item.surface.Get());
+        hr = asynchronous ? S_OK : item.visual->SetContent(item.surface.Get());
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetX(static_cast<float>(surfaceLeft));
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetY(static_cast<float>(surfaceTop));
         if (SUCCEEDED(hr))
             hr = item.clip->SetRight(
-                item.visible ? static_cast<float>(width) : 0.0f);
+                item.visible && (!asynchronous || item.renderedVisualAttached)
+                    ? static_cast<float>(width) : 0.0f);
         if (SUCCEEDED(hr))
             hr = item.clip->SetBottom(
-                item.visible ? static_cast<float>(height) : 0.0f);
+                item.visible && (!asynchronous || item.renderedVisualAttached)
+                    ? static_cast<float>(height) : 0.0f);
         if (FAILED(hr))
         {
             item.iconBackdrops.DiscardDraw();
@@ -492,6 +567,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         auto& item = position->second;
+        (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.surface.Reset();
         item.width = 0;
         item.height = 0;
@@ -512,6 +588,51 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     if (!structuralOk && hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
     return structuralOk;
+}
+
+void DesktopApp::DrainDesktopWidgetSurfaceResults()
+{
+    if (!widgetSurfaceRenderer_) return;
+    auto results = widgetSurfaceRenderer_->Drain();
+    bool changed = false;
+    for (const auto& result : results)
+    {
+        const auto position = desktopWidgetCompositionItems_.find(result.owner);
+        if (position == desktopWidgetCompositionItems_.end() ||
+            position->second.renderTarget != result.target) continue;
+        auto& item = position->second;
+        HRESULT hr = result.status;
+        if (SUCCEEDED(hr) && item.visible)
+        {
+            // The worker has committed actual pixels. Attach beneath the
+            // existing native marquee children and retire the startup surface.
+            hr = item.visual->AddVisual(item.renderedVisual.Get(), TRUE, nullptr);
+            if (SUCCEEDED(hr))
+            {
+                item.renderedVisualAttached = true;
+                hr = item.visual->SetContent(nullptr);
+            }
+            if (SUCCEEDED(hr)) hr = item.clip->SetRight(static_cast<float>(item.width));
+            if (SUCCEEDED(hr)) hr = item.clip->SetBottom(static_cast<float>(item.height));
+            if (SUCCEEDED(hr)) item.surface.Reset();
+            changed = true;
+        }
+        if (FAILED(hr))
+        {
+            item.renderFailed = true;
+            (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+            item.surface.Reset();
+            item.width = item.height = 0;
+            if (RequestGraphicsDeviceRecovery(L"Widget render worker", hr)) return;
+            const auto message = L"Widget render worker failed; using synchronous surface: " +
+                result.owner + L" hr=" + std::to_wstring(hr);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering,
+                message.c_str(), DiagnosticLogLevel::Warning);
+            if (item.visible) pendingDesktopWidgetCompositions_.insert(result.owner);
+            changed = true;
+        }
+    }
+    if (changed) (void)PresentQueuedDesktopWidgetComposition();
 }
 
 bool DesktopApp::HasDesktopWidgetComposition(
@@ -570,7 +691,12 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         item.backdropRegistered = false;
     }
     if (!visible)
+    {
+        // Stop queued/in-flight publication. A later show gets a fresh target
+        // identity, so a late completion cannot open the hidden clip.
+        (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
+    }
     if (!visible && item.clip)
     {
         (void)item.clip->SetRight(0.0f);
@@ -655,7 +781,8 @@ std::uint64_t DesktopApp::GetDesktopWidgetSurfaceBytes(
 {
     std::uint64_t bytes = 0;
     const auto parent = desktopWidgetCompositionItems_.find(widgetId);
-    if (parent != desktopWidgetCompositionItems_.end() && parent->second.surface)
+    if (parent != desktopWidgetCompositionItems_.end() &&
+        (parent->second.surface || parent->second.renderTarget))
         bytes = static_cast<std::uint64_t>(parent->second.width) *
             parent->second.height * 4;
     const auto marquees = widgetMarqueeCompositionItems_.find(widgetId);
@@ -770,6 +897,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     const RECT bounds = position->second.bounds;
+    (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
     position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
     if (position->second.backdropRegistered)
         (void)desktopBackdropCompositor_.RemovePanel(bounds);
@@ -853,6 +981,9 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 
 void DesktopApp::ResetDesktopWidgetComposition()
 {
+    // Join before resetting devices, command resources or the parent tree.
+    widgetSurfaceRenderer_.reset();
+    widgetSurfaceRendererUnavailable_ = false;
     if (desktopWidgetHoverTailToken_)
         uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
     desktopWidgetHoverTailToken_ = 0;

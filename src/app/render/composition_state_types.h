@@ -9,11 +9,14 @@
 #include <wrl/client.h>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 using UiCompositionAnimationHost =
     snowdesktop::widget_composition_layer_rules::CompositionHost;
+
+namespace snowdesktop::widget_runtime { struct WidgetSurfaceTarget; }
 
 struct UiCompositionAnimationOverlay
 {
@@ -66,6 +69,11 @@ struct DesktopWidgetCompositionItem
     Microsoft::WRL::ComPtr<IDCompositionVisual2> visual;
     Microsoft::WRL::ComPtr<IDCompositionRectangleClip> clip;
     Microsoft::WRL::ComPtr<IDCompositionSurface> surface;
+    std::shared_ptr<snowdesktop::widget_runtime::WidgetSurfaceTarget> renderTarget;
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> renderedVisual;
+    std::wstring renderedContentId;
+    bool renderedVisualAttached = false;
+    bool renderFailed = false;
     RECT bounds{};
     UINT width = 0;
     UINT height = 0;

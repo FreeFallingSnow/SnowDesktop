@@ -224,6 +224,7 @@ namespace snowdesktop::widget_runtime
 {
 class IWidgetSettingsBackend;
 class WidgetSettingsService;
+class WidgetSurfaceRenderer;
 }
 
 namespace snowdesktop
@@ -2610,6 +2611,7 @@ private:
         const std::wstring& widgetId);
     bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false);
     bool FlushPendingDesktopWidgetComposition();
+    void DrainDesktopWidgetSurfaceResults();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
     void SetDesktopWidgetCompositionVisible(
@@ -3346,6 +3348,9 @@ private:
     UINT desktopForegroundCompositionWidth_ = 0;
     UINT desktopForegroundCompositionHeight_ = 0;
     ComPtr<IDCompositionVisual2> desktopWidgetCompositionLayer_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSurfaceRenderer>
+        widgetSurfaceRenderer_;
+    bool widgetSurfaceRendererUnavailable_ = false;
     std::unordered_map<std::wstring, DesktopWidgetCompositionItem>
         desktopWidgetCompositionItems_;
     std::unordered_set<std::wstring>

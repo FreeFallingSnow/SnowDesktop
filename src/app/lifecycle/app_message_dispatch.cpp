@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_preview.h"
@@ -95,6 +96,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (msg >= 0xC000 &&
+        msg == snowdesktop::widget_runtime::WidgetSurfaceRenderer::ReadyMessage())
+    {
+        DrainDesktopWidgetSurfaceResults();
+        return 0;
+    }
     if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
         hwnd == dockShellHookWindow_)
     {
