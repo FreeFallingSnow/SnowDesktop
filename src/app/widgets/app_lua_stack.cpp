@@ -89,6 +89,7 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
     if (widgetEngine_)
     {
         widgetEngine_->BlurHostInput(false);
+        UpdateHostInputImePosition();
         widgetEngine_->CancelInteractionPointerPress("desktop");
         if (!oldId.empty()) widgetEngine_->SetWidgetDesktopVisible(oldId, false);
     }

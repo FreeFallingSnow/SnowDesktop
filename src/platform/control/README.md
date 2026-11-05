@@ -533,7 +533,7 @@ current contract.
 ### Lua widget stacks
 
 Desktop widget snapshots identify host-owned Lua stacks with `type: "luaStack"`,
-`activeMemberId` and `memberCount`. Each member retains its existing Lua instance ID
+`activeMemberId`, ordered `memberIds` and `memberCount`. Each member retains its existing Lua instance ID
 and settings target; `grouped: true` marks its membership. Only the active member
 uses the stack frame for desktop input and accessibility. Stacks do not enter native
 storage-container or Dock APIs. These snapshot fields are additive; the control

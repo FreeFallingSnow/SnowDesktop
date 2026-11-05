@@ -1474,7 +1474,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         SurfaceIncludesDesktop(surface) &&
                     customDesktopVisible_ &&
                     (!desktopIconsHidden_ ||
-                        widget.keepWhenDesktopHidden))
+                        ResolveLuaWidgetFrameOwner(widget).keepWhenDesktopHidden))
                 {
                     const RECT widgetFrame =
                         GetStandaloneWidgetFrameRect(widget);

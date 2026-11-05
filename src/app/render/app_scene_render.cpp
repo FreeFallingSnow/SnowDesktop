@@ -167,21 +167,24 @@ void DesktopApp::DrawStaticBackground(
         // Runtime visibility is semantic state, not a paint-frequency signal.
         // Synchronize it before dirty-region culling because DirectComposition
         // may retain a visible widget without asking the host to redraw it.
-        if (widgetEngine_ &&
-            widgetData.type == DesktopWidgetType::LuaScript)
+        if (widgetEngine_ && widgetData.type == DesktopWidgetType::LuaScript &&
+            !IsGroupedWidget(widgetData))
         {
             widgetEngine_->SetWidgetDesktopVisible(
-                widgetData.id,
-                (&ResolveLuaWidgetFrameOwner(widgetData) == &widgetData) ? desktopSurfaceVisible :
-                    (ResolveLuaWidgetContent(&ResolveLuaWidgetFrameOwner(widgetData)) == &widgetData &&
-                     !IsRectEmptyRect(ResolveLuaWidgetFrameOwner(widgetData).bounds) && customDesktopVisible_ &&
-                     !desktopPassthroughActive_ && (!hiddenMode || ResolveLuaWidgetFrameOwner(widgetData).keepWhenDesktopHidden) &&
-                     (!ResolveLuaWidgetFrameOwner(widgetData).showOnHoverOnly ||
-                      ResolveLuaWidgetFrameOwner(widgetData).selected || interactionPinnedWidgetId_ == ResolveLuaWidgetFrameOwner(widgetData).id ||
-                      luaStackIndicator_.stackId == ResolveLuaWidgetFrameOwner(widgetData).id ||
-                      dragSession_.IsActive() || widgetAction_ == WidgetAction::Move ||
-                      PtInRect(&ResolveLuaWidgetFrameOwner(widgetData).bounds, lastMousePoint_))),
+                widgetData.id, desktopSurfaceVisible,
                 keepTopologyHiddenPageRuntimeActive);
+        }
+        else if (widgetEngine_ && widgetData.type == DesktopWidgetType::LuaStack)
+        {
+            // One owner controls visibility, hover retention and monitor
+            // topology. A member's old standalone placement is not a surface.
+            const auto* active = ResolveLuaWidgetContent(&widgetData);
+            const std::wstring activeId = active ? active->id : L"";
+            const auto members = widgetData.childWidgetIds;
+            for (const auto& id : members)
+                widgetEngine_->SetWidgetDesktopVisible(id,
+                    id == activeId && desktopSurfaceVisible,
+                    id == activeId && keepTopologyHiddenPageRuntimeActive);
         }
         const bool isPreviewSource =
             mouseDownWidgetIndex_ < widgets_.size() &&
