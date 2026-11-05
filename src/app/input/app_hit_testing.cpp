@@ -358,6 +358,24 @@ size_t DesktopApp::HitTestStandaloneWidgetIndex(POINT pt) const
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         size_t i = n - 1;
+        const auto& widget = widgets_[i];
+        if (IsGroupedWidget(widget) || (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)) continue;
+        if (!IsLuaDesktopSurface(widget))
+        {
+            RECT frame = widget.bounds;
+            for (const auto& container : containers_)
+            {
+                const auto* native = dynamic_cast<const WidgetContainer*>(container.get());
+                if (native && native->GetWidgetData() == &widget)
+                {
+                    frame = native->GetFrameRect();
+                    break;
+                }
+            }
+            // A foreground native card also blocks Lua hover/cursor hits.
+            if (!IsRectEmpty(&frame) && PtInRect(&frame, pt)) return static_cast<size_t>(-1);
+            continue;
+        }
         if (HitTestStandaloneWidget(i, pt) != WidgetHit::None)
             return i;
     }

@@ -1519,7 +1519,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
                         {
                             const size_t owner = FindWidgetIndexById(luaStackIndicator_.stackId);
                             const RECT frame = owner < widgets_.size() ? GetStandaloneWidgetFrameRect(widgets_[owner]) : RECT{};
-                            if (PtInRect(&frame, point) || PtInRect(&luaStackIndicator_.bounds, point) ||
+                            if ((PtInRect(&frame, point) && HitTestStandaloneWidgetIndex(point) == owner) ||
+                                PtInRect(&luaStackIndicator_.bounds, point) ||
                                 PtInRect(&luaStackIndicator_.bridge, point))
                                 luaStackIndicator_.hideAfter = 0;
                             else UpdateLuaStackIndicator(point);
