@@ -21,6 +21,7 @@ namespace
 {
 constexpr UINT_PTR kPopupMouseLeaveTimerId = 1;
 constexpr UINT kPopupMouseLeavePollIntervalMs = 50;
+constexpr UINT kStackIndicatorMouseLeavePollIntervalMs = 30;
 constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
 constexpr UINT kPopupPresentationRetryIntervalMs = 100;
 constexpr unsigned kPopupPresentationRetryLimit = 5;
@@ -1300,7 +1301,9 @@ void DesktopApp::SyncPopupMouseLeaveTimer()
     {
         if (!popupMouseLeaveTimerArmed_)
             popupMouseLeaveTimerArmed_ = SetTimer(floatingPopupHwnd_,
-                kPopupMouseLeaveTimerId, kPopupMouseLeavePollIntervalMs, nullptr) != 0;
+                kPopupMouseLeaveTimerId,
+                IsLuaStackIndicatorVisible() ? kStackIndicatorMouseLeavePollIntervalMs : kPopupMouseLeavePollIntervalMs,
+                nullptr) != 0;
     }
     else
     {
@@ -1504,15 +1507,19 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
                         POINT screen = point; ClientToScreen(hwnd_, &screen);
                         const HWND hit = snowdesktop::private_pointer::WindowAtPoint(screen);
                         if (hit != hwnd_ && hit != floatingPopupHwnd_ && !IsChild(hwnd_, hit)) HideLuaStackIndicator();
-                        else if (!PtInRect(&luaStackIndicator_.bounds, point) && !PtInRect(&luaStackIndicator_.bridge, point))
+                        else
                         {
                             const size_t owner = FindWidgetIndexById(luaStackIndicator_.stackId);
                             const RECT frame = owner < widgets_.size() ? GetStandaloneWidgetFrameRect(widgets_[owner]) : RECT{};
-                            if (!PtInRect(&frame, point)) UpdateLuaStackIndicator(point);
+                            if (PtInRect(&frame, point) || PtInRect(&luaStackIndicator_.bounds, point) ||
+                                PtInRect(&luaStackIndicator_.bridge, point))
+                                luaStackIndicator_.hideAfter = 0;
+                            else UpdateLuaStackIndicator(point);
                         }
                     }
                 }
             }
+            else if (!luaStackIndicator_.stackId.empty()) HideLuaStackIndicator();
             return 0;
         }
         break;

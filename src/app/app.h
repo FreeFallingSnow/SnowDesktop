@@ -49,6 +49,7 @@
 #include "core/dock.h"
 #include "core/widget.h"
 #include "widgets/widget_pair_drop.h"
+#include "widgets/lua_stack.h"
 #include "app/widgets/widget_pair_drag_source.h"
 #include "app/widgets/widget_group_transition.h"
 #include "core/drop_model.h"
@@ -2866,9 +2867,9 @@ private:
         size_t visibleCount = 0;
         int pitch = 16;
         int padding = 8;
-        int wheelRemainder = 0;
         ULONGLONG hideAfter = 0;
     } luaStackIndicator_;
+    snowdesktop::lua_stack::WheelGesture luaStackWheel_;
     void BeginLuaWidgetConsent(POINT screenPoint,
         const std::wstring& packageId,
         const std::wstring& targetWidgetId);

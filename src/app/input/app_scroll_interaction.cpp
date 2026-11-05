@@ -157,7 +157,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                 (void)ScrollLuaWidgetStack(widgets_[luaWidget].id, delta);
                 return;
             }
-            luaStackIndicator_.wheelRemainder = 0;
+            (void)luaStackWheel_.Consume(widgets_[luaWidget].id, delta, GetTickCount64(), true);
         }
         if (!widgetEngine_->HandleHostUiPointer(
                 luaContent->id, localX, localY,

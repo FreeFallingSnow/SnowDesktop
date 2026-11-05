@@ -113,21 +113,14 @@ bool DesktopApp::ScrollLuaWidgetStack(const std::wstring& stackId, int delta)
     const std::wstring stableId(stackId);
     const size_t index = FindWidgetIndexById(stableId);
     if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaStack) return false;
-    if (luaStackIndicator_.stackId != stableId)
-    {
-        luaStackIndicator_.wheelRemainder = 0;
-        luaStackIndicator_.stackId = stackId;
-    }
-    luaStackIndicator_.wheelRemainder += delta;
-    const int steps = luaStackIndicator_.wheelRemainder / WHEEL_DELTA;
-    luaStackIndicator_.wheelRemainder %= WHEEL_DELTA;
-    if (!steps) return true;
+    const int step = luaStackWheel_.Consume(stableId, delta, GetTickCount64());
+    if (!step) return true;
     const auto members = widgets_[index].childWidgetIds;
     if (members.empty()) return true;
     const auto active = std::find(members.begin(), members.end(), widgets_[index].activeCategoryId);
     const auto count = static_cast<std::int64_t>(members.size());
     const auto position = active == members.end() ? 0 : static_cast<std::int64_t>(active - members.begin());
-    const size_t next = static_cast<size_t>(((position - steps) % count + count) % count);
+    const size_t next = static_cast<size_t>(((position + step) % count + count) % count);
     (void)SelectLuaStackMember(stableId, members[next]);
     UpdateLuaStackIndicator(lastMousePoint_);
     return true;
@@ -204,22 +197,11 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
             target = FindWidgetIndexById(luaStackIndicator_.stackId);
         else
         {
-            if (!luaStackIndicator_.hideAfter && !luaStackIndicator_.stackId.empty())
+            if (!luaStackIndicator_.stackId.empty())
             {
-                luaStackIndicator_.hideAfter = GetTickCount64() + 180;
-                uiAnimationScheduler_.ScheduleOnce(180, [this](snowdesktop::UiScheduleToken) {
-                    if (!luaStackIndicator_.hideAfter || GetTickCount64() < luaStackIndicator_.hideAfter) return;
-                    POINT cursor{};
-                    if (snowdesktop::private_pointer::CursorPosition(&cursor) && ScreenToClient(hwnd_, &cursor))
-                    {
-                        if (PtInRect(&luaStackIndicator_.bounds, cursor) || PtInRect(&luaStackIndicator_.bridge, cursor))
-                        { luaStackIndicator_.hideAfter = 0; return; }
-                        const size_t hovered = HitTestStandaloneWidgetIndex(cursor);
-                        if (hovered < widgets_.size() && widgets_[hovered].id == luaStackIndicator_.stackId)
-                        { luaStackIndicator_.hideAfter = 0; return; }
-                    }
-                    HideLuaStackIndicator();
-                });
+                const ULONGLONG now = GetTickCount64();
+                if (!luaStackIndicator_.hideAfter) luaStackIndicator_.hideAfter = now + 80;
+                else if (now >= luaStackIndicator_.hideAfter) HideLuaStackIndicator();
             }
             return;
         }
@@ -293,7 +275,7 @@ bool DesktopApp::HandleLuaStackIndicatorPointer(POINT point, bool pressed)
         const bool activate = luaStackIndicator_.pressedMember == id;
         luaStackIndicator_.pressedMember.clear();
         snowdesktop::private_pointer::ReleasePointerCapture();
-        luaStackIndicator_.wheelRemainder = 0;
+        luaStackWheel_.Hold(luaStackIndicator_.stackId, GetTickCount64());
         if (activate) (void)SelectLuaStackMember(luaStackIndicator_.stackId, id);
         UpdateLuaStackIndicator(point);
     }

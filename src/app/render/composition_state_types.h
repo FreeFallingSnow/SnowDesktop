@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 #include <chrono>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 using UiCompositionAnimationHost =
@@ -37,6 +38,7 @@ struct PopupFanIconDrawing
 
 struct WidgetMarqueeCompositionItem
 {
+    std::wstring instanceId;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> clipVisual;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> textVisual;
     Microsoft::WRL::ComPtr<IDCompositionRectangleClip> clip;

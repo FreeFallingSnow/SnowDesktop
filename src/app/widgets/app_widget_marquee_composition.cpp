@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
 #include "widget/runtime/widget_visibility_rules.h"
 
 namespace
@@ -93,19 +94,43 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
     auto pending = std::move(pendingWidgetMarqueeCompositions_);
     pendingWidgetMarqueeCompositions_.clear();
     const auto now = std::chrono::steady_clock::now();
+    const auto clearInstance = [&](const std::wstring& instance) {
+        for (auto owner = widgetMarqueeCompositionItems_.begin(); owner != widgetMarqueeCompositionItems_.end();)
+        {
+            const auto parent = desktopWidgetCompositionItems_.find(owner->first);
+            for (auto item = owner->second.begin(); item != owner->second.end();)
+            {
+                if (item->second.instanceId != instance) { ++item; continue; }
+                if (parent != desktopWidgetCompositionItems_.end() && parent->second.visual && item->second.clipVisual)
+                    (void)parent->second.visual->RemoveVisual(item->second.clipVisual.Get());
+                item = owner->second.erase(item);
+            }
+            if (owner->second.empty()) owner = widgetMarqueeCompositionItems_.erase(owner);
+            else ++owner;
+        }
+    };
     for (auto& [widgetId, request] : pending)
     {
+        const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, widgetId);
+        if (request.marquees.empty() || owner >= widgets_.size())
+        {
+            // A hidden/deleted member can clear only its own text. Pending
+            // updates from the new member must survive either delivery order.
+            clearInstance(widgetId);
+            continue;
+        }
+        const std::wstring ownerId = widgets_[owner].id;
         const auto parent =
-            desktopWidgetCompositionItems_.find(widgetId);
+            desktopWidgetCompositionItems_.find(ownerId);
         if (parent == desktopWidgetCompositionItems_.end() ||
             !parent->second.visual)
         {
-            widgetMarqueeCompositionItems_.erase(widgetId);
+            clearInstance(widgetId);
             continue;
         }
         if (!parent->second.visible)
             continue;
-        auto& items = widgetMarqueeCompositionItems_[widgetId];
+        auto& items = widgetMarqueeCompositionItems_[ownerId];
         std::unordered_set<std::string> liveKeys;
         liveKeys.reserve(request.marquees.size());
 
@@ -114,7 +139,8 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             liveKeys.insert(marquee.key);
             auto position = items.find(marquee.key);
             if (position != items.end() &&
-                (!position->second.clipVisual || !position->second.textVisual || !position->second.clip))
+                (position->second.instanceId != widgetId || !position->second.clipVisual ||
+                 !position->second.textVisual || !position->second.clip))
             {
                 if (position->second.clipVisual)
                     (void)parent->second.visual->RemoveVisual(position->second.clipVisual.Get());
@@ -127,6 +153,7 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             // entry for the next refresh to mistake for an initialized item.
             WidgetMarqueeCompositionItem item = inserted
                 ? WidgetMarqueeCompositionItem{} : position->second;
+            item.instanceId = widgetId;
             float phase = 0.0f;
             if (!inserted && item.scrolling && item.cycle > 0.0f &&
                 item.phaseTime.time_since_epoch().count() != 0)
@@ -312,7 +339,7 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             item = items.erase(item);
         }
         if (items.empty())
-            widgetMarqueeCompositionItems_.erase(widgetId);
+            widgetMarqueeCompositionItems_.erase(ownerId);
     }
     return true;
 }
@@ -330,7 +357,7 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
             desktopWidgetCompositionItems_.find(widgetId);
         const bool isPreviewSource =
             previewSourceId && widgetId == *previewSourceId;
-        const bool visible =
+        const bool ownerVisible =
             parent != desktopWidgetCompositionItems_.end() &&
             parent->second.visible &&
             !snowdesktop::widget_visibility_rules::
@@ -341,6 +368,8 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
         for (auto& [key, item] : items)
         {
             (void)key;
+            const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, item.instanceId);
+            const bool visible = ownerVisible && owner < widgets_.size() && widgets_[owner].id == widgetId;
             if (item.visible == visible)
                 continue;
             if (item.clip &&
@@ -357,6 +386,16 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
 
 void DesktopApp::ResetWidgetMarqueeComposition()
 {
+    for (auto& [ownerId, items] : widgetMarqueeCompositionItems_)
+    {
+        const auto parent = desktopWidgetCompositionItems_.find(ownerId);
+        if (parent == desktopWidgetCompositionItems_.end() || !parent->second.visual) continue;
+        for (const auto& [key, item] : items)
+        {
+            (void)key;
+            if (item.clipVisual) (void)parent->second.visual->RemoveVisual(item.clipVisual.Get());
+        }
+    }
     pendingWidgetMarqueeCompositions_.clear();
     widgetMarqueeCompositionItems_.clear();
 }

@@ -45,6 +45,50 @@ std::vector<std::wstring> Members(const DesktopWidget& widget)
         : std::vector<std::wstring>{widget.id};
 }
 
+size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance)
+{
+    const auto child = std::find_if(widgets.begin(), widgets.end(), [&](const auto& w) {
+        return w.id == instance && w.type == DesktopWidgetType::LuaScript;
+    });
+    if (child == widgets.end()) return widgets.size();
+    const size_t index = static_cast<size_t>(child - widgets.begin());
+    const size_t owner = Owner(widgets, instance);
+    if (owner >= widgets.size()) return index;
+    return Active(widgets, owner) == index ? owner : widgets.size();
+}
+
+int WheelGesture::Consume(std::wstring_view stack, int delta, std::uint64_t now,
+    bool controlOwnsWheel)
+{
+    if (stack_ != stack || !seen_ || now < lastEvent_ || now - lastEvent_ >= QuietMilliseconds)
+    {
+        stack_ = stack;
+        switched_ = false;
+        remainder_ = 0;
+    }
+    lastEvent_ = now;
+    seen_ = true;
+    if (controlOwnsWheel) { remainder_ = 0; return 0; }
+    if (switched_) return 0;
+    const std::int64_t total = static_cast<std::int64_t>(remainder_) + delta;
+    if (total >= 120 || total <= -120)
+    {
+        switched_ = true;
+        remainder_ = 0;
+        return total > 0 ? -1 : 1;
+    }
+    remainder_ = static_cast<int>(total);
+    return 0;
+}
+
+void WheelGesture::Hold(std::wstring_view stack, std::uint64_t now)
+{
+    stack_ = stack;
+    lastEvent_ = now;
+    remainder_ = 0;
+    seen_ = switched_ = true;
+}
+
 bool Supports(const DesktopWidget& widget, GridSpan span) noexcept
 {
     return span.columns >= widget.minGridSpan.columns && span.rows >= widget.minGridSpan.rows &&
