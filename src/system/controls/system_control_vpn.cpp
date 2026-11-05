@@ -25,6 +25,11 @@ struct EntryState
 {
     bool connected = false, busy = false;
 };
+struct DialParameters
+{
+    RASDIALPARAMSW value{};
+    ~DialParameters() { SecureZeroMemory(&value, sizeof(value)); }
+};
 using EntryStates = std::map<std::wstring, EntryState, WideLess>;
 
 std::string Utf8(std::wstring_view value)
@@ -256,15 +261,29 @@ private:
         if (found != states.end() && found->second.connected) return {true, {}, 0};
         if (found != states.end() && found->second.busy) return Error(ERROR_BUSY, "busy");
         if (cancel.Stop()) return cancel.Failure();
-        RASDIALPARAMSW parameters{}; parameters.dwSize = sizeof(parameters);
+        DialParameters saved;
+        auto& parameters = saved.value;
+        parameters.dwSize = sizeof(parameters);
         wcsncpy_s(parameters.szEntryName, RAS_MaxEntryName + 1, name.c_str(), _TRUNCATE);
+        // RasDial does not load the saved user name/password on its own. Keep
+        // the opaque password handle returned by Windows intact for RasDial.
+        BOOL hasPassword = FALSE;
+        status = api_.entryDialParams(nullptr, &parameters, &hasPassword);
+        if (status) return Error(status);
+        if (cancel.Stop()) return cancel.Failure();
         RASDIALEXTENSIONS extensions{}; extensions.dwSize = sizeof(extensions);
         // Keep the control center responsible for feedback; do not open the
         // separate connected/reconnect UI. Credentials remain owned by Windows.
         extensions.dwfOptions = RDEOPT_DisableConnectedUI | RDEOPT_DisableReconnectUI;
         HRASCONN connection = nullptr;
         status = api_.dial(&extensions, nullptr, &parameters, 0, nullptr, &connection);
-        if (status) return Error(status);
+        if (status)
+        {
+            // RAS can allocate a connection even when dialing fails. Release it
+            // without replacing the original error with a cleanup result.
+            if (connection) api_.hangUp(connection);
+            return Error(status);
+        }
         if (cancel.Stop()) return cancel.Failure();
         return ConfirmControlValue(1., 0, cancel, [&] { return ReadState(api_, name, cancel); }, ControlReadbackPause);
     }

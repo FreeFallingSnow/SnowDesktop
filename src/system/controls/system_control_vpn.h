@@ -15,6 +15,7 @@ struct VpnApi
     decltype(&RasGetConnectStatusW) connectStatus = &RasGetConnectStatusW;
     decltype(&RasHangUpW) hangUp = &RasHangUpW;
     decltype(&RasDialW) dial = &RasDialW;
+    decltype(&RasGetEntryDialParamsW) entryDialParams = &RasGetEntryDialParamsW;
 };
 std::shared_ptr<Backend> CreateVpnBackend(VpnApi api = {});
 }

@@ -113,7 +113,7 @@
 | [system_control_brightness.cpp](system_control_brightness.cpp) | 内置屏使用 WMI，外屏使用 DDC；依据真实 monitor ID 重新查找、确认支持并回读，不用未知值伪装 0。同步驱动调用仍有平台阻塞边界。 |
 | [system_control_wifi.cpp](system_control_wifi.cpp) | 读取使用缓存；扫描是显式任务。新配置支持开放网络和 WPA2/WPA3 Personal，其他认证返回 `systemSettingsRequired`。新建配置失败后仅在确认未使用时清理，未知状态保留；扫描等待最多 4 秒后读取缓存，连接按实际目标核对；不向 Lua 返回密码。 |
 | [system_control_bluetooth.cpp](system_control_bluetooth.cpp) | 枚举已配对设备；连接／断开当前仅支持可解析的经典蓝牙音频设备，其他设备返回 `systemSettingsRequired`。没有配对、取消配对或通用 BLE 连接任务；Lua 必须尊重 `canConnect/canDisconnect`。 |
-| [system_control_vpn.cpp](system_control_vpn.cpp) | 枚举当前用户默认 RAS 电话簿中类型为 VPN 的连接，用 `RasEnumConnections`／`RasGetConnectStatus` 读取状态，`RasDial` 同步连接、`RasHangUp` 断开。只接受采样中出现过的 VPN 条目名，不会改为拨号其他电话簿条目；连接沿用 Windows 已保存凭据，缺少凭据返回 `credentialsRequired`。同步拨号在执行线程内等待系统返回，取消只能阻止后续处理；不在默认电话簿中的其他 VPN 配置不会列出。 |
+| [system_control_vpn.cpp](system_control_vpn.cpp) | 枚举当前用户默认 RAS 电话簿中类型为 VPN 的连接，用 `RasEnumConnections`／`RasGetConnectStatus` 读取状态，先用 `RasGetEntryDialParams` 取得 Windows 保存的用户名及不透明密码句柄，再交给 `RasDial` 同步连接；`RasHangUp` 负责断开及清理失败拨号返回的连接句柄。只接受采样中出现过的 VPN 条目名，不会改为拨号其他电话簿条目；凭据由 Windows 保存，临时拨号参数在退出时清零，认证失败返回 `credentialsRequired`。同步拨号在执行线程内等待系统返回，取消只能阻止后续处理；不在默认电话簿中的其他 VPN 配置不会列出。 |
 | [system_control_power.cpp](system_control_power.cpp) | 模式仅在系统支持且计划兼容时可用，`setMode` 同时设置 AC／DC。敏感动作保留确认及系统权限检查，重启／关机不强制关闭其他应用。没有休眠任务。 |
 
 设备消失、策略拒绝、硬件不支持和读回不一致均是实际可能的结果；不要通过复制请求值或假成功消除它们。公共文档说明错误语义，不直接暴露内部平台码成为新的未审查契约。

@@ -135,6 +135,7 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **VPN 修复的新证据与处理**：2026-11-05，Task `vpn-connect-saved-credentials-20261105`、批次 `e2afef9c94df420f8ef49d7f07d7c445` 修订0。VPN 私有后端仅有宿主消费者，当前正式 CTest 没有 VPN 条目；本任务需要复用生产后端做临时拨号参数检查及真实分流测试连接验证。依据已确认的准入限制，不重复提交已知会拒绝的 `module/none`，计划选择 `behavior_manifest` 核对交付产物，VPN 行为由忽略任务目录中的临时驱动另验。该正式条目只验证部署契约，不能作为 VPN 已验证的证据；不新增永久测试、不展开全量，临时编译仍经标准执行租约。执行结果随本任务记录保存；模块临时验证入口仍待统一。
 - **编译前检查入口的新证据**：Task `winx-start-context-menu`、批次 `687b59aa338844a4bd422c7f3c899789` 修订0，移除自绘 Win+X 兜底后尝试通过 `Enter-BuildEntry` 和 `RunLeasedCommand` 执行临时 `/Zs /W4 /WX` 头文件检查；因本任务仍处 editing 被拒绝，未启动编译。此为通用入口按现有协议正常拒绝，Agent 选用入口不适配，并非执行器故障；现有批次轻检查只接受 `builtin-basic`，尚无手册化的编辑期临时前端检查入口。本次不绕过租约、不反复重试，以后续标准构建覆盖消费者编译，保留该项前置检查未执行记录。建议统一临时检查与当前任务编辑许可、独立输出及执行权的衔接，避免前置检查只能延后。
 - **来源与证据**：2026-11-04，Task `task-8071ca0eeffa4e399782658dd729d837`，批次 `19f0476bc15c467f97f9d12daf5d6906` 修订0。Shell 参数局部修正有临时 C++ 生产入口探针，无对应正式 CTest；`plan -Scope module -Suites none` 返回 `Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.`。`build_protocol.ps1` 的 `New-TaskPlan` 确认此限制。
 - **影响与本次处理**：规则默认一次性验证不扩展正式测试工程，计划入口却要求模块选择正式条目。本次增加选择 `behavior_manifest` 检查产品部署契约，参数本身仍由临时探针检查；Run `2afc920a0b284917acbca709a3e597fa` 的标准产品构建、激活和该条目通过，临时探针随后通过。没有新增永久测试或全量测试，额外编译与等待成本未单独测量。记录位于 `.codex-probes/powerrename-background/`。
