@@ -1,7 +1,6 @@
 #include "widget_image_sampling.h"
 #include <algorithm>
 #include <cmath>
-#include <utility>
 
 namespace snowdesktop::widget_runtime
 {
@@ -144,75 +143,10 @@ void WidgetImageSamplingCache::Remove(ID2D1Bitmap* source) noexcept
 void WidgetImageSamplingCache::Clear() noexcept
 {
     entries_.clear();
-    roundedBrush_.Reset();
-    roundedGeometry_.Reset();
     raster_.Reset();
     device_.Reset();
     bytes_ = 0;
     clock_ = 0;
-}
-
-bool WidgetImageSamplingCache::DrawRounded(ID2D1DeviceContext* context,
-    ID2D1Bitmap1* bitmap, const D2D1_RECT_F& destination,
-    const D2D1_RECT_F& source, float radius, float opacity,
-    D2D1_INTERPOLATION_MODE interpolation) noexcept
-{
-    if (!context || !bitmap || !(radius > 0) || !std::isfinite(radius) ||
-        !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
-        context->GetPrimitiveBlend() != D2D1_PRIMITIVE_BLEND_SOURCE_OVER ||
-        (interpolation != D2D1_INTERPOLATION_MODE_LINEAR &&
-            interpolation != D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR)) return false;
-    const float width = destination.right - destination.left;
-    const float height = destination.bottom - destination.top;
-    const float sourceWidth = source.right - source.left;
-    const float sourceHeight = source.bottom - source.top;
-    const auto size = bitmap->GetSize();
-    if (!(width > 0 && height > 0 && sourceWidth > 0 && sourceHeight > 0) ||
-        !std::isfinite(width) || !std::isfinite(height) ||
-        !std::isfinite(destination.left) || !std::isfinite(destination.top) ||
-        source.left < 0 || source.top < 0 || source.right > size.width ||
-        source.bottom > size.height || !std::isfinite(sourceWidth) ||
-        !std::isfinite(sourceHeight)) return false;
-    Microsoft::WRL::ComPtr<ID2D1Device> device;
-    context->GetDevice(&device);
-    if (!device) return false;
-    if (device_.Get() != device.Get()) { Clear(); device_ = device; }
-    const float sx = width / sourceWidth, sy = height / sourceHeight;
-    if (!std::isfinite(sx) || !std::isfinite(sy)) return false;
-    radius = std::min(radius, std::min(width, height) * 0.5f);
-    if (!roundedGeometry_ || roundedShape_.radiusX != radius ||
-        roundedShape_.rect.left != destination.left || roundedShape_.rect.top != destination.top ||
-        roundedShape_.rect.right != destination.right || roundedShape_.rect.bottom != destination.bottom)
-    {
-        Microsoft::WRL::ComPtr<ID2D1Factory> factory;
-        context->GetFactory(&factory);
-        const auto shape = D2D1::RoundedRect(destination, radius, radius);
-        Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> geometry;
-        if (!factory || FAILED(factory->CreateRoundedRectangleGeometry(shape, &geometry))) return false;
-        roundedGeometry_ = std::move(geometry);
-        roundedShape_ = shape;
-    }
-    if (!roundedBrush_)
-    {
-        const D2D1_BITMAP_BRUSH_PROPERTIES1 properties{
-            D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, interpolation };
-        if (FAILED(context->CreateBitmapBrush(bitmap, &properties,
-                nullptr, &roundedBrush_))) return false;
-    }
-    roundedBrush_->SetBitmap(bitmap);
-    roundedBrush_->SetOpacity(opacity);
-    roundedBrush_->SetInterpolationMode1(interpolation);
-    roundedBrush_->SetTransform(D2D1::Matrix3x2F::Scale(sx, sy) *
-        D2D1::Matrix3x2F::Translation(destination.left - source.left * sx,
-            destination.top - source.top * sy));
-    const auto antialias = context->GetAntialiasMode();
-    context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    context->FillGeometry(roundedGeometry_.Get(), roundedBrush_.Get());
-    context->SetAntialiasMode(antialias);
-    // Command lists retain their recorded bitmap; the reusable brush must
-    // not extend the lifetime of a source evicted from the image caches.
-    roundedBrush_->SetBitmap(nullptr);
-    return true;
 }
 
 bool WidgetImageSamplingCache::Contains(ID2D1Bitmap* bitmap) const noexcept

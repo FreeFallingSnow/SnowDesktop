@@ -28,11 +28,6 @@ public:
         bool nearest = false) noexcept;
     void Remove(ID2D1Bitmap* source) noexcept;
     void Clear() noexcept;
-    // Full destination rounded image, no tint/effect/group contents. A bitmap
-    // brush applies the geometric mask without an intermediate layer.
-    bool DrawRounded(ID2D1DeviceContext* context, ID2D1Bitmap1* bitmap,
-        const D2D1_RECT_F& destination, const D2D1_RECT_F& source,
-        float radius, float opacity, D2D1_INTERPOLATION_MODE interpolation) noexcept;
     bool Contains(ID2D1Bitmap* bitmap) const noexcept;
     std::size_t Size() const noexcept { return entries_.size(); }
     // Derived textures only; original textures are reported by their owners.
@@ -49,9 +44,6 @@ private:
     std::vector<Entry> entries_;
     Microsoft::WRL::ComPtr<ID2D1Device> device_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> raster_;
-    Microsoft::WRL::ComPtr<ID2D1BitmapBrush1> roundedBrush_;
-    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> roundedGeometry_;
-    D2D1_ROUNDED_RECT roundedShape_{};
     std::size_t bytes_ = 0;
     std::uint64_t clock_ = 0;
 };
