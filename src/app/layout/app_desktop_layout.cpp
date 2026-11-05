@@ -92,7 +92,9 @@ void DesktopApp::LayoutItems()
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
-            if (widget.type != DesktopWidgetType::LuaStack || snowdesktop::lua_stack::Supports(widget, widget.gridSpan))
+            // Preserve unsupported Lua sizes as placeholders, including members
+            // just detached from a stack. Placement already reserved this span.
+            if (!IsLuaDesktopSurface(widget) || snowdesktop::lua_stack::Supports(widget, widget.gridSpan))
                 widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan, page->columns, page->rows);
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));

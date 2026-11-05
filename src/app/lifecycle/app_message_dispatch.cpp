@@ -332,16 +332,17 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             const size_t widgetIndex =
                 HitTestStandaloneWidgetIndex(point);
             if (widgetIndex < widgets_.size() &&
-                widgets_[widgetIndex].type ==
-                    DesktopWidgetType::LuaScript &&
+                IsLuaDesktopSurface(widgets_[widgetIndex]) &&
                 HitTestStandaloneWidget(widgetIndex, point) ==
                     WidgetHit::Content)
             {
+                const auto* content = ResolveLuaWidgetContent(&widgets_[widgetIndex]);
+                if (!content) break;
                 const RECT frame = GetStandaloneWidgetFrameRect(
                     widgets_[widgetIndex]);
                 const std::string cursor =
                     widgetEngine_->InteractionCursorAt(
-                        widgets_[widgetIndex].id,
+                        content->id,
                         point.x - frame.left,
                         point.y - frame.top);
                 LPCWSTR cursorId = nullptr;
@@ -1047,14 +1048,16 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         size_t standaloneWidget = HitTestStandaloneWidgetIndex(pt);
         if (standaloneWidget != static_cast<size_t>(-1) &&
-            widgets_[standaloneWidget].type == DesktopWidgetType::LuaScript)
+            IsLuaDesktopSurface(widgets_[standaloneWidget]))
         {
             if (HitTestStandaloneWidget(standaloneWidget, pt) == WidgetHit::Content && widgetEngine_)
             {
+                const auto* content = ResolveLuaWidgetContent(&widgets_[standaloneWidget]);
+                if (!content) return 0;
                 RECT frame = GetStandaloneWidgetFrameRect(widgets_[standaloneWidget]);
-                widgetEngine_->EnsureWidgetLoaded(widgets_[standaloneWidget].id,
-                    widgets_[standaloneWidget].packageId);
-                widgetEngine_->InvokeMouseEvent(widgets_[standaloneWidget].id, "onDoubleClick",
+                const std::wstring instanceId = content->id;
+                widgetEngine_->EnsureWidgetLoaded(instanceId, content->packageId);
+                widgetEngine_->InvokeMouseEvent(instanceId, "onDoubleClick",
                     pt.x - frame.left, pt.y - frame.top, 1, 0);
             }
             return 0;

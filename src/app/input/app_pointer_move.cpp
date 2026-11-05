@@ -840,8 +840,8 @@ void DesktopApp::OnMouseMoveAt(
         if (mouseDownWidgetIndex_ >= widgets_.size()) return false;
         if (widgets_[mouseDownWidgetIndex_].type != DesktopWidgetType::LuaStack) return true;
         const bool detach = !rightButtonItemDrag_ &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0 &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) == 0 &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) == 0 &&
             (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) == 0;
         if (detach == luaStackMemberDrag_.Armed()) return true;
         const std::wstring sourceId = widgets_[mouseDownWidgetIndex_].id;

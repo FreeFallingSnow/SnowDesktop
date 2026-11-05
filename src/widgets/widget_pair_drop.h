@@ -47,6 +47,8 @@ constexpr Options GetOptions(DesktopWidgetType source, DesktopWidgetType target)
 
 constexpr Action ResolveAction(Options options, bool control, bool shift, bool alt)
 {
+    if (options.group == Action::CreateLuaStack)
+        return !control && !shift && !alt ? Action::CreateLuaStack : Action::None;
     // Ambiguous combinations never arm a merge or a new group.
     if (alt || control == shift) return Action::None;
     if (control) return options.group;

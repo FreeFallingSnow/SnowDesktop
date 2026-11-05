@@ -64,12 +64,16 @@ bool DesktopApp::CommitLuaWidgetStack(size_t source, size_t target)
     HideLuaStackIndicator();
     for (auto& widget : widgets_)
         if (widget.type == DesktopWidgetType::LuaScript) ConfigureWidgetGridLimits(widget);
-    if (!snowdesktop::lua_stack::Combine(widgets_, source, target, MakeNewWidgetId())) return false;
+    auto proposed = widgets_;
+    if (!snowdesktop::lua_stack::Combine(proposed, source, target, MakeNewWidgetId())) return false;
+    // Keep the retired model alive through page mapping and container rebuild.
+    widgets_.swap(proposed);
     for (auto& widget : widgets_)
         if (widget.type == DesktopWidgetType::LuaStack) ConfigureWidgetGridLimits(widget);
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavInsideWidget_ = false;
     keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    ApplyPageMapping();
     LayoutItems();
     RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -87,6 +91,8 @@ bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberI
     if (stack.activeCategoryId == memberId) return true;
     const auto* old = ResolveLuaWidgetContent(&stack);
     const std::wstring oldId = old ? old->id : L"";
+    if (luaInlineEdit_ && luaInlineEditWidgetId_ == oldId)
+        CommitLuaInlineTextEdit(false);
     if (widgetEngine_)
     {
         widgetEngine_->BlurHostInput(false);

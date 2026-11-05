@@ -426,15 +426,15 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             &backgroundEffects, !preview && registerBackdrop);
     }
 
-    bool incompatibleStackSize = false;
-    if (!preview && presentation.type == DesktopWidgetType::LuaStack)
+    bool incompatibleSize = false;
+    if (!preview)
     {
         const auto manifest = WidgetEngine::GetWidgetManifest(data_->packageId);
-        incompatibleStackSize = manifest.hasManifest &&
+        incompatibleSize = manifest.hasManifest &&
             (presentation.gridSpan.columns < manifest.minColumns || presentation.gridSpan.rows < manifest.minRows ||
              (manifest.maxColumns && presentation.gridSpan.columns > manifest.maxColumns) ||
              (manifest.maxRows && presentation.gridSpan.rows > manifest.maxRows));
-        if (incompatibleStackSize) widgetOk = false;
+        if (incompatibleSize) widgetOk = false;
     }
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
@@ -550,7 +550,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             break;
         }
 
-        if (incompatibleStackSize)
+        if (incompatibleSize)
         {
             body = _LW("app.lua_stack.unsupported_size");
             action.clear();
