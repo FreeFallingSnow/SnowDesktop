@@ -102,6 +102,9 @@
 
 ### CF-010 等待结束回执过大
 
+- **剩余输出证据（2026-11-05）**：Task `lua-widget-stacks` 在续修 `c6fc2053fdb343579fd8efcbd627e7d8` 修订2调用 claim 时，回执仍带完整继承 testPlan、originalRequirement 和输入身份，普通工具输出发生截断。CLI 等待结束回执已精简，本证据只涉及 claim；当前用 ConvertFrom-Json 投影 id/state/editRevision/ownedFiles 避免重复读取。建议为认领回执补同类精简投影，保留完整原件；未为该反馈另开任务或执行测试。
+
+
 - **发现**：同 CF-009。首批 `ready-and-wait` 返回 cancelled 后，工具输出约 1279 行、12026 个估算 token，触发截断；整份计划、输入与 19 项未运行证据占主要部分。
 - **本轮修复**：CLI 的 finish/wait/ready-and-wait 默认输出精简结束回执，返回状态、计数、最多 16 个失败名称、原始结果路径与恢复入口，保留完整 JSON 原件和退出码。`-FullResult` 取得原输出，直接 PowerShell 调用保持兼容、可选 `-Compact`。回归将核对默认 CLI 路由、完整输出兼容及原证据字节未被改写。
 
@@ -153,6 +156,10 @@
 - **下一步**：在计划/就绪时允许声明待人工验收意图，按有界保留或引用租约保护该候选；验收回执区分“已被策略回收”与“运行文件被修改”，并支持在源码与运行输入可证明一致时共享后续候选。当前仅登记，不修改保留策略或验收协议，不为反馈增加构建。
 
 ### CF-017 构建前缺少疑似重复构建提醒
+
+- **Lua 堆叠续修的新证据（2026-11-05）**：Task `lua-widget-stacks` 的批次 `c6fc2053fdb343579fd8efcbd627e7d8`、Run `44d6952728834da9a562f0ca3cee0d4f` 因 `lua_script.cpp:344` 的 C2678 失败；另一参与者随后创建并冻结同源续修 `8e85d4889f2649d4bcee75036717f602`、Run `7dc1a0937f144f819730ca7217c4568e`。本任务申请 repair 时实际返回 `Repair attempt is frozen. Observe it; no edit permission granted.`；该续修中本任务为继承的 finished 成员、ownedFiles 为空，原 const 赋值尚未修正。随后用同 ID begin 取得 `7ed71775714d4abbb631f3aa02ce1786`，认领后才修改原错误。证据在各批次 product.log、repair.json 和任务修订6～7；不估填额外耗时或 token。
+- **影响与处理边界**：已确认存在“失败归属尚待修改时，其他成员先冻结继承需求”的重复构建风险；本任务保留全部失败和原需求，不取消共享执行、不改冻结源码。后续应在续修冻结前核对实际失败是否已有修改或责任方仍需编辑，避免只重新登记便立即重编。此处仅追加反馈，未扩大协作设施修改或测试范围。
+
 
 - **发现时间与来源**：2026-11-04，CLI / Codex。用户要求“运行全量测试，全通过后发布最新构建到 Steam 测试分支”；来源 Task `steam-beta-full-20261104`，批次 `3b076c67bf27443db7784b8cc827df2a` 修订0，Run `3e8c97aed3ec4ff1a3caeeed850c1392`。本条由用户在侧聊明确要求登记并提交，记录 Task 为 `duplicate-build-warning-feedback-20261104`。
 - **已观察事实与证据**：Agent 核对干净的 `release/v1.0.14.0` 后，未先核对已有标准 Release 和测试程序能否复用，便提交 `plan ... -Scope public -Suites full,tools -Inputs version.json` 与 `ready-and-wait`；观察回执随后报告 `latest stage start configure`、`latest stage start compile`。用户指出仓库已有产物复用规则，并建议“两次源码一致发出警告”。原始请求与日志保存在 `.build/collaboration/runs/3e8c97aed3ec4ff1a3caeeed850c1392.request.json`、同名 `.json`、`.stdout.log`、`.stderr.log`，批次计划为 `.build/collaboration/3b076c67bf27443db7784b8cc827df2a.plan.json`。

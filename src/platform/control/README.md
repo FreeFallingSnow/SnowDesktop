@@ -529,3 +529,14 @@ exports. Fixture data and virtual clocks belong to the private renderer; they
 do not replace the live user profile. Creating/removing live widgets, external
 application control and package publication remain outside this endpoint's
 current contract.
+
+### Lua widget stacks
+
+Desktop widget snapshots identify host-owned Lua stacks with `type: "luaStack"`,
+`activeMemberId` and `memberCount`. Each member retains its existing Lua instance ID
+and settings target; `grouped: true` marks its membership. Only the active member
+uses the stack frame for desktop input and accessibility. Stacks do not enter native
+storage-container or Dock APIs. These snapshot fields are additive; the control
+protocol version and Lua API version are unchanged. Layout files persist the
+`luaStack` type, ordered `childWidgets` and `activeCategory`; older hosts do not
+support round-trip editing of these stack layouts.

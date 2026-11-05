@@ -133,7 +133,7 @@ void DesktopApp::DrawStaticBackground(
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
         const bool interactionRetained =
-            popupOpen || interactionPinned ||
+            popupOpen || interactionPinned || luaStackIndicator_.stackId == widgetData.id ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
                     keyboardNavVisualFocus_,
@@ -171,7 +171,16 @@ void DesktopApp::DrawStaticBackground(
             widgetData.type == DesktopWidgetType::LuaScript)
         {
             widgetEngine_->SetWidgetDesktopVisible(
-                widgetData.id, desktopSurfaceVisible,
+                widgetData.id,
+                (&ResolveLuaWidgetFrameOwner(widgetData) == &widgetData) ? desktopSurfaceVisible :
+                    (ResolveLuaWidgetContent(&ResolveLuaWidgetFrameOwner(widgetData)) == &widgetData &&
+                     !IsRectEmptyRect(ResolveLuaWidgetFrameOwner(widgetData).bounds) && customDesktopVisible_ &&
+                     !desktopPassthroughActive_ && (!hiddenMode || ResolveLuaWidgetFrameOwner(widgetData).keepWhenDesktopHidden) &&
+                     (!ResolveLuaWidgetFrameOwner(widgetData).showOnHoverOnly ||
+                      ResolveLuaWidgetFrameOwner(widgetData).selected || interactionPinnedWidgetId_ == ResolveLuaWidgetFrameOwner(widgetData).id ||
+                      luaStackIndicator_.stackId == ResolveLuaWidgetFrameOwner(widgetData).id ||
+                      dragSession_.IsActive() || widgetAction_ == WidgetAction::Move ||
+                      PtInRect(&ResolveLuaWidgetFrameOwner(widgetData).bounds, lastMousePoint_))),
                 keepTopologyHiddenPageRuntimeActive);
         }
         const bool isPreviewSource =

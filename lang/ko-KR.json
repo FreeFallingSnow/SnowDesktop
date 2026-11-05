@@ -2813,5 +2813,10 @@
   "winx.shutdownOrSignOut": "종료 또는 로그아웃",
   "winx.signOut": "로그아웃",
   "winx.desktop": "바탕 화면",
-  "winx.dockSettings": "Dock 설정"
+  "winx.dockSettings": "Dock 설정",
+  "core.drag.create_lua_stack": "위젯 쌓기",
+  "core.drag.lua_stack_hint": "Ctrl 키를 누른 채 위젯 쌓기",
+  "app.lua_stack.release": "현재 위젯을 스택에서 꺼내기",
+  "app.lua_stack.remove_current": "현재 위젯 제거",
+  "app.lua_stack.unsupported_size": "이 위젯은 현재 스택 크기를 지원하지 않습니다. 스택 크기를 조절하거나 이 위젯을 꺼내세요."
 }

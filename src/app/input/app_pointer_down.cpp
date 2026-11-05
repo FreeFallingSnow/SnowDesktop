@@ -230,14 +230,14 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         for (size_t n = widgets_.size(); n > 0; --n)
         {
             const size_t wi = n - 1;
-            if (widgets_[wi].type != DesktopWidgetType::LuaScript ||
+            if (!IsLuaDesktopSurface(widgets_[wi]) ||
                 HitTestStandaloneWidget(wi, pt) != WidgetHit::Content)
                 continue;
             const RECT frame =
                 GetStandaloneWidgetFrameRect(widgets_[wi]);
             keepFocusedInput =
                 widgetEngine_->IsFocusedHostInputAt(
-                    widgets_[wi].id,
+                    ResolveLuaWidgetContent(&widgets_[wi])->id,
                     pt.x - frame.left,
                     pt.y - frame.top);
             break;
@@ -914,16 +914,18 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             return;
         }
 
+        auto* luaContent = ResolveLuaWidgetContent(&widgets_[wi]);
+        if (!luaContent) return;
         bool hostInputArea = false;
         RECT luaFrame{};
         if (widgetEngine_ &&
-            widgets_[wi].type == DesktopWidgetType::LuaScript)
+            IsLuaDesktopSurface(widgets_[wi]))
         {
             luaFrame = GetStandaloneWidgetFrameRect(widgets_[wi]);
             widgetEngine_->EnsureWidgetLoaded(
-                widgets_[wi].id, widgets_[wi].packageId);
+                luaContent->id, luaContent->packageId);
             hostInputArea = widgetEngine_->IsHostInputAt(
-                widgets_[wi].id, pt.x - luaFrame.left,
+                luaContent->id, pt.x - luaFrame.left,
                 pt.y - luaFrame.top);
         }
 
@@ -937,15 +939,15 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         mouseDownWidgetIndex_ = wi;
         mouseDownHit_ = nullptr;
         snowdesktop::private_pointer::SetPointerCapture(hwnd_);
-        if (widgetEngine_ && widgets_[wi].type == DesktopWidgetType::LuaScript)
+        if (widgetEngine_ && IsLuaDesktopSurface(widgets_[wi]))
         {
             if (IsRectEmptyRect(luaFrame))
                 luaFrame = GetStandaloneWidgetFrameRect(widgets_[wi]);
             int localX = pt.x - luaFrame.left;
             int localY = pt.y - luaFrame.top;
             if (!widgetEngine_->HandleHostUiPointer(
-                    widgets_[wi].id, localX, localY, 0, false))
-                widgetEngine_->InvokeMouseEvent(widgets_[wi].id, "onMouseDown",
+                    luaContent->id, localX, localY, 0, false))
+                widgetEngine_->InvokeMouseEvent(luaContent->id, "onMouseDown",
                     localX, localY, 1, 0);
             else
                 UpdateHostInputImePosition();

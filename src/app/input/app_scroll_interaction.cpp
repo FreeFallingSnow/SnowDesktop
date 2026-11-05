@@ -132,25 +132,41 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         }
     }
 
+    if (IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, pt))
+    {
+        (void)ScrollLuaWidgetStack(luaStackIndicator_.stackId, GET_WHEEL_DELTA_WPARAM(wp));
+        return;
+    }
     size_t luaWidget = HitTestStandaloneWidgetIndex(pt);
     if (luaWidget != static_cast<size_t>(-1) &&
-        widgets_[luaWidget].type == DesktopWidgetType::LuaScript &&
+        IsLuaDesktopSurface(widgets_[luaWidget]) &&
         HitTestStandaloneWidget(luaWidget, pt) == WidgetHit::Content &&
         widgetEngine_)
     {
+        auto* luaContent = ResolveLuaWidgetContent(&widgets_[luaWidget]);
+        if (!luaContent) return;
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         RECT frame = GetStandaloneWidgetFrameRect(widgets_[luaWidget]);
-        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].packageId);
+        widgetEngine_->EnsureWidgetLoaded(luaContent->id, luaContent->packageId);
         int localX = pt.x - frame.left;
         int localY = pt.y - frame.top;
+        if (widgets_[luaWidget].type == DesktopWidgetType::LuaStack)
+        {
+            if (!widgetEngine_->OwnsDesktopWheel(luaContent->id, localX, localY))
+            {
+                (void)ScrollLuaWidgetStack(widgets_[luaWidget].id, delta);
+                return;
+            }
+            luaStackIndicator_.wheelRemainder = 0;
+        }
         if (!widgetEngine_->HandleHostUiPointer(
-                widgets_[luaWidget].id, localX, localY,
+                luaContent->id, localX, localY,
                 delta, true))
-            widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
+            widgetEngine_->InvokeMouseEvent(luaContent->id, "onWheel",
                 localX, localY, 0, delta);
         else
             UpdateHostInputImePosition();
-        (void)QueueDesktopWidgetComposition(widgets_[luaWidget].id);
+        (void)QueueDesktopWidgetComposition(luaContent->id);
         return;
     }
 

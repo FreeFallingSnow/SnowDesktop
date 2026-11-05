@@ -249,7 +249,7 @@ ComPtr<IDataObject> Widget::CreateDataObject()
 
 float Widget::GetCellScale() const
 {
-    return data_ ? data_->cellScale : 1.0f;
+    return data_ ? (app_ ? app_->GetWidgetCellScale(*data_) : data_->cellScale) : 1.0f;
 }
 
 float Widget::GetLayoutSpacingScale() const
@@ -3407,6 +3407,7 @@ std::unique_ptr<Widget> CreateWidget(DesktopWidget* data, DesktopApp* app)
     case DesktopWidgetType::FolderMapping:
         return std::make_unique<FolderMapping>(data, app);
     case DesktopWidgetType::LuaScript:
+    case DesktopWidgetType::LuaStack:
         return std::make_unique<LuaScript>(data, app);
     case DesktopWidgetType::Guide:
         return std::make_unique<GuideWidget>(data, app);

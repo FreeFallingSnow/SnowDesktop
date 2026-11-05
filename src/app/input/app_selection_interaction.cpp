@@ -877,11 +877,12 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
 void DesktopApp::SelectWidgetOnly(size_t index)
 {
     if (index >= widgets_.size()) return;
+    index = FindWidgetIndexById(ResolveLuaWidgetFrameOwner(widgets_[index]).id);
     ClearSelection();
     selectionController_.SelectWidget(widgets_, index);
-    if (widgetEngine_ && widgets_[index].type == DesktopWidgetType::LuaScript &&
-        widgetEngine_->EnsureWidgetLoaded(widgets_[index].id, widgets_[index].packageId))
-        widgetEngine_->InvokeSelected(widgets_[index].id);
+    const auto* content = ResolveLuaWidgetContent(&widgets_[index]);
+    if (widgetEngine_ && content && widgetEngine_->EnsureWidgetLoaded(content->id, content->packageId))
+        widgetEngine_->InvokeSelected(content->id);
 }
 
 /**

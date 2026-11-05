@@ -2813,5 +2813,10 @@
   "winx.shutdownOrSignOut": "Herunterfahren oder abmelden",
   "winx.signOut": "Abmelden",
   "winx.desktop": "Desktop",
-  "winx.dockSettings": "Dock-Einstellungen"
+  "winx.dockSettings": "Dock-Einstellungen",
+  "core.drag.create_lua_stack": "Widgets stapeln",
+  "core.drag.lua_stack_hint": "Strg gedrückt halten, um Widgets zu stapeln",
+  "app.lua_stack.release": "Aktuelles Widget aus dem Stapel lösen",
+  "app.lua_stack.remove_current": "Aktuelles Widget entfernen",
+  "app.lua_stack.unsupported_size": "Dieses Widget unterstützt die Stapelgröße nicht. Ändern Sie die Stapelgröße oder lösen Sie das Widget aus dem Stapel."
 }

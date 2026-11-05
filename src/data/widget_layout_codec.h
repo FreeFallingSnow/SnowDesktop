@@ -62,6 +62,7 @@ inline DesktopWidgetType TypeFromName(const std::wstring& type, NormalizeKey nor
     if (n == L"COLLECTIONGROUP" || n == L"COLLECTION_GROUP") return DesktopWidgetType::CollectionGroup;
     if (n == L"FILEGROUP" || n == L"FILE_GROUP") return DesktopWidgetType::FileGroup;
     if (n == L"LUA" || n == L"LUASCRIPT" || n == L"LUA_SCRIPT") return DesktopWidgetType::LuaScript;
+    if (n == L"LUASTACK" || n == L"LUA_STACK") return DesktopWidgetType::LuaStack;
     if (n == L"GUIDE") return DesktopWidgetType::Guide;
     if (n == L"COLLECTION") return DesktopWidgetType::Collection;
     return DesktopWidgetType::Collection;
@@ -77,6 +78,7 @@ inline std::wstring TypeName(DesktopWidgetType type)
     case DesktopWidgetType::FolderMapping: return L"folderMapping";
     case DesktopWidgetType::LuaScript: return L"lua";
     case DesktopWidgetType::Guide: return L"guide";
+    case DesktopWidgetType::LuaStack: return L"luaStack";
     case DesktopWidgetType::Collection:
     default: return L"collection";
     }

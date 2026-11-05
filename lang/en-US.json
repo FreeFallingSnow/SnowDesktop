@@ -2813,5 +2813,10 @@
   "winx.shutdownOrSignOut": "Shut down or sign out",
   "winx.signOut": "Sign out",
   "winx.desktop": "Desktop",
-  "winx.dockSettings": "Dock settings"
+  "winx.dockSettings": "Dock settings",
+  "core.drag.create_lua_stack": "Stack widgets",
+  "core.drag.lua_stack_hint": "Hold Ctrl to stack widgets",
+  "app.lua_stack.release": "Move current widget out of stack",
+  "app.lua_stack.remove_current": "Remove current widget",
+  "app.lua_stack.unsupported_size": "This widget does not support the stack size. Resize the stack or move this widget out."
 }

@@ -206,6 +206,9 @@ size_t DesktopApp::ResolveRenameVisibilityWidgetIndex(
         return RenameController::InvalidIndex;
 
     const DesktopWidget& widget = widgets_[widgetIndex];
+    const auto& frameOwner = ResolveLuaWidgetFrameOwner(widget);
+    if (&frameOwner != &widget)
+        return FindWidgetIndexById(frameOwner.id);
     if (widget.type == DesktopWidgetType::Collection)
     {
         const size_t groupIndex =

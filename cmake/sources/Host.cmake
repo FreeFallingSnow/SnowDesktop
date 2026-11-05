@@ -636,6 +636,8 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/file_category_auto_collect_rules.h
     src/widgets/folder_mapping.cpp
     src/widgets/lua_script.cpp
+    src/widgets/lua_stack.cpp
+    src/app/widgets/app_lua_stack.cpp
     src/widgets/lua_logical_slot.cpp
     src/widgets/guide_widget.cpp
     # Lightweight contracts and state declarations.

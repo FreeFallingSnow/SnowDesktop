@@ -4,6 +4,8 @@
 // Collision-aware widget placement and displacement planning.
 void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove)
 {
+    if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::LuaStack)
+        ConfigureWidgetGridLimits(widgets_[widgetIndex]);
     const auto order = BuildMonitorRenderOrder();
     snowdesktop::widget_displacement::Services services;
     services.grouped = [this](const auto& widget) { return IsGroupedWidget(widget); };

@@ -14,6 +14,7 @@
 #include "ui/menu/right_click_contract.h"
 #include "widget/packages/widget_removal.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/lua_stack.h"
 #include "widgets/file_category_auto_collect_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "settings/control_native_widget_settings.h"
@@ -26,6 +27,7 @@
 
 namespace
 {
+constexpr UINT kLuaStackRelease = 43788;
 constexpr UINT kDockChooseIcon = 43770;
 constexpr UINT kDockRestoreIcon = 43771;
 constexpr UINT kDockBeautifyIcon = 43786, kDockInheritIcon = 43787;
@@ -80,12 +82,47 @@ bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
 }
 }
 
+bool DesktopApp::RemoveLuaStackMember(const std::wstring& stackId, POINT screenPoint)
+{
+    const size_t owner = FindWidgetIndexById(stackId);
+    if (owner >= widgets_.size() || widgets_[owner].type != DesktopWidgetType::LuaStack) return false;
+    const auto* member = ResolveLuaWidgetContent(&widgets_[owner]);
+    if (!member) return false;
+    const std::wstring id = member->id;
+    const size_t index = FindWidgetIndexById(id);
+    const bool confirmation = !widgetEngine_ || widgetEngine_->RequiresRemovalConfirmation(id, member->packageId);
+    const auto approved = snowdesktop::widget_runtime::ConfirmWidgetRemoval(widgets_, index, confirmation,
+        [&](const std::wstring& title) { return ShowWidgetRemovalConfirmation(hwnd_, screenPoint, title); });
+    if (!approved) return false;
+    const size_t currentOwner = FindWidgetIndexById(stackId);
+    const size_t currentMember = FindWidgetIndexById(id);
+    if (currentOwner >= widgets_.size() || currentMember >= widgets_.size() ||
+        widgets_[currentOwner].activeCategoryId != id) return false;
+    HideLuaStackIndicator();
+    if (luaWidgetPanelRequest_.widgetId == id) CloseLuaWidgetPanel(id, "host");
+    // Closing a surface can invoke Lua and rebuild model vectors.
+    const size_t reboundOwner = FindWidgetIndexById(stackId);
+    const size_t reboundMember = FindWidgetIndexById(id);
+    if (reboundOwner >= widgets_.size() || reboundMember >= widgets_.size()) return false;
+    std::erase(widgets_[reboundOwner].childWidgetIds, id);
+    widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(reboundMember));
+    snowdesktop::lua_stack::Normalize(widgets_);
+    snowdesktop::lua_stack::Dissolve(widgets_);
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    LayoutItems();
+    RemoveDesktopWidgetComposition(id);
+    if (widgetEngine_) widgetEngine_->DeleteWidgetInstance(id);
+    RequestLayoutSave();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
 void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
 {
     if (!settingsWindow_ || widgetIndex >= widgets_.size()) return;
-    const auto& widget = widgets_[widgetIndex];
-    if (widget.type != DesktopWidgetType::LuaScript) return;
-    ShowSettingsWindow(snowdesktop::SettingsRoute::ForWidget(widget.id));
+    const auto* widget = ResolveLuaWidgetContent(&widgets_[widgetIndex]);
+    if (!widget) return;
+    ShowSettingsWindow(snowdesktop::SettingsRoute::ForWidget(widget->id));
 }
 
 /**
@@ -323,6 +360,15 @@ void DesktopApp::ShowWidgetContextMenu(
     bool forceComponentMenu)
 {
     if (widgetIndex >= widgets_.size()) return;
+    if (widgets_[widgetIndex].type == DesktopWidgetType::LuaStack)
+    {
+        const auto* member = ResolveLuaWidgetContent(&widgets_[widgetIndex]);
+        if (!member) return;
+        widgetIndex = FindWidgetIndexById(member->id);
+    }
+    const std::wstring stackMenuId = ResolveLuaWidgetFrameOwner(widgets_[widgetIndex]).type == DesktopWidgetType::LuaStack
+        ? ResolveLuaWidgetFrameOwner(widgets_[widgetIndex]).id : L"";
+    HideLuaStackIndicator();
     PrepareMenuIconsForPoint(screenPoint);
 
     HMENU menu = CreatePopupMenu();
@@ -829,10 +875,11 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
     }
 
-    const UINT hoverToggleCommand = widget.showOnHoverOnly
+    const auto& visibilityOwner = ResolveLuaWidgetFrameOwner(widget);
+    const UINT hoverToggleCommand = visibilityOwner.showOnHoverOnly
         ? kContextWidgetShowOnHoverOff
         : kContextWidgetShowOnHoverOn;
-    const UINT keepToggleCommand = widget.keepWhenDesktopHidden
+    const UINT keepToggleCommand = visibilityOwner.keepWhenDesktopHidden
         ? kContextWidgetKeepWhenHiddenOff
         : kContextWidgetKeepWhenHiddenOn;
     const UINT privacyToggleCommand = widget.privacyMode
@@ -864,10 +911,10 @@ void DesktopApp::ShowWidgetContextMenu(
             return label;
         };
         const std::wstring hoverLabel = toggleLabel(
-            _LW("app.interact.hover_only"), widget.showOnHoverOnly);
+            _LW("app.interact.hover_only"), visibilityOwner.showOnHoverOnly);
         const std::wstring keepLabel = toggleLabel(
             _LW("app.interact.keep_when_hidden"),
-            widget.keepWhenDesktopHidden);
+            visibilityOwner.keepWhenDesktopHidden);
         AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
         if (showExpandOnHoverOption)
         {
@@ -897,8 +944,13 @@ void DesktopApp::ShowWidgetContextMenu(
                 kContextWidgetToggleLargeFolderTitleless,
                 titlelessLabel.c_str());
         }
+        if (!stackMenuId.empty())
+        {
+            AppendMenuW(menu, MF_STRING, kLuaStackRelease, _LW("app.lua_stack.release"));
+            setFluentIcon(menu, kLuaStackRelease, L"\uF582");
+        }
         AppendMenuW(menu, MF_STRING, kContextWidgetDelete,
-            _LW("app.interact.delete_widget"));
+            _LW(stackMenuId.empty() ? "app.interact.delete_widget" : "app.lua_stack.remove_current"));
     }
 
     setFluentIcon(menu, kContextPopupFan, snowdesktop::menu_fluent_glyphs::kFanExpansion);
@@ -1256,8 +1308,12 @@ void DesktopApp::ShowWidgetContextMenu(
         needsDesktopFocus = false;
         ShowWidgetEditorHost(widgetIndex);
         break;
+    case kLuaStackRelease:
+        (void)ReleaseLuaStackMember(stackMenuId);
+        break;
     case kContextWidgetDelete:
     {
+        if (!stackMenuId.empty()) { (void)RemoveLuaStackMember(stackMenuId, screenPoint); break; }
         widgetIndex = FindWidgetIndexById(menuWidgetId);
         if (widgetIndex >= widgets_.size() ||
             widgets_[widgetIndex].packageId != menuPackageId ||
@@ -1387,7 +1443,7 @@ void DesktopApp::ShowWidgetContextMenu(
     case kContextWidgetShowOnHoverOn:
         if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
         { (void)applyNativeSettings(snowdesktop::control::Object({{"showOnHoverOnly", snowdesktop::control::Boolean(true)}})); break; }
-        widgets_[widgetIndex].showOnHoverOnly = true;
+        const_cast<DesktopWidget&>(ResolveLuaWidgetFrameOwner(widgets_[widgetIndex])).showOnHoverOnly = true;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
@@ -1408,21 +1464,21 @@ void DesktopApp::ShowWidgetContextMenu(
     case kContextWidgetShowOnHoverOff:
         if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
         { (void)applyNativeSettings(snowdesktop::control::Object({{"showOnHoverOnly", snowdesktop::control::Boolean(false)}})); break; }
-        widgets_[widgetIndex].showOnHoverOnly = false;
+        const_cast<DesktopWidget&>(ResolveLuaWidgetFrameOwner(widgets_[widgetIndex])).showOnHoverOnly = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetKeepWhenHiddenOn:
         if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
         { (void)applyNativeSettings(snowdesktop::control::Object({{"keepWhenDesktopHidden", snowdesktop::control::Boolean(true)}})); break; }
-        widgets_[widgetIndex].keepWhenDesktopHidden = true;
+        const_cast<DesktopWidget&>(ResolveLuaWidgetFrameOwner(widgets_[widgetIndex])).keepWhenDesktopHidden = true;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
     case kContextWidgetKeepWhenHiddenOff:
         if (snowdesktop::single_cell_widget::Supports(menuWidgetType))
         { (void)applyNativeSettings(snowdesktop::control::Object({{"keepWhenDesktopHidden", snowdesktop::control::Boolean(false)}})); break; }
-        widgets_[widgetIndex].keepWhenDesktopHidden = false;
+        const_cast<DesktopWidget&>(ResolveLuaWidgetFrameOwner(widgets_[widgetIndex])).keepWhenDesktopHidden = false;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;

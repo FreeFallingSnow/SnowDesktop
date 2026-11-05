@@ -58,6 +58,12 @@ void DesktopApp::BeginRenameSelected(
     }
     if (selectedWidgetCount == 1 && selectedWidgetIndex < widgets_.size())
     {
+        if (widgets_[selectedWidgetIndex].type == DesktopWidgetType::LuaStack)
+        {
+            const auto* content = ResolveLuaWidgetContent(&widgets_[selectedWidgetIndex]);
+            if (!content) return;
+            selectedWidgetIndex = FindWidgetIndexById(content->id);
+        }
         if (!CanRenameWidget(widgets_[selectedWidgetIndex])) return;
 
         size_t visibilityWidgetIndex =

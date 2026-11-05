@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widgets/lua_stack.h"
 #include "common/l10n.h"
 #include "ui/preview/component_preview.h"
 #include "widget/runtime/widget_engine.h"
@@ -301,6 +302,28 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
     widget.minGridSpan = { 1, 1 };
     widget.maxGridSpan = { 0, 0 };
 
+    if (widget.type == DesktopWidgetType::LuaStack)
+    {
+        int maxC = (std::numeric_limits<int>::max)(), maxR = maxC;
+        bool available = true;
+        for (const auto& id : widget.childWidgetIds)
+        {
+            const size_t child = FindWidgetIndexById(id);
+            if (child >= widgets_.size()) { available = false; continue; }
+            const auto manifest = WidgetEngine::GetWidgetManifest(widgets_[child].packageId);
+            if (!manifest.hasManifest) { available = false; continue; }
+            widget.minGridSpan.columns = std::max(widget.minGridSpan.columns, manifest.minColumns);
+            widget.minGridSpan.rows = std::max(widget.minGridSpan.rows, manifest.minRows);
+            if (manifest.maxColumns) maxC = std::min(maxC, manifest.maxColumns);
+            if (manifest.maxRows) maxR = std::min(maxR, manifest.maxRows);
+        }
+        if (!available || maxC < widget.minGridSpan.columns || maxR < widget.minGridSpan.rows)
+            widget.minGridSpan = widget.maxGridSpan = widget.gridSpan;
+        else widget.maxGridSpan = {maxC == (std::numeric_limits<int>::max)() ? 0 : maxC,
+            maxR == (std::numeric_limits<int>::max)() ? 0 : maxR};
+        return;
+    }
+
     if (widget.type == DesktopWidgetType::CollectionGroup ||
         widget.type == DesktopWidgetType::FileGroup ||
         widget.type == DesktopWidgetType::FileCategories ||
@@ -325,6 +348,17 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
 GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
     int availableColumns, int availableRows) const
 {
+    if (widget.type == DesktopWidgetType::LuaStack)
+    {
+        // Hot reload may change a member's limits without a layout pass.
+        // Both live resize previews and final placement use fresh limits.
+        DesktopWidget limits;
+        limits.type = DesktopWidgetType::LuaStack;
+        limits.gridSpan = widget.gridSpan;
+        limits.childWidgetIds = widget.childWidgetIds;
+        ConfigureWidgetGridLimits(limits);
+        return snowdesktop::widget_displacement::ClampSpan(limits, span, availableColumns, availableRows);
+    }
     return snowdesktop::widget_displacement::ClampSpan(widget, span, availableColumns, availableRows);
 }
 
@@ -686,6 +720,8 @@ std::optional<GridSpan> DesktopApp::GetWidgetPairGroupSpan(
     if (!snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, targetIndex, sourceGroupId))
         return std::nullopt;
     const auto& target = widgets_[targetIndex];
+    if (IsLuaDesktopSurface(widgets_[sourceIndex]))
+        return CanStackLuaWidgets(sourceIndex, targetIndex) ? std::optional<GridSpan>{target.gridSpan} : std::nullopt;
     DesktopWidget group;
     group.type = DesktopWidgetType::FileGroup;
     ConfigureWidgetGridLimits(group);
@@ -715,6 +751,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     snowdesktop::widget_pair_drop::Action action, std::wstring_view sourceGroupId)
 {
     namespace pair = snowdesktop::widget_pair_drop;
+    if (action == pair::Action::CreateLuaStack) return sourceGroupId.empty() && CommitLuaWidgetStack(sourceIndex, targetIndex);
     if (!pair::CanPair(widgets_, sourceIndex, targetIndex, sourceGroupId)) return false;
     const std::wstring targetId = widgets_[targetIndex].id;
     const std::wstring sourceId = widgets_[sourceIndex].id;

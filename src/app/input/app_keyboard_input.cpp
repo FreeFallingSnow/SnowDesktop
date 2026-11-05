@@ -390,7 +390,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             if (!widgets_[index].selected) continue;
             if (selectedLua != static_cast<size_t>(-1) ||
-                widgets_[index].type != DesktopWidgetType::LuaScript)
+                !IsLuaDesktopSurface(widgets_[index]))
             {
                 multipleSelected = true;
                 break;
@@ -401,9 +401,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             if (repeated) return true;
             const bool redo = key == 'Y' || shift;
-            const auto& widgetId = widgets_[selectedLua].id;
+            const auto* content = ResolveLuaWidgetContent(&widgets_[selectedLua]);
+            if (!content) return true;
+            const auto& widgetId = content->id;
             widgetEngine_->EnsureWidgetLoaded(
-                widgetId, widgets_[selectedLua].packageId);
+                widgetId, content->packageId);
             const bool available = redo
                 ? widgetEngine_->RuntimeCanRedoHostLogicalSlot(widgetId)
                 : widgetEngine_->RuntimeCanUndoHostLogicalSlot(widgetId);
@@ -431,7 +433,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             return true;
         }
         if (std::any_of(widgets_.begin(), widgets_.end(), [](const auto& widget) {
-                return widget.selected && widget.type == DesktopWidgetType::LuaScript;
+                return widget.selected && (widget.type == DesktopWidgetType::LuaScript || widget.type == DesktopWidgetType::LuaStack);
             })) return true;
     }
 
@@ -445,7 +447,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             if (!widgets_[index].selected) continue;
             if (selectedLua != static_cast<size_t>(-1) ||
-                widgets_[index].type != DesktopWidgetType::LuaScript)
+                !IsLuaDesktopSurface(widgets_[index]))
             {
                 multipleSelected = true;
                 break;
@@ -454,9 +456,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
         if (!multipleSelected && selectedLua < widgets_.size())
         {
-            const auto& widgetId = widgets_[selectedLua].id;
+            const auto* content = ResolveLuaWidgetContent(&widgets_[selectedLua]);
+            if (!content) return true;
+            const auto& widgetId = content->id;
             widgetEngine_->EnsureWidgetLoaded(
-                widgetId, widgets_[selectedLua].packageId);
+                widgetId, content->packageId);
             if (widgetEngine_->HandleHostViewKey(
                     widgetId, key, ctrl, shift, alt,
                     "desktop", repeated))
@@ -559,6 +563,16 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             break;
         }
 
+        const auto selectedStack = std::find_if(widgets_.begin(), widgets_.end(), [](const auto& widget) {
+            return widget.selected && widget.type == DesktopWidgetType::LuaStack;
+        });
+        if (selectedStack != widgets_.end())
+        {
+            const std::wstring id = selectedStack->id;
+            POINT screen = lastMousePoint_; ClientToScreen(hwnd_, &screen);
+            (void)RemoveLuaStackMember(id, screen);
+            break;
+        }
         cutPaths_.clear();
         std::vector<std::wstring> paths;
         for (const auto& item : items_)

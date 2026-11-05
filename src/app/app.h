@@ -2841,6 +2841,34 @@ private:
     void AddFolderMappingWidgetAt(POINT screenPoint);
     /** @brief 在指定屏幕位置创建 Lua 脚本部件。 @param screenPoint 屏幕坐标 @param scriptFilename 脚本文件名 */
     void AddLuaWidgetAt(POINT screenPoint, const std::wstring& scriptFilename);
+    DesktopWidget* ResolveLuaWidgetContent(DesktopWidget* widget) const;
+    const DesktopWidget* ResolveLuaWidgetContent(const DesktopWidget* widget) const;
+    const DesktopWidget& ResolveLuaWidgetFrameOwner(const DesktopWidget& widget) const;
+    bool IsLuaDesktopSurface(const DesktopWidget& widget) const;
+    bool CanStackLuaWidgets(size_t source, size_t target) const;
+    bool CommitLuaWidgetStack(size_t source, size_t target);
+    bool SelectLuaStackMember(std::wstring stackId, std::wstring memberId);
+    bool ScrollLuaWidgetStack(const std::wstring& stackId, int delta);
+    bool ReleaseLuaStackMember(const std::wstring& stackId);
+    bool RemoveLuaStackMember(const std::wstring& stackId, POINT screenPoint);
+    bool IsLuaStackIndicatorVisible() const;
+    void UpdateLuaStackIndicator(POINT point);
+    void HideLuaStackIndicator();
+    bool HandleLuaStackIndicatorPointer(POINT point, bool pressed);
+    void DrawLuaStackIndicator(ID2D1DeviceContext* context);
+    struct LuaStackIndicatorState
+    {
+        std::wstring stackId;
+        std::wstring pressedMember;
+        RECT bounds{};
+        RECT bridge{};
+        size_t first = 0;
+        size_t visibleCount = 0;
+        int pitch = 16;
+        int padding = 8;
+        int wheelRemainder = 0;
+        ULONGLONG hideAfter = 0;
+    } luaStackIndicator_;
     void BeginLuaWidgetConsent(POINT screenPoint,
         const std::wstring& packageId,
         const std::wstring& targetWidgetId);

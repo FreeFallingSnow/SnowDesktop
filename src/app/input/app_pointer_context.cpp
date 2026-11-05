@@ -797,13 +797,12 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     const size_t standaloneInputWidget =
         popupGroup ? static_cast<size_t>(-1) : HitTestStandaloneWidgetIndex(pt);
     if (standaloneInputWidget < widgets_.size() &&
-        widgets_[standaloneInputWidget].type ==
-            DesktopWidgetType::LuaScript)
+        IsLuaDesktopSurface(widgets_[standaloneInputWidget]))
     {
         const RECT frame = GetStandaloneWidgetFrameRect(
             widgets_[standaloneInputWidget]);
         if (ShowHostInputContextMenu(
-                screenPt, widgets_[standaloneInputWidget].id,
+                screenPt, ResolveLuaWidgetContent(&widgets_[standaloneInputWidget])->id,
                 POINT{ pt.x - frame.left, pt.y - frame.top }))
             return;
     }

@@ -15,6 +15,7 @@ enum class Action
     Merge,
     CreateCollectionGroup,
     CreateFileGroup,
+    CreateLuaStack,
 };
 
 struct Options
@@ -27,6 +28,9 @@ struct Options
 
 constexpr Options GetOptions(DesktopWidgetType source, DesktopWidgetType target)
 {
+    if ((source == DesktopWidgetType::LuaScript || source == DesktopWidgetType::LuaStack) &&
+        (target == DesktopWidgetType::LuaScript || target == DesktopWidgetType::LuaStack))
+        return {false, Action::CreateLuaStack};
     if (source == DesktopWidgetType::Collection &&
         target == DesktopWidgetType::Collection)
         return {true, Action::CreateCollectionGroup};

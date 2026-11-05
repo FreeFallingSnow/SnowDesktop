@@ -71,12 +71,17 @@ Value WidgetValue(const DesktopWidget& widget, bool grouped)
     case DesktopWidgetType::FolderMapping: type = "folder-mapping"; break;
     case DesktopWidgetType::FileGroup: type = "file-group"; break;
     case DesktopWidgetType::LuaScript: type = "lua"; break;
+    case DesktopWidgetType::LuaStack: type = "luaStack"; break;
     }
+    Value members = Array();
+    for (const auto& id : widget.childWidgetIds) members.array.push_back(String(WideToUtf8(id)));
     return Object({{"id", String(WideToUtf8(widget.id))}, {"type", String(type)},
         {"title", String(WideToUtf8(widget.title))}, {"pageId", String(WideToUtf8(widget.gridCell.pageId))},
         {"column", Number(widget.gridCell.column)}, {"row", Number(widget.gridCell.row)},
         {"columns", Number(widget.gridSpan.columns)}, {"rows", Number(widget.gridSpan.rows)},
-        {"grouped", Boolean(grouped)}, {"bounds", Rect(widget.bounds)}});
+        {"grouped", Boolean(grouped)}, {"bounds", Rect(widget.bounds)},
+        {"activeMemberId", String(widget.type == DesktopWidgetType::LuaStack ? WideToUtf8(widget.activeCategoryId) : "")},
+        {"memberCount", Number(static_cast<double>(widget.childWidgetIds.size()))}, {"memberIds", std::move(members)}});
 }
 std::string Revision(const Value& value)
 {
@@ -297,7 +302,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             throw Error("disabled", "Desktop is not visible");
         const auto index = widgetIndex();
         const auto& widget = widgets_[index];
-        if (widget.type == DesktopWidgetType::LuaScript || IsGroupedWidget(widget))
+        if (IsLuaDesktopSurface(widget) || IsGroupedWidget(widget))
             throw Error("invalid_target", "Use a standalone native storage widget");
         if (popupAnimation_.IsAnimating()) throw Error("busy", "Popup animation is active");
         const auto* current = GetOpenPopupWidget();

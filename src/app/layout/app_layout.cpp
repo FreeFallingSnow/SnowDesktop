@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
 #include "diagnostics/debug_profile.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "layout/page_management_rules.h"
@@ -667,9 +668,13 @@ void DesktopApp::LoadLayoutSlots()
                         group.childWidgetIds, group.activeCategoryId);
                 continue;
             }
-            group.childWidgetIds.clear();
+            if (group.type != DesktopWidgetType::LuaStack) group.childWidgetIds.clear();
         }
     }
+
+    snowdesktop::lua_stack::Normalize(widgets_);
+    snowdesktop::lua_stack::Dissolve(widgets_);
+    for (auto& widget : widgets_) ConfigureWidgetGridLimits(widget);
 
     // Ensure widget-owned items have layout records (they're not in the JSON items array)
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);

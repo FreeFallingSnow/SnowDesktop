@@ -128,6 +128,7 @@ enum class DesktopWidgetType
     FolderMapping,   /**< 文件夹映射组件 */
     LuaScript,       /**< Lua 脚本组件 */
     Guide,           /**< 分页指南组件 */
+    LuaStack,        /**< 宿主管理的 Lua 组件堆叠 */
     Count,           /**< 组件类型注册表边界；不得用于持久化 */
 };
 

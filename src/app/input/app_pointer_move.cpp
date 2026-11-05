@@ -59,7 +59,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
             !widgets_[candidate].keepWhenDesktopHidden)
             continue;
         bool hit = HitTestStandaloneWidget(candidate, pt) != WidgetHit::None;
-        if (!hit && widgets_[candidate].type != DesktopWidgetType::LuaScript)
+        if (!hit && !IsLuaDesktopSurface(widgets_[candidate]))
         {
             for (auto& container : containers_)
             {
@@ -373,6 +373,7 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdateLuaStackIndicator(current);
     UpdateListTitleHover();
     UpdatePopupHover(current);
     if (UpdateWidgetHoverExpansion(current))
@@ -432,18 +433,19 @@ void DesktopApp::OnMouseMoveAt(
                 const size_t interactionWidget =
                     HitTestStandaloneWidgetIndex(current);
                 if (interactionWidget < widgets_.size() &&
-                    widgets_[interactionWidget].type ==
-                        DesktopWidgetType::LuaScript &&
+                    IsLuaDesktopSurface(widgets_[interactionWidget]) &&
                     HitTestStandaloneWidget(interactionWidget, current) ==
                         WidgetHit::Content)
                 {
+                    const auto* luaContent = ResolveLuaWidgetContent(&widgets_[interactionWidget]);
+                    if (!luaContent) return;
                     const RECT frame = GetStandaloneWidgetFrameRect(
                         widgets_[interactionWidget]);
                     widgetEngine_->EnsureWidgetLoaded(
-                        widgets_[interactionWidget].id,
-                        widgets_[interactionWidget].packageId);
+                        luaContent->id,
+                        luaContent->packageId);
                     widgetEngine_->UpdateInteractionHover(
-                        widgets_[interactionWidget].id,
+                        luaContent->id,
                         current.x - frame.left,
                         current.y - frame.top);
                     interactionHoverRouted = true;
@@ -628,30 +630,32 @@ void DesktopApp::OnMouseMoveAt(
 
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
-        widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
+        IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]) &&
         widgetEngine_)
     {
+        auto* luaContent = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]);
+        if (!luaContent) return;
         WidgetHit hit = HitTestStandaloneWidget(mouseDownWidgetIndex_, current);
         RECT frame =
             GetStandaloneWidgetFrameRect(
                 widgets_[mouseDownWidgetIndex_]);
         widgetEngine_->EnsureWidgetLoaded(
-            widgets_[mouseDownWidgetIndex_].id,
-            widgets_[mouseDownWidgetIndex_].packageId);
+            luaContent->id,
+            luaContent->packageId);
         const bool hostInputHandled =
             widgetEngine_->HandleHostInputPointerMove(
-                widgets_[mouseDownWidgetIndex_].id,
+                luaContent->id,
                 current.x - frame.left,
                 current.y - frame.top);
         if (hostInputHandled)
             UpdateHostInputImePosition();
         const bool pointerCaptured =
             widgetEngine_->HasInteractionPointerCapture(
-                widgets_[mouseDownWidgetIndex_].id);
+                luaContent->id);
         if (!hostInputHandled &&
             (hit == WidgetHit::Content || pointerCaptured))
         {
-            widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
+            widgetEngine_->InvokeMouseEvent(luaContent->id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,
                 (snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
         }
@@ -660,7 +664,7 @@ void DesktopApp::OnMouseMoveAt(
         // the desktop marquee-selection state machine: a drag inside a Lua
         // widget has meaning only to the widget or its host input control.
         (void)QueueDesktopWidgetComposition(
-            widgets_[mouseDownWidgetIndex_].id);
+            luaContent->id);
         return;
     }
 
@@ -983,7 +987,8 @@ void DesktopApp::OnMouseMoveAt(
                 (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0,
                 (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0);
             if ((widgetPairAction_ == pair::Action::CreateCollectionGroup ||
-                 widgetPairAction_ == pair::Action::CreateFileGroup) &&
+                 widgetPairAction_ == pair::Action::CreateFileGroup ||
+                 widgetPairAction_ == pair::Action::CreateLuaStack) &&
                 !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
                 widgetPairAction_ = pair::Action::None;
             if (widgetPairAction_ != pair::Action::None)
@@ -998,10 +1003,16 @@ void DesktopApp::OnMouseMoveAt(
                         ? "core.drag.merge_collections" : "core.drag.merge_desktop_files")
                     : (widgetPairAction_ == pair::Action::CreateCollectionGroup
                         ? "core.drag.create_collection_group" : "core.drag.create_file_group");
+                if (widgetPairAction_ == pair::Action::CreateLuaStack)
+                {
+                    key = "core.drag.create_lua_stack";
+                    widgetPreviewCell_ = widgets_[widgetPairTargetIndex_].gridCell;
+                    widgetPreviewSpan_ = widgets_[widgetPairTargetIndex_].gridSpan;
+                }
                 ShowDragHintWindow(current, _LW(key), true);
                 return;
             }
-            pairHint = _LW(options.merge
+            pairHint = options.group == pair::Action::CreateLuaStack ? _LW("core.drag.lua_stack_hint") : _LW(options.merge
                 ? (movingType == DesktopWidgetType::Collection
                     ? "core.drag.collection_pair_hint" : "core.drag.desktop_files_pair_hint")
                 : "core.drag.file_source_pair_hint");

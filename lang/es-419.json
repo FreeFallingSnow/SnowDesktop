@@ -2813,5 +2813,10 @@
   "winx.shutdownOrSignOut": "Apagar o cerrar sesión",
   "winx.signOut": "Cerrar sesión",
   "winx.desktop": "Escritorio",
-  "winx.dockSettings": "Configuración del Dock"
+  "winx.dockSettings": "Configuración del Dock",
+  "core.drag.create_lua_stack": "Apilar widgets",
+  "core.drag.lua_stack_hint": "Mantén Ctrl para apilar widgets",
+  "app.lua_stack.release": "Sacar el widget actual de la pila",
+  "app.lua_stack.remove_current": "Quitar el widget actual",
+  "app.lua_stack.unsupported_size": "Este widget no admite el tamaño de la pila. Cambia el tamaño de la pila o saca este widget."
 }

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
 #include "diagnostics/diagnostic_log.h"
 #include "common/utils.h"
 #include "dock/dock_folder_rules.h"
@@ -283,6 +284,7 @@ size_t DesktopApp::FindFileGroupIndexForChild(
 bool DesktopApp::IsGroupedWidget(
     const DesktopWidget& widget) const
 {
+    if (widget.type == DesktopWidgetType::LuaScript && snowdesktop::lua_stack::Owner(widgets_, widget.id) < widgets_.size()) return true;
     if (IsGroupedCollection(widget)) return true;
     return (widget.type == DesktopWidgetType::FileCategories ||
             widget.type == DesktopWidgetType::FolderMapping) &&

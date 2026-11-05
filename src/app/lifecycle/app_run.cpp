@@ -1395,7 +1395,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 for (const auto& widget : widgets_)
                     if (widget.id == widgetId &&
                         widget.type == DesktopWidgetType::LuaScript)
-                        return widget.selected;
+                        return ResolveLuaWidgetFrameOwner(widget).selected;
                 return false;
             });
         widgetEngine_->SetSelectedWidgetPackageProvider(
@@ -1407,9 +1407,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     if (!widget.selected)
                         continue;
                     ++selectedCount;
-                    if (widget.type ==
-                        DesktopWidgetType::LuaScript)
-                        selectedPackageId = widget.packageId;
+                    if (const auto* content = ResolveLuaWidgetContent(&widget))
+                        selectedPackageId = content->packageId;
                 }
                 return selectedCount == 1
                     ? selectedPackageId
@@ -1693,7 +1692,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (index >= widgets_.size() ||
                 widgets_[index].type != DesktopWidgetType::LuaScript)
                 return false;
-            SelectWidgetOnly(index);
+            SelectWidgetOnly(FindWidgetIndexById(ResolveLuaWidgetFrameOwner(widgets_[index]).id));
             ::SetFocus(hwnd_);
             const bool focused = nodeKey.empty() ||
                 widgetEngine_->RuntimeSetAccessibilityFocus(
@@ -1709,7 +1708,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (index >= widgets_.size() ||
                 widgets_[index].type != DesktopWidgetType::LuaScript)
                 return false;
-            SelectWidgetOnly(index);
+            SelectWidgetOnly(FindWidgetIndexById(ResolveLuaWidgetFrameOwner(widgets_[index]).id));
             ::SetFocus(hwnd_);
             const bool accepted =
                 widgetEngine_->RuntimePerformAccessibilityAction(request);

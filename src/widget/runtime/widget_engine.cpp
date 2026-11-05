@@ -31401,6 +31401,21 @@ bool WidgetEngine::IsHostScrollbarDragging(
         hostScrollbarDrag_.surface == NormalizeWidgetSurface(surface);
 }
 
+bool WidgetEngine::OwnsDesktopWheel(const std::wstring& widgetId, int x, int y) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto& widget = widgets_[index];
+    const POINT point{x, y};
+    for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
+    {
+        if (!it->enabled || !HostControlBelongsToSurface(*it, "desktop") || !HostControlContainsPoint(*it, point)) continue;
+        if (it->selectPopup || it->type == LuaWidget::HostControl::Type::Scroll ||
+            (it->type == LuaWidget::HostControl::Type::Input && it->multiline)) return true;
+    }
+    return widget.interactionRegions.ActionAt(static_cast<float>(x), static_cast<float>(y), "wheel") != nullptr;
+}
+
 bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
     int delta, bool wheel, std::string_view surface)
 {

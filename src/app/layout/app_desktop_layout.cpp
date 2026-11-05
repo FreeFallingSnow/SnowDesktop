@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
 #include "app/dock/persistent_dock_host.h"
@@ -69,6 +70,11 @@ void DesktopApp::LayoutItems()
         item.bounds = GetGridRect(gridPages_, item.gridCell, item.gridSpan);
     }
 
+    snowdesktop::lua_stack::Normalize(widgets_);
+    snowdesktop::lua_stack::Dissolve(widgets_);
+    for (auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::LuaStack) ConfigureWidgetGridLimits(widget);
+
     // Layout widgets
     for (auto& widget : widgets_)
     {
@@ -86,8 +92,8 @@ void DesktopApp::LayoutItems()
         const GridPage* page = FindGridPage(gridPages_, widget.gridCell.pageId);
         if (page)
         {
-            widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan,
-                page->columns, page->rows);
+            if (widget.type != DesktopWidgetType::LuaStack || snowdesktop::lua_stack::Supports(widget, widget.gridSpan))
+                widget.gridSpan = ClampWidgetGridSpan(widget, widget.gridSpan, page->columns, page->rows);
             widget.gridCell.column  = std::clamp(widget.gridCell.column,  0, std::max(0, page->columns - widget.gridSpan.columns));
             widget.gridCell.row     = std::clamp(widget.gridCell.row,     0, std::max(0, page->rows    - widget.gridSpan.rows));
             widget.cellScale = GetGridPageCuScale(*page);
@@ -207,9 +213,13 @@ void DesktopApp::RebuildContainersAndItems()
         // and drops. Keep grouped collections in the runtime tree at all
         // times; their empty model bounds keep them off the desktop. Other
         // grouped source widgets remain hosted exclusively by their group.
-        if (IsGroupedWidget(w) &&
-            w.type != DesktopWidgetType::Collection)
-            continue;
+        const bool stackedLua = w.type == DesktopWidgetType::LuaScript && IsGroupedWidget(w);
+        if (IsGroupedWidget(w) && w.type != DesktopWidgetType::Collection && !stackedLua) continue;
+        if (stackedLua)
+        {
+            const size_t owner = snowdesktop::lua_stack::Owner(widgets_, w.id);
+            if (snowdesktop::lua_stack::Active(widgets_, owner) != FindWidgetIndexById(w.id)) continue;
+        }
         const bool dockExclusive = IsDockExclusiveWidgetId(w.id);
         auto widget = CreateWidget(&w, this);
         if (!widget) continue;
@@ -225,7 +235,7 @@ void DesktopApp::RebuildContainersAndItems()
         }
         else if (!dockExclusive)
         {
-            items_oo_.push_back(std::move(widget));
+            if (!stackedLua) items_oo_.push_back(std::move(widget));
             if (w.type == DesktopWidgetType::LuaScript && widgetEngine_ &&
                 widgetEngine_->EnsureWidgetLoaded(w.id, w.packageId))
             {

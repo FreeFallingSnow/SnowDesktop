@@ -41,6 +41,13 @@ bool DesktopApp::QueueDesktopWidgetComposition(
             InvalidateRect(hwnd_, nullptr, FALSE);
         return false;
     };
+    const size_t memberIndex = FindWidgetIndexById(widgetId);
+    if (memberIndex < widgets_.size())
+    {
+        const auto& owner = ResolveLuaWidgetFrameOwner(widgets_[memberIndex]);
+        if (owner.id != widgetId)
+            return ResolveLuaWidgetContent(&owner) == &widgets_[memberIndex] ? QueueDesktopWidgetComposition(owner.id) : true;
+    }
     if (widgetId.empty() || !dcompDevice_ || !dcompVisual_ || !hwnd_)
         return fail();
 

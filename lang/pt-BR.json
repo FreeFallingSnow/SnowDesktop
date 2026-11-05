@@ -2813,5 +2813,10 @@
   "winx.shutdownOrSignOut": "Desligar ou sair",
   "winx.signOut": "Sair",
   "winx.desktop": "Área de trabalho",
-  "winx.dockSettings": "Configurações do Dock"
+  "winx.dockSettings": "Configurações do Dock",
+  "core.drag.create_lua_stack": "Empilhar widgets",
+  "core.drag.lua_stack_hint": "Segure Ctrl para empilhar widgets",
+  "app.lua_stack.release": "Retirar o widget atual da pilha",
+  "app.lua_stack.remove_current": "Remover o widget atual",
+  "app.lua_stack.unsupported_size": "Este widget não é compatível com o tamanho da pilha. Redimensione a pilha ou retire este widget."
 }

@@ -2813,5 +2813,10 @@
   "winx.shutdownOrSignOut": "关机或注销",
   "winx.signOut": "注销",
   "winx.desktop": "桌面",
-  "winx.dockSettings": "Dock 设置"
+  "winx.dockSettings": "Dock 设置",
+  "core.drag.create_lua_stack": "堆叠小组件",
+  "core.drag.lua_stack_hint": "按住 Ctrl 堆叠小组件",
+  "app.lua_stack.release": "将当前组件移出堆叠",
+  "app.lua_stack.remove_current": "移除当前组件",
+  "app.lua_stack.unsupported_size": "此组件不支持堆叠当前的尺寸。请调整堆叠大小或将此组件移出。"
 }
