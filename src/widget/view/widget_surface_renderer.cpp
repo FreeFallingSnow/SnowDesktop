@@ -173,6 +173,7 @@ void WidgetSurfaceRenderer::Stop()
 HRESULT WidgetSurfaceRenderer::BeginRecording(ID2D1DeviceContext** context,
     ID2D1CommandList** commands)
 {
+    performance::Scope scope("widget.composition", "commands.begin");
     if (!context || !commands || !impl_->recording) return E_INVALIDARG;
     *context = nullptr; *commands = nullptr;
     HRESULT result = impl_->recording->CreateCommandList(commands);
@@ -187,6 +188,7 @@ HRESULT WidgetSurfaceRenderer::BeginRecording(ID2D1DeviceContext** context,
 
 HRESULT WidgetSurfaceRenderer::EndRecording(ID2D1CommandList* commands)
 {
+    performance::Scope scope("widget.composition", "commands.close");
     if (!commands || !impl_->recording) return E_INVALIDARG;
     const HRESULT result = impl_->recording->EndDraw();
     impl_->recording->SetTarget(nullptr);
@@ -209,6 +211,7 @@ WidgetSurfaceRenderer::Target WidgetSurfaceRenderer::CreateTarget(
 bool WidgetSurfaceRenderer::Submit(const Target& target,
     ID2D1CommandList* commands, const RECT& bounds)
 {
+    performance::Scope scope("widget.composition", "commands.submit");
     if (!target || !commands || !target->active.load() || target->failed.load()) return false;
     {
         std::lock_guard lock(impl_->mutex);

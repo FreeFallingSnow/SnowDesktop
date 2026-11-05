@@ -18,6 +18,8 @@
 #include "common/utils.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/preview/widget_preview_scene.h"
+#include "diagnostics/performance_trace.h"
+#include <optional>
 
 namespace
 {
@@ -158,6 +160,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     bool registerBackdrop)
 {
     if (!context || !data_ || !app_) return;
+
+    std::optional<snowdesktop::performance::Scope> recordingPhase;
+    recordingPhase.emplace("widget.composition", "state.prepare", data_->id);
 
     struct RestoreData { DesktopWidget*& data; DesktopWidget* previous; ~RestoreData() { data = previous; } } restore{data_, data_};
     if (data_->type == DesktopWidgetType::LuaStack)
@@ -385,6 +390,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         engine->SetWidgetSurfaceContext(data_->id, surfaceContext);
     }
 
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "material.record", data_->id);
     const float configuredStroke = std::clamp(
         effectSettings.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
@@ -426,16 +433,45 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             &backgroundEffects, !preview && registerBackdrop);
     }
 
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "size.validate", data_->id);
     bool incompatibleSize = false;
     if (!preview)
     {
-        const auto manifest = WidgetEngine::GetWidgetManifest(data_->packageId);
+        // The loaded VM already owns the manifest for this exact generation.
+        // Resolving the package path and reparsing widget.json on each frame
+        // performs synchronous filesystem work on the desktop input thread.
+        const LuaWidgetManifest* loadedManifest = nullptr;
+        if (engine)
+        {
+            const auto& loaded = engine->GetWidgets();
+            for (auto position = loaded.rbegin(); position != loaded.rend(); ++position)
+            {
+                if (position->widgetId == data_->id)
+                {
+                    loadedManifest = &position->manifest;
+                    break;
+                }
+            }
+        }
+        std::optional<LuaWidgetManifest> unloadedManifest;
+        if (!loadedManifest)
+        {
+            // Missing/failed instances still need their authored size bounds
+            // for the host placeholder. Successful hot reload replaces the VM
+            // and therefore the manifest used by the next frame.
+            unloadedManifest.emplace(WidgetEngine::GetWidgetManifest(data_->packageId));
+            loadedManifest = &*unloadedManifest;
+        }
+        const auto& manifest = *loadedManifest;
         incompatibleSize = manifest.hasManifest &&
             (presentation.gridSpan.columns < manifest.minColumns || presentation.gridSpan.rows < manifest.minRows ||
              (manifest.maxColumns && presentation.gridSpan.columns > manifest.maxColumns) ||
              (manifest.maxRows && presentation.gridSpan.rows > manifest.maxRows));
         if (incompatibleSize) widgetOk = false;
     }
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "content.commands", data_->id);
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
     {
@@ -607,6 +643,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 : D2D1::ColorF(0.63f, 0.79f, 1.0f, 0.98f));
     }
     context->PopAxisAlignedClip();
+
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "chrome.record", data_->id);
 
     if (engine && widgetOk)
         SafeReadFlags(engine, data_->packageId,

@@ -432,6 +432,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
         else if (luaWidget)
         {
+            snowdesktop::performance::Scope contentScope(
+                "widget.composition", "content.record", widgetId);
             // The child draw captures its base material request; the owning
             // surface registers the native panel after EndDraw succeeds.
             luaWidget->DrawCompositionSurface(
