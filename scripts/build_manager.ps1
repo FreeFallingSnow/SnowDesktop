@@ -19,6 +19,7 @@ param(
     [switch]$ResourceShared,
     [switch]$AutoCheck,
     [ValidateLength(0,160)][string]$TaskName='',
+    [ValidateSet('host','independent')][string]$HostParticipation='host',
     [ValidateLength(0,300)][string]$Capabilities='',
     [ValidateSet('investigating','editing','waiting','awaiting_input','blocked','validating','completed','cancelled')][string]$TaskPhase='investigating',
     [long]$TaskRevision=-1, [long]$RequirementsRevision=-1,
@@ -420,8 +421,14 @@ try {
                 $ledger=Get-TaskLedger $state
                 if($Command -eq 'task-new') {
                     $task=New-VisibleTask $ledger $Participant $TaskName
+                    if($PSBoundParameters.ContainsKey('HostParticipation')){Set-TaskHostParticipation $state $task $HostParticipation}
                 } elseif($Command -eq 'task-open') {
+                    $existingTask=@($ledger.tasks|Where-Object id -eq $Participant).Count -gt 0
                     $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'task-open'
+                    if($PSBoundParameters.ContainsKey('HostParticipation')){
+                        if($existingTask -and (Get-Field $task 'hostParticipation' 'host') -ne $HostParticipation){throw 'Use task-stage with the current TaskRevision to change host participation.'}
+                        Set-TaskHostParticipation $state $task $HostParticipation
+                    }
                     if($PSBoundParameters.ContainsKey('Capabilities')){
                         if($task.adapter -ne $Adapter){throw 'Capability declaration must name the registered adapter.'}
                         Set-TaskCapabilities $task $Capabilities
@@ -433,11 +440,13 @@ try {
                     if($task.phase -in 'completed','cancelled'){throw 'Closed task cannot change phase.'}
                     $now=[DateTime]::UtcNow.ToString('o')
                     $naming=$Command -eq 'task-stage' -and $PSBoundParameters.ContainsKey('TaskName')
+                    $participation=$Command -eq 'task-stage' -and $PSBoundParameters.ContainsKey('HostParticipation')
+                    if($participation){Set-TaskHostParticipation $state $task $HostParticipation}
                     if($naming){
                         if([string]::IsNullOrWhiteSpace($TaskName) -or $TaskName -match '[\r\n]'){throw 'TaskName must be a nonempty single-line task label.'}
                         $task.displayName=$TaskName.Trim()
                     }
-                    $nameOnly=$naming -and -not ($PSBoundParameters.ContainsKey('TaskPhase') -or $PSBoundParameters.ContainsKey('Progress') -or $PSBoundParameters.ContainsKey('Blocker') -or $PSBoundParameters.ContainsKey('RequirementsRevision'))
+                    $nameOnly=($naming -or $participation) -and -not ($PSBoundParameters.ContainsKey('TaskPhase') -or $PSBoundParameters.ContainsKey('Progress') -or $PSBoundParameters.ContainsKey('Blocker') -or $PSBoundParameters.ContainsKey('RequirementsRevision'))
                     if(-not $nameOnly){
                         if($TaskPhase -in 'completed','awaiting_input','cancelled') {
                             $sourceLease=Try-Lease 'git.lock';if(-not $sourceLease){throw 'Git transaction is active; retry task closure without changing its revision.'}
@@ -524,6 +533,10 @@ try {
                 } else {
                     Write-AtomicJson $state $statePath
                     $response=[pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}
+                    if((Get-Field $task 'hostParticipation' 'host') -eq 'independent'){
+                        $response.next=@('task-stage for progress and changed paths/commit references','task-close after independent validation and local commits')
+                        $response.observation='Independent task is recorded without a host edit member, build barrier or host execution lease.'
+                    }
                     if($Command -eq 'task-stage') { # Active progress must surface pending urgent notices.
                         $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
                         Set-Field $response 'urgentEvents' @($urgent | Select-Object -First 8 -Property sequence,key,sender,kind,requirementsRevision,createdUtc)
@@ -541,6 +554,27 @@ try {
                     $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
                     if($urgent.Count){[pscustomobject]@{attention='urgent-event';events=$urgent;batchId=$Batch;editRevision=$Revision;registrationRetained=$true;next='Read event, acknowledge explicitly, then re-evaluate current revision.'}|ConvertTo-Json -Depth 20;exit 6}
                 }
+            }
+            $visibleTask=@(Get-Field (Get-Field $state 'taskLedger') 'tasks' @()|Where-Object id -eq $Participant|Select-Object -First 1)
+            if($visibleTask.Count -and (Get-Field $visibleTask[0] 'hostParticipation' 'host') -eq 'independent' -and $Command -in 'begin','repair','edit-verify'){
+                $task=$visibleTask[0]
+                if($task.phase -in 'completed','cancelled' -or $task.closedUtc){throw 'Independent task is closed; register the next task before continuing.'}
+                if($Command -eq 'repair'){throw 'Host repair requires host participation; independent tasks do not join host batches.'}
+                if($Command -eq 'edit-verify'){
+                    if($Batch){throw 'Independent write verification does not accept a host batch.'}
+                    Assert-TaskRevision $task $TaskRevision
+                    $paths=@($Files.Split(',')|Where-Object {$_}|ForEach-Object {Assert-IndependentTaskPath $_})
+                    if(-not $paths.Count){throw 'edit-verify requires explicit Files.'}
+                    foreach($batchRecord in @($(if($state.current){$state.current});@(Get-Field $state 'activeCandidates' @()))){
+                        foreach($member in @($batchRecord.participants|Where-Object state -ne 'withdrawn')){
+                            foreach($owned in @(Get-Field $member 'ownedFiles' @())){foreach($path in $paths){
+                                if($path -ieq $owned -or $path.StartsWith($owned+'/',[StringComparison]::OrdinalIgnoreCase) -or $owned.StartsWith($path+'/',[StringComparison]::OrdinalIgnoreCase)){throw "Independent write conflicts with host member $($member.id): $path"}
+                            }}
+                        }
+                    }
+                    [pscustomobject]@{allowed=$true;hostParticipation='independent';taskRevision=$task.revision;paths=$paths;observation='Independent source paths only; no host batch or execution authority granted.'}|ConvertTo-Json -Depth 10;exit 0
+                }
+                [pscustomobject]@{participant=$Participant;task=$task;hostParticipation='independent';editingAuthority=$false;next='Continue independent work and report progress; begin does not create a host member for this task.'}|ConvertTo-Json -Depth 10;exit 0
             }
             if($Command -eq 'edit-verify') {
                 if(-not $current -or $current.id -ne $Batch -or $current.phase -ne 'editing'){throw 'No active editing window.'}

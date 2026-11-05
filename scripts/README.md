@@ -500,7 +500,9 @@ scripts\build.bat acceptance-complete ID -TaskRevision T -AcceptanceId A -Accept
 
 ## 协作协议 v2：登记、计划与阻塞等待
 
-`begin` 返回 `batchId` 与 `editRevision`。开始写文件前登记；各对话使用独立 ID。
+宿主参与范围先按[根规则](../AGENTS.md#任务与协作)选择。以下 `begin/claim/plan/ready/commit` 流程用于 `host` 任务；`independent` 任务只维护 Task，见[宿主参与与独立任务](#宿主参与与独立任务)。
+
+`begin` 返回 `batchId` 与 `editRevision`。宿主任务开始写文件前登记；各对话使用独立 ID。
 `claim` 用同一状态锁检查路径及父目录冲突，不会解决同文件的修改合并。默认整组替换 `ownedFiles`；`-Add` 追加并保留已有集合。回执的 `claimMode` 与完整 `ownedFiles` 说明本次结果。新增脏路径必须先审阅，再显式 `-AdoptExistingChanges`；已持有路径的自身修改不要求重复接手。没有声明的老参与者会显示为未确定所有权。
 
 ```bat
@@ -569,9 +571,11 @@ scripts\build.bat issue task-b -Batch <batchId> -IssueId <issueId> -IssueState d
 
 ### 独立子仓库提交
 
-当前 `commit` 和 `task-list.sourceChanges` 的 Git 根固定为主仓库；后者不枚举被忽略的独立子仓库，`pending: []` 不能证明这些仓库已提交。涉及独立子仓库时继续以主仓库相对路径 `claim`，并在该子仓库单独核对分支、远程、差异、未跟踪文件与暂存区。
+当前 `commit` 和 `task-list.sourceChanges` 的 Git 根固定为主仓库；后者不枚举被忽略的独立子仓库，`pending: []` 不能证明这些仓库已提交。每个实际 Git 根均须单独核对分支、远程、差异、未跟踪文件与暂存区。
 
-子仓库的本地提交复用 `build_ownership.ps1` 中的 `Invoke-OwnedCommit`：持有主协调器 `.build/collaboration/git.lock` 排他租约，核对当前任务、批次、修订与路径归属，将已认领的子仓库前缀映射为仓库内相对路径，再在实际 Git 根调用该函数并提供 UTF-8 消息文件。该调用使用 `git commit --only` 保留其他暂存项，回执另存任务目录；冻结后的内容须先通过原 `Assert-CommitIdentity`，不改写协调器的仓库根或既有状态。租约占用、归属变化和输入变化时等待或重开，不删除锁、不接管其他任务。
+`independent` 任务在实际 Git 根使用明确路径的 `git commit --only -F <UTF-8消息文件> -- <本任务路径...>`，保留其他暂存项；新文件先仅对本任务路径 `git add --intent-to-add`。这也适用于主仓库中的独立社区组件。检查实际提交文件、HEAD 及剩余差异，将路径、验证和提交哈希写入 Task 进展后关闭。不调用宿主 `claim/commit`，不为本地提交加入宿主批次；同文件存在他人改动时先协调归属。
+
+混合任务确实同时参与宿主批次和子仓库修改时，才继续以主仓库相对路径 `claim` 子仓库范围。其本地提交复用 `build_ownership.ps1` 中的 `Invoke-OwnedCommit`：持有主协调器 `.build/collaboration/git.lock` 排他租约，核对当前任务、批次、修订与路径归属，将已认领的子仓库前缀映射为仓库内相对路径，再在实际 Git 根调用该函数并提供 UTF-8 消息文件。该调用使用 `git commit --only` 保留其他暂存项，回执另存任务目录；冻结后的内容须先通过原 `Assert-CommitIdentity`，不改写协调器的仓库根或既有状态。租约占用、归属变化和输入变化时等待或重开，不删除锁、不接管其他任务。
 
 子仓库提交后核对实际提交文件、HEAD 和剩余差异；收尾逐仓审计，不以主仓库的关闭回执替代子仓库结果。本地保存及远端动作的授权边界见[提交规范](../.agents/rules/delivery.md#提交规范)。
 
@@ -700,8 +704,27 @@ prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有
 
 调查与编辑权使用两个独立修订；调查不会加入构建屏障，也不会由超时自动结束。
 
+### 宿主参与与独立任务
+
+Task 的 `hostParticipation` 接受 `host/independent`；旧记录及未传参数的调用按 `host` 兼容，自动心跳保持已有选择。选择依据只在[根规则](../AGENTS.md#任务与协作)维护。CLI 示例：
+
 ```bat
-scripts\build.bat task-open task-unique -TaskName "调查构建等待" -Adapter dsh
+scripts\build.bat task-open website-copy -TaskName "更新官网功能说明" -HostParticipation independent
+scripts\build.bat task-stage website-copy -TaskRevision 0 -TaskPhase editing -Progress "范围 SnowDesktop_Website/src；独立更新官网文案"
+rem 独立检查、明确路径的本地提交，再记录实际验证与提交哈希
+scripts\build.bat task-close website-copy -TaskRevision 1 -TaskPhase completed -Progress "实际修改路径、检查结果及本地提交哈希"
+```
+
+独立任务不创建宿主编辑成员，不申请宿主构建执行租约，不需要 plan/ready 或等待宿主批次；即使误调用 `begin`，也只返回独立任务说明，不生成 batchId/editRevision。看板及紧凑 status 显示其宿主参与范围，任务进展记录实际改动路径、验证及提交引用。
+
+DSH 使用 `snow_collaboration {"action":"open","text":"更新官网功能说明","hostParticipation":"independent"}`；后续只需 progress/close。标准 write/edit 对独立社区组件、独立网站/商店/宣传目录及不参与构建的根文档进行路径核对，拒绝链接逃逸、Git 元数据、宿主源码及共享设施；与宿主已认领路径重叠时仍拒绝。自定义工具及 shell 沿用规则中的范围与数据保护要求。该核对不提供独立任务间的文件锁或子仓库 Git 审计，独立提交仍须逐仓检查。
+
+修改范围时，CLI 用 `task-stage ID -TaskRevision N -HostParticipation host|independent`；DSH 再次 open 时传入选择。只修改选择会增加 Task 修订并保留已有进展、阶段和进展时间。只要任务仍属于活动宿主批次或候选，就拒绝切换，避免借元数据更改移除验证义务。旧任务只在等待 begin、尚未加入批次时，先停止其原等待进程再切换；已加入的自身编辑登记，确认自身操作停止后按既有 `recover ID -Batch B -ConfirmStopped -Reason ...` 撤回，再切换同一 Task。已经就绪/冻结且不能撤回时等待其原结果归档。保留源码、原批次、验证记录和其他任务，不手改协调状态。
+
+以下是参与宿主的调查和编辑示例：
+
+```bat
+scripts\build.bat task-open task-unique -TaskName "调查构建等待" -Adapter dsh -HostParticipation host
 scripts\build.bat task-stage task-unique -TaskRevision 0 -TaskName "定位编译槽等待原因"
 scripts\build.bat task-stage task-unique -TaskRevision 1 -TaskPhase investigating -Progress "已找到等待入口" -RequirementsRevision 1
 scripts\build.bat task-list

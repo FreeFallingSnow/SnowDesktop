@@ -139,6 +139,7 @@ function renderPresence(snapshot){
  text("presenceCount",tasks.length+" / "+(snapshot.taskPresenceTotal||0)+" 项");
  $("taskPresence").replaceChildren(...tasks.map(task=>{
   const row=element("article",null,"presence-row");row.dataset.presenceTask=task.id;row.append(element("strong",task.displayName||task.id),element("span",phases[task.phase]||task.phase,"badge"));
+  row.append(element("span",task.hostParticipation==="independent"?"独立任务 · 不参与宿主构建":"宿主任务","badge"));
   row.append(element("p",task.progress||"尚未报告进展"));
   if(task.blocker)row.append(element("p","阻塞："+task.blocker,"warn"));
   row.append(element("small",(task.adapter||"未记录宿主")+" · 最近进展 "+time(task.lastProgressUtc)+" · 心跳距今 "+duration(task.heartbeatAgeSeconds)));
@@ -543,7 +544,7 @@ function renderWorkDetail(group,snapshot,batch){
  const situation=batch?.phase==="editing"?batchDescription(batch):group.summary;text("workSituation",situation);$("workSituation").hidden=!situation;text("participantTabCount",group.members.length);text("buildTabCount",group.buildCount);
  const participants=group.members.map(task=>{
   const presence=presenceState(task,group.liveBatch||batch),card=element("article",null,"participant-card"),title=element("div",null,"section-title");title.append(element("strong",task.displayName||task.name||task.id),element("span",presence.text,"badge"+(presence.uncertain?" uncertain":"")));
-  card.append(title,element("p",task.progress||"暂无进展"));if(task.blocker)card.append(element("p","等待："+task.blocker,"warn"));
+  card.append(title,element("p",task.hostParticipation==="independent"?"独立任务 · 不参与宿主构建":"宿主任务","participant-role"),element("p",task.progress||"暂无进展"));if(task.blocker)card.append(element("p","等待："+task.blocker,"warn"));
   card.append(element("small",(task.adapter?task.adapter.toUpperCase():"来源未记录")+" · 最近进展 "+time(task.lastProgressUtc),"muted"));
   if(presence.uncertain)card.append(element("p","最后心跳 "+time(task.lastHeartbeatUtc),"participant-role"));
   const plans=group.batches.flatMap(item=>(item.tasks||[]).filter(member=>member.id===task.id&&member.plan));

@@ -1,6 +1,6 @@
 # SnowDesktop DSH 协作插件
 
-此目录是通用协作系统的 DSH 适配器，以独立 Cordis bundle 提供面板和能力补强。任务生命周期、认领、执行权、恢复和证据语义由[通用协调器](../../scripts/README.md)维护；效率问题统一写入[协作系统反馈](../../scripts/COLLABORATION_FEEDBACK.md)。插件不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.26` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，其他版本须重新核对接口。
+此目录是通用协作系统的 DSH 适配器，以独立 Cordis bundle 提供面板和能力补强。任务生命周期、认领、执行权、恢复和证据语义由[通用协调器](../../scripts/README.md)维护；效率问题统一写入[协作系统反馈](../../scripts/COLLABORATION_FEEDBACK.md)。插件不修改 DSH 宿主源码或安装文件，也不手写 profile 的 package.json/cordis.patch.yml。插件 `0.2.27` 的三个 DSH peer 依赖精确对齐本机 DSH `0.2.1-rc.5`，其他版本须重新核对接口。
 
 插件在配置的 SnowDesktop 仓库内登记调查任务；DSH 的 `tools/execute` 在标准 `write` / `edit` 执行前校验当前批次、编辑轮次和路径归属，再交由宿主执行观察版本、沙箱和文件修改检查。`snow_collaboration` 工具提供 open/status/progress/begin/claim/plan/ready/close/messages/wait-messages/acknowledge。任务登记、事件及编辑授权仍保存在现有协调器中。
 
@@ -49,7 +49,9 @@ Host `./typert` 清单必须提供完整 `model` 结构。缺少该结构会使�
 
 所有登记通知和协调事件消息必须携带插件自有的 `source.kind`，并使用 `form: notice` 和有界摘要。DSH 的 `createUserMessage` 不会补全来源；缺少来源既会中断下一步模型请求，也会使持久日志无法重新加载。两种通知均通过同一构造函数创建，需要排查时同时核对注入与序列化后的消费。
 
-新建和已有存活 Agent 在进入本仓库时补接任务；调查登记不占编辑权。工具读取之前也核对是否已登记。首次写入前必须通过 begin 和 claim；未登记、未 claim、已就绪、已冻结及已结束的轮次都不能通过写入校验。插件保存自己实际取得的批次和修订，外部重开不能使旧许可自动变成新许可；插件重载后也必须显式重新 begin，不能从状态文件静默接收编辑权。任务 ID 从 Agent 身份生成，避免直接以任意用户文本作路径或 shell 参数。结构化参数经子进程专用的 JSON 数据传入固定 PowerShell 引导命令，以命名参数调用协调器，不经过 shell 拼接；数据传递环境项在子进程调用协调器前移除，不持久修改用户环境或配置。
+新建和已有存活 Agent 在进入本仓库时补接任务；登记不占宿主编辑权。open 的 `hostParticipation` 选择 `host/independent`；旧记录默认 host，自动心跳保留选择。独立任务记录路径、进展、检查和本地提交后 close，不调用 begin/claim/plan/ready，不加入宿主屏障。其标准 write/edit 通过协调器核对 Task 修订与独立源码路径，不能写宿主/共享输入或已由宿主成员认领的路径；范围切换与旧登记退出按[脚本手册](../../scripts/README.md#宿主参与与独立任务)。独立任务之间的文件冲突仍由实际 Git 差异审查与归属协调处理。
+
+工具读取之前也核对是否已登记。host 任务首次写入前必须通过 begin 和 claim；未登记、未 claim、已就绪、已冻结及已结束的轮次都不能通过宿主写入校验。插件保存自己实际取得的批次和修订，外部重开不能使旧许可自动变成新许可；插件重载后也必须显式重新 begin，不能从状态文件静默接收编辑权。任务 ID 从 Agent 身份生成，避免直接以任意用户文本作路径或 shell 参数。结构化参数经子进程专用的 JSON 数据传入固定 PowerShell 引导命令，以命名参数调用协调器，不经过 shell 拼接；数据传递环境项在子进程调用协调器前移除，不持久修改用户环境或配置。
 
 `tools/execute` 校验标准 `write` / `edit` 工具的新建、覆盖及字符串替换写入，包括相对路径和经过链接解析的目标。其他自定义工具、普通外部编辑器、直接文件系统调用和任意 shell 脚本未接入本校验，插件不能据此声称拥有操作系统级写保护。现有 AGENTS.md 与构建入口仍约束这些动作。点时校验不替代路径授权、当前修订与实际执行边界。
 

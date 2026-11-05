@@ -1007,6 +1007,7 @@ class Store:
                                     ("id", "displayName", "phase", "progress", "blocker", "adapter", "registrationOrigin")},
                                  **{key: task.get(key) for key in ("revision", "requirementsRevision", "openedUtc", "lastHeartbeatUtc", "lastProgressUtc", "closedUtc")},
                                  "heartbeatAgeSeconds": age(task.get("lastHeartbeatUtc")),
+                                 "hostParticipation": "independent" if task.get("hostParticipation") == "independent" else "host",
                                  "capabilities": {key: (task.get("capabilities") or {}).get(key) is True for key in
                                                   ("taskRegistration", "beforeWriteGate", "boundedWait", "liveProgress", "activeTurnSteering", "idleWake")}})
             events = []

@@ -105,19 +105,23 @@ export class CollaborationBridge{
    throw new Error(message+(/access.*denied|拒绝访问|unauthorized|EACCES|EPERM/i.test(message)?'\nCheck scripts/build.bat diagnose in the failing tool context. Host and tool sandbox permissions can differ; ACL changes do not establish sandbox write permission. Use an authorized full-access context or external terminal; preserve the request and logs.':''));
   }
  }
- async open(agentId,name){
+ async open(agentId,name,hostParticipation){
   if(name!==undefined&&(typeof name!=='string'||!name.trim()||name.trim().length>160||/[\r\n]/.test(name)))throw new Error('open text must be a nonempty single-line task name of at most 160 characters.');
+  if(hostParticipation!==undefined&&!['host','independent'].includes(hostParticipation))throw new Error('hostParticipation must be host or independent.');
   const title=name?.trim(),state=this.state();let id=this.taskId(agentId,state);
   const previous=state.taskLedger?.tasks?.find(task=>task.id===id);
   if(closed(previous)){
    this.grants.delete(id);
    if(!title)return {task:previous,status:'closed',editingAuthority:false,next:'Use open with text to register the next task in this session.'};
-   const next=await this.call('task-new',id,['-TaskName',title]);
+   const next=await this.call('task-new',id,['-TaskName',title,...(hostParticipation?['-HostParticipation',hostParticipation]:[])]);
    id=next.task.id;
   }
-  const opened=await this.call('task-open',id,['-TaskName',title||'DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);
-  if(!title||opened.task.displayName===title)return opened;
-  return this.call('task-stage',opened.task.id,['-TaskRevision',String(opened.task.revision),'-TaskName',title]);
+  const opened=await this.call('task-open',id,['-TaskName',title||'DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none',...(!previous&&hostParticipation?['-HostParticipation',hostParticipation]:[])]);
+  const rename=title&&opened.task.displayName!==title,select=hostParticipation&&(opened.task.hostParticipation||'host')!==hostParticipation;
+  if(!rename&&!select)return opened;
+  const updated=await this.call('task-stage',opened.task.id,['-TaskRevision',String(opened.task.revision),...(rename?['-TaskName',title]:[]),...(select?['-HostParticipation',hostParticipation]:[])]);
+  if(select)this.grants.delete(opened.task.id);
+  return updated;
  }
  requireTaskName(agentId){
   const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));
@@ -132,7 +136,9 @@ export class CollaborationBridge{
   }
   const relative=path.relative(this.root,target).replaceAll('\\','/');
   if(!relative)throw new Error('Writing the repository root is not supported');
-  const id=this.taskId(agentId),grant=this.grant(id,[relative]);
+  const state=this.state(),id=this.taskId(agentId,state),task=state.taskLedger?.tasks?.find(task=>task.id===id);
+  if(task?.hostParticipation==='independent')return this.call('edit-verify',id,['-TaskRevision',String(task.revision),'-Files',relative]);
+  const grant=this.grant(id,[relative]);
   return this.call('edit-verify',id,['-Batch',grant.batchId,'-Revision',String(grant.revision),'-Files',relative]);
  }
  async progress(agentId,text){
@@ -167,7 +173,7 @@ export class CollaborationBridge{
  async operate(agentId,args,{signal}={}){
   const id=this.taskId(agentId),action=args.action;
   if(action==='status')return this.call('status',id,args.detail==='full'?[]:['-Compact']);
-  if(action==='open')return this.open(agentId,args.text);
+  if(action==='open')return this.open(agentId,args.text,args.hostParticipation);
   if(action==='progress')return this.progress(agentId,args.text||'');
   if(action==='close'){
    const task=this.state().taskLedger?.tasks?.find(task=>task.id===id);
@@ -178,6 +184,7 @@ export class CollaborationBridge{
   }
   if(action==='begin'){
    const registered=await this.call('begin',id,['-WaitSeconds','1']);
+   if(registered.hostParticipation==='independent'){this.grants.delete(id);return registered;}
    this.grants.set(id,{batchId:registered.batchId,revision:registered.editRevision});return registered;
   }
   if(action==='messages')return this.call('event-read',id,['-AfterSequence',String(args.afterSequence||0)]);
@@ -187,6 +194,7 @@ export class CollaborationBridge{
    return this.call('event-wait',id,['-AfterSequence',String(args.afterSequence||0),'-WaitSeconds',String(seconds)],{timeout:seconds?seconds*1000+5000:0,signal});
   }
   if(action==='acknowledge')return this.call('event-ack',id,['-Sequence',String(args.sequence),'-AckLevel','agent']);
+  if(this.state().taskLedger?.tasks?.find(task=>task.id===id)?.hostParticipation==='independent')throw new Error('Independent tasks use progress/close without host claim/plan/ready. Report changed paths, checks and local commits; select host participation only when host/shared work is needed.');
   const grant=this.grant(id),bound=['-Batch',grant.batchId,'-Revision',String(grant.revision)];
   if(action==='ready'){
    const result=await this.call('ready',id,bound,{timeout:35000});

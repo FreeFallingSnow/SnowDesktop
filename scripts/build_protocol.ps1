@@ -57,10 +57,30 @@ function Open-VisibleTask($Ledger, [string]$Id, [string]$Name, [string]$Adapter,
     $now=[DateTime]::UtcNow.ToString('o')
     $task=[pscustomobject]@{id=$Id; displayName=$Name; phase='investigating'; revision=[long]0; requirementsRevision=[long]0;
         openedUtc=$now; lastHeartbeatUtc=$now; lastProgressUtc=$now; progress=''; blocker=''; closedUtc=$null;
-        registrationOrigin=$Origin; adapter=$Adapter;
+        registrationOrigin=$Origin; adapter=$Adapter; hostParticipation='host';
         capabilities=[pscustomobject]@{taskRegistration=$true; beforeWriteGate=$false; boundedWait=$false; liveProgress=$false; activeTurnSteering=$false; idleWake=$false}}
     $Ledger.tasks=@($Ledger.tasks)+@($task)
     return $task
+}
+function Set-TaskHostParticipation($State,$Task,[string]$Participation) {
+    if((Get-Field $Task 'hostParticipation' 'host') -eq $Participation){return}
+    $batches=@($(if($State.current){$State.current});@(Get-Field $State 'activeCandidates' @()))
+    if(@($batches|Where-Object {@($_.participants|Where-Object {$_.id -eq $Task.id -and $_.state -ne 'withdrawn'}).Count}).Count){
+        throw 'Host participation cannot change while the task belongs to an active batch. Finish/retire it or recover only your stopped editing registration first.'
+    }
+    Set-Field $Task 'hostParticipation' $Participation
+}
+function Assert-IndependentTaskPath([string]$Relative) {
+    $path=Normalize-OwnedPath $Relative
+    if(@($path.Split('/')|Where-Object {$_ -ieq '.git'}).Count){throw 'Independent task paths cannot target Git metadata.'}
+    $top=$path.Split('/')[0]
+    $external=$top -in 'website','SnowDesktop_Website','SnowDesktop_SteamAssets','SnowDesktop_Marketing','SnowDesktop-Marketing'
+    $community=$path -ieq 'developer_assets/workshop_widgets' -or $path.StartsWith('developer_assets/workshop_widgets/',[StringComparison]::OrdinalIgnoreCase)
+    $document=-not $path.Contains('/') -and $path -ine 'AGENTS.md' -and [IO.Path]::GetExtension($path) -in '.md','.txt','.csv','.pdf','.docx','.xlsx','.pptx' -and -not (Test-BuildInputPath $path)
+    if(-not ($external -or $community -or $document)){
+        throw "Independent tasks cannot write host/shared inputs: $path. Select host participation, then begin and claim before writing."
+    }
+    return $path
 }
 function Set-TaskCapabilities($Task,[string]$Names) {
     $supported=@('beforeWriteGate','boundedWait','liveProgress','activeTurnSteering','idleWake')
@@ -113,7 +133,7 @@ function Get-CompactCollaborationStatus($State,[string]$Participant,$Current,$Re
     $task=$null
     if($own.Count){
         $entry=$own[0]
-        $task=[pscustomobject]@{id=$entry.id;displayName=$entry.displayName;phase=$entry.phase;revision=$entry.revision;requirementsRevision=$entry.requirementsRevision;
+        $task=[pscustomobject]@{id=$entry.id;displayName=$entry.displayName;phase=$entry.phase;revision=$entry.revision;requirementsRevision=$entry.requirementsRevision;hostParticipation=(Get-Field $entry 'hostParticipation' 'host');
             lastHeartbeatUtc=$entry.lastHeartbeatUtc;lastProgressUtc=$entry.lastProgressUtc;progress=$entry.progress;blocker=$entry.blocker;closedUtc=$entry.closedUtc;
             previousTask=(Get-Field $entry 'previousTask');continuationRoot=(Get-Field $entry 'continuationRoot');generation=(Get-Field $entry 'generation' 1);
             deferredBatchIds=@(Get-Field $entry 'deferredBatchIds' @()|Select-Object -First 32)}
