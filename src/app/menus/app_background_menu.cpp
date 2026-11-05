@@ -1016,6 +1016,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
                 preview->dateHeaders = settings.dateHeaders;
                 preview->showFileCategories = settings.showFileCategories;
                 preview->showSearchBox = settings.showSearchBox;
+                preview->privacyMode = settings.previewPrivacyMode;
                 // Group layout belongs to its active child content view.
                 // Keep the isolated preview fixture in the selected layout.
                 if (preview->type == DesktopWidgetType::CollectionGroup ||

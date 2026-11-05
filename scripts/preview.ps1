@@ -18,7 +18,7 @@ Usage: scripts/preview.bat native -Out DIR [-Component control-panel] [-Appearan
        scripts/preview.bat settings -Out DIR [-Page all] [-Appearance dark] [-Locale zh-CN] [-Width 1440] [-Height 1000] [-State collapsed] [-Focus ID]
        scripts/preview.bat localization [-Executable TEST_EXE]
 Common: -Executable EXE selects an existing build; -DryRun prints the exact argv without starting it; -Help displays this text. This wrapper never compiles.
-Native components: collection, collection-group, file-group, file-categories, folder-mapping, calendar-panel, control-panel, tray-panel, resource-panel, status-bar, quick-navigation, dock, taskbar, popup, popup-group, demo-scene, all, storage-hover.
+Native components: collection, collection-group, file-group, file-categories, folder-mapping, calendar-panel, control-panel, tray-panel, resource-panel, status-bar, quick-navigation, dock, taskbar, popup, popup-group, demo-scene, all, storage-hover, storage-privacy.
 Native appearances: dark, light, glass-dark, glass-light, glass-transparent, acrylic-dark, acrylic-light.
 Settings supports light/dark; states: expanded, collapsed, custom, disabled, scenarios, searching, restore, secret-input, notices, general-notices, calendar-dates, calendar-weekly, calendar-monthly, calendar-occurrence.
 Settings size: width 840-2400, height 520-1800 DIP. Native output is PNG/result.json; settings output includes result.txt. Isolated preview data does not constitute desktop interaction acceptance.

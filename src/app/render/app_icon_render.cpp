@@ -506,7 +506,7 @@ void DesktopApp::DrawPrivacyFaIcon(
             if (memoryDc)
             {
                 HGDIOBJ oldBitmap = SelectObject(memoryDc, source);
-                HFONT font = CreateFontW(-static_cast<int>(bitmapSize * 0.68f),
+                HFONT font = CreateFontW(-bitmapSize,
                     0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                     ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
@@ -548,8 +548,23 @@ void DesktopApp::DrawPrivacyFaIcon(
 
     if (cached)
     {
-        // The generated glyph already includes its complete target rectangle.
-        DrawIconBitmap(ctx, cached.Get(), rect, 1.0f, 0, false);
+        // Unstyled icons occupy the complete logical icon box. Keep the old
+        // inset only alongside styled icons; raster padding must not shrink
+        // the unstyled privacy glyph a second time.
+        auto destination = ToD2DRect(rect);
+        if (iconBeautifySettings_.enabled)
+        {
+            constexpr float insetScale = static_cast<float>(
+                static_cast<int>(kIconBitmapSize * 0.68f)) / kIconBitmapSize;
+            const float insetX = (destination.right - destination.left) * (1.0f - insetScale) * 0.5f;
+            const float insetY = (destination.bottom - destination.top) * (1.0f - insetScale) * 0.5f;
+            destination.left += insetX;
+            destination.right -= insetX;
+            destination.top += insetY;
+            destination.bottom -= insetY;
+        }
+        ctx->DrawBitmap(cached.Get(), destination, 1.0f,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         return;
     }
 
@@ -564,10 +579,12 @@ void DesktopApp::DrawPrivacyFaIcon(
     const D2D1_COLOR_F border = luminance > 0.58f
         ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifySettings_.backgroundOpacity)
         : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifySettings_.backgroundOpacity);
-    DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
+    if (iconBeautifySettings_.enabled)
+        DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
     ComPtr<IDWriteTextFormat> format;
     format.Attach(CreateFaTextFormat(dwriteFactory_.Get(),
-        static_cast<float>(std::min(rect.right - rect.left, rect.bottom - rect.top)) * 0.52f));
+        static_cast<float>(std::min(rect.right - rect.left, rect.bottom - rect.top)) *
+            (iconBeautifySettings_.enabled ? 0.52f : 1.0f)));
     if (format)
         DrawD2DText(ctx, L"", rect, format.Get(),
             D2D1::ColorF(1.0f, 219.0f / 255.0f, 118.0f / 255.0f, 0.94f));
