@@ -190,6 +190,7 @@ void DesktopApp::DrawStaticBackground(
             mouseDownWidgetIndex_ < widgets_.size() &&
             &widgetData == &widgets_[mouseDownWidgetIndex_];
         const bool previewSourceHidden =
+            !(isPreviewSource && luaStackMemberDrag_.Armed()) &&
             snowdesktop::widget_visibility_rules::
                 ShouldHideWidgetPreviewSource(
                     widgetAction_ == WidgetAction::Move,

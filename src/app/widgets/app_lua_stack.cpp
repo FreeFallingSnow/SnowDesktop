@@ -15,7 +15,7 @@ const DesktopWidget* DesktopApp::ResolveLuaWidgetContent(const DesktopWidget* wi
     if (!widget) return nullptr;
     if (widget->type == DesktopWidgetType::LuaScript) return widget;
     const size_t index = FindWidgetIndexById(widget->id);
-    const size_t active = snowdesktop::lua_stack::Active(widgets_, index);
+    const size_t active = snowdesktop::lua_stack::Active(widgets_, index, &luaStackMemberDrag_);
     return active < widgets_.size() ? &widgets_[active] : nullptr;
 }
 

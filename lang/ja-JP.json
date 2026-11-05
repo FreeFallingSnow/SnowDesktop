@@ -2825,5 +2825,6 @@
   "preview.contextMenu.share": "共有",
   "preview.contextMenu.windowsSecurity": "Windows セキュリティ",
   "preview.contextMenu.scanDefender": "Microsoft Defender でスキャンする",
-  "preview.contextMenu.openTerminal": "ターミナルで開く"
+  "preview.contextMenu.openTerminal": "ターミナルで開く",
+  "core.drag.lua_stack_detach_hint": "Shift を押して現在のウィジェットを取り出す"
 }

@@ -113,7 +113,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
                 dcompUpdate,
                 clientRect);
     desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
-    if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
+    if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size() && !luaStackMemberDrag_.Armed())
     {
         desktopBackdropCompositor_.RemovePanel(
             GetStandaloneWidgetFrameRect(

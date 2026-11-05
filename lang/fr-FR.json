@@ -2825,5 +2825,6 @@
   "preview.contextMenu.share": "Partager",
   "preview.contextMenu.windowsSecurity": "Sécurité Windows",
   "preview.contextMenu.scanDefender": "Analyser avec Microsoft Defender",
-  "preview.contextMenu.openTerminal": "Ouvrir dans le Terminal"
+  "preview.contextMenu.openTerminal": "Ouvrir dans le Terminal",
+  "core.drag.lua_stack_detach_hint": "Maintenez Maj pour sortir le widget actuel"
 }

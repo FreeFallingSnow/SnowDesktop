@@ -2825,5 +2825,6 @@
   "preview.contextMenu.share": "공유",
   "preview.contextMenu.windowsSecurity": "Windows 보안",
   "preview.contextMenu.scanDefender": "Microsoft Defender로 검사",
-  "preview.contextMenu.openTerminal": "터미널에서 열기"
+  "preview.contextMenu.openTerminal": "터미널에서 열기",
+  "core.drag.lua_stack_detach_hint": "Shift를 누르면 현재 위젯을 꺼냅니다"
 }

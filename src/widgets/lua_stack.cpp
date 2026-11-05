@@ -19,9 +19,11 @@ size_t Owner(const std::vector<DesktopWidget>& widgets, std::wstring_view member
     return widgets.size();
 }
 
-size_t Active(const std::vector<DesktopWidget>& widgets, size_t owner)
+size_t Active(const std::vector<DesktopWidget>& widgets, size_t owner, const MemberDrag* presentation)
 {
     if (owner >= widgets.size()) return widgets.size();
+    if (presentation && presentation->OwnerIndex(widgets) == owner)
+        if (const size_t preview = presentation->PreviewMemberIndex(widgets); preview < widgets.size()) return preview;
     const auto& widget = widgets[owner];
     if (widget.type == DesktopWidgetType::LuaScript) return owner;
     if (widget.type != DesktopWidgetType::LuaStack) return widgets.size();
@@ -72,6 +74,23 @@ size_t MemberDrag::MemberIndex(const std::vector<DesktopWidget>& widgets) const
     return member < widgets.size() && widgets[member].id == memberId_ ? member : widgets.size();
 }
 
+size_t MemberDrag::PreviewMemberIndex(const std::vector<DesktopWidget>& widgets) const
+{
+    const size_t owner = OwnerIndex(widgets);
+    if (owner >= widgets.size() || MemberIndex(widgets) >= widgets.size()) return widgets.size();
+    // Match Normalize's fallback after detachment, while leaving the saved
+    // active member untouched until placement commits.
+    for (const auto& id : widgets[owner].childWidgetIds)
+    {
+        if (id == memberId_) continue;
+        const auto found = std::find_if(widgets.begin(), widgets.end(), [&](const auto& widget) {
+            return widget.id == id && widget.type == DesktopWidgetType::LuaScript;
+        });
+        if (found != widgets.end()) return static_cast<size_t>(found - widgets.begin());
+    }
+    return widgets.size();
+}
+
 bool MemberDrag::Detach(std::vector<DesktopWidget>& widgets, GridCell landing) const
 {
     const size_t owner = OwnerIndex(widgets), member = MemberIndex(widgets);
@@ -87,7 +106,8 @@ bool MemberDrag::Detach(std::vector<DesktopWidget>& widgets, GridCell landing) c
     return true;
 }
 
-size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance)
+size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance,
+    const MemberDrag* presentation)
 {
     const auto child = std::find_if(widgets.begin(), widgets.end(), [&](const auto& w) {
         return w.id == instance && w.type == DesktopWidgetType::LuaScript;
@@ -96,7 +116,7 @@ size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view
     const size_t index = static_cast<size_t>(child - widgets.begin());
     const size_t owner = Owner(widgets, instance);
     if (owner >= widgets.size()) return index;
-    return Active(widgets, owner) == index ? owner : widgets.size();
+    return Active(widgets, owner, presentation) == index ? owner : widgets.size();
 }
 
 int WheelGesture::Consume(std::wstring_view stack, int delta, std::uint64_t now,

@@ -2825,5 +2825,6 @@
   "preview.contextMenu.share": "Freigeben",
   "preview.contextMenu.windowsSecurity": "Windows-Sicherheit",
   "preview.contextMenu.scanDefender": "Mit Microsoft Defender überprüfen",
-  "preview.contextMenu.openTerminal": "Im Terminal öffnen"
+  "preview.contextMenu.openTerminal": "Im Terminal öffnen",
+  "core.drag.lua_stack_detach_hint": "Umschalt halten, um das aktuelle Widget herauszulösen"
 }

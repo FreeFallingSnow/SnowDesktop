@@ -111,7 +111,7 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
     };
     for (auto& [widgetId, request] : pending)
     {
-        const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, widgetId);
+        const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, widgetId, &luaStackMemberDrag_);
         if (request.marquees.empty() || owner >= widgets_.size())
         {
             // A hidden/deleted member can clear only its own text. Pending
@@ -364,11 +364,11 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
                 ShouldHideWidgetPreviewSource(
                     widgetAction_ == WidgetAction::Move,
                     widgetAction_ == WidgetAction::Resize,
-                    isPreviewSource);
+                    isPreviewSource && !luaStackMemberDrag_.Armed());
         for (auto& [key, item] : items)
         {
             (void)key;
-            const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, item.instanceId);
+            const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, item.instanceId, &luaStackMemberDrag_);
             const bool visible = ownerVisible && owner < widgets_.size() && widgets_[owner].id == widgetId;
             if (item.visible == visible)
                 continue;

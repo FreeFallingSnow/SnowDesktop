@@ -2825,5 +2825,6 @@
   "preview.contextMenu.share": "共享",
   "preview.contextMenu.windowsSecurity": "Windows 安全中心",
   "preview.contextMenu.scanDefender": "使用 Microsoft Defender 扫描",
-  "preview.contextMenu.openTerminal": "在终端中打开"
+  "preview.contextMenu.openTerminal": "在终端中打开",
+  "core.drag.lua_stack_detach_hint": "按住 Shift 移出当前组件"
 }

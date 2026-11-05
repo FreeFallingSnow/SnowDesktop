@@ -8,11 +8,13 @@
 
 namespace snowdesktop::lua_stack
 {
+class MemberDrag;
 bool IsSurface(DesktopWidgetType type) noexcept;
 size_t Owner(const std::vector<DesktopWidget>& widgets, std::wstring_view member);
-size_t Active(const std::vector<DesktopWidget>& widgets, size_t owner);
+size_t Active(const std::vector<DesktopWidget>& widgets, size_t owner, const MemberDrag* presentation = nullptr);
 // Return the actual desktop surface only for a currently displayed Lua instance.
-size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance);
+size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance,
+    const MemberDrag* presentation = nullptr);
 std::vector<std::wstring> Members(const DesktopWidget& widget);
 bool Supports(const DesktopWidget& widget, GridSpan span) noexcept;
 bool CanCombine(const std::vector<DesktopWidget>& widgets, size_t source, size_t target,
@@ -33,6 +35,7 @@ public:
     void Reset() { ownerId_.clear(); memberId_.clear(); }
     size_t OwnerIndex(const std::vector<DesktopWidget>& widgets) const;
     size_t MemberIndex(const std::vector<DesktopWidget>& widgets) const;
+    size_t PreviewMemberIndex(const std::vector<DesktopWidget>& widgets) const;
     bool Detach(std::vector<DesktopWidget>& widgets, GridCell landing) const;
 
 private:
