@@ -152,7 +152,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         int localY = pt.y - frame.top;
         if (widgets_[luaWidget].type == DesktopWidgetType::LuaStack)
         {
-            if (!widgetEngine_->OwnsDesktopWheel(luaContent->id, localX, localY))
+            if (!widgetEngine_->OwnsDesktopWheel(luaContent->id, localX, localY, delta))
             {
                 (void)ScrollLuaWidgetStack(widgets_[luaWidget].id, delta);
                 return;
