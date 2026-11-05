@@ -44,6 +44,7 @@
 | [CF-018](#cf-018-固定内存估算限制编译并行且缺少动态调整) | P2 | 普通与重型编译统一按固定内存成本估算，低申报使整轮维持单路 | 已实现；已有实际4路派发记录，最终修订待后续实际构建观察 |
 | [CF-019](#cf-019-应用全量被扩大为工具回归并阻断产物打包) | P1 | Agent 将应用 full 扩大为 full,tools，混合失败阻止独立通过的产品产物打包 | 已确认：范围已纠正；门禁分离待评估 |
 | [CF-020](#cf-020-验收产物路径拒绝缺少修正示例) | P2 | CandidateRun 产物路径误用后，错误回执未说明 runtime 相对路径 | 已澄清手册；拒绝回执待完善 |
+| [CF-021](#cf-021-协作提交无法直接保存空验收记录) | P2 | 提交规则允许空 verify，协作 commit 仍要求有差异的路径 | 已确认：源码与规则入口不闭合 |
 
 ### CF-001 持久执行器被父 Job 拒绝
 
@@ -215,3 +216,10 @@
 - **现象与证据**：Agent 在 `acceptance-start -CandidateRun` 中误用 `.build/Release/SnowDesktop.exe`，回执为 `Acceptance file is neither a saved runtime nor a present candidate input.`；改传保存runtime中的绝对路径又返回 `Unsafe candidate relative path.`。最终传 `-Files SnowDesktop.exe` 成功，验收记录 `71a637d093eb45469aed5d690a0625a9`。路径误用属于调用方；回执没有同时说明基准目录与可执行修正示例，增加了跟进读取和调用，没有引发额外产品编译。未测量额外耗时或token数量。
 - **源码确认**：`build_acceptance.ps1` 的 `New-SavedRuntimeAcceptance` 先将路径解析到保存runtime，再匹配产物或原候选源码；`-CandidateRun` 不兼容 `.build/Release/` 前缀。第4版批次 `-Batch/-Revision` 的前缀兼容仍存在，原手册中的批次示例有效，不把两个入口混为同一错误。
 - **处理与下一步**：已在手册明确CandidateRun运行文件采用runtime相对路径、拒绝绝对路径及Release前缀。尚未修改错误回执；后续可按入口返回 `-Files SnowDesktop.exe` 修正示例，同时保留源码输入的仓库相对语义和原安全检查。本次仅文档澄清，复用上述实际拒绝/成功与源码走查证据，不为反馈增加编译或常驻测试。
+
+### CF-021 协作提交无法直接保存空验收记录
+
+- **发现时间与来源**：2026-11-05，CLI，Task `music-resource-attribution-20261105`；采样尝试 `cab65ec4`，最终产品Run `3f0feba1daae471b98535bab21146e90`、验收 `da8bbd8ab573452c82162d8d0db181cd`，热点提交 `7637193a`。归档批次 `f3feb142ca9d4c7fadeec31aadfd28cd`。
+- **现象与证据（源码确认，未执行已知失败命令）**：`.agents/rules/delivery.md` 要求无代码修改的后续验收创建独立 `verify`，允许空提交；`build_manager.ps1` 的 `commit` 没有空提交参数，`build_ownership.ps1::Invoke-OwnedCommit` 要求非空路径并调用 `git commit --only`，没有 `--allow-empty`。目标路径已提交且无差异时，入口不能直接记录所需空验收；不能把其他暂存内容纳入来满足提交。
+- **效率影响与状态**：P2，增加收尾调查及归档步骤，没有因此配置、编译或重跑通过测试；额外耗时/token未测量。本任务在独立verify提交中纳入本条真实反馈，并绑定原采样与用户验收，保留此前try历史，没有修改协作实现或绕过Git事务。
+- **下一步**：为纯验收提供显式空提交入口，校验对应Task、原候选/文件身份、验收回执及暂存区隔离，继续持有协调器Git事务租约；没有真实文件修改时不为其创建产品候选或构建。当前为已确认、待实现，不声称入口已修复。
