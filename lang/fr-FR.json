@@ -2815,10 +2815,10 @@
   "winx.desktop": "Bureau",
   "winx.dockSettings": "Paramètres du Dock",
   "core.drag.create_lua_stack": "Empiler les widgets",
-  "core.drag.lua_stack_hint": "Maintenir Ctrl pour empiler les widgets",
+  "core.drag.lua_stack_hint": "Relâchez pour empiler les widgets",
   "app.lua_stack.release": "Sortir",
   "app.lua_stack.remove_current": "Retirer",
-  "app.lua_stack.unsupported_size": "Ce widget ne prend pas en charge la taille de la pile. Redimensionnez la pile ou sortez ce widget.",
+  "app.lua_stack.unsupported_size": "Ce widget ne prend pas en charge la taille actuelle. Redimensionnez-le.",
   "preview.contextMenu.fileExplorer": "Explorateur de fichiers",
   "preview.contextMenu.openWith": "Ouvrir avec",
   "preview.contextMenu.sendTo": "Envoyer vers",
@@ -2826,5 +2826,5 @@
   "preview.contextMenu.windowsSecurity": "Sécurité Windows",
   "preview.contextMenu.scanDefender": "Analyser avec Microsoft Defender",
   "preview.contextMenu.openTerminal": "Ouvrir dans le Terminal",
-  "core.drag.lua_stack_detach_hint": "Maintenez Maj pour sortir le widget actuel"
+  "core.drag.lua_stack_detach_hint": "Maintenez Ctrl pour sortir le widget actuel"
 }

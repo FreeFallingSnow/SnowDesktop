@@ -132,6 +132,7 @@
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
 
+- **资源请求与认领脱节的新证据（2026-11-05）**：Task `lua-widget-stacks` 在批次 `d6e9ae2780214cebbcb0d47f9747e7fc` 通过十次 `resource prepare/apply` 更新三项提示键；标准 Release 与五项回归通过后，明确路径 `commit` 返回 `Unclaimed commit path: lang/de-DE.json`。源码确认提交只看 `ownedFiles`，`claim` 又只接受 editing 状态。先按原批次提交已认领源码为 `363bea07`，保留语言改动；随后用户新增预览需求，沿用新批次 `6a3e1f0c91e7417e95bb63bf30a4c03f` 审查并显式认领这十个语言文件（仅本任务三键改动），将共同保存。后续产品构建由真实预览源码变化触发，不为补认领重编；本记录不是协作接口已修复的证据。
 - **来源与确认**：2026-11-04，用户授权 `winx-start-context-menu` 交接反馈。该任务通过 `resource prepare/apply` 向十种语言各添加19个 `winx.*` 键，同文件还有 `fav-nav-bar` 的8个收藏栏键。资源事务按键安全合并，`Invoke-OwnedCommit/commit --only` 仍按整路径提交和授权，无法直接满足不混入其他任务修改的要求。
 - **实际绕行**：用户仅为该次操作特许在Git协作锁下用临时索引按19键提交，提交 `3a7bb60595a7fdaf32b5bd4abc139d07d5164250`。已读 `.codex-probes/winx-start-context-menu/locale-commit.json`：记录十种语言、每语言19键、resourceRequests、`otherIndexEntriesUnchanged=true` 和 `workingFilesUnchanged=true`。临时脚本不入库，不作为通用接口已修复的证据。
 - **影响与下一步**：共享资源能编辑却不能精确提交，增加例外操作和交接成本。让requestId/键级归属贯穿认领、就绪、提交和关闭，在单一Git租约下构造事务提交；覆盖已有暂存、键冲突、HEAD变化和中断恢复。当前仅登记，尚未实现，未为反馈增加构建。

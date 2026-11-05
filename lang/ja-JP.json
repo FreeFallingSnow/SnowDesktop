@@ -2815,10 +2815,10 @@
   "winx.desktop": "デスクトップ",
   "winx.dockSettings": "Dock の設定",
   "core.drag.create_lua_stack": "ウィジェットをスタック",
-  "core.drag.lua_stack_hint": "Ctrl を押しながらウィジェットをスタック",
+  "core.drag.lua_stack_hint": "放すとウィジェットをスタック",
   "app.lua_stack.release": "取り出す",
   "app.lua_stack.remove_current": "削除",
-  "app.lua_stack.unsupported_size": "このウィジェットはスタックのサイズに対応していません。スタックのサイズを変更するか、このウィジェットを取り出してください。",
+  "app.lua_stack.unsupported_size": "このウィジェットは現在のサイズに対応していません。サイズを変更してください。",
   "preview.contextMenu.fileExplorer": "エクスプローラー",
   "preview.contextMenu.openWith": "プログラムから開く",
   "preview.contextMenu.sendTo": "送る",
@@ -2826,5 +2826,5 @@
   "preview.contextMenu.windowsSecurity": "Windows セキュリティ",
   "preview.contextMenu.scanDefender": "Microsoft Defender でスキャンする",
   "preview.contextMenu.openTerminal": "ターミナルで開く",
-  "core.drag.lua_stack_detach_hint": "Shift を押して現在のウィジェットを取り出す"
+  "core.drag.lua_stack_detach_hint": "Ctrl を押して現在のウィジェットを取り出す"
 }

@@ -2815,10 +2815,10 @@
   "winx.desktop": "바탕 화면",
   "winx.dockSettings": "Dock 설정",
   "core.drag.create_lua_stack": "위젯 쌓기",
-  "core.drag.lua_stack_hint": "Ctrl 키를 누른 채 위젯 쌓기",
+  "core.drag.lua_stack_hint": "놓으면 위젯을 쌓습니다",
   "app.lua_stack.release": "꺼내기",
   "app.lua_stack.remove_current": "제거",
-  "app.lua_stack.unsupported_size": "이 위젯은 현재 스택 크기를 지원하지 않습니다. 스택 크기를 조절하거나 이 위젯을 꺼내세요.",
+  "app.lua_stack.unsupported_size": "이 위젯은 현재 크기를 지원하지 않습니다. 크기를 조절하세요.",
   "preview.contextMenu.fileExplorer": "파일 탐색기",
   "preview.contextMenu.openWith": "연결 프로그램",
   "preview.contextMenu.sendTo": "보내기",
@@ -2826,5 +2826,5 @@
   "preview.contextMenu.windowsSecurity": "Windows 보안",
   "preview.contextMenu.scanDefender": "Microsoft Defender로 검사",
   "preview.contextMenu.openTerminal": "터미널에서 열기",
-  "core.drag.lua_stack_detach_hint": "Shift를 누르면 현재 위젯을 꺼냅니다"
+  "core.drag.lua_stack_detach_hint": "Ctrl을 누르면 현재 위젯을 꺼냅니다"
 }

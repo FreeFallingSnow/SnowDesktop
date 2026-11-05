@@ -946,6 +946,9 @@ void DesktopApp::OnMouseMoveAt(
 
         const DesktopWidgetType movingType =
             widgets_[mouseDownWidgetIndex_].type;
+        // Hovering a stack target must not resize the source preview, including
+        // the next sample after leaving that target or changing modifiers.
+        widgetPreviewSpan_ = widgetDragOriginalSpan_;
         namespace pair = snowdesktop::widget_pair_drop;
         widgetPairTargetIndex_ = static_cast<size_t>(-1);
         widgetPairAction_ = pair::Action::None;
@@ -1093,8 +1096,8 @@ void DesktopApp::OnMouseMoveAt(
                 if (widgetPairAction_ == pair::Action::CreateLuaStack)
                 {
                     key = "core.drag.create_lua_stack";
-                    widgetPreviewCell_ = widgets_[widgetPairTargetIndex_].gridCell;
-                    widgetPreviewSpan_ = widgets_[widgetPairTargetIndex_].gridSpan;
+                    widgetPreviewCell_ = ResolveGridSpanDragCell(gridPages_, current,
+                        widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
                 }
                 ShowDragHintWindow(current, _LW(key), true);
                 return;

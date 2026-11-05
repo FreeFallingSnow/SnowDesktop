@@ -2815,10 +2815,10 @@
   "winx.desktop": "Desktop",
   "winx.dockSettings": "Dock-Einstellungen",
   "core.drag.create_lua_stack": "Widgets stapeln",
-  "core.drag.lua_stack_hint": "Strg gedrückt halten, um Widgets zu stapeln",
+  "core.drag.lua_stack_hint": "Loslassen, um Widgets zu stapeln",
   "app.lua_stack.release": "Lösen",
   "app.lua_stack.remove_current": "Entfernen",
-  "app.lua_stack.unsupported_size": "Dieses Widget unterstützt die Stapelgröße nicht. Ändern Sie die Stapelgröße oder lösen Sie das Widget aus dem Stapel.",
+  "app.lua_stack.unsupported_size": "Dieses Widget unterstützt die aktuelle Größe nicht. Ändern Sie die Größe.",
   "preview.contextMenu.fileExplorer": "Explorer",
   "preview.contextMenu.openWith": "Öffnen mit",
   "preview.contextMenu.sendTo": "Senden an",
@@ -2826,5 +2826,5 @@
   "preview.contextMenu.windowsSecurity": "Windows-Sicherheit",
   "preview.contextMenu.scanDefender": "Mit Microsoft Defender überprüfen",
   "preview.contextMenu.openTerminal": "Im Terminal öffnen",
-  "core.drag.lua_stack_detach_hint": "Umschalt halten, um das aktuelle Widget herauszulösen"
+  "core.drag.lua_stack_detach_hint": "Strg halten, um das aktuelle Widget herauszulösen"
 }
