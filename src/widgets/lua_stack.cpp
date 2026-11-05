@@ -130,7 +130,14 @@ int WheelGesture::Consume(std::wstring_view stack, int delta, std::uint64_t now,
     }
     lastEvent_ = now;
     seen_ = true;
-    if (controlOwnsWheel) { remainder_ = 0; return 0; }
+    if (controlOwnsWheel)
+    {
+        // An internal control owns this entire burst, including its momentum
+        // after reaching an edge. Only a quiet gap can rearm stack switching.
+        remainder_ = 0;
+        switched_ = true;
+        return 0;
+    }
     if (switched_) return 0;
     const std::int64_t total = static_cast<std::int64_t>(remainder_) + delta;
     if (total >= 120 || total <= -120)
