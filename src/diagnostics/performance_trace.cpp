@@ -18,7 +18,7 @@ namespace snowdesktop::performance
 {
 namespace detail
 {
-struct DrawOrigins { std::array<std::uint64_t, 16> flows{}; std::size_t count = 0; };
+struct DrawOrigins { std::uint64_t flow = 0, count = 0; };
 struct TraceContext
 {
     struct TaskOrigin { std::uint64_t flow = 0, operation = 0, owner = 0; std::wstring instance; };
@@ -34,6 +34,7 @@ struct TraceContext
     // Bounded identity and correlation registries, not event/timing storage.
     std::unordered_set<std::uint64_t> counters;
     std::unordered_map<std::uint64_t, DrawOrigins> origins;
+    std::uint64_t drawRequests = 0, drawCoalesced = 0, drawConsumed = 0;
     std::unordered_map<std::uint64_t, TaskOrigin> tasks;
 };
 }
@@ -66,7 +67,7 @@ Category CategoryFor(std::string_view module) noexcept
     if (module.starts_with("animation.") || module == "timer.callback") return Category::Frame;
     if (module == "lua" || module == "widget" || module.starts_with("widget.event")) return Category::Lua;
     if (module.starts_with("task.") || module.starts_with("shared.")) return Category::Task;
-    if (module.find("memory") != module.npos || module == "process" ||
+    if (module.find("memory") != module.npos || module == "process" || module == "widget.gpu" ||
         module.ends_with(".state") || module == "widget.package") return Category::Resource;
     if (module.find("cache") != module.npos) return Category::Cache;
     if (module.find("layout") != module.npos) return Category::Layout;
@@ -298,32 +299,40 @@ void DrawLink(std::string_view surface, std::wstring_view owner, bool consume) n
         std::string safeSurface;
         if (surface != "desktop" && surface != "panel") { safeSurface = "surface-" + std::to_string(Hash(surface, state->salt)); surface = safeSurface; }
         detail::DrawOrigins origins;
-        std::uint64_t flow = 0;
+        bool first = false;
         {
             std::lock_guard lock(state->drawMutex);
+            if (!Enabled() || context.load() != state) return;
             const auto found = state->origins.find(key);
             if (consume)
             {
-                if (found != state->origins.end()) { origins = found->second; state->origins.erase(found); }
+                if (found != state->origins.end())
+                {
+                    origins = found->second;
+                    state->drawConsumed += origins.count;
+                    state->origins.erase(found);
+                }
             }
             else
             {
                 if (found == state->origins.end() && state->origins.size() >= 1024)
                 { ++state->droppedLinks; return; }
                 auto& entry = state->origins[key];
-                if (entry.count == entry.flows.size()) { ++state->droppedLinks; return; }
-                flow = state->nextOperation.fetch_add(1);
-                entry.flows[entry.count++] = flow;
+                first = entry.count == 0;
+                if (first) entry.flow = state->nextOperation.fetch_add(1);
+                else ++state->drawCoalesced;
+                ++entry.count;
+                ++state->drawRequests;
+                origins = entry;
             }
         }
-        if (!consume)
-            TRACE_EVENT_INSTANT("snow.frame", "draw.invalidate", perfetto::Flow::ProcessScoped(flow),
+        if (!consume && first)
+            TRACE_EVENT_INSTANT("snow.frame", "draw.invalidate", perfetto::Flow::ProcessScoped(origins.flow),
                 "surface", perfetto::DynamicString(surface.data(), surface.size()), "owner", ownerId);
-        else
-            for (std::size_t index = 0; index < origins.count; ++index)
-                TRACE_EVENT_INSTANT("snow.frame", "draw.consume", perfetto::TerminatingFlow::ProcessScoped(origins.flows[index]),
-                    "surface", perfetto::DynamicString(surface.data(), surface.size()), "owner", ownerId,
-                    "coalesced_count", origins.count);
+        else if (consume && origins.count)
+            TRACE_EVENT_INSTANT("snow.frame", "draw.consume", perfetto::TerminatingFlow::ProcessScoped(origins.flow),
+                "surface", perfetto::DynamicString(surface.data(), surface.size()), "owner", ownerId,
+                "coalesced_count", origins.count);
     }
     catch (...) { ++state->probeErrors; }
 }
@@ -409,8 +418,14 @@ TraceQuality DeactivateTrace() noexcept
     activeGeneration.store(0, std::memory_order_release);
     const auto state = context.exchange(nullptr);
     if (!state) return {};
-    return { state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load(),
+    TraceQuality quality{ state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load(),
         state->filteredProbeCalls.load(), state->inputOperationsObserved.load(), state->inputOperationsSelected.load(), state->ownerFilteredProbeCalls.load() };
+    std::lock_guard lock(state->drawMutex);
+    quality.drawRequests = state->drawRequests;
+    quality.drawCoalesced = state->drawCoalesced;
+    quality.drawConsumed = state->drawConsumed;
+    for (const auto& [key, origin] : state->origins) { (void)key; quality.drawPending += origin.count; }
+    return quality;
 }
 std::vector<TraceOwnerDescription> DescribeTraceOwners()
 {

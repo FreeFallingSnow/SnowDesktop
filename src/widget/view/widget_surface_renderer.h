@@ -9,6 +9,7 @@ struct ID2D1Device;
 struct ID2D1DeviceContext;
 struct ID2D1CommandList;
 struct IDCompositionVisual2;
+struct ID3D11Device;
 
 namespace snowdesktop::widget_runtime
 {
@@ -32,13 +33,13 @@ public:
     WidgetSurfaceRenderer(const WidgetSurfaceRenderer&) = delete;
     WidgetSurfaceRenderer& operator=(const WidgetSurfaceRenderer&) = delete;
 
-    bool Initialize(ID2D1Device* device, HWND notifyWindow);
+    bool Initialize(ID2D1Device* device, HWND notifyWindow, ID3D11Device* graphicsDevice = nullptr);
     void Stop();
     HRESULT BeginRecording(ID2D1DeviceContext** context,
         ID2D1CommandList** commands);
     HRESULT EndRecording(ID2D1CommandList* commands);
     Target CreateTarget(const std::wstring& owner, UINT width, UINT height,
-        IDCompositionVisual2** visual);
+        IDCompositionVisual2** visual, const std::wstring& componentOwner = {});
     bool Submit(const Target& target, ID2D1CommandList* commands,
         const RECT& bounds);
     void Cancel(const Target& target);

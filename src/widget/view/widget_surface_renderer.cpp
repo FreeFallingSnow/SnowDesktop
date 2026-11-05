@@ -1,4 +1,5 @@
 #include "widget_surface_renderer.h"
+#include "widget_gpu_timing.h"
 #include "diagnostics/performance_trace.h"
 
 #include <d2d1_1.h>
@@ -20,6 +21,7 @@ using Microsoft::WRL::ComPtr;
 struct WidgetSurfaceTarget
 {
     std::wstring owner;
+    std::wstring componentOwner;
     UINT width = 0, height = 0;
     ComPtr<IDCompositionVisual2> visual;
     // Only the render thread accesses these surface/notification fields.
@@ -39,6 +41,7 @@ struct WidgetSurfaceRenderer::Impl
     ComPtr<ID2D1Device> device;
     ComPtr<ID2D1DeviceContext> recording;
     ComPtr<IDCompositionDesktopDevice> composition;
+    WidgetGpuTiming gpuTiming;
     HWND notifyWindow = nullptr;
     std::mutex mutex;
     std::condition_variable changed;
@@ -50,7 +53,7 @@ struct WidgetSurfaceRenderer::Impl
     HRESULT Draw(const Frame& frame)
     {
         auto& target = *frame.target;
-        performance::Scope scope("widget.composition", "raster", target.owner);
+        performance::Scope scope("widget.composition", "raster", target.componentOwner);
         if (!target.surface)
         {
             const HRESULT result = composition->CreateSurface(target.width,
@@ -59,6 +62,7 @@ struct WidgetSurfaceRenderer::Impl
             if (FAILED(result)) return result;
         }
         ComPtr<ID2D1DeviceContext> context;
+        WidgetGpuTiming::Frame gpuFrame(gpuTiming, target.componentOwner);
         POINT offset{};
         HRESULT result = target.surface->BeginDraw(nullptr,
             __uuidof(ID2D1DeviceContext),
@@ -73,6 +77,7 @@ struct WidgetSurfaceRenderer::Impl
         context->DrawImage(frame.commands.Get());
         context.Reset();
         result = target.surface->EndDraw();
+        gpuFrame.Complete(SUCCEEDED(result));
         if (FAILED(result) || !target.active.load()) return result;
         result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
@@ -132,7 +137,7 @@ UINT WidgetSurfaceRenderer::ReadyMessage()
     return message;
 }
 
-bool WidgetSurfaceRenderer::Initialize(ID2D1Device* device, HWND notifyWindow)
+bool WidgetSurfaceRenderer::Initialize(ID2D1Device* device, HWND notifyWindow, ID3D11Device* graphicsDevice)
 {
     if (!device || !notifyWindow || !ReadyMessage() || impl_->worker.joinable()) return false;
     ComPtr<ID2D1Factory> factory;
@@ -143,6 +148,7 @@ bool WidgetSurfaceRenderer::Initialize(ID2D1Device* device, HWND notifyWindow)
     impl_->device = device;
     impl_->notifyWindow = notifyWindow;
     impl_->stopping = false;
+    impl_->gpuTiming.Initialize(graphicsDevice, device);
     HRESULT result = device->CreateDeviceContext(
         D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &impl_->recording);
     if (SUCCEEDED(result)) result = DCompositionCreateDevice3(device,
@@ -165,6 +171,7 @@ void WidgetSurfaceRenderer::Stop()
     }
     impl_->changed.notify_all();
     if (impl_->worker.joinable()) impl_->worker.join();
+    impl_->gpuTiming.Reset();
     impl_->recording.Reset();
     impl_->composition.Reset();
     impl_->device.Reset();
@@ -197,12 +204,14 @@ HRESULT WidgetSurfaceRenderer::EndRecording(ID2D1CommandList* commands)
 }
 
 WidgetSurfaceRenderer::Target WidgetSurfaceRenderer::CreateTarget(
-    const std::wstring& owner, UINT width, UINT height, IDCompositionVisual2** visual)
+    const std::wstring& owner, UINT width, UINT height, IDCompositionVisual2** visual,
+    const std::wstring& componentOwner)
 {
     if (!visual || !width || !height || !impl_->composition) return {};
     *visual = nullptr;
     auto target = std::make_shared<WidgetSurfaceTarget>();
     target->owner = owner; target->width = width; target->height = height;
+    target->componentOwner = componentOwner.empty() ? owner : componentOwner;
     if (FAILED(impl_->composition->CreateVisual(&target->visual)) ||
         FAILED(target->visual.CopyTo(visual))) return {};
     return target;

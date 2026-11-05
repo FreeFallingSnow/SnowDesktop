@@ -10,6 +10,7 @@ struct TraceQuality
     std::uint64_t droppedOwners = 0, droppedCounters = 0, droppedLinks = 0, probeErrors = 0, droppedTracks = 0;
     // Intentional filtering/sampling, never counted as data loss or probe errors.
     std::uint64_t filteredProbeCalls = 0, inputOperationsObserved = 0, inputOperationsSelected = 0, ownerFilteredProbeCalls = 0;
+    std::uint64_t drawRequests = 0, drawCoalesced = 0, drawConsumed = 0, drawPending = 0;
 };
 struct TraceOwnerDescription
 {

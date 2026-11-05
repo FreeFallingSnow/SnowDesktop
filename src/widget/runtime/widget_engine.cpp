@@ -20838,6 +20838,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
     snowdesktop::performance::Scope performanceScope("widget.render", "desktop", widgetId);
+    // A stack is a surface owner; invalidation belongs to the active Lua VM.
+    snowdesktop::performance::DrawLink("desktop", widgetId, true);
     (void)scriptPath;
 
     int idx = FindWidget(widgetId);

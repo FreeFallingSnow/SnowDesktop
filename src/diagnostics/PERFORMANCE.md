@@ -89,7 +89,7 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
 
 固定 SQL 位于 tools/performance/sql，直接交给官方 Trace Processor。分析目录保存
 最终 SQL、CSV、summary.json、查询哈希、诊断日志及 perfetto_analysis_report.md。
-查询包 v2 只接受 probeSchemaVersion 2 的原生会话；旧 JSON 继续通过 report 只读分析，
+查询包 v3 接受 probeSchemaVersion 2/3 的原生会话；旧 JSON 继续通过 report 只读分析，
 旧原生会话仍可直接用 Perfetto 查看。查询输出每流最多 4 MiB、错误日志最多 256 KiB、
 摘要最多 16 MiB；每次托管分析预留 64 MiB，总空间继续受 1 GiB 限额约束。
 
@@ -99,16 +99,29 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
   过滤掉的工作仍可能包含在该值中，不能等同独占线程 CPU。
 - thread CPU 由 SDK 提供，只对实际具有 thread_dur 的 slice 汇总。没有 CPU 样本时
   保持 null；无法证明子调用完整覆盖时 selfCpuMs 保持 null。
+  schema 3 的Windows计时使用GetThreadTimes，避免周期换算的初始校准跳变。
+  OS记账存在量化，短作用域可能为零或比墙钟多一个记账量；按足够长窗口汇总，
+  不把单次微小作用域CPU值当作高精度耗时。分析拒绝负CPU或超过墙钟50ms的明显异常。
   模块和实例的 rootInclusiveCpuMs 只取本组最外层同步 Scope，避免同组嵌套重复；
   仍包含 native API 和共享子工作，各组会重叠，不得相加或称为实例独占/纯 Lua VM CPU。
 - 进程 CPU 使用 GetProcessTimes 的累计值差，分母是该 counter 实际首尾采样窗口。
   同时输出 CPU ms/s、单核百分比及按逻辑处理器数归一化的百分比。
 - 内存等 gauge 不累加；明确的累计量才计算差值/速率，且至少两个样本、正窗口和
   无计数器回退。缺样本、重置或无效证据保持 null。
-- GPU 数据只能表达进程级引擎/内存观测，不按 Lua 实例分摊 GPU 时间。
+- 进程级GPU引擎/内存观测不按Lua实例分摊。schema 3另为独立组件渲染线程采集
+  D3D11 timestamp/disjoint区间，按实际Lua成员归属，排除UI命令交错；只在显式采集时
+  工作，使用DONOTFLUSH异步读回，最多64个在途区间，不轮询等待、不为计时Flush。
+  报告区间总时间、有效样本、边界未完成、disjoint、失败和跳过数量，不外推缺失样本。
+  这是宿主组件光栅提交区间，GPU调度/抢占可能延长它；不含DWM合成、原生毛玻璃，
+  不等同组件GPU利用率、完整GPU独占执行时间或呈现FPS。
   进程数据复用现有系统数据提供器的 GPU 查询。采集只增删 performance-capture
   consumer，不停止组件或系统面板的订阅。
   回调、应用更新和提交不代表操作系统唤醒、DWM 呈现或显示器实际帧率。
+- schema 3每个组件/表面使用一条有界失效flow和累计请求数，正常合并不算丢失；
+  drawRequests = drawConsumed + drawPending必须闭合，边界待处理单独展示。
+  桌面消费发生在实际Lua成员绘制入口，堆叠外层不再错误地消费成员失效。
+  同次采集可选择最多64个实例（旧请求兼容；旧宿主上限为8），manifest按请求顺序
+  保存ordinal与匿名owner，调用方在本地关联选择列表，不将原始实例名写入trace。
 - 跨会话匿名实例标识不同。比较工具只比较相同查询/预设配置的有效模块观测；
   已知 SDK、系统、处理器、显示、DPI、刷新率和电源差异会拒绝比较；无法证明的
   机器身份、组件内容、布局和负载保留 unknown，不能据数值变化直接判断因果。

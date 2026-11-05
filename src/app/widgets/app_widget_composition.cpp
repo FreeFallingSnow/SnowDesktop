@@ -223,7 +223,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         !widgetSurfaceRendererUnavailable_)
     {
         auto renderer = std::make_unique<snowdesktop::widget_runtime::WidgetSurfaceRenderer>();
-        if (renderer->Initialize(d2dDevice_.Get(), hwnd_))
+        if (renderer->Initialize(d2dDevice_.Get(), hwnd_, d3dDevice_.Get()))
             widgetSurfaceRenderer_ = std::move(renderer);
         else
         {
@@ -251,9 +251,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     std::vector<DesktopWidgetSurfaceFailure> surfaceFailures;
     for (const auto& widgetId : pending)
     {
-        snowdesktop::performance::Scope widgetPerformanceScope(
-            "widget.composition", "draw", widgetId);
-        snowdesktop::performance::DrawLink("desktop", widgetId, true);
         auto composition = desktopWidgetCompositionItems_.find(widgetId);
         if (composition == desktopWidgetCompositionItems_.end())
             continue;
@@ -304,6 +301,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             continue;
         }
 
+        auto* luaWidget = dynamic_cast<LuaScript*>(widgetItem);
+        const auto* content = luaWidget ? ResolveLuaWidgetContent(widgetData) : nullptr;
+        const std::wstring contentId = content ? content->id : widgetId;
+        snowdesktop::performance::Scope widgetPerformanceScope(
+            "widget.composition", "draw", contentId);
+
         const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
         const LONG rawWidth = bounds.right - bounds.left;
         const LONG rawHeight = bounds.bottom - bounds.top;
@@ -336,10 +339,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         auto& item = composition->second;
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
-        auto* luaWidget = dynamic_cast<LuaScript*>(widgetItem);
         const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed;
-        const auto* content = luaWidget ? ResolveLuaWidgetContent(widgetData) : nullptr;
-        const std::wstring contentId = content ? content->id : widgetId;
         if (item.renderTarget && (!asynchronous || item.width != width ||
             item.height != height || item.renderedContentId != contentId))
         {
@@ -353,7 +353,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         if (asynchronous && !item.renderTarget)
         {
             item.renderTarget = widgetSurfaceRenderer_->CreateTarget(
-                widgetId, width, height, &item.renderedVisual);
+                widgetId, width, height, &item.renderedVisual, contentId);
             if (!item.renderTarget)
             {
                 item.renderFailed = true;
@@ -433,7 +433,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         else if (luaWidget)
         {
             snowdesktop::performance::Scope contentScope(
-                "widget.composition", "content.record", widgetId);
+                "widget.composition", "content.record", contentId);
             // The child draw captures its base material request; the owning
             // surface registers the native panel after EndDraw succeeds.
             luaWidget->DrawCompositionSurface(

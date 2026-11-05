@@ -162,7 +162,6 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (!context || !data_ || !app_) return;
 
     std::optional<snowdesktop::performance::Scope> recordingPhase;
-    recordingPhase.emplace("widget.composition", "state.prepare", data_->id);
 
     struct RestoreData { DesktopWidget*& data; DesktopWidget* previous; ~RestoreData() { data = previous; } } restore{data_, data_};
     if (data_->type == DesktopWidgetType::LuaStack)
@@ -171,6 +170,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         if (!data_) return;
     }
     const auto& presentation = preview ? *data_ : app_->ResolveLuaWidgetFrameOwner(*data_);
+    recordingPhase.emplace("widget.composition", "state.prepare", data_->id);
     GridCell renderCell = presentation.gridCell;
     RECT frame = preview ? rect : app_->GetStandaloneWidgetFrameRect(*data_);
     if (IsRectEmptyRect(frame)) return;

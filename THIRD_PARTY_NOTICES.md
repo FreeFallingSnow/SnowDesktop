@@ -451,6 +451,10 @@ Provides native performance capture and analysis. The repository vendors the off
 
 The compiler copy has two MSVC C4267 type adaptations: a chunk index uses `size_t` to match producer and consumer APIs, and the at-most-five-byte uint32 varint length is represented as `uint32_t`. These do not change the trace format or disable compiler warnings; the compiler copy is rewritten only when its contents change.
 
+Windows CPU计时统一使用上游Windows/Arm分支的`GetThreadTimes`，避免x64周期换算的首次校准零值与时间跳变；未使用的TSC频率函数标为`maybe_unused`。原始SDK不变，计时保留OS线程记账的短区间量化限制。
+
+Windows CPU timing uses the upstream Windows/Arm `GetThreadTimes` path on all architectures, avoiding x64 cycle-conversion startup zeros and jumps; the unused TSC frequency helper is marked `maybe_unused`. Original SDK files remain unchanged, and short intervals retain OS CPU-accounting quantization.
+
 **分发 / Distribution**
 
 发行包随附 `licenses/Perfetto-LICENSE.txt`。采集、分析和回归入口见 [PERFORMANCE.md](src/diagnostics/PERFORMANCE.md)。

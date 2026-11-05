@@ -583,6 +583,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/view/widget_draw_geometry.cpp
     src/widget/view/widget_surface_renderer.cpp
+    src/widget/view/widget_gpu_timing.cpp
     src/widget/view/widget_background_cache.cpp
     src/widget/view/widget_image_sampling.cpp
     src/widget/view/widget_interaction_region.cpp
