@@ -19,7 +19,8 @@ struct TraceOwnerDescription
     std::wstring instanceId;
 };
 void ActivateTrace(std::uint64_t generation, std::uint64_t salt,
-    const std::vector<std::wstring>& selectedInstances = {}, unsigned inputSampleEvery = 1);
+    const std::vector<std::wstring>& selectedInstances = {}, unsigned inputSampleEvery = 1,
+    bool scopeCpu = false);
 TraceQuality DeactivateTrace() noexcept;
 std::vector<TraceOwnerDescription> DescribeTraceOwners();
 // Session-local correlation identity; do not export a HWND/address verbatim.

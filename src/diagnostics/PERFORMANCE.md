@@ -2,7 +2,8 @@
 
 运行时默认关闭。第一次显式开始采集时初始化固定的 Perfetto v58.2
 in-process SDK。宿主使用 SDK 原生线程轨道、slice、counter 和 flow；业务
-Scope 只传递实例与操作上下文，不保存事件、计时栈、CPU 时钟、直方图或聚合结果。
+Scope传递实例与操作上下文；显式请求CPU采样时另保存起始OS CPU/原始周期快照，
+在结束事件中记录差值（包括零），不建立事件存储、计时栈、直方图或聚合器。
 日志、崩溃转储和实际动画调度器保留原有职责。
 
 ## CLI 与产物
@@ -89,7 +90,7 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
 
 固定 SQL 位于 tools/performance/sql，直接交给官方 Trace Processor。分析目录保存
 最终 SQL、CSV、summary.json、查询哈希、诊断日志及 perfetto_analysis_report.md。
-查询包 v3 接受 probeSchemaVersion 2/3 的原生会话；旧 JSON 继续通过 report 只读分析，
+查询包 v4 接受 probeSchemaVersion 2/3/4 的原生会话；旧 JSON 继续通过 report 只读分析，
 旧原生会话仍可直接用 Perfetto 查看。查询输出每流最多 4 MiB、错误日志最多 256 KiB、
 摘要最多 16 MiB；每次托管分析预留 64 MiB，总空间继续受 1 GiB 限额约束。
 
@@ -100,6 +101,8 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
 - thread CPU 由 SDK 提供，只对实际具有 thread_dur 的 slice 汇总。没有 CPU 样本时
   保持 null；无法证明子调用完整覆盖时 selfCpuMs 保持 null。
   schema 3 的Windows计时使用GetThreadTimes，避免周期换算的初始校准跳变。
+  schema 4在Scope结束事件中显式保存OS CPU差值，区分已测得零与SDK未提供slice CPU；
+  另存QueryThreadCycleTime原始差值作为细粒度工作量，不将周期数换算为时间。
   OS记账存在量化，短作用域可能为零或比墙钟多一个记账量；按足够长窗口汇总，
   不把单次微小作用域CPU值当作高精度耗时。分析拒绝负CPU或超过墙钟50ms的明显异常。
   模块和实例的 rootInclusiveCpuMs 只取本组最外层同步 Scope，避免同组嵌套重复；
@@ -108,9 +111,12 @@ manifest 包含 SDK/应用版本、进程角色、请求与配置身份、原生
   同时输出 CPU ms/s、单核百分比及按逻辑处理器数归一化的百分比。
 - 内存等 gauge 不累加；明确的累计量才计算差值/速率，且至少两个样本、正窗口和
   无计数器回退。缺样本、重置或无效证据保持 null。
-- 进程级GPU引擎/内存观测不按Lua实例分摊。schema 3另为独立组件渲染线程采集
+- 进程级GPU引擎/内存观测不按Lua实例分摊。schema 4为独立组件渲染线程采集
   D3D11 timestamp/disjoint区间，按实际Lua成员归属，排除UI命令交错；只在显式采集时
-  工作，使用DONOTFLUSH异步读回，最多64个在途区间，不轮询等待、不为计时Flush。
+  工作，使用DONOTFLUSH异步读回，最多64个在途区间，不轮询等待或Flush D3D设备。
+  采样时先Flush本帧D2D绘制命令到已有D3D批次，再结束时间戳，随后正常DComp提交，
+  避免空区间或后续CPU提交间隙进入测量。未采样时不增加该D2D命令Flush。
+  schema 3的GPU端点可能覆盖提交等待，只保留诊断用途，不用于光栅热点排名。
   报告区间总时间、有效样本、边界未完成、disjoint、失败和跳过数量，不外推缺失样本。
   这是宿主组件光栅提交区间，GPU调度/抢占可能延长它；不含DWM合成、原生毛玻璃，
   不等同组件GPU利用率、完整GPU独占执行时间或呈现FPS。

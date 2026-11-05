@@ -51,7 +51,7 @@ try {
             interpretation='Capture-active per-producer synchronous operation-group observations, not OS input counts or the SQL slice window. Nested input scopes agree. Selected groups are probe decisions; consult trace loss/boundary quality. No scaled estimates.'}
     }
     if ($manifest.schemaVersion -ne 2 -or $manifest.format -ne 'perfetto' -or -not $manifest.completion -or $manifest.state -ne 'completed') { throw 'captureIncompleteOrUnsupported' }
-    if (-not $manifest.PSObject.Properties['probeSchemaVersion'] -or $manifest.probeSchemaVersion -notin @(2,3)) { throw 'unsupportedProbeSchema: record a new native capture; historical JSON remains supported through report.' }
+    if (-not $manifest.PSObject.Properties['probeSchemaVersion'] -or $manifest.probeSchemaVersion -notin @(2,3,4)) { throw 'unsupportedProbeSchema: record a new native capture; historical JSON remains supported through report.' }
     if ($manifest.traceFile -ne [IO.Path]::GetFileName($manifest.traceFile) -or [IO.Path]::GetExtension($manifest.traceFile) -ne '.pftrace') { throw 'manifestTracePathRejected' }
     $trace = Join-Path ([IO.Path]::GetDirectoryName($manifestFile)) $manifest.traceFile
     if ((Get-Item -LiteralPath $trace).Length -gt 268435456 -or
@@ -126,15 +126,16 @@ try {
         unattributedServiceDiscardedPatches=[double]$q.servicePatchesDiscarded
         incompleteSlices=[int]$q.incompleteSlices;boundarySlices=[int]$q.boundarySlices;missingCpuSlices=[int]$q.missingCpuSlices;invalidCpuSlices=[int]$q.invalidCpuSlices
         drawCorrelation=$drawCorrelation
+        cpuValid=($manifest.scopeCpuEnabled -and [int]$q.missingCpuSlices -eq 0 -and [int]$q.invalidCpuSlices -eq 0)
         window='SDK capture markers; only complete contained slices; resource rates use their actual first/last sample window'}
     $scopes = @($tables.scopes | ForEach-Object {
         [pscustomobject]@{module=$_.module;phase=$_.phase;owner=$_.owner;calls=[int]$_.calls
             wallMs=(Number-OrNull $_.wallMs);selfWallMs=(Number-OrNull $_.selfWallMs)
             p50WallMs=(Number-OrNull $_.p50WallMs);p95WallMs=(Number-OrNull $_.p95WallMs);p99WallMs=(Number-OrNull $_.p99WallMs)
-            maxWallMs=(Number-OrNull $_.maxWallMs);inclusiveCpuMs=(Number-OrNull $_.inclusiveCpuMs);selfCpuMs=$null;cpuSamples=[int]$_.cpuSamples}
+            maxWallMs=(Number-OrNull $_.maxWallMs);inclusiveCpuMs=(Number-OrNull $_.inclusiveCpuMs);inclusiveCpuCycles=(Number-OrNull $_.inclusiveCpuCycles);selfCpuMs=$null;cpuSamples=[int]$_.cpuSamples}
     })
     $modules = @($tables.modules | ForEach-Object { [pscustomobject]@{module=$_.module;calls=[int]$_.calls;selfWallMs=(Number-OrNull $_.selfWallMs);selfCpuMs=$null
-        rootInclusiveCpuMs=(Number-OrNull $_.rootInclusiveCpuMs);rootScopes=[int]$_.rootScopes;rootCpuSamples=[int]$_.rootCpuSamples} })
+        rootInclusiveCpuMs=(Number-OrNull $_.rootInclusiveCpuMs);rootCpuCycles=(Number-OrNull $_.rootCpuCycles);rootScopes=[int]$_.rootScopes;rootCpuSamples=[int]$_.rootCpuSamples} })
     $cumulative = @('cpu_total_ms','page_fault_count','io_read_bytes','io_write_bytes','io_other_bytes','io_read_operations','io_write_operations',
         'lua_allocated_bytes_total','lua_freed_bytes_total','lua_allocations_total','lua_frees_total','lua_reallocations_total',
         'surface_reclaim_count','surface_reclaimed_bytes','history_skipped_total','query_failures_total','snapshot.bitmap_allocations',
@@ -157,20 +158,23 @@ try {
     })
     $cpu = if ($cpuRows.Count -eq 1) {$cpuRows[0].ratePerSecond} else {$null}
     $gpuMissingOwners = @()
+    $gpuRasterTimingSupported = $manifest.probeSchemaVersion -ge 4
     $widgetGpu = @($counters | Where-Object module -eq 'widget.gpu' | Group-Object owner | ForEach-Object {
         $metrics = @{}; foreach ($row in $_.Group) { $metrics[$row.metric] = $row }
         $missing = @('raster_ms_total','ranges_total','samples_total','disjoint_total','errors_total','skipped_total') | Where-Object { -not $metrics.ContainsKey($_) }
         if (@($missing).Count) { $gpuMissingOwners += $_.Name; return }
         $samples = $metrics['samples_total'].last
-        [pscustomobject]@{owner=$_.Name;rasterMs=$metrics['raster_ms_total'].delta
-            sampleWindowMs=$metrics['raster_ms_total'].sampleWindowMs;rasterMsPerSecond=$metrics['raster_ms_total'].ratePerSecond
+        [pscustomobject]@{owner=$_.Name;validRasterRange=$gpuRasterTimingSupported
+            rasterMs=if($gpuRasterTimingSupported){$metrics['raster_ms_total'].delta}else{$null}
+            sampleWindowMs=$metrics['raster_ms_total'].sampleWindowMs
+            rasterMsPerSecond=if($gpuRasterTimingSupported){$metrics['raster_ms_total'].ratePerSecond}else{$null}
             samples=$samples;ranges=$metrics['ranges_total'].last;disjoint=$metrics['disjoint_total'].last
             errors=$metrics['errors_total'].last;skipped=$metrics['skipped_total'].last
             pending=$metrics['ranges_total'].last-$samples-$metrics['disjoint_total'].last-$metrics['errors_total'].last-$metrics['skipped_total'].last
-            meanObservedMs=if($valid -and $samples -gt 0){$metrics['raster_ms_total'].last/$samples}else{$null}
+            meanObservedMs=if($valid -and $gpuRasterTimingSupported -and $samples -gt 0){$metrics['raster_ms_total'].last/$samples}else{$null}
             interpretation='Observed timestamp intervals for host widget raster submission only; adapter scheduling may stretch them. No GPU utilization percentage, DWM/native-backdrop work, presentation FPS, or extrapolation of pending/skipped/disjoint/error samples.'}
     })
-    $summary = [ordered]@{schemaVersion=2;queryVersion=3;probeSchemaVersion=$manifest.probeSchemaVersion;sdkVersion=$manifest.sdkVersion;sessionId=$manifest.sessionId
+    $summary = [ordered]@{schemaVersion=2;queryVersion=4;probeSchemaVersion=$manifest.probeSchemaVersion;sdkVersion=$manifest.sdkVersion;sessionId=$manifest.sessionId
         hostVersion=$manifest.hostVersion;executableSha256=$manifest.executableSha256;sourceCommit=$manifest.sourceCommit
         environment=$manifest.environment;selectedInstances=$manifest.selectedInstances
         moduleFilter=$moduleFilter;enabledCategories=$enabledCategories;inputDetailSampling=$inputSampling;probeFiltering=$probeFiltering
@@ -186,7 +190,7 @@ try {
         animations=@(Sql-Records $tables.animations);compositor=@(Sql-Records $tables.compositor)
         resourceTrends=$resourceTrends;processWakeupsPerSecond=$null
         limitations=@('One measured process only; its role and excluded processes are listed in the manifest.',
-            'Inclusive thread CPU uses the manifest clock source. Windows GetThreadTimes retains OS accounting quantization: tiny individual scopes may read zero or exceed their wall interval by a quantum. Missing CPU stays null; self CPU is not inferred.',
+            'Native scope CPU annotations preserve measured zero separately from missing samples. Windows GetThreadTimes retains OS accounting quantization; raw CPU-cycle deltas offer finer work counts, never a cycle-to-time conversion. Self CPU is not inferred.',
             'Module and instance CPU use outermost synchronous scopes per group. They remain inclusive views, overlap across groups, include native/shared child work, and must not be added as exclusive CPU. Lua protected calls are not pure VM CPU.',
             'Wall time includes waiting and nested work. App callbacks, updates and commits do not measure OS wakeups or presented frames.',
             'Process GPU-engine counters are not divided among widgets. Separate D3D11 timestamp ranges measure observed host raster intervals per component, exclude DWM/native-backdrop work, and report pending, skipped, disjoint and error samples explicitly.',

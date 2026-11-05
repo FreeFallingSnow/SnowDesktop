@@ -62,12 +62,12 @@ struct WidgetSurfaceRenderer::Impl
             if (FAILED(result)) return result;
         }
         ComPtr<ID2D1DeviceContext> context;
-        WidgetGpuTiming::Frame gpuFrame(gpuTiming, target.componentOwner);
         POINT offset{};
         HRESULT result = target.surface->BeginDraw(nullptr,
             __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(context.GetAddressOf()), &offset);
         if (FAILED(result)) return result;
+        WidgetGpuTiming::Frame gpuFrame(gpuTiming, target.componentOwner);
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -75,14 +75,17 @@ struct WidgetSurfaceRenderer::Impl
             static_cast<float>(offset.y - frame.bounds.top)));
         context->Clear(D2D1::ColorF(0, 0.0f));
         context->DrawImage(frame.commands.Get());
+        // Flush D2D commands into the existing D3D batch, not the D3D device.
+        // Both GPU markers then precede the normal DComp submission. Without
+        // this, the endpoint can measure an empty range or a later CPU gap.
+        const HRESULT recorded = gpuFrame.Active() ? context->Flush() : S_OK;
         context.Reset();
         result = target.surface->EndDraw();
+        if (SUCCEEDED(result) && FAILED(recorded)) result = recorded;
+        gpuFrame.Complete(SUCCEEDED(result));
         if (FAILED(result) || !target.active.load()) return result;
         result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
-        // DComp submits the D2D surface work at Commit. An earlier timestamp
-        // only measures an empty command range, despite valid query readback.
-        gpuFrame.Complete(SUCCEEDED(result));
         return result;
     }
 

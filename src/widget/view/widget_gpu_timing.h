@@ -28,6 +28,7 @@ public:
         Frame(const Frame&) = delete;
         Frame& operator=(const Frame&) = delete;
         void Complete(bool successful);
+        bool Active() const noexcept { return timer_ != nullptr; }
     private:
         WidgetGpuTiming* timer_ = nullptr;
     };

@@ -28,6 +28,7 @@ struct TraceContext
     std::atomic<std::uint64_t> droppedOwners{ 0 }, droppedCounters{ 0 }, droppedLinks{ 0 }, probeErrors{ 0 };
     std::atomic<std::uint64_t> animationTracks{0}, droppedTracks{0};
     unsigned inputSampleEvery = 1;
+    bool scopeCpu = false;
     std::atomic<std::uint64_t> filteredProbeCalls{0}, inputOperationsObserved{0}, inputOperationsSelected{0}, ownerFilteredProbeCalls{0};
     std::mutex identityMutex, counterMutex, drawMutex, taskMutex;
     std::unordered_map<std::uint64_t, std::wstring> owners;
@@ -154,9 +155,22 @@ bool Begin(Category category, std::string_view module, std::string_view phase,
 #undef SNOW_BEGIN_CASE
     return false;
 }
-void End(Category category)
+bool NativeCpu(std::uint64_t& ticks) noexcept
 {
-#define SNOW_END_CASE(kind, label) case Category::kind: TRACE_EVENT_END(label); break;
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return false;
+    ticks = ((std::uint64_t(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime) +
+        ((std::uint64_t(user.dwHighDateTime) << 32) | user.dwLowDateTime);
+    return true;
+}
+void End(Category category, bool cpuSampled, std::uint64_t cpuNs,
+    bool cyclesSampled, std::uint64_t cycles)
+{
+#define SNOW_END_CASE(kind, label) case Category::kind: \
+    TRACE_EVENT_END(label, [=](perfetto::EventContext event) { \
+        if (cpuSampled) { auto* value = event.event()->add_debug_annotations(); value->set_name("cpu_ns"); value->set_uint_value(cpuNs); } \
+        if (cyclesSampled) { auto* value = event.event()->add_debug_annotations(); value->set_name("cpu_cycles"); value->set_uint_value(cycles); } \
+    }); break;
     switch (category) { SNOW_TRACE_CATEGORIES(SNOW_END_CASE) }
 #undef SNOW_END_CASE
 }
@@ -205,14 +219,40 @@ Scope::Scope(std::string_view module, std::string_view phase,
         if (phase.size() > 256 || module.size() > 64) { ++context_->probeErrors; return; }
         if (Selected(*context_, currentOwner) && RecordCategory(*context_, category) &&
             (category != Category::Input || RecordInputOperation(*context_, currentOperation)))
+        {
+            if (context_->scopeCpu)
+            {
+                nativeThread_ = GetCurrentThreadId();
+                nativeCpuSampled_ = NativeCpu(nativeCpuStart_);
+                ULONG64 cycles = 0;
+                nativeCyclesSampled_ = QueryThreadCycleTime(GetCurrentThread(), &cycles) != FALSE;
+                nativeCyclesStart_ = cycles;
+                if (!nativeCpuSampled_ || !nativeCyclesSampled_) ++context_->probeErrors;
+            }
             open_ = Begin(category, module, phase, currentOwner, currentOperation);
+        }
     }
     catch (...) { ++context_->probeErrors; }
 }
 Scope::~Scope()
 {
     if (!context_) return;
-    try { if (open_ && Enabled() && context.load() == context_) End(static_cast<Category>(category_)); }
+    try
+    {
+        if (open_ && Enabled() && context.load() == context_)
+        {
+            std::uint64_t cpu = 0;
+            ULONG64 cycles = 0;
+            const bool sameThread = nativeThread_ == GetCurrentThreadId();
+            const bool cpuSampled = nativeCpuSampled_ && sameThread && NativeCpu(cpu) && cpu >= nativeCpuStart_;
+            const bool cyclesSampled = nativeCyclesSampled_ && sameThread &&
+                QueryThreadCycleTime(GetCurrentThread(), &cycles) && cycles >= nativeCyclesStart_;
+            if ((nativeCpuSampled_ && !cpuSampled) || (nativeCyclesSampled_ && !cyclesSampled)) ++context_->probeErrors;
+            End(static_cast<Category>(category_), cpuSampled,
+                cpuSampled ? (cpu - nativeCpuStart_) * 100 : 0,
+                cyclesSampled, cyclesSampled ? cycles - nativeCyclesStart_ : 0);
+        }
+    }
     catch (...) { ++context_->probeErrors; }
     currentOwner = previousOwner_;
     currentOperation = previousOperation_;
@@ -401,12 +441,14 @@ TaskExecution::~TaskExecution()
     if (flow_ && Enabled() && context.load() == context_)
         TRACE_EVENT_INSTANT("snow.task", "task.execute.end", perfetto::Flow::ProcessScoped(flow_), "operation", operation_, "owner", owner_);
 }
-void ActivateTrace(std::uint64_t generation, std::uint64_t salt, const std::vector<std::wstring>& selected, unsigned inputSampleEvery)
+void ActivateTrace(std::uint64_t generation, std::uint64_t salt, const std::vector<std::wstring>& selected,
+    unsigned inputSampleEvery, bool scopeCpu)
 {
     auto state = std::make_shared<detail::TraceContext>();
     state->generation = generation;
     state->salt = salt;
     state->inputSampleEvery = (std::max)(1U, inputSampleEvery);
+    state->scopeCpu = scopeCpu;
     for (const auto& owner : selected) state->selected.push_back(RegisterOwner(*state, owner));
     context.store(std::move(state));
     active.store(true, std::memory_order_release);
