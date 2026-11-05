@@ -8,6 +8,19 @@ local mediaArtwork
 local audioAnalysis
 local launcherBinding
 local descriptor
+local snapshotCache = {}
+
+-- A frame, its background and its view read the same subscription revision.
+-- Keep one immutable envelope until the host delivers a data.change event.
+local function subscriptionValue(subscription, topic)
+    if not subscription then return nil end
+    local cached = snapshotCache[topic]
+    if not cached or cached.subscription ~= subscription then
+        cached = { subscription = subscription, value = subscription:value() }
+        snapshotCache[topic] = cached
+    end
+    return cached.value
+end
 local RECORD_FRAME = "aurora.record.spin"
 local PROGRESS_TICK = "aurora.timeline.tick"
 local PROGRESS_TICK_MS = 100
@@ -123,7 +136,7 @@ local function currentSession(model)
         return localPlayback.session(model.localPlayback), model.localPlayback.updatedAtMs or 0
     end
     if model and model.preview then return previewSession(), 0 end
-    local snapshot = mediaCurrent and mediaCurrent:value() or nil
+    local snapshot = subscriptionValue(mediaCurrent, "media.current")
     return player.session(snapshot), tonumber(snapshot and
         snapshot.timestamp) or 0
 end
@@ -147,7 +160,7 @@ local function currentArtwork(model, session)
     end
     if not session or (model and model.preview) then return nil end
     local artwork = player.artwork(
-        mediaArtwork and mediaArtwork:value() or nil,
+        subscriptionValue(mediaArtwork, "media.artwork"),
         session.id, model and model.artworkAfterMs or nil)
     if artwork and model then model.artworkAfterMs = nil end
     return artwork
@@ -195,9 +208,11 @@ local function syncAudioAnalysis(context, model)
     local analyze = not model.preview and shouldAnalyze(context)
     if analyze and not audioAnalysis then
         audioAnalysis = subscribeAudioAnalysis()
+        snapshotCache["audio.output.analysis"] = nil
     elseif not analyze and audioAnalysis then
         audioAnalysis:unsubscribe()
         audioAnalysis = nil
+        snapshotCache["audio.output.analysis"] = nil
     end
     model.visualizer = analyze or model.preview
 end
@@ -548,7 +563,7 @@ local function visualizerNode(model, colors, plan)
     if not model.visualizer or not widget.hasFeature("view.dataSeries") then
         return nil
     end
-    local snapshot = audioAnalysis and audioAnalysis:value() or nil
+    local snapshot = subscriptionValue(audioAnalysis, "audio.output.analysis")
     return view.spectrum({
         key = "aurora.visualizer",
         values = player.spectrum(snapshot, 36, model.preview),
@@ -571,7 +586,7 @@ end
 local function viewTree(context, model)
     model.reducedMotion = context.accessibility.reducedMotion == true
     local session, timestamp = currentSession(model)
-    local launcher = currentLauncher()
+    local launcher = not session and currentLauncher() or nil
     syncMediaIdentity(model, session, timestamp)
     local artwork = currentArtwork(model, session)
     local artworkBackgroundActive = player.shouldUseArtworkBackground(
@@ -917,6 +932,12 @@ local function commitSeek(model, session, timeline, fraction)
 end
 
 local function event(context, model, value)
+    if value.kind == "data.change" and value.topic then
+        snapshotCache[value.topic] = nil
+    elseif value.kind == "visibility" or value.kind == "environment" or
+        value.kind == "settings.changed" or value.kind == "task.complete" then
+        snapshotCache = {}
+    end
     if value.kind=="panel" or value.kind=="popover" then
         if value.action=="opened" then model.auxiliarySurface=value.kind
         elseif value.action=="closed" and model.auxiliarySurface==value.kind then
@@ -1246,6 +1267,7 @@ local function dispose(_context,model)
     mediaCurrent = nil
     mediaArtwork = nil
     audioAnalysis = nil
+    snapshotCache = {}
     launcherBinding = nil
 end
 

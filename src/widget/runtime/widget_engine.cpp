@@ -18700,7 +18700,7 @@ static void DrawWidgetMonthCalendar(D2DState* state,
 static void DrawWidgetViewBitmap(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     ID2D1Bitmap1* bitmap, const D2D1_RECT_F& rect,
-    float opacity, float borderWidth,
+    float opacity, float borderWidth, float radius,
     const snowdesktop::widget_runtime::ViewThemePalette& palette,
     snowdesktop::widget_runtime::PackageImageSize original = {})
 {
@@ -18759,6 +18759,38 @@ static void DrawWidgetViewBitmap(D2DState* state,
     const std::optional<std::uint32_t> imageTint =
         snowdesktop::widget_runtime::ResolveViewThemeColor(
             node.imageTint, node.imageTintToken, palette);
+    const bool rounded = node.type == snowdesktop::widget_runtime::ViewNodeType::Image && radius > 0;
+    if (rounded && !imageTint && destination.left == rect.left &&
+        destination.top == rect.top && destination.right == rect.right &&
+        destination.bottom == rect.bottom &&
+        state->imageSamplingCache.DrawRounded(state->ctx, bitmap, destination,
+            sourceRect, radius, opacity, interpolation))
+    {
+        snowdesktop::performance::Value("widget.image", "rounded.direct", {}, 1);
+        return;
+    }
+    struct ImageClip
+    {
+        ID2D1DeviceContext* context;
+        bool pushed = false;
+        ~ImageClip() { if (pushed) context->PopLayer(); }
+    } imageClip{ state->ctx };
+    if (rounded)
+    {
+        ComPtr<ID2D1Factory> factory;
+        state->ctx->GetFactory(&factory);
+        ComPtr<ID2D1RoundedRectangleGeometry> geometry;
+        const float clipRadius = std::min(radius,
+            std::min(node.frame.width, node.frame.height) * 0.5f);
+        if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(rect, clipRadius, clipRadius), &geometry)) && geometry)
+        {
+            state->ctx->PushLayer(D2D1::LayerParameters(rect, geometry.Get(),
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+            imageClip.pushed = true;
+            snowdesktop::performance::Value("widget.image", "rounded.layer", {}, 1);
+        }
+    }
     if (imageTint)
     {
         ComPtr<ID2D1Effect> tintEffect;
@@ -19717,28 +19749,8 @@ static void DrawWidgetViewNode(D2DState* state,
                 }
             }
         }
-        ComPtr<ID2D1RoundedRectangleGeometry> imageClip;
-        bool imageClipPushed = false;
-        if (node.type == ViewNodeType::Image && bitmap && radius > 0.0f)
-        {
-            ComPtr<ID2D1Factory> factory;
-            state->ctx->GetFactory(&factory);
-            const float clipRadius = std::min(radius,
-                std::min(node.frame.width, node.frame.height) * 0.5f);
-            if (factory && SUCCEEDED(factory->CreateRoundedRectangleGeometry(
-                    D2D1::RoundedRect(rect, clipRadius, clipRadius),
-                    &imageClip)) && imageClip)
-            {
-                state->ctx->PushLayer(D2D1::LayerParameters(
-                    rect, imageClip.Get(),
-                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
-                imageClipPushed = true;
-            }
-        }
         DrawWidgetViewBitmap(
-            state, node, bitmap, rect, opacity, borderWidth, palette, original);
-        if (imageClipPushed)
-            state->ctx->PopLayer();
+            state, node, bitmap, rect, opacity, borderWidth, radius, palette, original);
     }
 
     if ((node.type == ViewNodeType::Text ||
