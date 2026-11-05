@@ -20763,7 +20763,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     const auto cachedBackground = d2dState_->backgroundCache.Resolve(widgetId,
         context, commands.Get(), D2D1::RectF(static_cast<float>(bounds.left),
             static_cast<float>(bounds.top), static_cast<float>(bounds.right),
-            static_cast<float>(bounds.bottom)), blurRadius,
+            static_cast<float>(bounds.bottom)), blurRadius, cornerRadius,
         [this](ID2D1Bitmap* bitmap) {
             // These caches create immutable decoded bitmaps. Arbitrary target
             // bitmaps or effect inputs must never enter the signature cache.
@@ -20781,6 +20781,17 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
             cachedBackground.outcome == CacheOutcome::Miss ? "miss" : "bypass", widgetId, 1);
     snowdesktop::performance::Value("widget.background.cache", "retained_bytes_estimate", {},
         static_cast<double>(d2dState_->backgroundCache.RetainedBytes()));
+    if (cachedBackground.bitmap)
+    {
+        // Cached pixels already contain the rounded mask. Applying opacity to
+        // the premultiplied bitmap preserves the group's opacity semantics.
+        context->DrawBitmap(cachedBackground.bitmap.Get(),
+            D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
+            opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+        widget.backgroundLayerError.clear();
+        return true;
+    }
     ComPtr<ID2D1Image> output;
     if (FAILED(commands.As(&output)) || !output)
     {
@@ -20825,10 +20836,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     context->PushLayer(D2D1::LayerParameters(frame, clip.Get(),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
         D2D1::Matrix3x2F::Identity(), opacity), nullptr);
-    if (cachedBackground.bitmap)
-        context->DrawImage(cachedBackground.bitmap.Get(),
-            D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.top)));
-    else context->DrawImage(output.Get());
+    context->DrawImage(output.Get());
     context->PopLayer();
     widget.backgroundLayerError.clear();
     return true;
@@ -23698,7 +23706,10 @@ WidgetEngine::GetWidgetHostState(const std::wstring& widgetId,
 
     if (!IsWidgetPackageInstalled(packageId))
         return { WidgetHostStateKind::PackageMissing, {} };
-    const auto package = GetWidgetPackage(packageId);
+    // This synchronous check performs no catalog mutation or callbacks. Keep
+    // permission evaluation fresh without copying the manifest and locales
+    // on every animated frame. The borrow ends before leaving this call.
+    const auto* package = GetWidgetPackageManager().FindResolved(WidgetWideToUtf8(packageId));
     if (!package)
         return { WidgetHostStateKind::LoadFailed, {} };
     const auto grant = snowdesktop::widget::WidgetPermissionBroker::Evaluate(

@@ -373,6 +373,9 @@ public:
         std::string& error,
         const SteamLibrarySubscriptions* libraries = nullptr);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
+    // Synchronous inspection only; invalidated by any catalog mutation.
+    // Callers needing ownership across callbacks must use Resolve instead.
+    const InstalledPackage* FindResolved(const std::string& packageId) const;
     // Selection and inspection do not grant execution of a disabled package.
     std::optional<InstalledPackage> ResolveSelected(const std::string& packageId) const;
     std::optional<std::filesystem::path> ResolveSelectedEntry(const std::string& packageId) const;

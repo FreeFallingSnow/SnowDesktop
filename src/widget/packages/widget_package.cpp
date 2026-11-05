@@ -3204,20 +3204,26 @@ SteamLibrarySubscriptionHistory WidgetPackageManager::SteamLibraryHistory() cons
 std::optional<InstalledPackage> WidgetPackageManager::Resolve(
     const std::string& packageId) const
 {
+    const auto* package = FindResolved(packageId);
+    return package ? std::optional<InstalledPackage>(*package) : std::nullopt;
+}
+
+const InstalledPackage* WidgetPackageManager::FindResolved(
+    const std::string& packageId) const
+{
     if (const auto registry = registry_.find(packageId);
         registry != registry_.end() && !registry->second.enabled &&
         !developmentOverrides_.contains(packageId))
-        return std::nullopt;
+        return nullptr;
     const InstalledPackage* builtinFallback = nullptr;
     for (const auto& package : packages_)
     {
         if (package.manifest.id != packageId) continue;
-        if (package.active && package.enabled) return package;
+        if (package.active && package.enabled) return &package;
         if (package.builtin && package.enabled && !builtinFallback)
             builtinFallback = &package;
     }
-    if (builtinFallback) return *builtinFallback;
-    return std::nullopt;
+    return builtinFallback;
 }
 
 std::optional<InstalledPackage> WidgetPackageManager::ResolveSelected(
