@@ -1110,21 +1110,41 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         return result;
     };
     appearance.themeLibrary = themeLibrary;
-    appearance.contextMenu = [english](const shell_extensions::Request&, bool) {
-        shell_extensions::CatalogueView result; result.catalogue.revision = 1;
-        for (int index = 0; index < 3; ++index)
-        {
-            shell_extensions::Registration item;
-            item.id = "preview-menu-" + std::to_string(index);
+    appearance.contextMenu = [](const shell_extensions::Request& request, bool) {
+        namespace ext = shell_extensions;
+        ext::CatalogueView result;
+        result.selection = request;
+        result.catalogue.revision = result.registrations.revision = 1;
+        const unsigned files = ext::ContextBit(ext::Context::File);
+        const unsigned folders = ext::ContextBit(ext::Context::Folder);
+        const unsigned backgrounds = ext::ContextBit(ext::Context::FolderBackground) |
+            ext::ContextBit(ext::Context::Desktop);
+        const ext::Application explorer{"preview-windows-explorer", _LW("preview.contextMenu.fileExplorer")};
+        const ext::Application security{"preview-windows-security", _LW("preview.contextMenu.windowsSecurity")};
+        const ext::Application terminal{"preview-windows-terminal", L"Windows Terminal"};
+        const auto add = [&](const char* id, const char* label, const ext::Application& application,
+                             unsigned contexts, ext::RegistrationKind kind) {
+            ext::Registration item;
+            item.id = std::string("preview-windows-") + id;
+            item.kind = kind;
             item.display.registration = item.id;
-            item.display.label = english ? L"Example file action " : L"示例文件操作 "; // l10n-allow: isolated bilingual preview fixture, not production UI text.
-            item.display.label += std::to_wstring(index + 1);
-            item.application = {"preview-tools", english ? L"Example tools" : L"示例工具"}; // l10n-allow: isolated bilingual preview fixture, not production UI text.
-            item.contexts = shell_extensions::ContextBit(shell_extensions::Context::File) |
-                shell_extensions::ContextBit(shell_extensions::Context::Folder);
-            item.linked = true; item.types = {L"*"};
+            item.display.key = id;
+            item.display.label = _LW(label);
+            item.application = application;
+            item.contexts = contexts;
+            item.types = {L"*"};
+            // Installed sources feed By application; the linked projection
+            // feeds By object. These isolated IDs have no invocation tokens.
+            result.registrations.rows.push_back(item);
+            item.linked = true;
             result.catalogue.rows.push_back(std::move(item));
-        }
+        };
+        add("open-with", "preview.contextMenu.openWith", explorer, files, ext::RegistrationKind::Handler);
+        add("send-to", "preview.contextMenu.sendTo", explorer, files | folders, ext::RegistrationKind::Handler);
+        add("share", "preview.contextMenu.share", explorer, files, ext::RegistrationKind::Handler);
+        add("pin-to-start", "settings.contextMenu.pinToStart", explorer, folders, ext::RegistrationKind::Handler);
+        add("defender", "preview.contextMenu.scanDefender", security, files | folders, ext::RegistrationKind::Handler);
+        add("terminal", "preview.contextMenu.openTerminal", terminal, folders | backgrounds, ext::RegistrationKind::Packaged);
         return result;
     };
     appearance.listFonts = [] { return std::vector<app_fonts::Choice>{{{}, L"Segoe UI", L"Segoe UI"}}; };
@@ -2204,9 +2224,15 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         {
             for (int pass = 0; pass < 4; ++pass)
             {
-                Walk(cards, [](const x::DependencyObject& node) {
+                Walk(cards, [page](const x::DependencyObject& node) {
                     if (const auto expander = node.try_as<c::Expander>(); expander && expander.Visibility() == x::Visibility::Visible)
-                        expander.IsExpanded(true);
+                    {
+                        // Keep per-location editors compact while showing the
+                        // installed Windows applications and their commands.
+                        if (page != SettingsPage::ContextMenu ||
+                            x::Automation::AutomationProperties::GetName(expander).empty())
+                            expander.IsExpanded(true);
+                    }
                 });
                 Settle(shell.as<x::FrameworkElement>());
             }

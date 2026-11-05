@@ -2818,5 +2818,12 @@
   "core.drag.lua_stack_hint": "按住 Ctrl 堆叠小组件",
   "app.lua_stack.release": "将当前组件移出堆叠",
   "app.lua_stack.remove_current": "移除当前组件",
-  "app.lua_stack.unsupported_size": "此组件不支持堆叠当前的尺寸。请调整堆叠大小或将此组件移出。"
+  "app.lua_stack.unsupported_size": "此组件不支持堆叠当前的尺寸。请调整堆叠大小或将此组件移出。",
+  "preview.contextMenu.fileExplorer": "文件资源管理器",
+  "preview.contextMenu.openWith": "打开方式",
+  "preview.contextMenu.sendTo": "发送到",
+  "preview.contextMenu.share": "共享",
+  "preview.contextMenu.windowsSecurity": "Windows 安全中心",
+  "preview.contextMenu.scanDefender": "使用 Microsoft Defender 扫描",
+  "preview.contextMenu.openTerminal": "在终端中打开"
 }

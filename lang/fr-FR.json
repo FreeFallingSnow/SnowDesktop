@@ -2818,5 +2818,12 @@
   "core.drag.lua_stack_hint": "Maintenir Ctrl pour empiler les widgets",
   "app.lua_stack.release": "Sortir le widget actuel de la pile",
   "app.lua_stack.remove_current": "Retirer le widget actuel",
-  "app.lua_stack.unsupported_size": "Ce widget ne prend pas en charge la taille de la pile. Redimensionnez la pile ou sortez ce widget."
+  "app.lua_stack.unsupported_size": "Ce widget ne prend pas en charge la taille de la pile. Redimensionnez la pile ou sortez ce widget.",
+  "preview.contextMenu.fileExplorer": "Explorateur de fichiers",
+  "preview.contextMenu.openWith": "Ouvrir avec",
+  "preview.contextMenu.sendTo": "Envoyer vers",
+  "preview.contextMenu.share": "Partager",
+  "preview.contextMenu.windowsSecurity": "Sécurité Windows",
+  "preview.contextMenu.scanDefender": "Analyser avec Microsoft Defender",
+  "preview.contextMenu.openTerminal": "Ouvrir dans le Terminal"
 }

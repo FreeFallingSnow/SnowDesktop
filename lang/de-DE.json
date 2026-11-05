@@ -2818,5 +2818,12 @@
   "core.drag.lua_stack_hint": "Strg gedrückt halten, um Widgets zu stapeln",
   "app.lua_stack.release": "Aktuelles Widget aus dem Stapel lösen",
   "app.lua_stack.remove_current": "Aktuelles Widget entfernen",
-  "app.lua_stack.unsupported_size": "Dieses Widget unterstützt die Stapelgröße nicht. Ändern Sie die Stapelgröße oder lösen Sie das Widget aus dem Stapel."
+  "app.lua_stack.unsupported_size": "Dieses Widget unterstützt die Stapelgröße nicht. Ändern Sie die Stapelgröße oder lösen Sie das Widget aus dem Stapel.",
+  "preview.contextMenu.fileExplorer": "Explorer",
+  "preview.contextMenu.openWith": "Öffnen mit",
+  "preview.contextMenu.sendTo": "Senden an",
+  "preview.contextMenu.share": "Freigeben",
+  "preview.contextMenu.windowsSecurity": "Windows-Sicherheit",
+  "preview.contextMenu.scanDefender": "Mit Microsoft Defender überprüfen",
+  "preview.contextMenu.openTerminal": "Im Terminal öffnen"
 }

@@ -2818,5 +2818,12 @@
   "core.drag.lua_stack_hint": "按住 Ctrl 堆疊小元件",
   "app.lua_stack.release": "將目前元件移出堆疊",
   "app.lua_stack.remove_current": "移除目前元件",
-  "app.lua_stack.unsupported_size": "此元件不支援堆疊目前的尺寸。請調整堆疊大小或將此元件移出。"
+  "app.lua_stack.unsupported_size": "此元件不支援堆疊目前的尺寸。請調整堆疊大小或將此元件移出。",
+  "preview.contextMenu.fileExplorer": "檔案總管",
+  "preview.contextMenu.openWith": "開啟方式",
+  "preview.contextMenu.sendTo": "傳送到",
+  "preview.contextMenu.share": "共用",
+  "preview.contextMenu.windowsSecurity": "Windows 安全性",
+  "preview.contextMenu.scanDefender": "使用 Microsoft Defender 掃描",
+  "preview.contextMenu.openTerminal": "在終端機中開啟"
 }

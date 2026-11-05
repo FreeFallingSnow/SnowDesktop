@@ -2818,5 +2818,12 @@
   "core.drag.lua_stack_hint": "Hold Ctrl to stack widgets",
   "app.lua_stack.release": "Move current widget out of stack",
   "app.lua_stack.remove_current": "Remove current widget",
-  "app.lua_stack.unsupported_size": "This widget does not support the stack size. Resize the stack or move this widget out."
+  "app.lua_stack.unsupported_size": "This widget does not support the stack size. Resize the stack or move this widget out.",
+  "preview.contextMenu.fileExplorer": "File Explorer",
+  "preview.contextMenu.openWith": "Open with",
+  "preview.contextMenu.sendTo": "Send to",
+  "preview.contextMenu.share": "Share",
+  "preview.contextMenu.windowsSecurity": "Windows Security",
+  "preview.contextMenu.scanDefender": "Scan with Microsoft Defender",
+  "preview.contextMenu.openTerminal": "Open in Terminal"
 }

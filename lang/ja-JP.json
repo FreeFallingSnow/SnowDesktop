@@ -2818,5 +2818,12 @@
   "core.drag.lua_stack_hint": "Ctrl を押しながらウィジェットをスタック",
   "app.lua_stack.release": "現在のウィジェットをスタックから取り出す",
   "app.lua_stack.remove_current": "現在のウィジェットを削除",
-  "app.lua_stack.unsupported_size": "このウィジェットはスタックのサイズに対応していません。スタックのサイズを変更するか、このウィジェットを取り出してください。"
+  "app.lua_stack.unsupported_size": "このウィジェットはスタックのサイズに対応していません。スタックのサイズを変更するか、このウィジェットを取り出してください。",
+  "preview.contextMenu.fileExplorer": "エクスプローラー",
+  "preview.contextMenu.openWith": "プログラムから開く",
+  "preview.contextMenu.sendTo": "送る",
+  "preview.contextMenu.share": "共有",
+  "preview.contextMenu.windowsSecurity": "Windows セキュリティ",
+  "preview.contextMenu.scanDefender": "Microsoft Defender でスキャンする",
+  "preview.contextMenu.openTerminal": "ターミナルで開く"
 }
