@@ -2230,7 +2230,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                         // Keep per-location editors compact while showing the
                         // installed Windows applications and their commands.
                         if (page != SettingsPage::ContextMenu ||
-                            x::Automation::AutomationProperties::GetName(expander).empty())
+                            !c::ToolTipService::GetToolTip(expander))
                             expander.IsExpanded(true);
                     }
                 });
