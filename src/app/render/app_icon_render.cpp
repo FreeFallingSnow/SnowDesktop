@@ -506,7 +506,10 @@ void DesktopApp::DrawPrivacyFaIcon(
             if (memoryDc)
             {
                 HGDIOBJ oldBitmap = SelectObject(memoryDc, source);
-                HFONT font = CreateFontW(-bitmapSize,
+                // Preserve the styled source's original optical margins.
+                // Unstyled glyphs use a larger source with a small inset.
+                const float glyphScale = iconBeautifySettings_.enabled ? 0.68f : 0.88f;
+                HFONT font = CreateFontW(-static_cast<int>(bitmapSize * glyphScale),
                     0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                     ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
@@ -548,23 +551,8 @@ void DesktopApp::DrawPrivacyFaIcon(
 
     if (cached)
     {
-        // Unstyled icons occupy the complete logical icon box. Keep the old
-        // inset only alongside styled icons; raster padding must not shrink
-        // the unstyled privacy glyph a second time.
-        auto destination = ToD2DRect(rect);
-        if (iconBeautifySettings_.enabled)
-        {
-            constexpr float insetScale = static_cast<float>(
-                static_cast<int>(kIconBitmapSize * 0.68f)) / kIconBitmapSize;
-            const float insetX = (destination.right - destination.left) * (1.0f - insetScale) * 0.5f;
-            const float insetY = (destination.bottom - destination.top) * (1.0f - insetScale) * 0.5f;
-            destination.left += insetX;
-            destination.right -= insetX;
-            destination.top += insetY;
-            destination.bottom -= insetY;
-        }
-        ctx->DrawBitmap(cached.Get(), destination, 1.0f,
-            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        // Upload already applies the selected style and its content inset.
+        DrawIconBitmap(ctx, cached.Get(), rect, 1.0f, 0, false);
         return;
     }
 
@@ -584,7 +572,7 @@ void DesktopApp::DrawPrivacyFaIcon(
     ComPtr<IDWriteTextFormat> format;
     format.Attach(CreateFaTextFormat(dwriteFactory_.Get(),
         static_cast<float>(std::min(rect.right - rect.left, rect.bottom - rect.top)) *
-            (iconBeautifySettings_.enabled ? 0.52f : 1.0f)));
+            (iconBeautifySettings_.enabled ? 0.52f : 0.88f)));
     if (format)
         DrawD2DText(ctx, L"", rect, format.Get(),
             D2D1::ColorF(1.0f, 219.0f / 255.0f, 118.0f / 255.0f, 0.94f));
