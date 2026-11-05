@@ -43,6 +43,7 @@
 | [CF-017](#cf-017-构建前缺少疑似重复构建提醒) | P2 | 未核对既有产物便提交构建，建议在执行前提示可复用候选 | 待核实：告警建议已登记 |
 | [CF-018](#cf-018-固定内存估算限制编译并行且缺少动态调整) | P2 | 普通与重型编译统一按固定内存成本估算，低申报使整轮维持单路 | 已实现；已有实际4路派发记录，最终修订待后续实际构建观察 |
 | [CF-019](#cf-019-应用全量被扩大为工具回归并阻断产物打包) | P1 | Agent 将应用 full 扩大为 full,tools，混合失败阻止独立通过的产品产物打包 | 已确认：范围已纠正；门禁分离待评估 |
+| [CF-020](#cf-020-验收产物路径拒绝缺少修正示例) | P2 | CandidateRun 产物路径误用后，错误回执未说明 runtime 相对路径 | 已澄清手册；拒绝回执待完善 |
 
 ### CF-001 持久执行器被父 Job 拒绝
 
@@ -207,3 +208,10 @@
 - 批次 `57baf8ec85bd41feabb5e91fb5079a15`、Run `0b5cd5d045f348d88a9f04b273d9babf`：真实SDK与工作流通过；DSH综合到冷会话场景仍超120秒。夹具目录时间表明前段约71秒、驻留场景约26秒后才开始冷场景；续修将Host与两个独立驻留场景重叠，仍使用最多三组及原120秒预算，单补该失败。
 - 最终工具续验批次 `4badda709a8a47e48b3a0d41fb011a3b`、Run `033618dd3b8e47a9b5c002f6eadfa742`：5项共享检查全部通过、输入稳定；其中本任务仅补 `dsh_collaboration`，90.30秒通过，编译与链接无警告。改动保存为 `03c60893`；此前尝试 `229167aa`、`c0e01116`、`a9d80e2a` 的失败历史保留。
 - 本任务21项工具需求均已有对应通过证据：17项引用 `81878ff165874a35928e5fc45d6e0739`，资源预算引用 `9e4fd9334e0c4d8e91dce0a0d4fad684`，工作流及实际SDK引用 `0b5cd5d045f348d88a9f04b273d9babf`，DSH综合引用最终Run。此为分批修正后的定向证据汇总，不称为单次21项全量通过。只读反馈收尾不新增构建。
+
+### CF-020 验收产物路径拒绝缺少修正示例
+
+- **发现时间与来源**：2026-11-05，CLI，Task `task-91fa4754b4214c029e5d1c3ca31e2330`；候选Run `4f2a90912e50419b9f43e671b909f64f`。
+- **现象与证据**：Agent 在 `acceptance-start -CandidateRun` 中误用 `.build/Release/SnowDesktop.exe`，回执为 `Acceptance file is neither a saved runtime nor a present candidate input.`；改传保存runtime中的绝对路径又返回 `Unsafe candidate relative path.`。最终传 `-Files SnowDesktop.exe` 成功，验收记录 `71a637d093eb45469aed5d690a0625a9`。路径误用属于调用方；回执没有同时说明基准目录与可执行修正示例，增加了跟进读取和调用，没有引发额外产品编译。未测量额外耗时或token数量。
+- **源码确认**：`build_acceptance.ps1` 的 `New-SavedRuntimeAcceptance` 先将路径解析到保存runtime，再匹配产物或原候选源码；`-CandidateRun` 不兼容 `.build/Release/` 前缀。第4版批次 `-Batch/-Revision` 的前缀兼容仍存在，原手册中的批次示例有效，不把两个入口混为同一错误。
+- **处理与下一步**：已在手册明确CandidateRun运行文件采用runtime相对路径、拒绝绝对路径及Release前缀。尚未修改错误回执；后续可按入口返回 `-Files SnowDesktop.exe` 修正示例，同时保留源码输入的仓库相对语义和原安全检查。本次仅文档澄清，复用上述实际拒绝/成功与源码走查证据，不为反馈增加编译或常驻测试。
