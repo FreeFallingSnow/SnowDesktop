@@ -106,6 +106,7 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **托盘中键任务的新证据**：2026-11-05，Task `task-3ce5856630f8469dad256d8d3b1e8fde` 的 `begin` 在批次 `e2afef9c94df420f8ef49d7f07d7c445` 等待编辑者 `task-0eb0e940aaf647079b420cdf668166cf`，随后取得批次 `853bba595c0146769419350d2d9179be` 修订0；完成五个托盘源码文件后，`ready-and-wait` 又等待同批 `nonhost-coordination-scope`。全程续接原前台 session，没有重交构建或清理登记；登记时间不计作连续等待时间。共享反馈文件当时有 VPN 任务未提交内容，待其提交后才重开本修订并追加记录，保留所有既有改动。后续结果见 `.codex-probes/tray-middle-click-20261105/record.txt`；此记录不声称已解决共享屏障。
 - **实测来源**：本任务批次 `8cfc68d8bb0a4d4abc9376f54213b282`，修订6于2026-11-04 16:29:22（Asia/Shanghai）就绪；16:48:56仍等待产品成员编辑，已约19分33秒，此后继续等待超过30分钟。只读聊天快照确认另一成员仍在实现，未发现失效登记。
 - **影响与边界**：21项工具需求随共享屏障延后；没有测量真实编译重叠率，不推定拆批一定更快。用户选择继续原流程等待，未授权跨聊天提醒。
 - **当前状态**：原共享Run `a98535f880644c2f94aadaa10c46d0ac` 因产品源码/链接失败；续修共享Run `120b0fb34113421090f97daf926ccfc0` 的标准产品构建和激活通过，后续测试编译进程中断。原产物与首次失败保留，工具检查未计通过。
@@ -117,6 +118,7 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **托盘任务的观察噪音**：上述中键任务的同一 `begin` session `34855` 多次交替输出 `Waiting for the collaboration state transaction.` 和相同的 `Waiting for batch e2afef9c94df420f8ef49d7f07d7c445: editing phase; editing peers task-0eb0e940aaf647079b420cdf668166cf.`。业务等待条件未变化，原生进程仍存活；工具传输 yield 后仅续接原 session，不另起 status 或构建。后续应区分短时状态事务与业务等待去重，避免交替提示重复输出；没有为本反馈追加复现。
 - **发现**：2026-11-04，用户明确要求等待不限时长，直到下一个事件。源码确认 `ready-and-wait/watch` 默认1800秒、`event-wait`及DSH消息等待默认30秒，DSH工具另声明45000毫秒外层时限；反复返回空状态会产生额外模型调用。
 - **本轮修复**：通用 `ready-and-wait/finish/wait/event-wait` 和 `watch` 默认不设截止时间，显式0同义，正数保留有界等待；相同等待提示只输出一次。票据以 `deadlineUtc: null` 记录无期限，旧票据的截止时间保留。DSH `wait-messages` 默认 `waitSeconds=0`，移除工具外层固定截止，转发调用取消信号；取消仅结束观察子进程，不取消共享Run。
 - **证据与边界**：已核对本机DSH的 `dsh-tool-call-timeout-policy`：未声明工具 `timeoutMs` 时不设置该层截止。进程内持续观察不调用模型；传输yield续接同一session。测试内部故障兜底仍有界。默认/0、事件到达、显式超时、取消与编辑权不变已通过既有通用/适配器驱动，实际SDK也验证工具注册后没有外层截止。真实用户Host的长期连接及重载仍需安装环境回验。
@@ -135,6 +137,7 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **托盘中键的新证据与处理**：Task `task-3ce5856630f8469dad256d8d3b1e8fde`、批次 `853bba595c0146769419350d2d9179be`，现有 CTest 无托盘回调条目，仍按已确认限制选 `behavior_manifest` 核对运行文件；实际中键消息生成和旧版/v3/v4 封装由忽略任务目录中的临时消息窗口驱动验证。临时项已记录所属任务、生产输入、最小范围和结束条件，不新增永久测试或全量需求；实际结果和第三方应用待验边界另记任务记录。此计划准入限制尚未修改。
 - **VPN 修复的新证据与处理**：2026-11-05，Task `vpn-connect-saved-credentials-20261105`、批次 `e2afef9c94df420f8ef49d7f07d7c445` 修订0。VPN 私有后端仅有宿主消费者，当前正式 CTest 没有 VPN 条目；本任务需要复用生产后端做临时拨号参数检查及真实分流测试连接验证。依据已确认的准入限制，不重复提交已知会拒绝的 `module/none`，计划选择 `behavior_manifest` 核对交付产物，VPN 行为由忽略任务目录中的临时驱动另验。该正式条目只验证部署契约，不能作为 VPN 已验证的证据；不新增永久测试、不展开全量，临时编译仍经标准执行租约。执行结果随本任务记录保存；模块临时验证入口仍待统一。
 - **编译前检查入口的新证据**：Task `winx-start-context-menu`、批次 `687b59aa338844a4bd422c7f3c899789` 修订0，移除自绘 Win+X 兜底后尝试通过 `Enter-BuildEntry` 和 `RunLeasedCommand` 执行临时 `/Zs /W4 /WX` 头文件检查；因本任务仍处 editing 被拒绝，未启动编译。此为通用入口按现有协议正常拒绝，Agent 选用入口不适配，并非执行器故障；现有批次轻检查只接受 `builtin-basic`，尚无手册化的编辑期临时前端检查入口。本次不绕过租约、不反复重试，以后续标准构建覆盖消费者编译，保留该项前置检查未执行记录。建议统一临时检查与当前任务编辑许可、独立输出及执行权的衔接，避免前置检查只能延后。
 - **来源与证据**：2026-11-04，Task `task-8071ca0eeffa4e399782658dd729d837`，批次 `19f0476bc15c467f97f9d12daf5d6906` 修订0。Shell 参数局部修正有临时 C++ 生产入口探针，无对应正式 CTest；`plan -Scope module -Suites none` 返回 `Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.`。`build_protocol.ps1` 的 `New-TaskPlan` 确认此限制。

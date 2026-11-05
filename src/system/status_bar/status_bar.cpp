@@ -185,6 +185,7 @@ struct StatusBar::Impl
         StatusBarInteractionVisualState paintedInteraction;
         StatusBarPresentationPreparation presentationPreparation;
         std::string pressedTray;
+        std::optional<tray::Identity> middleTrayPress, lastMiddleTray;
         std::string trayMenuKey;
         tray::MenuRetentionSession trayMenu;
         POINT trayPress{};
@@ -386,6 +387,7 @@ struct StatusBar::Impl
             CancelTrayMenu();
             EndDragFeedback(); dropIndicator.reset();
             pressedTray.clear(); trayDragging = false;
+            middleTrayPress.reset(); lastMiddleTray.reset();
             if (GetCapture() == hwnd) ReleaseCapture();
             if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
@@ -1228,7 +1230,8 @@ struct StatusBar::Impl
             // clock dispatch, plus the Dock's policy queries, track menu closure.
             if (armed && !trayMenu.tracker.Armed() && owner.dockChanged) owner.dockChanged(false);
         }
-        void ActivateTray(const std::string& key, tray::Activation action, POINT point, bool leftClick = false)
+        void ActivateTray(const std::string& key, tray::Activation action, POINT point, bool leftClick = false,
+            std::optional<tray::Identity> expectedIdentity = {})
         {
             if (!owner.tray) return;
             // The app callback may synchronously open a foreign menu loop.
@@ -1238,7 +1241,7 @@ struct StatusBar::Impl
             bool changed = ArmTrayMenu(key);
             bool accepted = false;
             if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, {hwnd, hwnd});
-            accepted = owner.tray->Activate(key, action, point, {hwnd, hwnd}) || accepted;
+            accepted = owner.tray->Activate(key, action, point, {hwnd, hwnd}, {}, expectedIdentity) || accepted;
             if (!accepted) changed = CancelTrayMenu() || changed;
             if (changed && owner.dockChanged) owner.dockChanged(false);
         }
@@ -1307,6 +1310,43 @@ struct StatusBar::Impl
                 return true;
             }
             return false;
+        }
+        void TrayMiddleMouse(UINT message, POINT point)
+        {
+            const bool release = message == WM_MBUTTONUP;
+            if (!owner.tray || (!release && !pressedTray.empty())) return;
+            std::optional<tray::Identity> pressed;
+            if (release)
+            {
+                pressed = std::exchange(middleTrayPress, {});
+                if (!pressed) return;
+                if (GetCapture() == hwnd) ReleaseCapture();
+            }
+            const auto hit = HitTestStatusBarItems(items, point);
+            if (!hit || !items[*hit].icon)
+            { lastMiddleTray.reset(); return; }
+            const auto identity = items[*hit].icon->identity;
+            const auto key = items[*hit].icon->key;
+            RECT geometry = items[*hit].bounds;
+            if (release && !tray::SameFocusIdentity(*pressed, identity))
+            { lastMiddleTray.reset(); return; }
+            const auto action = release ? tray::Activation::MiddleUp :
+                message == WM_MBUTTONDBLCLK && lastMiddleTray && tray::SameFocusIdentity(*lastMiddleTray, identity) ?
+                    tray::Activation::MiddleDoubleClick : tray::Activation::MiddleDown;
+            if (release) lastMiddleTray = identity;
+            else
+            {
+                middleTrayPress = identity;
+                owner.tray->CancelFocusReturn();
+                if (owner.pointerPressed) owner.pointerPressed();
+                UpdateInteraction([&] { ClearHover(); keyboardFocusVisible = false; });
+                if (!InputAvailable() || !middleTrayPress) return;
+                SetCapture(hwnd);
+            }
+            MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&geometry), 2);
+            owner.tray->SetGeometry(key, geometry);
+            ClientToScreen(hwnd, &point);
+            ActivateTray(key, action, point, false, identity);
         }
         void ReturnTrayFocus(std::uint64_t serial)
         {
@@ -1522,6 +1562,8 @@ struct StatusBar::Impl
             case WM_LBUTTONDBLCLK:
             case WM_RBUTTONDOWN:
             {
+                if (std::exchange(self->middleTrayPress, {}) && GetCapture() == window) ReleaseCapture();
+                self->lastMiddleTray.reset();
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
@@ -1536,6 +1578,11 @@ struct StatusBar::Impl
                 if (self->CancelTrayMenu() && self->owner.dockChanged) self->owner.dockChanged(false);
                 break;
             }
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+            case WM_MBUTTONDBLCLK:
+                self->TrayMiddleMouse(message, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+                return 0;
             case WM_RBUTTONUP:
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
@@ -1720,6 +1767,7 @@ struct StatusBar::Impl
             case WM_CAPTURECHANGED:
                 self->UpdateInteraction([&] {
                     self->EndDragFeedback();
+                    self->middleTrayPress.reset(); self->lastMiddleTray.reset();
                     self->pressedTray.clear(); self->trayDragging = false;
                     if (message == WM_CANCELMODE && GetCapture() == window) ReleaseCapture();
                     self->ClearHover(); self->interaction.CancelPointer();

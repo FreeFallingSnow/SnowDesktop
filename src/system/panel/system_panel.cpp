@@ -83,6 +83,7 @@ struct SystemPanel::Impl
     bool pointerRefreshPending=false;
     NativePointerHoverState pointerHover;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
+    std::optional<tray::Identity> middleTrayPress,lastMiddleTray;
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
     DWORD trayLayerTraceStarted=0,trayLayerTraceLast=0;unsigned trayLayerTraceCount=0;
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
@@ -277,7 +278,7 @@ struct SystemPanel::Impl
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.powerMenu=[this]{if(window)PostMessageW(window,kPowerMenu,0,0);};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
-        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;backdropDirty=true;
+        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;middleTrayPress.reset();lastMiddleTray.reset();paintDirty=true;backdropDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action,r.clockAtRight);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
         // HideNow clears these rectangles. Reopening the same layout need not
         // move or reshape the HWND, so Arrange alone may not publish them.
@@ -404,7 +405,7 @@ struct SystemPanel::Impl
         if(!opening)closing=true;
         if(!opening)ReportTrayState(nullptr);
         if(!opening&&model){model->CancelControlInput();if(calendarInputs)calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));}
-        if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();if(GetCapture()==window)ReleaseCapture();}
+        if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();middleTrayPress.reset();lastMiddleTray.reset();if(GetCapture()==window)ReleaseCapture();}
         if(!opening&&modal){if(model)model->Close();CancelPrompt();}
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
         if(!scheduler||animation::RuntimePopupEffect()==animation::NoEffect){if(opening){slide.ShowImmediately();Pose();}else FinishClose();return;}
@@ -429,6 +430,7 @@ struct SystemPanel::Impl
         if(oldRequest&&oldRequest->tray&&oldRequest->action==StatusBarAction::Tray)oldRequest->tray->UnsubscribeChanges(window);
         ReportTrayState(nullptr);
         EndDragFeedback();dropIndicator.reset();
+        middleTrayPress.reset();lastMiddleTray.reset();
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;input.Cancel();scrollbarDragging=false;hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
         if(calendarInputs)calendarInputs->Clear();if(oldModel)oldModel->Close();CancelPrompt();
         if(window){KillTimer(window,1);KillTimer(window,kTrayMenuTimer);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
@@ -672,6 +674,48 @@ struct SystemPanel::Impl
         if(model->Reveal(id)&&!Arrange())return;input.Focus(id,keyboard);
         if(!calendarInputs||!calendarInputs->Focus(id,keyboard))SetFocus(window);
     }
+    void TrayMiddleMouse(UINT message,POINT point)
+    {
+        const auto life=lifetime;
+        const auto activeModel=model;
+        const bool release=message==WM_MBUTTONUP;
+        if(!current||!current->tray||(!release&&(scrollbarDragging||!input.Pressed().empty())))return;
+        std::optional<tray::Identity> pressed;
+        if(release)
+        {
+            pressed=std::exchange(middleTrayPress,{});
+            if(!pressed)return;
+            if(GetCapture()==window)ReleaseCapture();
+            if(!life->alive||!current||model!=activeModel||closing||modal)return;
+        }
+        const auto* node=model->View().Hit(ModelPoint(point.x,point.y));
+        if(!node||!node->id.starts_with("tray:")){lastMiddleTray.reset();return;}
+        const auto key=node->id.substr(5);
+        const auto service=current->tray;
+        const auto snapshot=service->Current();
+        const auto found=std::find_if(snapshot.icons.begin(),snapshot.icons.end(),[&](const auto& icon){return icon.key==key;});
+        if(found==snapshot.icons.end()||(release&&!tray::SameFocusIdentity(*pressed,found->identity)))
+        {lastMiddleTray.reset();return;}
+        const auto identity=found->identity;
+        const auto action=release?tray::Activation::MiddleUp:
+            message==WM_MBUTTONDBLCLK&&lastMiddleTray&&tray::SameFocusIdentity(*lastMiddleTray,identity)?
+                tray::Activation::MiddleDoubleClick:tray::Activation::MiddleDown;
+        if(release)lastMiddleTray=identity;
+        else
+        {
+            middleTrayPress=identity;
+            service->CancelFocusReturn();
+            const bool focusChanged=input.PointerInput();
+            SetCapture(window);SetFocus(window);
+            if(!life->alive||!current||model!=activeModel||closing||modal||!middleTrayPress)return;
+            if(focusChanged)Paint();
+        }
+        if(!life->alive||!current||model!=activeModel||closing||modal)return;
+        const auto source=window,bar=current->owner;
+        PublishGeometry();ArmContext(key);ClientToScreen(source,&point);
+        const bool accepted=service->Activate(key,action,point,{bar,source},{},identity);
+        if(life->alive&&!accepted)context.Reset();
+    }
     void Result(ui::InputResult result,POINT screen,bool keyboard=false)
     {
         if(result.kind==ui::InputResult::Kind::None||!model||!current||modal||closing)return;
@@ -772,8 +816,12 @@ struct SystemPanel::Impl
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
             if(self->calendarInputs&&self->calendarInputs->HandlePointer(m,wp,{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)}))
             {self->Paint();return 0;}
+            if(m==WM_MBUTTONDOWN||m==WM_MBUTTONUP||m==WM_MBUTTONDBLCLK)
+            {self->TrayMiddleMouse(m,{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)});return 0;}
             if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN)
             {
+                if(std::exchange(self->middleTrayPress,{})&&GetCapture()==w)ReleaseCapture();
+                self->lastMiddleTray.reset();
                 self->pointerHover.Resume();
                 const bool focusChanged=self->input.PointerInput();
                 self->context.Reset();KillTimer(w,kTrayMenuTimer);self->SyncTrayMenuLayer();self->ClearPointerHover();const auto p=self->ModelPoint(GET_X_LPARAM(lp),GET_Y_LPARAM(lp));
@@ -817,6 +865,7 @@ struct SystemPanel::Impl
             }
             if(m==WM_CAPTURECHANGED||m==WM_CANCELMODE)
             {
+                self->middleTrayPress.reset();self->lastMiddleTray.reset();
                 const bool wasPressed=!self->input.Pressed().empty();
                 self->EndDragFeedback();self->input.Cancel();self->scrollbarDragging=false;
                 if(m==WM_CANCELMODE&&GetCapture()==w)ReleaseCapture();

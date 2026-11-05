@@ -31,7 +31,11 @@ struct Snapshot
 // Pure model operations are shared by the live collector and protocol tests.
 std::string Key(const Identity& identity);
 bool Apply(std::vector<Icon>& icons, const Event& event);
-enum class Activation { LeftDown, LeftUp, DoubleClick, RightDown, RightUp, Keyboard, ContextKeyboard, Hover, Leave };
+enum class Activation
+{
+    LeftDown, LeftUp, DoubleClick, RightDown, RightUp, Keyboard, ContextKeyboard, Hover, Leave,
+    MiddleDown, MiddleUp, MiddleDoubleClick
+};
 std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor);
 struct FocusOrigin { HWND target = nullptr, source = nullptr; };
 // Host-private synchronous updates. Keys not present in this batch keep the

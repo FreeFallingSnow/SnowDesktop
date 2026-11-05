@@ -549,7 +549,7 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         if (originProcess == GetCurrentProcessId() && IsWindowVisible(origin.target))
             GetWindowRect(origin.target, &barBounds);
         impl_->menuPlacement.Arm(target, anchor, geometry,
-            action == Activation::LeftUp || action == Activation::RightUp, barBounds,
+            action == Activation::LeftUp || action == Activation::RightUp || action == Activation::MiddleUp, barBounds,
             action == Activation::RightDown || action == Activation::RightUp || action == Activation::ContextKeyboard);
     }
     bool accepted = true;
@@ -559,7 +559,7 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         if (!SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp))
         { accepted = false; error = GetLastError(); }
     }
-    if (gesture && action != Activation::LeftDown && action != Activation::RightDown)
+    if (gesture && action != Activation::LeftDown && action != Activation::RightDown && action != Activation::MiddleDown)
     {
         wchar_t message[384]{};
         swprintf_s(message, L"Tray activation pid=%lu id=%lu hwnd=%p callback=%lu action=%u version=%lu geometry=%u rect=(%ld,%ld,%ld,%ld) anchor=(%ld,%ld) foregroundGrant=%u accepted=%u error=%lu",
