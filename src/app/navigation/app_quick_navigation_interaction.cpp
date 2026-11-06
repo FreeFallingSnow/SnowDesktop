@@ -320,7 +320,8 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     {
         std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
         bool onNotice = false;
-        if (entries.empty() && quickNavigation_->everythingResults.empty())
+        if (entries.empty() && quickNavigation_->appResultIndices.empty() &&
+            quickNavigation_->everythingResults.empty())
         {
             onNotice = true;
         }
