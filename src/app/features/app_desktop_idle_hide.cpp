@@ -29,17 +29,9 @@ void DesktopApp::UpdateDesktopIdleHide()
     if (sample.enabled && !sample.suspended &&
         generalSettings_.desktopIdleHidePauseWithWindows)
     {
-        // Reuse taskbar/status-bar discovery, including its virtual desktop,
-        // cloaking and minimized-window filters, even when Dock is disabled.
-        if (systemTaskbarWindowScanTick_ == 0 ||
-            GetTickCount() - systemTaskbarWindowScanTick_ >= 1000)
-        {
-            RefreshSystemTaskbarWindowState();
-            systemTaskbarWindowScanTick_ = GetTickCount();
-        }
-        sample.suspended = systemTaskbarMonitorWindowStates_.empty() ||
-            std::any_of(systemTaskbarMonitorWindowStates_.begin(),
-                systemTaskbarMonitorWindowStates_.end(),
+        sample.suspended = observedMonitorWindows_.empty() ||
+            std::any_of(observedMonitorWindows_.begin(),
+                observedMonitorWindows_.end(),
                 [](const auto& entry) { return entry.second.visible; });
     }
 

@@ -497,7 +497,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (systemTaskbarTaskViewActive_ != visible)
         {
             systemTaskbarTaskViewActive_ = visible;
-            systemTaskbarWindowStateChangedTick_.fetch_add(1,
+            windowObservationRevision_.fetch_add(1,
                 std::memory_order_relaxed);
         }
         return 0;
@@ -510,7 +510,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         systemTaskbarTaskViewActive_ = false;
         systemTaskbarWindows_.clear();
         RestartSystemTaskbarShellVisibilityDetectors();
-        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        windowObservationRevision_.fetch_add(1,
             std::memory_order_relaxed);
         DWORD currentExplorerProcessId = 0;
         if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
@@ -535,7 +535,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         ProcessLargeIconAssets();
         return 0;
     case kForegroundInteractionChangedMessage:
-        HandleDockForegroundInteractionChanged();
+        HandleDockForegroundInteractionChanged(
+            reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         return 0;
     case kDockWindowListChangedMessage:
         if (generalSettings_.dockEnabled && !reloading_)

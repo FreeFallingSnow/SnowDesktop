@@ -572,8 +572,8 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
                 PostMessageW(
                     target,
                     kForegroundInteractionChangedMessage,
-                    0,
-                    0);
+                    reinterpret_cast<WPARAM>(window),
+                    static_cast<LPARAM>(eventTime));
             }
         }
     }
@@ -583,45 +583,16 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
         return;
     if (event == EVENT_OBJECT_LOCATIONCHANGE)
     {
-        if (!window || GetAncestor(window, GA_ROOT) != window)
+        const auto placement = snowdesktop::window_observation::ObservePlacement(window);
+        if (!placement) return;
+        std::scoped_lock lock(windowPlacementMutex_);
+        const auto found = observedWindowPlacements_.find(window);
+        if (found != observedWindowPlacements_.end() && found->second == *placement &&
+            !placement->maximized && !placement->fullscreenSized)
             return;
-        DWORD processId = 0;
-        GetWindowThreadProcessId(window, &processId);
-        if (!processId || processId == GetCurrentProcessId())
-            return;
-        wchar_t className[96]{};
-        GetClassNameW(window, className,
-            static_cast<int>(std::size(className)));
-        if (_wcsicmp(className, L"Progman") == 0 ||
-            _wcsicmp(className, L"WorkerW") == 0 ||
-            _wcsicmp(className, L"Shell_TrayWnd") == 0 ||
-            _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
-            return;
-        const LONG_PTR exStyle =
-            GetWindowLongPtrW(window, GWL_EXSTYLE);
-        if ((exStyle & WS_EX_TOOLWINDOW) != 0 ||
-            (GetWindow(window, GW_OWNER) &&
-                (exStyle & WS_EX_APPWINDOW) == 0))
-            return;
-        if (!IsWindowVisible(window) || IsIconic(window))
-            return;
-
-        const SystemTaskbarWindowObservation observation{
-            MonitorFromWindow(window, MONITOR_DEFAULTTONULL),
-            IsZoomed(window) != FALSE
-        };
-        std::scoped_lock lock(
-            systemTaskbarWindowObservationMutex_);
-        const auto found =
-            systemTaskbarWindowObservations_.find(window);
-        if (found !=
-                systemTaskbarWindowObservations_.end() &&
-            found->second.monitor == observation.monitor &&
-            found->second.maximized == observation.maximized)
-            return;
-        systemTaskbarWindowObservations_[window] = observation;
+        observedWindowPlacements_[window] = *placement;
     }
-    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+    windowObservationRevision_.fetch_add(1,
         std::memory_order_relaxed);
     snowdesktop::performance::Value("shared.taskbar", TaskbarDirtyEventMetric(event), {}, 1);
     bool dockWindowListChanged =

@@ -70,16 +70,6 @@ void QueueFullscreen(HWND window)
     if (const auto found = liveBars.find(window); found != liveBars.end())
         found->second->Queue(window, PostFullscreen);
 }
-void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
-{
-    if (object != OBJID_WINDOW) return;
-    for (const auto& [window, request] : liveBars)
-    {
-        if (event == EVENT_SYSTEM_FOREGROUND)
-            PostMessageW(window, kForeground, reinterpret_cast<WPARAM>(target), static_cast<LPARAM>(time));
-        request->Queue(window, PostFullscreen);
-    }
-}
 bool HighContrast()
 {
     HIGHCONTRASTW info{ sizeof(info) };
@@ -91,20 +81,6 @@ D2D1_COLOR_F SystemColor(int color)
     const auto value = GetSysColor(color);
     return D2D1::ColorF(GetRValue(value) / 255.f, GetGValue(value) / 255.f,
         GetBValue(value) / 255.f);
-}
-std::vector<std::optional<HWND>> MonitorFullscreenSources(std::span<const HMONITOR> monitors)
-{
-    const auto observations = fullscreen::ObserveMonitors(monitors);
-    std::vector<std::optional<HWND>> sources;
-    sources.reserve(observations.size());
-    for (const auto& observed : observations)
-        sources.push_back(observed ? std::optional{observed->window} : std::nullopt);
-    return sources;
-}
-std::optional<HWND> MonitorFullscreenSource(HMONITOR monitor)
-{
-    const std::array monitors{monitor};
-    return MonitorFullscreenSources(monitors).front();
 }
 bool DockFullscreenSourceEligible(HWND source, DWORD expectedProcess, HMONITOR monitor)
 {
@@ -158,7 +134,7 @@ struct StatusBar::Impl
         bool hidingWindow = false;
         ULONGLONG showDesktopTraceTick = 0;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
-        bool checkingFullscreen = false, clockTimerActive = false;
+        bool checkingFullscreen = false;
         bool lastDockInteraction = false, lastDockPromoted = false;
         StatusBarFullscreenState fullscreenState;
         StatusBarRevealState revealState;
@@ -498,7 +474,8 @@ struct StatusBar::Impl
             if (closing || checkingFullscreen) return;
             checkingFullscreen = true;
             struct CheckScope { bool& active; ~CheckScope() { active = false; } } checkScope{checkingFullscreen};
-            if (collect) observed = MonitorFullscreenSource(monitor);
+            if (collect && owner.fullscreenSourceProvider)
+                observed = owner.fullscreenSourceProvider(monitor);
             const auto dock = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
             const bool previousObservation = fullscreenObserved;
             DWORD foregroundProcess = 0;
@@ -1474,7 +1451,6 @@ struct StatusBar::Impl
                         self->TraceValue("volume.completions");
                         self->owner.volumeWheel.Complete(completion.id);
                     }
-                    if (self->owner.IsFullscreenClock(window)) self->owner.CheckFullscreenWindows();
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else self->Paint();
                     self->PollTrayMenu();
@@ -1796,6 +1772,7 @@ struct StatusBar::Impl
     std::function<bool(HMONITOR)> interactionSessionProvider;
     std::function<PersonalizationSettings(HMONITOR)> mergedAppearanceProvider;
     std::function<StatusBarSceneState(HMONITOR)> sceneProvider;
+    std::function<std::optional<HWND>(HMONITOR)> fullscreenSourceProvider;
     std::function<void(HRESULT)> graphicsFailure;
     StatusBarSettings settings;
     PersonalizationSettings globalAppearance;
@@ -1811,30 +1788,20 @@ struct StatusBar::Impl
     // Host-owned Shell Show Desktop transition; see StatusBar::
     // SetSystemShowDesktopActive.
     bool systemShowDesktopActive = false;
-    std::vector<HWINEVENTHOOK> hooks;
     UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
-    bool IsFullscreenClock(HWND receiver) const
-    {
-        // Keep every bar's clock/paint cadence, but only one existing timer
-        // initiates the one-second fullscreen round. No time-based cache.
-        for (const auto& [id, window] : windows)
-            if (window && !window->closing && window->clockTimerActive)
-                return window->hwnd == receiver;
-        return false;
-    }
     void CheckFullscreenWindows(bool updateAppearance = false)
     {
         if (removingWindows) return;
         struct Target { std::wstring id; std::uint64_t identity; HMONITOR monitor; };
         std::vector<Target> targets;
-        std::vector<HMONITOR> monitors;
+        std::vector<std::optional<HWND>> sources;
         for (const auto& [id, window] : windows)
             if (window && !window->closing)
             {
                 targets.push_back({id, window->identity, window->monitor});
-                monitors.push_back(window->monitor);
+                sources.push_back(fullscreenSourceProvider
+                    ? fullscreenSourceProvider(window->monitor) : std::nullopt);
             }
-        const auto sources = MonitorFullscreenSources(monitors);
         for (std::size_t i = 0; i < targets.size(); ++i)
         {
             const auto& target = targets[i];
@@ -1905,8 +1872,6 @@ struct StatusBar::Impl
         : data(std::move(source)), sharedTray(std::move(shared)), activate(std::move(action)), hidden(std::move(hide)), error(std::move(report)), drawBackground(std::move(draw)) {}
     void Close()
     {
-        for (auto hook : hooks) UnhookWinEvent(hook);
-        hooks.clear();
         for (const auto& [id,window] : windows) if(window) window->EndDragFeedback();
         // A panel-origin drag can end from Window::~Window -> hidden. Its
         // cross-surface cleanup must not iterate a map during clear/erase.
@@ -2197,6 +2162,27 @@ void StatusBar::SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> pr
         if (window && window->UpdateAppearance()) window->QueuePlace();
     }
 }
+void StatusBar::SetFullscreenSourceProvider(
+    std::function<std::optional<HWND>(HMONITOR)> provider)
+{
+    impl_->fullscreenSourceProvider = std::move(provider);
+}
+void StatusBar::NotifyWindowObservations()
+{
+    for (const auto& [id, window] : impl_->windows)
+        if (window && !window->closing)
+        {
+            QueueFullscreen(window->hwnd);
+            return;
+        }
+}
+void StatusBar::ObserveForeground(HWND foreground, DWORD eventTime)
+{
+    for (const auto& [id, window] : impl_->windows)
+        if (window && !window->closing)
+            PostMessageW(window->hwnd, kForeground,
+                reinterpret_cast<WPARAM>(foreground), static_cast<LPARAM>(eventTime));
+}
 PersonalizationSettings StatusBar::AppearanceForMonitor(HMONITOR monitor) const
 {
     for (const auto& [id, window] : impl_->windows)
@@ -2354,7 +2340,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             liveBars.emplace(window->hwnd, &self.fullscreenRequest);
             ExcludeDesktopWindowFromPeek(window->hwnd);
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
-            window->clockTimerActive = SetTimer(window->hwnd, kClockTimer, 1000, nullptr) != 0;
+            SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }
         if (self.tray && (createdWindow || trayChanged)) self.tray->SubscribeChanges(window->hwnd);
         if (self.settings.inputMethod) SetTimer(window->hwnd, kInputMethodTimer, 200, nullptr);
@@ -2406,15 +2392,6 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         if (!self.presentationEnabled && !window->positioned) window->Place();
         else window->QueuePlace(changed || mergedChanged);
     }
-    if (self.hooks.empty())
-        for (const auto range : {std::pair{EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND},
-                std::pair{EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND},
-                std::pair{EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE},
-                std::pair{EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE},
-                std::pair{EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED}})
-            if (auto hook = SetWinEventHook(range.first, range.second, nullptr, WindowEvent, 0, 0,
-                    WINEVENT_OUTOFCONTEXT | (range.first == EVENT_SYSTEM_FOREGROUND ? 0 : WINEVENT_SKIPOWNPROCESS)))
-                self.hooks.push_back(hook);
 }
 
 void StatusBar::SetPresentationEnabled(bool enabled)

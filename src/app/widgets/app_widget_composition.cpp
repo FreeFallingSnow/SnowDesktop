@@ -46,6 +46,69 @@ HRESULT RetireRenderedSurface(
 // root surface contains desktop icons only; a separate foreground surface
 // covers widgets with Dock, popup, drag, marquee, and navigation content.
 
+static bool CoversDesktopWidget(const std::vector<RECT>& coverage, const RECT& bounds)
+{
+    if (coverage.empty() || IsRectEmpty(&bounds)) return false;
+    RECT frame = bounds;
+    constexpr LONG border = snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw;
+    InflateRect(&frame, border, border);
+    return std::any_of(coverage.begin(), coverage.end(), [&](const RECT& covered) {
+        return covered.left <= frame.left && covered.top <= frame.top &&
+            covered.right >= frame.right && covered.bottom >= frame.bottom;
+    });
+}
+
+void DesktopApp::UpdateDesktopWidgetCoverage(std::vector<RECT> coverage)
+{
+    if (std::ranges::equal(desktopWidgetCoverage_, coverage,
+            [](const RECT& left, const RECT& right) { return EqualRect(&left, &right) != FALSE; }))
+        return;
+    const auto previous = std::exchange(desktopWidgetCoverage_, std::move(coverage));
+    for (const auto& widget : widgets_)
+    {
+        if (IsGroupedWidget(widget)) continue;
+        const RECT bounds = GetStandaloneWidgetFrameRect(widget);
+        const bool wasCovered = CoversDesktopWidget(previous, bounds);
+        if (wasCovered == CoversDesktopWidget(desktopWidgetCoverage_, bounds)) continue;
+        if (!SyncDesktopWidgetOcclusion(widget, bounds) && hwnd_)
+        {
+            RECT dirty = bounds;
+            InflateRect(&dirty, 3, 3);
+            InvalidateRect(hwnd_, &dirty, FALSE);
+        }
+    }
+    if (compositionCommitPending_ && !compositionPaintInProgress_ &&
+        !IsAnyPersistentDockHostPainting() && !floatingPopupCompositionPaintInProgress_)
+        (void)FlushPendingCompositionCommit();
+}
+
+bool DesktopApp::SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const RECT& bounds)
+{
+    const bool covered = CoversDesktopWidget(desktopWidgetCoverage_, bounds);
+    if (widgetEngine_ && (widget.type == DesktopWidgetType::LuaScript ||
+            widget.type == DesktopWidgetType::LuaStack))
+    {
+        if (const auto* content = ResolveLuaWidgetContent(&widget))
+            widgetEngine_->SetWidgetDesktopOccluded(content->id, covered);
+    }
+    const auto existing = desktopWidgetCompositionItems_.find(widget.id);
+    if (existing == desktopWidgetCompositionItems_.end() || existing->second.occluded == covered)
+        return covered;
+    auto& item = existing->second;
+    item.occluded = covered;
+    snowdesktop::performance::Value("desktop", "widget_occluded", widget.id, covered ? 1 : 0);
+    if (widgetSurfaceRenderer_)
+        widgetSurfaceRenderer_->SetPaused(item.renderTarget, covered);
+    if (covered)
+    {
+        pendingDesktopWidgetCompositions_.erase(widget.id);
+        PauseWidgetMarqueeComposition(widget.id);
+    }
+    else if (item.visible)
+        pendingDesktopWidgetCompositions_.insert(widget.id);
+    return covered;
+}
+
 bool DesktopApp::QueueDesktopWidgetComposition(
     const std::wstring& widgetId)
 {
@@ -81,7 +144,7 @@ bool DesktopApp::QueueDesktopWidgetComposition(
         return fail();
 
     const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
-    if (IsRectEmptyRect(bounds))
+    if (IsRectEmptyRect(bounds) || CoversDesktopWidget(desktopWidgetCoverage_, bounds))
         return true;
     if (!customDesktopVisible_ ||
         (desktopIconsHidden_ && !widgetData->keepWhenDesktopHidden))
@@ -255,7 +318,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         auto composition = desktopWidgetCompositionItems_.find(widgetId);
         if (composition == desktopWidgetCompositionItems_.end())
             continue;
-        if (!composition->second.visible)
+        if (!composition->second.visible || composition->second.occluded)
             continue;
 
         DesktopWidget* widgetData = nullptr;

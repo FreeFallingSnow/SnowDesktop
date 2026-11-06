@@ -1233,6 +1233,9 @@ void DesktopApp::SyncStatusBar()
             return state;
         });
         statusBar_->SetMergedAppearanceProvider([this](HMONITOR) { return CurrentDockAppearance(); });
+        statusBar_->SetFullscreenSourceProvider([this](HMONITOR monitor) -> std::optional<HWND> {
+            return ObservedFullscreenSource(monitor);
+        });
         statusBar_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
         statusBar_->SetGraphicsFailureHandler([this](HRESULT error) {
             (void)RequestGraphicsDeviceRecovery(L"StatusBar", error);
@@ -1242,27 +1245,10 @@ void DesktopApp::SyncStatusBar()
             const auto& settings = generalSettings_.statusBar;
             if (!settings.noWindow.enabled && !settings.maximizedWindow.enabled)
                 return scene;
-            // StartDockForegroundMonitor already owns these observations even
-            // when Dock/taskbar styling is disabled. The taskbar's own timer
-            // maintains the cache while its controls are active. Otherwise the
-            // first bar consumes dirty observations for all monitors together.
-            // Never enable the Explorer appearance hook to obtain this state.
-            const DWORD now = GetTickCount();
-            const bool dirty = systemTaskbarWindowStateChangedTick_.load() != systemTaskbarWindowStateObservedTick_;
-            const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
-            if (systemTaskbarWindowScanTick_ == 0 ||
-                (systemTaskbarMonitorWindowStates_.empty() && now - systemTaskbarWindowScanTick_ >= 1500) ||
-                (!taskbarObserverActive &&
-                    ((dirty && now - systemTaskbarWindowScanTick_ >= 250) ||
-                        now - systemTaskbarWindowScanTick_ >= 1500)))
-            {
-                RefreshSystemTaskbarWindowState();
-                systemTaskbarWindowScanTick_ = now;
-            }
             // Empty entries are published only after successful window and
             // monitor observations. A missing entry remains unknown/default.
-            if (const auto found = systemTaskbarMonitorWindowStates_.find(monitor);
-                found != systemTaskbarMonitorWindowStates_.end())
+            if (const auto found = observedMonitorWindows_.find(monitor);
+                found != observedMonitorWindows_.end())
             {
                 scene.noWindow = !found->second.visible && !found->second.maximized;
                 scene.maximizedWindow = found->second.maximized;

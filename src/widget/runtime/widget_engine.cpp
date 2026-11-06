@@ -12469,7 +12469,7 @@ void WidgetEngine::DrainAudioAnalysisChanges()
                 dataBroker_->ConsumeUpdateDue(id, now))
                 due = true;
         }
-        if (!due) continue;
+        if (!due || (widget.desktopOccluded && !widget.panelActive)) continue;
         snowdesktop::performance::DrawLink("desktop", widget.widgetId, false);
         // Audio is asynchronous data, so share an existing animation deadline
         // or request one host frame. Pointer invalidation remains synchronous.
@@ -21042,6 +21042,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     const RECT previousBounds = found->lastBounds;
     const auto previousPaintRevision = std::exchange(found->desktopPaintRevision, 0);
     auto* surfacePaint = d2dState_->desktopSurfacePaint;
+    const bool resumeAfterOcclusion = std::exchange(found->desktopOcclusionResumePending, false);
     const int previousColumns = found->lastColumns;
     const int previousRows = found->lastRows;
     found->lastBounds = bounds;
@@ -21071,7 +21072,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     const bool transitionGeometryUnchanged =
         EqualRect(&previousBounds, &bounds) != FALSE &&
         previousColumns == columns && previousRows == rows;
-    if (transitionFrameRequested && transitionGeometryUnchanged &&
+    if (!resumeAfterOcclusion && transitionFrameRequested && transitionGeometryUnchanged &&
         found->viewTree)
     {
         BeginImageFrame(d2dState_);
@@ -21101,7 +21102,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     const bool nativeMarqueeFrame =
         std::exchange(found->desktopMarquee.framePending, false);
-    if (nativeMarqueeFrame && transitionGeometryUnchanged &&
+    if (!resumeAfterOcclusion && nativeMarqueeFrame && transitionGeometryUnchanged &&
         !found->desktopMarquee.requiresLuaRender &&
         found->desktopMarquee.staticCommands)
     {
@@ -21123,6 +21124,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     // A replayed command list still consumes its images. Replace demands only
     // when drawing the tree or recording a fresh Lua frame.
+    if (resumeAfterOcclusion) (void)ScheduleAnimationFrame(*found);
     BeginImageFrame(d2dState_);
     snowdesktop::widget_runtime::HostControlFrame<LuaWidget::HostControl>
         hostControlFrame([this, ownerId = widgetId]() -> std::vector<LuaWidget::HostControl>* {
@@ -22615,6 +22617,8 @@ void WidgetEngine::SetWidgetDesktopVisible(
     widget.keepRuntimeActiveForHiddenPage =
         !visible && keepRuntimeActive;
     widget.desktopVisible = visible;
+    if (!visible)
+        widget.desktopOccluded = widget.desktopOcclusionResumePending = false;
     if (!visible && d2dState_)
         d2dState_->packageImageCache.ForgetOwner(WidgetWideToUtf8(widgetId) + "|desktop");
     if (!visible)
@@ -22632,6 +22636,8 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
             continue;
         widget.keepRuntimeActiveForHiddenPage = false;
         widget.desktopVisible = visible;
+        if (!visible)
+            widget.desktopOccluded = widget.desktopOcclusionResumePending = false;
         if (!visible && d2dState_)
             d2dState_->packageImageCache.ForgetOwner(
                 WidgetWideToUtf8(widget.widgetId) + "|desktop");
@@ -22640,6 +22646,25 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
         ApplyWidgetHostVisibility(
             widget, widget.desktopVisible || widget.panelActive);
     }
+}
+
+void WidgetEngine::SetWidgetDesktopOccluded(const std::wstring& widgetId, bool occluded)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    auto& widget = widgets_[index];
+    if (widget.desktopOccluded == occluded) return;
+    widget.desktopOccluded = occluded;
+    widget.desktopOcclusionResumePending = !occluded && widget.desktopVisible;
+    if (!occluded) return;
+    widget.viewTransitions.Clear();
+    widget.viewTransitionFramePending = false;
+    if (widget.panelActive) return;
+    if (widget.animationTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widget.animationTimerId);
+    widget.animationTimerId = 0;
+    (void)widget.animationFrames.ConsumeDataRefresh();
+    widget.animationFrames.ResetFrameTiming();
 }
 
 void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
@@ -22664,6 +22689,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         if (widget.animationTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.animationTimerId);
         widget.animationTimerId = 0;
+        if (widget.desktopOccluded && !widget.panelActive) return;
         const bool dataRefreshFrame = widget.animationFrames.ConsumeDataRefresh();
         const auto now = snowdesktop::widget_runtime::
             AnimationFrameRequests::Clock::now();
@@ -22677,7 +22703,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
             HostManagedAnimationsSuppressed();
         const bool animateIndeterminateProgress = !reducedMotion;
         const bool desktopProgressFrame = animateIndeterminateProgress &&
-            widget.hostVisible &&
+            widget.hostVisible && !widget.desktopOccluded &&
             widget.viewIndeterminateProgressActive;
         const bool panelProgressFrame = animateIndeterminateProgress &&
             widget.panelActive &&
@@ -27756,6 +27782,9 @@ std::string WidgetEngine::RuntimeRequestAnimationFrame(
         return "reducedMotion";
     if (!widget.animationFrames.Request(name))
         return "quotaExceeded";
+    // Retain author requests for the first live frame after uncovering.
+    if ((widget.desktopOccluded || widget.desktopOcclusionResumePending) && !widget.panelActive)
+        return {};
     if (ScheduleAnimationFrame(widget))
         return {};
     (void)widget.animationFrames.Cancel(name);
@@ -27841,16 +27870,19 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
 
 bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
 {
+    if ((widget.desktopOccluded || widget.desktopOcclusionResumePending) && !widget.panelActive)
+        return false;
     if (widget.animationTimerId)
         return true;
     const bool indeterminateProgressActive =
         !HostManagedAnimationsSuppressed() &&
-        ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
+        ((widget.hostVisible && !widget.desktopOccluded &&
+            widget.viewIndeterminateProgressActive) ||
             (widget.panelActive &&
                 widget.panelIndeterminateProgressActive));
     const bool nativeMarqueeActive =
         !HostManagedAnimationsSuppressed() &&
-        widget.desktopVisible &&
+        widget.desktopVisible && !widget.desktopOccluded &&
         !widget.desktopMarquee.compositionManaged &&
         HasActiveNativeMarquee(widget.desktopMarquee);
     const bool highRateAnimationPending =

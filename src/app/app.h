@@ -114,6 +114,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "desktop/explorer_icon_visibility.h"
 #include "dock/dock_settings_types.h"
 #include "dock/dock_fullscreen_types.h"
+#include "platform/window_observation.h"
 #include "dock/dock_drop_rules.h"
 #include "layout/collection_popup_types.h"
 #include "layout/popup_animation_rules.h"
@@ -1052,13 +1053,16 @@ private:
     void ApplyRuntimeModulePolicy();
     bool HandleDockExternalMinimize(HWND window, DWORD deadline);
     void PrepareDockWindowMinimize(HWND window, const wchar_t* origin);
-    void HandleDockForegroundInteractionChanged();
+    void HandleDockForegroundInteractionChanged(HWND window, DWORD eventTime);
     void UpdateSystemShowDesktopLayerGuard();
     bool IsShellDesktopForegroundWindow(HWND window) const;
     bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
     PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
         const SystemTaskbarDynamicRule& rule) const;
-    bool RefreshSystemTaskbarWindowState();
+    void RefreshWindowObservations();
+    bool RefreshSystemTaskbarShellUiState();
+    std::optional<HWND> ObservedFullscreenSource(HMONITOR monitor) const;
+    std::optional<snowdesktop::fullscreen::WindowSnapshot> RecheckFullscreenSource(HMONITOR monitor) const;
     bool RefreshSystemTaskbarAppearance(
         bool forceWindowScan = false,
         bool skipUnchangedWindowState = false);
@@ -2609,6 +2613,9 @@ private:
     void ResetWidgetMarqueeComposition();
     bool QueueDesktopWidgetComposition(
         const std::wstring& widgetId);
+    void UpdateDesktopWidgetCoverage(std::vector<RECT> coverage);
+    bool SyncDesktopWidgetOcclusion(const DesktopWidget& widget, const RECT& bounds);
+    void PauseWidgetMarqueeComposition(const std::wstring& widgetId);
     bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false);
     bool FlushPendingDesktopWidgetComposition();
     void DrainDesktopWidgetSurfaceResults();
@@ -3355,6 +3362,7 @@ private:
         desktopWidgetCompositionItems_;
     std::unordered_set<std::wstring>
         pendingDesktopWidgetCompositions_;
+    std::vector<RECT> desktopWidgetCoverage_;
     std::vector<std::wstring> desktopWidgetCompositionZOrder_;
     std::unordered_map<std::wstring,
         std::unordered_map<std::string, WidgetMarqueeCompositionItem>>
@@ -3628,7 +3636,7 @@ private:
     DockAppIdentity dockWindowPreviewIdentity_;
     RECT dockWindowPreviewAnchorScreen_{};
     DWORD systemTaskbarBackdropRefreshTick_ = 0;
-    DWORD systemTaskbarWindowScanTick_ = 0;
+    DWORD windowObservationTick_ = 0;
     DWORD systemTaskbarBackdropForegroundTick_ = 0;
     HWINEVENTHOOK dockForegroundEventHook_ = nullptr;
     std::vector<HWINEVENTHOOK> systemTaskbarWindowEventHooks_;
@@ -3639,18 +3647,17 @@ private:
         dockSystemMinimizeStartedTick_{ 0 };
     inline static std::atomic<HWND>
         dockForegroundNotificationWindow_{ nullptr };
-    inline static std::atomic<DWORD> systemTaskbarWindowStateChangedTick_{ 0 };
+    inline static std::atomic<DWORD> windowObservationRevision_{ 0 };
     inline static std::atomic<DWORD> dockWindowListChangedTick_{ 0 };
-    struct SystemTaskbarWindowObservation
-    {
-        HMONITOR monitor = nullptr;
-        bool maximized = false;
-    };
-    inline static std::mutex systemTaskbarWindowObservationMutex_;
+    inline static std::mutex windowPlacementMutex_;
     inline static std::unordered_map<HWND,
-        SystemTaskbarWindowObservation>
-        systemTaskbarWindowObservations_;
-    DWORD systemTaskbarWindowStateObservedTick_ = 0;
+        snowdesktop::window_observation::WindowPlacement>
+        observedWindowPlacements_;
+    DWORD observedWindowRevision_ = 0;
+    bool windowObservationInProgress_ = false;
+    std::uint64_t monitorSceneRevision_ = 0;
+    std::uint64_t taskbarAppliedMonitorSceneRevision_ = 0;
+    DWORD taskbarObservedShellRevision_ = 0;
     DWORD dockRunningWindowsForegroundTick_ = 0;
     DWORD desktopHoverForegroundObservedTick_ = 0;
     DWORD dockRunningWindowsStateTick_ = 0;
@@ -3659,13 +3666,8 @@ private:
     // independent status bar presentation guard.
     bool systemShowDesktopLayerGuardActive_ = false;
     ULONGLONG systemShowDesktopLastProtectedForegroundTick_ = 0;
-    struct SystemTaskbarMonitorWindowState
-    {
-        bool visible = false;
-        bool maximized = false;
-    };
-    std::unordered_map<HMONITOR, SystemTaskbarMonitorWindowState>
-        systemTaskbarMonitorWindowStates_;
+    std::unordered_map<HMONITOR, snowdesktop::window_observation::MonitorState>
+        observedMonitorWindows_;
     std::vector<HWND> systemTaskbarWindows_;
     ComPtr<IAppVisibility> taskbarAppVisibility_;
     bool taskbarAppVisibilityAttempted_ = false;

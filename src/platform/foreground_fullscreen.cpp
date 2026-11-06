@@ -1,8 +1,6 @@
 #include "foreground_fullscreen.h"
-#include "fullscreen_rules.h"
 
 #include <dwmapi.h>
-#include <array>
 #include <iterator>
 #include <cwchar>
 
@@ -45,6 +43,14 @@ bool IsFullscreen(const WindowSample& window, const RECT& monitor) noexcept
         ClientCoversMonitor(window.client, monitor, clientEdgeInset);
 }
 
+bool IsShellWindow(HWND window) noexcept
+{
+    wchar_t name[128]{};
+    GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    return _wcsicmp(name, L"Progman") == 0 || _wcsicmp(name, L"WorkerW") == 0 ||
+        _wcsicmp(name, L"Shell_TrayWnd") == 0 || _wcsicmp(name, L"Shell_SecondaryTrayWnd") == 0;
+}
+
 std::optional<WindowSample> SampleWindow(
     HWND window, DWORD ignoredProcess) noexcept
 {
@@ -57,12 +63,7 @@ std::optional<WindowSample> SampleWindow(
     sample.extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
     sample.maximized = IsZoomed(window) != FALSE;
     sample.nonRude = GetPropW(window, L"NonRudeHWND") != nullptr;
-    if ((sample.extended & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) || sample.nonRude)
-        return std::nullopt;
-    wchar_t name[128]{};
-    GetClassNameW(window, name, static_cast<int>(std::size(name)));
-    sample.shell = _wcsicmp(name, L"Progman") == 0 || _wcsicmp(name, L"WorkerW") == 0 ||
-        _wcsicmp(name, L"Shell_TrayWnd") == 0 || _wcsicmp(name, L"Shell_SecondaryTrayWnd") == 0;
+    sample.shell = IsShellWindow(window);
     if (sample.shell) return std::nullopt;
     DWORD cloaked = 0;
     if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))))
@@ -93,37 +94,4 @@ std::optional<WindowSnapshot> ObserveForeground() noexcept
     return ObserveWindow(GetForegroundWindow());
 }
 
-std::vector<std::optional<WindowSnapshot>> ObserveMonitors(
-    std::span<const HMONITOR> monitors, DWORD ignoredProcess)
-{
-    std::vector<std::optional<RECT>> bounds;
-    bounds.reserve(monitors.size());
-    for (const auto monitor : monitors)
-    {
-        MONITORINFO info{sizeof(info)};
-        bounds.push_back(monitor && GetMonitorInfoW(monitor, &info) ? std::optional{info.rcMonitor} : std::nullopt);
-    }
-    const auto samples = ScanMonitors(bounds, [&](const auto& visit) {
-        struct Context { const std::function<bool(const WindowSample&)>& visit; DWORD ignoredProcess; };
-        Context context{visit, ignoredProcess};
-        return EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
-            const auto& state = *reinterpret_cast<const Context*>(parameter);
-            const auto sample = SampleWindow(window, state.ignoredProcess);
-            return !sample || state.visit(*sample) ? TRUE : FALSE;
-        }, reinterpret_cast<LPARAM>(&context)) != FALSE;
-    });
-    std::vector<std::optional<WindowSnapshot>> sources(monitors.size());
-    for (std::size_t i = 0; i < samples.size(); ++i)
-        if (samples[i]) sources[i] = WindowSnapshot{samples[i]->window, monitors[i],
-            samples[i]->process, samples[i]->client, *bounds[i]};
-    return sources;
-}
-
-std::optional<WindowSnapshot> ObserveMonitor(
-    HMONITOR monitor, DWORD ignoredProcess)
-{
-    const std::array monitors{monitor};
-    auto source = ObserveMonitors(monitors, ignoredProcess).front();
-    return source && source->window ? source : std::nullopt;
-}
 } // namespace snowdesktop::fullscreen

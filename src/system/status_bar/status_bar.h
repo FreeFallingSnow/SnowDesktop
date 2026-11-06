@@ -139,6 +139,9 @@ public:
     void SetPointerPressed(std::function<void()> pressed);
     // Application-owned window observations; must not enable taskbar effects.
     void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);
+    void SetFullscreenSourceProvider(std::function<std::optional<HWND>(HMONITOR)> provider);
+    void NotifyWindowObservations();
+    void ObserveForeground(HWND window, DWORD eventTime);
     void SetGraphicsFailureHandler(std::function<void(HRESULT)> handler);
     PersonalizationSettings AppearanceForMonitor(HMONITOR monitor) const;
 private:

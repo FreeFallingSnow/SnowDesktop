@@ -73,6 +73,7 @@ public:
         IDCompositionVisual2** visual, const std::wstring& componentOwner = {});
     bool Submit(const Target& target, ID2D1CommandList* commands,
         const RECT& bounds, WidgetImageSpin imageSpin, WidgetSurfacePaint paint);
+    void SetPaused(const Target& target, bool paused);
     void Cancel(const Target& target);
     std::vector<Result> Drain();
     static UINT ReadyMessage();

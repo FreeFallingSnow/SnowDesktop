@@ -783,23 +783,31 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
         const DWORD windowStateTick =
-            systemTaskbarWindowStateChangedTick_.load();
+            windowObservationRevision_.load();
         const bool foregroundChanged = foregroundTick != 0 &&
             foregroundTick != systemTaskbarBackdropForegroundTick_;
         const bool windowStateChanged = windowStateTick !=
-            systemTaskbarWindowStateObservedTick_;
+            observedWindowRevision_;
+        const bool observeDesktopWindows = customDesktopVisible_ ||
+            generalSettings_.statusBar.enabled;
+        const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
         const bool windowStateRefreshDue =
             windowStateChanged &&
-            (systemTaskbarWindowScanTick_ == 0 ||
-                now - systemTaskbarWindowScanTick_ >= 250);
+            (windowObservationTick_ == 0 ||
+                now - windowObservationTick_ >= (observeDesktopWindows ? 100u : 250u));
+        if ((observeDesktopWindows || taskbarObserverActive) &&
+            (windowStateRefreshDue || windowObservationTick_ == 0 ||
+                now - windowObservationTick_ >= 1000))
+            RefreshWindowObservations();
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
         // Reconcile guard ownership after Dock/display changes and external
         // auto-hide changes, including when appearance effects are disabled.
         const bool controlRefreshDue = now - systemTaskbarBackdropRefreshTick_ >= 1000;
-        if (controlRefreshDue || (IsSystemTaskbarHookRequired(dockSettings_) &&
+        if (controlRefreshDue || (taskbarObserverActive &&
             (foregroundChanged || windowStateRefreshDue ||
+                taskbarAppliedMonitorSceneRevision_ != monitorSceneRevision_ ||
                 foregroundSettling)))
         {
             if (controlRefreshDue)
@@ -810,7 +818,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 snowdesktop::performance::Value("shared.taskbar", "guard.window_dirty_due", {}, 1);
             if (foregroundSettling)
                 snowdesktop::performance::Value("shared.taskbar", "guard.foreground_settling", {}, 1);
-            RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
+            RefreshSystemTaskbarAppearance(false, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
         }
         else snowdesktop::performance::Value("shared.maintenance", "taskbar.refresh.not_due", {}, 1);

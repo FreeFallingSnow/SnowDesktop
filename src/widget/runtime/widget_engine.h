@@ -600,6 +600,8 @@ struct LuaWidget
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
     bool desktopVisible = false;
     bool keepRuntimeActiveForHiddenPage = false;
+    bool desktopOccluded = false;
+    bool desktopOcclusionResumePending = false;
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
@@ -919,6 +921,7 @@ public:
     void SetWidgetDesktopVisible(
         const std::wstring& widgetId, bool visible,
         bool keepRuntimeActive = false);
+    void SetWidgetDesktopOccluded(const std::wstring& widgetId, bool occluded);
     /** Hide or show the desktop surface of every loaded non-preview widget. */
     void SetAllWidgetDesktopVisible(bool visible);
     // Applies host-owned presentation settings without changing Lua callbacks,

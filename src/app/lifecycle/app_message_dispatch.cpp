@@ -1467,7 +1467,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnUrlDropDownloadCompleted(lp);
         return 0;
     case kForegroundInteractionChangedMessage:
-        HandleDockForegroundInteractionChanged();
+        HandleDockForegroundInteractionChanged(
+            reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         return 0;
     case kDockWindowListChangedMessage:
         if (generalSettings_.dockEnabled && !reloading_)

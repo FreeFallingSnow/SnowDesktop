@@ -15,7 +15,6 @@
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
 #include "dock_input_diagnostics.h"
-#include "platform/foreground_fullscreen.h"
 #include <algorithm>
 
 // Floating-Dock hotkey and edge-swipe lifecycle.
@@ -23,7 +22,7 @@
 bool DesktopApp::FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const
 {
     if (!monitor) return false;
-    const auto fullscreen = snowdesktop::fullscreen::ObserveMonitor(monitor);
+    const auto fullscreen = RecheckFullscreenSource(monitor);
     auto policy = dockSettings_.fullscreenPolicy;
     if (fullscreen && !dockSettings_.fullscreenExceptions.empty())
     {
@@ -42,7 +41,7 @@ bool DesktopApp::FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR mo
     // Do not apply the previous application's exception to the new source.
     if (fullscreen && !dockSettings_.fullscreenExceptions.empty())
     {
-        const auto current = snowdesktop::fullscreen::ObserveMonitor(monitor);
+        const auto current = RecheckFullscreenSource(monitor);
         if (!current) return false;
         if (current->window != fullscreen->window || current->process != fullscreen->process) return true;
     }

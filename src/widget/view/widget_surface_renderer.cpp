@@ -48,7 +48,7 @@ struct WidgetSurfaceTarget
     std::uint64_t committedRevision = 0;
     WidgetImageSpinState spin;
     bool announced = false;
-    std::atomic<bool> active{true}, failed{false};
+    std::atomic<bool> active{true}, failed{false}, paused{false};
 };
 
 struct WidgetSurfaceRenderer::Impl
@@ -248,6 +248,22 @@ struct WidgetSurfaceRenderer::Impl
         };
     }
 
+    HRESULT PauseSpin(WidgetSurfaceTarget& target)
+    {
+        auto& spin = target.spin;
+        if (!spin.rotation || spin.image.degreesPerSecond <= 0.0f)
+            return S_OK;
+        const auto now = std::chrono::steady_clock::now();
+        const float elapsed = std::chrono::duration<float>(now - spin.phaseTime).count();
+        const float phase = std::fmod(spin.phase + elapsed * spin.image.degreesPerSecond, 360.0f);
+        const HRESULT result = spin.rotation->SetAngle(phase);
+        if (FAILED(result)) return result;
+        spin.phase = phase;
+        spin.phaseTime = now;
+        spin.image.degreesPerSecond = 0.0f;
+        return composition->Commit();
+    }
+
     HRESULT Draw(const Frame& frame)
     {
         auto& target = *frame.target;
@@ -347,13 +363,17 @@ struct WidgetSurfaceRenderer::Impl
                 pending.pop_front();
             }
             if (!frame.target->active.load()) continue;
+            const bool draw = frame.commands != nullptr;
+            if (draw == frame.target->paused.load()) continue;
             HRESULT result = apartment;
             try
             {
-                if (SUCCEEDED(result)) result = Draw(frame);
+                if (SUCCEEDED(result))
+                    result = draw ? Draw(frame) : PauseSpin(*frame.target);
             }
             catch (...) { result = E_FAIL; }
             if (!frame.target->active.load()) continue;
+            if (!draw && SUCCEEDED(result)) continue;
             if (FAILED(result)) frame.target->failed.store(true);
             if (FAILED(result) || !frame.target->announced)
             {
@@ -479,6 +499,7 @@ bool WidgetSurfaceRenderer::Submit(const Target& target,
 {
     performance::Scope scope("widget.composition", "commands.submit");
     if (!target || !commands || !target->active.load() || target->failed.load()) return false;
+    if (target->paused.load()) return true;
     {
         std::lock_guard lock(impl_->mutex);
         if (impl_->stopping) return false;
@@ -520,6 +541,26 @@ bool WidgetSurfaceRenderer::Submit(const Target& target,
     }
     impl_->changed.notify_one();
     return true;
+}
+
+void WidgetSurfaceRenderer::SetPaused(const Target& target, bool paused)
+{
+    if (!target || !target->active.load() || target->paused.exchange(paused) == paused ||
+        !paused) return;
+    {
+        std::lock_guard lock(impl_->mutex);
+        if (impl_->stopping) return;
+        const auto pending = std::find_if(impl_->pending.begin(), impl_->pending.end(),
+            [&target](const auto& frame) { return frame.target == target; });
+        // A commandless entry runs on the same owner as the DComp rotation.
+        Impl::Frame pause;
+        pause.target = target;
+        if (pending == impl_->pending.end())
+            impl_->pending.push_back(std::move(pause));
+        else
+            *pending = std::move(pause);
+    }
+    impl_->changed.notify_one();
 }
 
 void WidgetSurfaceRenderer::Cancel(const Target& target)

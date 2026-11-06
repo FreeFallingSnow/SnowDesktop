@@ -8,7 +8,6 @@
 #include "system/panel/system_panel.h"
 #include "app/dock/persistent_dock_host.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
-#include "platform/foreground_fullscreen.h"
 #include "desktop/display_color_mode.h"
 #include "desktop_composition_effect.h"
 #include "platform/window_support/window_support_runtime.h"
@@ -443,7 +442,7 @@ void DesktopApp::InitializeDockWindowTransition()
                 // for native animations instead of resolving from the source.
                 if (generalSettings_.dockEnabled && !reloading_ &&
                     dockSettings_.summonOnAppMinimize &&
-                    !snowdesktop::fullscreen::ObserveMonitor(target.monitor).has_value())
+                    !RecheckFullscreenSource(target.monitor).has_value())
                 {
                     for (const auto& host : persistentDockHosts_)
                         if (host && host->active && host->hwnd == target.dock &&
@@ -462,7 +461,7 @@ void DesktopApp::InitializeDockWindowTransition()
                             { matching = host.get(); return true; }
                         return false;
                     },
-                    [](HMONITOR monitor) { return snowdesktop::fullscreen::ObserveMonitor(monitor).has_value(); },
+                    [this](HMONITOR monitor) { return RecheckFullscreenSource(monitor).has_value(); },
                     [this, &matching](const auto&) {
                         auto& host = *matching;
                         if (host.promoted)

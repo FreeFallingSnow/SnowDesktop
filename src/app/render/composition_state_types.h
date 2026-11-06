@@ -51,10 +51,12 @@ struct WidgetMarqueeCompositionItem
     float cycle = 0.0f;
     float speed = 0.0f;
     float phase = 0.0f;
+    float originX = 0.0f;
     float clipWidth = 0.0f;
     float clipHeight = 0.0f;
     std::chrono::steady_clock::time_point phaseTime{};
     bool scrolling = false;
+    bool paused = false;
     bool visible = true;
 };
 
@@ -74,6 +76,7 @@ struct DesktopWidgetCompositionItem
     std::wstring renderedContentId;
     bool renderedVisualAttached = false;
     bool renderFailed = false;
+    bool occluded = false;
     RECT bounds{};
     UINT width = 0;
     UINT height = 0;

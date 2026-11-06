@@ -47,6 +47,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/render/app_desktop_foreground_composition.cpp
     src/app/layout/app_desktop_layout.cpp
     src/app/shell/app_desktop_reload.cpp
+    src/app/shell/app_window_observation.cpp
     src/app/dock/app_dock_drop.cpp
     src/app/dock/app_dock_running_drag.cpp
     src/app/dock/dock_running_drag_state.h
@@ -489,6 +490,7 @@ set(SNOWDESKTOP_SOURCES
     src/theme/theme_preview.cpp
     src/theme/theme_workshop.cpp
     src/platform/foreground_fullscreen.cpp
+    src/platform/window_observation.cpp
     src/dock/dock_fullscreen_policy.cpp
     src/dock/dock_tray_rules.cpp
     src/dock/dock_layout_settings.cpp

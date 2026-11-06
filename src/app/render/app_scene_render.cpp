@@ -208,6 +208,9 @@ void DesktopApp::DrawStaticBackground(
         if (HasDesktopWidgetComposition(widgetData.id))
             SetDesktopWidgetCompositionVisible(
                 widgetData.id, presentWidgetSurface, widgetFrame);
+        if (presentWidgetSurface && !IsGroupedWidget(widgetData) &&
+            SyncDesktopWidgetOcclusion(widgetData, widgetFrame))
+            continue;
         if (!desktopSurfaceVisible)
             continue;
         if (!presentWidgetSurface)

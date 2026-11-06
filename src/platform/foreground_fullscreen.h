@@ -37,6 +37,8 @@ bool IsCandidate(LONG_PTR style, LONG_PTR extended, bool maximized, bool shell) 
 
 bool IsFullscreen(const WindowSample& window, const RECT& monitor) noexcept;
 
+bool IsShellWindow(HWND window) noexcept;
+
 std::optional<WindowSample> SampleWindow(
     HWND window, DWORD ignoredProcess = GetCurrentProcessId()) noexcept;
 
@@ -44,12 +46,6 @@ std::optional<WindowSnapshot> ObserveWindow(
     HWND window, DWORD ignoredProcess = GetCurrentProcessId()) noexcept;
 
 std::optional<WindowSnapshot> ObserveForeground() noexcept;
-
-std::vector<std::optional<WindowSnapshot>> ObserveMonitors(
-    std::span<const HMONITOR> monitors, DWORD ignoredProcess = GetCurrentProcessId());
-
-std::optional<WindowSnapshot> ObserveMonitor(
-    HMONITOR monitor, DWORD ignoredProcess = GetCurrentProcessId());
 
 // Re-observe at the side-effect boundary, including any attached-input retry.
 template<class Observe, class Activate>

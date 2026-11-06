@@ -310,7 +310,7 @@ void DesktopApp::RebuildContainersAndItems()
     // necessarily changing the foreground. Reconcile taskbar targets on the
     // next guard tick instead of retaining the previous Dock monitor binding.
     systemTaskbarBackdropRefreshTick_ = 0;
-    systemTaskbarWindowStateChangedTick_.fetch_add(1, std::memory_order_relaxed);
+    windowObservationRevision_.fetch_add(1, std::memory_order_relaxed);
     for (auto& container : containers_)
         if (auto* widget = dynamic_cast<ScrollingItemWidget*>(container.get()))
             for (const auto& state : searchPresentations) widget->RestoreSearchPresentation(state);

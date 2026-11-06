@@ -2292,7 +2292,7 @@ void DesktopApp::LoadDockSettingsAndApply()
     ApplyAnimationPreferences();
     SyncSystemTaskbarSettingsFromWindows();
     ApplyFloatingDockHotkey();
-    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+    windowObservationRevision_.fetch_add(1,
         std::memory_order_relaxed);
     RefreshSystemTaskbarAppearance(true);
     if (hwnd_ && IsWindow(hwnd_))

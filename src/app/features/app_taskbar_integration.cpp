@@ -72,7 +72,7 @@ void DesktopApp::StartDockForegroundMonitor()
     addHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED);
 #endif
     RestartSystemTaskbarShellVisibilityDetectors();
-    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+    windowObservationRevision_.fetch_add(1,
         std::memory_order_relaxed);
     dockWindowListChangedTick_.fetch_add(
         1, std::memory_order_relaxed);
@@ -84,7 +84,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
     taskbarAppVisibilityAttempted_ = false;
     taskbarSearchVisibility_.reset();
     taskbarSearchVisibility_ = std::make_unique<SearchVisibilityDetector>([] {
-        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        windowObservationRevision_.fetch_add(1,
             std::memory_order_relaxed);
     });
 }
@@ -118,20 +118,23 @@ void DesktopApp::StopDockForegroundMonitor()
     // The bar outlives this monitor across Explorer/topology recovery; drop its
     // protection instead of leaving a stale TOPMOST/visible guard behind.
     if (statusBar_) statusBar_->SetSystemShowDesktopActive(false);
-    systemTaskbarWindowStateChangedTick_.store(0);
+    windowObservationRevision_.store(0);
     dockWindowListChangedTick_.store(0);
-    systemTaskbarWindowStateObservedTick_ = 0;
-    systemTaskbarWindowScanTick_ = 0;
+    observedWindowRevision_ = 0;
+    windowObservationTick_ = 0;
+    taskbarObservedShellRevision_ = 0;
     {
         std::scoped_lock lock(
-            systemTaskbarWindowObservationMutex_);
-        systemTaskbarWindowObservations_.clear();
+            windowPlacementMutex_);
+        observedWindowPlacements_.clear();
     }
     dockRunningWindowsForegroundTick_ = 0;
     desktopHoverForegroundObservedTick_ = 0;
     dockRunningWindowsStateTick_ = 0;
     dockRunningWindowsRefreshTick_ = 0;
-    systemTaskbarMonitorWindowStates_.clear();
+    observedMonitorWindows_.clear();
+    ++monitorSceneRevision_;
+    UpdateDesktopWidgetCoverage({});
     systemTaskbarWindows_.clear();
     taskbarAppVisibility_.Reset();
     taskbarAppVisibilityAttempted_ = false;
@@ -153,8 +156,9 @@ bool DesktopApp::IsShellDesktopForegroundWindow(HWND window) const
         _wcsicmp(className, L"WorkerW") == 0;
 }
 
-void DesktopApp::HandleDockForegroundInteractionChanged()
+void DesktopApp::HandleDockForegroundInteractionChanged(HWND window, DWORD eventTime)
 {
+    if (window && statusBar_) statusBar_->ObserveForeground(window, eventTime);
     ClearSelectionForExternalWindow(GetForegroundWindow());
     ReconcileDesktopHoverState();
     UpdateSystemShowDesktopLayerGuard();
@@ -272,46 +276,6 @@ PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
     return snowdesktop::ResolveTaskbarRuleAppearance(rule, CurrentPersonalization());
 }
 
-bool IsSystemTaskbarCandidateWindow(HWND window,
-    IVirtualDesktopManager* virtualDesktopManager)
-{
-    if (!window || GetAncestor(window, GA_ROOT) != window ||
-        !IsWindowVisible(window) || IsIconic(window))
-        return false;
-
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
-    if (!processId || processId == GetCurrentProcessId())
-        return false;
-
-    wchar_t className[96]{};
-    GetClassNameW(window, className, static_cast<int>(std::size(className)));
-    if (_wcsicmp(className, L"Progman") == 0 ||
-        _wcsicmp(className, L"WorkerW") == 0 ||
-        _wcsicmp(className, L"Shell_TrayWnd") == 0 ||
-        _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
-        return false;
-
-    const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
-    if ((exStyle & WS_EX_TOOLWINDOW) != 0 ||
-        (GetWindow(window, GW_OWNER) && (exStyle & WS_EX_APPWINDOW) == 0))
-        return false;
-
-    DWORD cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked,
-        sizeof(cloaked))) && cloaked != 0)
-        return false;
-
-    if (virtualDesktopManager)
-    {
-        BOOL onCurrentDesktop = TRUE;
-        if (SUCCEEDED(virtualDesktopManager->IsWindowOnCurrentVirtualDesktop(
-            window, &onCurrentDesktop)) && !onCurrentDesktop)
-            return false;
-    }
-    return true;
-}
-
 bool IsSystemTaskbarShellUiWindow(HWND window)
 {
     if (!window) return false;
@@ -344,103 +308,10 @@ bool IsSystemTaskbarShellUiWindow(HWND window)
             _wcsicmp(className, L"Windows.UI.Core.CoreWindow") == 0);
 }
 
-bool DesktopApp::RefreshSystemTaskbarWindowState()
+bool DesktopApp::RefreshSystemTaskbarShellUiState()
 {
-    snowdesktop::performance::Scope trace("shared.taskbar", "window_state.scan");
-    const auto previousStates = systemTaskbarMonitorWindowStates_;
-    const bool previousShellUiActive =
-        systemTaskbarShellUiActive_;
-    const HMONITOR previousShellUiMonitor =
-        systemTaskbarShellUiMonitor_;
-    systemTaskbarMonitorWindowStates_.clear();
-
-    // UpdateLayoutWorkArea publishes this list only after a complete successful
-    // EnumDisplayMonitors sample. Reuse it instead of enumerating monitors for
-    // every window scan, but reject stale geometry during topology changes.
-    // Resolve handles exactly as SyncStatusBar does; monitorId is not a handle
-    // or necessarily a Win32 device name, and pages may share one monitor.
-    std::vector<HMONITOR> knownMonitors;
-    bool monitorsKnown = !gridPages_.empty();
-    for (const auto& page : gridPages_)
-    {
-        RECT screen = page.bounds;
-        OffsetRect(&screen, virtualLeft_, virtualTop_);
-        const HMONITOR monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);
-        MONITORINFO info{sizeof(info)};
-        if (IsRectEmpty(&screen) || !monitor || !GetMonitorInfoW(monitor, &info) ||
-            !EqualRect(&screen, &info.rcMonitor))
-        {
-            monitorsKnown = false;
-            break;
-        }
-        if (std::find(knownMonitors.begin(), knownMonitors.end(), monitor) == knownMonitors.end())
-            knownMonitors.push_back(monitor);
-    }
-    const int monitorCount = GetSystemMetrics(SM_CMONITORS);
-    monitorsKnown = monitorsKnown && monitorCount > 0 &&
-        knownMonitors.size() == static_cast<std::size_t>(monitorCount);
-
-    ComPtr<IVirtualDesktopManager> virtualDesktopManager;
-    {
-        snowdesktop::performance::Scope comTrace("shared.taskbar", "scan.com_setup");
-        CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
-    }
-
-    struct EnumerationContext
-    {
-        IVirtualDesktopManager* virtualDesktopManager = nullptr;
-        std::unordered_map<HMONITOR,
-            SystemTaskbarMonitorWindowState>* states = nullptr;
-        std::unordered_map<HWND,
-            SystemTaskbarWindowObservation>* observations = nullptr;
-    } context{ virtualDesktopManager.Get(),
-        &systemTaskbarMonitorWindowStates_ };
-    std::unordered_map<HWND,
-        SystemTaskbarWindowObservation> observations;
-    context.observations = &observations;
-
-    const bool windowsKnown = [&context] {
-        snowdesktop::performance::Scope windowTrace("shared.taskbar", "scan.windows");
-        return EnumWindows([](HWND window, LPARAM value) -> BOOL {
-            auto* context = reinterpret_cast<EnumerationContext*>(value);
-            if (!IsSystemTaskbarCandidateWindow(window,
-                context->virtualDesktopManager))
-                return TRUE;
-            const HMONITOR monitor = MonitorFromWindow(window,
-                MONITOR_DEFAULTTONULL);
-            if (!monitor) return TRUE;
-            (*context->observations)[window] = {
-                monitor, IsZoomed(window) != FALSE
-            };
-            auto& state = (*context->states)[monitor];
-            state.visible = true;
-            if (IsZoomed(window))
-                state.maximized = true;
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&context)) != FALSE;
-    }();
-    if (!windowsKnown)
-    {
-        // A partial or failed scan is unknown, including on a monitor whose
-        // previous valid sample happened to contain no application windows.
-        systemTaskbarMonitorWindowStates_.clear();
-        observations.clear();
-    }
-    else if (monitorsKnown)
-    {
-        // Positive observations remain usable without a complete monitor list;
-        // only the absence of windows requires both complete observations.
-        for (const HMONITOR monitor : knownMonitors)
-            systemTaskbarMonitorWindowStates_.try_emplace(monitor);
-    }
-    {
-        std::scoped_lock lock(
-            systemTaskbarWindowObservationMutex_);
-        systemTaskbarWindowObservations_ =
-            std::move(observations);
-    }
-
+    const bool previousShellUiActive = systemTaskbarShellUiActive_;
+    const HMONITOR previousShellUiMonitor = systemTaskbarShellUiMonitor_;
     {
         snowdesktop::performance::Scope shellTrace("shared.taskbar", "scan.shell_ui");
         bool launcherVisible = false;
@@ -473,26 +344,7 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
             ? MonitorFromWindow(foreground, MONITOR_DEFAULTTOPRIMARY)
             : nullptr;
     }
-    systemTaskbarWindowStateObservedTick_ =
-        systemTaskbarWindowStateChangedTick_.load();
-
-    const bool statesEqual =
-        previousStates.size() ==
-            systemTaskbarMonitorWindowStates_.size() &&
-        std::all_of(previousStates.begin(), previousStates.end(),
-            [this](const auto& entry) {
-                const auto found =
-                    systemTaskbarMonitorWindowStates_.find(
-                        entry.first);
-                return found !=
-                        systemTaskbarMonitorWindowStates_.end() &&
-                    found->second.visible ==
-                        entry.second.visible &&
-                    found->second.maximized ==
-                        entry.second.maximized;
-            });
-    return !statesEqual ||
-        previousShellUiActive != systemTaskbarShellUiActive_ ||
+    return previousShellUiActive != systemTaskbarShellUiActive_ ||
         previousShellUiMonitor != systemTaskbarShellUiMonitor_;
 }
 
@@ -529,20 +381,20 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         return true;
     }
 
-    const DWORD changedTick = systemTaskbarWindowStateChangedTick_.load();
-    if (forceWindowScan || changedTick != systemTaskbarWindowStateObservedTick_)
+    if (forceWindowScan || windowObservationTick_ == 0 ||
+        windowObservationRevision_.load() != observedWindowRevision_)
+        RefreshWindowObservations();
+    bool shellChanged = false;
+    if (forceWindowScan || taskbarObservedShellRevision_ != observedWindowRevision_)
     {
-        snowdesktop::performance::Value("shared.taskbar", forceWindowScan
-            ? "scan.request.forced" : "scan.request.dirty", {}, 1);
-        const bool windowStateChanged =
-            RefreshSystemTaskbarWindowState();
-        systemTaskbarWindowScanTick_ = GetTickCount();
-        if (skipUnchangedWindowState &&
-            !windowStateChanged)
-        {
-            snowdesktop::performance::Value("shared.taskbar", "refresh.window_state_unchanged", {}, 1);
-            return false;
-        }
+        shellChanged = RefreshSystemTaskbarShellUiState();
+        taskbarObservedShellRevision_ = observedWindowRevision_;
+    }
+    if (skipUnchangedWindowState && !shellChanged &&
+        taskbarAppliedMonitorSceneRevision_ == monitorSceneRevision_)
+    {
+        snowdesktop::performance::Value("shared.taskbar", "refresh.window_state_unchanged", {}, 1);
+        return false;
     }
 
     struct TaskbarEnumerationContext
@@ -610,10 +462,10 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         const HMONITOR monitor = snowdesktop::taskbar_monitor::Resolve(taskbar);
         const bool hasDock = monitor &&
             std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
-        const auto stateIt = systemTaskbarMonitorWindowStates_.find(monitor);
-        const SystemTaskbarMonitorWindowState state =
-            stateIt == systemTaskbarMonitorWindowStates_.end()
-            ? SystemTaskbarMonitorWindowState{} : stateIt->second;
+        const auto stateIt = observedMonitorWindows_.find(monitor);
+        const snowdesktop::window_observation::MonitorState state =
+            stateIt == observedMonitorWindows_.end()
+            ? snowdesktop::window_observation::MonitorState{} : stateIt->second;
 
         const bool shellPanelVisible = snowdesktop::dock_settings_rules::
             ShouldRevealTaskbarForShellPanel(systemTaskbarTaskViewActive_,
@@ -663,6 +515,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         [](const auto& target) { return target.suppressTaskbar; });
     ApplySystemTaskbarBackdrop(true,
         dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
+    taskbarAppliedMonitorSceneRevision_ = monitorSceneRevision_;
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
 }
