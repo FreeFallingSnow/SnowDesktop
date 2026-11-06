@@ -2,7 +2,6 @@
 #include "platform/fullscreen_rules.h"
 #include "diagnostics/performance_trace.h"
 
-#include <array>
 #include <dwmapi.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
@@ -162,20 +161,20 @@ std::optional<fullscreen::WindowSnapshot> RecheckFullscreenSource(
 {
     MONITORINFO info{sizeof(info)};
     if (!monitor || !GetMonitorInfoW(monitor, &info)) return std::nullopt;
+    const auto recheck = [&](HWND window) -> std::optional<fullscreen::WindowSnapshot> {
+        const auto sample = fullscreen::SampleWindow(window);
+        if (!sample || !fullscreen::IsFullscreen(*sample, info.rcMonitor))
+            return std::nullopt;
+        return fullscreen::WindowSnapshot{window, monitor, sample->process,
+            sample->client, info.rcMonitor};
+    };
     const HWND foreground = GetForegroundWindow();
-    const std::array bounds{std::optional{info.rcMonitor}};
-    const auto sources = fullscreen::ScanMonitors(bounds, [&](const auto& visit) {
-        if (foreground && MonitorFromWindow(foreground, MONITOR_DEFAULTTONULL) == monitor)
-            if (const auto sample = fullscreen::SampleWindow(foreground); sample && !visit(*sample))
-                return true;
-        if (knownSource && knownSource != foreground)
-            if (const auto sample = fullscreen::SampleWindow(knownSource))
-                visit(*sample);
-        return true;
-    });
-    const auto& source = sources.front();
-    if (!source || !source->window) return std::nullopt;
-    return fullscreen::WindowSnapshot{source->window, monitor, source->process,
-        source->client, info.rcMonitor};
+    if (foreground && foreground != knownSource &&
+        MonitorFromWindow(foreground, MONITOR_DEFAULTTONULL) == monitor)
+        if (auto current = recheck(foreground))
+            return current;
+    // The shared observation already resolved which window is above the
+    // others. An ordinary foreground window need not be above that source.
+    return recheck(knownSource);
 }
 }

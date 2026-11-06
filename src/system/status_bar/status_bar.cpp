@@ -2182,6 +2182,9 @@ void StatusBar::ObserveForeground(HWND foreground, DWORD eventTime)
         if (window && !window->closing)
             PostMessageW(window->hwnd, kForeground,
                 reinterpret_cast<WPARAM>(foreground), static_cast<LPARAM>(eventTime));
+    // A retained Dock fullscreen source also depends on foreground ownership.
+    // Reconcile it even when the observed fullscreen HWND did not change.
+    NotifyWindowObservations();
 }
 PersonalizationSettings StatusBar::AppearanceForMonitor(HMONITOR monitor) const
 {
