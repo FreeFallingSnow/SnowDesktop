@@ -344,6 +344,7 @@
 ---@field debugName? string Developer-readable node name, 1..256 UTF-8 bytes without control characters when present; it only appears in copied host diagnostics and does not affect behavior.
 ---@field testId? string Developer test selector, 1..128 ASCII letters/digits or ._:-/ when present; it is diagnostics-only and does not replace key or UIA AutomationId. Requires view.identity.diagnostics.
 ---@field text? string Used by text nodes.
+---@field glowRadius? number Text-only radius from 0 to 128 layout units. Positive values draw eight offset copies without the center glyph. Probe view.textGlow first.
 ---@field spans? SnowViewTextSpan[] Required by styledText; 1 to 64 bounded spans. Interactive span fields require view.styledText.actions.
 ---@field label? string Required by button, link, toggle, and checkbox nodes.
 ---@field glyph? string Required by icon and iconButton nodes.

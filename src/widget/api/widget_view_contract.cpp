@@ -327,6 +327,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("debugName", ViewPropertyValueKind::String),
     Property("testId", ViewPropertyValueKind::String),
     Property("text", ViewPropertyValueKind::String),
+    RangedProperty("glowRadius", ViewPropertyValueKind::Number, 0.0, 128.0),
     Property("spans", ViewPropertyValueKind::Spans),
     Property("label", ViewPropertyValueKind::String),
     Property("glyph", ViewPropertyValueKind::String),
@@ -897,6 +898,7 @@ bool ViewNodeAllowsProperty(
     if (Contains(kCommonProperties, property)) return true;
     if (property == "text")
         return type == ViewNodeType::Text || type == ViewNodeType::Badge;
+    if (property == "glowRadius") return type == ViewNodeType::Text;
     if (property == "spans") return type == ViewNodeType::StyledText;
     if (property == "label") return IsLabelNode(type);
     if (property == "glyph" || property == "iconFont")

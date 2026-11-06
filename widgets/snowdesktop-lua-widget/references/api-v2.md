@@ -604,6 +604,10 @@ region 声明过该作用域，其返回项就会注册到整个组件表面，�
 可信手势规则约束。例如没有实际焦点的节点不会收到 key 事件，selectionMode 为 none 的集合也
 不会产生 change。所有事件动作继续使用 `SnowInteractionAction`，不能保存 Lua 闭包或取消宿主默认行为。
 
+探测 `view.textGlow` 后，普通 `text` 可用 `glowRadius`（0–128 布局单位）绘制八方向
+偏移的发光字形。正值只绘制发光副本，正文可由独立 `text` 绘制。副本沿用该节点的前景色、
+透明度和变换。省略或传 0 时照常绘制文字。宿主可缓存发光位图，资源不可用时直接绘制副本。
+
 探测 `view.text.flow` 后，普通 `text`、按钮/链接等 label 节点和 `styledText` 可使用
 `textWrap="noWrap|wrap"`、`maxLines=0..64`、`overflowText="clip|ellipsis"` 和
 `verticalAlign="start|center|end"`。普通文本/label 默认 noWrap+ellipsis，styledText 为保持

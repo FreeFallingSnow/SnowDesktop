@@ -64,6 +64,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_background_cache.h"
 #include "widget/view/widget_image_sampling.h"
 #include "widget/view/widget_text_layout_cache.h"
+#include "widget/view/widget_text_glow_cache.h"
 #include "widget/view/widget_view_lua.h"
 #include "widget/view/widget_view_tree.h"
 #include "widget/view/widget_surface_renderer.h"
@@ -666,6 +667,7 @@ struct D2DState
     snowdesktop::widget_runtime::WidgetBackgroundCache backgroundCache;
     snowdesktop::widget_runtime::WidgetImageSamplingCache imageSamplingCache;
     snowdesktop::widget_runtime::WidgetTextLayoutCache textLayoutCache;
+    snowdesktop::widget_runtime::WidgetTextGlowCache textGlowCache;
     snowdesktop::widget_runtime::WidgetScriptReadAhead scriptReadAhead;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     std::unordered_map<std::string, std::uint64_t> imageCacheRevisions;
@@ -10291,6 +10293,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->bitmapDevice = std::move(device);
     state->backgroundCache.Clear();
     state->textLayoutCache.Clear();
+    state->textGlowCache.Clear();
     state->imageSamplingCache.Clear();
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
@@ -19907,7 +19910,11 @@ static void DrawWidgetViewNode(D2DState* state,
                         origin.y -= (overhang.bottom - overhang.top) * 0.5f;
                     }
                 }
-                state->ctx->DrawTextLayout(origin, layout.Get(), brush);
+                if (node.textGlowRadius && *node.textGlowRadius > 0.0f)
+                    state->textGlowCache.Draw(*state->ctx, *layout.Get(),
+                        *brush, origin, *node.textGlowRadius);
+                else
+                    state->ctx->DrawTextLayout(origin, layout.Get(), brush);
             }
         }
     }

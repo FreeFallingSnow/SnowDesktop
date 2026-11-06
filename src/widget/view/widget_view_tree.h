@@ -577,6 +577,7 @@ struct ViewNode
     std::optional<std::uint32_t> imageTint;
     std::optional<ViewThemeColorToken> imageTintToken;
     std::optional<float> imageSpinSpeed;
+    std::optional<float> textGlowRadius;
     ViewOrientation orientation = ViewOrientation::Horizontal;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;

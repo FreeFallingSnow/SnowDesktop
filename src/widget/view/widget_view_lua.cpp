@@ -2900,6 +2900,9 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     };
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
+        (fields.MaybePresent("glowRadius") &&
+            !ReadOptionalNodeFloatField(state, index, "glowRadius",
+                node.textGlowRadius, error)) ||
         (imageNode && !ReadResourceField(state, index, "source",
             LuaResourceType::Image, true, node.imageResourceName, error)) ||
         (fields.MaybePresent("font") && !ReadResourceField(state, index,

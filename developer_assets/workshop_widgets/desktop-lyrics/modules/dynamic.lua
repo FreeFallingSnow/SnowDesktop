@@ -173,16 +173,23 @@ local function label(key,value,x,y,width,height,font,foreground,alpha)
         style={foreground=foreground,opacity=alpha}}
 end
 local directions={{1,0},{-1,0},{0,1},{0,-1},{0.707,0.707},{-0.707,0.707},{0.707,-0.707},{-0.707,-0.707}}
-local function glowLabels(cache,piece,glyph,index,font,accent)
+local function glowLabels(cache,piece,glyph,index,font,accent,native)
     local labels=cache[glyph]
     if labels then return labels end
     labels={}
     local radius=font*0.13
-    for j,direction in ipairs(directions) do
-        local glow=label(piece.key..".glow."..index.."."..j,glyph.text,glyph.x+direction[1]*radius,
-            direction[2]*radius,glyph.width,piece.height,font,accent,0)
+    if native and radius<=128 then
+        local glow=label(piece.key..".glow."..index,glyph.text,glyph.x,0,glyph.width,piece.height,font,accent,0)
         glow.accessibility={hidden=true}
-        labels[j]=glow
+        glow.glowRadius=radius
+        labels[1]=glow
+    else
+        for j,direction in ipairs(directions) do
+            local glow=label(piece.key..".glow."..index.."."..j,glyph.text,glyph.x+direction[1]*radius,
+                direction[2]*radius,glyph.width,piece.height,font,accent,0)
+            glow.accessibility={hidden=true}
+            labels[j]=glow
+        end
     end
     cache[glyph]=labels
     return labels
@@ -249,7 +256,7 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
     -- consumes each frame into its own view tree before the next update.
     local glowCache=m.glowCache
     if not glowCache or glowCache.page~=page or glowCache.accent~=accent then
-        glowCache={page=page,accent=accent,labels={}}
+        glowCache={page=page,accent=accent,labels={},native=widget.hasFeature("view.textGlow")}
         m.glowCache=glowCache
     end
     local reduced=m.reducedMotion==true
@@ -278,7 +285,7 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
                         end
                         if strength>0.025 and glowBudget>=8 then
                             local alpha=0.075*strength
-                            for _,glow in ipairs(glowLabels(glowCache.labels,piece,glyph,i,p.font,accent)) do
+                            for _,glow in ipairs(glowLabels(glowCache.labels,piece,glyph,i,p.font,accent,glowCache.native)) do
                                 glow.style.opacity=alpha
                                 items[#items+1]=glow
                             end

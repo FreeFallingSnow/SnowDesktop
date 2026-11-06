@@ -586,6 +586,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/view/widget_gpu_timing.cpp
     src/widget/view/widget_background_cache.cpp
     src/widget/view/widget_image_sampling.cpp
+    src/widget/view/widget_text_glow_cache.cpp
     src/widget/view/widget_interaction_region.cpp
     src/widget/view/widget_accessibility_events.cpp
     src/widget/view/widget_accessibility_provider.cpp
