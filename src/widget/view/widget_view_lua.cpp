@@ -199,11 +199,15 @@ public:
         enabled_ = true;
     }
 
+    bool MaybePresent(PresenceField field) const noexcept
+    {
+        return !enabled_ || ((first_ & field.first) != 0 &&
+            (second_ & field.second) != 0);
+    }
+
     bool Present(PresenceField field) const
     {
-        if (enabled_ && ((first_ & field.first) == 0 ||
-                (second_ & field.second) == 0)) return false;
-        return FieldPresent(state_, index_, field.name);
+        return MaybePresent(field) && FieldPresent(state_, index_, field.name);
     }
 private:
     lua_State* state_;
@@ -2890,22 +2894,27 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
     const bool initialScrollKeySpecified =
         fields.Present("initialScrollKey");
     std::string initialScrollKey;
+    const auto readStyle = [&](PresenceField field, ViewStyle& style) {
+        return !fields.MaybePresent(field) ||
+            ReadStyleField(state, index, field.name, style, error);
+    };
     if (!ReadStringField(state, index, contentField,
             node.text, false, error) ||
-        !ReadResourceField(state, index, "source", LuaResourceType::Image,
-            imageNode, node.imageResourceName, error) ||
-        !ReadResourceField(state, index, "font", LuaResourceType::Font,
-            false, node.fontResourceName, error) ||
-        !ReadStringField(state, index, "alt", node.alt, false, error) ||
-        !ReadImageFitField(state, index, node.imageFit, error) ||
-        !ReadImageAlignmentField(state, index,
-            node.imageAlignment, error) ||
-        !ReadImageInterpolationField(state, index,
-            node.imageInterpolation, error) ||
-        !ReadOptionalNodeFloatField(state, index, "spinSpeed",
-            node.imageSpinSpeed, error) ||
-        !ReadOptionalColor(state, index, "tint", node.imageTint, error,
-            &node.imageTintToken) ||
+        (imageNode && !ReadResourceField(state, index, "source",
+            LuaResourceType::Image, true, node.imageResourceName, error)) ||
+        (fields.MaybePresent("font") && !ReadResourceField(state, index,
+            "font", LuaResourceType::Font, false, node.fontResourceName, error)) ||
+        (imageVisualNode && (
+            !ReadStringField(state, index, "alt", node.alt, false, error) ||
+            !ReadImageFitField(state, index, node.imageFit, error) ||
+            !ReadImageAlignmentField(state, index, node.imageAlignment, error) ||
+            !ReadImageInterpolationField(state, index,
+                node.imageInterpolation, error))) ||
+        (imageNode && (
+            !ReadOptionalNodeFloatField(state, index, "spinSpeed",
+                node.imageSpinSpeed, error) ||
+            !ReadOptionalColor(state, index, "tint", node.imageTint, error,
+                &node.imageTintToken))) ||
         !ReadOrientationField(state, index, node.orientation, error) ||
         !ReadLengthField(state, index, "width", node.width, error) ||
         !ReadLengthField(state, index, "height", node.height, error) ||
@@ -2925,44 +2934,48 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadIntegerField(state, index, "zIndex", node.zIndex, error) ||
         !ReadBoolField(state, index, "clip", node.clipChildren, error) ||
         !ReadOverflowField(state, index, node.overflow, error) ||
-        !ReadShadowField(state, index, node.shadow, error) ||
-        !ReadTransformField(state, index, node.transform, error) ||
-        !ReadTransitionField(state, index, node.transition, error) ||
-        !ReadPresenceTransitionField(state, index, "enterTransition",
-            node.enterTransition, error) ||
-        !ReadPresenceTransitionField(state, index, "exitTransition",
-            node.exitTransition, error) ||
+        (fields.MaybePresent("shadow") &&
+            !ReadShadowField(state, index, node.shadow, error)) ||
+        (fields.MaybePresent("transform") &&
+            !ReadTransformField(state, index, node.transform, error)) ||
+        (fields.MaybePresent("transition") &&
+            !ReadTransitionField(state, index, node.transition, error)) ||
+        (fields.MaybePresent("enterTransition") &&
+            !ReadPresenceTransitionField(state, index, "enterTransition",
+                node.enterTransition, error)) ||
+        (fields.MaybePresent("exitTransition") &&
+            !ReadPresenceTransitionField(state, index, "exitTransition",
+                node.exitTransition, error)) ||
         !ReadFloatField(state, index, "gap", node.gap, error) ||
-        !ReadGridTracksField(state, index, "columns",
-            positionedGridNode, node.columns, node.columnTracks, error) ||
-        !ReadGridTracksField(state, index, "rows",
-            positionedGridNode, rowTrackCount, node.rowTracks, error) ||
-        !ReadNonNegativeSizeField(state, index, "itemCount",
-            node.itemCount, virtualCollectionNode, error) ||
-        !ReadFloatField(state, index, "itemExtent",
-            node.itemExtent, error) ||
-        !ReadOptionalNodeFloatField(state, index, "estimatedItemSize",
-            node.estimatedItemSize, error) ||
-        !ReadNonNegativeSizeField(state, index, "layoutRevision",
-            virtualLayoutRevision, false, error) ||
-        !ReadPositiveSizeArrayField(state, index,
-            "sectionHeaderIndices", node.sectionHeaderIndices,
-            ViewTreeLimits::MaximumVirtualSectionHeaders, error) ||
-        !ReadOptionalPositiveSizeField(state, index,
-            "stickyHeaderIndex", node.stickyHeaderIndex, error) ||
-        !ReadNonNegativeSizeField(state, index, "firstIndex",
-            node.firstIndex, virtualCollectionNode, error) ||
-        !ReadNonNegativeSizeField(state, index, "overscan",
-            node.overscan, false, error) ||
-        !ReadStringField(state, index, "initialScrollKey",
-            initialScrollKey, false, error) ||
-        !ReadOptionalPositiveSizeField(state, index,
-            "initialScrollIndex", node.initialScrollIndex, error) ||
-        !ReadSelectionModeField(state, index,
-            node.selectionMode, error) ||
-        !ReadStringArrayField(state, index, "selectedKeys",
-            node.selectedKeys, 0,
-            ViewTreeLimits::MaximumCollectionItems, false, error) ||
+        (gridNode && !ReadGridTracksField(state, index, "columns",
+            positionedGridNode, node.columns, node.columnTracks, error)) ||
+        (positionedGridNode && !ReadGridTracksField(state, index, "rows",
+            true, rowTrackCount, node.rowTracks, error)) ||
+        (virtualCollectionNode && (
+            !ReadNonNegativeSizeField(state, index, "itemCount",
+                node.itemCount, true, error) ||
+            !ReadFloatField(state, index, "itemExtent", node.itemExtent, error) ||
+            !ReadOptionalNodeFloatField(state, index, "estimatedItemSize",
+                node.estimatedItemSize, error) ||
+            !ReadNonNegativeSizeField(state, index, "layoutRevision",
+                virtualLayoutRevision, false, error) ||
+            !ReadPositiveSizeArrayField(state, index, "sectionHeaderIndices",
+                node.sectionHeaderIndices, ViewTreeLimits::MaximumVirtualSectionHeaders,
+                error) ||
+            !ReadOptionalPositiveSizeField(state, index, "stickyHeaderIndex",
+                node.stickyHeaderIndex, error) ||
+            !ReadNonNegativeSizeField(state, index, "firstIndex",
+                node.firstIndex, true, error) ||
+            !ReadNonNegativeSizeField(state, index, "overscan",
+                node.overscan, false, error))) ||
+        (initialScrollKeySpecified && !ReadStringField(state, index,
+            "initialScrollKey", initialScrollKey, false, error)) ||
+        (virtualCollectionNode && !ReadOptionalPositiveSizeField(state, index,
+            "initialScrollIndex", node.initialScrollIndex, error)) ||
+        (collectionNode && (
+            !ReadSelectionModeField(state, index, node.selectionMode, error) ||
+            !ReadStringArrayField(state, index, "selectedKeys", node.selectedKeys,
+                0, ViewTreeLimits::MaximumCollectionItems, false, error))) ||
         !ReadOptionalNodeFloatField(state, index, "columnGap",
             node.columnGap, error) ||
         !ReadOptionalNodeFloatField(state, index, "rowGap",
@@ -3050,29 +3063,18 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.overflowText, error) ||
         !ReadShapeKindField(state, index, node.shapeKind, error) ||
         !ReadIconFontField(state, index, node.iconFont, error) ||
-        !ReadStyleField(state, index, "style", node.style, error) ||
-        !ReadStyleField(state, index, "hoverStyle",
-            node.hoverStyle, error) ||
-        !ReadStyleField(state, index, "pressedStyle",
-            node.pressedStyle, error) ||
-        !ReadStyleField(state, index, "focusStyle",
-            node.focusStyle, error) ||
-        !ReadStyleField(state, index, "disabledStyle",
-            node.disabledStyle, error) ||
-        !ReadStyleField(state, index, "validationStyle",
-            node.validationStyle, error) ||
-        !ReadStyleField(state, index, "checkedStyle",
-            node.checkedStyle, error) ||
-        !ReadStyleField(state, index, "selectedStyle",
-            node.selectedStyle, error) ||
-        !ReadStyleField(state, index, "dropStyle",
-            node.dropStyle, error) ||
-        !ReadStyleField(state, index, "todayStyle",
-            node.todayStyle, error) ||
-        !ReadStyleField(state, index, "adjacentStyle",
-            node.adjacentStyle, error) ||
-        !ReadStyleField(state, index, "eventStyle",
-            node.eventStyle, error))
+        !readStyle("style", node.style) ||
+        !readStyle("hoverStyle", node.hoverStyle) ||
+        !readStyle("pressedStyle", node.pressedStyle) ||
+        !readStyle("focusStyle", node.focusStyle) ||
+        !readStyle("disabledStyle", node.disabledStyle) ||
+        !readStyle("validationStyle", node.validationStyle) ||
+        !readStyle("checkedStyle", node.checkedStyle) ||
+        !readStyle("selectedStyle", node.selectedStyle) ||
+        !readStyle("dropStyle", node.dropStyle) ||
+        !readStyle("todayStyle", node.todayStyle) ||
+        !readStyle("adjacentStyle", node.adjacentStyle) ||
+        !readStyle("eventStyle", node.eventStyle))
         return false;
 
     node.virtualLayoutRevision =

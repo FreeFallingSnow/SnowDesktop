@@ -513,6 +513,17 @@ constexpr auto PropertyNames() noexcept
 
 constexpr auto kPropertyNames = PropertyNames();
 
+constexpr auto kPropertiesByName = [] {
+    std::array<const ViewPropertyContract*, kProperties.size()> result{};
+    for (std::size_t index = 0; index < result.size(); ++index)
+        result[index] = &kProperties[index];
+    std::sort(result.begin(), result.end(),
+        [](const auto* left, const auto* right) {
+            return left->name < right->name;
+        });
+    return result;
+}();
+
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "type", "key", "debugName", "testId", "width", "height", "minWidth", "maxWidth",
     "minHeight", "maxHeight", "aspectRatio", "margin", "padding",
@@ -742,11 +753,13 @@ std::span<const ViewPropertyContract> ViewPropertyContracts() noexcept
 const ViewPropertyContract* FindViewPropertyContract(
     std::string_view name) noexcept
 {
-    const auto found = std::find_if(kProperties.begin(), kProperties.end(),
-        [name](const ViewPropertyContract& contract) {
-            return contract.name == name;
+    const auto found = std::lower_bound(kPropertiesByName.begin(),
+        kPropertiesByName.end(), name,
+        [](const ViewPropertyContract* contract, std::string_view value) {
+            return contract->name < value;
         });
-    return found == kProperties.end() ? nullptr : &*found;
+    return found != kPropertiesByName.end() && (*found)->name == name
+        ? *found : nullptr;
 }
 
 std::string_view ViewPropertyValueKindName(
