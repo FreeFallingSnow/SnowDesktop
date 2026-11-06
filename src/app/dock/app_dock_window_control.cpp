@@ -29,6 +29,20 @@ const char* TaskbarDirtyEventMetric(DWORD event) noexcept
     default: return "dirty.other";
     }
 }
+
+template <typename ReadWindowAppId>
+bool MatchesTrackedDockApp(HWND window, const DockAppIdentity& identity,
+    std::optional<DockProcessParentMap>* processParents, ReadWindowAppId readWindowAppId)
+{
+    if (DockWindowMatchesAppIdentity(window, identity, processParents))
+        return true;
+
+    // Running discovery also accepts an exact app ID for executable shortcuts.
+    // Reuse its async lookup when paths differ to keep Shell queries off hover.
+    return identity.kind == DockAppIdentityKind::Executable &&
+        !identity.appUserModelId.empty() &&
+        identity.appUserModelId == readWindowAppId(window);
+}
 }
 
 // Dock window closing and hover-preview control.
@@ -65,9 +79,9 @@ bool DesktopApp::IsDockAppClosePending(
     return std::any_of(
         dockPendingCloseWindows_.begin(),
         dockPendingCloseWindows_.end(),
-        [&identity](const auto& entry) {
-            return DockWindowMatchesAppIdentity(
-                entry.first, identity);
+        [this, &identity](const auto& entry) {
+            return MatchesTrackedDockApp(entry.first, identity, nullptr,
+                [this](HWND window) { return GetDockWindowAppUserModelIdAsync(window); });
         });
 }
 
@@ -164,8 +178,10 @@ DesktopApp::CollectDockWindowPreviewItems(
                 window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
             cloaked != 0)
             return TRUE;
-        if (!DockWindowMatchesAppIdentity(window, *context->identity,
-                &context->processParents))
+        if (!MatchesTrackedDockApp(window, *context->identity, &context->processParents,
+                [owner = context->owner](HWND candidate) {
+                    return owner->GetDockWindowAppUserModelIdAsync(candidate);
+                }))
             return TRUE;
 
         wchar_t titleBuffer[512]{};
