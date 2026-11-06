@@ -22,6 +22,7 @@ using Microsoft::WRL::ComPtr;
 
 struct WidgetImageSpinState
 {
+    ComPtr<IDCompositionVisual2> placement;
     ComPtr<IDCompositionVisual2> visual;
     ComPtr<IDCompositionRotateTransform> rotation;
     ComPtr<IDCompositionSurface> surface;
@@ -116,13 +117,13 @@ struct WidgetSurfaceRenderer::Impl
         const auto& image = frame.imageSpin;
         if (!image.bitmap)
         {
-            if (!spin.visual) return S_OK;
-            const HRESULT hr = target.visual->RemoveVisual(spin.visual.Get());
+            if (!spin.placement) return S_OK;
+            const HRESULT hr = target.visual->RemoveVisual(spin.placement.Get());
             if (SUCCEEDED(hr)) spin = {};
             return hr;
         }
 
-        const bool newVisual = !spin.visual;
+        const bool newVisual = !spin.placement;
         const float size = image.destination.right - image.destination.left;
         const float previousSize = spin.image.destination.right -
             spin.image.destination.left;
@@ -130,7 +131,9 @@ struct WidgetSurfaceRenderer::Impl
         HRESULT hr = S_OK;
         if (newVisual)
         {
-            hr = composition->CreateVisual(&spin.visual);
+            hr = composition->CreateVisual(&spin.placement);
+            if (SUCCEEDED(hr))
+                hr = composition->CreateVisual(&spin.visual);
             if (SUCCEEDED(hr))
                 hr = composition->CreateRotateTransform(&spin.rotation);
             if (SUCCEEDED(hr))
@@ -138,6 +141,8 @@ struct WidgetSurfaceRenderer::Impl
             if (SUCCEEDED(hr))
                 hr = spin.visual->SetBitmapInterpolationMode(
                     DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+            if (SUCCEEDED(hr))
+                hr = spin.placement->AddVisual(spin.visual.Get(), TRUE, nullptr);
             if (FAILED(hr)) return hr;
         }
         if (newVisual || size != previousSize ||
@@ -156,16 +161,20 @@ struct WidgetSurfaceRenderer::Impl
             static_cast<float>(frame.bounds.left) - 1.0f;
         const float offsetY = image.destination.top -
             static_cast<float>(frame.bounds.top) - 1.0f;
-        if (newVisual || size != previousSize ||
-            offsetX != spin.offsetX || offsetY != spin.offsetY)
+        if (newVisual || size != previousSize)
         {
-            // DirectComposition applies Offset before Transform, so the
-            // rotation center uses the translated position in the parent.
-            hr = spin.rotation->SetCenterX(offsetX + size * 0.5f + 1.0f);
+            // The child rotates in its own surface pixels, including padding.
+            // Its parent positions the already rotated image in the widget.
+            const float center = size * 0.5f + 1.0f;
+            hr = spin.rotation->SetCenterX(center);
             if (SUCCEEDED(hr))
-                hr = spin.rotation->SetCenterY(offsetY + size * 0.5f + 1.0f);
-            if (SUCCEEDED(hr)) hr = spin.visual->SetOffsetX(offsetX);
-            if (SUCCEEDED(hr)) hr = spin.visual->SetOffsetY(offsetY);
+                hr = spin.rotation->SetCenterY(center);
+            if (FAILED(hr)) return hr;
+        }
+        if (newVisual || offsetX != spin.offsetX || offsetY != spin.offsetY)
+        {
+            hr = spin.placement->SetOffsetX(offsetX);
+            if (SUCCEEDED(hr)) hr = spin.placement->SetOffsetY(offsetY);
             if (FAILED(hr)) return hr;
             spin.offsetX = offsetX;
             spin.offsetY = offsetY;
@@ -198,7 +207,7 @@ struct WidgetSurfaceRenderer::Impl
         }
         if (newVisual)
         {
-            hr = target.visual->AddVisual(spin.visual.Get(), TRUE, nullptr);
+            hr = target.visual->AddVisual(spin.placement.Get(), TRUE, nullptr);
             if (FAILED(hr)) return hr;
         }
         spin.image = image;
