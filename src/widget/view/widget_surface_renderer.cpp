@@ -41,6 +41,7 @@ struct WidgetSurfaceTarget
     ComPtr<IDCompositionVisual2> visual;
     // Only the render thread accesses these surface/notification fields.
     ComPtr<IDCompositionSurface> surface;
+    RECT committedPaintBounds{};
     WidgetImageSpinState spin;
     bool announced = false;
     std::atomic<bool> active{true}, failed{false};
@@ -57,6 +58,7 @@ struct WidgetSurfaceRenderer::Impl
     };
     ComPtr<ID2D1Device> device;
     ComPtr<ID2D1DeviceContext> recording;
+    ComPtr<ID2D1DeviceContext> boundsContext;
     ComPtr<IDCompositionDesktopDevice> composition;
     WidgetGpuTiming gpuTiming;
     HWND notifyWindow = nullptr;
@@ -214,11 +216,53 @@ struct WidgetSurfaceRenderer::Impl
         return S_OK;
     }
 
+    RECT PaintBounds(const Frame& frame, const RECT& surfaceBounds)
+    {
+        D2D1_RECT_F bounds{};
+        if (!boundsContext ||
+            FAILED(boundsContext->GetImageLocalBounds(frame.commands.Get(), &bounds)) ||
+            !std::isfinite(bounds.left) || !std::isfinite(bounds.top) ||
+            !std::isfinite(bounds.right) || !std::isfinite(bounds.bottom))
+            return surfaceBounds;
+        if (bounds.left >= bounds.right || bounds.top >= bounds.bottom)
+            return {};
+
+        // Include the antialiased edge when mapping the command list's
+        // desktop coordinates into integer pixels of the composition surface.
+        constexpr double padding = 2.0;
+        const auto pixel = [](double value, LONG maximum) {
+            return static_cast<LONG>(std::clamp(value, 0.0, static_cast<double>(maximum)));
+        };
+        return {
+            pixel(std::floor(bounds.left) - frame.bounds.left - padding, surfaceBounds.right),
+            pixel(std::floor(bounds.top) - frame.bounds.top - padding, surfaceBounds.bottom),
+            pixel(std::ceil(bounds.right) - frame.bounds.left + padding, surfaceBounds.right),
+            pixel(std::ceil(bounds.bottom) - frame.bounds.top + padding, surfaceBounds.bottom),
+        };
+    }
+
     HRESULT Draw(const Frame& frame)
     {
         auto& target = *frame.target;
         performance::Scope scope("widget.composition", "raster", target.componentOwner);
-        if (!target.surface)
+        const bool firstDraw = !target.surface;
+        const RECT surfaceBounds{0, 0, static_cast<LONG>(target.width),
+            static_cast<LONG>(target.height)};
+        const RECT paintBounds = PaintBounds(frame, surfaceBounds);
+        RECT updateBounds = surfaceBounds;
+        if (!firstDraw)
+        {
+            RECT changedBounds{};
+            // The pending queue can drop recorded frames. Only the previous
+            // committed footprint describes the pixels this update must erase.
+            if (UnionRect(&changedBounds, &target.committedPaintBounds, &paintBounds))
+                updateBounds = changedBounds;
+        }
+        const bool partial = !EqualRect(&updateBounds, &surfaceBounds);
+        performance::Value("widget.composition", "raster_update_pixels",
+            target.componentOwner, static_cast<double>(updateBounds.right - updateBounds.left) *
+                (updateBounds.bottom - updateBounds.top));
+        if (firstDraw)
         {
             const HRESULT result = composition->CreateSurface(target.width,
                 target.height, DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -227,7 +271,7 @@ struct WidgetSurfaceRenderer::Impl
         }
         ComPtr<ID2D1DeviceContext> context;
         POINT offset{};
-        HRESULT result = target.surface->BeginDraw(nullptr,
+        HRESULT result = target.surface->BeginDraw(partial ? &updateBounds : nullptr,
             __uuidof(ID2D1DeviceContext),
             reinterpret_cast<void**>(context.GetAddressOf()), &offset);
         if (FAILED(result)) return result;
@@ -235,8 +279,8 @@ struct WidgetSurfaceRenderer::Impl
         context->SetDpi(96.0f, 96.0f);
         context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
         context->SetTransform(D2D1::Matrix3x2F::Translation(
-            static_cast<float>(offset.x - frame.bounds.left),
-            static_cast<float>(offset.y - frame.bounds.top)));
+            static_cast<float>(offset.x - frame.bounds.left - updateBounds.left),
+            static_cast<float>(offset.y - frame.bounds.top - updateBounds.top)));
         context->Clear(D2D1::ColorF(0, 0.0f));
         context->DrawImage(frame.commands.Get());
         // Flush D2D commands into the existing D3D batch, not the D3D device.
@@ -250,8 +294,9 @@ struct WidgetSurfaceRenderer::Impl
         if (FAILED(result) || !target.active.load()) return result;
         result = UpdateSpin(frame);
         if (FAILED(result)) return result;
-        result = target.visual->SetContent(target.surface.Get());
+        if (firstDraw) result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
+        if (SUCCEEDED(result)) target.committedPaintBounds = paintBounds;
         return result;
     }
 
@@ -326,6 +371,12 @@ bool WidgetSurfaceRenderer::Initialize(ID2D1Device* device, HWND notifyWindow, I
         __uuidof(IDCompositionDesktopDevice),
         reinterpret_cast<void**>(impl_->composition.GetAddressOf()));
     if (FAILED(result)) return false;
+    if (SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+            &impl_->boundsContext)))
+    {
+        impl_->boundsContext->SetDpi(96.0f, 96.0f);
+        impl_->boundsContext->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    }
     try { impl_->worker = std::thread([this] { impl_->Run(); }); }
     catch (...) { return false; }
     return true;
@@ -343,6 +394,7 @@ void WidgetSurfaceRenderer::Stop()
     impl_->changed.notify_all();
     if (impl_->worker.joinable()) impl_->worker.join();
     impl_->gpuTiming.Reset();
+    impl_->boundsContext.Reset();
     impl_->recording.Reset();
     impl_->composition.Reset();
     impl_->device.Reset();
