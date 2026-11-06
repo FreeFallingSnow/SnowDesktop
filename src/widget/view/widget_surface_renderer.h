@@ -1,9 +1,13 @@
 #pragma once
 
+#include "theme/personalization_types.h"
+
 #include <windows.h>
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include <memory>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,6 +29,21 @@ struct WidgetImageSpin
     D2D1_INTERPOLATION_MODE interpolation = D2D1_INTERPOLATION_MODE_LINEAR;
     float opacity = 1.0f;
     float degreesPerSecond = 0.0f;
+};
+
+struct WidgetSurfacePaint
+{
+    std::uint64_t revision = 0;
+    std::uint64_t baseRevision = 0;
+    RECT damage{};
+    RECT textBounds{};
+    bool textChanged = false;
+    bool backgroundKnown = false;
+    bool authoredBackground = false;
+    float backgroundOpacity = 0.0f;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> background;
+    std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap1>> images;
+    std::optional<PersonalizationSettings> appearance;
 };
 
 // UI-owned command recording with a separate raster/DirectComposition owner.
@@ -53,7 +72,7 @@ public:
     Target CreateTarget(const std::wstring& owner, UINT width, UINT height,
         IDCompositionVisual2** visual, const std::wstring& componentOwner = {});
     bool Submit(const Target& target, ID2D1CommandList* commands,
-        const RECT& bounds, WidgetImageSpin imageSpin);
+        const RECT& bounds, WidgetImageSpin imageSpin, WidgetSurfacePaint paint);
     void Cancel(const Target& target);
     std::vector<Result> Drain();
     static UINT ReadyMessage();

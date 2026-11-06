@@ -2935,6 +2935,7 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
         !ReadEdgeInsetsField(state, index, "padding", node.padding, error) ||
         !ReadOffsetField(state, index, node.offsetX, node.offsetY, error) ||
         !ReadIntegerField(state, index, "zIndex", node.zIndex, error) ||
+        !ReadBoolField(state, index, "localRefresh", node.localRefresh, error) ||
         !ReadBoolField(state, index, "clip", node.clipChildren, error) ||
         !ReadOverflowField(state, index, node.overflow, error) ||
         (fields.MaybePresent("shadow") &&

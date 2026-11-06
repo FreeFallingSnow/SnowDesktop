@@ -343,6 +343,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     EnumProperty("orientation", ViewPropertyEnumSet::Orientation),
     Property("value", ViewPropertyValueKind::StringOrNumber),
     Property("values", ViewPropertyValueKind::NumberArray),
+    Property("localRefresh", ViewPropertyValueKind::Boolean),
     Property("min", ViewPropertyValueKind::Number),
     Property("max", ViewPropertyValueKind::Number),
     RangedProperty("step", ViewPropertyValueKind::Number,
@@ -874,6 +875,9 @@ bool IsKnownViewNodeProperty(std::string_view property) noexcept
 bool ViewNodeAllowsProperty(
     ViewNodeType type, std::string_view property) noexcept
 {
+    if (property == "localRefresh")
+        return IsType(type, { ViewNodeType::Spectrum, ViewNodeType::Slider,
+            ViewNodeType::Text });
     if (property == "children")
     {
         const ViewNodeContract* contract = FindViewNodeContract(type);

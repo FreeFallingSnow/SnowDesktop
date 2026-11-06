@@ -422,6 +422,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
         desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
         snowdesktop::widget_runtime::WidgetImageSpin imageSpin;
+        snowdesktop::widget_runtime::WidgetSurfacePaint surfacePaint;
         const POINT interactionPoint = lastMousePoint_;
         if (SuppressDesktopWidgetDragTargets() ||
             IsPointOccludedByOpenPopup(lastMousePoint_))
@@ -438,18 +439,25 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 "widget.composition", "content.record", contentId);
             // The child draw captures its base material request; the owning
             // surface registers the native panel after EndDraw succeeds.
-            struct ImageSpinOutputScope
+            struct SurfaceOutputScope
             {
                 WidgetEngine* engine;
-                ~ImageSpinOutputScope()
+                ~SurfaceOutputScope()
                 {
-                    if (engine) engine->SetDesktopImageSpinOutput(nullptr);
+                    if (!engine) return;
+                    engine->SetDesktopImageSpinOutput(nullptr);
+                    engine->SetDesktopSurfacePaintOutput(nullptr);
                 }
-            } spinOutput{asynchronous ? widgetEngine_.get() : nullptr};
-            if (spinOutput.engine) spinOutput.engine->SetDesktopImageSpinOutput(&imageSpin);
+            } output{asynchronous ? widgetEngine_.get() : nullptr};
+            if (output.engine)
+            {
+                output.engine->SetDesktopImageSpinOutput(&imageSpin);
+                output.engine->SetDesktopSurfacePaintOutput(&surfacePaint);
+            }
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
-                widgetData->selected ? 2 : 0, true);
+                widgetData->selected ? 2 : 0, true,
+                output.engine ? &surfacePaint : nullptr);
         }
         else
         {
@@ -479,7 +487,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             const RECT surfaceBounds{surfaceLeft, surfaceTop,
                 surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
             if (!widgetSurfaceRenderer_->Submit(item.renderTarget, commands.Get(),
-                    surfaceBounds, std::move(imageSpin)))
+                    surfaceBounds, std::move(imageSpin), std::move(surfacePaint)))
                 endDrawHr = E_FAIL;
         }
         brushCache_.clear();

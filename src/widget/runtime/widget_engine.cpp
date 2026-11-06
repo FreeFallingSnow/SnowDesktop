@@ -660,6 +660,8 @@ struct D2DState
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
     snowdesktop::widget_runtime::WidgetImageSpin* desktopImageSpin = nullptr;
+    snowdesktop::widget_runtime::WidgetSurfacePaint* desktopSurfacePaint = nullptr;
+    std::uint64_t nextDesktopPaintRevision = 0;
     bool backgroundLayerActive = false;
     std::vector<D2D1_RECT_F> immediateClipRects;
     ComPtr<ID2D1Device> bitmapDevice;
@@ -19776,6 +19778,9 @@ static void DrawWidgetViewNode(D2DState* state,
                 imageClipRadius = clipRadius;
             }
         }
+        if (auto* paint = state->desktopSurfacePaint;
+            paint && paint->revision != 0)
+            paint->images.emplace_back(bitmap);
         DrawWidgetViewBitmap(
             state, node, bitmap, rect, opacity, borderWidth, imageClipRadius,
             reducedMotion, palette, original);
@@ -19914,7 +19919,31 @@ static void DrawWidgetViewNode(D2DState* state,
                     state->textGlowCache.Draw(*state->ctx, *layout.Get(),
                         *brush, origin, *node.textGlowRadius);
                 else
+                {
                     state->ctx->DrawTextLayout(origin, layout.Get(), brush);
+                    if (auto* paint = state->desktopSurfacePaint;
+                        paint && paint->revision != 0 && node.localRefresh)
+                    {
+                        DWRITE_OVERHANG_METRICS overhang{};
+                        if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+                        {
+                            constexpr float padding = 2.0f;
+                            const RECT ink{
+                                static_cast<LONG>(std::floor(origin.x -
+                                    std::max(0.0f, overhang.left) - padding)),
+                                static_cast<LONG>(std::floor(origin.y -
+                                    std::max(0.0f, overhang.top) - padding)),
+                                static_cast<LONG>(std::ceil(origin.x + textWidth +
+                                    std::max(0.0f, overhang.right) + padding)),
+                                static_cast<LONG>(std::ceil(origin.y + layoutHeight +
+                                    std::max(0.0f, overhang.bottom) + padding)),
+                            };
+                            UnionRect(&paint->textBounds, &paint->textBounds, &ink);
+                        }
+                        else
+                            paint->revision = 0;
+                    }
+                }
             }
         }
     }
@@ -20829,6 +20858,12 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
         static_cast<double>(d2dState_->backgroundCache.RetainedBytes()));
     if (cachedBackground.bitmap)
     {
+        if (auto* paint = d2dState_->desktopSurfacePaint)
+        {
+            paint->backgroundKnown = true;
+            paint->background = cachedBackground.bitmap;
+            paint->backgroundOpacity = opacity;
+        }
         // Cached pixels already contain the rounded mask. Applying opacity to
         // the premultiplied bitmap preserves the group's opacity semantics.
         context->DrawBitmap(cachedBackground.bitmap.Get(),
@@ -20837,6 +20872,13 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
             opacity, D2D1_INTERPOLATION_MODE_LINEAR);
         widget.backgroundLayerError.clear();
         return true;
+    }
+    if (auto* paint = d2dState_->desktopSurfacePaint)
+    {
+        D2D1_RECT_F ink{};
+        paint->backgroundKnown =
+            SUCCEEDED(context->GetImageLocalBounds(commands.Get(), &ink)) &&
+            (ink.left >= ink.right || ink.top >= ink.bottom);
     }
     ComPtr<ID2D1Image> output;
     if (FAILED(commands.As(&output)) || !output)
@@ -20888,6 +20930,77 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     return true;
 }
 
+static bool HasLocalRefresh(const snowdesktop::widget_runtime::ViewNode& node)
+{
+    return node.localRefresh ||
+        std::any_of(node.children.begin(), node.children.end(), HasLocalRefresh);
+}
+
+// The old tree has already supplied exit transitions and will be replaced.
+// Normalize only the supported values so the regular tree equality checks
+// every other property, including layout and SMTC-driven metadata.
+static void CollectLocalRefresh(
+    snowdesktop::widget_runtime::ViewNode& previous,
+    const snowdesktop::widget_runtime::ViewNode& current,
+    const RECT& bounds, snowdesktop::widget_runtime::WidgetSurfacePaint& paint)
+{
+    using namespace snowdesktop::widget_runtime;
+    if (current.key != previous.key || current.type != previous.type ||
+        current.transform || current.transition ||
+        current.children.size() != previous.children.size())
+        return;
+    for (std::size_t i = 0; i < current.children.size(); ++i)
+        CollectLocalRefresh(previous.children[i], current.children[i], bounds, paint);
+    if (!current.localRefresh || !previous.localRefresh || current.shadow)
+        return;
+
+    ViewRect rect = current.frame;
+    float padding = 2.0f;
+    if (current.type == ViewNodeType::Spectrum && current.values != previous.values)
+    {
+        rect = ViewNodeContentRect(current);
+        const auto peak = [](const std::vector<float>& values, float minimum) {
+            return values.empty() ? minimum :
+                *std::max_element(values.begin(), values.end());
+        };
+        const float minimum = current.seriesMinimum.value_or(0.0f);
+        const float maximum = current.seriesMaximum.value_or(1.0f);
+        const float value = std::max(peak(previous.values, minimum),
+            peak(current.values, minimum));
+        const float barHeight = rect.height *
+            std::clamp((value - minimum) / (maximum - minimum), 0.0f, 1.0f);
+        rect.y += rect.height - barHeight;
+        rect.height = barHeight;
+        previous.values = current.values;
+    }
+    else if (current.type == ViewNodeType::Slider)
+    {
+        previous.accessibilityValue = current.accessibilityValue;
+        if (current.value == previous.value) return;
+        padding += 8.0f + 0.5f * std::max(
+            current.style.borderWidth.value_or(0.0f),
+            current.disabledStyle.borderWidth.value_or(0.0f));
+        previous.value = current.value;
+    }
+    else
+    {
+        if (current.type == ViewNodeType::Text && !current.textGlowRadius &&
+            current.text != previous.text)
+        {
+            previous.text = current.text;
+            paint.textChanged = true;
+        }
+        return;
+    }
+    const RECT changed{
+        bounds.left + static_cast<LONG>(std::floor(rect.x - padding)),
+        bounds.top + static_cast<LONG>(std::floor(rect.y - padding)),
+        bounds.left + static_cast<LONG>(std::ceil(rect.x + rect.width + padding)),
+        bounds.top + static_cast<LONG>(std::ceil(rect.y + rect.height + padding)),
+    };
+    UnionRect(&paint.damage, &paint.damage, &changed);
+}
+
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
@@ -20927,6 +21040,8 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
     const RECT previousBounds = found->lastBounds;
+    const auto previousPaintRevision = std::exchange(found->desktopPaintRevision, 0);
+    auto* surfacePaint = d2dState_->desktopSurfacePaint;
     const int previousColumns = found->lastColumns;
     const int previousRows = found->lastRows;
     found->lastBounds = bounds;
@@ -21351,6 +21466,18 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                                 !widgetTimerRequestCallback_ ||
                                 HostManagedAnimationsSuppressed());
                     }
+                    if (surfacePaint && HasLocalRefresh(candidate))
+                    {
+                        surfacePaint->revision = ++d2dState_->nextDesktopPaintRevision;
+                        if (previousPaintRevision != 0 && found->viewTree &&
+                            transitionGeometryUnchanged)
+                        {
+                            CollectLocalRefresh(*found->viewTree, candidate, bounds,
+                                *surfacePaint);
+                            if (candidate == *found->viewTree)
+                                surfacePaint->baseRevision = previousPaintRevision;
+                        }
+                    }
                     found->viewTree = std::move(candidate);
                     found->viewIndeterminateProgressActive =
                         snowdesktop::widget_runtime::
@@ -21428,6 +21555,15 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             if (transitionActive ||
                 found->viewIndeterminateProgressActive)
                 (void)ScheduleAnimationFrame(*found);
+            if (surfacePaint)
+            {
+                if (transitionActive || found->viewIndeterminateProgressActive ||
+                    !found->interactionRegions.HoveredKey().empty() ||
+                    !found->interactionRegions.PressedKey().empty() ||
+                    !found->viewKeyboardFocusKey.empty())
+                    surfacePaint->revision = surfacePaint->baseRevision = 0;
+                found->desktopPaintRevision = surfacePaint->revision;
+            }
         }
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -31845,6 +31981,12 @@ void WidgetEngine::SetDesktopImageSpinOutput(
     snowdesktop::widget_runtime::WidgetImageSpin* output)
 {
     if (d2dState_) d2dState_->desktopImageSpin = output;
+}
+
+void WidgetEngine::SetDesktopSurfacePaintOutput(
+    snowdesktop::widget_runtime::WidgetSurfacePaint* output)
+{
+    if (d2dState_) d2dState_->desktopSurfacePaint = output;
 }
 
 LuaWidgetContextState WidgetEngine::RuntimeGetWidgetContextState(

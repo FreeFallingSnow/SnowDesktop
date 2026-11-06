@@ -39,9 +39,13 @@ struct WidgetSurfaceTarget
     std::wstring componentOwner;
     UINT width = 0, height = 0;
     ComPtr<IDCompositionVisual2> visual;
+    // Submission metadata is compared on the UI thread under the queue lock.
+    WidgetSurfacePaint submittedPaint;
+    RECT submittedBounds{};
     // Only the render thread accesses these surface/notification fields.
     ComPtr<IDCompositionSurface> surface;
     RECT committedPaintBounds{};
+    std::uint64_t committedRevision = 0;
     WidgetImageSpinState spin;
     bool announced = false;
     std::atomic<bool> active{true}, failed{false};
@@ -55,6 +59,9 @@ struct WidgetSurfaceRenderer::Impl
         ComPtr<ID2D1CommandList> commands;
         RECT bounds{};
         WidgetImageSpin imageSpin;
+        std::uint64_t revision = 0;
+        std::uint64_t baseRevision = 0;
+        RECT damage{};
     };
     ComPtr<ID2D1Device> device;
     ComPtr<ID2D1DeviceContext> recording;
@@ -248,14 +255,26 @@ struct WidgetSurfaceRenderer::Impl
         const bool firstDraw = !target.surface;
         const RECT surfaceBounds{0, 0, static_cast<LONG>(target.width),
             static_cast<LONG>(target.height)};
-        const RECT paintBounds = PaintBounds(frame, surfaceBounds);
+        RECT paintBounds = target.committedPaintBounds;
         RECT updateBounds = surfaceBounds;
-        if (!firstDraw)
+        RECT damage = frame.damage;
+        OffsetRect(&damage, -frame.bounds.left, -frame.bounds.top);
+        const bool incremental = !firstDraw && frame.baseRevision != 0 &&
+            frame.baseRevision == target.committedRevision &&
+            IntersectRect(&updateBounds, &surfaceBounds, &damage);
+        if (incremental)
         {
+            UnionRect(&paintBounds, &paintBounds, &updateBounds);
+        }
+        else
+        {
+            paintBounds = PaintBounds(frame, surfaceBounds);
+            updateBounds = surfaceBounds;
             RECT changedBounds{};
             // The pending queue can drop recorded frames. Only the previous
             // committed footprint describes the pixels this update must erase.
-            if (UnionRect(&changedBounds, &target.committedPaintBounds, &paintBounds))
+            if (!firstDraw &&
+                UnionRect(&changedBounds, &target.committedPaintBounds, &paintBounds))
                 updateBounds = changedBounds;
         }
         const bool partial = !EqualRect(&updateBounds, &surfaceBounds);
@@ -281,8 +300,18 @@ struct WidgetSurfaceRenderer::Impl
         context->SetTransform(D2D1::Matrix3x2F::Translation(
             static_cast<float>(offset.x - frame.bounds.left - updateBounds.left),
             static_cast<float>(offset.y - frame.bounds.top - updateBounds.top)));
+        if (incremental)
+        {
+            context->PushAxisAlignedClip(D2D1::RectF(
+                static_cast<float>(frame.bounds.left + updateBounds.left),
+                static_cast<float>(frame.bounds.top + updateBounds.top),
+                static_cast<float>(frame.bounds.left + updateBounds.right),
+                static_cast<float>(frame.bounds.top + updateBounds.bottom)),
+                D2D1_ANTIALIAS_MODE_ALIASED);
+        }
         context->Clear(D2D1::ColorF(0, 0.0f));
         context->DrawImage(frame.commands.Get());
+        if (incremental) context->PopAxisAlignedClip();
         // Flush D2D commands into the existing D3D batch, not the D3D device.
         // Both GPU markers then precede the normal DComp submission. Without
         // this, the endpoint can measure an empty range or a later CPU gap.
@@ -296,7 +325,11 @@ struct WidgetSurfaceRenderer::Impl
         if (FAILED(result)) return result;
         if (firstDraw) result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
-        if (SUCCEEDED(result)) target.committedPaintBounds = paintBounds;
+        if (SUCCEEDED(result))
+        {
+            target.committedPaintBounds = paintBounds;
+            target.committedRevision = frame.revision;
+        }
         return result;
     }
 
@@ -441,7 +474,8 @@ WidgetSurfaceRenderer::Target WidgetSurfaceRenderer::CreateTarget(
 }
 
 bool WidgetSurfaceRenderer::Submit(const Target& target,
-    ID2D1CommandList* commands, const RECT& bounds, WidgetImageSpin imageSpin)
+    ID2D1CommandList* commands, const RECT& bounds, WidgetImageSpin imageSpin,
+    WidgetSurfacePaint paint)
 {
     performance::Scope scope("widget.composition", "commands.submit");
     if (!target || !commands || !target->active.load() || target->failed.load()) return false;
@@ -450,14 +484,38 @@ bool WidgetSurfaceRenderer::Submit(const Target& target,
         if (impl_->stopping) return false;
         auto found = std::find_if(impl_->pending.begin(), impl_->pending.end(),
             [&target](const auto& frame) { return frame.target == target; });
+        if (found == impl_->pending.end() && impl_->pending.size() >= 128)
+            return false;
+        const auto& previous = target->submittedPaint;
+        Impl::Frame frame{target, commands, bounds, std::move(imageSpin),
+            paint.revision};
+        if (paint.baseRevision != 0 && paint.baseRevision == previous.revision &&
+            EqualRect(&bounds, &target->submittedBounds) &&
+            paint.appearance && paint.appearance == previous.appearance &&
+            paint.backgroundKnown && previous.backgroundKnown &&
+            paint.authoredBackground == previous.authoredBackground &&
+            paint.background == previous.background &&
+            paint.backgroundOpacity == previous.backgroundOpacity &&
+            paint.images == previous.images)
+        {
+            frame.baseRevision = paint.baseRevision;
+            frame.damage = paint.damage;
+            if (paint.textChanged)
+            {
+                UnionRect(&frame.damage, &frame.damage, &previous.textBounds);
+                UnionRect(&frame.damage, &frame.damage, &paint.textBounds);
+            }
+        }
+        target->submittedPaint = paint.revision != 0 && paint.appearance
+            ? std::move(paint) : WidgetSurfacePaint{};
+        target->submittedBounds = bounds;
         if (found != impl_->pending.end())
-            *found = {target, commands, bounds, std::move(imageSpin)};
+            *found = std::move(frame);
         else
         {
             // One queued frame per visible owner, plus the in-flight frame.
             // A burst cannot retain an unbounded history of images/commands.
-            if (impl_->pending.size() >= 128) return false;
-            impl_->pending.push_back({target, commands, bounds, std::move(imageSpin)});
+            impl_->pending.push_back(std::move(frame));
         }
     }
     impl_->changed.notify_one();

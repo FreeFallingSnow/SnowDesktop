@@ -11,6 +11,7 @@
 #include "core/widget.h"
 #include "widget/view/widget_title_layout.h"
 #include "widget/view/widget_clip_geometry.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "widget_chrome_rules.h"
 #include "common/types.h"
 #include "app/app.h"
@@ -139,11 +140,11 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
 void LuaScript::DrawCompositionSurface(
     ID2D1DeviceContext* context, RECT rect, int state,
-    bool registerBackdrop)
+    bool registerBackdrop, snowdesktop::widget_runtime::WidgetSurfacePaint* surfacePaint)
 {
     DrawInternal(context, rect, state,
         app_ ? app_->widgetEngine_.get() : nullptr,
-        false, registerBackdrop);
+        false, registerBackdrop, surfacePaint);
 }
 
 void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
@@ -157,7 +158,7 @@ void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
 
 void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     int state, WidgetEngine* engine, bool preview,
-    bool registerBackdrop)
+    bool registerBackdrop, snowdesktop::widget_runtime::WidgetSurfacePaint* surfacePaint)
 {
     if (!context || !data_ || !app_) return;
 
@@ -403,6 +404,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
     const bool hasBackgroundLayer = engine && widgetOk &&
         engine->HasBackgroundLayer(data_->id);
+    if (surfacePaint)
+    {
+        surfacePaint->authoredBackground = hasBackgroundLayer;
+        surfacePaint->backgroundKnown = !hasBackgroundLayer;
+    }
     if (hasBackgroundLayer)
     {
         PersonalizationSettings materialEffects = backgroundEffects;
@@ -654,6 +660,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (engine && widgetOk)
     {
         auto scrollControls = engine->GetScrollControls(data_->id);
+        if (surfacePaint && surfacePaint->revision != 0 &&
+            !selected && !hovered && !data_->showTitle && scrollControls.empty())
+            surfacePaint->appearance = effectSettings;
         for (const auto& ctrl : scrollControls)
         {
             const int contentExtent = ctrl.horizontal

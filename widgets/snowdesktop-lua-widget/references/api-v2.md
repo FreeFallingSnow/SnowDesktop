@@ -1133,6 +1133,12 @@ UIA VirtualizedItem，
 该层遮盖其他前景内容。`0` 暂停当前角度，隐藏或更换表面后可从初始角度恢复。减少动态效果、
 预览、弹窗及无法提供独立合成层的场景使用静止呈现。旧宿主按原先的 `transform.rotate` 路径处理。
 
+`view.localRefresh` 允许 `spectrum`、`slider` 和 `text` 使用可选的布尔字段
+`localRefresh`。先探测 `widget.hasFeature("view.localRefresh")`，旧宿主省略字段。
+在桌面异步绘制中，如果只有标记节点的 `values`、`value` 或 `text` 变化，
+宿主可以只更新这些节点影响的像素。布局、样式和输入事件仍按完整视图树处理。
+组件应把随帧变化的绘制内容通过视图树或 `backgroundLayer` 提供。
+
 `linear` 是默认平滑模式：宿主在大幅缩小不可变图片时先做高质量预滤波，按实际像素尺寸
 缓存缩图，计入 DPI、变换和源图裁切；`nearest` 保留原始最近邻采样，适合像素画。
 这项质量改进不新增 API 或 feature，旧宿主仍接受相同参数并沿用原有平滑质量。

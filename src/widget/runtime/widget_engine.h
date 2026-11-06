@@ -74,6 +74,7 @@ namespace snowdesktop::widget_menu { struct Entry; }
 namespace snowdesktop::widget_runtime
 {
 struct WidgetImageSpin;
+struct WidgetSurfacePaint;
 struct PackageImageSource;
 class WidgetEngineSettingsBackend;
 }
@@ -633,6 +634,7 @@ struct LuaWidget
     bool viewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    std::uint64_t desktopPaintRevision = 0;
     snowdesktop::widget_runtime::ViewLayoutCache viewLayoutCache;
     snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
     bool viewTransitionFramePending = false;
@@ -1504,6 +1506,7 @@ public:
     void SetWidgetSurfaceContext(const std::wstring& widgetId,
         const LuaWidgetSurfaceContext& context);
     void SetDesktopImageSpinOutput(snowdesktop::widget_runtime::WidgetImageSpin* output);
+    void SetDesktopSurfacePaintOutput(snowdesktop::widget_runtime::WidgetSurfacePaint* output);
     LuaWidgetContextState RuntimeGetWidgetContextState(
         const std::wstring& widgetId) const;
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);

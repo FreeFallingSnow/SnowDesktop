@@ -502,6 +502,7 @@ struct ViewNode
     std::string key;
     std::string debugName;
     std::string testId;
+    bool localRefresh = false;
     std::string text;
     std::string inputValue;
     std::string placeholder;

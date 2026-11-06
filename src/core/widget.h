@@ -42,6 +42,7 @@ struct DesktopWidget;
 struct CategorySettings;
 class DesktopApp;
 namespace snowdesktop::group_tab_drag_preview { struct Layout; }
+namespace snowdesktop::widget_runtime { struct WidgetSurfacePaint; }
 class WidgetEngine;
 namespace snowdesktop { struct WidgetFolderSearchState; }
 struct GridPage;
@@ -1161,7 +1162,7 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     void DrawCompositionSurface(
         ID2D1DeviceContext* context, RECT rect, int state,
-        bool registerBackdrop);
+        bool registerBackdrop, snowdesktop::widget_runtime::WidgetSurfacePaint* surfacePaint);
     void DrawPreview(ID2D1DeviceContext* context, RECT frame,
         const snowdesktop::WidgetRenderOptions& options) override;
 
@@ -1180,7 +1181,8 @@ private:
     bool SafeReadFlags(WidgetEngine* engine, const std::wstring& scriptPath,
         bool& showTitle, bool& bottomBarHover);
     void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
-        WidgetEngine* engine, bool preview, bool registerBackdrop);
+        WidgetEngine* engine, bool preview, bool registerBackdrop,
+        snowdesktop::widget_runtime::WidgetSurfacePaint* surfacePaint = nullptr);
 
     ID2D1Geometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);

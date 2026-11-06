@@ -553,6 +553,7 @@ local function visualizerNode(model, colors, plan)
     local snapshot = audioAnalysis and audioAnalysis:value() or nil
     return view.spectrum({
         key = "aurora.visualizer",
+        localRefresh = widget.hasFeature("view.localRefresh") or nil,
         values = player.spectrum(snapshot, 36, model.preview),
         width = "fill",
         height = "fill",
@@ -673,6 +674,7 @@ local function viewTree(context, model)
     })
 
     local progressHeight = plan.progressHeight
+    local localRefresh = widget.hasFeature("view.localRefresh") or nil
     local progressNode = hasTimeline and view.column({
         key = "aurora.progress.group",
         width = "fill",
@@ -681,6 +683,7 @@ local function viewTree(context, model)
         children = {
             view.slider({
                 key = "aurora.progress",
+                localRefresh = localRefresh,
                 value = progress,
                 min = 0,
                 max = 1,
@@ -712,6 +715,7 @@ local function viewTree(context, model)
                 children = {
                     view.text({
                         key = "aurora.progress.current",
+                        localRefresh = localRefresh,
                         text = player.formatTime(position),
                         width = plan.detailWidth * 0.30,
                         height = "fill",
@@ -720,6 +724,7 @@ local function viewTree(context, model)
                     }),
                     view.text({
                         key = "aurora.progress.duration",
+                        localRefresh = localRefresh,
                         text = player.formatTime(duration),
                         width = plan.detailWidth * 0.30,
                         height = "fill",
