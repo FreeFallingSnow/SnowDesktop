@@ -171,7 +171,7 @@ local function desktop(_, model)
                 accessibility = {role = playable and "button" or "text",
                     label = l10n.tr("lua_widget.tic_tac_toe.cell") .. " " .. index .. " " .. mark},
                 style = {background = isWin and highlight or tile,
-                    borderColor = isWin and "accent" or "border", borderWidth = side * 0.005, cornerRadius = cell * 0.21},
+                    borderColor = isWin and "systemAccent" or "border", borderWidth = side * 0.005, cornerRadius = cell * 0.21},
                 hoverStyle = playable and {background = highlight} or nil,
                 children = {view.text({key = id .. ".mark", text = mark == "." and "·" or mark,
                     width = "fill", height = "fill", fontSize = cell * 0.55,

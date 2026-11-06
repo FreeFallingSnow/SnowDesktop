@@ -10,7 +10,7 @@
   "license": "MIT",
   "name": "Tic-tac-toe",
   "nameKey": "lua_widget.tic_tac_toe.name",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "preview": "workshop-preview.png",
   "description": "Play tic-tac-toe locally or invite a Steam friend.",
   "descriptionKey": "lua_widget.tic_tac_toe.description",
