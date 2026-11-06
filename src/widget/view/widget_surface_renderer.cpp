@@ -8,6 +8,8 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -18,6 +20,18 @@ namespace snowdesktop::widget_runtime
 {
 using Microsoft::WRL::ComPtr;
 
+struct WidgetImageSpinState
+{
+    ComPtr<IDCompositionVisual2> visual;
+    ComPtr<IDCompositionRotateTransform> rotation;
+    ComPtr<IDCompositionSurface> surface;
+    WidgetImageSpin image;
+    std::chrono::steady_clock::time_point phaseTime;
+    float phase = 0.0f;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+};
+
 struct WidgetSurfaceTarget
 {
     std::wstring owner;
@@ -26,6 +40,7 @@ struct WidgetSurfaceTarget
     ComPtr<IDCompositionVisual2> visual;
     // Only the render thread accesses these surface/notification fields.
     ComPtr<IDCompositionSurface> surface;
+    WidgetImageSpinState spin;
     bool announced = false;
     std::atomic<bool> active{true}, failed{false};
 };
@@ -37,6 +52,7 @@ struct WidgetSurfaceRenderer::Impl
         Target target;
         ComPtr<ID2D1CommandList> commands;
         RECT bounds{};
+        WidgetImageSpin imageSpin;
     };
     ComPtr<ID2D1Device> device;
     ComPtr<ID2D1DeviceContext> recording;
@@ -49,6 +65,145 @@ struct WidgetSurfaceRenderer::Impl
     std::vector<Result> ready;
     std::thread worker;
     bool stopping = false;
+
+    HRESULT DrawSpinSurface(WidgetImageSpinState& spin,
+        const WidgetImageSpin& image, float size)
+    {
+        // Rasterize the usual circular mask once. Extra transparent pixels
+        // keep linear sampling at the edge inside the surface as it rotates.
+        const UINT extent = static_cast<UINT>(std::ceil(size)) + 2;
+        ComPtr<IDCompositionSurface> surface;
+        HRESULT hr = composition->CreateSurface(extent, extent,
+            DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);
+        if (FAILED(hr)) return hr;
+        ComPtr<ID2D1DeviceContext> context;
+        POINT offset{};
+        hr = surface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+            reinterpret_cast<void**>(context.GetAddressOf()), &offset);
+        if (FAILED(hr)) return hr;
+        context->SetDpi(96.0f, 96.0f);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(offset.x), static_cast<float>(offset.y)));
+        context->Clear(D2D1::ColorF(0, 0.0f));
+        const auto rect = D2D1::RectF(1.0f, 1.0f, size + 1.0f, size + 1.0f);
+        ComPtr<ID2D1Factory> factory;
+        ComPtr<ID2D1RoundedRectangleGeometry> clip;
+        context->GetFactory(&factory);
+        hr = factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(rect, size * 0.5f, size * 0.5f), &clip);
+        if (SUCCEEDED(hr))
+        {
+            context->PushLayer(D2D1::LayerParameters(
+                rect, clip.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
+            context->DrawBitmap(image.bitmap.Get(), rect, image.opacity,
+                image.interpolation, image.source);
+            context->PopLayer();
+        }
+        context.Reset();
+        const HRESULT end = surface->EndDraw();
+        if (FAILED(hr)) return hr;
+        if (FAILED(end)) return end;
+        hr = spin.visual->SetContent(surface.Get());
+        if (SUCCEEDED(hr)) spin.surface = std::move(surface);
+        return hr;
+    }
+
+    HRESULT UpdateSpin(const Frame& frame)
+    {
+        auto& target = *frame.target;
+        auto& spin = target.spin;
+        const auto& image = frame.imageSpin;
+        if (!image.bitmap)
+        {
+            if (!spin.visual) return S_OK;
+            const HRESULT hr = target.visual->RemoveVisual(spin.visual.Get());
+            if (SUCCEEDED(hr)) spin = {};
+            return hr;
+        }
+
+        const bool newVisual = !spin.visual;
+        const float size = image.destination.right - image.destination.left;
+        const float previousSize = spin.image.destination.right -
+            spin.image.destination.left;
+        const auto& previousSource = spin.image.source;
+        HRESULT hr = S_OK;
+        if (newVisual)
+        {
+            hr = composition->CreateVisual(&spin.visual);
+            if (SUCCEEDED(hr))
+                hr = composition->CreateRotateTransform(&spin.rotation);
+            if (SUCCEEDED(hr))
+                hr = spin.visual->SetTransform(spin.rotation.Get());
+            if (SUCCEEDED(hr))
+                hr = spin.visual->SetBitmapInterpolationMode(
+                    DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+            if (FAILED(hr)) return hr;
+        }
+        if (newVisual || size != previousSize ||
+            image.bitmap.Get() != spin.image.bitmap.Get() ||
+            image.source.left != previousSource.left ||
+            image.source.top != previousSource.top ||
+            image.source.right != previousSource.right ||
+            image.source.bottom != previousSource.bottom ||
+            image.opacity != spin.image.opacity ||
+            image.interpolation != spin.image.interpolation)
+        {
+            hr = DrawSpinSurface(spin, image, size);
+            if (FAILED(hr)) return hr;
+        }
+        const float offsetX = image.destination.left -
+            static_cast<float>(frame.bounds.left) - 1.0f;
+        const float offsetY = image.destination.top -
+            static_cast<float>(frame.bounds.top) - 1.0f;
+        if (newVisual || size != previousSize ||
+            offsetX != spin.offsetX || offsetY != spin.offsetY)
+        {
+            // DirectComposition applies Offset before Transform, so the
+            // rotation center uses the translated position in the parent.
+            hr = spin.rotation->SetCenterX(offsetX + size * 0.5f + 1.0f);
+            if (SUCCEEDED(hr))
+                hr = spin.rotation->SetCenterY(offsetY + size * 0.5f + 1.0f);
+            if (SUCCEEDED(hr)) hr = spin.visual->SetOffsetX(offsetX);
+            if (SUCCEEDED(hr)) hr = spin.visual->SetOffsetY(offsetY);
+            if (FAILED(hr)) return hr;
+            spin.offsetX = offsetX;
+            spin.offsetY = offsetY;
+        }
+        if (newVisual || image.degreesPerSecond != spin.image.degreesPerSecond)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (!newVisual && spin.image.degreesPerSecond > 0.0f)
+            {
+                const float elapsed =
+                    std::chrono::duration<float>(now - spin.phaseTime).count();
+                spin.phase = std::fmod(spin.phase +
+                    elapsed * spin.image.degreesPerSecond, 360.0f);
+            }
+            if (image.degreesPerSecond > 0.0f)
+            {
+                ComPtr<IDCompositionAnimation> animation;
+                hr = composition->CreateAnimation(&animation);
+                const double period = 360.0 / image.degreesPerSecond;
+                if (SUCCEEDED(hr))
+                    hr = animation->AddCubic(0.0, spin.phase,
+                        image.degreesPerSecond, 0.0f, 0.0f);
+                if (SUCCEEDED(hr)) hr = animation->AddRepeat(period, period);
+                if (SUCCEEDED(hr)) hr = spin.rotation->SetAngle(animation.Get());
+            }
+            else
+                hr = spin.rotation->SetAngle(spin.phase);
+            if (FAILED(hr)) return hr;
+            spin.phaseTime = now;
+        }
+        if (newVisual)
+        {
+            hr = target.visual->AddVisual(spin.visual.Get(), TRUE, nullptr);
+            if (FAILED(hr)) return hr;
+        }
+        spin.image = image;
+        return S_OK;
+    }
 
     HRESULT Draw(const Frame& frame)
     {
@@ -84,6 +239,8 @@ struct WidgetSurfaceRenderer::Impl
         if (SUCCEEDED(result) && FAILED(recorded)) result = recorded;
         gpuFrame.Complete(SUCCEEDED(result));
         if (FAILED(result) || !target.active.load()) return result;
+        result = UpdateSpin(frame);
+        if (FAILED(result)) return result;
         result = target.visual->SetContent(target.surface.Get());
         if (SUCCEEDED(result)) result = composition->Commit();
         return result;
@@ -223,7 +380,7 @@ WidgetSurfaceRenderer::Target WidgetSurfaceRenderer::CreateTarget(
 }
 
 bool WidgetSurfaceRenderer::Submit(const Target& target,
-    ID2D1CommandList* commands, const RECT& bounds)
+    ID2D1CommandList* commands, const RECT& bounds, WidgetImageSpin imageSpin)
 {
     performance::Scope scope("widget.composition", "commands.submit");
     if (!target || !commands || !target->active.load() || target->failed.load()) return false;
@@ -233,13 +390,13 @@ bool WidgetSurfaceRenderer::Submit(const Target& target,
         auto found = std::find_if(impl_->pending.begin(), impl_->pending.end(),
             [&target](const auto& frame) { return frame.target == target; });
         if (found != impl_->pending.end())
-            *found = {target, commands, bounds};
+            *found = {target, commands, bounds, std::move(imageSpin)};
         else
         {
             // One queued frame per visible owner, plus the in-flight frame.
             // A burst cannot retain an unbounded history of images/commands.
             if (impl_->pending.size() >= 128) return false;
-            impl_->pending.push_back({target, commands, bounds});
+            impl_->pending.push_back({target, commands, bounds, std::move(imageSpin)});
         }
     }
     impl_->changed.notify_one();

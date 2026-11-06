@@ -2902,6 +2902,8 @@ bool ParseNode(lua_State* state, int index, ViewNode& node,
             node.imageAlignment, error) ||
         !ReadImageInterpolationField(state, index,
             node.imageInterpolation, error) ||
+        !ReadOptionalNodeFloatField(state, index, "spinSpeed",
+            node.imageSpinSpeed, error) ||
         !ReadOptionalColor(state, index, "tint", node.imageTint, error,
             &node.imageTintToken) ||
         !ReadOrientationField(state, index, node.orientation, error) ||

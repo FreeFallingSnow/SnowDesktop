@@ -576,6 +576,7 @@ struct ViewNode
         ViewImageInterpolation::Linear;
     std::optional<std::uint32_t> imageTint;
     std::optional<ViewThemeColorToken> imageTintToken;
+    std::optional<float> imageSpinSpeed;
     ViewOrientation orientation = ViewOrientation::Horizontal;
     ViewShapeKind shapeKind = ViewShapeKind::Rectangle;
     ViewIconFont iconFont = ViewIconFont::FontAwesome;

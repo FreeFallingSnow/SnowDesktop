@@ -66,6 +66,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_text_layout_cache.h"
 #include "widget/view/widget_view_lua.h"
 #include "widget/view/widget_view_tree.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "widget/data/widget_resource_lua.h"
 #include "widget/packages/widget_package_image_cache.h"
 #include "widget/view/widget_text_input_rules.h"
@@ -657,6 +658,7 @@ struct D2DState
     float layoutContentHeight = 0.0f;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
+    snowdesktop::widget_runtime::WidgetImageSpin* desktopImageSpin = nullptr;
     bool backgroundLayerActive = false;
     std::vector<D2D1_RECT_F> immediateClipRects;
     ComPtr<ID2D1Device> bitmapDevice;
@@ -18700,7 +18702,7 @@ static void DrawWidgetMonthCalendar(D2DState* state,
 static void DrawWidgetViewBitmap(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     ID2D1Bitmap1* bitmap, const D2D1_RECT_F& rect,
-    float opacity, float borderWidth,
+    float opacity, float borderWidth, float clipRadius, bool reducedMotion,
     const snowdesktop::widget_runtime::ViewThemePalette& palette,
     snowdesktop::widget_runtime::PackageImageSize original = {})
 {
@@ -18759,6 +18761,40 @@ static void DrawWidgetViewBitmap(D2DState* state,
     const std::optional<std::uint32_t> imageTint =
         snowdesktop::widget_runtime::ResolveViewThemeColor(
             node.imageTint, node.imageTintToken, palette);
+    auto* spin = state->desktopImageSpin;
+    const float width = destination.right - destination.left;
+    const float height = destination.bottom - destination.top;
+    // A separate visual sits above the component surface. Only opt-in,
+    // unclipped circular artwork can be lifted out of the normal paint order.
+    if (spin && !spin->bitmap && node.imageSpinSpeed && !imageTint &&
+        state->widgetClipDepth == 0 && width >= 1.0f &&
+        std::abs(width - height) < 0.001f &&
+        clipRadius >= width * 0.5f - 0.001f &&
+        std::abs(rect.left - destination.left) < 0.001f &&
+        std::abs(rect.top - destination.top) < 0.001f &&
+        std::abs(rect.right - destination.right) < 0.001f &&
+        std::abs(rect.bottom - destination.bottom) < 0.001f)
+    {
+        D2D1_MATRIX_3X2_F transform{};
+        state->ctx->GetTransform(&transform);
+        if (transform._11 == 1.0f && transform._22 == 1.0f &&
+            transform._12 == 0.0f && transform._21 == 0.0f)
+        {
+            const auto absolute = D2D1::RectF(
+                destination.left + transform._31, destination.top + transform._32,
+                destination.right + transform._31, destination.bottom + transform._32);
+            const auto& widget = state->widgetRect;
+            if (absolute.left >= widget.left && absolute.top >= widget.top &&
+                absolute.right <= widget.right && absolute.bottom <= widget.bottom)
+            {
+                *spin = {sampled.bitmap, absolute, sourceRect, interpolation,
+                    opacity, reducedMotion ? 0.0f : *node.imageSpinSpeed};
+                snowdesktop::performance::Value("widget.composition",
+                    "image_spin.layer", state->currentWidgetId, 1);
+                return;
+            }
+        }
+    }
     if (imageTint)
     {
         ComPtr<ID2D1Effect> tintEffect;
@@ -19719,6 +19755,7 @@ static void DrawWidgetViewNode(D2DState* state,
         }
         ComPtr<ID2D1RoundedRectangleGeometry> imageClip;
         bool imageClipPushed = false;
+        float imageClipRadius = 0.0f;
         if (node.type == ViewNodeType::Image && bitmap && radius > 0.0f)
         {
             ComPtr<ID2D1Factory> factory;
@@ -19733,10 +19770,12 @@ static void DrawWidgetViewNode(D2DState* state,
                     rect, imageClip.Get(),
                     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
                 imageClipPushed = true;
+                imageClipRadius = clipRadius;
             }
         }
         DrawWidgetViewBitmap(
-            state, node, bitmap, rect, opacity, borderWidth, palette, original);
+            state, node, bitmap, rect, opacity, borderWidth, imageClipRadius,
+            reducedMotion, palette, original);
         if (imageClipPushed)
             state->ctx->PopLayer();
     }
@@ -31793,6 +31832,12 @@ void WidgetEngine::SetWidgetSurfaceContext(
         std::max<UINT>(USER_DEFAULT_SCREEN_DPI, context.dpiX);
     widgets_[index].surfaceContext.dpiY =
         std::max<UINT>(USER_DEFAULT_SCREEN_DPI, context.dpiY);
+}
+
+void WidgetEngine::SetDesktopImageSpinOutput(
+    snowdesktop::widget_runtime::WidgetImageSpin* output)
+{
+    if (d2dState_) d2dState_->desktopImageSpin = output;
 }
 
 LuaWidgetContextState WidgetEngine::RuntimeGetWidgetContextState(

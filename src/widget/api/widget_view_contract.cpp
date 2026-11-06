@@ -332,6 +332,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("glyph", ViewPropertyValueKind::String),
     EnumProperty("iconFont", ViewPropertyEnumSet::IconFont),
     Property("source", ViewPropertyValueKind::Resource),
+    RangedProperty("spinSpeed", ViewPropertyValueKind::Number, 0.0, 360.0),
     Property("font", ViewPropertyValueKind::Resource),
     EnumProperty("fit", ViewPropertyEnumSet::ImageFit),
     EnumProperty("alignment", ViewPropertyEnumSet::ImageAlignment),
@@ -887,7 +888,8 @@ bool ViewNodeAllowsProperty(
     if (property == "label") return IsLabelNode(type);
     if (property == "glyph" || property == "iconFont")
         return type == ViewNodeType::Icon || type == ViewNodeType::IconButton;
-    if (property == "source") return type == ViewNodeType::Image;
+    if (property == "source" || property == "spinSpeed")
+        return type == ViewNodeType::Image;
     if (property == "font") return IsTextResourceNode(type);
     if (property == "locale" || property == "textDirection")
         return IsTextualNode(type);

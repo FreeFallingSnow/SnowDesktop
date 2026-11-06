@@ -224,6 +224,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "view.collection.virtual.stickyHeaders",
     "view.collection.virtual.variableExtent",
     "view.dataSeries",
+    "view.imageSpin",
     "view.flex.layout",
     "view.flex.sizing",
     "view.focus.request",

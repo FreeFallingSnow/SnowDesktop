@@ -1121,6 +1121,14 @@ UIA VirtualizedItem，
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
 `view.image`。图片节点的 `style.cornerRadius` 同时裁切位图内容和节点表面；半径最大按
 节点短边的一半处理，因此可用正方形节点和半边长半径显示圆形图片。
+
+`view.imageSpin` 为 `image` 提供可选 `spinSpeed`，单位为顺时针度每秒，范围 0–360。
+使用前探测 `widget.hasFeature("view.imageSpin")`。宿主将首个符合条件的圆形装饰图片放在
+组件表面之上的独立视觉层，旋转由桌面合成器推进。节点应为正方形，圆角为边长的一半，
+图片铺满节点且位于组件内部，使用普通无色调图片并避免祖先裁剪、缩放或旋转。避免用
+该层遮盖其他前景内容。`0` 暂停当前角度，隐藏或更换表面后可从初始角度恢复。减少动态效果、
+预览、弹窗及无法提供独立合成层的场景使用静止呈现。旧宿主按原先的 `transform.rotate` 路径处理。
+
 `linear` 是默认平滑模式：宿主在大幅缩小不可变图片时先做高质量预滤波，按实际像素尺寸
 缓存缩图，计入 DPI、变换和源图裁切；`nearest` 保留原始最近邻采样，适合像素画。
 这项质量改进不新增 API 或 feature，旧宿主仍接受相同参数并沿用原有平滑质量。

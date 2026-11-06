@@ -466,7 +466,7 @@ local function recordCircle(key, size, style)
     })
 end
 
-local function coverNode(artwork, size, colors, rotation)
+local function coverNode(artwork, size, colors, rotation, spinSpeed)
     local labelSize = size * 0.64
     local borderWidth = size * 0.007
     local children = {
@@ -496,11 +496,12 @@ local function coverNode(artwork, size, colors, rotation)
             width = labelSize,
             height = labelSize,
             alignSelf = "center",
-            transform = {
+            spinSpeed = spinSpeed,
+            transform = not spinSpeed and {
                 rotate = rotation,
                 originX = 0.5,
                 originY = 0.5,
-            },
+            } or nil,
             style = {
                 cornerRadius = labelSize * 0.5,
             },
@@ -587,10 +588,12 @@ local function viewTree(context, model)
     local spinRecord = player.shouldSpinRecord(artwork ~= nil,
         playing and "playing" or "paused", model.reducedMotion,
         model.visible, model.preview)
-    if spinRecord and not model.recordFramePending then
+    local nativeSpin = not model.preview and widget.hasFeature("view.imageSpin")
+    local luaSpin = spinRecord and not nativeSpin
+    if luaSpin and not model.recordFramePending then
         local accepted = animation.requestFrame(RECORD_FRAME)
         model.recordFramePending = accepted == true
-    elseif not spinRecord and model.recordFramePending then
+    elseif not luaSpin and model.recordFramePending then
         animation.cancelFrame(RECORD_FRAME)
         model.recordFramePending = false
     end
@@ -822,7 +825,8 @@ local function viewTree(context, model)
         alignItems = "center",
         justifyContent = plan.vertical and "center" or nil,
         children = {
-            coverNode(artwork, coverSize, colors, model.recordRotation),
+            coverNode(artwork, coverSize, colors, model.recordRotation,
+                nativeSpin and (spinRecord and 24 or 0) or nil),
             details,
         },
     }
@@ -975,7 +979,8 @@ local function event(context, model, value)
         local playing = session and session.playbackStatus == "playing"
         if model.pendingPlayback == "playing" then playing = true end
         if model.pendingPlayback == "paused" then playing = false end
-        if player.shouldSpinRecord(artwork ~= nil,
+        if not widget.hasFeature("view.imageSpin") and
+            player.shouldSpinRecord(artwork ~= nil,
                 playing and "playing" or "paused", model.reducedMotion,
                 model.visible, model.preview) then
             model.recordRotation = player.advanceRecordRotation(

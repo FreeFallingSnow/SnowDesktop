@@ -73,6 +73,7 @@ namespace snowdesktop::widget_menu { struct Entry; }
 
 namespace snowdesktop::widget_runtime
 {
+struct WidgetImageSpin;
 struct PackageImageSource;
 class WidgetEngineSettingsBackend;
 }
@@ -1502,6 +1503,7 @@ public:
             semanticUiMetrics);
     void SetWidgetSurfaceContext(const std::wstring& widgetId,
         const LuaWidgetSurfaceContext& context);
+    void SetDesktopImageSpinOutput(snowdesktop::widget_runtime::WidgetImageSpin* output);
     LuaWidgetContextState RuntimeGetWidgetContextState(
         const std::wstring& widgetId) const;
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);

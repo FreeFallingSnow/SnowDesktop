@@ -353,6 +353,7 @@
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Defaults to linear smooth sampling with cached high-quality downscaling; nearest preserves point samples. Older hosts retain their original linear quality.
 ---@field tint? SnowViewColor Image-only RGB or host theme tint that replaces source RGB while preserving source alpha.
+---@field spinSpeed? number Clockwise degrees per second (0–360) for a circular desktop image on a separate composition layer. Zero pauses the rotation. Probe view.imageSpin first.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'

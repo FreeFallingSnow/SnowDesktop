@@ -5,6 +5,7 @@
 #include "diagnostics/performance_trace.h"
 #include "widget/view/widget_surface_retention.h"
 #include "widget/view/widget_surface_renderer.h"
+#include "widget/runtime/widget_engine.h"
 #include "ui/render/ui_presentation_scope.h"
 
 namespace
@@ -420,6 +421,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         desktopWidgetBackdropRequestedDuringDraw_ = false;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
         desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
+        snowdesktop::widget_runtime::WidgetImageSpin imageSpin;
         const POINT interactionPoint = lastMousePoint_;
         if (SuppressDesktopWidgetDragTargets() ||
             IsPointOccludedByOpenPopup(lastMousePoint_))
@@ -436,6 +438,15 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 "widget.composition", "content.record", contentId);
             // The child draw captures its base material request; the owning
             // surface registers the native panel after EndDraw succeeds.
+            struct ImageSpinOutputScope
+            {
+                WidgetEngine* engine;
+                ~ImageSpinOutputScope()
+                {
+                    if (engine) engine->SetDesktopImageSpinOutput(nullptr);
+                }
+            } spinOutput{asynchronous ? widgetEngine_.get() : nullptr};
+            if (spinOutput.engine) spinOutput.engine->SetDesktopImageSpinOutput(&imageSpin);
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
                 widgetData->selected ? 2 : 0, true);
@@ -467,7 +478,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             const RECT surfaceBounds{surfaceLeft, surfaceTop,
                 surfaceLeft + static_cast<LONG>(width), surfaceTop + static_cast<LONG>(height)};
-            if (!widgetSurfaceRenderer_->Submit(item.renderTarget, commands.Get(), surfaceBounds))
+            if (!widgetSurfaceRenderer_->Submit(item.renderTarget, commands.Get(),
+                    surfaceBounds, std::move(imageSpin)))
                 endDrawHr = E_FAIL;
         }
         brushCache_.clear();
