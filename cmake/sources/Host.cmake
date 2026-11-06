@@ -312,6 +312,7 @@ set(SNOWDESKTOP_SOURCES
     src/shell/power_user_menu.cpp
     src/shell/power_user_menu.h
     src/app/features/app_steam_workshop.cpp
+    src/app/features/app_widget_multiplayer.cpp
     src/app/lifecycle/app_timer_dispatch.cpp
     src/app/tray/app_tray.cpp
     src/app/lifecycle/app_window_dispatch.cpp
@@ -356,6 +357,7 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_entitlement.cpp
     src/steam/steam_entitlement.h
     src/steam/steam_presence.cpp
+    src/steam/steam_widget_multiplayer.cpp
     src/steam/steam_presence.h
     src/system/calendar/calendar_service.cpp
     src/system/calendar/calendar_display.cpp
@@ -622,6 +624,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_calendar_provider.h
     src/widget/runtime/widget_data_subscribe_lua.inc
     src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_multiplayer.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
     src/widget/packages/widget_package.cpp

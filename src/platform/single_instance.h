@@ -6,6 +6,7 @@
 #pragma once
 
 #include <windows.h>
+#include <cstdint>
 
 #include <optional>
 #include <string>
@@ -124,6 +125,11 @@ StartupAcquisition AcquireForStartup(Guard& guard, Find&& find, Resolve&& resolv
 // Accept a full command line (including the executable) so quoted paths and
 // values cannot be mistaken for a background launch marker.
 LaunchIntent ParseLaunchIntent(std::wstring_view commandLine);
+// Steam launch arguments are untrusted hints. The receiving host validates the
+// Steam room metadata and waits for a local user action before joining it.
+std::uint64_t ParseSteamWidgetLobby(std::wstring_view commandLine);
+inline constexpr LPARAM kSteamWidgetLobbyActivation = 1;
+bool ForwardSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby);
 
 // Deliver settings activation only for an interactive compatible launch.
 // Background duplicates exit silently; the current Steam launcher may still

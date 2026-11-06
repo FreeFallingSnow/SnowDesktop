@@ -23,6 +23,7 @@ struct SteamBridgeConfiguration
     std::string version;
     std::uint32_t protocolVersion = 0;
     std::uint32_t expectedAppId = 0;
+    std::uint32_t widgetMultiplayerProtocolVersion = 0;
     bool steamworksCompiled = false;
 };
 
@@ -38,7 +39,8 @@ struct SteamBridgeConfiguration
 /** Query `configuration` without initializing Steam and validate the result. */
 [[nodiscard]] bool IsSteamBridgeExecutableCompatible(
     const std::filesystem::path& executable,
-    std::string_view expectedVersion);
+    std::string_view expectedVersion,
+    bool* widgetMultiplayerAvailable = nullptr);
 
 enum class State : std::uint8_t
 {
@@ -66,6 +68,7 @@ struct Snapshot
         steam_bridge::SteamConnectionProblem::None;
     std::string errorDetail;
     bool bridgeAvailable = false;
+    bool widgetMultiplayerAvailable = false;
     /** An unexpired last-known ownership result remains usable while offline. */
     bool registered = false;
     /** Unix timestamp when the cached ownership result stops being usable. */

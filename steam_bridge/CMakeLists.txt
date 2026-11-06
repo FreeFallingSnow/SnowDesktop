@@ -44,7 +44,8 @@ target_link_libraries(SnowDesktopWorkshopManagerSupport PUBLIC
     SnowDesktopSteamAppIdentity SnowDesktopThemeLibrary
     ole32 shell32 bcrypt shlwapi windowscodecs)
 
-add_executable(SnowDesktopSteamBridge src/main.cpp src/presence_lifetime.h)
+add_executable(SnowDesktopSteamBridge src/main.cpp src/presence_lifetime.h
+    src/widget_multiplayer.cpp)
 target_link_libraries(SnowDesktopSteamBridge PRIVATE
     SnowDesktopSteamWorkshopCore
     SnowDesktopWorkshopManagerSupport)

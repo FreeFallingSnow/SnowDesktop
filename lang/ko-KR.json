@@ -2826,5 +2826,7 @@
   "preview.contextMenu.windowsSecurity": "Windows 보안",
   "preview.contextMenu.scanDefender": "Microsoft Defender로 검사",
   "preview.contextMenu.openTerminal": "터미널에서 열기",
-  "core.drag.lua_stack_detach_hint": "Ctrl을 누르면 현재 위젯을 꺼냅니다"
+  "core.drag.lua_stack_detach_hint": "Ctrl을 누르면 현재 위젯을 꺼냅니다",
+  "app.steam.widget_invite_instruction": "초대할 Steam 친구 선택",
+  "app.settings.widgets_permission_multiplayer_steam": "Steam으로 온라인 플레이"
 }

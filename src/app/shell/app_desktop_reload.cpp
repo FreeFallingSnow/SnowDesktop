@@ -2,6 +2,7 @@
 #include "app/navigation/quick_navigation_state.h"
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
+#include "platform/single_instance.h"
 #include "app/shell/icon_load_task.h"
 #include "common/utils.h"
 #include "dock/dock_settings.h"
@@ -566,6 +567,12 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             widgetEngine_->OnTaskWake();
         return 0;
     case kActivateExistingInstanceMessage:
+        if (lp == snowdesktop::single_instance::kSteamWidgetLobbyActivation)
+        {
+            if (widgetEngine_) widgetEngine_->OpenSteamWidgetInvitation(static_cast<std::uint64_t>(wp));
+            else pendingSteamWidgetLobby_ = static_cast<std::uint64_t>(wp);
+            return 0;
+        }
         ShowSettingsWindow();
         return 0;
     case WM_DISPLAYCHANGE:

@@ -19,6 +19,8 @@
  * - 渲染通过 D2DState 结构管理资源，支持逐小部件独立绘制
  */
 #pragma once
+
+namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "ui/input/text_input_state.h"
 #include "widget_host_requests.h"
 #include "widget/view/widget_native_marquee.h"
@@ -707,7 +709,7 @@ public:
     /**
      * @brief 默认构造函数
      */
-    WidgetEngine() = default;
+    WidgetEngine();
 
     /**
      * @brief 析构函数，释放所有小部件实例和 Lua 状态
@@ -848,6 +850,10 @@ public:
     /** @brief 设置音频分析线程发布新快照时的 UI 线程唤醒回调。 */
     void SetAudioAnalysisWakeCallback(AudioAnalysisWakeCallback callback);
     void SetTaskWakeCallback(TaskWakeCallback callback);
+    void ConfigureSteamMultiplayer(std::filesystem::path executable,
+        std::function<int()> availability, std::function<void()> unlock,
+        std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend);
+    void OpenSteamWidgetInvitation(std::uint64_t lobby);
     /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
     void RebindHostTimers();
 
@@ -1793,6 +1799,13 @@ private:
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void InitializeWidgetTaskBroker();
     void ApplyWidgetTaskBrokerActions();
+    void PumpWidgetMultiplayer();
+    void StartWidgetMultiplayerTask(const snowdesktop::widget_runtime::TaskBrokerAction& action,
+        LuaWidget& widget);
+    void StopWidgetMultiplayer(std::string_view error);
+    void ForgetWidgetMultiplayer(std::uint64_t owner);
+    std::string WidgetMultiplayerIdentity(const LuaWidget& widget);
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetMultiplayer> widgetMultiplayer_;
     void LoadNotificationSchedules();
     bool SaveNotificationSchedules();
     void RestoreNotificationSchedules(LuaWidget& widget);

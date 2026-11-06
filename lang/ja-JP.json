@@ -2826,5 +2826,7 @@
   "preview.contextMenu.windowsSecurity": "Windows セキュリティ",
   "preview.contextMenu.scanDefender": "Microsoft Defender でスキャンする",
   "preview.contextMenu.openTerminal": "ターミナルで開く",
-  "core.drag.lua_stack_detach_hint": "Ctrl を押して現在のウィジェットを取り出す"
+  "core.drag.lua_stack_detach_hint": "Ctrl を押して現在のウィジェットを取り出す",
+  "app.steam.widget_invite_instruction": "招待する Steam フレンドを選択",
+  "app.settings.widgets_permission_multiplayer_steam": "Steam でオンライン対戦する"
 }

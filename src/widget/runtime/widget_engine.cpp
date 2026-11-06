@@ -17,6 +17,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_multiplayer.h"
 #include "widget_script_read_ahead.h"
 #include "widget/tasks/widget_audio_playback_lua.h"
 #include "ui/render/smooth_corner_geometry.h"
@@ -5461,7 +5462,26 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
         }
     }
 
-    if (taskName == "native.request" || taskName == "native.watch")
+    if (taskName == "multiplayer.send")
+    {
+        if (!hasArguments) return luaL_error(state, "task.start: multiplayer.send requires text");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING || lua_type(state, -1) != LUA_TSTRING)
+                return luaL_error(state, "task.start: multiplayer.send requires text");
+            size_t keyLength = 0, length = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            const char* text = lua_tolstring(state, -1, &length);
+            if (std::string_view(key, keyLength) != "text" ||
+                !snowdesktop::steam_widget_multiplayer::IsUtf8Text({text, length}))
+                return luaL_error(state, "task.start: multiplayer.send requires 1 to 1024 UTF-8 bytes");
+            arguments.emplace("text", std::string(text, length));
+            lua_pop(state, 1);
+        }
+        if (arguments.empty()) return luaL_error(state, "task.start: multiplayer.send requires text");
+    }
+    else if (taskName == "native.request" || taskName == "native.watch")
     {
         if (!hasArguments) return luaL_error(state, "task.start: native task requires arguments");
         lua_pushnil(state);
@@ -12273,6 +12293,8 @@ static int lua_DrawIcon(lua_State* L)
 }
 
 // ── WidgetEngine ──────────────────────────────────────────────────
+WidgetEngine::WidgetEngine() = default;
+
 WidgetEngine::~WidgetEngine()
 {
     Shutdown();
@@ -12664,6 +12686,7 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 
 void WidgetEngine::BeginTaskShutdown()
 {
+    StopWidgetMultiplayer("canceled");
     audioPlayback_.reset();
     if (taskBroker_) taskBroker_->Shutdown();
     nativeTaskExecutor_.reset();
@@ -12916,6 +12939,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    PumpWidgetMultiplayer();
     std::vector<snowdesktop::widget_runtime::AudioPlaybackMessage> audioEvents;
     if (audioPlayback_)
         for (auto& message : audioPlayback_->Drain())
@@ -13146,6 +13170,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (action.name.starts_with("multiplayer."))
+            {
+                if (widgetMultiplayer_ && widgetMultiplayer_->task == action.id)
+                    StopWidgetMultiplayer("canceled");
+                (void)taskBroker_->Complete(action.id, false);
+                continue;
+            }
             if (audioPlayback_) audioPlayback_->Cancel(action.id);
             if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(action.id);
             nativeTaskCompletions_.erase(action.id);
@@ -13206,6 +13237,11 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name.starts_with("multiplayer."))
+        {
+            StartWidgetMultiplayerTask(action, *owner);
+            continue;
+        }
         if (snowdesktop::widget_runtime::WidgetAudioPlayback::SupportsAction(action.name))
         {
             using namespace snowdesktop::widget_runtime;
@@ -15912,6 +15948,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     snowdesktop::widget_runtime::TaskBrokerCancelReason reason)
 {
+    ForgetWidgetMultiplayer(widget.runtimeToken);
     if (audioPlayback_) audioPlayback_->ForgetOwner(widget.runtimeToken);
     if (notificationCenter_)
         notificationCenter_->RemoveOwner(
@@ -27365,6 +27402,8 @@ WidgetEngine::RuntimeStartTask(
     std::unordered_map<std::string, std::string> arguments)
 {
     using snowdesktop::widget_runtime::TaskStartOptions;
+    if (name.starts_with("multiplayer.") && snowdesktop::widget_runtime::IsDryLoad())
+        return {0, "previewUnavailable"};
     if ((name == "native.request" || name == "native.watch") && snowdesktop::widget_runtime::IsDryLoad())
         return { 0, "previewUnavailable" };
     if (!taskBroker_)

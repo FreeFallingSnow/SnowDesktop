@@ -2826,5 +2826,7 @@
   "preview.contextMenu.windowsSecurity": "Windows-Sicherheit",
   "preview.contextMenu.scanDefender": "Mit Microsoft Defender überprüfen",
   "preview.contextMenu.openTerminal": "Im Terminal öffnen",
-  "core.drag.lua_stack_detach_hint": "Strg halten, um das aktuelle Widget herauszulösen"
+  "core.drag.lua_stack_detach_hint": "Strg halten, um das aktuelle Widget herauszulösen",
+  "app.steam.widget_invite_instruction": "Steam-Freund zum Einladen auswählen",
+  "app.settings.widgets_permission_multiplayer_steam": "Über Steam online spielen"
 }

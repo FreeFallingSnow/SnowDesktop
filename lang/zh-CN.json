@@ -2826,5 +2826,7 @@
   "preview.contextMenu.windowsSecurity": "Windows 安全中心",
   "preview.contextMenu.scanDefender": "使用 Microsoft Defender 扫描",
   "preview.contextMenu.openTerminal": "在终端中打开",
-  "core.drag.lua_stack_detach_hint": "按住 Ctrl 移出当前组件"
+  "core.drag.lua_stack_detach_hint": "按住 Ctrl 移出当前组件",
+  "app.steam.widget_invite_instruction": "选择要邀请的 Steam 好友",
+  "app.settings.widgets_permission_multiplayer_steam": "通过 Steam 联机"
 }

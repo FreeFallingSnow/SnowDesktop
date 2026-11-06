@@ -31,6 +31,7 @@
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
 #include "presence_lifetime.h"
+#include "widget_multiplayer.h"
 #include "workshop_project.h"
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -209,7 +210,10 @@ int PrintConfiguration()
               << ",\"componentWorkflowProtocolVersion\":1"
               << ",\"componentPreviewGalleryProtocolVersion\":1"
               << ",\"iconPackWorkflowProtocolVersion\":1"
-              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]"
+              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\""
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? ",\"multiplayer.lobby.v1\"" : "") << ']'
+              << ",\"widgetMultiplayerProtocolVersion\":"
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? 1 : 0)
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";
@@ -1704,6 +1708,16 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (command == L"configuration" && argc == 2)
         return PrintConfiguration();
+    if (command == L"widget-multiplayer" && argc == 4)
+    {
+#if SNOWDESKTOP_HAS_STEAMWORKS
+        SteamApiSession session;
+        if (!session.IsInitialized()) return 4;
+        return snowdesktop::steam_bridge::RunWidgetMultiplayer(argc, argv);
+#else
+        return kSteamworksUnavailable;
+#endif
+    }
     if (command == L"presence")
     {
 #if SNOWDESKTOP_HAS_STEAMWORKS

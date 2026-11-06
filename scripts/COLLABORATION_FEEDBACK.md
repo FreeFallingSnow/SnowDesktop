@@ -114,6 +114,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **同一只读入口复现（2026-11-06）**：Steam 组件联机 Task `task-e8cf97d08e2c41299365e068559911c4` 在编辑批次 `5048f0139d70451f918c67b612fac1f6` 时用 `scripts/test.bat list` 查验证计划的条目，返回 `Shared output busy` 并列出自身编辑登记。改为核对 `cmake/testing/Tests.cmake` 与已有 CTest 注册。未运行重复构建，目录入口与执行租约的分离仍待处理。
+
 - **只读目录也被执行租约挡住（2026-11-05）**：Task `lua-widget-stacks`、批次 `d6e9ae2780214cebbcb0d47f9747e7fc` 编辑期间执行 `scripts/test.bat list`，返回 `Shared output busy: batch d6e9ae2780214cebbcb0d47f9747e7fc / editing / lua-widget-stacks:editing`。此调用只为核对计划中的现有测试名，没有请求配置或编译；随后直接读取 `cmake/testing/Tests.cmake` 完成核对，未另建候选或绕过构建租约。新增影响为计划前的只读测试目录查询被自身编辑屏障拒绝；建议区分纯目录查询与实际执行入口，尚未审查或修改工具根因，不记作已解决。
 - **托盘中键任务的新证据**：2026-11-05，Task `task-3ce5856630f8469dad256d8d3b1e8fde` 的 `begin` 在批次 `e2afef9c94df420f8ef49d7f07d7c445` 等待编辑者 `task-0eb0e940aaf647079b420cdf668166cf`，随后取得批次 `853bba595c0146769419350d2d9179be` 修订0；完成五个托盘源码文件后，`ready-and-wait` 又等待同批 `nonhost-coordination-scope`。全程续接原前台 session，没有重交构建或清理登记；登记时间不计作连续等待时间。共享反馈文件当时有 VPN 任务未提交内容，待其提交后才重开本修订并追加记录，保留所有既有改动。后续结果见 `.codex-probes/tray-middle-click-20261105/record.txt`；此记录不声称已解决共享屏障。
 - **实测来源**：本任务批次 `8cfc68d8bb0a4d4abc9376f54213b282`，修订6于2026-11-04 16:29:22（Asia/Shanghai）就绪；16:48:56仍等待产品成员编辑，已约19分33秒，此后继续等待超过30分钟。只读聊天快照确认另一成员仍在实现，未发现失效登记。
@@ -133,6 +135,8 @@
 - **证据与边界**：已核对本机DSH的 `dsh-tool-call-timeout-policy`：未声明工具 `timeoutMs` 时不设置该层截止。进程内持续观察不调用模型；传输yield续接同一session。测试内部故障兜底仍有界。默认/0、事件到达、显式超时、取消与编辑权不变已通过既有通用/适配器驱动，实际SDK也验证工具注册后没有外层截止。真实用户Host的长期连接及重载仍需安装环境回验。
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
+
+- **通过验证后的归属补录（2026-11-06）**：Steam 组件联机 Task `task-e8cf97d08e2c41299365e068559911c4` 的十份语言键级事务通过产品 Run `1f09dda6e3014a109f4f87fc21b6f16f` 和 `localization_contract`，但 `Invoke-OwnedCommit` 仍仅检查 `ownedFiles`。本轮对照 HEAD 确认每份目录只有本任务新增的两个键，随后在 `0c2db860530548539070dc84d9a0f75b` 显式补认领并合并保存。已验证的产品输入未改动，本次仅补归属和记录，不重编、不重测。键级提交仍待实现。
 
 - **资源请求与认领脱节的新证据（2026-11-05）**：Task `lua-widget-stacks` 在批次 `d6e9ae2780214cebbcb0d47f9747e7fc` 通过十次 `resource prepare/apply` 更新三项提示键；标准 Release 与五项回归通过后，明确路径 `commit` 返回 `Unclaimed commit path: lang/de-DE.json`。源码确认提交只看 `ownedFiles`，`claim` 又只接受 editing 状态。先按原批次提交已认领源码为 `363bea07`，保留语言改动；随后用户新增预览需求，沿用新批次 `6a3e1f0c91e7417e95bb63bf30a4c03f` 审查并显式认领这十个语言文件（仅本任务三键改动），将共同保存。后续产品构建由真实预览源码变化触发，不为补认领重编；本记录不是协作接口已修复的证据。
 - **来源与确认**：2026-11-04，用户授权 `winx-start-context-menu` 交接反馈。该任务通过 `resource prepare/apply` 向十种语言各添加19个 `winx.*` 键，同文件还有 `fav-nav-bar` 的8个收藏栏键。资源事务按键安全合并，`Invoke-OwnedCommit/commit --only` 仍按整路径提交和授权，无法直接满足不混入其他任务修改的要求。

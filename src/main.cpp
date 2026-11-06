@@ -522,6 +522,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
 
     const auto launchIntent = snowdesktop::single_instance::
         ParseLaunchIntent(GetCommandLineW());
+    const auto steamWidgetLobby = snowdesktop::single_instance::ParseSteamWidgetLobby(GetCommandLineW());
     snowdesktop::single_instance::Guard singleInstance;
     const auto requestedInstance =
         snowdesktop::single_instance::DescribeCurrentInstance(
@@ -531,6 +532,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     const auto acquisition = snowdesktop::single_instance::AcquireForStartup(singleInstance,
         [](DWORD timeout) { return snowdesktop::single_instance::FindExistingInstance(timeout); },
         [&](const snowdesktop::single_instance::InstanceInfo& running) {
+            if (steamWidgetLobby && running.version == requestedInstance.version &&
+                SameDeployment(running, requestedInstance) &&
+                snowdesktop::single_instance::ForwardSteamWidgetLobby(running, steamWidgetLobby))
+                return ExistingInstanceResolution::ExitNewInstance;
             // Older builds do not own the mutex but do expose the stable control
             // window. Resolve it before acquiring the stable mutex.
             if (switchHandoff && SameDeployment(running, switchTarget))

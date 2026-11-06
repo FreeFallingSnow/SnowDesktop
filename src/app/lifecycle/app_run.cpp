@@ -10,6 +10,7 @@
 #include "ui/render/app_font.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
+#include "platform/single_instance.h"
 #include "settings/settings_snapshot.h"
 #include "settings/general_settings.h"
 #include "settings/animation_settings.h"
@@ -1601,6 +1602,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     (void)PostMessageW(widgetAudioWakeWindow,
                         kWidgetTaskWakeMessage, 0, 0);
             });
+        ConfigureSteamWidgetMultiplayer(executableDirectory / L"SnowDesktopSteamBridge.exe");
+        const auto steamWidgetLobby = pendingSteamWidgetLobby_ ? pendingSteamWidgetLobby_ :
+            snowdesktop::single_instance::ParseSteamWidgetLobby(GetCommandLineW());
+        pendingSteamWidgetLobby_ = 0;
+        widgetEngine_->OpenSteamWidgetInvitation(steamWidgetLobby);
         systemDataProvider_->Controls()->SetWake([widgetAudioWakeWindow] {
             if(widgetAudioWakeWindow)(void)PostMessageW(widgetAudioWakeWindow,kWidgetTaskWakeMessage,0,0);
         });

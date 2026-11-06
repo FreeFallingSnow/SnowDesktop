@@ -11,6 +11,8 @@ constexpr std::array kPermissionDescriptors = {
         "app.settings.widgets_permission_audio_playback" },
     WidgetPermissionDescriptor{ "native.execute", PermissionRiskClass::Modification,
         "app.settings.widgets_permission_native_execute" },
+    WidgetPermissionDescriptor{ "multiplayer.steam", PermissionRiskClass::ExternalCommunication,
+        "app.settings.widgets_permission_multiplayer_steam" },
     WidgetPermissionDescriptor{ "audio.devices.read", PermissionRiskClass::SystemStatus,
         "app.settings.widgets_permission_audio_devices_read" },
     WidgetPermissionDescriptor{ "audio.input.read", PermissionRiskClass::SystemStatus,

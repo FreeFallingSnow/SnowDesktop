@@ -1619,6 +1619,8 @@ private:
     void PollSteamWorkshopSubscriptions(bool bypassThrottle = false);
     std::unique_ptr<snowdesktop::steam_presence::Service> steamPresenceService_;
     void UpdateSteamPresence();
+    void ConfigureSteamWidgetMultiplayer(const std::filesystem::path& bridge);
+    std::uint64_t pendingSteamWidgetLobby_ = 0;
     void StartSteamWorkshopWatcher();
     void StopSteamWorkshopWatcher();
     static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);

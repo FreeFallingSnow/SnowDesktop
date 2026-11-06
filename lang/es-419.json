@@ -2826,5 +2826,7 @@
   "preview.contextMenu.windowsSecurity": "Seguridad de Windows",
   "preview.contextMenu.scanDefender": "Analizar con Microsoft Defender",
   "preview.contextMenu.openTerminal": "Abrir en Terminal",
-  "core.drag.lua_stack_detach_hint": "Mantén Ctrl para sacar el widget actual"
+  "core.drag.lua_stack_detach_hint": "Mantén Ctrl para sacar el widget actual",
+  "app.steam.widget_invite_instruction": "Elige a un amigo de Steam para invitar",
+  "app.settings.widgets_permission_multiplayer_steam": "Jugar en línea a través de Steam"
 }
