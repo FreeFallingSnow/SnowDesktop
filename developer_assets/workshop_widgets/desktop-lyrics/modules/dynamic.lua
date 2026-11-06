@@ -173,6 +173,20 @@ local function label(key,value,x,y,width,height,font,foreground,alpha)
         style={foreground=foreground,opacity=alpha}}
 end
 local directions={{1,0},{-1,0},{0,1},{0,-1},{0.707,0.707},{-0.707,0.707},{0.707,-0.707},{-0.707,-0.707}}
+local function glowLabels(cache,piece,glyph,index,font,accent)
+    local labels=cache[glyph]
+    if labels then return labels end
+    labels={}
+    local radius=font*0.13
+    for j,direction in ipairs(directions) do
+        local glow=label(piece.key..".glow."..index.."."..j,glyph.text,glyph.x+direction[1]*radius,
+            direction[2]*radius,glyph.width,piece.height,font,accent,0)
+        glow.accessibility={hidden=true}
+        labels[j]=glow
+    end
+    cache[glyph]=labels
+    return labels
+end
 local function pose(piece,media,pageStart,reduced,angle,previousAngle)
     local elapsed=(media-math.max(piece.start-150,pageStart))/1000
     local enter=spring(elapsed);local after=ease((media-piece.finish)/500)
@@ -231,6 +245,13 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
     for i,page in ipairs(prepared.pages) do if media>=page.start then pageIndex=i end end
     local page=prepared.pages[pageIndex]
     if not page then return {type="stack",key="lyrics.dynamic",width=width,height=height,children={}} end
+    -- Keep the fixed label geometry for the current page only. The host
+    -- consumes each frame into its own view tree before the next update.
+    local glowCache=m.glowCache
+    if not glowCache or glowCache.page~=page or glowCache.accent~=accent then
+        glowCache={page=page,accent=accent,labels={}}
+        m.glowCache=glowCache
+    end
     local reduced=m.reducedMotion==true
     local breath=reduced and 0 or p.font*0.20*math.sin((media-line.start)/7000*math.pi*2)
     local top=(height-page.height-prepared.subtitleHeight)/2+breath
@@ -256,11 +277,10 @@ function M.scene(m,g,line,media,width,height,p,primary,accent)
                             strength=strength*math.exp(-math.max(0,media-piece.finish)/300)
                         end
                         if strength>0.025 and glowBudget>=8 then
-                            for j,direction in ipairs(directions) do
-                                local radius=p.font*0.13
-                                local glow=label(piece.key..".glow."..i.."."..j,glyph.text,glyph.x+direction[1]*radius,
-                                    direction[2]*radius,glyph.width,piece.height,p.font,accent,0.075*strength)
-                                glow.accessibility={hidden=true};items[#items+1]=glow
+                            local alpha=0.075*strength
+                            for _,glow in ipairs(glowLabels(glowCache.labels,piece,glyph,i,p.font,accent)) do
+                                glow.style.opacity=alpha
+                                items[#items+1]=glow
                             end
                             glowBudget=glowBudget-8
                         end
