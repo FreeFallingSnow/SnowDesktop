@@ -278,10 +278,11 @@ local function syncMediaIdentity(model, session, timestamp)
 end
 
 local function updateProgressTicker(model, active)
-    if active and not model.progressTicking then
-        model.progressTicking = schedule.every(PROGRESS_TICK,
+    if active then
+        -- Spectrum frames already update progress. Only schedule a fallback between frames.
+        model.progressTicking = schedule.after(PROGRESS_TICK,
             PROGRESS_TICK_MS, { whenHidden = "pause" }) == true
-    elseif not active and model.progressTicking then
+    elseif model.progressTicking then
         schedule.cancel(PROGRESS_TICK)
         model.progressTicking = false
     end
@@ -992,6 +993,7 @@ local function event(context, model, value)
         return
     end
     if value.kind == "schedule" and value.id == PROGRESS_TICK then
+        model.progressTicking = false
         if model.visible then widget.invalidate() end
         return
     end
