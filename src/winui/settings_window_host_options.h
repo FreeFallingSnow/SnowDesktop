@@ -9,6 +9,7 @@
 #include "backup_data_page_backend.h"
 #include "general_page_types.h"
 #include "general_advanced_feature_status.h"
+#include "steam/steam_room_status.h"
 #include "platform/window_support/window_capabilities.h"
 #include "ui/render/app_font_types.h"
 #include "home_about_page_model.h"
@@ -57,6 +58,7 @@ struct SettingsWindowHostOptions
     std::function<GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
     std::function<bool()> resetAdvancedFeatures;
+    std::function<steam_room::Status(steam_room::Command)> steamRoom;
 
     /** Ensure a persisted component instance is loaded before its declarative
      * settings session is created. The application owns the instance-to-

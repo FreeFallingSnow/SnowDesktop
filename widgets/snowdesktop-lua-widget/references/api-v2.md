@@ -3666,36 +3666,33 @@ blur and edge reflections. Use the tool bundled with a supporting host; older
 tools reject this appearance. Lua API and schema versions remain unchanged.
 
 
-## Steam 组件联机（`multiplayer.session`）
+## Steam 组件联机（`multiplayer.room`）
 
-Lua API v2 组件可声明 `multiplayer.session` feature 和 `multiplayer.steam` 权限。用
-`widget.hasFeature("multiplayer.session")` 判断契约，用 `widget.hasPermission("multiplayer.steam")`
-判断授权。声明该权限的包最低支持带此能力的 1.0.14.0 宿主。同版本早期构建和旧宿主会拒绝
-未知权限。先发布支持联机的宿主和 Bridge，再发布依赖它们的组件。
+Lua API v2 组件可声明 `multiplayer.session`、`multiplayer.room` 和 `multiplayer.steam` 权限。
+用 `widget.hasFeature("multiplayer.room")` 判断共享房间契约，用
+`widget.hasPermission("multiplayer.steam")` 判断授权。最低宿主版本为支持该 feature 的
+1.0.14.0。同版本早期构建缺少 `multiplayer.room`。先发布宿主与 Bridge，再发布依赖组件。
 
-每个宿主可同时参加一个 Steam 私密双人房，房间由发起或接受邀请的组件实例独占。双方须安装
-UUID、来源和版本一致的组件。预览保持单机。
+每个宿主可在「常规 → Steam 联机」管理一个 Steam 私密双人房。房间在组件卸载后继续存在。
+同一房间的消息按组件 UUID、包来源和版本分开，每个组件在本机只选一个已授权实例参与。
+双方可在进房前后添加组件，预览使用单机状态。
 
 | 任务 | 参数及效果 |
 | --- | --- |
-| `multiplayer.create` | 创建私密房间 |
-| `multiplayer.invite` | 等待中的房主打开宿主的好友选择器，由用户发送 Steam 邀请 |
-| `multiplayer.listen` | 接下来两分钟接收 Steam 邀请，启用 Steam 运行状态时也可持续接收 |
-| `multiplayer.join` | 接受当前组件的待处理邀请 |
 | `multiplayer.send` | `{text=...}`，发送 1–1024 字节 UTF-8 文本，拒绝 NUL |
-| `multiplayer.leave` | 结束此实例的房间，可在撤权时用于退出 |
 
-除 `send` 外均要求可信用户手势。`task.complete.value.accepted` 表示任务成功提交，
-`send` 成功表示 Steam 接受发送。需要应用层确认时，由组件实现确认或重新同步。
-每个方向每秒最多 8 条。组件只接收如下事件字段，好友选择和 Steam 身份由宿主处理。
+`task.complete.value.accepted` 表示 Steam 接受发送。需要应用层确认时，由组件实现确认或
+重新同步。整间房每个方向每秒最多 8 条。旧的 `create`、`listen`、`invite`、`join` 和
+`leave` 任务继续识别可信用户手势，会打开房间设置并返回 `hostManaged`。好友选择和 Steam
+身份由宿主处理。
 
 - `multiplayer.state` 的 `state` 可能是 `unavailable`、`locked`、`idle`、`listening`、
   `invited`、`connecting`、`waiting`、`connected` 或 `busy`，`host` 表示当前实例是否是房主。
-  离开 `connected` 即结束本局，应清理未确认的游戏操作。
+  共享房间由宿主接收邀请，组件收到 `connected` 即可收发。离开此状态时清理未确认的游戏操作。
 - `multiplayer.message` 的 `text` 是对方发来的文本，`fromHost` 表示发送者是当前房主。
   把消息作为不可信游戏数据解析，房主校验行动、回合和版本。双方均在房间中时才收发。
 
-Steam 断线、账号变化、权限撤回、实例卸载或任一玩家退出会结束对局。
+Steam 断线、账号变化或任一玩家退出会结束房间。组件撤权或卸载时立即退出其消息通道。
 
 ## Native EXE helpers (feature `task.native.request`)
 

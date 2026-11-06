@@ -57,22 +57,21 @@ Exit codes:
 | 6 | Download or upload timeout |
 | 64 | Invalid command line |
 
-### Widget multiplayer v1
+### Shared widget rooms v2
 
-SDK-enabled `configuration` advertises `widgetMultiplayerProtocolVersion: 1`
-and `multiplayer.lobby.v1`. The host also requires the matching Bridge version
+SDK-enabled `configuration` advertises `widgetMultiplayerProtocolVersion: 2`
+and `multiplayer.lobby.v2`. The host also requires the matching Bridge version
 and Steam App ID. The private `widget-multiplayer` worker uses two explicitly
-inherited pipe handles with fixed-size v1 frames and an owned child lifetime.
+inherited pipe handles with fixed-size v2 frames and an owned child lifetime.
 The normal JSON CLI protocol remains version 1.
 
 The worker uses an online, entitled Steam user and keeps at most one private
-two-player lobby. The host binds it to one authorized Lua instance. The worker
-resolves accepted Steam invitations to lobby metadata, validates the exact
-package identity again after join, and accepts chat from the other current
-member. The host selects a friend from a bounded online list and keeps Steam
-identifiers and friend details inside the native boundary. Steam lobby data
-contains the package UUID, package version and source. Widget payloads are
-UTF-8 with a 1024-byte application limit and per-direction quotas.
+two-player lobby per host. The worker resolves Steam invitations using the
+room protocol marker and validates it after join. Only the other current
+member can send messages. The application routes messages by package UUID,
+version and source to an authorized Lua instance. The host keeps Steam IDs
+and friend details within its native settings and Bridge boundary. Payloads
+are UTF-8 with a 1024-byte limit and per-direction room quotas.
 
 ## Content contract
 

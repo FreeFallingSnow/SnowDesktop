@@ -20,6 +20,7 @@ public:
     Service& operator=(const Service&) = delete;
 
     bool Submit(Frame frame);
+    void DiscardQueued(std::uint64_t request);
     std::vector<Frame> Drain();
 
 private:

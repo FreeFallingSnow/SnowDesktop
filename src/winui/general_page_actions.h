@@ -14,6 +14,7 @@
 #include "start_page_actions.h"
 #include "hotkey_recorder_types.h"
 #include "platform/window_support/window_capabilities.h"
+#include "steam/steam_room_status.h"
 
 namespace snowdesktop::winui
 {
@@ -42,6 +43,7 @@ struct GeneralPageActions
     std::function<GeneralAdvancedFeatureStatus()> queryAdvancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
     std::function<void()> openAdvancedFeaturesStore;
+    std::function<steam_room::Status(steam_room::Command)> steamRoom;
 
     std::function<void(
         SettingsHostActions::HotkeyTarget target,

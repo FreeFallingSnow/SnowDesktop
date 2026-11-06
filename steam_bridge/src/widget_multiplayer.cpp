@@ -22,8 +22,9 @@ using namespace steam_widget_multiplayer;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 
-constexpr char kIdentityKey[] = "snowdesktop_widget_multiplayer_v1";
-constexpr std::string_view kMessagePrefix = "SDW1:";
+constexpr char kIdentityKey[] = "snowdesktop_multiplayer";
+constexpr char kRoomIdentity[] = "shared-room-v2";
+constexpr std::string_view kMessagePrefix = "SDW2:";
 
 HANDLE InheritedPipe(const wchar_t* argument)
 {
@@ -92,9 +93,6 @@ private:
     {
         switch (frame.kind)
         {
-        case Kind::Listen:
-            Result(frame.request);
-            break;
         case Kind::OpenInvitation:
             if (frame.value) ReadInvitation(CSteamID(frame.value));
             else ReadLaunchInvitation();
@@ -131,15 +129,11 @@ private:
     {
         if (room_.IsValid() || call_ != k_uAPICallInvalid)
             return Result(frame.request, "sessionBusy");
-        if (!IsUtf8Text(frame.Text()) || frame.Text().size() > 192)
-            return Result(frame.request, "invalidArguments");
-
         creating_ = frame.kind == Kind::Create;
         if (!creating_ && (!invitation_.IsValid() || frame.value != invitation_.ConvertToUint64() ||
-            frame.Text() != invitationIdentity_ || Clock::now() >= invitationExpiry_))
+            Clock::now() >= invitationExpiry_))
             return Result(frame.request, "invitationExpired");
 
-        identity_ = frame.Text();
         request_ = frame.request;
         deadline_ = Clock::now() + 20s;
         call_ = creating_ ? SteamMatchmaking()->CreateLobby(k_ELobbyTypePrivate, 2) :
@@ -177,7 +171,7 @@ private:
             if (ReadCall(result) && result.m_eResult == k_EResultOK)
             {
                 room_ = CSteamID(result.m_ulSteamIDLobby);
-                if (!SteamMatchmaking()->SetLobbyData(room_, kIdentityKey, identity_.c_str()))
+                if (!SteamMatchmaking()->SetLobbyData(room_, kIdentityKey, kRoomIdentity))
                     CloseRoom();
             }
         }
@@ -187,14 +181,14 @@ private:
             if (ReadCall(result) && result.m_EChatRoomEnterResponse == k_EChatRoomEnterResponseSuccess)
             {
                 room_ = CSteamID(result.m_ulSteamIDLobby);
-                if (room_ != invitation_ || identity_ != SteamMatchmaking()->GetLobbyData(room_, kIdentityKey))
+                if (room_ != invitation_ || std::string_view(SteamMatchmaking()->GetLobbyData(room_, kIdentityKey)) != kRoomIdentity)
                     CloseRoom();
             }
         }
         call_ = k_uAPICallInvalid;
         if (!room_.IsValid()) return Result(request_, "roomUnavailable");
         owner_ = SteamMatchmaking()->GetLobbyOwner(room_);
-        if (!owner_.IsValid())
+        if (!owner_.IsValid() || (owner_ == user_) != creating_)
         {
             CloseRoom();
             return Result(request_, "roomUnavailable");
@@ -232,7 +226,7 @@ private:
         const auto count = SteamMatchmaking()->GetNumLobbyMembers(room_);
         if (count < 1 || count > 2 || (count == 1 && (members_ == 2 || owner_ != user_)) ||
             SteamMatchmaking()->GetLobbyOwner(room_) != owner_ ||
-            identity_ != SteamMatchmaking()->GetLobbyData(room_, kIdentityKey))
+            std::string_view(SteamMatchmaking()->GetLobbyData(room_, kIdentityKey)) != kRoomIdentity)
         {
             CloseRoom();
             return;
@@ -308,12 +302,11 @@ private:
         if (!event->m_bSuccess || event->m_ulSteamIDLobby != requestedInvitation_.ConvertToUint64() ||
             event->m_ulSteamIDMember != event->m_ulSteamIDLobby || Clock::now() >= requestedExpiry_) return;
         const std::string_view identity(SteamMatchmaking()->GetLobbyData(requestedInvitation_, kIdentityKey));
-        if (!IsUtf8Text(identity) || identity.size() > 192) return;
+        if (identity != kRoomIdentity) return;
         invitation_ = requestedInvitation_;
-        invitationIdentity_ = identity;
         invitationExpiry_ = Clock::now() + 2min;
         requestedInvitation_.Clear();
-        Emit(Kind::Invitation, 0, invitation_.ConvertToUint64(), 0, invitationIdentity_);
+        Emit(Kind::Invitation, 0, invitation_.ConvertToUint64());
     }
 
     static bool AdmitMessage(Clock::time_point& window, unsigned& count)
@@ -329,9 +322,12 @@ private:
     {
         RefreshRoom();
         if (members_ != 2) return Result(frame.request, "roomUnavailable");
-        if (!IsUtf8Text(frame.Text())) return Result(frame.request, "invalidArguments");
+        Frame checked;
+        if (!IsUtf8Text(frame.Text()) || !checked.SetChannel(frame.Channel())) return Result(frame.request, "invalidArguments");
         if (!AdmitMessage(sendWindow_, sendCount_)) return Result(frame.request, "rateLimited");
         std::string message(kMessagePrefix);
+        message.append(frame.Channel());
+        message.push_back('\n');
         message.append(frame.Text());
         Result(frame.request, SteamMatchmaking()->SendLobbyChatMsg(room_, message.data(),
             static_cast<int>(message.size())) ? "" : "sendFailed");
@@ -345,7 +341,7 @@ private:
         if (members_ != 2) return;
         if (!peer_.IsValid() || event->m_ulSteamIDUser != peer_.ConvertToUint64() ||
             !AdmitMessage(receiveWindow_, receiveCount_)) return;
-        std::array<char, kPayloadLimit + kMessagePrefix.size() + 1> text{};
+        std::array<char, kPayloadLimit + kChannelLimit + kMessagePrefix.size() + 2> text{};
         CSteamID sender;
         EChatEntryType type{};
         const int size = SteamMatchmaking()->GetLobbyChatEntry(room_,
@@ -355,7 +351,13 @@ private:
         std::string_view message(text.data(), static_cast<std::size_t>(size));
         if (!message.starts_with(kMessagePrefix)) return;
         message.remove_prefix(kMessagePrefix.size());
-        if (IsUtf8Text(message)) Emit(Kind::Message, 0, 0, sender == owner_ ? 1u : 0u, message);
+        const auto delimiter = message.find('\n');
+        if (delimiter == std::string_view::npos) return;
+        Frame frame{0, 0, Kind::Message};
+        frame.flags = sender == owner_ ? 1u : 0u;
+        const auto payload = message.substr(delimiter + 1);
+        if (frame.SetChannel(message.substr(0, delimiter)) && IsUtf8Text(payload) &&
+            frame.SetText(payload) && !WriteFrame(output_, frame)) running_ = false;
     }
 
     HANDLE input_;
@@ -374,7 +376,6 @@ private:
     Clock::time_point deadline_{}, invitationExpiry_{}, requestedExpiry_{};
     Clock::time_point sendWindow_{}, receiveWindow_{};
     std::vector<std::uint64_t> friends_;
-    std::string identity_, invitationIdentity_;
     SteamAPICall_t call_ = k_uAPICallInvalid;
     std::uint64_t request_ = 0;
     unsigned sendCount_ = 0, receiveCount_ = 0;

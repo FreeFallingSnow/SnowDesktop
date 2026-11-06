@@ -5,6 +5,7 @@
 #include "common/utils.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace
@@ -14,6 +15,9 @@ using snowdesktop::steam_widget_multiplayer::Kind;
 using snowdesktop::steam_widget_multiplayer::Service;
 using snowdesktop::widget_runtime::WidgetMultiplayer;
 using namespace std::chrono_literals;
+namespace room = snowdesktop::steam_room;
+
+constexpr auto kRoomRequest = (std::numeric_limits<std::uint64_t>::max)();
 
 bool CanPlay(const LuaWidget& widget)
 {
@@ -32,22 +36,113 @@ void StartBridge(WidgetMultiplayer& state, const std::function<void()>& wake)
 }
 
 void WidgetEngine::ConfigureSteamMultiplayer(std::filesystem::path executable,
-    std::function<int()> availability, std::function<void()> unlock,
-    std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend)
+    std::function<int()> availability, std::function<void(bool)> openSettings,
+    std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend,
+    std::function<void()> changed)
 {
     widgetMultiplayer_ = std::make_unique<WidgetMultiplayer>();
     widgetMultiplayer_->executable = std::move(executable);
     widgetMultiplayer_->availability = std::move(availability);
-    widgetMultiplayer_->unlock = std::move(unlock);
+    widgetMultiplayer_->openSettings = std::move(openSettings);
     widgetMultiplayer_->chooseFriend = std::move(chooseFriend);
+    widgetMultiplayer_->changed = std::move(changed);
 }
 
 void WidgetEngine::OpenSteamWidgetInvitation(std::uint64_t lobby)
 {
     if (!widgetMultiplayer_ || !lobby) return;
     widgetMultiplayer_->launchLobby = lobby;
-    widgetMultiplayer_->listenUntil = WidgetMultiplayer::Clock::now() + 2min;
+    widgetMultiplayer_->launchUntil = WidgetMultiplayer::Clock::now() + 2min;
     if (taskWakeCallback_) taskWakeCallback_();
+}
+
+room::Status WidgetEngine::SteamRoomStatus() const
+{
+    if (!widgetMultiplayer_) return {};
+    const auto& state = *widgetMultiplayer_;
+    const int availability = state.availability();
+    room::Status status;
+    status.inRoom = state.members != 0;
+    status.host = status.inRoom && state.host;
+    status.busy = state.operation.has_value();
+    status.failure = state.failure;
+    if (availability == 0) return status;
+    if (availability == 1) status.phase = room::Phase::Locked;
+    else if (state.members == 2) status.phase = room::Phase::Connected;
+    else if (state.members == 1) status.phase = room::Phase::Waiting;
+    else if (state.invitation && WidgetMultiplayer::Clock::now() < state.invitationUntil)
+        status.phase = room::Phase::Invited;
+    else status.phase = room::Phase::Idle;
+    return status;
+}
+
+room::Status WidgetEngine::ControlSteamRoom(room::Command command)
+{
+    if (!widgetMultiplayer_ || command == room::Command::Query) return SteamRoomStatus();
+    auto& state = *widgetMultiplayer_;
+    const int availability = state.availability();
+    const auto wake = [this] { if (taskWakeCallback_) taskWakeCallback_(); };
+    if (command == room::Command::StopListening)
+    {
+        state.settingsListening = false;
+        wake();
+        return SteamRoomStatus();
+    }
+    if (command == room::Command::Listen)
+    {
+        state.settingsListening = true;
+        wake();
+        return SteamRoomStatus();
+    }
+    if (command == room::Command::Leave)
+    {
+        // Closing the owned child also leaves Steam when an operation is still
+        // pending or when entitlement has changed since the UI was displayed.
+        StopWidgetMultiplayer("roomClosed");
+        state.launchLobby = 0;
+        state.launchUntil = {};
+        state.failure = room::Failure::None;
+        wake();
+        return SteamRoomStatus();
+    }
+    if (availability < 2)
+    {
+        if (availability == 1 && state.openSettings) state.openSettings(true);
+        return SteamRoomStatus();
+    }
+    if (state.operation) return SteamRoomStatus();
+
+    Frame frame;
+    frame.request = kRoomRequest;
+    switch (command)
+    {
+    case room::Command::Create:
+        if (state.members) return SteamRoomStatus();
+        frame.kind = Kind::Create;
+        break;
+    case room::Command::Join:
+        if (state.members || !state.invitation ||
+            WidgetMultiplayer::Clock::now() >= state.invitationUntil) return SteamRoomStatus();
+        frame.kind = Kind::Join;
+        frame.value = state.invitation->value;
+        break;
+    case room::Command::Invite:
+        if (state.members != 1 || !state.host) return SteamRoomStatus();
+        frame.kind = Kind::Friends;
+        state.friends.clear();
+        break;
+    default:
+        return SteamRoomStatus();
+    }
+    StartBridge(state, taskWakeCallback_);
+    if (state.service->Submit(frame))
+    {
+        state.operation = frame.kind;
+        state.failure = room::Failure::None;
+    }
+    else state.failure = room::Failure::SteamUnavailable;
+    wake();
+    return SteamRoomStatus();
 }
 
 std::string WidgetEngine::WidgetMultiplayerIdentity(const LuaWidget& widget)
@@ -68,103 +163,73 @@ void WidgetEngine::StopWidgetMultiplayer(std::string_view error)
 {
     if (!widgetMultiplayer_) return;
     auto& state = *widgetMultiplayer_;
-    const auto task = std::exchange(state.task, 0);
-    if (task && taskBroker_) (void)taskBroker_->Complete(task, false, std::string(error));
     state.service.reset();
+    if (taskBroker_)
+        for (const auto& [request, owner] : state.sends)
+            (void)taskBroker_->Complete(request, false, std::string(error));
+    state.sends.clear();
+    state.operation.reset();
     state.invitation.reset();
     state.friends.clear();
-    state.taskOwner = state.owner = 0;
     state.members = 0;
     state.host = state.ready = false;
-    state.listenUntil = {};
     state.retryAfter = WidgetMultiplayer::Clock::now() + 15s;
+}
+
+void WidgetEngine::CancelWidgetMultiplayerSend(std::uint64_t request)
+{
+    if (!widgetMultiplayer_ || !widgetMultiplayer_->sends.erase(request)) return;
+    if (widgetMultiplayer_->service) widgetMultiplayer_->service->DiscardQueued(request);
 }
 
 void WidgetEngine::ForgetWidgetMultiplayer(std::uint64_t owner)
 {
     if (!widgetMultiplayer_) return;
-    widgetMultiplayer_->lastState.erase(owner);
-    if (widgetMultiplayer_->owner == owner || widgetMultiplayer_->taskOwner == owner)
-        StopWidgetMultiplayer("instanceDisposed");
+    auto& state = *widgetMultiplayer_;
+    state.lastState.erase(owner);
+    std::erase_if(state.sends, [&](const auto& entry) {
+        if (entry.second != owner) return false;
+        if (state.service) state.service->DiscardQueued(entry.first);
+        return true;
+    });
 }
 
 void WidgetEngine::StartWidgetMultiplayerTask(
     const snowdesktop::widget_runtime::TaskBrokerAction& action, LuaWidget& widget)
 {
-    const auto finish = [&](std::string error = {}) {
-        const bool ok = error.empty();
-        (void)taskBroker_->Complete(action.id, ok, std::move(error));
+    const auto finish = [&](const char* error) {
+        (void)taskBroker_->Complete(action.id, false, error);
     };
     if (action.preview || !widgetMultiplayer_) return finish("providerUnavailable");
     auto& state = *widgetMultiplayer_;
-    const bool leave = action.name == "multiplayer.leave";
-    if (leave && state.owner != widget.runtimeToken) return finish();
-    if (leave && state.task)
-    {
-        StopWidgetMultiplayer("canceled");
-        if (taskWakeCallback_) taskWakeCallback_();
-        return finish();
-    }
-    if (!leave)
-    {
-        if (!CanPlay(widget)) return finish("permissionRevoked");
-        const int availability = state.availability();
-        if (!availability) return finish("providerUnavailable");
-        if (availability == 1)
-        {
-            if (action.name != "multiplayer.send" && state.unlock) state.unlock();
-            return finish("advancedFeatureLocked");
-        }
-    }
-    if (state.task) return finish("sessionBusy");
-    if (state.owner && state.owner != widget.runtimeToken) return finish("sessionBusy");
+    const int availability = state.availability();
+    if (!availability) return finish("providerUnavailable");
 
-    Frame frame;
-    frame.request = action.id;
-    if (action.name == "multiplayer.listen")
+    if (action.name != "multiplayer.send")
     {
-        if (state.owner) return finish("sessionBusy");
-        frame.kind = Kind::Listen;
-        state.listenUntil = WidgetMultiplayer::Clock::now() + 2min;
-        StartBridge(state, taskWakeCallback_);
+        if (action.name != "multiplayer.leave" && !CanPlay(widget)) return finish("permissionRevoked");
+        if (state.openSettings) state.openSettings(availability == 1);
+        return finish(availability == 1 ? "advancedFeatureLocked" : "hostManaged");
     }
-    else if (action.name == "multiplayer.create" || action.name == "multiplayer.join")
-    {
-        if (state.owner) return finish("sessionBusy");
-        const auto identity = WidgetMultiplayerIdentity(widget);
-        if (identity.empty() || !frame.SetText(identity)) return finish("providerUnavailable");
-        frame.kind = action.name == "multiplayer.create" ? Kind::Create : Kind::Join;
-        if (frame.kind == Kind::Join)
-        {
-            if (!state.invitation || state.invitation->Text() != identity ||
-                WidgetMultiplayer::Clock::now() >= state.invitationUntil) return finish("invitationExpired");
-            frame.value = state.invitation->value;
-        }
-        StartBridge(state, taskWakeCallback_);
-    }
-    else if (action.name == "multiplayer.invite")
-    {
-        if (state.owner != widget.runtimeToken || !state.host || state.members != 1)
-            return finish("inviteUnavailable");
-        frame.kind = Kind::Friends;
-        state.friends.clear();
-    }
-    else if (action.name == "multiplayer.send")
-    {
-        if (state.owner != widget.runtimeToken || state.members != 2)
-            return finish("roomUnavailable");
-        const auto value = action.arguments.find("text");
-        if (value == action.arguments.end() || !frame.SetText(value->second)) return finish("invalidArguments");
-        frame.kind = Kind::Send;
-    }
-    else if (leave) frame.kind = Kind::Leave;
-    else return finish("invalidArguments");
 
-    if (!state.service || !state.service->Submit(frame)) return finish("steamUnavailable");
-    state.task = action.id;
-    state.taskOwner = widget.runtimeToken;
-    state.operation = frame.kind;
-    if (OpensRoom(frame.kind)) state.owner = widget.runtimeToken;
+    if (!CanPlay(widget)) return finish("permissionRevoked");
+    if (availability < 2) return finish("advancedFeatureLocked");
+    if (state.members != 2 || !state.service) return finish("roomUnavailable");
+    const auto channel = WidgetMultiplayerIdentity(widget);
+    if (channel.empty()) return finish("providerUnavailable");
+    const auto first = std::find_if(widgets_.begin(), widgets_.end(), [&](const LuaWidget& candidate) {
+        return CanPlay(candidate) && candidate.packageId == widget.packageId &&
+            WidgetMultiplayerIdentity(candidate) == channel;
+    });
+    if (first == widgets_.end() || first->runtimeToken != widget.runtimeToken)
+        return finish("sessionBusy");
+
+    Frame frame{action.id, 0, Kind::Send};
+    const auto text = action.arguments.find("text");
+    if (text == action.arguments.end() || !frame.SetText(text->second) || !frame.SetChannel(channel))
+        return finish("invalidArguments");
+    if (!state.service->Submit(frame)) return finish("sessionBusy");
+    state.sends.emplace(action.id, widget.runtimeToken);
 }
 
 void WidgetEngine::PumpWidgetMultiplayer()
@@ -178,23 +243,28 @@ void WidgetEngine::PumpWidgetMultiplayer()
         });
     };
     const int availability = state.availability();
-    const bool hasPlayers = std::any_of(widgets_.begin(), widgets_.end(), CanPlay);
-    const auto task = state.task ? taskBroker_->Snapshot(state.task) : std::nullopt;
-    if (state.task && (!task || task->cancelRequested)) StopWidgetMultiplayer("canceled");
-    if (now >= state.listenUntil) state.launchLobby = 0;
+    // Invalidate queued messages when a component is unloaded or loses consent.
+    std::erase_if(state.sends, [&](const auto& send) {
+        const auto snapshot = taskBroker_->Snapshot(send.first);
+        if (snapshot && !snapshot->cancelRequested && find(send.second) != widgets_.end())
+            return false;
+        if (state.service) state.service->DiscardQueued(send.first);
+        if (snapshot && !snapshot->cancelRequested)
+            (void)taskBroker_->Complete(send.first, false, "permissionRevoked");
+        return true;
+    });
+    if (now >= state.launchUntil) state.launchLobby = 0;
     if (now >= state.invitationUntil) state.invitation.reset();
-    if (state.service && (availability < 2 || !hasPlayers ||
-        (state.owner && find(state.owner) == widgets_.end()) ||
-        (availability != 3 && !state.owner && !state.task && now >= state.listenUntil && !state.invitation)))
+    const bool keepListening = state.settingsListening || availability == 3 || now < state.launchUntil;
+    if (state.service && (availability < 2 ||
+        (!keepListening && !state.launchLobby && !state.members && !state.operation && !state.invitation)))
         StopWidgetMultiplayer("roomClosed");
 
-    if (availability >= 2 && hasPlayers && now >= state.retryAfter &&
-        (availability == 3 || state.launchLobby || now < state.listenUntil))
+    if (availability >= 2 && (state.launchLobby || (keepListening && now >= state.retryAfter)))
         StartBridge(state, taskWakeCallback_);
     if (state.service && state.ready && (state.launchLobby || state.readSteamLaunch))
     {
-        const Frame frame{0, state.launchLobby, Kind::OpenInvitation};
-        if (state.service->Submit(frame))
+        if (state.service->Submit(Frame{0, state.launchLobby, Kind::OpenInvitation}))
         {
             state.launchLobby = 0;
             state.readSteamLaunch = false;
@@ -203,6 +273,7 @@ void WidgetEngine::PumpWidgetMultiplayer()
 
     const auto events = state.service ? state.service->Drain() : std::vector<Frame>{};
     std::vector<Frame> messages;
+    bool showInvite = false;
     for (const auto& event : events)
     {
         if (!state.service) break;
@@ -210,83 +281,103 @@ void WidgetEngine::PumpWidgetMultiplayer()
         {
         case Kind::Ready:
             state.ready = true;
+            state.failure = room::Failure::None;
             if (taskWakeCallback_) taskWakeCallback_();
             break;
         case Kind::Disconnected:
             StopWidgetMultiplayer("steamUnavailable");
+            state.failure = room::Failure::SteamUnavailable;
             break;
         case Kind::Invitation:
             state.invitation = event;
             state.invitationUntil = now + 2min;
+            showInvite = !state.members && !state.operation;
             break;
         case Kind::Room:
-            if (!state.owner) break;
             state.members = static_cast<int>(event.value);
             state.host = event.flags != 0;
-            if (!state.members) state.owner = 0;
+            if (state.members) state.invitation.reset();
             break;
         case Kind::Message:
             if (state.members == 2) messages.push_back(event);
             break;
         case Kind::Friend:
-            if (state.task == event.request && state.operation == Kind::Friends &&
+            if (event.request == kRoomRequest && state.operation == Kind::Friends &&
                 state.friends.size() < snowdesktop::steam_widget_multiplayer::kFriendLimit)
                 state.friends.push_back(event);
             break;
         case Kind::Result:
-            if (!event.request || state.task != event.request) break;
+            if (state.sends.erase(event.request))
+            {
+                (void)taskBroker_->Complete(event.request, event.value == 1, std::string(event.Text()));
+                break;
+            }
+            if (event.request != kRoomRequest || !state.operation) break;
             if (state.operation == Kind::Friends && event.value)
             {
                 std::vector<std::string> names;
                 for (const auto& entry : state.friends) names.emplace_back(entry.Text());
                 const auto selected = state.chooseFriend ? state.chooseFriend(names) : std::nullopt;
-                if (!state.service || state.task != event.request) break;
-                const auto snapshot = taskBroker_->Snapshot(state.task);
-                if (selected && *selected < state.friends.size() && snapshot && !snapshot->cancelRequested &&
-                    state.availability() >= 2 && find(state.owner) != widgets_.end() &&
-                    state.service->Submit(Frame{state.task, state.friends[*selected].value, Kind::Invite}))
+                if (!state.service || state.operation != Kind::Friends) break;
+                if (selected && *selected < state.friends.size() && state.availability() >= 2 &&
+                    state.service->Submit(Frame{kRoomRequest, state.friends[*selected].value, Kind::Invite}))
                 {
                     state.operation = Kind::Invite;
                     state.friends.clear();
                     break;
                 }
-                (void)taskBroker_->Complete(state.task, false, "canceled");
+                if (selected) state.failure = room::Failure::ActionFailed;
             }
-            else
-            {
-                (void)taskBroker_->Complete(state.task, event.value == 1, std::string(event.Text()));
-                if (!event.value && OpensRoom(state.operation)) state.owner = 0;
-                if (state.operation == Kind::Join) state.invitation.reset();
-            }
-            state.task = state.taskOwner = 0;
+            else if (!event.value)
+                state.failure = event.Text() == "noFriendsOnline" ? room::Failure::NoFriends : room::Failure::ActionFailed;
+            if (state.operation == Kind::Join) state.invitation.reset();
+            state.operation.reset();
             state.friends.clear();
             break;
         default: break;
         }
     }
 
-    // Broadcast only changed state to each eligible local instance. The first
-    // matching instance that accepts an invitation becomes its exclusive owner.
+    const auto status = SteamRoomStatus();
+    if (std::exchange(state.published, status) != status && state.changed) state.changed();
+    if (showInvite && status.phase == room::Phase::Invited && state.openSettings)
+        state.openSettings(false);
+
+    // One participating instance per package channel avoids simultaneous
+    // game state producers when the same widget is placed more than once.
+    std::unordered_map<std::string, std::uint64_t> channels;
     std::vector<std::uint64_t> owners;
-    for (const auto& widget : widgets_) if (CanPlay(widget)) owners.push_back(widget.runtimeToken);
+    for (const auto& widget : widgets_)
+        if (CanPlay(widget))
+        {
+            owners.push_back(widget.runtimeToken);
+            if (state.members == 2)
+                if (auto channel = WidgetMultiplayerIdentity(widget); !channel.empty())
+                    channels.try_emplace(std::move(channel), widget.runtimeToken);
+        }
+
     for (const auto token : owners)
     {
         const auto widget = find(token);
         if (widget == widgets_.end()) continue;
-        const bool localHost = state.owner == token && state.host;
-        std::string_view status = "idle";
-        if (!availability) status = "unavailable";
-        else if (availability == 1) status = "locked";
-        else if (state.owner == token) status = state.members == 2 ? "connected" : state.members ? "waiting" : "connecting";
-        else if (state.owner) status = "busy";
-        else if (state.invitation && state.invitation->Text() == WidgetMultiplayerIdentity(*widget)) status = "invited";
-        else if (state.ready && now < state.listenUntil) status = "listening";
-        const std::string key = std::string(status) + (localHost ? "+" : "-");
+        std::string_view phase = "idle";
+        if (!availability) phase = "unavailable";
+        else if (availability == 1) phase = "locked";
+        else if (state.members == 2)
+        {
+            const auto channel = channels.find(WidgetMultiplayerIdentity(*widget));
+            phase = channel != channels.end() && channel->second == token ? "connected" : "busy";
+        }
+        else if (state.members == 1) phase = "waiting";
+        else if (state.operation && OpensRoom(*state.operation)) phase = "connecting";
+        else if (state.invitation) phase = "invited";
+        const bool localHost = phase == "connected" && state.host;
+        const std::string key = std::string(phase) + (localHost ? "+" : "-");
         if (state.lastState[token] == key) continue;
         state.lastState[token] = key;
         const auto widgetId = widget->widgetId;
         (void)InvokeLifecycleEvent(*widget, "multiplayer.state", [&](lua_State* lua) {
-            lua_pushlstring(lua, status.data(), status.size());
+            lua_pushlstring(lua, phase.data(), phase.size());
             lua_setfield(lua, -2, "state");
             lua_pushboolean(lua, localHost);
             lua_setfield(lua, -2, "host");
@@ -295,8 +386,11 @@ void WidgetEngine::PumpWidgetMultiplayer()
     }
     for (const auto& message : messages)
     {
-        const auto widget = find(state.owner);
-        if (state.members != 2 || widget == widgets_.end()) break;
+        if (state.members != 2) break;
+        const auto channel = channels.find(std::string(message.Channel()));
+        if (channel == channels.end()) continue;
+        const auto widget = find(channel->second);
+        if (widget == widgets_.end() || WidgetMultiplayerIdentity(*widget) != message.Channel()) continue;
         const auto widgetId = widget->widgetId;
         (void)InvokeLifecycleEvent(*widget, "multiplayer.message", [&](lua_State* lua) {
             lua_pushlstring(lua, message.Text().data(), message.Text().size());

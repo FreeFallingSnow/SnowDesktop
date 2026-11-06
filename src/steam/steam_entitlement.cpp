@@ -568,7 +568,7 @@ bool IsSteamBridgeExecutableCompatible(
         result->output, result->exitCode) : SteamBridgeConfiguration{};
     const bool compatible = IsSteamBridgeConfigurationCompatible(configuration, expectedVersion);
     if (widgetMultiplayerAvailable)
-        *widgetMultiplayerAvailable = compatible && configuration.widgetMultiplayerProtocolVersion == 1;
+        *widgetMultiplayerAvailable = compatible && configuration.widgetMultiplayerProtocolVersion == 2;
     Trace(traceId, L"configuration compatible=" + std::to_wstring(compatible) +
         L" valid=" + std::to_wstring(configuration.valid) +
         L" host_version=" + DiagnosticText(expectedVersion) +

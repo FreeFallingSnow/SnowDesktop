@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "在終端機中開啟",
   "core.drag.lua_stack_detach_hint": "按住 Ctrl 移出目前元件",
   "app.steam.widget_invite_instruction": "選擇要邀請的 Steam 好友",
-  "app.settings.widgets_permission_multiplayer_steam": "透過 Steam 連線遊玩"
+  "app.settings.widgets_permission_multiplayer_steam": "透過 Steam 連線遊玩",
+  "settings.general.steamRoom": "Steam 連線遊玩",
+  "settings.general.steamRoom.actions": "房間操作",
+  "settings.general.steamRoom.idle": "尚未加入房間",
+  "settings.general.steamRoom.invited": "收到邀請",
+  "settings.general.steamRoom.waiting": "等待好友加入",
+  "settings.general.steamRoom.connected": "已連線",
+  "settings.general.steamRoom.busy": "正在處理…",
+  "settings.general.steamRoom.offline": "Steam 暫時無法使用",
+  "settings.general.steamRoom.noFriends": "沒有上線的好友",
+  "settings.general.steamRoom.failed": "房間操作失敗",
+  "settings.general.steamRoom.create": "建立房間",
+  "settings.general.steamRoom.invite": "邀請好友",
+  "settings.general.steamRoom.join": "加入房間",
+  "settings.general.steamRoom.leave": "離開房間"
 }

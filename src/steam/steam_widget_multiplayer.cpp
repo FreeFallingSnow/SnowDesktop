@@ -183,4 +183,10 @@ std::vector<Frame> Service::Drain()
     const std::lock_guard lock(impl_->mutex);
     return std::exchange(impl_->events, {});
 }
+
+void Service::DiscardQueued(std::uint64_t request)
+{
+    const std::lock_guard lock(impl_->mutex);
+    std::erase_if(impl_->commands, [request](const Frame& frame) { return frame.request == request; });
+}
 }

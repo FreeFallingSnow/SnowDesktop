@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "ターミナルで開く",
   "core.drag.lua_stack_detach_hint": "Ctrl を押して現在のウィジェットを取り出す",
   "app.steam.widget_invite_instruction": "招待する Steam フレンドを選択",
-  "app.settings.widgets_permission_multiplayer_steam": "Steam でオンライン対戦する"
+  "app.settings.widgets_permission_multiplayer_steam": "Steam でオンライン対戦する",
+  "settings.general.steamRoom": "Steam マルチプレイ",
+  "settings.general.steamRoom.actions": "ルーム操作",
+  "settings.general.steamRoom.idle": "ルーム未参加",
+  "settings.general.steamRoom.invited": "招待が届きました",
+  "settings.general.steamRoom.waiting": "フレンドの参加待ち",
+  "settings.general.steamRoom.connected": "接続済み",
+  "settings.general.steamRoom.busy": "処理中…",
+  "settings.general.steamRoom.offline": "Steam を利用できません",
+  "settings.general.steamRoom.noFriends": "オンラインのフレンドはいません",
+  "settings.general.steamRoom.failed": "ルーム操作に失敗しました",
+  "settings.general.steamRoom.create": "ルームを作成",
+  "settings.general.steamRoom.invite": "フレンドを招待",
+  "settings.general.steamRoom.join": "ルームに参加",
+  "settings.general.steamRoom.leave": "ルームから退出"
 }

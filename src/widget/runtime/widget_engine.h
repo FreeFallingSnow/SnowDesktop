@@ -21,6 +21,7 @@
 #pragma once
 
 namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
+#include "steam/steam_room_status.h"
 #include "ui/input/text_input_state.h"
 #include "widget_host_requests.h"
 #include "widget/view/widget_native_marquee.h"
@@ -851,8 +852,11 @@ public:
     void SetAudioAnalysisWakeCallback(AudioAnalysisWakeCallback callback);
     void SetTaskWakeCallback(TaskWakeCallback callback);
     void ConfigureSteamMultiplayer(std::filesystem::path executable,
-        std::function<int()> availability, std::function<void()> unlock,
-        std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend);
+        std::function<int()> availability, std::function<void(bool)> openSettings,
+        std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend,
+        std::function<void()> changed);
+    snowdesktop::steam_room::Status SteamRoomStatus() const;
+    snowdesktop::steam_room::Status ControlSteamRoom(snowdesktop::steam_room::Command command);
     void OpenSteamWidgetInvitation(std::uint64_t lobby);
     /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
     void RebindHostTimers();
@@ -1803,6 +1807,7 @@ private:
     void StartWidgetMultiplayerTask(const snowdesktop::widget_runtime::TaskBrokerAction& action,
         LuaWidget& widget);
     void StopWidgetMultiplayer(std::string_view error);
+    void CancelWidgetMultiplayerSend(std::uint64_t request);
     void ForgetWidgetMultiplayer(std::uint64_t owner);
     std::string WidgetMultiplayerIdentity(const LuaWidget& widget);
     std::unique_ptr<snowdesktop::widget_runtime::WidgetMultiplayer> widgetMultiplayer_;

@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "在终端中打开",
   "core.drag.lua_stack_detach_hint": "按住 Ctrl 移出当前组件",
   "app.steam.widget_invite_instruction": "选择要邀请的 Steam 好友",
-  "app.settings.widgets_permission_multiplayer_steam": "通过 Steam 联机"
+  "app.settings.widgets_permission_multiplayer_steam": "通过 Steam 联机",
+  "settings.general.steamRoom": "Steam 联机",
+  "settings.general.steamRoom.actions": "房间操作",
+  "settings.general.steamRoom.idle": "尚未加入房间",
+  "settings.general.steamRoom.invited": "收到邀请",
+  "settings.general.steamRoom.waiting": "等待好友加入",
+  "settings.general.steamRoom.connected": "已连接",
+  "settings.general.steamRoom.busy": "正在处理…",
+  "settings.general.steamRoom.offline": "Steam 暂不可用",
+  "settings.general.steamRoom.noFriends": "没有在线好友",
+  "settings.general.steamRoom.failed": "房间操作失败",
+  "settings.general.steamRoom.create": "创建房间",
+  "settings.general.steamRoom.invite": "邀请好友",
+  "settings.general.steamRoom.join": "加入房间",
+  "settings.general.steamRoom.leave": "离开房间"
 }

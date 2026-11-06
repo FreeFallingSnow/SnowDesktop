@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "Open in Terminal",
   "core.drag.lua_stack_detach_hint": "Hold Ctrl to move out the current widget",
   "app.steam.widget_invite_instruction": "Choose a Steam friend to invite",
-  "app.settings.widgets_permission_multiplayer_steam": "Play online via Steam"
+  "app.settings.widgets_permission_multiplayer_steam": "Play online via Steam",
+  "settings.general.steamRoom": "Steam multiplayer",
+  "settings.general.steamRoom.actions": "Room actions",
+  "settings.general.steamRoom.idle": "No room",
+  "settings.general.steamRoom.invited": "Invitation received",
+  "settings.general.steamRoom.waiting": "Waiting for a friend",
+  "settings.general.steamRoom.connected": "Connected",
+  "settings.general.steamRoom.busy": "Working…",
+  "settings.general.steamRoom.offline": "Steam unavailable",
+  "settings.general.steamRoom.noFriends": "No friends online",
+  "settings.general.steamRoom.failed": "Room action failed",
+  "settings.general.steamRoom.create": "Create room",
+  "settings.general.steamRoom.invite": "Invite friend",
+  "settings.general.steamRoom.join": "Join room",
+  "settings.general.steamRoom.leave": "Leave room"
 }

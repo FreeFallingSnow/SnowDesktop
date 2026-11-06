@@ -1,6 +1,7 @@
 #pragma once
 
 #include "steam/steam_widget_multiplayer.h"
+#include "steam/steam_room_status.h"
 
 #include <chrono>
 #include <optional>
@@ -17,21 +18,23 @@ struct WidgetMultiplayer
     std::filesystem::path executable;
     // 0: incompatible bridge, 1: locked, 2: unlocked, 3: unlocked with Steam presence.
     std::function<int()> availability;
-    std::function<void()> unlock;
+    std::function<void(bool)> openSettings;
+    std::function<void()> changed;
     std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend;
     std::unique_ptr<steam_widget_multiplayer::Service> service;
     std::vector<steam_widget_multiplayer::Frame> friends;
     std::unordered_map<std::uint64_t, std::string> lastState;
+    std::unordered_map<std::uint64_t, std::uint64_t> sends;
     std::optional<steam_widget_multiplayer::Frame> invitation;
-    Clock::time_point invitationUntil{}, listenUntil{}, retryAfter{};
+    Clock::time_point invitationUntil{}, launchUntil{}, retryAfter{};
     std::uint64_t launchLobby = 0;
-    std::uint64_t owner = 0;
-    std::uint64_t task = 0;
-    std::uint64_t taskOwner = 0;
-    Kind operation{};
+    std::optional<Kind> operation;
+    steam_room::Status published;
+    steam_room::Failure failure = steam_room::Failure::None;
     int members = 0;
     bool host = false;
     bool ready = false;
+    bool settingsListening = false;
     bool readSteamLaunch = true;
 };
 }

@@ -945,6 +945,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.registerAdvancedFeatures = [this]() {
         StartSteamEntitlementRegistration();
     };
+    settingsHostOptions.steamRoom = [this](snowdesktop::steam_room::Command command) {
+        return widgetEngine_ ? widgetEngine_->ControlSteamRoom(command) : snowdesktop::steam_room::Status{};
+    };
     settingsHostOptions.resetAdvancedFeatures = [this]() {
         const bool reset = steamEntitlementService_ &&
             steamEntitlementService_->ResetRegistration();
@@ -2043,7 +2046,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
             snowdesktop::StatusBarSupportsSystemQuickSettings(),
             CurrentPersonalization().contextMenuStyle,
             snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
-            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable);
+            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable,
+            steamEntitlementService_ && steamEntitlementService_->Current().widgetMultiplayerAvailable);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

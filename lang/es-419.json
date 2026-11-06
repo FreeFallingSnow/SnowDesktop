@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "Abrir en Terminal",
   "core.drag.lua_stack_detach_hint": "Mantén Ctrl para sacar el widget actual",
   "app.steam.widget_invite_instruction": "Elige a un amigo de Steam para invitar",
-  "app.settings.widgets_permission_multiplayer_steam": "Jugar en línea a través de Steam"
+  "app.settings.widgets_permission_multiplayer_steam": "Jugar en línea a través de Steam",
+  "settings.general.steamRoom": "Multijugador de Steam",
+  "settings.general.steamRoom.actions": "Acciones de la sala",
+  "settings.general.steamRoom.idle": "Sin sala",
+  "settings.general.steamRoom.invited": "Recibiste una invitación",
+  "settings.general.steamRoom.waiting": "Esperando a un amigo",
+  "settings.general.steamRoom.connected": "Conectado",
+  "settings.general.steamRoom.busy": "Procesando…",
+  "settings.general.steamRoom.offline": "Steam no está disponible",
+  "settings.general.steamRoom.noFriends": "No hay amigos conectados",
+  "settings.general.steamRoom.failed": "Falló la acción de la sala",
+  "settings.general.steamRoom.create": "Crear sala",
+  "settings.general.steamRoom.invite": "Invitar a un amigo",
+  "settings.general.steamRoom.join": "Unirse a la sala",
+  "settings.general.steamRoom.leave": "Salir de la sala"
 }

@@ -33,6 +33,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "task.native.watch",
     "task.native.diagnostics",
     "multiplayer.session",
+    "multiplayer.room",
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",

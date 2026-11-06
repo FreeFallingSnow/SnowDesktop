@@ -13172,8 +13172,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         {
             if (action.name.starts_with("multiplayer."))
             {
-                if (widgetMultiplayer_ && widgetMultiplayer_->task == action.id)
-                    StopWidgetMultiplayer("canceled");
+                CancelWidgetMultiplayerSend(action.id);
                 (void)taskBroker_->Complete(action.id, false);
                 continue;
             }

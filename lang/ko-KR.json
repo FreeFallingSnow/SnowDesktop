@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "터미널에서 열기",
   "core.drag.lua_stack_detach_hint": "Ctrl을 누르면 현재 위젯을 꺼냅니다",
   "app.steam.widget_invite_instruction": "초대할 Steam 친구 선택",
-  "app.settings.widgets_permission_multiplayer_steam": "Steam으로 온라인 플레이"
+  "app.settings.widgets_permission_multiplayer_steam": "Steam으로 온라인 플레이",
+  "settings.general.steamRoom": "Steam 멀티플레이",
+  "settings.general.steamRoom.actions": "방 작업",
+  "settings.general.steamRoom.idle": "참가한 방 없음",
+  "settings.general.steamRoom.invited": "초대를 받았습니다",
+  "settings.general.steamRoom.waiting": "친구를 기다리는 중",
+  "settings.general.steamRoom.connected": "연결됨",
+  "settings.general.steamRoom.busy": "처리 중…",
+  "settings.general.steamRoom.offline": "Steam을 사용할 수 없음",
+  "settings.general.steamRoom.noFriends": "온라인 친구 없음",
+  "settings.general.steamRoom.failed": "방 작업에 실패했습니다",
+  "settings.general.steamRoom.create": "방 만들기",
+  "settings.general.steamRoom.invite": "친구 초대",
+  "settings.general.steamRoom.join": "방 참가",
+  "settings.general.steamRoom.leave": "방 나가기"
 }

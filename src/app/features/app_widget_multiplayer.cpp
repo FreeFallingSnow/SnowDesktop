@@ -3,6 +3,7 @@
 #include "common/l10n.h"
 #include "common/utils.h"
 #include "platform/operation_feedback.h"
+#include "settings/settings_window.h"
 #include "steam/steam_entitlement.h"
 #include "widget/runtime/widget_engine.h"
 
@@ -18,9 +19,9 @@ void DesktopApp::ConfigureSteamWidgetMultiplayer(const std::filesystem::path& br
             if (!state.registered) return 1;
             return generalSettings_.steamShowRunningStatus ? 3 : 2;
         },
-        [this] {
+        [this](bool locked) {
             ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
-                snowdesktop::SettingsPage::General, "general.advancedFeatures.unlockRequired"));
+                snowdesktop::SettingsPage::General, locked ? "general.advancedFeatures.unlockRequired" : "general.steamRoom"));
         },
         [this](const std::vector<std::string>& friends) -> std::optional<std::size_t> {
             if (friends.empty()) return std::nullopt;
@@ -36,7 +37,8 @@ void DesktopApp::ConfigureSteamWidgetMultiplayer(const std::filesystem::path& br
                 buttons.push_back({100 + static_cast<int>(index), labels[index].c_str()});
             TASKDIALOGCONFIG dialog{};
             dialog.cbSize = sizeof(dialog);
-            dialog.hwndParent = controlHwnd_;
+            const HWND settings = settingsWindow_ ? settingsWindow_->Window() : nullptr;
+            dialog.hwndParent = settings ? settings : controlHwnd_;
             dialog.pszWindowTitle = L"Steam";
             dialog.pszMainInstruction = _LW("app.steam.widget_invite_instruction");
             dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_NO_DEFAULT_RADIO_BUTTON;
@@ -50,5 +52,6 @@ void DesktopApp::ConfigureSteamWidgetMultiplayer(const std::filesystem::path& br
                 return std::nullopt;
             const auto index = static_cast<std::size_t>(selected - 100);
             return index < labels.size() ? std::optional<std::size_t>(index) : std::nullopt;
-        });
+        },
+        [this] { if (settingsWindow_) settingsWindow_->RefreshGeneralRuntimeState(); });
 }

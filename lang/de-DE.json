@@ -2828,5 +2828,19 @@
   "preview.contextMenu.openTerminal": "Im Terminal öffnen",
   "core.drag.lua_stack_detach_hint": "Strg halten, um das aktuelle Widget herauszulösen",
   "app.steam.widget_invite_instruction": "Steam-Freund zum Einladen auswählen",
-  "app.settings.widgets_permission_multiplayer_steam": "Über Steam online spielen"
+  "app.settings.widgets_permission_multiplayer_steam": "Über Steam online spielen",
+  "settings.general.steamRoom": "Steam-Mehrspieler",
+  "settings.general.steamRoom.actions": "Raumaktionen",
+  "settings.general.steamRoom.idle": "Kein Raum",
+  "settings.general.steamRoom.invited": "Einladung erhalten",
+  "settings.general.steamRoom.waiting": "Warten auf einen Freund",
+  "settings.general.steamRoom.connected": "Verbunden",
+  "settings.general.steamRoom.busy": "Wird verarbeitet…",
+  "settings.general.steamRoom.offline": "Steam nicht verfügbar",
+  "settings.general.steamRoom.noFriends": "Keine Freunde online",
+  "settings.general.steamRoom.failed": "Raumaktion fehlgeschlagen",
+  "settings.general.steamRoom.create": "Raum erstellen",
+  "settings.general.steamRoom.invite": "Freund einladen",
+  "settings.general.steamRoom.join": "Raum beitreten",
+  "settings.general.steamRoom.leave": "Raum verlassen"
 }

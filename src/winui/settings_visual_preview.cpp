@@ -1011,6 +1011,11 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     };
     const auto generalNotice = std::make_shared<GeneralNoticeFixture>();
     GeneralPageActions general;
+    if (focusId == "general.steamRoom")
+        general.steamRoom = [](steam_room::Command) {
+            return steam_room::Status{steam_room::Phase::Waiting, steam_room::Failure::None,
+                false, true, true};
+        };
     general.onboarding.settingsIndex = [] {
         SettingsSearchIndexInput index; index.developerToolsVisible = index.debugVisible = true;
         PopulateSettingsSearchCatalog(index, [](std::string_view key) { return std::wstring(_LW(std::string(key).c_str())); }, true, true);

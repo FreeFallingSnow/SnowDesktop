@@ -32,6 +32,7 @@
 #include "steam_workshop_core.h"
 #include "presence_lifetime.h"
 #include "widget_multiplayer.h"
+#include "widget_multiplayer_wire.h"
 #include "workshop_project.h"
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -211,9 +212,9 @@ int PrintConfiguration()
               << ",\"componentPreviewGalleryProtocolVersion\":1"
               << ",\"iconPackWorkflowProtocolVersion\":1"
               << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\""
-              << (SNOWDESKTOP_HAS_STEAMWORKS ? ",\"multiplayer.lobby.v1\"" : "") << ']'
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? ",\"multiplayer.lobby.v2\"" : "") << ']'
               << ",\"widgetMultiplayerProtocolVersion\":"
-              << (SNOWDESKTOP_HAS_STEAMWORKS ? 1 : 0)
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? snowdesktop::steam_widget_multiplayer::kRoomProtocolVersion : 0)
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";

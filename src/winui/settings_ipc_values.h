@@ -127,5 +127,6 @@ SD_IPC_FIELDS(winui::BackupDataActionRequest,
     v.command, v.subjectId, v.displayName, v.selectedPath,
     v.completionPolicy);
 
+SD_IPC_FIELDS(steam_room::Status, v.phase, v.failure, v.busy, v.inRoom, v.host);
 #undef SD_IPC_FIELDS
 } // namespace snowdesktop::settings_ipc

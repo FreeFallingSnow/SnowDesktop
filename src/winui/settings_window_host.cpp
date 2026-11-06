@@ -1110,7 +1110,8 @@ struct SettingsWindowHost::Impl
                 snapshot ? snapshot->values.personalization.contextMenuStyle : 0,
                 snapshot && ResolveBarSettingsAvailability(snapshot->values.general.dockEnabled,
                     snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
-                options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable);
+                options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable,
+                options.steamRoom && options.steamRoom(steam_room::Command::Query).phase != steam_room::Phase::Unavailable);
         }
         if (snapshot && modern_menu::appearance_rules::IsWin10Style(
             static_cast<modern_menu::Appearance>(snapshot->values.personalization.contextMenuStyle)))
@@ -2020,6 +2021,11 @@ struct SettingsWindowHost::Impl
                 return;
             }
             state->owner->options.registerAdvancedFeatures();
+        };
+        general.steamRoom = [weak](steam_room::Command command) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner && state->owner->options.steamRoom
+                ? state->owner->options.steamRoom(command) : steam_room::Status{};
         };
         general.openAdvancedFeaturesStore = [weak]() {
             const auto state = weak.lock();
@@ -4077,7 +4083,8 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
 
     // Reopening the same destination must replay its locator after the HWND
     // is visible, including when a previous visit already consumed the pulse.
-    if (impl_->shell && route.page == SettingsPage::General && route.focusId == "general.windowSupport")
+    if (impl_->shell && route.page == SettingsPage::General &&
+        (route.focusId == "general.windowSupport" || route.focusId == "general.steamRoom"))
         (void)impl_->shell->Navigate(route, false);
 
     if (snapshot && impl_->shell &&
