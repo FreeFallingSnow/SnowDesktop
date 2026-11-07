@@ -2830,7 +2830,6 @@
   "app.steam.widget_invite_instruction": "选择要邀请的 Steam 好友",
   "app.settings.widgets_permission_multiplayer_steam": "通过 Steam 联机",
   "settings.general.steamRoom": "Steam 联机",
-  "settings.general.steamRoom.actions": "房间操作",
   "settings.general.steamRoom.idle": "尚未加入房间",
   "settings.general.steamRoom.invited": "收到邀请",
   "settings.general.steamRoom.waiting": "等待好友加入",

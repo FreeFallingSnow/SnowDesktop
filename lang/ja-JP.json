@@ -2830,7 +2830,6 @@
   "app.steam.widget_invite_instruction": "招待する Steam フレンドを選択",
   "app.settings.widgets_permission_multiplayer_steam": "Steam でオンライン対戦する",
   "settings.general.steamRoom": "Steam マルチプレイ",
-  "settings.general.steamRoom.actions": "ルーム操作",
   "settings.general.steamRoom.idle": "ルーム未参加",
   "settings.general.steamRoom.invited": "招待が届きました",
   "settings.general.steamRoom.waiting": "フレンドの参加待ち",

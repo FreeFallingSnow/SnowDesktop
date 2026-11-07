@@ -2830,7 +2830,6 @@
   "app.steam.widget_invite_instruction": "초대할 Steam 친구 선택",
   "app.settings.widgets_permission_multiplayer_steam": "Steam으로 온라인 플레이",
   "settings.general.steamRoom": "Steam 멀티플레이",
-  "settings.general.steamRoom.actions": "방 작업",
   "settings.general.steamRoom.idle": "참가한 방 없음",
   "settings.general.steamRoom.invited": "초대를 받았습니다",
   "settings.general.steamRoom.waiting": "친구를 기다리는 중",

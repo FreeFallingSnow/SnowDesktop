@@ -2830,7 +2830,6 @@
   "app.steam.widget_invite_instruction": "Choisir un ami Steam à inviter",
   "app.settings.widgets_permission_multiplayer_steam": "Jouer en ligne via Steam",
   "settings.general.steamRoom": "Multijoueur Steam",
-  "settings.general.steamRoom.actions": "Actions du salon",
   "settings.general.steamRoom.idle": "Aucun salon",
   "settings.general.steamRoom.invited": "Invitation reçue",
   "settings.general.steamRoom.waiting": "En attente d’un ami",

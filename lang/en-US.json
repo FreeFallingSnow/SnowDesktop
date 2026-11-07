@@ -2830,7 +2830,6 @@
   "app.steam.widget_invite_instruction": "Choose a Steam friend to invite",
   "app.settings.widgets_permission_multiplayer_steam": "Play online via Steam",
   "settings.general.steamRoom": "Steam multiplayer",
-  "settings.general.steamRoom.actions": "Room actions",
   "settings.general.steamRoom.idle": "No room",
   "settings.general.steamRoom.invited": "Invitation received",
   "settings.general.steamRoom.waiting": "Waiting for a friend",

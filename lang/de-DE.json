@@ -2830,7 +2830,6 @@
   "app.steam.widget_invite_instruction": "Steam-Freund zum Einladen auswählen",
   "app.settings.widgets_permission_multiplayer_steam": "Über Steam online spielen",
   "settings.general.steamRoom": "Steam-Mehrspieler",
-  "settings.general.steamRoom.actions": "Raumaktionen",
   "settings.general.steamRoom.idle": "Kein Raum",
   "settings.general.steamRoom.invited": "Einladung erhalten",
   "settings.general.steamRoom.waiting": "Warten auf einen Freund",
