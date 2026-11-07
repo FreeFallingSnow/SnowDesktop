@@ -65,6 +65,7 @@
 ### CF-003 任务关闭后同会话无法继续
 
 - **后继任务验收关联缺口（源码确认）**：2026-11-05，托盘实现 Task `task-3ce5856630f8469dad256d8d3b1e8fde` 已关闭，用户随后明确反馈固定托盘与展开面板中键均正常。`task-new` 正常创建验证 Task `task-5ae4d391375140a7a5fe6ba92e8e8f05`，保留前序与 continuationRoot；但 `build_manager.ps1` 禁止关闭的 Task 登记验收，`Start-TaskAcceptance` 又只接受候选原成员，`Start-RunAcceptance` 要求原请求 task 完全相同，均未解析后继关系。此为源码确认，没有提交已知会失败的验收命令。本次在独立 verify 提交和忽略任务记录中绑定用户原话、候选 `b85ab212`、Run `772b51ec3d9e4d428ee21e0c51f9e499` 及匹配的运行文件哈希，不补造历史验收起点、不创建新产品候选或重跑构建。下一步应支持同一 continuationRoot 下的可审查验收关联，并保留原需求修订及产物校验；原 task-new 登记修复仍有效。
+- **后继验收补录（2026-11-07）**：Lua 首帧修复 Task `task-4932f8440e3045d98b477fc4ba7ef362` 关闭后，用户重启确认内容与毛玻璃一起显示、首次异步刷新无闪空。后继 Task `task-20ff05487820495c83fe414b7d58c96a` 核对批次 `1cc4f84ab406479785f40b62d9b09b74`、Run `7adb4dc5ee9b437e9c83b1a46c369280` 及保存、激活与当前 EXE 哈希一致。现有入口仍要求原任务关联，此为源码确认。事后验收保存在独立 verify 提交及 `.codex-probes/lua-startup-glass/user-verification.json`，复用原候选与回归结果。后继关联与无历史起点的补录入口待实现。
 - **原始反馈**：关闭任务后，新增“可见性改到管理页”“名称改 VPN”需求，`open/begin` 报 `Task ID is closed; use a new ID for a new task`。插件没有下一任务入口，只能创建新 teammate，重复整轮登记、实现、提交和汇报。
 - **源码确认**：旧插件直接用 Agent 身份哈希作为唯一任务 ID；通用协调器拒绝复活已关闭 ID。
 - **处理方向**：在通用协调器增加 `task-new`，保留旧任务和连续关系；适配器在明确命名的新工作开始时调用，不因心跳自动新建。新任务必须重新取得编辑权；正常会话恢复和急件定位跟随当前任务。
