@@ -532,8 +532,7 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
             PtInRect(&collectionBounds, point))
             hoverHit = L"desktop-collection-frame";
 
-        RECT buttonRect = collection->GetAllButtonRect();
-        if (IsRectEmptyRect(buttonRect) || !PtInRect(&buttonRect, point))
+        if (!collection->IsDragPopupOpenerAt(point))
             continue;
 
         hoverHit = L"desktop-collection-opener";

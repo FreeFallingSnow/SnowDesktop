@@ -632,16 +632,19 @@ public:
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     RECT GetAllButtonRect() const;
+    bool IsDragPopupOpenerAt(POINT point) const;
     RECT GetTitleCellRect() const;
     bool HidesBottomBarTitle() const override;
 
 private:
+    RECT GetDragInsertionTitleRect(RECT opener) const;
     RECT GetThumbnailIconRect(RECT rect) const;
     void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
         RECT rect, bool selected) const;
     bool DrawTitlelessTooltip(ID2D1DeviceContext* context,
         const std::wstring& title, RECT anchor) const;
     mutable snowdesktop::InlineTooltipBackdrop titleTooltipBackdrop_;
+    std::unique_ptr<Slot> appendDropSlot_;
 };
 
 /**

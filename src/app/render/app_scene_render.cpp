@@ -541,7 +541,9 @@ void DesktopApp::DrawDynamicOverlays(
              (dragSession_.SourceList().
                     UsesFileGroupSourceInsertion() &&
                 dynamic_cast<FileGroup*>(wc)));
-        if (wc && !groupEntryTarget)
+        const bool collectionAppend = targetSlot &&
+            targetSlot->GetFeedbackIdentity().role == SlotFeedbackRole::CollectionAppend;
+        if (wc && !groupEntryTarget && !collectionAppend)
         {
             RECT bodyRect = wc->GetBodyRect();
             if (popupTarget)
