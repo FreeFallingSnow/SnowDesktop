@@ -13,7 +13,6 @@
 
 #include "core/widget.h"
 #include "core/slot.h"
-#include "core/transient_drag_slot.h"
 #include "core/item.h"
 #include "common/types.h"
 #include "app/app.h"
@@ -988,26 +987,6 @@ RECT Collection::GetAllButtonRect() const
         this, presentation.allButtonSlot, body);
 }
 
-RECT Collection::GetDragInsertionTitleRect(RECT opener) const
-{
-    if (!data_ || !app_) return {};
-    if (IsSingleCellIconMode() ||
-        (IsSingleCellPresentation() && data_->showTitle))
-        return GetTitleRect();
-    if (IsLargeFolderMode() && !CollectionTitlelessActive(this) && !IsRectEmpty(&opener))
-        return app_->GetItemTextRect(opener, false, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
-    return {};
-}
-
-bool Collection::IsDragPopupOpenerAt(POINT point) const
-{
-    const RECT opener = GetAllButtonRect();
-    if (!PtInRect(&opener, point)) return false;
-    if (!app_->dragDropController_.IsExternalDragActive()) return true;
-    const RECT title = GetDragInsertionTitleRect(opener);
-    return !PtInRect(&title, point);
-}
-
 RECT Collection::GetTitleCellRect() const
 {
     if (!app_ || !IsLargeFolderMode()) return {};
@@ -1099,23 +1078,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
-    const bool externalDrag = app_ && app_->dragDropController_.IsExternalDragActive();
-    const auto append = [&](RECT bounds) {
-        // The mosaic can hide several members. Append after the real last index.
-        const size_t count = data_->itemKeys.size();
-        outSlot = BindTransientDragSlot(appendDropSlot_, this, bounds,
-            count == 0 ? 0 : count - 1, SlotFeedbackRole::CollectionAppend);
-        return HitRegion::SortAfter;
-    };
-    if (IsSingleCellDesktopPoint(pt))
-    {
-        if (externalDrag)
-        {
-            const RECT title = GetDragInsertionTitleRect({});
-            if (PtInRect(&title, pt)) return append(title);
-        }
-        return WidgetContainer::HitTestDrag(pt, outSlot);
-    }
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     if (data_ && !data_->scrollContainerMode &&
         GetCollectionPresentation(this, false).interactiveItemCount == 0)
     {
@@ -1143,10 +1106,9 @@ HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
         if (!IsRectEmptyRect(allButton) &&
             PtInRect(&allButton, pt))
         {
+            outSlot = nullptr;
             if (app_)
                 app_->ResetCompactCollectionHandoffDwell();
-            if (externalDrag) return append(allButton);
-            outSlot = nullptr;
             return HitRegion::SortAfter;
         }
     }

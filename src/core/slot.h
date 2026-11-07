@@ -37,7 +37,6 @@ enum class SlotFeedbackRole
     FileGroupSourceTab,
     FileGroupHosted,
     LuaLogical,
-    CollectionAppend,
 };
 
 /** @brief 不含运行时裸指针的 Slot 反馈身份补充信息。 */
