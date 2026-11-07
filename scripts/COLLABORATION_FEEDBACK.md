@@ -136,6 +136,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **候选槽排队的重复提示（2026-11-07）**：Task `win10-opaque-context-menu`，批次 `22546c8e67de4f5f959a99765be2c60f` 修订 0，Run `d0c0f816ff0042acaca91b6579ef4621`。`ready-and-wait` 在原观察 session `35079` 多次交替输出 `Waiting for the collaboration state transaction.` 和 `Candidate slot is busy; existing materialization/executor retains its files.`，进入执行前还短暂输出 `resource reason not recorded`。排队时本机仍有 MSBuild 和 cl 运行，原 Run 随后完成构建和两项定向测试。重复提示同样出现在候选槽排队，阅读等待输出时需过滤。保留候选槽实际占用及业务阶段变化，去重事务提示，并核对排队状态切换时原因字段的发布顺序。
+
 - **内存排队的重复提示（2026-11-07）**：Task `task-2fd4d1befda64e58b7597f3bd2f862e6`，批次 `74d958ae21bb4c94aad34b338ee16690` 修订 0，Run `0ed3218032654c6faa899a700a836731`。`ready-and-wait` 在业务条件不变时反复交替输出 `Waiting for the collaboration state transaction.` 和 `Shared project resources busy: memory-headroom; requested 18 CPU slots / 3072 MiB`。原观察 session `82513` 持续等待，未重复提交，内存满足后原 Run 构建和定向测试通过。详细证据保存在 `.codex-probes/pages-menu-icon-weight/collaboration-feedback.md`。事务提示与业务等待仍需分别去重。
 
 - **托盘任务的观察噪音**：上述中键任务的同一 `begin` session `34855` 多次交替输出 `Waiting for the collaboration state transaction.` 和相同的 `Waiting for batch e2afef9c94df420f8ef49d7f07d7c445: editing phase; editing peers task-0eb0e940aaf647079b420cdf668166cf.`。业务等待条件未变化，原生进程仍存活；工具传输 yield 后仅续接原 session，不另起 status 或构建。后续应区分短时状态事务与业务等待去重，避免交替提示重复输出；没有为本反馈追加复现。
