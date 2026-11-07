@@ -576,44 +576,6 @@ struct GeneralPagePresenter::Impl
         });
         advancedFeaturesCard.content.Children().Append(advancedFeatureErrorExpander);
 
-        InitializeCard(steamRoomCard, cardStyle, root, false);
-        steamRoomExpander = muxc::Expander{};
-        steamRoomExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        steamRoomExpander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        UseInlineDisclosureStyle(steamRoomExpander);
-        steamRoomSummary = muxc::TextBlock{};
-        steamRoomSummary.TextWrapping(mux::TextWrapping::Wrap);
-        steamRoomSummary.MaxWidth(205);
-        steamRoomHeader.Initialize(steamRoomSummary, 0.0);
-        steamRoomHeader.SetControlAlignment(mux::HorizontalAlignment::Right);
-        steamRoomHeader.root.MinHeight(34.0);
-        steamRoomExpander.Header(steamRoomHeader.root);
-        muxc::StackPanel roomButtons;
-        roomButtons.Orientation(muxc::Orientation::Horizontal);
-        roomButtons.Spacing(8);
-        steamRoomPrimary = muxc::Button{};
-        steamRoomLeave = muxc::Button{};
-        roomButtons.Children().Append(steamRoomPrimary);
-        roomButtons.Children().Append(steamRoomLeave);
-        steamRoomActions.Initialize(roomButtons);
-        steamRoomActions.SetControlAlignment(mux::HorizontalAlignment::Right);
-        presenter_controls::StyleSettingsSubrow(steamRoomActions.root, false, 0.0);
-        steamRoomExpander.Content(steamRoomActions.root);
-        steamRoomCard.content.Children().Append(steamRoomExpander);
-        steamRoomCard.root.Visibility(mux::Visibility::Collapsed);
-        steamRoomExpandToken = steamRoomExpander.Expanding([this](const auto&, const auto&) {
-            if (active) SetSteamRoomListening(true);
-        });
-        steamRoomCollapseToken = steamRoomExpander.Collapsed([this](const auto&, const auto&) {
-            SetSteamRoomListening(false);
-        });
-        steamRoomPrimaryToken = steamRoomPrimary.Click([this](const auto&, const auto&) {
-            UpdateSteamRoom(steamRoomPrimaryCommand);
-        });
-        steamRoomLeaveToken = steamRoomLeave.Click([this](const auto&, const auto&) {
-            UpdateSteamRoom(steam_room::Command::Leave);
-        });
-
         InitializeCard(desktopBehaviorCard, cardStyle, desktopRoot);
         softwareDesktopToggle = muxc::ToggleSwitch{};
         softwareDesktopToggle.HorizontalAlignment(
@@ -666,6 +628,44 @@ struct GeneralPagePresenter::Impl
             root.Children().RemoveAt(advancedFeaturesIndex);
             root.Children().Append(advancedFeaturesCard.root);
         }
+
+        InitializeCard(steamRoomCard, cardStyle, root, false);
+        steamRoomExpander = muxc::Expander{};
+        steamRoomExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        steamRoomExpander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        UseInlineDisclosureStyle(steamRoomExpander);
+        steamRoomSummary = muxc::TextBlock{};
+        steamRoomSummary.TextWrapping(mux::TextWrapping::Wrap);
+        steamRoomSummary.MaxWidth(205);
+        steamRoomHeader.Initialize(steamRoomSummary, 0.0);
+        steamRoomHeader.SetControlAlignment(mux::HorizontalAlignment::Right);
+        steamRoomHeader.root.MinHeight(34.0);
+        steamRoomExpander.Header(steamRoomHeader.root);
+        muxc::StackPanel roomButtons;
+        roomButtons.Orientation(muxc::Orientation::Horizontal);
+        roomButtons.Spacing(8);
+        steamRoomPrimary = muxc::Button{};
+        steamRoomLeave = muxc::Button{};
+        roomButtons.Children().Append(steamRoomPrimary);
+        roomButtons.Children().Append(steamRoomLeave);
+        steamRoomActions.Initialize(roomButtons);
+        steamRoomActions.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(steamRoomActions.root, false, 0.0);
+        steamRoomExpander.Content(steamRoomActions.root);
+        steamRoomCard.content.Children().Append(steamRoomExpander);
+        steamRoomCard.root.Visibility(mux::Visibility::Collapsed);
+        steamRoomExpandToken = steamRoomExpander.Expanding([this](const auto&, const auto&) {
+            if (active) SetSteamRoomListening(true);
+        });
+        steamRoomCollapseToken = steamRoomExpander.Collapsed([this](const auto&, const auto&) {
+            SetSteamRoomListening(false);
+        });
+        steamRoomPrimaryToken = steamRoomPrimary.Click([this](const auto&, const auto&) {
+            UpdateSteamRoom(steamRoomPrimaryCommand);
+        });
+        steamRoomLeaveToken = steamRoomLeave.Click([this](const auto&, const auto&) {
+            UpdateSteamRoom(steam_room::Command::Leave);
+        });
 
         quickRoot = muxc::StackPanel{}; quickRoot.Spacing(8);
         InitializeCard(quickNavigationCard, cardStyle, quickRoot);
