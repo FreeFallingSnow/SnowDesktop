@@ -179,22 +179,31 @@ DWORD ReadSymbols(const std::filesystem::path& dll, const std::filesystem::path&
     auto& modern = resolution.modernTray; modern = {}; modern.image = adapter.image;
     const auto root = resolve("?g_trayUI@@3V?$ComPtr@UITrayUI@@@WRL@Microsoft@@A");
     const auto itemVtable = resolve("??_7NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@6B@");
-    bool compatible = root && itemVtable;
-    if (compatible) { modern.root = *root; modern.itemVtable = *itemVtable; }
-    for (std::size_t i = 0; compatible && i < modernNames.size(); ++i)
-    {
-        const auto address = resolve(modernNames[i].c_str());
-        if (!address) { compatible = false; break; }
-        auto function = image.Function(*address);
-        if (i == static_cast<std::size_t>(ModernTraySymbol::StringBuffer) && !function)
+    const auto readModern = [&](bool softwareBitmap) -> std::optional<ModernTrayLayout> {
+        if (!root || !itemVtable) return {};
+        modern.root = *root; modern.itemVtable = *itemVtable;
+        for (std::size_t i = 0; i < modernNames.size(); ++i)
         {
-            AutoHideFunction leaf{*address, *address + 21};
-            if (image.Executable(leaf.begin, leaf.end) && image.Read(leaf.begin, leaf.entry)) function = leaf;
+            const char* name = modernNames[i].c_str();
+            if (softwareBitmap && i == static_cast<std::size_t>(ModernTraySymbol::Icon))
+                name = "?Icon@NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@QEAA?AUSoftwareBitmap@Imaging@Graphics@Windows@6@XZ";
+            if (softwareBitmap && i == static_cast<std::size_t>(ModernTraySymbol::Tooltip))
+                name = "?ToolTipText@NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@QEAA?AUhstring@6@XZ";
+            const auto address = resolve(name);
+            if (!address) return {};
+            auto function = image.Function(*address);
+            if (i == static_cast<std::size_t>(ModernTraySymbol::StringBuffer) && !function)
+            {
+                AutoHideFunction leaf{*address, *address + 21};
+                if (image.Executable(leaf.begin, leaf.end) && image.Read(leaf.begin, leaf.entry)) function = leaf;
+            }
+            if (!function) return {};
+            modern.functions[i] = *function;
         }
-        if (!function) { compatible = false; break; }
-        modern.functions[i] = *function;
-    }
-    const auto layout = compatible ? DecodeModernTrayLayout(bytes, modern) : std::nullopt;
+        return DecodeModernTrayLayout(bytes, modern, softwareBitmap);
+    };
+    auto layout = readModern(false);
+    if (!layout) layout = readModern(true);
     resolution.modernTrayError = layout ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
     if (layout) modern.layout = *layout; else modern = {};
     for (std::size_t i = 0; i < std::size(kNames); ++i)

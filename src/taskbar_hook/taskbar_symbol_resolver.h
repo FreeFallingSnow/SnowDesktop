@@ -11,7 +11,7 @@ namespace snowdesktop::taskbar_hook
 inline constexpr wchar_t kSymbolHelperCommand[] = L"--internal-taskbar-symbols";
 struct AutoHideResolution
 {
-    DWORD magic = 0x53445359, version = 3;
+    DWORD magic = 0x53445359, version = 4;
     DWORD error = ERROR_IO_PENDING;
     AutoHideAdapter adapter;
     DWORD modernTrayError = ERROR_IO_PENDING;

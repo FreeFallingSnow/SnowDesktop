@@ -6,6 +6,17 @@
 
 namespace snowdesktop::tray
 {
+inline constexpr wchar_t kModernBootstrapMessage[] = L"SnowDesktop.Tray.ModernBootstrap.v1";
+struct ModernBootstrapRequest
+{
+    std::uint64_t epoch = 0;
+    taskbar_hook::ModernTrayAdapter adapter;
+    // Zero while pending, -1 on capture failure, otherwise the queued count plus one.
+    volatile LONG result = 0;
+};
+inline std::wstring ModernBootstrapName(DWORD owner, std::uint64_t epoch)
+{ return ObjectName(owner, L"ModernBootstrap.v1") + L"." + std::to_wstring(epoch); }
+
 class ModernTrayReader
 {
 public:
@@ -106,10 +117,11 @@ inline std::uint64_t ModernTaskbarModule(DWORD process)
     } while (Module32NextW(modules, &module));
     CloseHandle(modules); return base;
 }
-inline std::vector<Event> BootstrapModernTray(DWORD explorer, std::uint64_t epoch,
-    const taskbar_hook::ModernTrayAdapter& adapter)
+template<class Item, class Capture>
+std::vector<Item> CaptureModernTray(DWORD explorer, std::uint64_t epoch,
+    const taskbar_hook::ModernTrayAdapter& adapter, Capture capture, ULONGLONG deadline = 0)
 {
-    std::vector<Event> events;
+    std::vector<Item> events;
     const auto base = ModernTaskbarModule(explorer);
     ModernTrayReader reader(explorer);
     if (!base || !reader.Image(base, adapter)) return events;
@@ -123,18 +135,19 @@ inline std::vector<Event> BootstrapModernTray(DWORD explorer, std::uint64_t epoc
         !reader.Visible(overflow, base, adapter, hidden)) return events;
     for (const auto record : records)
     {
+        if (deadline && GetTickCount64() >= deadline) return {};
         const auto length = (std::max)({layout.guid + 16, layout.window + 8, layout.id + 4,
             layout.callback + 4, layout.version + 4, layout.icon + 8, layout.tip + 8});
         if (length > 4096) return {};
         std::array<BYTE, 4096> before{}, after{};
         if (!reader.Bytes(record, before.data(), length)) return {};
         const auto get = [&]<class T>(DWORD offset, T& value) { std::memcpy(&value, before.data() + offset, sizeof(value)); };
-        std::uint64_t vtable = 0, iconHandle = 0, tip = 0; Event event;
+        std::uint64_t vtable = 0, image = 0, tip = 0; Notification event;
         get(0, vtable);
         if (vtable != base + adapter.itemVtable) return {};
         get(layout.window, event.identity.window); get(layout.id, event.identity.id);
         get(layout.guid, event.identity.guid); get(layout.callback, event.callback);
-        get(layout.version, event.version); get(layout.icon, iconHandle); get(layout.tip, tip);
+        get(layout.version, event.version); get(layout.icon, image); get(layout.tip, tip);
         const auto target = reinterpret_cast<HWND>(event.identity.window);
         const DWORD thread = GetWindowThreadProcessId(target, &event.identity.process);
         if (!thread || !event.identity.process || event.callback < WM_USER || event.callback > 0xffff ||
@@ -152,11 +165,11 @@ inline std::vector<Event> BootstrapModernTray(DWORD explorer, std::uint64_t epoc
                 projected >= base && projected < base + adapter.image.imageSize) visible = true;
         event.stateMask = NIS_HIDDEN; event.state = visible ? 0 : NIS_HIDDEN;
         if (reader.Tooltip(tip, event.tip)) event.flags |= NIF_TIP;
-        if (auto copy = CopyIcon(reinterpret_cast<HICON>(iconHandle))) { Pixels(copy, event); DestroyIcon(copy); }
+        auto item = capture(event, image);
         DWORD processAfter = 0;
         if (!reader.Bytes(record, after.data(), length) || !std::equal(before.begin(), before.begin() + length, after.begin()) ||
             GetWindowThreadProcessId(target, &processAfter) != thread || processAfter != event.identity.process) return {};
-        if (event.width && event.height) events.push_back(event);
+        if (item) events.push_back(std::move(*item));
     }
     // Do not deliver a partly stale snapshot after a concurrent Shell mutation.
     std::vector<std::uint64_t> check, checkPinned, checkHidden;
@@ -170,5 +183,19 @@ inline std::vector<Event> BootstrapModernTray(DWORD explorer, std::uint64_t epoc
         !reader.Visible(promoted, base, adapter, checkPinned) || checkPinned != pinned ||
         !reader.Visible(overflow, base, adapter, checkHidden) || checkHidden != hidden) return {};
     return events;
+}
+
+inline std::vector<Event> BootstrapModernTray(DWORD explorer, std::uint64_t epoch,
+    const taskbar_hook::ModernTrayAdapter& adapter, bool tooltipOnly = false)
+{
+    if (adapter.layout.softwareBitmap && !tooltipOnly) return {};
+    return CaptureModernTray<Event>(explorer, epoch, adapter,
+        [tooltipOnly](const Notification& notification, std::uint64_t image) -> std::optional<Event> {
+            Event event;
+            static_cast<Notification&>(event) = notification;
+            if (tooltipOnly) return event.flags & NIF_TIP ? std::optional(event) : std::nullopt;
+            if (auto copy = CopyIcon(reinterpret_cast<HICON>(image))) { Pixels(copy, event); DestroyIcon(copy); }
+            return event.width && event.height ? std::optional(event) : std::nullopt;
+        });
 }
 }

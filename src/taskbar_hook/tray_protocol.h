@@ -11,6 +11,8 @@
 namespace snowdesktop::tray
 {
 inline constexpr DWORD kMagic = 0x53445452, kVersion = 2;
+// The resident broker can be upgraded independently of the v2 event mapping.
+inline constexpr DWORD kCollectorRevision = 3;
 inline constexpr std::size_t kCapacity = 128, kGeometries = 512, kIconSize = 64;
 // Optional collector supplement, not a Shell_NotifyIcon command. An older
 // receiver safely ignores it; the shared-memory layout remains unchanged.

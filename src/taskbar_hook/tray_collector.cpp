@@ -1,6 +1,10 @@
 #include "tray_protocol.h"
-#include "../system/tray/tray_icon_pixels.h"
+#include "../system/tray/tray_modern_bootstrap.h"
 #include <commctrl.h>
+#include <MemoryBuffer.h>
+#include <roapi.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Graphics.Imaging.h>
 #include <memory>
 #include <new>
 
@@ -23,6 +27,7 @@ struct Pending : Notification
 {
     // Do not copy a 16 KiB pixel array in the Explorer callback.
     HICON icon = nullptr;
+    winrt::com_ptr<IInspectable> bitmap;
 };
 struct Collector
 {
@@ -30,7 +35,7 @@ struct Collector
     HANDLE mapping = nullptr, signal = nullptr, wake = nullptr, owner = nullptr;
     SharedState* shared = nullptr;
     SRWLOCK lock = SRWLOCK_INIT;
-    std::array<Pending, 256> queue{};
+    std::array<Pending, kGeometries + 256> queue{};
     std::size_t head = 0, tail = 0;
     volatile LONG stopping = 0;
     ReregisterSession reregister;
@@ -48,17 +53,31 @@ struct Collector
         { if (event.icon) DestroyIcon(event.icon); Lost(); return false; }
         const auto next = (head + 1) % queue.size();
         const bool full = next == tail;
-        if (!full) { queue[head] = event; head = next; }
+        if (!full) { queue[head] = std::move(event); head = next; }
         ReleaseSRWLockExclusive(&lock);
         if (full) { if (event.icon) DestroyIcon(event.icon); Lost(); }
         else SetEvent(wake);
         return !full;
     }
+    bool PushBootstrap(std::vector<Pending>& icons)
+    {
+        if (!TryAcquireSRWLockExclusive(&lock)) return false;
+        const auto free = (tail + queue.size() - head - 1) % queue.size();
+        const bool fits = icons.size() <= free;
+        if (fits) for (auto& icon : icons)
+        {
+            queue[head] = std::move(icon);
+            head = (head + 1) % queue.size();
+        }
+        ReleaseSRWLockExclusive(&lock);
+        if (fits) SetEvent(wake);
+        return fits;
+    }
     bool Pop(Pending& event)
     {
         AcquireSRWLockExclusive(&lock);
         const bool available = head != tail;
-        if (available) { event = queue[tail]; queue[tail].icon = nullptr; tail = (tail + 1) % queue.size(); }
+        if (available) { event = std::move(queue[tail]); queue[tail].icon = nullptr; tail = (tail + 1) % queue.size(); }
         ReleaseSRWLockExclusive(&lock);
         return available;
     }
@@ -69,6 +88,84 @@ bool CopyBytes(const void* source, void* destination, SIZE_T length)
     SIZE_T read = 0;
     return source && ReadProcessMemory(GetCurrentProcess(), source, destination, length, &read) && read == length;
 }
+
+bool InImage(const void* address, HMODULE module, bool executable = false)
+{
+    MEMORY_BASIC_INFORMATION memory{};
+    if (!address || VirtualQuery(address, &memory, sizeof(memory)) != sizeof(memory) ||
+        memory.AllocationBase != module || memory.Type != MEM_IMAGE || memory.State != MEM_COMMIT ||
+        (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
+    return !executable || (memory.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+}
+
+LONG BootstrapSoftwareBitmaps(Collector& collector, const ModernBootstrapRequest& request)
+{
+    const auto& adapter = request.adapter;
+    if (!adapter.layout.softwareBitmap || !adapter.image.imageSize || adapter.image.imageSize > 64 * 1024 * 1024) return -1;
+    const auto module = GetModuleHandleW(L"Taskbar.dll");
+    const auto explorer = GetCurrentProcessId();
+    const auto base = reinterpret_cast<std::uint64_t>(module);
+    if (!base || !ModernTrayReader(explorer).Image(base, adapter) ||
+        taskbar_hook::DecodeModernTrayLayout({reinterpret_cast<const BYTE*>(base), adapter.image.imageSize},
+            adapter, true) != std::optional(adapter.layout)) return -1;
+
+    wchar_t system[MAX_PATH]{};
+    const UINT length = GetSystemDirectoryW(system, MAX_PATH);
+    if (!length || length >= MAX_PATH) return -1;
+    const auto bitmapModule = GetModuleHandleW((std::wstring(system, length) + L"\\RTMediaFrame.dll").c_str());
+    if (!bitmapModule) return -1;
+    // This posted taskbar-thread callback only retains local, validated bitmap
+    // interfaces. The worker performs all WinRT conversion and buffer access.
+    auto icons = CaptureModernTray<Pending>(explorer, request.epoch, adapter,
+        [bitmapModule](const Notification& notification, std::uint64_t image) -> std::optional<Pending> {
+            auto* object = reinterpret_cast<IInspectable*>(image);
+            const void* table = nullptr;
+            std::array<const void*, 3> methods{};
+            if (!CopyBytes(object, &table, sizeof(table)) || !InImage(table, bitmapModule) ||
+                !CopyBytes(table, methods.data(), sizeof(methods)) ||
+                !std::all_of(methods.begin(), methods.end(), [bitmapModule](auto method) { return InImage(method, bitmapModule, true); })) return {};
+            Pending icon;
+            static_cast<Notification&>(icon) = notification;
+            icon.bitmap.copy_from(object);
+            return icon;
+        }, GetTickCount64() + 75);
+    if (icons.empty() || request.epoch != static_cast<std::uint64_t>(Read(collector.shared->epoch)) ||
+        !collector.PushBootstrap(icons)) return -1;
+    return static_cast<LONG>(icons.size()) + 1;
+}
+
+void BitmapPixels(const winrt::com_ptr<IInspectable>& source, Event& event) noexcept try
+{
+    using namespace winrt::Windows::Graphics::Imaging;
+    auto bitmap = source.try_as<SoftwareBitmap>();
+    if (!bitmap) return;
+    const int width = bitmap.PixelWidth(), height = bitmap.PixelHeight();
+    const int maximum = (std::max)(width, height);
+    if (width <= 0 || height <= 0 || maximum > 512) return;
+    if (bitmap.BitmapPixelFormat() != BitmapPixelFormat::Bgra8 || bitmap.BitmapAlphaMode() != BitmapAlphaMode::Premultiplied)
+        bitmap = SoftwareBitmap::Convert(bitmap, BitmapPixelFormat::Bgra8, BitmapAlphaMode::Premultiplied);
+    const auto buffer = bitmap.LockBuffer(BitmapBufferAccessMode::Read);
+    const auto plane = buffer.GetPlaneDescription(0);
+    const auto reference = buffer.CreateReference();
+    BYTE* bytes = nullptr;
+    UINT32 capacity = 0;
+    if (FAILED(reference.as<::Windows::Foundation::IMemoryBufferByteAccess>()->GetBuffer(&bytes, &capacity)) || !bytes ||
+        plane.StartIndex < 0 || plane.Stride < width * 4 || plane.Width != width || plane.Height != height ||
+        static_cast<std::uint64_t>(plane.StartIndex) + static_cast<std::uint64_t>(plane.Stride) * (height - 1) + width * 4 > capacity) return;
+    const int limit = static_cast<int>(kIconSize);
+    const int outputWidth = maximum <= limit ? width : (std::max)(1, width * limit / maximum);
+    const int outputHeight = maximum <= limit ? height : (std::max)(1, height * limit / maximum);
+    for (int y = 0; y < outputHeight; ++y)
+    {
+        const auto* row = bytes + plane.StartIndex + static_cast<std::size_t>(plane.Stride) * (y * height / outputHeight);
+        for (int x = 0; x < outputWidth; ++x)
+            std::memcpy(&event.pixels[static_cast<std::size_t>(y * outputWidth + x)], row + 4 * (x * width / outputWidth), 4);
+    }
+    event.width = static_cast<DWORD>(outputWidth);
+    event.height = static_cast<DWORD>(outputHeight);
+}
+catch (...) { /* A closed or unsupported bitmap does not yield a bootstrap icon. */ }
+
 void BootstrapClassic(Collector& collector)
 {
     // Optional compatibility supplement. Read only Explorer-owned toolbars;
@@ -161,6 +258,8 @@ DWORD WINAPI Worker(void* parameter)
     InterlockedExchange(&self->shared->ready, 1);
     SetEvent(self->signal);
     BootstrapClassic(*self);
+    const HRESULT apartment = RoInitialize(RO_INIT_MULTITHREADED);
+    struct Apartment { HRESULT result; ~Apartment() { if (SUCCEEDED(result)) RoUninitialize(); } } scope{apartment};
     LONG64 epoch = Read(self->shared->epoch);
     HANDLE handles[]{self->owner, self->wake};
     while (!Read(self->stopping) && !Read(self->shared->stop))
@@ -177,7 +276,20 @@ DWORD WINAPI Worker(void* parameter)
             {
                 Event event;
                 static_cast<Notification&>(event) = pending;
-                Pixels(pending.icon, event);
+                if (pending.bitmap)
+                {
+                    if (SUCCEEDED(apartment)) BitmapPixels(pending.bitmap, event);
+                    if (!event.width || !event.height) continue;
+                    // An initial snapshot may exceed the live ring capacity.
+                    // Give the host worker time to consume the preceding entries.
+                    const auto deadline = GetTickCount64() + 100;
+                    while ((Read(self->shared->write) + 1) % static_cast<LONG>(kCapacity) == Read(self->shared->read) &&
+                        GetTickCount64() < deadline && !Read(self->stopping) && !Read(self->shared->stop) &&
+                        WaitForSingleObject(self->owner, 1) == WAIT_TIMEOUT) {}
+                    if (Read(self->stopping) || Read(self->shared->stop) ||
+                        pending.epoch != static_cast<std::uint64_t>(Read(self->shared->epoch))) continue;
+                }
+                else Pixels(pending.icon, event);
                 Publish(*self->shared, event);
                 SetEvent(self->signal);
             }
@@ -198,6 +310,36 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
     auto* holder = reinterpret_cast<std::shared_ptr<Collector>*>(data);
     const auto keepAlive = *holder;
     auto& self = *keepAlive;
+    if (message == RegisterWindowMessageW(kModernBootstrapMessage))
+    {
+        if (InSendMessageEx(nullptr) != ISMEX_NOSEND || Read(self.stopping) || Read(self.shared->stop) ||
+            wp != self.shared->owner || lp != static_cast<LPARAM>(Read(self.shared->epoch)) ||
+            WaitForSingleObject(self.owner, 0) != WAIT_TIMEOUT) return 0;
+        try
+        {
+            const auto name = ModernBootstrapName(self.shared->owner, static_cast<std::uint64_t>(lp));
+            const HANDLE mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, name.c_str());
+            if (!mapping) return 0;
+            auto* request = static_cast<ModernBootstrapRequest*>(MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE,
+                0, 0, sizeof(ModernBootstrapRequest)));
+            if (request)
+            {
+                LONG result = -1;
+                try
+                {
+                    const ModernBootstrapRequest copy{request->epoch, request->adapter};
+                    if (copy.epoch == static_cast<std::uint64_t>(lp)) result = BootstrapSoftwareBitmaps(self, copy);
+                }
+                catch (...) {}
+                InterlockedExchange(&request->result, result);
+                UnmapViewOfFile(request);
+                SetEvent(self.signal);
+            }
+            CloseHandle(mapping);
+        }
+        catch (...) { /* A supplemental snapshot must not unwind through Explorer. */ }
+        return 0;
+    }
     if (message == RegisterWindowMessageW(kReregisterMessage))
     {
         if (Read(self.stopping) || Read(self.shared->stop) ||
@@ -374,7 +516,7 @@ bool Attach(HWND window, DWORD owner, LONG64 expectedEpoch)
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&Procedure), &pinned)) return false;
     if (!SetWindowSubclass(window, BrokerProcedure, kBrokerSubclass, 0) ||
-        !SetPropW(window, kResidentProperty, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(kVersion)))) return false;
+        !SetPropW(window, kResidentProperty, reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(kCollectorRevision)))) return false;
     auto* subclassHolder = new(std::nothrow) std::shared_ptr<Collector>(self);
     if (!subclassHolder) return false;
     if (!SetWindowSubclass(window, Procedure, kSubclass, reinterpret_cast<DWORD_PTR>(subclassHolder)))

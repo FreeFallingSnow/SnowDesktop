@@ -63,6 +63,44 @@ struct Connection
         if (module) FreeLibrary(module);
     }
 };
+
+struct BitmapBootstrap
+{
+    HANDLE mapping = nullptr;
+    ModernBootstrapRequest* request = nullptr;
+    std::uint64_t epoch = 0;
+    ULONGLONG started = 0;
+    ~BitmapBootstrap() { Reset(); }
+    void Reset()
+    {
+        if (request) UnmapViewOfFile(request);
+        if (mapping) CloseHandle(mapping);
+        request = nullptr;
+        mapping = nullptr;
+        started = 0;
+    }
+    bool Post(const Connection& connection, const taskbar_hook::ModernTrayAdapter& adapter)
+    {
+        started = 0;
+        if (!request)
+        {
+            const auto name = ModernBootstrapName(connection.shared->owner, epoch);
+            mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+                sizeof(ModernBootstrapRequest), name.c_str());
+            if (!mapping || GetLastError() == ERROR_ALREADY_EXISTS) { Reset(); return false; }
+            request = static_cast<ModernBootstrapRequest*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS,
+                0, 0, sizeof(ModernBootstrapRequest)));
+            if (!request) { Reset(); return false; }
+            new(request) ModernBootstrapRequest{epoch, adapter};
+        }
+        InterlockedExchange(&request->result, 0);
+        const UINT message = RegisterWindowMessageW(kModernBootstrapMessage);
+        if (!message || !PostMessageW(connection.window, message, connection.shared->owner,
+                static_cast<LPARAM>(epoch))) return false;
+        started = GetTickCount64();
+        return true;
+    }
+};
 }
 struct Service::Impl
 {
@@ -289,6 +327,7 @@ struct Service::Impl
             bool reportedCollection = false;
             std::uint64_t supplementedEpoch = 0;
             unsigned supplementAttempts = 0;
+            BitmapBootstrap bitmapBootstrap;
             HANDLE handles[]{stop, current->explorer, current->signal};
             while (!token.stop_requested() && runtime_modules::Allowed(runtime_modules::Module::Tray))
             {
@@ -309,7 +348,32 @@ struct Service::Impl
                     std::lock_guard guard(mutex);
                     refreshTooltips = std::exchange(nativeTooltipsRequested, false);
                 }
-                if (modernAdapter && supplementedEpoch != epoch)
+                if (modernAdapter && modernAdapter->layout.softwareBitmap && supplementedEpoch != epoch)
+                {
+                    if (bitmapBootstrap.epoch != epoch)
+                    {
+                        bitmapBootstrap.Reset();
+                        bitmapBootstrap.epoch = epoch;
+                        supplementAttempts = 0;
+                    }
+                    const LONG result = bitmapBootstrap.request ? Read(bitmapBootstrap.request->result) : 0;
+                    const bool timedOut = bitmapBootstrap.started && GetTickCount64() - bitmapBootstrap.started >= 1500;
+                    if (result > 0 || timedOut || ((!bitmapBootstrap.started || result < 0) && supplementAttempts >= 3))
+                    {
+                        supplementedEpoch = epoch; supplementAttempts = 0;
+                        wchar_t message[176]{};
+                        swprintf_s(message, L"Tray software bitmap bootstrap queued=%ld epoch=%llu",
+                            result > 0 ? result - 1 : -1L, static_cast<unsigned long long>(epoch));
+                        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Tray, message,
+                            result > 0 ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Warning);
+                    }
+                    else if (!bitmapBootstrap.started || result < 0)
+                    {
+                        ++supplementAttempts;
+                        bitmapBootstrap.Post(*current, *modernAdapter);
+                    }
+                }
+                else if (modernAdapter && supplementedEpoch != epoch)
                 {
                     // Capture before draining the live ring. Ordinary ADD,
                     // MODIFY and DELETE events take precedence over bootstrap.
@@ -382,7 +446,7 @@ struct Service::Impl
                     // First apply older queued notifications, then read native
                     // text. Notifications arriving during the read are drained
                     // afterwards, so DELETE/owner changes and newer tips win.
-                    const auto native = BootstrapModernTray(state.explorer, epoch, *modernAdapter);
+                    const auto native = BootstrapModernTray(state.explorer, epoch, *modernAdapter, modernAdapter->layout.softwareBitmap);
                     if (epoch == static_cast<std::uint64_t>(Read(state.epoch)))
                     {
                         std::lock_guard guard(mutex);

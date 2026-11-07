@@ -25,7 +25,7 @@ DWORD AttachCollector(HWND window, SharedState& state, HMODULE& module,
     DWORD targetProcess = 0;
     const DWORD targetThread = GetWindowThreadProcessId(window, &targetProcess);
     if (!targetThread || !targetProcess) return ERROR_INVALID_WINDOW_HANDLE;
-    if (reinterpret_cast<UINT_PTR>(GetPropW(window, kResidentProperty)) == kVersion)
+    if (reinterpret_cast<UINT_PTR>(GetPropW(window, kResidentProperty)) == kCollectorRevision)
     {
         stage = L"resumeCollector";
         DWORD_PTR acknowledgement = 0;
