@@ -175,6 +175,8 @@
 
 ### CF-016 候选回收与人工验收登记存在竞争
 
+- **回收发生在验收期间（2026-11-07）**：Task `task-a0a57ef0479d44e1b0732f484b0d472c`，批次 `d80a7cfd13c749c2b0a9d2402ba57138` 修订 0，Run `a6a031f21d4645f093e12fafd5c1c968`，验收 `58b3f996e74f48e4b2ae430ebfd4002b`。`acceptance-start` 已绑定保存的主程序，Win10 虚拟机部署和实测完成后，`acceptance-complete -AcceptanceOutcome passed` 返回 `Saved runtime was retired by the retention policy`。`retention.json` 记载 `runtimeRemoved=true`、`reason=superseded-runtime`，后续本机激活为 Run `cfc98b09057d46a0aaa57af82c4ae302`。此例说明成功开始的验收也会被回收打断。协调器记录以取消结束，匹配 SHA-256 的来宾实测回执和原始回收记录保存在 `.codex-probes/win10-menu-compatibility/`。后续应让进行中的验收持有有界保留租约。本次未为归档重复构建或恢复已回收目录。
+
 - **实测来源**：Task `winx-start-context-menu` 的批次 `4badda709a8a47e48b3a0d41fb011a3b`、Run `033618dd3b8e47a9b5c002f6eadfa742` 标准产品构建、激活与5项共享检查全部通过，源码输入稳定。之后按批次/修订正确调用 `acceptance-start`，返回 `Candidate artifact runtime file changed.`。
 - **已确认事实**：该 Run 的 `retention.json` 记录 `runtimeRemoved=true`、`removedUtc=2026-11-04T13:13:32.9333872Z`、`reason=superseded-runtime`；保存的 runtime 目录已不存在。另一任务的 Run `2afc920a0b284917acbca709a3e597fa` 于13:13:31Z完成新激活。原验收入口的报错来自保存运行文件验证，不能据此否定原构建、测试或推断人工验收通过。
 - **影响与边界**：人工验收只能在候选全部通过后开始，登记前的自动回收窗口会使实际等待用户验证的候选无法绑定；当前活动程序也已切换为另一候选。证据为本任务忽略目录中的 `artifact-mismatch.json`、原 Run/批次结果及上述 retention 记录。没有为登记重建、补造验收结果或恢复被回收目录。
