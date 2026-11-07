@@ -1011,10 +1011,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     };
     const auto generalNotice = std::make_shared<GeneralNoticeFixture>();
     GeneralPageActions general;
-    if (focusId == "general.steamRoom")
-        general.steamRoom = [](steam_room::Command) {
-            return steam_room::Status{steam_room::Phase::Waiting, steam_room::Failure::None,
-                false, true, true};
+    if (focusId == "general.steamRoom" || focusId == "general.steamRoom.toggle")
+        general.steamRoom = [shown = focusId == "general.steamRoom"](steam_room::Command) {
+            if (!shown) return steam_room::Status{steam_room::Phase::Idle};
+            return steam_room::Status{steam_room::Phase::Waiting, steam_room::Failure::None, false, true, true};
         };
     general.onboarding.settingsIndex = [] {
         SettingsSearchIndexInput index; index.developerToolsVisible = index.debugVisible = true;
@@ -1483,6 +1483,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
         snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules || page == SettingsPage::AgentOperations;
+        snapshot.values.general.steamRoomVisible = focusId == "general.steamRoom";
         snapshot.values.general.runtimeModules.allowed.fill(!disabled);
         *modulePreviewPolicy = snapshot.values.general.runtimeModules;
         snapshot.values.general.dockEnabled = !disabled;

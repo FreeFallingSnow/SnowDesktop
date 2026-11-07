@@ -1,10 +1,12 @@
 local board = module.require("modules/board.lua")
 
 local function setup()
+    local preview = board.parse(storage.get("preview_board"))
     return {
-        game = board.parse(storage.get("preview_board")) or board.parse(board.empty),
+        game = preview or board.parse(board.empty),
         revision = 0,
         connected = false,
+        showSteam = not preview and widget.hasFeature("multiplayer.room.settings"),
     }
 end
 
@@ -85,6 +87,10 @@ end
 
 local function event(_, model, e)
     if e.kind == "action" then
+        if e.id == "steam" and model.showSteam then
+            task.start("multiplayer.openSettings")
+            return
+        end
         model.sendFailed = false
         local index = e.id and e.id:match("^cell%.(%d+)$")
         if index then
@@ -208,12 +214,16 @@ local function render(_, model)
     end
 
     centeredText(status(model, shown), left, top + side * 1.026, side, side * 0.047, secondary, false)
-    if model.connected and not model.host then
-        button("sync", l10n.tr("lua_widget.gomoku.sync"), left + side * 0.27, top + side * 1.105,
-            side * 0.46, side * 0.095, buttonFill, ink)
-    else
-        button("new", l10n.tr("lua_widget.gomoku.new"), left + side * 0.27, top + side * 1.105,
-            side * 0.46, side * 0.095, buttonFill, ink)
+    local sync = model.connected and not model.host
+    local action = sync and "sync" or "new"
+    local label = sync and l10n.tr("lua_widget.gomoku.sync") or l10n.tr("lua_widget.gomoku.new")
+    local showSteam = model.showSteam and not model.connected
+    local buttonY = top + side * 1.105
+    button(action, label, left + side * (showSteam and 0.04 or 0.27), buttonY,
+        side * 0.46, side * 0.095, buttonFill, ink)
+    if showSteam then
+        button("steam", l10n.tr("lua_widget.gomoku.steam_room"), left + side * 0.52, buttonY,
+            side * 0.44, side * 0.095, buttonFill, ink)
     end
 end
 

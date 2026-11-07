@@ -2842,5 +2842,7 @@
   "settings.general.steamRoom.create": "ルームを作成",
   "settings.general.steamRoom.invite": "フレンドを招待",
   "settings.general.steamRoom.join": "ルームに参加",
-  "settings.general.steamRoom.leave": "ルームから退出"
+  "settings.general.steamRoom.leave": "ルームから退出",
+  "settings.general.steamRoom.showCard": "表示",
+  "settings.general.steamRoom.hideCard": "非表示"
 }

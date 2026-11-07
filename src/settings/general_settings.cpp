@@ -107,6 +107,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     settings.showAdvancedSettings = false;
     settings.steamShowRunningStatus = false;
     ReadBoolField(text, "steamShowRunningStatus", settings.steamShowRunningStatus);
+    settings.steamRoomVisible = false;
+    ReadBoolField(text, "steamRoomVisible", settings.steamRoomVisible);
     settings.runtimeModules = {};
     ReadBoolField(text, "showAdvancedSettings", settings.showAdvancedSettings);
     for (std::size_t i = 0; i < snowdesktop::runtime_modules::kCount; ++i)
@@ -346,6 +348,7 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << snowdesktop::diagnostics::NormalizeLogModules(settings.diagnosticLogModules) << ",\n";
     file << "  \"showAdvancedSettings\": " << (settings.showAdvancedSettings ? "true" : "false") << ",\n";
     file << "  \"steamShowRunningStatus\": " << (settings.steamShowRunningStatus ? "true" : "false") << ",\n";
+    file << "  \"steamRoomVisible\": " << (settings.steamRoomVisible ? "true" : "false") << ",\n";
     for (std::size_t i = 0; i < snowdesktop::runtime_modules::kCount; ++i)
         file << "  \"moduleAllowed_" << snowdesktop::runtime_modules::kKeys[i] << "\": "
              << (settings.runtimeModules.allowed[i] ? "true" : "false") << ",\n";

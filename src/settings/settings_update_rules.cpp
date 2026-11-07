@@ -38,6 +38,7 @@ bool IsGeneralShortcutOnlyCommit(
     return shortcutChanged &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
         before.steamShowRunningStatus == after.steamShowRunningStatus &&
+        before.steamRoomVisible == after.steamRoomVisible &&
         before.runtimeModules == after.runtimeModules &&
         before.autoStartEnabled == after.autoStartEnabled &&
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
@@ -77,6 +78,7 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
     return before.diagnosticLogModules != after.diagnosticLogModules &&
         before.showAdvancedSettings == after.showAdvancedSettings &&
         before.steamShowRunningStatus == after.steamShowRunningStatus &&
+        before.steamRoomVisible == after.steamRoomVisible &&
         before.runtimeModules == after.runtimeModules &&
         before.autoStartEnabled == after.autoStartEnabled &&
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&

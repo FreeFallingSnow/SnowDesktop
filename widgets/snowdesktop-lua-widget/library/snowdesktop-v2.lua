@@ -2277,6 +2277,7 @@ task = {}
 ---@overload fun(name: 'calendar.series.remove', arguments: SnowCalendarSeriesRemoveArguments): taskId: integer?, error: string?
 --- On hosts with multiplayer.room, legacy room tasks open General settings and return hostManaged.
 ---@overload fun(name: 'multiplayer.create'|'multiplayer.invite'|'multiplayer.listen'|'multiplayer.join'|'multiplayer.leave'): taskId: integer?, error: string?
+---@overload fun(name: 'multiplayer.openSettings'): taskId: integer?, error: string?
 ---@overload fun(name: 'multiplayer.send', arguments: SnowMultiplayerSendArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'native.request', arguments: SnowNativeRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'native.watch', arguments: SnowNativeWatchArguments): taskId: integer?, error: string?

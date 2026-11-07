@@ -2842,5 +2842,7 @@
   "settings.general.steamRoom.create": "Raum erstellen",
   "settings.general.steamRoom.invite": "Freund einladen",
   "settings.general.steamRoom.join": "Raum beitreten",
-  "settings.general.steamRoom.leave": "Raum verlassen"
+  "settings.general.steamRoom.leave": "Raum verlassen",
+  "settings.general.steamRoom.showCard": "Anzeigen",
+  "settings.general.steamRoom.hideCard": "Ausblenden"
 }

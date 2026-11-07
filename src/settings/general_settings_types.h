@@ -23,6 +23,7 @@ struct GeneralSettings
     bool autoStartEnabled = false;
     bool showAdvancedSettings = false;
     bool steamShowRunningStatus = false;
+    bool steamRoomVisible = false;
     snowdesktop::runtime_modules::Policy runtimeModules;
     bool softwareDesktopEnabled = true;
     bool softwareDesktopHotkeyEnabled = false;

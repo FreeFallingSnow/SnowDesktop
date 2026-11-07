@@ -2842,5 +2842,7 @@
   "settings.general.steamRoom.create": "建立房間",
   "settings.general.steamRoom.invite": "邀請好友",
   "settings.general.steamRoom.join": "加入房間",
-  "settings.general.steamRoom.leave": "離開房間"
+  "settings.general.steamRoom.leave": "離開房間",
+  "settings.general.steamRoom.showCard": "顯示",
+  "settings.general.steamRoom.hideCard": "隱藏"
 }

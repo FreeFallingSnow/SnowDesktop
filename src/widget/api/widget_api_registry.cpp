@@ -34,6 +34,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "task.native.diagnostics",
     "multiplayer.session",
     "multiplayer.room",
+    "multiplayer.room.settings",
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",
@@ -457,7 +458,7 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 82> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 83> kSystemTaskContracts = {{
     { "audio.play", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlayArguments", "SnowAudioPlayValue" },
     { "audio.pause", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlaybackArguments", "SnowAcceptedTaskValue" },
     { "audio.resume", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlaybackArguments", "SnowAcceptedTaskValue" },
@@ -483,6 +484,8 @@ constexpr std::array<SystemTaskContract, 82> kSystemTaskContracts = {{
         false, 1, "SnowMultiplayerSendArguments", "SnowAcceptedTaskValue" },
     { "multiplayer.leave", "multiplayer.session", nullptr,
         true, 1, nullptr, "SnowAcceptedTaskValue" },
+    { "multiplayer.openSettings", "multiplayer.room.settings", nullptr,
+        true, 1, nullptr, nullptr },
     { "location.current", "task.location.current", "location.read",
         true, 1, "SnowLocationArguments", "SnowLocationTaskValue" },
     { "network.request", "task.network.request", "network.internet",

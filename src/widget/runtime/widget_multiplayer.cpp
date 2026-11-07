@@ -205,6 +205,14 @@ void WidgetEngine::StartWidgetMultiplayerTask(
     const int availability = state.availability();
     if (!availability) return finish("providerUnavailable");
 
+    if (action.name == "multiplayer.openSettings")
+    {
+        if (!state.openSettings) return finish("providerUnavailable");
+        state.openSettings(availability == 1);
+        (void)taskBroker_->Complete(action.id, true);
+        return;
+    }
+
     if (action.name != "multiplayer.send")
     {
         if (action.name != "multiplayer.leave" && !CanPlay(widget)) return finish("permissionRevoked");

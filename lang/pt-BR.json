@@ -2842,5 +2842,7 @@
   "settings.general.steamRoom.create": "Criar sala",
   "settings.general.steamRoom.invite": "Convidar amigo",
   "settings.general.steamRoom.join": "Entrar na sala",
-  "settings.general.steamRoom.leave": "Sair da sala"
+  "settings.general.steamRoom.leave": "Sair da sala",
+  "settings.general.steamRoom.showCard": "Mostrar",
+  "settings.general.steamRoom.hideCard": "Ocultar"
 }

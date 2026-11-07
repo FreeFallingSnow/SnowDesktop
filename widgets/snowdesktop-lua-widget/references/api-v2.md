@@ -3673,13 +3673,19 @@ Lua API v2 组件可声明 `multiplayer.session`、`multiplayer.room` 和 `multi
 `widget.hasPermission("multiplayer.steam")` 判断授权。最低宿主版本为支持该 feature 的
 1.0.14.0。同版本早期构建缺少 `multiplayer.room`。先发布宿主与 Bridge，再发布依赖组件。
 
-每个宿主可在「常规 → Steam 联机」管理一个 Steam 私密双人房。房间在组件卸载后继续存在。
+在「常规 → 高级功能 → Steam 联机」显示房间卡片，再从卡片管理 Steam 私密双人房。
+房间在组件卸载后继续存在。
 同一房间的消息按组件 UUID、包来源和版本分开，每个组件在本机只选一个已授权实例参与。
 双方可在进房前后添加组件，预览使用单机状态。
 
 | 任务 | 参数及效果 |
 | --- | --- |
 | `multiplayer.send` | `{text=...}`，发送 1–1024 字节 UTF-8 文本，拒绝 NUL |
+| `multiplayer.openSettings` | 无参数，从可信用户手势打开联机设置。卡片隐藏时定位到显示按钮；高级功能尚未解锁时定位到解锁入口。 |
+
+`multiplayer.openSettings` 使用可选能力 `multiplayer.room.settings`，沿用 API v2。
+调用前通过 `widget.hasFeature("multiplayer.room.settings")` 探测，旧宿主可隐藏该入口。
+打开设置不需要 Steam 消息权限，也不会修改卡片显隐或房间状态。
 
 `task.complete.value.accepted` 表示 Steam 接受发送。需要应用层确认时，由组件实现确认或
 重新同步。整间房每个方向每秒最多 8 条。旧的 `create`、`listen`、`invite`、`join` 和
