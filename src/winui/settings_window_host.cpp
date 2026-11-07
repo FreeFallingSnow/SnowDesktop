@@ -3896,6 +3896,16 @@ bool SettingsWindowHost::Initialize(
 
     try
     {
+        if (!SupportsMicaBackdrop())
+        {
+            // These templates use in-app acrylic by default, including the
+            // child-item flyout opened from a compact NavigationView pane.
+            // Install the solid theme resources before creating any controls.
+            const auto resources = mux::Application::Current().Resources();
+            const auto popupBackgrounds = resources.Lookup(
+                winrt::box_value(L"SettingsOpaquePopupBackgrounds")).as<mux::ResourceDictionary>();
+            resources.MergedDictionaries().Append(popupBackgrounds);
+        }
         impl_->callbacks =
             std::make_shared<Impl::CallbackState>();
         impl_->callbacks->owner = impl_.get();
