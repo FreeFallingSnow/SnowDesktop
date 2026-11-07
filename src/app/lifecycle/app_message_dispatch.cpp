@@ -129,7 +129,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             0, 0, dockSystemMinimizeStartedTick_.load());
         floatingDockInputDeactivated_ = false;
         CancelDockWindowActivationObservation(source);
-        PrepareDockWindowMinimize(source, L"helper-application-minimize");
+        PrepareDockWindowMinimize(source, L"helper-application-minimize", deadline);
         if (dockWindowTransition_ && snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
             if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(source))
                 KeepDockTopmostForAction(target->anchor, dockSettings_.summonOnAppMinimize);

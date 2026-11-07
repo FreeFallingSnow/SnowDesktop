@@ -22,6 +22,7 @@ namespace
 constexpr wchar_t kDockWindowTransitionClassName[] =
     L"SnowDesktopDockWindowTransition";
 std::atomic<unsigned> presentationWaitJobs{0};
+std::atomic<unsigned> restoreCloakJobs{0};
 std::atomic<unsigned> sceneRetirementJobs{0};
 constexpr UINT kRetireSceneWindow = WM_APP + 51;
 
@@ -223,6 +224,10 @@ void CALLBACK DockWindowTransition::RunRetiredScene(
 {
     CallbackMayRunLong(instance);
     auto* state = static_cast<RetiredScene*>(context);
+    // A cancelled preparation can still own the source. Release it promptly
+    // even when the compositor has not finished retiring the hidden scene.
+    if (state->source && SUCCEEDED(snowdesktop::dock_source_cloak::Release(state->source, state->owner)))
+        state->source = nullptr;
     try
     {
         if (state->wait) state->wait(state->device.Get());
@@ -422,6 +427,22 @@ void DockWindowTransition::LogPresentation(int requestedEffect,
         direction_ == DockWindowTransitionDirection::Minimize ? L"minimize" : L"restore",
         requestedEffect, effect_, imageSource_,
         fallbackStage, static_cast<unsigned long>(imageResult_));
+    diagnosticCallback_(message);
+}
+
+void DockWindowTransition::LogAbort(const wchar_t* stage, HRESULT result) const
+{
+    if (!diagnosticCallback_) return;
+    const DWORD remaining = externalMinimize_ ?
+        snowdesktop::dock_minimize::RemainingRequestTime(externalMinimizeDeadline_, GetTickCount()) : 0;
+    wchar_t message[256]{};
+    swprintf_s(message, L"Dock animation aborted: hwnd=%p stage=%ls direction=%ls provider=%ls "
+        L"hr=0x%08lX elapsedMs=%.1f external=%d remainingMs=%lu",
+        static_cast<void*>(sourceWindow_), stage,
+        direction_ == DockWindowTransitionDirection::Restore ? L"restore" : L"minimize",
+        helperRouting_ ? L"host" : L"local", static_cast<unsigned long>(result),
+        transitionStartTimeMs_ ? MonotonicTimeMilliseconds() - transitionStartTimeMs_ : 0.0,
+        externalMinimize_ ? 1 : 0, remaining);
     diagnosticCallback_(message);
 }
 
@@ -659,6 +680,18 @@ struct DockWindowTransition::RemoteAnimation
     bool pending = true;
     ULONGLONG acceptedAt = GetTickCount64();
 };
+
+struct DockWindowTransition::RestoreCloak
+{
+    HWND source = nullptr;
+    DWORD thread = 0;
+    DWORD process = 0;
+    snowdesktop::dock_source_cloak::Owner owner;
+    ULONGLONG deadline = 0;
+    double pollDeadlineMs = 0.0;
+    HRESULT result = E_ABORT;
+    std::atomic<bool> completed{false};
+};
 bool DockWindowTransition::StartHelperAnimation(HWND source, RECT anchor, HWND below, bool restore, RestoreCallback callback)
 {
     namespace support = snowdesktop::window_support;
@@ -711,7 +744,9 @@ bool DockWindowTransition::StartMinimize(
         if (awaitingMinimizePresentation_) minimizeRequest_ = std::move(minimizeRequest);
         else if (SourceIdentityCurrent()) minimizeRequest(sourceWindow_);
     }
-    if (!started && helperRouting_ && SystemWindowAnimationsEnabled())
+    // Only an unavailable image API justifies routing future requests away
+    // from this provider. A temporary presentation failure is per operation.
+    if (!started && helperRouting_ && nativeFallbackRequested_ && imageResult_ == E_NOTIMPL)
     {
         snowdesktop::window_support::WindowSupport().RecordFailure(snowdesktop::window_support::Capability::MinimizeAnimation,
             sourceWindow, snowdesktop::window_support::Provider::InProcess, ERROR_NOT_SUPPORTED);
@@ -800,18 +835,26 @@ void DockWindowTransition::PollMinimizeObservation()
 bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRect,
     DWORD deadline, HWND keepBelowWindow)
 {
-    if (IsActive() || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+    if (!deadline || IsActive() || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
         return false;
-    if (!StartMinimize(sourceWindow, dockRect,
-            keepBelowWindow))
+    if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
+            snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
+            snowdesktop::window_support::Provider::InProcess)
+        return false;
+    // CBT will still perform the original native minimize. Starting a helper
+    // command here could dispatch a second native request for the same action.
+    ObserveMinimize(sourceWindow, dockRect, true);
+    if (!Start(sourceWindow, dockRect, DockWindowTransitionDirection::Minimize, {}, keepBelowWindow))
         return false;
     externalMinimize_ = true;
     externalMinimizeObserved_ = IsIconic(sourceWindow) != FALSE;
     externalMinimizeDeadline_ = deadline;
     externalMinimizeObservationDeadline_ = GetTickCount() +
         snowdesktop::dock_minimize::kRequestTimeoutMs;
-    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+        !SetPropW(hwnd_, snowdesktop::dock_minimize::kPresentationDeadlineProperty, ULongToHandle(deadline)))
     {
+        LogAbort(L"external-minimize-setup", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
         Finish();
         return false;
     }
@@ -851,7 +894,7 @@ bool DockWindowTransition::StartRestore(
         DockWindowTransitionDirection::Restore,
         restoreCallback,
         keepBelowWindow);
-    if (!started && helperRouting_ && SystemWindowAnimationsEnabled())
+    if (!started && helperRouting_ && nativeFallbackRequested_ && imageResult_ == E_NOTIMPL)
     {
         snowdesktop::window_support::WindowSupport().RecordFailure(snowdesktop::window_support::Capability::MinimizeAnimation,
             sourceWindow, snowdesktop::window_support::Provider::InProcess, ERROR_NOT_SUPPORTED);
@@ -911,6 +954,13 @@ bool DockWindowTransition::Start(
     if (startAction ==
         DockWindowTransitionStartAction::ReverseActive)
     {
+        if (restoreCloak_)
+        {
+            // The source may still be handling the old restore. Cancel its
+            // lease before the caller posts the newer native minimize.
+            Finish();
+            return false;
+        }
         if (awaitingMinimizePresentation_)
         {
             if (externalMinimize_)
@@ -956,6 +1006,7 @@ bool DockWindowTransition::Start(
     sourceWindow_ = sourceWindow;
     sourceThread_ = GetWindowThreadProcessId(sourceWindow_, &sourceProcess_);
     direction_ = direction;
+    transitionStartTimeMs_ = MonotonicTimeMilliseconds();
     restoreCallback_ = std::move(restoreCallback);
     effect_ = snowdesktop::animation::RuntimeWindowEffect();
     const int requestedEffect = effect_;
@@ -1061,7 +1112,7 @@ bool DockWindowTransition::Start(
 
     if (!ApplyFrame(0.0))
     {
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=first-frame");
+        LogAbort(L"first-frame");
         Cancel();
         return false;
     }
@@ -1091,6 +1142,7 @@ bool DockWindowTransition::Start(
         awaitingMinimizePresentation_ = true;
         if (!BeginPresentationBarrier(RestorePresentationPhase::None) || !ScheduleAnimationWake())
         {
+            LogAbort(L"minimize-presentation-schedule");
             Cancel();
             return false;
         }
@@ -1098,7 +1150,6 @@ bool DockWindowTransition::Start(
         return true;
     }
 
-    if (!AcquireSourceCloak()) { Cancel(); return false; }
     animationStartTimeMs_ = MonotonicTimeMilliseconds();
     minimizeObserved_ = false;
     minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
@@ -1106,11 +1157,11 @@ bool DockWindowTransition::Start(
     restoreCleanupDeadlineMs_ = 0.0;
     restoreVisibleTimeMs_ = 0.0;
     restoreFadeStartTimeMs_ = 0.0;
-    RequestRestoreForAnimation();
+    if (!BeginRestoreCloak()) { Finish(); return false; }
     if (!ScheduleAnimationWake())
     {
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=schedule");
-        Cancel();
+        LogAbort(L"schedule");
+        Finish();
         return false;
     }
     LogPresentation(requestedEffect, L"shared-window");
@@ -1142,13 +1193,78 @@ bool DockWindowTransition::AcquireSourceCloak()
     }
     if (FAILED(cloakHr))
     {
-        if (diagnosticCallback_)
-        {
-            wchar_t diagnostic[128]{};
-            swprintf_s(diagnostic, L"Dock animation aborted: stage=source-cloak hr=0x%08X",
-                static_cast<unsigned>(cloakHr));
-            diagnosticCallback_(diagnostic);
-        }
+        LogAbort(L"source-cloak", cloakHr);
+        return false;
+    }
+    return true;
+}
+
+void CALLBACK DockWindowTransition::RunRestoreCloak(PTP_CALLBACK_INSTANCE instance, void* context)
+{
+    if (instance) CallbackMayRunLong(instance);
+    const std::unique_ptr<std::shared_ptr<RestoreCloak>> work(
+        static_cast<std::shared_ptr<RestoreCloak>*>(context));
+    auto& state = **work;
+    snowdesktop::performance::Scope trace("dock.transition", "restore.source");
+    DWORD process = 0;
+    if (GetTickCount64() < state.deadline &&
+        GetWindowThreadProcessId(state.source, &process) == state.thread && process == state.process &&
+        snowdesktop::dock_source_cloak::IsLiveOwner(state.owner))
+    {
+        bool confirmed = false;
+        state.result = snowdesktop::dock_source_cloak::ApplyCloak(state.source, state.owner,
+            snowdesktop::dock_minimize::kPrepareRestoreCloak, confirmed);
+    }
+    state.completed.store(true, std::memory_order_release);
+    restoreCloakJobs.fetch_sub(1, std::memory_order_relaxed);
+}
+
+bool DockWindowTransition::BeginRestoreCloak()
+{
+    if (!IsIconic(sourceWindow_) || sourceProcess_ == GetCurrentProcessId())
+    {
+        if (!sourceCloaked_ && !AcquireSourceCloak()) return false;
+        RequestRestoreForAnimation();
+        return true;
+    }
+
+    namespace cloak = snowdesktop::dock_source_cloak;
+    std::shared_ptr<RestoreCloak> state;
+    try { state = std::make_shared<RestoreCloak>(); }
+    catch (...)
+    {
+        LogAbort(L"restore-source-allocation", E_OUTOFMEMORY);
+        return false;
+    }
+    state->source = sourceWindow_;
+    state->thread = sourceThread_;
+    state->process = sourceProcess_;
+    state->owner = cloak::CaptureOwner(hwnd_);
+    state->deadline = GetTickCount64() + kRestoreCleanupTimeoutMs;
+    state->pollDeadlineMs = MonotonicTimeMilliseconds() + kRestoreCleanupTimeoutMs;
+    bool reserved = false;
+    const HRESULT result = cloak::Reserve(sourceWindow_, state->owner, reserved, true);
+    if (FAILED(result) || !reserved)
+    {
+        LogAbort(L"restore-source-reserve", result);
+        return false;
+    }
+    sourceCloaked_ = true;
+    sourceCloakWindow_ = sourceWindow_;
+    // From reservation onward, failure must transfer cleanup to retirement.
+    restoreCloak_ = state;
+    if (restoreCloakJobs.fetch_add(1, std::memory_order_relaxed) >= 4)
+    {
+        restoreCloakJobs.fetch_sub(1, std::memory_order_relaxed);
+        LogAbort(L"restore-source-queue", HRESULT_FROM_WIN32(ERROR_BUSY));
+        return false;
+    }
+    auto* work = new (std::nothrow) std::shared_ptr<RestoreCloak>(std::move(state));
+    if (!work || !TrySubmitThreadpoolCallback(RunRestoreCloak, work, nullptr))
+    {
+        delete work;
+        restoreCloakJobs.fetch_sub(1, std::memory_order_relaxed);
+        LogAbort(L"restore-source-queue");
         return false;
     }
     return true;
@@ -1168,6 +1284,7 @@ bool DockWindowTransition::PrepareMinimizePresentation(double now)
         !GetWindowRect(sourceWindow_, &actual) || !EqualRect(&actual, &minimizeSourceWindowRect_) ||
         !ResolveVisibleWindowRect(sourceWindow_, frame) || !EqualRect(&frame, &windowRect_))
     {
+        LogAbort(L"minimize-source-changed", E_ABORT);
         // A source that moved or changed state must not leave an old aligned
         // duplicate visible until a slow compositor wait eventually finishes.
         CompleteImmediately();
@@ -1180,14 +1297,16 @@ bool DockWindowTransition::PrepareMinimizePresentation(double now)
         IsWindowVisible(sourceWindow_) && !IsIconic(sourceWindow_) &&
         ResolveVisibleWindowRect(sourceWindow_, frame) && EqualRect(&frame, &windowRect_) &&
         (!externalMinimize_ || snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()));
-    if (!ready || !AcquireSourceCloak())
+    if (!ready || !AcquireSourceCloak() ||
+        (externalMinimize_ && !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount())))
     {
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=presentation-barrier");
+        LogAbort(L"minimize-presentation-or-cloak", FAILED(*result) ? *result : E_ABORT);
         CompleteImmediately();
         return false;
     }
     awaitingMinimizePresentation_ = false;
     ClearExternalPresentationWait();
+    RemovePropW(hwnd_, snowdesktop::dock_minimize::kPresentationDeadlineProperty);
     animationStartTimeMs_ = MonotonicTimeMilliseconds();
     if (externalMinimize_)
         externalMinimizeObservationDeadline_ = GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs;
@@ -1197,6 +1316,7 @@ bool DockWindowTransition::PrepareMinimizePresentation(double now)
     const HWND source = sourceWindow_;
     if (!ScheduleAnimationWake())
     {
+        LogAbort(L"minimize-timeline");
         Finish();
     }
     // The native route is unchanged; it now follows the acknowledged frame and
@@ -1309,6 +1429,7 @@ bool DockWindowTransition::Reverse(
             (direction == DockWindowTransitionDirection::Minimize ? 0.0 : 255.0)) / 255.0;
 
     direction_ = direction;
+    transitionStartTimeMs_ = MonotonicTimeMilliseconds();
     fromRect_ = currentFrame;
     toRect_ = targetFrame;
     if (effect_ == 2)
@@ -1342,15 +1463,13 @@ bool DockWindowTransition::Reverse(
     presentationBarrier_.reset();
     restorePresentationPhase_ = RestorePresentationPhase::None;
     restorePresentationAcknowledged_ = false;
-    if (direction_ == DockWindowTransitionDirection::Restore && IsIconic(sourceWindow_) && !AcquireSourceCloak())
+    if (direction_ == DockWindowTransitionDirection::Restore && !BeginRestoreCloak())
     {
         Finish();
         return false;
     }
-    RequestRestoreForAnimation();
     if (!ScheduleAnimationWake())
     {
-        CompleteRestoreAfterRenderFailure();
         Finish();
         return false;
     }
@@ -2045,7 +2164,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
     animationToken_ = 0;
 
     const bool retiring = awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0;
-    if (UsesCompositionImage() && !preparingRestore_ && !awaitingMinimizePresentation_)
+    if (UsesCompositionImage() && !restoreCloak_ && !preparingRestore_ && !awaitingMinimizePresentation_)
     {
         if (!StartCompositionTimeline(retiring))
             return false;
@@ -2222,6 +2341,7 @@ bool DockWindowTransition::OnAnimationFrame(
         if (awaitingMinimizePresentation_ &&
             !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()))
         {
+            LogAbort(L"external-minimize-deadline", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
             if (pendingExternalRestore_) CompleteImmediately();
             else Finish();
             return false;
@@ -2265,12 +2385,30 @@ bool DockWindowTransition::OnAnimationFrame(
         pendingExternalRestore_ = false;
         animationStartTimeMs_ = now;
         auto callback = std::move(restoreCallback_);
-        if (!Reverse(DockWindowTransitionDirection::Restore, std::move(callback)))
+        const auto identity = snowdesktop::window_support::protocol::Capture(sourceWindow_);
+        if (!Reverse(DockWindowTransitionDirection::Restore, callback))
         {
-            CompleteRestoreAfterRenderFailure();
             Finish();
+            if (callback && snowdesktop::window_support::protocol::Current(identity))
+                callback(snowdesktop::window_support::protocol::Window(identity),
+                    DockWindowRestoreTransitionPhase::FallbackWithoutAnimation);
         }
         return false;
+    }
+    if (restoreCloak_)
+    {
+        const bool completed = restoreCloak_->completed.load(std::memory_order_acquire);
+        if (!completed && now < restoreCloak_->pollDeadlineMs) return true;
+        const HRESULT result = completed ? restoreCloak_->result : HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+        if (FAILED(result))
+        {
+            LogAbort(L"restore-source", result);
+            CompleteRestoreAfterRenderFailure();
+            return false;
+        }
+        restoreCloak_.reset();
+        RequestRestoreForAnimation();
+        return IsActive();
     }
     if (preparingRestore_)
     {
@@ -2279,8 +2417,8 @@ bool DockWindowTransition::OnAnimationFrame(
         // image now has its final geometry and can run independently.
         if (!ScheduleAnimationWake())
         {
+            LogAbort(L"restore-timeline");
             CompleteRestoreAfterRenderFailure();
-            Finish();
         }
         return false;
     }
@@ -2420,8 +2558,8 @@ bool DockWindowTransition::OnAnimationFrame(
                 if (aligned) aligned = ApplyFrame(1.0);
                 if (!aligned || !BeginPresentationBarrier(RestorePresentationPhase::AlignedImage))
                 {
+                    LogAbort(L"restore-handoff-realign");
                     CompleteRestoreAfterRenderFailure();
-                    Finish();
                     return false;
                 }
                 if (diagnosticCallback_) diagnosticCallback_(L"Dock restore realigning: retaining live image until presentation");
@@ -2454,8 +2592,8 @@ bool DockWindowTransition::OnAnimationFrame(
             std::max(1.0, animationDurationMs_));
     if (!ApplyFrame(progress))
     {
+        LogAbort(L"frame");
         CompleteRestoreAfterRenderFailure();
-        Finish();
         return false;
     }
     if (progress < 1.0)
@@ -2537,8 +2675,8 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         restorePresentationPhase_ = RestorePresentationPhase::None;
         if (FAILED(*result))
         {
+            LogAbort(L"restore-presentation", *result);
             CompleteRestoreAfterRenderFailure();
-            Finish();
             return false;
         }
         animationStartTimeMs_ = MonotonicTimeMilliseconds();
@@ -2622,21 +2760,19 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
                 diagnosticCallback_(diagnostic);
             }
             CompleteRestoreAfterRenderFailure();
-            Finish();
             return false;
         }
         if (!BeginPresentationBarrier(RestorePresentationPhase::PreparedImage))
         {
+            LogAbort(L"restore-presentation-schedule");
             CompleteRestoreAfterRenderFailure();
-            Finish();
         }
         return false;
     }
     if (now >= restoreCleanupDeadlineMs_)
     {
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=restore-geometry-timeout");
+        LogAbort(L"restore-geometry-timeout", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
         CompleteRestoreAfterRenderFailure();
-        Finish();
     }
     return false;
 }
@@ -2644,18 +2780,13 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
 void DockWindowTransition::
 CompleteRestoreAfterRenderFailure()
 {
-    if (direction_ !=
-            DockWindowTransitionDirection::Restore ||
-        !restoreCallback_ ||
-        !sourceWindow_ ||
-        !IsWindow(sourceWindow_))
-        return;
-    RestoreCallback callback =
-        std::move(restoreCallback_);
-    callback(
-        sourceWindow_,
-        DockWindowRestoreTransitionPhase::
-            FallbackWithoutAnimation);
+    const auto identity = snowdesktop::window_support::protocol::Capture(sourceWindow_);
+    auto callback = direction_ == DockWindowTransitionDirection::Restore ?
+        std::move(restoreCallback_) : RestoreCallback{};
+    Finish();
+    if (callback && snowdesktop::window_support::protocol::Current(identity))
+        callback(snowdesktop::window_support::protocol::Window(identity),
+            DockWindowRestoreTransitionPhase::FallbackWithoutAnimation);
 }
 
 void DockWindowTransition::
@@ -2694,6 +2825,16 @@ void DockWindowTransition::ReleaseSourceCloak()
 void DockWindowTransition::Finish()
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "scene.retire");
+    const bool deferRelease = restoreCloak_ || (externalMinimize_ && awaitingMinimizePresentation_ &&
+        !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()));
+    if (deferRelease && sourceCloaked_ && sceneRetirement_)
+    {
+        namespace cloak = snowdesktop::dock_source_cloak;
+        const auto owner = cloak::CaptureOwner(hwnd_);
+        if (cloak::SameOwner(sourceCloakWindow_, owner))
+            SetPropW(sourceCloakWindow_, cloak::RecoveryProperty, owner.token);
+    }
+    restoreCloak_.reset();
     ClearExternalPresentationWait();
     awaitingMinimizePresentation_ = false;
     pendingExternalRestore_ = false;
@@ -2737,7 +2878,7 @@ void DockWindowTransition::Finish()
         presentationCallback_(nullptr);
     if (wasPresenting && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: after-dock-layer-restore");
-    ReleaseSourceCloak();
+    if (!deferRelease || !sceneRetirement_) ReleaseSourceCloak();
     if (sceneRetirement_)
     {
         auto state = std::move(sceneRetirement_);
@@ -2795,6 +2936,7 @@ void DockWindowTransition::Finish()
     lastFrameOpacity_ = 0;
     hasLastFrame_ = false;
     animationStartTimeMs_ = 0.0;
+    transitionStartTimeMs_ = 0.0;
     animationDurationMs_ =
         static_cast<double>(
             kAnimationDurationMs);
@@ -2829,7 +2971,7 @@ void DockWindowTransition::Cancel()
     // Cancellation used to run after the caller had already dispatched its
     // native minimize. Preserve that accepted operation when only its first
     // frame is pending; explicit reversal uses Finish to withdraw that intent.
-    if ((awaitingMinimizePresentation_ && minimizeRequest_) || pendingExternalRestore_) CompleteImmediately();
+    if ((awaitingMinimizePresentation_ && minimizeRequest_) || pendingExternalRestore_ || restoreCloak_) CompleteImmediately();
     else Finish();
 }
 
@@ -2851,10 +2993,12 @@ void DockWindowTransition::CompleteImmediately()
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_ && sourceWindow_ && IsWindow(sourceWindow_))
     {
-        if (IsIconic(sourceWindow_))
+        if (restoreCloak_ || IsIconic(sourceWindow_))
+        {
             CompleteRestoreAfterRenderFailure();
-        else
-            ActivateRestoredWindowForHandoff();
+            return;
+        }
+        ActivateRestoredWindowForHandoff();
     }
     Finish();
     if (minimize && source) minimize(source);

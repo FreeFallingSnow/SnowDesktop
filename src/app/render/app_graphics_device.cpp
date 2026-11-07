@@ -420,12 +420,14 @@ void DesktopApp::InitializeDockWindowTransition()
                             if (!IntersectRect(&intersection, &candidate, &viewport)) continue;
                             MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&candidate), 2);
                             const bool sameMonitor = MonitorFromRect(&candidate, MONITOR_DEFAULTTONEAREST) == sourceMonitor;
-                            if (IsRectEmpty(&anchor) || (sameMonitor && !foundOnMonitor))
+                            if (sameMonitor || IsRectEmpty(&anchor)) anchor = candidate;
+                            if (sameMonitor)
                             {
-                                anchor = candidate;
-                                foundOnMonitor = sameMonitor;
+                                foundOnMonitor = true;
+                                break;
                             }
                         }
+                        if (foundOnMonitor) break;
                     }
                 }
                 if (IsRectEmpty(&anchor)) return std::nullopt;

@@ -53,6 +53,8 @@ struct DockWindowHelperAnimation::Impl
         }
         if (self && message == snowdesktop::dock_minimize::RequestMessage())
         {
+            const DWORD deadline = static_cast<DWORD>(lp);
+            if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return FALSE;
             const HWND source = reinterpret_cast<HWND>(wp);
             const auto found = std::find_if(self->targets.begin(), self->targets.end(), [source](const auto& value) {
                 return wire::Window(value.identity) == source && wire::Current(value.identity);
@@ -64,16 +66,18 @@ struct DockWindowHelperAnimation::Impl
             GetWindowRect(source, &self->nativeMinimizeFrame);
             // Establish the host's native-minimize protection before the CBT
             // caller can change foreground. No polling round trip is required.
-            if (wire::Current(self->hostReceiver))
+            const DWORD remaining = snowdesktop::dock_minimize::RemainingRequestTime(deadline, GetTickCount());
+            if (remaining && wire::Current(self->hostReceiver))
             {
                 DWORD_PTR acknowledged = 0;
                 SendMessageTimeoutW(wire::Window(self->hostReceiver), support::BeforeNativeMinimizeMessage(),
-                    reinterpret_cast<WPARAM>(source), lp, SMTO_ABORTIFHUNG | SMTO_BLOCK, 12, &acknowledged);
+                    reinterpret_cast<WPARAM>(source), lp, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                    (std::min)(remaining, 12ul), &acknowledged);
             }
             Preferences(*found);
             self->transition.ObserveNativeMinimize(source);
             if (!found->animate || IsRectEmpty(&found->anchor)) return FALSE;
-            const bool started = self->transition.StartExternalMinimize(source, found->anchor, static_cast<DWORD>(lp),
+            const bool started = self->transition.StartExternalMinimize(source, found->anchor, deadline,
                 reinterpret_cast<HWND>(static_cast<UINT_PTR>(found->keepBelow)));
             if (started) self->current = found->identity;
             return started;

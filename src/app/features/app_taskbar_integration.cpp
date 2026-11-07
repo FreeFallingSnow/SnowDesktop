@@ -14,16 +14,17 @@
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
-void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
+void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin, DWORD deadline)
 {
+    snowdesktop::performance::Scope trace("dock.transition", "minimize.taskbar");
     snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);
-    // Refresh all monitors, then synchronously cloak their taskbars before
-    // either the Dock or the application lets Windows minimize the source.
     if ((snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Taskbar) && snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::WindowMinimize)) && ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
             IsSystemTaskbarAutoHideEnabled()))
     {
-        RefreshSystemTaskbarAppearance(false);
-        if (!BeginSystemTaskbarMinimizeProtection(window))
+        // CBT is already waiting. Use the published taskbar configuration
+        // maintained by the normal observation path instead of scanning here.
+        if (!deadline) RefreshSystemTaskbarAppearance(false);
+        if (!BeginSystemTaskbarMinimizeProtection(window, false, deadline))
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Taskbar, L"[TaskbarMinimizeProtection] not all taskbars acknowledged temporary cloaking",
                 DiagnosticLogLevel::Warning);
     }

@@ -50,7 +50,7 @@ void NormalizeDockSettings(DockSettings& settings);
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
-bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false);
+bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false, DWORD deadline = 0);
 // Worker-only, bounded acknowledgement before sending the Start invocation.
 // Renewal and the 500ms closing hold expire independently in Explorer.
 // A new begin rearms even when the previous closing hold is still alive.

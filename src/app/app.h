@@ -1052,7 +1052,7 @@ private:
     void UpdateDockExternalMinimizeTargets();
     void ApplyRuntimeModulePolicy();
     bool HandleDockExternalMinimize(HWND window, DWORD deadline);
-    void PrepareDockWindowMinimize(HWND window, const wchar_t* origin);
+    void PrepareDockWindowMinimize(HWND window, const wchar_t* origin, DWORD deadline = 0);
     void HandleDockForegroundInteractionChanged(HWND window, DWORD eventTime);
     void UpdateSystemShowDesktopLayerGuard();
     bool IsShellDesktopForegroundWindow(HWND window) const;

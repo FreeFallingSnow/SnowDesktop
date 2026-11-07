@@ -6,6 +6,7 @@
 #include "dock/dock_external_minimize.h"
 #include "dock_platform_helpers.h"
 #include "dock/dock_minimize_protocol.h"
+#include "diagnostics/performance_trace.h"
 #include "platform/deployment_context.h"
 #include "settings/animation_settings.h"
 #include "platform/window_support/window_support_runtime.h"
@@ -119,13 +120,25 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
 
 bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
 {
-    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+    snowdesktop::performance::Scope trace("dock.transition", "minimize.external");
+    const auto expired = [window, deadline](const wchar_t* stage) {
+        if (snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
+        if (ShouldWriteDiagnosticLog(DiagnosticLogModule::Dock, DiagnosticLogLevel::Debug))
+        {
+            wchar_t message[192]{};
+            swprintf_s(message, L"Dock animation aborted: hwnd=%p direction=minimize provider=host "
+                L"stage=%ls hr=0x800705B4 remainingMs=0", static_cast<void*>(window), stage);
+            WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, message, DiagnosticLogLevel::Debug);
+        }
+        return true;
+    };
+    if (expired(L"external-message") ||
         !dockExternalMinimize_ || !dockExternalMinimize_->OwnsTarget(window) ||
         !IsWindowVisible(window) || IsIconic(window)) return false;
     floatingDockOutsidePress_.Cancel(window);
     dockSystemMinimizeStartedTick_.store(GetTickCount64());
-    PrepareDockWindowMinimize(window, L"application-minimize");
-    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+    PrepareDockWindowMinimize(window, L"application-minimize", deadline);
+    if (expired(L"external-taskbar") ||
         !generalSettings_.dockEnabled || reloading_ || dragSession_.HasContext() ||
         graphicsDeviceRecovery_.Pending() || !dockExternalMinimize_ ||
         !dockExternalMinimize_->OwnsTarget(window) || !dockWindowTransition_ ||
@@ -134,8 +147,11 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
         snowdesktop::animation::RuntimeWindowEffect() == snowdesktop::animation::NoEffect)
         return false;
 
-    const auto target = dockWindowTransition_->ResolveMinimizeTarget(window);
-    if (!target || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
+    const auto target = [&] {
+        snowdesktop::performance::Scope anchorTrace("dock.transition", "minimize.anchor");
+        return dockWindowTransition_->ResolveMinimizeTarget(window);
+    }();
+    if (expired(L"external-anchor") || !target) return false;
     const RECT anchor = target->anchor;
     HWND keepBelow = target->dock && IsWindowVisible(target->dock) ? target->dock : nullptr;
     if (dockSettings_.summonOnAppMinimize)

@@ -3,6 +3,7 @@
 #include <sstream>
 #include "dock_settings.h"
 #include "dock_settings_rules.h"
+#include "dock_minimize_protocol.h"
 #include "dock_fullscreen_policy.h"
 #include "dock_tray_rules.h"
 #include "platform/runtime_module_policy.h"
@@ -864,14 +865,15 @@ public:
         return true;
     }
 
-    bool BeginMinimizeProtection(HWND source, bool observed)
+    bool BeginMinimizeProtection(HWND source, bool observed, DWORD deadline)
     {
         using namespace snowdesktop::taskbar_hook;
         std::vector<HWND> taskbars;
         {
             std::lock_guard lock(mutex_);
             Snapshot snapshot;
-            if (!source || !ReadSharedSnapshot(state_, snapshot) ||
+            if (!source || (deadline && !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) ||
+                !ReadSharedSnapshot(state_, snapshot) ||
                 snapshot.ownerProcessId != GetCurrentProcessId() || !HasMinimizeProtection(snapshot)) return false;
             const ULONGLONG now = GetTickCount64();
             for (LONG i = 0; i < snapshot.targetCount; ++i)
@@ -910,13 +912,24 @@ public:
         }
         bool applied = !taskbars.empty();
         const UINT message = RegisterWindowMessageW(kApplyMessageName);
+        // Leave most of the CBT budget for preparing and presenting the image.
+        constexpr DWORD externalProtectionBudgetMs = 32;
+        const DWORD started = GetTickCount();
         for (HWND taskbar : taskbars)
         {
+            DWORD timeout = 150;
+            if (deadline)
+            {
+                const DWORD elapsed = GetTickCount() - started;
+                const DWORD remaining = snowdesktop::dock_minimize::RemainingRequestTime(deadline, GetTickCount());
+                if (!remaining || elapsed >= externalProtectionBudgetMs) return false;
+                timeout = (std::min)(remaining, externalProtectionBudgetMs - elapsed);
+            }
             DWORD_PTR result = 0;
             // Complete the existing native cloak on every taskbar thread before
             // returning to the application's original minimize operation.
             applied &= SendMessageTimeoutW(taskbar, message, 0, 0,
-                SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &result) != 0 &&
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, timeout, &result) != 0 &&
                 result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
                 GetPropW(taskbar, native::kAttachedProperty) != nullptr;
         }
@@ -1170,9 +1183,9 @@ bool IsSystemTaskbarAutoHideEnabled()
     return ReadSystemTaskbarAutoHideEnabled();
 }
 
-bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed)
+bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed, DWORD deadline)
 {
-    return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed);
+    return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed, deadline);
 }
 
 bool UpdateSystemTaskbarStartMenuProtection(bool active, bool begin)

@@ -47,7 +47,8 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockMinimizeHook(
     {
         notifying = true;
         const UINT message = snowdesktop::dock_minimize::RequestMessage();
-        const DWORD deadline = GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs;
+        DWORD deadline = GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs;
+        if (!deadline) --deadline; // Zero is reserved for an absent deadline property.
         DWORD_PTR result = 0;
         const bool sent = message && SendMessageTimeoutW(receiver, message, wParam,
                 // Allow the host's bounded source-cloak command back into this
