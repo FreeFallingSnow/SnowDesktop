@@ -3,7 +3,6 @@
 #include "settings/settings_snapshot.h"
 
 #include "SettingsShell.xaml.h"
-#include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/render/app_font.h"
 #include "platform/usage_guide.h"
 #include "settings/settings_page_catalog.h"
@@ -362,7 +361,7 @@ bool ExpandFocusContainers(const mux::DependencyObject& node,
     return icon;
 }
 
-[[nodiscard]] muxc::FontIcon CreateNavigationFontIcon(
+[[nodiscard]] muxc::FontIcon CreateHighContrastNavigationIcon(
     std::wstring_view glyph)
 {
     muxc::FontIcon icon{};
@@ -2457,6 +2456,8 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/desktop-style.svg", L"\xE7F4"},
         IconDescriptor{DesktopItem(),
             L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
+        IconDescriptor{PagesItem(),
+            L"ms-appx:///Assets/Settings/Icons/pages.svg", L"\xE8A5"},
         IconDescriptor{CategoriesItem(),
             L"ms-appx:///Assets/Settings/Icons/categories.svg", L"\xE8B7"},
         IconDescriptor{QuickNavigationItem(), L"ms-appx:///Assets/Settings/Icons/search.svg", L"\xE721"},
@@ -2495,7 +2496,7 @@ void SettingsShell::ApplyNavigationIcons()
     {
         if (highContrast)
         {
-            descriptor.item.Icon(CreateNavigationFontIcon(
+            descriptor.item.Icon(CreateHighContrastNavigationIcon(
                 descriptor.fallbackGlyph));
         }
         else
@@ -2504,14 +2505,6 @@ void SettingsShell::ApplyNavigationIcons()
                 descriptor.asset));
         }
     }
-    auto pagesIcon = CreateNavigationFontIcon(
-        highContrast ? L"\xE8A5" : snowdesktop::menu_fluent_glyphs::kFileGroup);
-    if (!highContrast)
-    {
-        pagesIcon.FontFamily(muxm::FontFamily(
-            L"ms-appx:///Assets/Fonts/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular"));
-    }
-    PagesItem().Icon(pagesIcon);
     navigationIconsHighContrast_ = highContrast;
 }
 
@@ -2537,7 +2530,6 @@ void SettingsShell::RenderPageHeaderIcon()
     {
         muxc::FontIcon headerIcon{};
         headerIcon.Glyph(sourceIcon.Glyph());
-        headerIcon.FontFamily(sourceIcon.FontFamily());
         headerIcon.FontSize(34.0);
         PageHeaderIconHost().Content(headerIcon);
         PageHeaderIconHost().Visibility(mux::Visibility::Visible);

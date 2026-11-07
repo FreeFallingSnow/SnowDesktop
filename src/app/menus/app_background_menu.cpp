@@ -1897,8 +1897,9 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             savedPageIds_.size() > std::max<std::size_t>(1, gridPages_.size()) ? 0 : MF_GRAYED),
             kContextPageDelete, _LW("app.menu.delete_page"));
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(pageMenu), _LW("app.menu.pages"));
+        // Table Multiple 24 Regular, the outline used by Settings pages.svg.
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pageMenu),
-            snowdesktop::menu_fluent_glyphs::kFileGroup, MenuIconFont::FluentRegular);
+            L"\U000F0A68", MenuIconFont::FluentRegular);
         SetMenuItemIcon(pageMenu, kContextPageAdd, L"\uF067",
             MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
         SetMenuItemIcon(pageMenu, kContextPageDelete, L"\uF2ED");
