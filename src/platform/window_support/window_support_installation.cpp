@@ -18,7 +18,19 @@ DWORD PublishHelperBundle(const std::filesystem::path& staging, const std::files
         retiredDirectory = destination.parent_path() / (destination.filename().wstring() + L".retired-" +
             std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
         const bool present = existing != INVALID_FILE_ATTRIBUTES;
-        if (present && !MoveFileExW(destination.c_str(), retiredDirectory.c_str(), MOVEFILE_WRITE_THROUGH)) return GetLastError();
+        if (present)
+        {
+            // A previous helper can still be closing its images. Wait before
+            // moving the old bundle, while it remains available to the task.
+            const ULONGLONG deadline = GetTickCount64() + 16000;
+            while (!MoveFileExW(destination.c_str(), retiredDirectory.c_str(), MOVEFILE_WRITE_THROUGH))
+            {
+                const DWORD error = GetLastError();
+                if ((error != ERROR_SHARING_VIOLATION && error != ERROR_LOCK_VIOLATION) ||
+                    GetTickCount64() >= deadline) return error;
+                Sleep(100);
+            }
+        }
         if (!MoveFileExW(staging.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH))
         {
             const DWORD error = GetLastError();

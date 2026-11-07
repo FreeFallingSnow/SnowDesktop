@@ -110,6 +110,34 @@ struct Runtime::Impl
         { SetLastError(ERROR_REVISION_MISMATCH); return false; }
         return true;
     }
+    DWORD ConnectAuthorized(HANDLE& connection, protocol::Response& response)
+    {
+        DWORD error = ERROR_SUCCESS;
+        if (connection == INVALID_HANDLE_VALUE)
+        {
+            connection = Connect();
+            if (connection == INVALID_HANDLE_VALUE)
+            {
+                error = StartAuthorizedHelper();
+                const ULONGLONG deadline = GetTickCount64() + 4000;
+                while (!error && GetTickCount64() < deadline)
+                {
+                    { std::lock_guard guard(mutex); if (stopping) break; }
+                    connection = Connect();
+                    if (connection != INVALID_HANDLE_VALUE) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                }
+            }
+        }
+        protocol::Request hello;
+        if (connection != INVALID_HANDLE_VALUE && Exchange(connection, hello, response))
+        {
+            if (response.succeeded) return ERROR_SUCCESS;
+            error = response.error;
+        }
+        else if (!error) error = GetLastError();
+        return error ? error : ERROR_NOT_CONNECTED;
+    }
     void Publish(const protocol::Response& response)
     {
         if (response.asynchronousError)
@@ -172,6 +200,28 @@ struct Runtime::Impl
             }
             if (configure)
             {
+                if (configure->enabled && !elevated && protocol::Current(configure->owner))
+                {
+                    authorization = QueryAuthorization();
+                    if (authorization.state == AuthorizationState::Registered && !authorization.updateAvailable)
+                    {
+                        constexpr CapabilityMask required = Mask(Capability::WindowPin) | Mask(Capability::WindowControl) |
+                            Mask(Capability::PointerObservation) | Mask(Capability::MinimizeAnimation);
+                        protocol::Response response;
+                        // A transient disconnect can leave a valid installation behind.
+                        // Verify that it actually works before replacing the bundle.
+                        if (!ConnectAuthorized(connection, response) && (response.capabilities & required) == required)
+                        {
+                            alternateVersionTried = false;
+                            Publish(response);
+                            std::lock_guard guard(mutex);
+                            status.authorization = authorization.state;
+                            status.updateAvailable = false;
+                            configured.emplace_back(std::move(configure->completion), ERROR_SUCCESS);
+                            continue;
+                        }
+                    }
+                }
                 HANDLE previous = nullptr;
                 if (connection != INVALID_HANDLE_VALUE)
                 {
@@ -238,28 +288,12 @@ struct Runtime::Impl
                     status.capabilities.helperState = ProviderState::Starting;
                     ++status.capabilities.generation;
                 }
-                connection = Connect();
-                DWORD error = ERROR_SUCCESS;
-                if (connection == INVALID_HANDLE_VALUE)
-                {
-                    error = StartAuthorizedHelper();
-                    const ULONGLONG deadline = GetTickCount64() + 4000;
-                    while (!error && GetTickCount64() < deadline)
-                    {
-                        { std::lock_guard guard(mutex); if (stopping) break; }
-                        connection = Connect();
-                        if (connection != INVALID_HANDLE_VALUE) break;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(40));
-                    }
-                }
-                protocol::Request hello;
                 protocol::Response response;
-                if (connection == INVALID_HANDLE_VALUE || !Exchange(connection, hello, response) || !response.succeeded)
+                if (const DWORD error = ConnectAuthorized(connection, response))
                 {
-                    if (!error) error = GetLastError();
                     if (connection != INVALID_HANDLE_VALUE) CloseHandle(connection);
                     connection = INVALID_HANDLE_VALUE;
-                    Disconnect(error ? error : ERROR_NOT_CONNECTED);
+                    Disconnect(error);
                     const bool versionProbe = !alternateVersionTried && (error == ERROR_BROKEN_PIPE ||
                         error == ERROR_NO_DATA || error == ERROR_REVISION_MISMATCH || error == ERROR_INVALID_DATA);
                     if (versionProbe)
