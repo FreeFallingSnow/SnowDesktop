@@ -180,6 +180,9 @@ local function fetch(model, bypassCache, useBrowserAgent)
         cacheSeconds = bypassCache and 0 or 120,
         maxBytes = responseLimit(),
     }
+    if widget.hasFeature("task.network.retryDirect") then
+        arguments.retryDirect = true
+    end
     if widget.hasFeature("task.network.headers") then
         arguments.headers = {
             Accept = "application/rss+xml, application/atom+xml, " ..
