@@ -37,7 +37,6 @@ HRESULT RetireRenderedSurface(
     item.renderedVisualAttached = false;
     item.renderTarget.reset();
     item.renderedVisual.Reset();
-    item.renderedContentId.clear();
     return result;
 }
 }
@@ -283,7 +282,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         return false;
     }
 
-    if (startupInitializationComplete_ && !widgetSurfaceRenderer_ &&
+    // Prepare the visible startup frame on the UI device before showing the desktop.
+    if (!desktopStartupPresentationPending_ && !widgetSurfaceRenderer_ &&
         !widgetSurfaceRendererUnavailable_)
     {
         auto renderer = std::make_unique<snowdesktop::widget_runtime::WidgetSurfaceRenderer>();
@@ -404,8 +404,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed;
-        if (item.renderTarget && (!asynchronous || item.width != width ||
-            item.height != height || item.renderedContentId != contentId))
+        // The synchronous surface and the worker target may coexist during handoff
+        // when they represent the same Lua content at the same size.
+        const bool sameSurface = item.width == width && item.height == height &&
+            item.renderedContentId == contentId;
+        if (item.renderTarget && (!asynchronous || !sameSurface))
         {
             const HRESULT retired = RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
             if (FAILED(retired))
@@ -413,6 +416,16 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 surfaceFailures.push_back({widgetId, L"Retire worker visual", retired, true});
                 continue;
             }
+        }
+        if (asynchronous && item.surface && !sameSurface)
+        {
+            const HRESULT detached = item.visual->SetContent(nullptr);
+            if (FAILED(detached))
+            {
+                surfaceFailures.push_back({widgetId, L"Detach synchronous surface", detached, true});
+                continue;
+            }
+            item.surface.Reset();
         }
         if (asynchronous && !item.renderTarget)
         {
@@ -599,14 +612,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             hr = item.visual->SetOffsetX(static_cast<float>(surfaceLeft));
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetY(static_cast<float>(surfaceTop));
+        const bool showContent = item.visible &&
+            (item.surface || item.renderedVisualAttached);
         if (SUCCEEDED(hr))
-            hr = item.clip->SetRight(
-                item.visible && (!asynchronous || item.renderedVisualAttached)
-                    ? static_cast<float>(width) : 0.0f);
+            hr = item.clip->SetRight(showContent ? static_cast<float>(width) : 0.0f);
         if (SUCCEEDED(hr))
-            hr = item.clip->SetBottom(
-                item.visible && (!asynchronous || item.renderedVisualAttached)
-                    ? static_cast<float>(height) : 0.0f);
+            hr = item.clip->SetBottom(showContent ? static_cast<float>(height) : 0.0f);
         if (FAILED(hr))
         {
             item.iconBackdrops.DiscardDraw();
@@ -614,7 +625,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 widgetId, L"Update visual", hr, true });
         }
         else
+        {
+            if (luaWidget && !asynchronous)
+                item.renderedContentId = contentId;
             item.iconBackdrops.Publish(desktopBackdropCompositor_);
+        }
     }
 
     if (!SyncDesktopWidgetCompositionZOrder())
@@ -693,12 +708,10 @@ void DesktopApp::DrainDesktopWidgetSurfaceResults()
             // existing native marquee children and retire the startup surface.
             hr = item.visual->AddVisual(item.renderedVisual.Get(), TRUE, nullptr);
             if (SUCCEEDED(hr))
-            {
                 item.renderedVisualAttached = true;
-                hr = item.visual->SetContent(nullptr);
-            }
             if (SUCCEEDED(hr)) hr = item.clip->SetRight(static_cast<float>(item.width));
             if (SUCCEEDED(hr)) hr = item.clip->SetBottom(static_cast<float>(item.height));
+            if (SUCCEEDED(hr)) hr = item.visual->SetContent(nullptr);
             if (SUCCEEDED(hr)) item.surface.Reset();
             changed = true;
         }
@@ -706,8 +719,7 @@ void DesktopApp::DrainDesktopWidgetSurfaceResults()
         {
             item.renderFailed = true;
             (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
-            item.surface.Reset();
-            item.width = item.height = 0;
+            if (!item.surface) item.width = item.height = 0;
             if (RequestGraphicsDeviceRecovery(L"Widget render worker", hr)) return;
             const auto message = L"Widget render worker failed; using synchronous surface: " +
                 result.owner + L" hr=" + std::to_wstring(hr);
@@ -780,6 +792,7 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         // Stop queued/in-flight publication. A later show gets a fresh target
         // identity, so a late completion cannot open the hidden clip.
         (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), item);
+        item.renderedContentId.clear();
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }
     if (!visible && item.clip)
