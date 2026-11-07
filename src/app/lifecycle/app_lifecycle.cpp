@@ -1195,6 +1195,8 @@ void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
     exitRequested_ = true;
+    steamPresenceService_.reset();
+    if (steamEntitlementService_) steamEntitlementService_->Stop();
     dataCleanupWorker_.Stop();
     // A confirmation may be pumping messages inside task dispatch. Invalidate
     // tasks now, keeping the engine alive until that modal stack has unwound.

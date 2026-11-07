@@ -17,6 +17,8 @@ namespace
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 
+constexpr DWORD kBridgeShutdownWaitMs = 2000;
+
 struct Handle
 {
     HANDLE value = nullptr;
@@ -31,11 +33,12 @@ bool StartChild(const std::filesystem::path& path, Handle& process,
     Handle& write, Handle& read)
 {
     Handle childRead, childWrite;
-    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
-    if (!CreatePipe(&childRead.value, &write.value, &security, 64 * 1024) ||
-        !CreatePipe(&read.value, &childWrite.value, &security, 64 * 1024) ||
-        !SetHandleInformation(write.value, HANDLE_FLAG_INHERIT, 0) ||
-        !SetHandleInformation(read.value, HANDLE_FLAG_INHERIT, 0)) return false;
+    // A concurrent process launch must never inherit the host's writer and
+    // keep the bridge waiting for input after the host closes it.
+    if (!CreatePipe(&childRead.value, &write.value, nullptr, 64 * 1024) ||
+        !CreatePipe(&read.value, &childWrite.value, nullptr, 64 * 1024) ||
+        !SetHandleInformation(childRead.value, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) ||
+        !SetHandleInformation(childWrite.value, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) return false;
 
     auto environment = BuildSnowDesktopSteamChildEnvironment();
     if (environment.empty()) return false;
@@ -93,10 +96,15 @@ struct Service::Impl
         if (StartChild(executable, process, write, read))
         {
             Pump(process.value, write.value, read.value, stop);
+            // Closing the pipes lets the bridge leave the lobby and shut
+            // down Steamworks, even if it was blocked writing an event.
             write.Reset();
             read.Reset();
-            if (WaitForSingleObject(process.value, 250) == WAIT_TIMEOUT)
+            if (WaitForSingleObject(process.value, kBridgeShutdownWaitMs) == WAIT_TIMEOUT)
+            {
                 (void)TerminateProcess(process.value, ERROR_CANCELLED);
+                (void)WaitForSingleObject(process.value, kBridgeShutdownWaitMs);
+            }
         }
         {
             const std::lock_guard lock(mutex);

@@ -14,7 +14,7 @@ void DesktopApp::ConfigureSteamWidgetMultiplayer(const std::filesystem::path& br
 {
     widgetEngine_->ConfigureSteamMultiplayer(bridge,
         [this] {
-            if (!steamEntitlementService_) return 0;
+            if (exitRequested_ || !steamEntitlementService_) return 0;
             const auto state = steamEntitlementService_->Current();
             if (!state.widgetMultiplayerAvailable) return 0;
             if (!state.registered) return 1;
