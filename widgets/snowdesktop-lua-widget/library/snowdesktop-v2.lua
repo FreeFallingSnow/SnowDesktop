@@ -740,7 +740,7 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
----@field state? 'unavailable'|'locked'|'idle'|'listening'|'invited'|'connecting'|'waiting'|'connected'|'busy' Steam multiplayer.state.
+---@field state? 'unavailable'|'locked'|'idle'|'listening'|'invited'|'connecting'|'waiting'|'roomReady'|'waitingPeer'|'connected'|'busy' Steam multiplayer.state.
 ---@field host? boolean Whether this instance owns the active Steam lobby.
 ---@field fromHost? boolean Whether a multiplayer.message came from the lobby owner.
 ---@field task? 'audio.play'|'audio.pause'|'audio.resume'|'audio.stop'|'audio.seek'|'audio.setVolume'|'audio.setLoop'|'audio.setPlaybackRate'|'audio.setPlaybackMode'|'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'native.request'|'native.watch'|'shell.openUri'|string
@@ -2278,6 +2278,7 @@ task = {}
 --- On hosts with multiplayer.room, legacy room tasks open General settings and return hostManaged.
 ---@overload fun(name: 'multiplayer.create'|'multiplayer.invite'|'multiplayer.listen'|'multiplayer.join'|'multiplayer.leave'): taskId: integer?, error: string?
 ---@overload fun(name: 'multiplayer.openSettings'): taskId: integer?, error: string?
+---@overload fun(name: 'multiplayer.activate'|'multiplayer.deactivate'): taskId: integer?, error: string?
 ---@overload fun(name: 'multiplayer.send', arguments: SnowMultiplayerSendArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'native.request', arguments: SnowNativeRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'native.watch', arguments: SnowNativeWatchArguments): taskId: integer?, error: string?

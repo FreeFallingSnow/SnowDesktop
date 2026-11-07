@@ -2846,5 +2846,5 @@
   "settings.general.steamRoom.showCard": "表示",
   "settings.general.steamRoom.hideCard": "非表示",
   "settings.general.steamRoom.description": "オンライン対戦に対応したデスクトップウィジェットで Steam のフレンドと遊べます。",
-  "settings.general.steamRoom.usage": "「表示」を選び、Steam 対戦カードからルームを作成するか招待を承諾します。"
+  "settings.general.steamRoom.usage": "「表示」を選ぶとルームを作成でき、Steam のフレンドから招待が届くと自動で参加します。"
 }

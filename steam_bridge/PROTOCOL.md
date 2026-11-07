@@ -66,12 +66,18 @@ inherited pipe handles with fixed-size v2 frames and an owned child lifetime.
 The normal JSON CLI protocol remains version 1.
 
 The worker uses an online, entitled Steam user and keeps at most one private
-two-player lobby per host. The worker resolves Steam invitations using the
-room protocol marker and validates it after join. Only the other current
+two-player lobby per host. With the room card shown, the host listens in the
+background and automatically joins valid invitations from Steam friends for
+the current app. Explicit Steam join requests still work. The worker checks
+the room protocol marker before and after joining. Only the other current
 member can send messages. The application routes messages by package UUID,
 version and source to an authorized Lua instance. The host keeps Steam IDs
 and friend details within its native settings and Bridge boundary. Payloads
 are UTF-8 with a 1024-byte limit and per-direction room quotas.
+The host reserves the `snowdesktop.room.participation` channel for readiness
+announcements. A `+` or `-` prefix followed by the package channel selects or
+withdraws the sender's participation. These messages are handled by the host
+and never delivered to Lua. The Bridge uses the same v2 lobby envelope.
 
 ## Content contract
 

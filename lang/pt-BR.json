@@ -2846,5 +2846,5 @@
   "settings.general.steamRoom.showCard": "Mostrar",
   "settings.general.steamRoom.hideCard": "Ocultar",
   "settings.general.steamRoom.description": "Jogue com seus amigos do Steam em widgets de área de trabalho com suporte a multijogador.",
-  "settings.general.steamRoom.usage": "Selecione «Mostrar» e use o cartão do Steam para criar uma sala ou aceitar um convite."
+  "settings.general.steamRoom.usage": "Selecione «Mostrar» para criar uma sala e entrar automaticamente ao receber um convite de um amigo do Steam."
 }

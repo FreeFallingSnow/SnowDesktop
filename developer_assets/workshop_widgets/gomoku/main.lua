@@ -3,10 +3,11 @@ local board = module.require("modules/board.lua")
 local function setup()
     local preview = board.parse(storage.get("preview_board"))
     return {
-        game = preview or board.parse(board.empty),
+        localGame = preview or board.parse(board.empty),
         revision = 0,
         connected = false,
         showSteam = not preview and widget.hasFeature("multiplayer.room.settings"),
+        supportsParticipation = widget.hasFeature("multiplayer.room.participation"),
     }
 end
 
@@ -36,12 +37,14 @@ local function applyMove(model, nextGame)
 end
 
 local function move(model, index)
+    if not model.connected then
+        model.localGame = board.play(model.localGame, index) or model.localGame
+        return
+    end
     if model.pending then return end
     local nextGame = board.play(model.game, index)
     if not nextGame then return end
-    if not model.connected then
-        applyMove(model, nextGame)
-    elseif model.host and model.game.turn == "B" then
+    if model.host and model.game.turn == "B" then
         applyMove(model, nextGame)
     elseif not model.host and model.game.turn == "W" then
         model.pending, model.pendingIndex = nextGame, index
@@ -85,10 +88,24 @@ local function receive(model, e)
     end
 end
 
+local function changeMode(model)
+    if model.modeTask then return end
+    if model.connected or model.state == "waitingPeer" then
+        model.modeTask = task.start("multiplayer.deactivate")
+    elseif model.state == "roomReady" then
+        model.modeTask = task.start("multiplayer.activate")
+    else
+        task.start("multiplayer.openSettings")
+        return
+    end
+    model.modeFailed = not model.modeTask
+    widget.invalidate()
+end
+
 local function event(_, model, e)
     if e.kind == "action" then
         if e.id == "steam" and model.showSteam then
-            task.start("multiplayer.openSettings")
+            changeMode(model)
             return
         end
         model.sendFailed = false
@@ -96,26 +113,31 @@ local function event(_, model, e)
         if index then
             move(model, tonumber(index))
         elseif e.id == "new" and (not model.connected or model.host) then
-            applyMove(model, board.parse(board.empty))
+            local empty = board.parse(board.empty)
+            if model.connected then applyMove(model, empty) else model.localGame = empty end
             model.roomEnded = false
         elseif e.id == "sync" and model.connected and not model.host then
             model.resyncRequested = true
             send(model, "R")
         end
     elseif e.kind == "multiplayer.state" then
-        local connected = e.state == "connected"
+        local connected = model.supportsParticipation and e.state == "connected"
         if connected and not model.connected then
             model.game, model.revision = board.parse(board.empty), 0
             model.roomEnded, model.sendFailed = false, false
         elseif model.connected and not connected then
             model.pending, model.pendingIndex, model.sendTask, model.sent, model.queued = nil, nil, nil, nil, nil
-            model.resyncRequested, model.sendFailed, model.roomEnded = false, false, true
+            model.resyncRequested, model.sendFailed = false, false
+            model.roomEnded = e.state ~= "waitingPeer" and e.state ~= "roomReady" and e.state ~= "busy"
         end
         local arrived = connected and not model.connected
-        model.connected, model.host = connected, e.host
+        model.state, model.connected, model.host = e.state, connected, e.host
+        model.modeFailed = false
         if arrived and not model.host then send(model, "R") end
     elseif e.kind == "multiplayer.message" then
         receive(model, e)
+    elseif e.kind == "task.complete" and e.taskId == model.modeTask then
+        model.modeTask, model.modeFailed = nil, not e.ok
     elseif e.kind == "task.complete" and e.taskId == model.sendTask then
         if not e.ok then sendFailed(model, model.sent) end
         local nextMessage = model.queued
@@ -131,6 +153,9 @@ local function status(model, shown)
     if shown.winner == "B" then return l10n.tr("lua_widget.gomoku.black_wins") end
     if shown.winner == "W" then return l10n.tr("lua_widget.gomoku.white_wins") end
     if shown.winner == "draw" then return l10n.tr("lua_widget.gomoku.draw") end
+    if model.modeFailed then return l10n.tr("lua_widget.gomoku.mode_failed") end
+    if model.state == "waitingPeer" then return l10n.tr("lua_widget.gomoku.waiting_peer") end
+    if model.state == "busy" then return l10n.tr("lua_widget.gomoku.local_board_busy") end
     if model.sendFailed then return l10n.tr("lua_widget.gomoku.send_failed") end
     if model.pending then return l10n.tr("lua_widget.gomoku.confirming") end
     if model.roomEnded then return l10n.tr("lua_widget.gomoku.room_ended") end
@@ -187,7 +212,7 @@ local function render(_, model)
         end
     end
 
-    local shown = model.pending or model.game
+    local shown = model.connected and (model.pending or model.game) or model.localGame
     local wins = {}
     for _, index in ipairs(shown.line or {}) do wins[index] = true end
     local canMove = not shown.winner and not model.pending and
@@ -217,12 +242,18 @@ local function render(_, model)
     local sync = model.connected and not model.host
     local action = sync and "sync" or "new"
     local label = sync and l10n.tr("lua_widget.gomoku.sync") or l10n.tr("lua_widget.gomoku.new")
-    local showSteam = model.showSteam and not model.connected
+    local showSteam = model.showSteam and model.state ~= "busy"
     local buttonY = top + side * 1.105
     button(action, label, left + side * (showSteam and 0.04 or 0.27), buttonY,
         side * 0.46, side * 0.095, buttonFill, ink)
     if showSteam then
-        button("steam", l10n.tr("lua_widget.gomoku.steam_room"), left + side * 0.52, buttonY,
+        local steamLabel = l10n.tr("lua_widget.gomoku.steam_room")
+        if model.connected or model.state == "waitingPeer" then
+            steamLabel = l10n.tr("lua_widget.gomoku.local_game")
+        elseif model.state == "roomReady" then
+            steamLabel = l10n.tr("lua_widget.gomoku.online_game")
+        end
+        button("steam", steamLabel, left + side * 0.52, buttonY,
             side * 0.44, side * 0.095, buttonFill, ink)
     end
 end

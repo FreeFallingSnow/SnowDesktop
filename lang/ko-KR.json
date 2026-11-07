@@ -2846,5 +2846,5 @@
   "settings.general.steamRoom.showCard": "표시",
   "settings.general.steamRoom.hideCard": "숨기기",
   "settings.general.steamRoom.description": "멀티플레이를 지원하는 데스크톱 위젯에서 Steam 친구와 함께 플레이하세요.",
-  "settings.general.steamRoom.usage": "「표시」를 선택한 후 Steam 카드에서 방을 만들거나 초대를 수락하세요."
+  "settings.general.steamRoom.usage": "「표시」를 선택하면 방을 만들 수 있고, Steam 친구의 초대를 받으면 자동으로 참가합니다."
 }

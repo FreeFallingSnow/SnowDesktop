@@ -35,6 +35,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "multiplayer.session",
     "multiplayer.room",
     "multiplayer.room.settings",
+    "multiplayer.room.participation",
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",
@@ -458,7 +459,7 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 83> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 85> kSystemTaskContracts = {{
     { "audio.play", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlayArguments", "SnowAudioPlayValue" },
     { "audio.pause", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlaybackArguments", "SnowAcceptedTaskValue" },
     { "audio.resume", "task.audio.playback", "audio.playback", false, 8, "SnowAudioPlaybackArguments", "SnowAcceptedTaskValue" },
@@ -485,6 +486,10 @@ constexpr std::array<SystemTaskContract, 83> kSystemTaskContracts = {{
     { "multiplayer.leave", "multiplayer.session", nullptr,
         true, 1, nullptr, "SnowAcceptedTaskValue" },
     { "multiplayer.openSettings", "multiplayer.room.settings", nullptr,
+        true, 1, nullptr, nullptr },
+    { "multiplayer.activate", "multiplayer.room.participation", "multiplayer.steam",
+        true, 1, nullptr, nullptr },
+    { "multiplayer.deactivate", "multiplayer.room.participation", nullptr,
         true, 1, nullptr, nullptr },
     { "location.current", "task.location.current", "location.read",
         true, 1, "SnowLocationArguments", "SnowLocationTaskValue" },

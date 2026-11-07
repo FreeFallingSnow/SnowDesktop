@@ -43,6 +43,7 @@ class Lobby final
 public:
     Lobby(HANDLE input, HANDLE output)
         : input_(input), output_(output), user_(SteamUser()->GetSteamID()),
+          invited_(this, &Lobby::OnInvited),
           joinRequested_(this, &Lobby::OnJoinRequested),
           launchChanged_(this, &Lobby::OnLaunchChanged),
           dataUpdated_(this, &Lobby::OnDataUpdated),
@@ -138,7 +139,11 @@ private:
         deadline_ = Clock::now() + 20s;
         call_ = creating_ ? SteamMatchmaking()->CreateLobby(k_ELobbyTypePrivate, 2) :
             SteamMatchmaking()->JoinLobby(invitation_);
-        if (call_ == k_uAPICallInvalid) Result(request_, "roomUnavailable");
+        if (call_ == k_uAPICallInvalid)
+        {
+            invitation_.Clear();
+            Result(request_, "roomUnavailable");
+        }
     }
 
     template<typename T>
@@ -186,6 +191,7 @@ private:
             }
         }
         call_ = k_uAPICallInvalid;
+        invitation_.Clear();
         if (!room_.IsValid()) return Result(request_, "roomUnavailable");
         owner_ = SteamMatchmaking()->GetLobbyOwner(room_);
         if (!owner_.IsValid() || (owner_ == user_) != creating_)
@@ -261,6 +267,13 @@ private:
         friends_.clear();
     }
 
+    void OnInvited(LobbyInvite_t* event)
+    {
+        if (CGameID(event->m_ulGameID).AppID() == SteamUtils()->GetAppID() &&
+            SteamFriends()->HasFriend(CSteamID(event->m_ulSteamIDUser), k_EFriendFlagImmediate))
+            ReadInvitation(CSteamID(event->m_ulSteamIDLobby));
+    }
+
     void OnJoinRequested(GameLobbyJoinRequested_t* event)
     {
         ReadInvitation(event->m_steamIDLobby);
@@ -290,22 +303,28 @@ private:
 
     void ReadInvitation(CSteamID id)
     {
+        const auto now = Clock::now();
+        if (room_.IsValid() || call_ != k_uAPICallInvalid ||
+            (invitation_.IsValid() && now < invitationExpiry_) ||
+            (requestedInvitation_.IsValid() && now < requestedExpiry_)) return;
         if (!id.IsValid() || id.GetEAccountType() != k_EAccountTypeChat ||
-            !(id.GetUnAccountInstance() & k_EChatInstanceFlagLobby) || id == room_) return;
+            !(id.GetUnAccountInstance() & k_EChatInstanceFlagLobby)) return;
         requestedInvitation_ = id;
-        requestedExpiry_ = Clock::now() + 15s;
-        (void)SteamMatchmaking()->RequestLobbyData(id);
+        requestedExpiry_ = now + 15s;
+        if (!SteamMatchmaking()->RequestLobbyData(id)) requestedInvitation_.Clear();
     }
 
     void OnDataUpdated(LobbyDataUpdate_t* event)
     {
-        if (!event->m_bSuccess || event->m_ulSteamIDLobby != requestedInvitation_.ConvertToUint64() ||
+        if (!requestedInvitation_.IsValid() || event->m_ulSteamIDLobby != requestedInvitation_.ConvertToUint64() ||
             event->m_ulSteamIDMember != event->m_ulSteamIDLobby || Clock::now() >= requestedExpiry_) return;
-        const std::string_view identity(SteamMatchmaking()->GetLobbyData(requestedInvitation_, kIdentityKey));
-        if (identity != kRoomIdentity) return;
-        invitation_ = requestedInvitation_;
-        invitationExpiry_ = Clock::now() + 2min;
+        const auto lobby = requestedInvitation_;
         requestedInvitation_.Clear();
+        if (!event->m_bSuccess || room_.IsValid() || call_ != k_uAPICallInvalid) return;
+        const std::string_view identity(SteamMatchmaking()->GetLobbyData(lobby, kIdentityKey));
+        if (identity != kRoomIdentity) return;
+        invitation_ = lobby;
+        invitationExpiry_ = Clock::now() + 2min;
         Emit(Kind::Invitation, 0, invitation_.ConvertToUint64());
     }
 
@@ -368,6 +387,7 @@ private:
     CSteamID peer_;
     CSteamID invitation_;
     CSteamID requestedInvitation_;
+    CCallback<Lobby, LobbyInvite_t> invited_;
     CCallback<Lobby, GameLobbyJoinRequested_t> joinRequested_;
     CCallback<Lobby, NewUrlLaunchParameters_t> launchChanged_;
     CCallback<Lobby, LobbyDataUpdate_t> dataUpdated_;

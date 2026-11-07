@@ -2846,5 +2846,5 @@
   "settings.general.steamRoom.showCard": "显示",
   "settings.general.steamRoom.hideCard": "隐藏",
   "settings.general.steamRoom.description": "和 Steam 好友在支持联机的桌面组件中一起玩。",
-  "settings.general.steamRoom.usage": "点击「显示」，再从联机卡片创建房间或接受邀请。"
+  "settings.general.steamRoom.usage": "点击「显示」后可创建房间，收到 Steam 好友邀请时会自动加入。"
 }

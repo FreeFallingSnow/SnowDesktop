@@ -2846,5 +2846,5 @@
   "settings.general.steamRoom.showCard": "Anzeigen",
   "settings.general.steamRoom.hideCard": "Ausblenden",
   "settings.general.steamRoom.description": "Spiele mit Steam-Freunden in Desktop-Widgets mit Mehrspieler-Unterstützung.",
-  "settings.general.steamRoom.usage": "Wähle „Anzeigen“ und erstelle auf der Steam-Karte einen Raum oder nimm eine Einladung an."
+  "settings.general.steamRoom.usage": "Wähle „Anzeigen“, um einen Raum zu erstellen und Einladungen von Steam-Freunden automatisch beizutreten."
 }

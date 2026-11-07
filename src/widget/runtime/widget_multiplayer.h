@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace snowdesktop::widget_runtime
 {
@@ -16,7 +17,7 @@ struct WidgetMultiplayer
     using Kind = steam_widget_multiplayer::Kind;
 
     std::filesystem::path executable;
-    // 0: incompatible bridge, 1: locked, 2: unlocked, 3: unlocked with Steam presence.
+    // 0: incompatible bridge, 1: locked, 2: unlocked, 3: unlocked with the room card shown.
     std::function<int()> availability;
     std::function<void(bool)> openSettings;
     std::function<void()> changed;
@@ -25,6 +26,16 @@ struct WidgetMultiplayer
     std::vector<steam_widget_multiplayer::Frame> friends;
     std::unordered_map<std::uint64_t, std::string> lastState;
     std::unordered_map<std::uint64_t, std::uint64_t> sends;
+    struct Participation
+    {
+        std::uint64_t owner;
+        bool peerReady = false;
+        bool peerLeft = false;
+    };
+    std::unordered_map<std::string, Participation> participants;
+    std::unordered_map<std::string, bool> pendingAnnouncements;
+    std::optional<std::pair<std::string, bool>> announcement;
+    Clock::time_point announceAfter{};
     std::optional<steam_widget_multiplayer::Frame> invitation;
     Clock::time_point invitationUntil{}, launchUntil{}, retryAfter{};
     std::uint64_t launchLobby = 0;

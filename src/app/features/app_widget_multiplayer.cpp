@@ -17,7 +17,7 @@ void DesktopApp::ConfigureSteamWidgetMultiplayer(const std::filesystem::path& br
             const auto state = steamEntitlementService_->Current();
             if (!state.widgetMultiplayerAvailable) return 0;
             if (!state.registered) return 1;
-            return generalSettings_.steamShowRunningStatus ? 3 : 2;
+            return generalSettings_.steamRoomVisible ? 3 : 2;
         },
         [this](bool locked) {
             ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(

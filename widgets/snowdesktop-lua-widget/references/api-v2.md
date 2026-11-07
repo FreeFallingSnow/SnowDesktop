@@ -3674,6 +3674,7 @@ Lua API v2 组件可声明 `multiplayer.session`、`multiplayer.room` 和 `multi
 1.0.14.0。同版本早期构建缺少 `multiplayer.room`。先发布宿主与 Bridge，再发布依赖组件。
 
 在「常规 → 高级功能 → Steam 联机」显示房间卡片，再从卡片管理 Steam 私密双人房。
+显示卡片后，宿主会在后台接收 Steam 好友的邀请，并在空闲时自动加入已校验的房间。
 房间在组件卸载后继续存在。
 同一房间的消息按组件 UUID、包来源和版本分开，每个组件在本机只选一个已授权实例参与。
 双方可在进房前后添加组件，预览使用单机状态。
@@ -3682,10 +3683,18 @@ Lua API v2 组件可声明 `multiplayer.session`、`multiplayer.room` 和 `multi
 | --- | --- |
 | `multiplayer.send` | `{text=...}`，发送 1–1024 字节 UTF-8 文本，拒绝 NUL |
 | `multiplayer.openSettings` | 无参数，从可信用户手势打开联机设置。卡片隐藏时定位到显示按钮；高级功能尚未解锁时定位到解锁入口。 |
+| `multiplayer.activate` | 无参数，从可信用户手势选择当前实例参与已连接的房间。需要 `multiplayer.steam` 授权。 |
+| `multiplayer.deactivate` | 无参数，从可信用户手势让当前实例退出联机，保留宿主房间。 |
 
 `multiplayer.openSettings` 使用可选能力 `multiplayer.room.settings`，沿用 API v2。
 调用前通过 `widget.hasFeature("multiplayer.room.settings")` 探测，旧宿主可隐藏该入口。
 打开设置不需要 Steam 消息权限，也不会修改卡片显隐或房间状态。
+
+声明可选能力 `multiplayer.room.participation` 可让同一台机器上的玩家选择参与实例。
+该能力沿用 API v2。旧宿主可继续提供本地功能。
+房间连通后未选择的实例收到 `roomReady`。本机已有同渠道实例参与时，其他实例收到
+`busy`。选中后收到 `waitingPeer`，双方都选中相同包渠道后收到 `connected`。
+退出、撤销权限或卸载会结束该实例的联机参与。未声明选择能力的组件沿用自动分配。
 
 `task.complete.value.accepted` 表示 Steam 接受发送。需要应用层确认时，由组件实现确认或
 重新同步。整间房每个方向每秒最多 8 条。旧的 `create`、`listen`、`invite`、`join` 和
@@ -3693,7 +3702,8 @@ Lua API v2 组件可声明 `multiplayer.session`、`multiplayer.room` 和 `multi
 身份由宿主处理。
 
 - `multiplayer.state` 的 `state` 可能是 `unavailable`、`locked`、`idle`、`listening`、
-  `invited`、`connecting`、`waiting`、`connected` 或 `busy`，`host` 表示当前实例是否是房主。
+  `invited`、`connecting`、`waiting`、`roomReady`、`waitingPeer`、`connected` 或 `busy`。
+  `host` 表示已进入联机的当前实例是否是房主。
   共享房间由宿主接收邀请，组件收到 `connected` 即可收发。离开此状态时清理未确认的游戏操作。
 - `multiplayer.message` 的 `text` 是对方发来的文本，`fromHost` 表示发送者是当前房主。
   把消息作为不可信游戏数据解析，房主校验行动、回合和版本。双方均在房间中时才收发。
