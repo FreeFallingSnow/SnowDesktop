@@ -119,6 +119,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **空文档批次受构建租约阻塞（2026-11-07）**：Task `geometric-icon-title-drop` 的批次 `17540adb42054997915cb0b3dae40bdc` 修订 0 声明 `docs/none`，轻量检查通过，`ready-and-wait` 随后返回码 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。当时只读状态显示并行批次 `96150660c82445c883d13f4bb56edd84` 的 Run `01e1c6c6523e4aa5865f2bd47aa41f3e` 正在执行，状态回执未识别锁持有人。源码确认 `build_manager.ps1` 在判定可直接发布空计划前尝试取得 `build.lock`。并行 Run 归档后重开同一文档批次补记证据，产品构建无需重跑。下一步分离空计划发布所需的状态事务与执行租约，或在租约占用时保留前台等待。
+
 - **测试目录查询再次受阻（2026-11-07）**：设置图标 Task `pages-header-monochrome-icon` 在批次 `46f5094bd7c24cc38e26205ff50ad871` 修订 0 执行 `scripts/test.bat list`，返回码 1，原始输出为 `Shared output busy: batch 46f5094bd7c24cc38e26205ff50ad871 / editing / task-b2f6f0cee3ba4b22be90f33da3929a7b:editing, pages-header-monochrome-icon:editing.`。改查 `cmake/testing/Tests.cmake` 确认 `behavior_manifest`，未重复配置或构建。目录查询与执行租约的分离仍待处理。
 
 - **同一只读入口复现（2026-11-06）**：Steam 组件联机 Task `task-e8cf97d08e2c41299365e068559911c4` 在编辑批次 `5048f0139d70451f918c67b612fac1f6` 时用 `scripts/test.bat list` 查验证计划的条目，返回 `Shared output busy` 并列出自身编辑登记。改为核对 `cmake/testing/Tests.cmake` 与已有 CTest 注册。未运行重复构建，目录入口与执行租约的分离仍待处理。
@@ -135,6 +137,8 @@
 - **本次等待证据**：Task `remove-tool-tests-20261104` 的 `begin` 等待已封闭批次 `c2e847c94366496eb443eef167f37cf5`，当时编辑者为 `task-d5e30970e8544fdca7461e632368ad5b`。原生工具测试删除不需要产品编译，仍需等待编辑窗口；其两处待删测试源码也有该任务的在编修改，须等归属闭合后接手。沿用原等待 session，不创建候选或重复提交，不估填等待成本。
 
 ### CF-012 观察等待默认超时导致模型轮询
+
+- **执行阶段的重复提示（2026-11-07）**：Task `geometric-icon-title-drop`，批次 `dade9af1c5cb479b84e47add78d40877` 修订 0，Run `8e306b73b26f4c0290a13cd8d92247e5`。同一 `ready-and-wait` session `22245` 在执行期间两次输出 `Waiting for the collaboration state transaction.`，并在两段回执中重复显示 `latest stage start compile`。同一 Run 最终通过 Release 构建和三项测试。记录的是观察输出重复，未发现重复提交或重复执行。后续按业务阶段标识与短时事务分别去重，保留实际阶段变化和最终结果。
 
 - **候选槽排队的重复提示（2026-11-07）**：Task `win10-opaque-context-menu`，批次 `22546c8e67de4f5f959a99765be2c60f` 修订 0，Run `d0c0f816ff0042acaca91b6579ef4621`。`ready-and-wait` 在原观察 session `35079` 多次交替输出 `Waiting for the collaboration state transaction.` 和 `Candidate slot is busy; existing materialization/executor retains its files.`，进入执行前还短暂输出 `resource reason not recorded`。排队时本机仍有 MSBuild 和 cl 运行，原 Run 随后完成构建和两项定向测试。重复提示同样出现在候选槽排队，阅读等待输出时需过滤。保留候选槽实际占用及业务阶段变化，去重事务提示，并核对排队状态切换时原因字段的发布顺序。
 
