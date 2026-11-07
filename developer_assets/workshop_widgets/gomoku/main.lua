@@ -1,17 +1,33 @@
 local board = module.require("modules/board.lua")
+local ai = module.require("modules/ai.lua")
+local skin = module.require("modules/skin.lua")
 
 local function setup()
-    local preview = board.parse(storage.get("preview_board"))
+    local preview = board.parse(storage.get("preview_board"), storage.get("preview_rule"))
+    if preview then
+        local last = storage.get("preview_last")
+        if type(last) == "number" and last >= 1 and last <= board.count and last % 1 == 0 then
+            preview.last = last
+        end
+    end
     return {
         localGame = preview or board.parse(board.empty),
         revision = 0,
         connected = false,
         showSteam = not preview and widget.hasFeature("multiplayer.room.settings"),
         supportsParticipation = widget.hasFeature("multiplayer.room.participation"),
+        muted = storage.get("mute_reactions") == true,
     }
 end
 
+local function shownGame(model)
+    if model.connected then return model.pending or model.game end
+    if model.aiLevel then return model.aiGame end
+    return model.localGame
+end
+
 local function sendFailed(model, text)
+    if text:sub(1, 2) == "C:" then return end
     if text:sub(1, 2) == "M:" then model.pending, model.pendingIndex = nil, nil end
     if text == "R" then model.resyncRequested = false end
     model.sendFailed = true
@@ -19,7 +35,7 @@ end
 
 local function send(model, text)
     if model.sendTask then
-        model.queued = text
+        if text ~= "R" or not model.queued then model.queued = text end
         return
     end
     model.sendTask = task.start("multiplayer.send", {text = text})
@@ -27,40 +43,88 @@ local function send(model, text)
 end
 
 local function publish(model)
-    send(model, "S:" .. model.revision .. ":" .. model.game.cells)
+    local game = model.game
+    send(model, "S:" .. model.revision .. ":" .. (game.last or 0) .. ":" .. game.rule .. ":" .. game.cells)
 end
 
-local function applyMove(model, nextGame)
-    model.game = nextGame
+local function applyOnlineMove(model, game)
+    model.game = game
     model.revision = model.revision + 1
-    if model.connected then publish(model) end
+    publish(model)
+end
+
+local function applyComputerMove(model)
+    local game = model.aiGame
+    if model.connected or not model.aiLevel or game.winner or game.turn ~= "W" then return end
+    model.aiGame = board.play(game, ai.choose(game, model.aiLevel)) or game
+end
+
+local function scheduleComputer(model)
+    if model.connected or not model.aiLevel or model.aiGame.winner or model.aiGame.turn ~= "W" then return end
+    if not schedule.after("computer", 240, {whenHidden = "pause"}) then applyComputerMove(model) end
 end
 
 local function move(model, index)
     if not model.connected then
-        model.localGame = board.play(model.localGame, index) or model.localGame
+        if model.aiLevel then
+            if model.aiGame.turn ~= "B" then return end
+            local game = board.play(model.aiGame, index)
+            if game then
+                model.aiGame = game
+                scheduleComputer(model)
+            end
+        else
+            model.localGame = board.play(model.localGame, index) or model.localGame
+        end
         return
     end
     if model.pending then return end
     local nextGame = board.play(model.game, index)
     if not nextGame then return end
     if model.host and model.game.turn == "B" then
-        applyMove(model, nextGame)
+        applyOnlineMove(model, nextGame)
     elseif not model.host and model.game.turn == "W" then
         model.pending, model.pendingIndex = nextGame, index
         send(model, "M:" .. model.revision .. ":" .. index)
     end
 end
 
+local function showReaction(model, id, peer)
+    model.reaction = {id = id, peer = peer}
+    schedule.after("reaction", 3100, {whenHidden = "throttle"})
+end
+
+local function reactionId(text)
+    local id = tonumber(text:match("^C:([1-6])$"))
+    if id and skin.reactions[id] then return id end
+end
+
+local function sendReaction(model, id)
+    local now = time.monotonic()
+    if not model.connected or not skin.reactions[id] or model.sendTask or
+        now - (model.lastSentReaction or -2000) < 1200 then return end
+    model.lastSentReaction = now
+    model.menu = nil
+    send(model, "C:" .. id)
+end
+
 local function receive(model, e)
     if not model.connected then return end
+    if e.text:sub(1, 2) == "C:" then
+        local id, now = reactionId(e.text), time.monotonic()
+        if id and not model.muted and now - (model.lastReceivedReaction or -2000) >= 1200 then
+            model.lastReceivedReaction = now
+            showReaction(model, id, true)
+        end
+        return
+    end
     if model.host then
         if e.fromHost then return end
         if e.text == "R" then publish(model); return end
         local revision, index = e.text:match("^M:(%d+):(%d+)$")
         if revision and #revision <= 9 and #index <= 3 and tonumber(revision) == model.revision and model.game.turn == "W" then
             local nextGame = board.play(model.game, tonumber(index))
-            if nextGame then applyMove(model, nextGame) else send(model, "N:" .. revision .. ":" .. index) end
+            if nextGame then applyOnlineMove(model, nextGame) else send(model, "N:" .. revision .. ":" .. index) end
         elseif revision then
             publish(model)
         end
@@ -70,18 +134,22 @@ local function receive(model, e)
             model.sendFailed = true
             return
         end
-        local revision, cells = e.text:match("^S:(%d+):([BW.]+)$")
-        if not revision or #revision > 9 then return end
-        local number = tonumber(revision)
-        if number < model.revision then return end
+        local revision, last, rule, cells = e.text:match("^S:(%d+):(%d+):(%a+):([BW.]+)$")
+        if not revision or #revision > 9 or #last > 3 then return end
+        local number, index = tonumber(revision), tonumber(last)
+        if number < model.revision or index > board.count then return end
         if number == model.revision then
-            if cells ~= model.game.cells or not model.resyncRequested then return end
+            if cells ~= model.game.cells or rule ~= model.game.rule or not model.resyncRequested then return end
             model.pending, model.pendingIndex, model.resyncRequested = nil, nil, false
             model.sendFailed = false
             return
         end
-        local confirmed = board.parse(cells)
+        local confirmed = board.parse(cells, rule)
         if confirmed then
+            local recentStone = confirmed.turn == "B" and "W" or "B"
+            if confirmed.played == 0 and index ~= 0 then return end
+            if confirmed.played > 0 and (index == 0 or cells:sub(index, index) ~= recentStone) then return end
+            confirmed.last = index > 0 and index or nil
             model.game, model.revision = confirmed, number
             model.pending, model.pendingIndex, model.resyncRequested, model.sendFailed = nil, nil, false, false
         end
@@ -90,6 +158,7 @@ end
 
 local function changeMode(model)
     if model.modeTask then return end
+    model.menu = nil
     if model.connected or model.state == "waitingPeer" then
         model.modeTask = task.start("multiplayer.deactivate")
     elseif model.state == "roomReady" then
@@ -99,47 +168,122 @@ local function changeMode(model)
         return
     end
     model.modeFailed = not model.modeTask
-    widget.invalidate()
+end
+
+local function setOpponent(model, mode)
+    schedule.cancel("computer")
+    if mode == "local" then
+        model.aiLevel = nil
+    elseif model.aiLevel ~= mode then
+        model.aiGame = board.parse(board.empty, shownGame(model).rule)
+        model.aiLevel = mode
+    end
+    model.menu, model.roomEnded = nil, false
+    scheduleComputer(model)
+end
+
+local function startRound(model)
+    local empty = board.parse(board.empty, shownGame(model).rule)
+    if model.connected then
+        if model.host then applyOnlineMove(model, empty) end
+    elseif model.aiLevel then
+        schedule.cancel("computer")
+        model.aiGame = empty
+    else
+        model.localGame = empty
+    end
+    model.menu, model.roomEnded = nil, false
+end
+
+local function canChooseRules(model)
+    return (not model.connected or model.host) and shownGame(model).played == 0
+end
+
+local function chooseRules(model, rule)
+    if not canChooseRules(model) then return end
+    local game = board.parse(board.empty, rule)
+    if model.connected then
+        if model.game.rule ~= rule then applyOnlineMove(model, game) end
+    elseif model.aiLevel then
+        model.aiGame = game
+    else
+        model.localGame = game
+    end
+    model.menu = nil
+end
+
+local function action(model, id)
+    if id == "steam" and model.showSteam then
+        changeMode(model)
+    elseif id == "mode" and not model.connected then
+        model.menu = model.menu ~= "mode" and "mode" or nil
+    elseif id == "rules" and canChooseRules(model) then
+        model.menu = model.menu ~= "rules" and "rules" or nil
+    elseif id == "chat" and model.connected then
+        model.menu = model.menu ~= "chat" and "chat" or nil
+    elseif id == "mute" and model.connected then
+        model.muted = not model.muted
+        storage.set("mute_reactions", model.muted)
+        if model.muted and model.reaction and model.reaction.peer then model.reaction = nil end
+    elseif id == "new" then
+        startRound(model)
+    elseif id == "sync" and model.connected and not model.host then
+        model.resyncRequested = true
+        send(model, "R")
+    elseif id then
+        local index = id:match("^cell%.(%d+)$")
+        local mode = id:match("^opponent%.(%a+)$")
+        local rule = id:match("^rule%.(%a+)$")
+        local reaction = tonumber(id:match("^reaction%.([1-6])$"))
+        if index and not model.menu then
+            model.sendFailed, model.roomEnded = false, false
+            move(model, tonumber(index))
+        elseif mode and model.menu == "mode" and not model.connected and skin.modes[mode] then
+            setOpponent(model, mode)
+        elseif rule and model.menu == "rules" and skin.rules[rule] then
+            chooseRules(model, rule)
+        elseif reaction and model.menu == "chat" then
+            sendReaction(model, reaction)
+        end
+    end
 end
 
 local function event(_, model, e)
     if e.kind == "action" then
-        if e.id == "steam" and model.showSteam then
-            changeMode(model)
-            return
-        end
-        model.sendFailed = false
-        local index = e.id and e.id:match("^cell%.(%d+)$")
-        if index then
-            move(model, tonumber(index))
-        elseif e.id == "new" and (not model.connected or model.host) then
-            local empty = board.parse(board.empty)
-            if model.connected then applyMove(model, empty) else model.localGame = empty end
-            model.roomEnded = false
-        elseif e.id == "sync" and model.connected and not model.host then
-            model.resyncRequested = true
-            send(model, "R")
-        end
+        action(model, e.id)
+    elseif e.kind == "schedule" then
+        if e.id == "computer" then applyComputerMove(model)
+        elseif e.id == "reaction" then model.reaction = nil
+        else return end
     elseif e.kind == "multiplayer.state" then
         local connected = model.supportsParticipation and e.state == "connected"
-        if connected and not model.connected then
-            model.game, model.revision = board.parse(board.empty), 0
+        local arrived = connected and not model.connected
+        if arrived then
+            schedule.cancel("computer")
+            model.game, model.revision, model.menu = board.parse(board.empty), 0, nil
             model.roomEnded, model.sendFailed = false, false
         elseif model.connected and not connected then
             model.pending, model.pendingIndex, model.sendTask, model.sent, model.queued = nil, nil, nil, nil, nil
             model.resyncRequested, model.sendFailed = false, false
             model.roomEnded = e.state ~= "waitingPeer" and e.state ~= "roomReady" and e.state ~= "busy"
+            model.menu, model.reaction, model.lastSentReaction, model.lastReceivedReaction = nil, nil, nil, nil
+            schedule.cancel("reaction")
         end
-        local arrived = connected and not model.connected
+        local left = model.connected and not connected
         model.state, model.connected, model.host = e.state, connected, e.host
         model.modeFailed = false
         if arrived and not model.host then send(model, "R") end
+        if left then scheduleComputer(model) end
     elseif e.kind == "multiplayer.message" then
         receive(model, e)
     elseif e.kind == "task.complete" and e.taskId == model.modeTask then
         model.modeTask, model.modeFailed = nil, not e.ok
     elseif e.kind == "task.complete" and e.taskId == model.sendTask then
-        if not e.ok then sendFailed(model, model.sent) end
+        if not e.ok then sendFailed(model, model.sent)
+        else
+            local id = reactionId(model.sent)
+            if id and model.connected then showReaction(model, id, false) end
+        end
         local nextMessage = model.queued
         model.sendTask, model.sent, model.queued = nil, nil, nil
         if model.connected and nextMessage then send(model, nextMessage) end
@@ -149,118 +293,48 @@ local function event(_, model, e)
     widget.invalidate()
 end
 
-local function status(model, shown)
-    if shown.winner == "B" then return l10n.tr("lua_widget.gomoku.black_wins") end
-    if shown.winner == "W" then return l10n.tr("lua_widget.gomoku.white_wins") end
-    if shown.winner == "draw" then return l10n.tr("lua_widget.gomoku.draw") end
+local function status(model, game)
+    if game.winner == "draw" then return l10n.tr("lua_widget.gomoku.draw") end
+    if game.winner and model.aiLevel and not model.connected then
+        if game.winner == "B" then return l10n.tr("lua_widget.gomoku.you_win") end
+        return l10n.tr("lua_widget.gomoku.ai_win")
+    end
+    if game.winner == "B" then return l10n.tr("lua_widget.gomoku.black_wins") end
+    if game.winner == "W" then return l10n.tr("lua_widget.gomoku.white_wins") end
     if model.modeFailed then return l10n.tr("lua_widget.gomoku.mode_failed") end
     if model.state == "waitingPeer" then return l10n.tr("lua_widget.gomoku.waiting_peer") end
     if model.state == "busy" then return l10n.tr("lua_widget.gomoku.local_board_busy") end
     if model.sendFailed then return l10n.tr("lua_widget.gomoku.send_failed") end
     if model.pending then return l10n.tr("lua_widget.gomoku.confirming") end
     if model.roomEnded then return l10n.tr("lua_widget.gomoku.room_ended") end
+    if game.played == 0 then return l10n.tr("lua_widget.gomoku.opening") end
     if model.connected then
-        if shown.turn == (model.host and "B" or "W") then return l10n.tr("lua_widget.gomoku.your_turn") end
+        if game.turn == (model.host and "B" or "W") then return l10n.tr("lua_widget.gomoku.your_turn") end
         return l10n.tr("lua_widget.gomoku.their_turn")
     end
-    if shown.turn == "B" then return l10n.tr("lua_widget.gomoku.black_turn") end
+    if model.aiLevel then
+        if game.turn == "W" then return l10n.tr("lua_widget.gomoku.ai_thinking") end
+        return l10n.tr("lua_widget.gomoku.your_turn")
+    end
+    if game.turn == "B" then return l10n.tr("lua_widget.gomoku.black_turn") end
     return l10n.tr("lua_widget.gomoku.white_turn")
 end
 
-local function centeredText(text, x, y, width, size, color, bold)
-    local measured = draw.measureText(text, size, width, bold)
-    local padding = math.max(0, (width - measured.width) / 2)
-    draw.text(x + padding, y, text, size, color, width - padding, bold, true)
-end
-
-local function button(id, label, x, y, width, height, color, foreground)
-    local radius = height * 0.2
-    draw.rect(x, y, width, height, color, radius, interaction.isHovered(id) and 0.94 or 0.72)
-    centeredText(label, x, y + height * 0.18, width, height * 0.49, foreground, true)
-    interaction.region({
-        key = id,
-        shape = {type = "roundedRect", x = x, y = y, width = width, height = height, radius = radius},
-        cursor = "hand", focusable = true, events = {click = {id = id}},
-        accessibility = {role = "button", label = label},
-    })
-end
-
-local starPoints = {4, 8, 12}
-
 local function render(_, model)
-    local width, height = layout.contentWidth(), layout.contentHeight()
-    local side = math.min(width * 0.90, height * 0.70)
-    if side <= 0 then return end
-    local left, top = (width - side) / 2, (height - side * 1.31) / 2 + side * 0.13
-    local step = side / (board.size + 0.4)
-    local startX, startY = left + step * 0.7, top + step * 0.7
-    local darkInk = widget.theme().contentTheme == 1
-    local ink = darkInk and 0x192634 or 0xF6F8FC
-    local secondary = darkInk and 0x48586B or 0xD9E5F2
-    local buttonFill = darkInk and 0xDCE6F4 or 0x385472
-    centeredText(l10n.tr("lua_widget.gomoku.name"), left, top - side * 0.112, side, side * 0.067, ink, true)
-    draw.rect(left, top, side, side, 0xD1A05F, step * 0.58)
-    draw.rect(left + step * 0.10, top + step * 0.10, side - step * 0.20, side - step * 0.20, 0xE8BA7A, step * 0.52)
-    for line = 0, board.size - 1 do
-        local d = line * step
-        draw.line(startX + d, startY, startX + d, startY + step * (board.size - 1), step * 0.043, 0x5D3D24)
-        draw.line(startX, startY + d, startX + step * (board.size - 1), startY + d, step * 0.043, 0x5D3D24)
+    local game = shownGame(model)
+    local canMove = not game.winner and not model.menu and not model.pending
+    if model.connected then
+        canMove = canMove and game.turn == (model.host and "B" or "W")
+    elseif model.aiLevel then
+        canMove = canMove and game.turn == "B"
     end
-    for _, x in ipairs(starPoints) do
-        for _, y in ipairs(starPoints) do
-            draw.circle(startX + (x - 1) * step, startY + (y - 1) * step, step * 0.12, 0x5D3D24)
-        end
-    end
-
-    local shown = model.connected and (model.pending or model.game) or model.localGame
-    local wins = {}
-    for _, index in ipairs(shown.line or {}) do wins[index] = true end
-    local canMove = not shown.winner and not model.pending and
-        (not model.connected or model.game.turn == (model.host and "B" or "W"))
-    local cellLabel = l10n.tr("lua_widget.gomoku.intersection")
-    for index = 1, board.count do
-        local column, row = board.coordinates(index)
-        local x, y = startX + (column - 1) * step, startY + (row - 1) * step
-        local stone = shown.cells:sub(index, index)
-        if stone ~= "." then
-            local predicted = model.pending and model.game.cells:sub(index, index) == "."
-            draw.circle(x, y + step * 0.06, step * 0.455, 0x795637, 0.58)
-            draw.circle(x, y, step * 0.44, wins[index] and 0x36668A or 0x736047)
-            draw.circle(x, y, step * 0.39, stone == "B" and 0x25272C or 0xFFF5E4, predicted and 0.76 or 1.0)
-            if wins[index] then draw.circle(x, y, step * 0.105, 0x6EB5EF) end
-        elseif canMove then
-            local id = "cell." .. index
-            interaction.region({
-                key = id, shape = {type = "rect", x = x - step / 2, y = y - step / 2, width = step, height = step},
-                cursor = "crosshair", focusable = true, events = {click = {id = id}},
-                accessibility = {role = "button", label = cellLabel .. " " .. string.char(64 + column) .. row},
-            })
-        end
-    end
-
-    centeredText(status(model, shown), left, top + side * 1.026, side, side * 0.047, secondary, false)
-    local sync = model.connected and not model.host
-    local action = sync and "sync" or "new"
-    local label = sync and l10n.tr("lua_widget.gomoku.sync") or l10n.tr("lua_widget.gomoku.new")
-    local showSteam = model.showSteam and model.state ~= "busy"
-    local buttonY = top + side * 1.105
-    button(action, label, left + side * (showSteam and 0.04 or 0.27), buttonY,
-        side * 0.46, side * 0.095, buttonFill, ink)
-    if showSteam then
-        local steamLabel = l10n.tr("lua_widget.gomoku.steam_room")
-        if model.connected or model.state == "waitingPeer" then
-            steamLabel = l10n.tr("lua_widget.gomoku.local_game")
-        elseif model.state == "roomReady" then
-            steamLabel = l10n.tr("lua_widget.gomoku.online_game")
-        end
-        button("steam", steamLabel, left + side * 0.52, buttonY,
-            side * 0.44, side * 0.095, buttonFill, ink)
-    end
+    skin.render(model, game, status(model, game), canMove)
 end
 
 return widget.define({
     name = l10n.tr("lua_widget.gomoku.name"),
-    useCustomStyle = true, followPersonalizationDefault = true,
-    bg = 0x172131, border = 0xFFFFFF, alpha = 0.46, borderAlpha = 0.17, gradientEndA = 0.30,
+    useCustomStyle = true, followPersonalizationDefault = false, glassEnabled = false,
+    bg = 0x102622, border = 0x79AE96, alpha = 1, borderAlpha = 0.68, gradientEndA = 1,
+    backgroundLayer = {render = skin.background, opacity = 1, blurRadius = 0},
     setup = setup, event = event, render = render,
 })

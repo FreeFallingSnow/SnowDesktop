@@ -8,7 +8,7 @@ function board.coordinates(index)
     return (index - 1) % board.size + 1, (index - 1) // board.size + 1
 end
 
-local function winningLine(cells, index, stone)
+local function winningLine(cells, index, stone, rule)
     local x, y = board.coordinates(index)
     for _, axis in ipairs(axes) do
         local line = {index}
@@ -21,12 +21,14 @@ local function winningLine(cells, index, stone)
                 cx, cy = cx + sign * axis[1], cy + sign * axis[2]
             end
         end
-        if #line >= 5 then return line end
+        if #line == 5 or (#line > 5 and rule == "free") then return line end
     end
 end
 
-function board.parse(cells)
+function board.parse(cells, rule)
     if type(cells) ~= "string" or #cells ~= board.count or cells:find("[^BW.]") then return end
+    rule = rule or "free"
+    if rule ~= "free" and rule ~= "exact" then return end
     local _, black = cells:gsub("B", "")
     local _, white = cells:gsub("W", "")
     if black ~= white and black ~= white + 1 then return end
@@ -34,7 +36,7 @@ function board.parse(cells)
     for index = 1, board.count do
         local stone = cells:sub(index, index)
         if stone ~= "." and stone ~= winner then
-            local found = winningLine(cells, index, stone)
+            local found = winningLine(cells, index, stone, rule)
             if found then
                 if winner or (stone == "B" and black == white) or (stone == "W" and black ~= white) then return end
                 winner, line = stone, found
@@ -42,18 +44,18 @@ function board.parse(cells)
         end
     end
     local played = black + white
-    return {cells = cells, played = played, turn = black == white and "B" or "W",
+    return {cells = cells, played = played, turn = black == white and "B" or "W", rule = rule,
         winner = winner or (played == board.count and "draw" or nil), line = line}
 end
 
 function board.play(state, index)
-    if not index or index < 1 or index > board.count or state.winner or
+    if not index or index % 1 ~= 0 or index < 1 or index > board.count or state.winner or
         state.cells:sub(index, index) ~= "." then return end
     local stone = state.turn
     local cells = state.cells:sub(1, index - 1) .. stone .. state.cells:sub(index + 1)
-    local line = winningLine(cells, index, stone)
+    local line = winningLine(cells, index, stone, state.rule)
     local played = state.played + 1
-    return {cells = cells, played = played, turn = stone == "B" and "W" or "B",
+    return {cells = cells, played = played, turn = stone == "B" and "W" or "B", last = index, rule = state.rule,
         winner = line and stone or (played == board.count and "draw" or nil), line = line}
 end
 
