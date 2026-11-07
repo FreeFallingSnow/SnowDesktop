@@ -15,9 +15,12 @@ struct WidgetMultiplayer
 {
     using Clock = std::chrono::steady_clock;
     using Kind = steam_widget_multiplayer::Kind;
+    static constexpr int kUnlocked = 2;
+    static constexpr int kBackgroundListening = 4;
+    static constexpr int kReportRunningStatus = 8;
 
     std::filesystem::path executable;
-    // 0: incompatible bridge, 1: locked, 2: unlocked, 3: unlocked with the room card shown.
+    // 0: incompatible bridge, 1: locked, otherwise kUnlocked with optional flags.
     std::function<int()> availability;
     std::function<void(bool)> openSettings;
     std::function<void()> changed;
@@ -46,6 +49,7 @@ struct WidgetMultiplayer
     bool host = false;
     bool ready = false;
     bool settingsListening = false;
+    bool idleListeningPaused = false;
     bool readSteamLaunch = true;
 };
 }

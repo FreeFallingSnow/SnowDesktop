@@ -6,6 +6,7 @@
 #include "settings/settings_window.h"
 #include "steam/steam_entitlement.h"
 #include "widget/runtime/widget_engine.h"
+#include "widget/runtime/widget_multiplayer.h"
 
 #include <algorithm>
 
@@ -17,7 +18,10 @@ void DesktopApp::ConfigureSteamWidgetMultiplayer(const std::filesystem::path& br
             const auto state = steamEntitlementService_->Current();
             if (!state.widgetMultiplayerAvailable) return 0;
             if (!state.registered) return 1;
-            return generalSettings_.steamRoomVisible ? 3 : 2;
+            using Multiplayer = snowdesktop::widget_runtime::WidgetMultiplayer;
+            return Multiplayer::kUnlocked |
+                (generalSettings_.steamRoomVisible ? Multiplayer::kBackgroundListening : 0) |
+                (generalSettings_.steamShowRunningStatus ? Multiplayer::kReportRunningStatus : 0);
         },
         [this](bool locked) {
             ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(

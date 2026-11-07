@@ -74,6 +74,9 @@ member can send messages. The application routes messages by package UUID,
 version and source to an authorized Lua instance. The host keeps Steam IDs
 and friend details within its native settings and Bridge boundary. Payloads
 are UTF-8 with a 1024-byte limit and per-direction room quotas.
+When a room ends with Steam running status off, the host closes the worker and
+pauses background listening. Reopening General with the room card shown, creating
+a room, or opening a Steam invitation can start a new session.
 The host reserves the `snowdesktop.room.participation` channel for readiness
 announcements. A `+` or `-` prefix followed by the package channel selects or
 withdraws the sender's participation. These messages are handled by the host

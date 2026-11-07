@@ -64,6 +64,13 @@ void StartBridge(WidgetMultiplayer& state, const std::function<void()>& wake)
 {
     if (!state.service) state.service = std::make_unique<Service>(state.executable, wake);
 }
+
+void PauseIdleListening(WidgetMultiplayer& state)
+{
+    state.idleListeningPaused = true;
+    state.launchLobby = 0;
+    state.launchUntil = {};
+}
 }
 
 void WidgetEngine::ConfigureSteamMultiplayer(std::filesystem::path executable,
@@ -121,6 +128,11 @@ room::Status WidgetEngine::ControlSteamRoom(room::Command command)
     }
     if (command == room::Command::Listen)
     {
+        if (!state.settingsListening && state.idleListeningPaused)
+        {
+            state.idleListeningPaused = false;
+            state.retryAfter = {};
+        }
         state.settingsListening = true;
         wake();
         return SteamRoomStatus();
@@ -129,6 +141,7 @@ room::Status WidgetEngine::ControlSteamRoom(room::Command command)
     {
         // Closing the owned child also leaves Steam when an operation is still
         // pending or when entitlement has changed since the UI was displayed.
+        if (!(availability & WidgetMultiplayer::kReportRunningStatus)) PauseIdleListening(state);
         StopWidgetMultiplayer("roomClosed");
         state.launchLobby = 0;
         state.launchUntil = {};
@@ -339,7 +352,10 @@ void WidgetEngine::PumpWidgetMultiplayer()
     });
     if (now >= state.launchUntil) state.launchLobby = 0;
     if (now >= state.invitationUntil) state.invitation.reset();
-    const bool keepListening = state.settingsListening || availability == 3 || now < state.launchUntil;
+    const bool reportRunningStatus = (availability & WidgetMultiplayer::kReportRunningStatus) != 0;
+    const bool keepListening = now < state.launchUntil ||
+        ((!state.idleListeningPaused || reportRunningStatus) &&
+            (state.settingsListening || (availability & WidgetMultiplayer::kBackgroundListening)));
     if (state.service && (availability < 2 ||
         (!keepListening && !state.launchLobby && !state.members && !state.operation && !state.invitation)))
         StopWidgetMultiplayer("roomClosed");
@@ -368,6 +384,7 @@ void WidgetEngine::PumpWidgetMultiplayer()
             if (taskWakeCallback_) taskWakeCallback_();
             break;
         case Kind::Disconnected:
+            if (state.members && !reportRunningStatus) PauseIdleListening(state);
             StopWidgetMultiplayer("steamUnavailable");
             state.failure = room::Failure::SteamUnavailable;
             break;
@@ -379,6 +396,13 @@ void WidgetEngine::PumpWidgetMultiplayer()
             }
             break;
         case Kind::Room:
+            if (state.members && !event.value && !reportRunningStatus)
+            {
+                PauseIdleListening(state);
+                StopWidgetMultiplayer("roomClosed");
+                messages.clear();
+                break;
+            }
             state.members = static_cast<int>(event.value);
             state.host = event.flags != 0;
             if (state.members) state.invitation.reset();
