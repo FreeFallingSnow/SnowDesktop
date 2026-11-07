@@ -78,9 +78,12 @@ When a room ends with Steam running status off, the host closes the worker and
 pauses background listening. Reopening General with the room card shown, creating
 a room, or opening a Steam invitation can start a new session.
 The host reserves the `snowdesktop.room.participation` channel for readiness
-announcements. A `+` or `-` prefix followed by the package channel selects or
-withdraws the sender's participation. These messages are handled by the host
-and never delivered to Lua. The Bridge uses the same v2 lobby envelope.
+announcements. A `+` or `-` prefix followed by the package channel announces
+or withdraws the sender's participation. A host still waiting for readiness
+can send `?` with the same package channel. A participating peer answers with
+`+`, even if it has already seen the requester's readiness. These messages
+are handled by the host and never delivered to Lua. The Bridge uses the same
+v2 lobby envelope.
 
 ## Content contract
 

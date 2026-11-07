@@ -14,6 +14,7 @@ using snowdesktop::steam_widget_multiplayer::Frame;
 using snowdesktop::steam_widget_multiplayer::Kind;
 using snowdesktop::steam_widget_multiplayer::Service;
 using snowdesktop::widget_runtime::WidgetMultiplayer;
+using ParticipationSignal = WidgetMultiplayer::ParticipationSignal;
 using namespace std::chrono_literals;
 namespace room = snowdesktop::steam_room;
 
@@ -51,12 +52,27 @@ void ClearParticipation(WidgetMultiplayer& state)
 
 void PumpParticipationAnnouncement(WidgetMultiplayer& state, WidgetMultiplayer::Clock::time_point now)
 {
-    if (state.announcement || state.pendingAnnouncements.empty() || now < state.announceAfter) return;
-    const auto& [channel, active] = *state.pendingAnnouncements.begin();
+    if (state.announcement || now < state.announceAfter) return;
+    if (state.pendingAnnouncements.empty())
+    {
+        const auto waiting = std::find_if(state.participants.begin(), state.participants.end(),
+            [now](const auto& entry) { return !entry.second.peerReady && now >= entry.second.queryAfter; });
+        if (waiting == state.participants.end()) return;
+        state.pendingAnnouncements.emplace(waiting->first, ParticipationSignal::Query);
+    }
+
+    const auto pending = state.pendingAnnouncements.begin();
+    const auto& [channel, signal] = *pending;
     Frame frame{kParticipationRequest, 0, Kind::Send};
-    if (frame.SetChannel(kParticipationChannel) && frame.SetText((active ? "+" : "-") + channel) &&
+    if (frame.SetChannel(kParticipationChannel) && frame.SetText(static_cast<char>(signal) + channel) &&
         state.service->Submit(frame))
-        state.announcement.emplace(channel, active);
+    {
+        if (const auto participant = state.participants.find(channel); participant != state.participants.end())
+            participant->second.queryAfter = now + 3s;
+        // Leave later requests in the queue even when they match this in-flight signal.
+        state.announcement.emplace(channel, signal);
+        state.pendingAnnouncements.erase(pending);
+    }
     state.announceAfter = now + 500ms;
 }
 
@@ -234,7 +250,7 @@ void WidgetEngine::ForgetWidgetMultiplayer(std::uint64_t owner)
     state.lastState.erase(owner);
     std::erase_if(state.participants, [&](const auto& entry) {
         if (entry.second.owner != owner) return false;
-        state.pendingAnnouncements[entry.first] = false;
+        state.pendingAnnouncements[entry.first] = ParticipationSignal::Withdraw;
         return true;
     });
     std::erase_if(state.sends, [&](const auto& entry) {
@@ -274,18 +290,20 @@ void WidgetEngine::StartWidgetMultiplayerTask(
             if (availability < 2) return finish("advancedFeatureLocked");
             if (state.members != 2) return finish("roomUnavailable");
             if (const auto pending = state.pendingAnnouncements.find(channel);
-                pending != state.pendingAnnouncements.end() && !pending->second)
+                (pending != state.pendingAnnouncements.end() && pending->second == ParticipationSignal::Withdraw) ||
+                (state.announcement && state.announcement->first == channel &&
+                    state.announcement->second == ParticipationSignal::Withdraw))
                 return finish("sessionBusy");
             const auto [entry, inserted] = state.participants.try_emplace(
                 channel, WidgetMultiplayer::Participation{widget.runtimeToken});
             if (entry->second.owner != widget.runtimeToken) return finish("sessionBusy");
-            if (inserted) state.pendingAnnouncements[channel] = true;
+            if (inserted) state.pendingAnnouncements[channel] = ParticipationSignal::Ready;
         }
         else if (const auto entry = state.participants.find(channel);
                  entry != state.participants.end() && entry->second.owner == widget.runtimeToken)
         {
             state.participants.erase(entry);
-            state.pendingAnnouncements[channel] = false;
+            state.pendingAnnouncements[channel] = ParticipationSignal::Withdraw;
         }
         (void)taskBroker_->Complete(action.id, true);
         if (taskWakeCallback_) taskWakeCallback_();
@@ -423,14 +441,13 @@ void WidgetEngine::PumpWidgetMultiplayer()
         case Kind::Result:
             if (event.request == kParticipationRequest)
             {
-                if (event.value && state.announcement)
+                const auto sent = std::exchange(state.announcement, std::nullopt);
+                if (!event.value && sent)
                 {
-                    const auto& [channel, active] = *state.announcement;
-                    const auto pending = state.pendingAnnouncements.find(channel);
-                    if (pending != state.pendingAnnouncements.end() && pending->second == active)
-                        state.pendingAnnouncements.erase(pending);
+                    const auto& [channel, signal] = *sent;
+                    if (signal == ParticipationSignal::Withdraw || state.participants.contains(channel))
+                        state.pendingAnnouncements.try_emplace(channel, signal);
                 }
-                state.announcement.reset();
                 break;
             }
             if (state.sends.erase(event.request))
@@ -475,20 +492,31 @@ void WidgetEngine::PumpWidgetMultiplayer()
         std::erase_if(state.participants, [&](const auto& entry) {
             const auto widget = find(entry.second.owner);
             if (widget != widgets_.end() && WidgetMultiplayerIdentity(*widget) == entry.first) return false;
-            state.pendingAnnouncements[entry.first] = false;
+            state.pendingAnnouncements[entry.first] = ParticipationSignal::Withdraw;
             return true;
         });
         for (const auto& message : messages)
         {
             if (message.Channel() != kParticipationChannel) continue;
             const auto text = message.Text();
-            if (text.size() < 2 || (text.front() != '+' && text.front() != '-')) continue;
+            if (text.size() < 2) continue;
             const auto entry = state.participants.find(std::string(text.substr(1)));
             if (entry == state.participants.end()) continue;
-            const bool ready = text.front() == '+';
-            if (ready && !entry->second.peerReady) state.pendingAnnouncements[entry->first] = true;
-            if (!ready && entry->second.peerReady) entry->second.peerLeft = true;
-            entry->second.peerReady = ready;
+            switch (static_cast<ParticipationSignal>(text.front()))
+            {
+            case ParticipationSignal::Query:
+                state.pendingAnnouncements[entry->first] = ParticipationSignal::Ready;
+                break;
+            case ParticipationSignal::Ready:
+                if (!entry->second.peerReady)
+                    state.pendingAnnouncements[entry->first] = ParticipationSignal::Ready;
+                entry->second.peerReady = true;
+                break;
+            case ParticipationSignal::Withdraw:
+                if (entry->second.peerReady) entry->second.peerLeft = true;
+                entry->second.peerReady = false;
+                break;
+            }
         }
         PumpParticipationAnnouncement(state, now);
     }

@@ -29,15 +29,17 @@ struct WidgetMultiplayer
     std::vector<steam_widget_multiplayer::Frame> friends;
     std::unordered_map<std::uint64_t, std::string> lastState;
     std::unordered_map<std::uint64_t, std::uint64_t> sends;
+    enum class ParticipationSignal : char { Ready = '+', Withdraw = '-', Query = '?' };
     struct Participation
     {
         std::uint64_t owner;
         bool peerReady = false;
         bool peerLeft = false;
+        Clock::time_point queryAfter{};
     };
     std::unordered_map<std::string, Participation> participants;
-    std::unordered_map<std::string, bool> pendingAnnouncements;
-    std::optional<std::pair<std::string, bool>> announcement;
+    std::unordered_map<std::string, ParticipationSignal> pendingAnnouncements;
+    std::optional<std::pair<std::string, ParticipationSignal>> announcement;
     Clock::time_point announceAfter{};
     std::optional<steam_widget_multiplayer::Frame> invitation;
     Clock::time_point invitationUntil{}, launchUntil{}, retryAfter{};
