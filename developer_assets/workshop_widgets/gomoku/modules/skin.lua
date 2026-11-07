@@ -7,7 +7,7 @@ local skin = {
         balanced = "lua_widget.gomoku.ai_balanced",
         advanced = "lua_widget.gomoku.ai_advanced",
     },
-    rules = {free = "lua_widget.gomoku.rule_free", exact = "lua_widget.gomoku.rule_exact"},
+    rules = {free = "lua_widget.gomoku.rule_free", standard = "lua_widget.gomoku.rule_standard"},
     reactions = {
         {label = "lua_widget.gomoku.say_hello"},
         {label = "lua_widget.gomoku.say_nice"},
@@ -229,8 +229,8 @@ local function overlay(model, x, y, side, u, c)
         local game = model.connected and model.game or (model.aiLevel and model.aiGame or model.localGame)
         button("rule.free", l10n.tr("lua_widget.gomoku.rule_free_detail"), left + inset, buttonTop,
             width - inset * 2, item, c, game.rule == "free")
-        button("rule.exact", l10n.tr("lua_widget.gomoku.rule_exact_detail"), left + inset, buttonTop + item + gap,
-            width - inset * 2, item, c, game.rule == "exact")
+        button("rule.standard", l10n.tr("lua_widget.gomoku.rule_standard_detail"), left + inset, buttonTop + item + gap,
+            width - inset * 2, item, c, game.rule == "standard")
     else
         for i, reaction in ipairs(skin.reactions) do tile("reaction." .. i, l10n.tr(reaction.label), i, false, reaction.stamp) end
         local mute = model.muted and l10n.tr("lua_widget.gomoku.unmute") or l10n.tr("lua_widget.gomoku.mute")

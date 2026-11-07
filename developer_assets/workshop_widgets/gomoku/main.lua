@@ -3,13 +3,9 @@ local ai = module.require("modules/ai.lua")
 local skin = module.require("modules/skin.lua")
 
 local function setup()
-    local preview = board.parse(storage.get("preview_board"), storage.get("preview_rule"))
-    if preview then
-        local last = storage.get("preview_last")
-        if type(last) == "number" and last >= 1 and last <= board.count and last % 1 == 0 then
-            preview.last = last
-        end
-    end
+    local last = storage.get("preview_last")
+    if type(last) ~= "number" or last < 1 or last > board.count or last % 1 ~= 0 then last = nil end
+    local preview = board.parse(storage.get("preview_board"), storage.get("preview_rule"), last)
     return {
         localGame = preview or board.parse(board.empty),
         revision = 0,
@@ -65,25 +61,22 @@ local function scheduleComputer(model)
 end
 
 local function move(model, index)
+    local current = shownGame(model)
+    if model.pending or (model.connected and current.turn ~= (model.host and "B" or "W")) or
+        (not model.connected and model.aiLevel and current.turn ~= "B") then return end
+    local nextGame, foul = board.play(current, index)
+    model.foul = foul
+    if not nextGame then return end
     if not model.connected then
         if model.aiLevel then
-            if model.aiGame.turn ~= "B" then return end
-            local game = board.play(model.aiGame, index)
-            if game then
-                model.aiGame = game
-                scheduleComputer(model)
-            end
+            model.aiGame = nextGame
+            scheduleComputer(model)
         else
-            model.localGame = board.play(model.localGame, index) or model.localGame
+            model.localGame = nextGame
         end
-        return
-    end
-    if model.pending then return end
-    local nextGame = board.play(model.game, index)
-    if not nextGame then return end
-    if model.host and model.game.turn == "B" then
+    elseif model.host then
         applyOnlineMove(model, nextGame)
-    elseif not model.host and model.game.turn == "W" then
+    else
         model.pending, model.pendingIndex = nextGame, index
         send(model, "M:" .. model.revision .. ":" .. index)
     end
@@ -144,15 +137,17 @@ local function receive(model, e)
             model.sendFailed = false
             return
         end
-        local confirmed = board.parse(cells, rule)
-        if confirmed then
-            local recentStone = confirmed.turn == "B" and "W" or "B"
-            if confirmed.played == 0 and index ~= 0 then return end
-            if confirmed.played > 0 and (index == 0 or cells:sub(index, index) ~= recentStone) then return end
-            confirmed.last = index > 0 and index or nil
-            model.game, model.revision = confirmed, number
-            model.pending, model.pendingIndex, model.resyncRequested, model.sendFailed = nil, nil, false, false
+        local confirmed
+        if index > 0 and number == model.revision + 1 then
+            if model.game.rule ~= rule then return end
+            confirmed = board.play(model.game, index)
+            if not confirmed or confirmed.cells ~= cells then return end
+        else
+            confirmed = board.parse(cells, rule, index > 0 and index or nil)
+            if not confirmed or (index == 0 and confirmed.played > 0) then return end
         end
+        model.game, model.revision = confirmed, number
+        model.pending, model.pendingIndex, model.resyncRequested, model.sendFailed = nil, nil, false, false
     end
 end
 
@@ -178,7 +173,7 @@ local function setOpponent(model, mode)
         model.aiGame = board.parse(board.empty, shownGame(model).rule)
         model.aiLevel = mode
     end
-    model.menu, model.roomEnded = nil, false
+    model.menu, model.roomEnded, model.foul = nil, false, nil
     scheduleComputer(model)
 end
 
@@ -192,7 +187,7 @@ local function startRound(model)
     else
         model.localGame = empty
     end
-    model.menu, model.roomEnded = nil, false
+    model.menu, model.roomEnded, model.foul = nil, false, nil
 end
 
 local function canChooseRules(model)
@@ -262,11 +257,13 @@ local function event(_, model, e)
             schedule.cancel("computer")
             model.game, model.revision, model.menu = board.parse(board.empty), 0, nil
             model.roomEnded, model.sendFailed = false, false
+            model.foul = nil
         elseif model.connected and not connected then
             model.pending, model.pendingIndex, model.sendTask, model.sent, model.queued = nil, nil, nil, nil, nil
             model.resyncRequested, model.sendFailed = false, false
             model.roomEnded = e.state ~= "waitingPeer" and e.state ~= "roomReady" and e.state ~= "busy"
             model.menu, model.reaction, model.lastSentReaction, model.lastReceivedReaction = nil, nil, nil, nil
+            model.foul = nil
             schedule.cancel("reaction")
         end
         local left = model.connected and not connected
@@ -294,6 +291,9 @@ local function event(_, model, e)
 end
 
 local function status(model, game)
+    if model.foul == "overline" then return l10n.tr("lua_widget.gomoku.foul_overline") end
+    if model.foul == "double_four" then return l10n.tr("lua_widget.gomoku.foul_double_four") end
+    if model.foul == "double_three" then return l10n.tr("lua_widget.gomoku.foul_double_three") end
     if game.winner == "draw" then return l10n.tr("lua_widget.gomoku.draw") end
     if game.winner and model.aiLevel and not model.connected then
         if game.winner == "B" then return l10n.tr("lua_widget.gomoku.you_win") end
