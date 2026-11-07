@@ -2844,5 +2844,7 @@
   "settings.general.steamRoom.join": "加入房間",
   "settings.general.steamRoom.leave": "離開房間",
   "settings.general.steamRoom.showCard": "顯示",
-  "settings.general.steamRoom.hideCard": "隱藏"
+  "settings.general.steamRoom.hideCard": "隱藏",
+  "settings.general.steamRoom.description": "和 Steam 好友一起玩支援連線的桌面元件。",
+  "settings.general.steamRoom.usage": "按一下「顯示」，再從連線卡片建立房間或接受邀請。"
 }

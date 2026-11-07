@@ -26,6 +26,7 @@ SnowDesktop's embedded Regular font:
 | `appearance-widgets.svg` | Window Apps 24 Regular + Filled |
 | `appearance-desktop-icons.svg` | Paint Brush 24 Regular + Filled (global appearance) |
 | `appearance-icon-beautification.svg` | Paint Brush Sparkle 24 Regular + Filled |
+| `steam-multiplayer.svg` | People 24 Regular + Filled (Steam multiplayer entry) |
 | `desktop.svg` | Desktop 24 Regular + Filled |
 | `desktop-style.svg` | Desktop Edit 24 Regular + Filled |
 | `desktop-layout.svg` | Board 24 Regular + Filled |

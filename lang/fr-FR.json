@@ -2844,5 +2844,7 @@
   "settings.general.steamRoom.join": "Rejoindre le salon",
   "settings.general.steamRoom.leave": "Quitter le salon",
   "settings.general.steamRoom.showCard": "Afficher",
-  "settings.general.steamRoom.hideCard": "Masquer"
+  "settings.general.steamRoom.hideCard": "Masquer",
+  "settings.general.steamRoom.description": "Jouez avec vos amis Steam dans les widgets de bureau compatibles avec le mode multijoueur.",
+  "settings.general.steamRoom.usage": "Sélectionnez « Afficher », puis créez un salon ou acceptez une invitation depuis la carte Steam."
 }

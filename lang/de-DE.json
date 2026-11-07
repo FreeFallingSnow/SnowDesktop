@@ -2844,5 +2844,7 @@
   "settings.general.steamRoom.join": "Raum beitreten",
   "settings.general.steamRoom.leave": "Raum verlassen",
   "settings.general.steamRoom.showCard": "Anzeigen",
-  "settings.general.steamRoom.hideCard": "Ausblenden"
+  "settings.general.steamRoom.hideCard": "Ausblenden",
+  "settings.general.steamRoom.description": "Spiele mit Steam-Freunden in Desktop-Widgets mit Mehrspieler-Unterstützung.",
+  "settings.general.steamRoom.usage": "Wähle „Anzeigen“ und erstelle auf der Steam-Karte einen Raum oder nimm eine Einladung an."
 }

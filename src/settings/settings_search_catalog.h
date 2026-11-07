@@ -169,7 +169,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.startup.description"},
     {SettingsPage::General, "general.windowSupport", "settings.general.windowSupport.title", "settings.general.windowSupport.disabled"},
     {SettingsPage::General, "general.steamRunningStatus", "settings.general.steamRunningStatus", ""},
-    {SettingsPage::General, "general.steamRoom", "settings.general.steamRoom", ""},
+    {SettingsPage::General, "general.steamRoom", "settings.general.steamRoom", "settings.general.steamRoom.description"},
     {SettingsPage::General, "general.advancedFeatures",
         "settings.general.advancedFeatures",
         "settings.general.advancedFeatures.description"},

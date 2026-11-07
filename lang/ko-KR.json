@@ -2844,5 +2844,7 @@
   "settings.general.steamRoom.join": "방 참가",
   "settings.general.steamRoom.leave": "방 나가기",
   "settings.general.steamRoom.showCard": "표시",
-  "settings.general.steamRoom.hideCard": "숨기기"
+  "settings.general.steamRoom.hideCard": "숨기기",
+  "settings.general.steamRoom.description": "멀티플레이를 지원하는 데스크톱 위젯에서 Steam 친구와 함께 플레이하세요.",
+  "settings.general.steamRoom.usage": "「표시」를 선택한 후 Steam 카드에서 방을 만들거나 초대를 수락하세요."
 }

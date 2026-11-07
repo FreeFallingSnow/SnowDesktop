@@ -2844,5 +2844,7 @@
   "settings.general.steamRoom.join": "Unirse a la sala",
   "settings.general.steamRoom.leave": "Salir de la sala",
   "settings.general.steamRoom.showCard": "Mostrar",
-  "settings.general.steamRoom.hideCard": "Ocultar"
+  "settings.general.steamRoom.hideCard": "Ocultar",
+  "settings.general.steamRoom.description": "Juega con tus amigos de Steam en los componentes de escritorio que admiten el modo multijugador.",
+  "settings.general.steamRoom.usage": "Selecciona «Mostrar» y crea una sala o acepta una invitación desde la tarjeta de Steam."
 }

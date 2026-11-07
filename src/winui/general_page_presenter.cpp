@@ -184,7 +184,10 @@ struct GeneralPagePresenter::Impl
     winrt::event_token enableWindowSupportToken{}, disableWindowSupportToken{};
     SettingsCard advancedFeaturesCard;
     SettingsCard steamRoomCard;
-    SettingRow steamRoomFeatureRow, steamRoomHeader, steamRoomActions;
+    SettingRow steamRoomHeader, steamRoomActions;
+    muxc::Grid steamRoomFeatureRow{nullptr};
+    muxc::ContentControl steamRoomFeatureIcon{nullptr};
+    muxc::TextBlock steamRoomFeatureName{nullptr}, steamRoomFeatureDescription{nullptr}, steamRoomFeatureUsage{nullptr};
     muxc::Expander steamRoomExpander{nullptr};
     muxc::TextBlock steamRoomSummary{nullptr};
     muxc::Button steamRoomToggle{nullptr}, steamRoomPrimary{nullptr}, steamRoomLeave{nullptr};
@@ -480,42 +483,54 @@ struct GeneralPagePresenter::Impl
         advancedFeaturesCard.title = advancedFeatureRow.label;
         advancedFeaturesCard.title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
         advancedFeatureExpander.Header(advancedFeatureRow.root);
-        muxc::StackPanel featureBody;
-        featureBody.Spacing(4.0);
-        advancedFeatureName = muxc::TextBlock{};
-        advancedFeatureName.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        advancedFeatureName.TextWrapping(mux::TextWrapping::Wrap);
-        advancedFeatureDescription = muxc::TextBlock{};
-        advancedFeatureDescription.TextWrapping(mux::TextWrapping::Wrap);
-        advancedFeatureUsage = muxc::TextBlock{};
-        advancedFeatureUsage.TextWrapping(mux::TextWrapping::Wrap);
-        advancedFeatureUsage.FontSize(12.0);
-        advancedFeatureUsage.Opacity(0.68);
-        featureBody.Children().Append(advancedFeatureName);
-        featureBody.Children().Append(advancedFeatureDescription);
-        featureBody.Children().Append(advancedFeatureUsage);
-        muxc::Grid featureRow;
-        featureRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition iconColumn;
-        iconColumn.Width(mux::GridLengthHelper::Auto());
-        muxc::ColumnDefinition featureColumn;
-        featureColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
-        featureRow.ColumnDefinitions().Append(iconColumn);
-        featureRow.ColumnDefinitions().Append(featureColumn);
-        advancedFeatureIconHost = muxc::ContentControl{};
-        advancedFeatureIconHost.Width(24.0);
-        advancedFeatureIconHost.Height(24.0);
-        advancedFeatureIconHost.VerticalAlignment(mux::VerticalAlignment::Top);
-        advancedFeatureIconHost.Margin({0.0, 4.0, 0.0, 0.0});
-        muxc::Grid::SetColumn(featureBody, 1);
-        featureRow.Children().Append(advancedFeatureIconHost);
-        featureRow.Children().Append(featureBody);
-        featureRow.Margin({0.0, 12.0, 0.0, 0.0});
+        const auto featureRow = [](muxc::ContentControl& icon, muxc::TextBlock& name,
+            muxc::TextBlock& description, muxc::TextBlock& usage, const muxc::Button& action) {
+            muxc::StackPanel body;
+            body.Spacing(4.0);
+            name = muxc::TextBlock{};
+            name.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+            name.TextWrapping(mux::TextWrapping::Wrap);
+            description = muxc::TextBlock{};
+            description.TextWrapping(mux::TextWrapping::Wrap);
+            usage = muxc::TextBlock{};
+            usage.TextWrapping(mux::TextWrapping::Wrap);
+            usage.FontSize(12.0);
+            usage.Opacity(0.68);
+            body.Children().Append(name);
+            body.Children().Append(description);
+            body.Children().Append(usage);
+            muxc::Grid row;
+            row.ColumnSpacing(12.0);
+            muxc::ColumnDefinition iconColumn;
+            iconColumn.Width(mux::GridLengthHelper::Auto());
+            muxc::ColumnDefinition bodyColumn;
+            bodyColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+            row.ColumnDefinitions().Append(iconColumn);
+            row.ColumnDefinitions().Append(bodyColumn);
+            icon = muxc::ContentControl{};
+            icon.Width(24.0);
+            icon.Height(24.0);
+            icon.VerticalAlignment(mux::VerticalAlignment::Top);
+            icon.Margin({0.0, 4.0, 0.0, 0.0});
+            muxc::Grid::SetColumn(body, 1);
+            row.Children().Append(icon);
+            row.Children().Append(body);
+            if (action)
+            {
+                muxc::ColumnDefinition actionColumn;
+                actionColumn.Width(mux::GridLengthHelper::Auto());
+                row.ColumnDefinitions().Append(actionColumn);
+                action.VerticalAlignment(mux::VerticalAlignment::Center);
+                muxc::Grid::SetColumn(action, 2);
+                row.Children().Append(action);
+            }
+            row.Margin({0.0, 12.0, 0.0, 0.0});
+            return row;
+        };
         steamRoomToggle = muxc::Button{};
-        steamRoomFeatureRow.Initialize(steamRoomToggle);
-        steamRoomFeatureRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        presenter_controls::StyleSettingsSubrow(steamRoomFeatureRow.root, false, 0.0);
-        steamRoomFeatureRow.root.Visibility(mux::Visibility::Collapsed);
+        steamRoomFeatureRow = featureRow(steamRoomFeatureIcon, steamRoomFeatureName,
+            steamRoomFeatureDescription, steamRoomFeatureUsage, steamRoomToggle);
+        steamRoomFeatureRow.Visibility(mux::Visibility::Collapsed);
         steamRoomToggleToken = steamRoomToggle.Click([this](const auto&, const auto&) {
             if (!steamRoomVisible && steamRoomState.phase == steam_room::Phase::Locked)
             {
@@ -529,8 +544,9 @@ struct GeneralPagePresenter::Impl
         });
         muxc::StackPanel featureList;
         featureList.Spacing(8.0);
-        featureList.Children().Append(featureRow);
-        featureList.Children().Append(steamRoomFeatureRow.root);
+        featureList.Children().Append(featureRow(advancedFeatureIconHost, advancedFeatureName,
+            advancedFeatureDescription, advancedFeatureUsage, muxc::Button{nullptr}));
+        featureList.Children().Append(steamRoomFeatureRow);
         advancedFeatureExpander.Content(featureList);
         // Header sizing is owned by the native template's star column. Only
         // stretch the expanded body to the card's available content width.
@@ -1211,24 +1227,29 @@ struct GeneralPagePresenter::Impl
         HIGHCONTRASTW contrast{sizeof(contrast)};
         const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST,
             sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON);
-        if (highContrast)
-        {
-            muxc::FontIcon icon;
-            icon.Glyph(L"\xE793");
-            icon.FontSize(24.0);
-            advancedFeatureIconHost.Content(icon);
-        }
-        else
-        {
-            mux::Media::Imaging::SvgImageSource source;
-            source.UriSource(winrt::Windows::Foundation::Uri{
-                L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg"});
-            muxc::ImageIcon icon;
-            icon.Source(source);
-            icon.Width(24.0);
-            icon.Height(24.0);
-            advancedFeatureIconHost.Content(icon);
-        }
+        const auto setIcon = [highContrast](const muxc::ContentControl& host, const wchar_t* asset,
+            const wchar_t* fallback) {
+            if (highContrast)
+            {
+                muxc::FontIcon icon;
+                icon.Glyph(fallback);
+                icon.FontSize(24.0);
+                host.Content(icon);
+            }
+            else
+            {
+                mux::Media::Imaging::SvgImageSource source;
+                source.UriSource(winrt::Windows::Foundation::Uri{asset});
+                muxc::ImageIcon icon;
+                icon.Source(source);
+                icon.Width(24.0);
+                icon.Height(24.0);
+                host.Content(icon);
+            }
+        };
+        setIcon(advancedFeatureIconHost,
+            L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg", L"\xE793");
+        setIcon(steamRoomFeatureIcon, L"ms-appx:///Assets/Settings/Icons/steam-multiplayer.svg", L"\xE716");
     }
 
     void RefreshLocalizedText()
@@ -1261,6 +1282,9 @@ struct GeneralPagePresenter::Impl
             L("settings.general.advancedFeatures"));
         advancedFeatureName.Text(L("settings.general.advancedFeatures.largeIcons"));
         advancedFeatureDescription.Text(L("settings.general.advancedFeatures.largeIconsDescription"));
+        steamRoomFeatureName.Text(L("settings.general.steamRoom"));
+        steamRoomFeatureDescription.Text(L("settings.general.steamRoom.description"));
+        steamRoomFeatureUsage.Text(L("settings.general.steamRoom.usage"));
         RefreshAdvancedFeatureIcon();
         advancedFeatureInfoTitle.Text(L("settings.general.advancedFeatures.infoTitle"));
         muxa::AutomationProperties::SetName(advancedFeatureInfoButton,
@@ -1437,9 +1461,8 @@ struct GeneralPagePresenter::Impl
         steamRoomState = status;
         const bool available = status.phase != Phase::Unavailable;
         const bool cardVisible = steamRoomVisible && (available || status.inRoom);
-        steamRoomFeatureRow.root.Visibility(available || steamRoomVisible
+        steamRoomFeatureRow.Visibility(available || steamRoomVisible
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        steamRoomFeatureRow.SetText(L("settings.general.steamRoom"));
         const auto toggleLabel = L(steamRoomVisible
             ? "settings.general.steamRoom.hideCard" : "settings.general.steamRoom.showCard");
         steamRoomToggle.Content(winrt::box_value(toggleLabel));
@@ -1932,7 +1955,7 @@ mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId
             if (reveal) impl_->steamRoomExpander.IsExpanded(true);
             return impl_->steamRoomExpander;
         }
-        if (impl_->steamRoomFeatureRow.root.Visibility() == mux::Visibility::Visible)
+        if (impl_->steamRoomFeatureRow.Visibility() == mux::Visibility::Visible)
         {
             if (reveal) impl_->advancedFeatureExpander.IsExpanded(true);
             return impl_->steamRoomToggle;

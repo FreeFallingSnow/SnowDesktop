@@ -2844,5 +2844,7 @@
   "settings.general.steamRoom.join": "Join room",
   "settings.general.steamRoom.leave": "Leave room",
   "settings.general.steamRoom.showCard": "Show",
-  "settings.general.steamRoom.hideCard": "Hide"
+  "settings.general.steamRoom.hideCard": "Hide",
+  "settings.general.steamRoom.description": "Play with Steam friends in desktop widgets that support multiplayer.",
+  "settings.general.steamRoom.usage": "Select Show, then create a room or accept an invite from the Steam card."
 }
