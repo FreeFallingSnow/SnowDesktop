@@ -12,6 +12,9 @@
   "nameKey": "lua_widget.gomoku.name",
   "version": "1.1.1",
   "preview": "workshop-preview.png",
+  "previewGallery": [
+    "previews/zh-CN.png"
+  ],
   "description": "Play local, AI or Steam Gomoku with two rule sets and preset reactions.",
   "descriptionKey": "lua_widget.gomoku.description",
   "locales": {
