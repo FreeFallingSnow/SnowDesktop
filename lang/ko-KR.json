@@ -2845,5 +2845,6 @@
   "settings.general.steamRoom.showCard": "표시",
   "settings.general.steamRoom.hideCard": "숨기기",
   "settings.general.steamRoom.description": "멀티플레이를 지원하는 데스크톱 위젯에서 Steam 친구와 함께 플레이하세요.",
-  "settings.general.steamRoom.usage": "실행 상태 표시가 꺼져 있으면 Steam 초대에서 「참가」를 선택하세요. 실행 상태 표시가 켜져 있고 카드가 표시되면 친구의 초대에 자동으로 참가합니다."
+  "settings.general.steamRoom.usage": "실행 상태 표시가 꺼져 있으면 Steam 초대에서 「참가」를 선택하세요. 실행 상태 표시가 켜져 있고 카드가 표시되면 친구의 초대에 자동으로 참가합니다.",
+  "app.steam.invite_instance_busy": "실행 중인 SnowDesktop이 이미 방에 참가했거나 멀티플레이 작업을 처리하고 있습니다. 방에서 나가거나 처리가 끝난 후 Steam에서 다시 참가하세요."
 }

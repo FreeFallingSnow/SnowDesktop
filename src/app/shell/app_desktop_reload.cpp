@@ -3,6 +3,7 @@
 #include "common/l10n.h"
 #include "widget/runtime/widget_engine.h"
 #include "platform/single_instance.h"
+#include "steam/steam_room_status.h"
 #include "app/shell/icon_load_task.h"
 #include "common/utils.h"
 #include "dock/dock_settings.h"
@@ -566,6 +567,20 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (widgetEngine_)
             widgetEngine_->OnTaskWake();
         return 0;
+    case snowdesktop::single_instance::kSteamWidgetLobbyRequestMessage:
+    {
+        using Handoff = snowdesktop::single_instance::SteamWidgetLobbyHandoff;
+        if (!wp || exitRequested_ || !widgetEngine_)
+            return static_cast<LRESULT>(Handoff::Unavailable);
+        const auto room = widgetEngine_->SteamRoomStatus();
+        if (room.inRoom || room.busy)
+            return static_cast<LRESULT>(Handoff::Busy);
+        if (room.phase == snowdesktop::steam_room::Phase::Unavailable ||
+            room.phase == snowdesktop::steam_room::Phase::Locked)
+            return static_cast<LRESULT>(Handoff::Unavailable);
+        widgetEngine_->OpenSteamWidgetInvitation(static_cast<std::uint64_t>(wp));
+        return static_cast<LRESULT>(Handoff::Accepted);
+    }
     case kActivateExistingInstanceMessage:
         if (lp == snowdesktop::single_instance::kSteamWidgetLobbyActivation)
         {

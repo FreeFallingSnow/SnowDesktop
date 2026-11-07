@@ -125,11 +125,24 @@ StartupAcquisition AcquireForStartup(Guard& guard, Find&& find, Resolve&& resolv
 // Accept a full command line (including the executable) so quoted paths and
 // values cannot be mistaken for a background launch marker.
 LaunchIntent ParseLaunchIntent(std::wstring_view commandLine);
-// Steam launch arguments are untrusted hints. The receiving host validates the
-// Steam room metadata and waits for a local user action before joining it.
+// The launch argument is an untrusted room hint. The receiving host validates
+// the Steam room metadata before joining.
 std::uint64_t ParseSteamWidgetLobby(std::wstring_view commandLine);
 inline constexpr LPARAM kSteamWidgetLobbyActivation = 1;
 bool ForwardSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby);
+
+// Cross-deployment handoff requires a reply from the receiving control window.
+// Older hosts return zero for this message and continue using legacy activation.
+inline constexpr UINT kSteamWidgetLobbyRequestMessage = WM_APP + 26;
+enum class SteamWidgetLobbyHandoff : std::uint32_t
+{
+    Unsupported = 0,
+    Accepted = 0x53444C01,
+    Busy = 0x53444C02,
+    Unavailable = 0x53444C03,
+    DeliveryFailed = 0x53444C04
+};
+SteamWidgetLobbyHandoff RequestSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby);
 
 // Deliver settings activation only for an interactive compatible launch.
 // Background duplicates exit silently; the current Steam launcher may still

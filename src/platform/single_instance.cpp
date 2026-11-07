@@ -614,6 +614,31 @@ bool ForwardSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby)
             static_cast<WPARAM>(lobby), kSteamWidgetLobbyActivation) != FALSE;
 }
 
+SteamWidgetLobbyHandoff RequestSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby)
+{
+    DWORD owner = 0;
+    if (!lobby || !instance.controlWindow ||
+        !GetWindowThreadProcessId(instance.controlWindow, &owner) || owner != instance.processId)
+        return SteamWidgetLobbyHandoff::DeliveryFailed;
+
+    DWORD_PTR reply = 0;
+    if (!SendMessageTimeoutW(instance.controlWindow, kSteamWidgetLobbyRequestMessage,
+            static_cast<WPARAM>(lobby), 0, SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 1500, &reply))
+        return SteamWidgetLobbyHandoff::DeliveryFailed;
+
+    switch (reply)
+    {
+    case static_cast<DWORD_PTR>(SteamWidgetLobbyHandoff::Accepted):
+        return SteamWidgetLobbyHandoff::Accepted;
+    case static_cast<DWORD_PTR>(SteamWidgetLobbyHandoff::Busy):
+        return SteamWidgetLobbyHandoff::Busy;
+    case static_cast<DWORD_PTR>(SteamWidgetLobbyHandoff::Unavailable):
+        return SteamWidgetLobbyHandoff::Unavailable;
+    default:
+        return SteamWidgetLobbyHandoff::Unsupported;
+    }
+}
+
 bool NotifyExistingInstance(DWORD timeoutMilliseconds)
 {
     const auto instance =

@@ -2845,5 +2845,6 @@
   "settings.general.steamRoom.showCard": "Afficher",
   "settings.general.steamRoom.hideCard": "Masquer",
   "settings.general.steamRoom.description": "Jouez avec vos amis Steam dans les widgets de bureau compatibles avec le mode multijoueur.",
-  "settings.general.steamRoom.usage": "Si le statut d’exécution est désactivé, cliquez sur « Rejoindre » dans Steam. Si le statut est activé et la carte visible, les invitations de vos amis sont acceptées automatiquement."
+  "settings.general.steamRoom.usage": "Si le statut d’exécution est désactivé, cliquez sur « Rejoindre » dans Steam. Si le statut est activé et la carte visible, les invitations de vos amis sont acceptées automatiquement.",
+  "app.steam.invite_instance_busy": "L’instance de SnowDesktop en cours est déjà dans un salon ou traite une action multijoueur. Réessayez de rejoindre le salon depuis Steam lorsqu’elle sera disponible."
 }

@@ -2845,5 +2845,6 @@
   "settings.general.steamRoom.showCard": "显示",
   "settings.general.steamRoom.hideCard": "隐藏",
   "settings.general.steamRoom.description": "和 Steam 好友在支持联机的桌面组件中一起玩。",
-  "settings.general.steamRoom.usage": "关闭 Steam 运行状态时，在 Steam 邀请中点「加入」。开启运行状态并显示卡片时，收到好友邀请会自动加入。"
+  "settings.general.steamRoom.usage": "关闭 Steam 运行状态时，在 Steam 邀请中点「加入」。开启运行状态并显示卡片时，收到好友邀请会自动加入。",
+  "app.steam.invite_instance_busy": "当前 SnowDesktop 已在房间中，或正在处理联机操作。离开房间或等操作结束后，请在 Steam 中重新加入。"
 }
