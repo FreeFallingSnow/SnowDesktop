@@ -362,20 +362,21 @@ GlyphAlphaMask BuildOpticallyWeightedMask(const LOGFONTW& sourceFont,
     for (size_t i = 0; i < source.size(); ++i)
         source[i] = static_cast<std::uint8_t>(pixels[i] & 0xFFu);
 
-    // Expand the 4x mask by one sample before downsampling.  This adds only
-    // 0.25 physical pixel of optical weight and preserves counters/corners.
+    // Expand the 4x mask by one sample before downsampling for most glyphs.
+    // Keep the original stroke weight on Pages so its small grid cells stay open.
+    const int expansion = std::wstring_view(glyph) == menu_fluent_glyphs::kPages ? 0 : 1;
     std::vector<std::uint8_t> expanded(source.size(), 0);
     for (int y = 0; y < highHeight; ++y)
     {
         for (int x = 0; x < highWidth; ++x)
         {
             std::uint8_t coverage = 0;
-            for (int offsetY = -1; offsetY <= 1; ++offsetY)
+            for (int offsetY = -expansion; offsetY <= expansion; ++offsetY)
             {
                 const int sampleY = y + offsetY;
                 if (sampleY < 0 || sampleY >= highHeight)
                     continue;
-                for (int offsetX = -1; offsetX <= 1; ++offsetX)
+                for (int offsetX = -expansion; offsetX <= expansion; ++offsetX)
                 {
                     const int sampleX = x + offsetX;
                     if (sampleX < 0 || sampleX >= highWidth)

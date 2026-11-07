@@ -1899,7 +1899,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(pageMenu), _LW("app.menu.pages"));
         // Table Multiple 24 Regular, the outline used by Settings pages.svg.
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pageMenu),
-            L"\U000F0A68", MenuIconFont::FluentRegular);
+            snowdesktop::menu_fluent_glyphs::kPages, MenuIconFont::FluentRegular);
         SetMenuItemIcon(pageMenu, kContextPageAdd, L"\uF067",
             MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
         SetMenuItemIcon(pageMenu, kContextPageDelete, L"\uF2ED");
