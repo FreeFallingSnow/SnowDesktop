@@ -182,6 +182,9 @@ public:
         const int quickTextHeight = -metrics_.quickActionTextFontHeight;
         const int quickIconHeight = -metrics_.quickActionFontHeight;
         const bool win10Style = appearance_rules::IsWin10Style(effectiveAppearance_);
+        // ClearType assumes a fixed background behind its RGB subpixels.
+        // The blur styles composite this bitmap over a separate backdrop.
+        const DWORD textQuality = blurEnabled_ ? ANTIALIASED_QUALITY : CLEARTYPE_QUALITY;
         if (win10Style)
         {
             // Match native menu typography, including the user's text size,
@@ -200,7 +203,7 @@ public:
         if (!textFont_)
             textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
                 FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                CLIP_DEFAULT_PRECIS, textQuality,
                 DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         if (win10Style && textFont_)
         {
@@ -234,7 +237,7 @@ public:
             L"Font Awesome 6 Free Solid");
         quickTextFont_ = CreateFontW(quickTextHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            CLIP_DEFAULT_PRECIS, textQuality,
             DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         quickFluentIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
             FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
