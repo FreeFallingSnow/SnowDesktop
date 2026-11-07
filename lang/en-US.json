@@ -2845,5 +2845,5 @@
   "settings.general.steamRoom.showCard": "Show",
   "settings.general.steamRoom.hideCard": "Hide",
   "settings.general.steamRoom.description": "Play with Steam friends in desktop widgets that support multiplayer.",
-  "settings.general.steamRoom.usage": "Select Show to create a room and automatically join when a Steam friend invites you."
+  "settings.general.steamRoom.usage": "With running status off, select Join in Steam. Turn it on to join friends’ invites automatically while this card is shown."
 }

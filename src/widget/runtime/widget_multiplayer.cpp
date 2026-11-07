@@ -81,12 +81,6 @@ void StartBridge(WidgetMultiplayer& state, const std::function<void()>& wake)
     if (!state.service) state.service = std::make_unique<Service>(state.executable, wake);
 }
 
-void PauseIdleListening(WidgetMultiplayer& state)
-{
-    state.idleListeningPaused = true;
-    state.launchLobby = 0;
-    state.launchUntil = {};
-}
 }
 
 void WidgetEngine::ConfigureSteamMultiplayer(std::filesystem::path executable,
@@ -105,8 +99,12 @@ void WidgetEngine::ConfigureSteamMultiplayer(std::filesystem::path executable,
 void WidgetEngine::OpenSteamWidgetInvitation(std::uint64_t lobby)
 {
     if (!widgetMultiplayer_ || !lobby) return;
-    widgetMultiplayer_->launchLobby = lobby;
-    widgetMultiplayer_->launchUntil = WidgetMultiplayer::Clock::now() + 2min;
+    auto& state = *widgetMultiplayer_;
+    if (state.members || state.operation) return;
+    state.launchLobby = lobby;
+    state.launchUntil = WidgetMultiplayer::Clock::now() + 2min;
+    state.launchSubmitted = false;
+    state.retryAfter = {};
     if (taskWakeCallback_) taskWakeCallback_();
 }
 
@@ -144,11 +142,6 @@ room::Status WidgetEngine::ControlSteamRoom(room::Command command)
     }
     if (command == room::Command::Listen)
     {
-        if (!state.settingsListening && state.idleListeningPaused)
-        {
-            state.idleListeningPaused = false;
-            state.retryAfter = {};
-        }
         state.settingsListening = true;
         wake();
         return SteamRoomStatus();
@@ -157,10 +150,7 @@ room::Status WidgetEngine::ControlSteamRoom(room::Command command)
     {
         // Closing the owned child also leaves Steam when an operation is still
         // pending or when entitlement has changed since the UI was displayed.
-        if (!(availability & WidgetMultiplayer::kReportRunningStatus)) PauseIdleListening(state);
         StopWidgetMultiplayer("roomClosed");
-        state.launchLobby = 0;
-        state.launchUntil = {};
         state.failure = room::Failure::None;
         wake();
         return SteamRoomStatus();
@@ -231,6 +221,9 @@ void WidgetEngine::StopWidgetMultiplayer(std::string_view error)
     ClearParticipation(state);
     state.operation.reset();
     state.invitation.reset();
+    state.launchLobby = 0;
+    state.launchUntil = {};
+    state.launchSubmitted = false;
     state.friends.clear();
     state.members = 0;
     state.host = state.ready = false;
@@ -371,22 +364,27 @@ void WidgetEngine::PumpWidgetMultiplayer()
     if (now >= state.launchUntil) state.launchLobby = 0;
     if (now >= state.invitationUntil) state.invitation.reset();
     const bool reportRunningStatus = (availability & WidgetMultiplayer::kReportRunningStatus) != 0;
-    const bool keepListening = now < state.launchUntil ||
-        ((!state.idleListeningPaused || reportRunningStatus) &&
-            (state.settingsListening || (availability & WidgetMultiplayer::kBackgroundListening)));
+    const bool keepListening = reportRunningStatus &&
+        (state.settingsListening || (availability & WidgetMultiplayer::kBackgroundListening));
     if (state.service && (availability < 2 ||
         (!keepListening && !state.launchLobby && !state.members && !state.operation && !state.invitation)))
         StopWidgetMultiplayer("roomClosed");
 
-    if (availability >= 2 && (state.launchLobby || (keepListening && now >= state.retryAfter)))
+    if (availability >= 2 && (state.launchLobby || keepListening) && now >= state.retryAfter)
         StartBridge(state, taskWakeCallback_);
-    if (state.service && state.ready && (state.launchLobby || state.readSteamLaunch))
+    if (state.service && state.ready)
     {
-        if (state.service->Submit(Frame{0, state.launchLobby, Kind::OpenInvitation}))
+        if (state.launchLobby && !state.launchSubmitted &&
+            state.service->Submit(Frame{0, state.launchLobby, Kind::OpenInvitation}))
         {
-            state.launchLobby = 0;
+            state.launchSubmitted = true;
+            // The bridge gives Steam 15 seconds to supply the lobby metadata.
+            state.launchUntil = now + 20s;
             state.readSteamLaunch = false;
         }
+        else if (!state.launchLobby && reportRunningStatus && state.readSteamLaunch &&
+            state.service->Submit(Frame{0, 0, Kind::OpenInvitation}))
+            state.readSteamLaunch = false;
     }
 
     const auto events = state.service ? state.service->Drain() : std::vector<Frame>{};
@@ -402,21 +400,23 @@ void WidgetEngine::PumpWidgetMultiplayer()
             if (taskWakeCallback_) taskWakeCallback_();
             break;
         case Kind::Disconnected:
-            if (state.members && !reportRunningStatus) PauseIdleListening(state);
             StopWidgetMultiplayer("steamUnavailable");
             state.failure = room::Failure::SteamUnavailable;
             break;
         case Kind::Invitation:
-            if (!state.members && !state.operation && !state.invitation)
+        {
+            const bool accepted = state.launchLobby ? event.value == state.launchLobby : reportRunningStatus;
+            if (accepted && !state.members && !state.operation && !state.invitation)
             {
                 state.invitation = event;
                 state.invitationUntil = now + 2min;
+                state.launchLobby = 0;
             }
             break;
+        }
         case Kind::Room:
             if (state.members && !event.value && !reportRunningStatus)
             {
-                PauseIdleListening(state);
                 StopWidgetMultiplayer("roomClosed");
                 messages.clear();
                 break;

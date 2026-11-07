@@ -2845,5 +2845,5 @@
   "settings.general.steamRoom.showCard": "Mostrar",
   "settings.general.steamRoom.hideCard": "Ocultar",
   "settings.general.steamRoom.description": "Juega con tus amigos de Steam en los componentes de escritorio compatibles con el modo multijugador.",
-  "settings.general.steamRoom.usage": "Pulsa «Mostrar» para crear una sala y unirte automáticamente cuando te invite un amigo de Steam."
+  "settings.general.steamRoom.usage": "Con el estado de ejecución desactivado, pulsa «Unirse» en Steam. Si lo activas y la tarjeta está visible, te unirás automáticamente al recibir una invitación."
 }

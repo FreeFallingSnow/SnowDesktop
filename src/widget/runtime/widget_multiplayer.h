@@ -51,7 +51,7 @@ struct WidgetMultiplayer
     bool host = false;
     bool ready = false;
     bool settingsListening = false;
-    bool idleListeningPaused = false;
+    bool launchSubmitted = false;
     bool readSteamLaunch = true;
 };
 }

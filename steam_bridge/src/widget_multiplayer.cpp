@@ -95,7 +95,7 @@ private:
         switch (frame.kind)
         {
         case Kind::OpenInvitation:
-            if (frame.value) ReadInvitation(CSteamID(frame.value));
+            if (frame.value) ReadInvitation(CSteamID(frame.value), true);
             else ReadLaunchInvitation();
             Result(frame.request);
             break;
@@ -276,7 +276,7 @@ private:
 
     void OnJoinRequested(GameLobbyJoinRequested_t* event)
     {
-        ReadInvitation(event->m_steamIDLobby);
+        ReadInvitation(event->m_steamIDLobby, true);
     }
 
     void OnLaunchChanged(NewUrlLaunchParameters_t*) { ReadLaunchInvitation(); }
@@ -298,17 +298,27 @@ private:
         std::uint64_t id = 0;
         const auto result = std::from_chars(argument.data(), argument.data() + argument.size(), id);
         if (result.ec == std::errc{} && result.ptr == argument.data() + argument.size())
-            ReadInvitation(CSteamID(id));
+            ReadInvitation(CSteamID(id), true);
     }
 
-    void ReadInvitation(CSteamID id)
+    void ReadInvitation(CSteamID id, bool explicitRequest = false)
     {
         const auto now = Clock::now();
-        if (room_.IsValid() || call_ != k_uAPICallInvalid ||
-            (invitation_.IsValid() && now < invitationExpiry_) ||
-            (requestedInvitation_.IsValid() && now < requestedExpiry_)) return;
+        if (room_.IsValid() || call_ != k_uAPICallInvalid) return;
         if (!id.IsValid() || id.GetEAccountType() != k_EAccountTypeChat ||
             !(id.GetUnAccountInstance() & k_EChatInstanceFlagLobby)) return;
+        if (invitation_.IsValid() && now < invitationExpiry_)
+        {
+            if (!explicitRequest) return;
+            if (id == invitation_)
+            {
+                Emit(Kind::Invitation, 0, id.ConvertToUint64());
+                return;
+            }
+        }
+        if (requestedInvitation_.IsValid() && now < requestedExpiry_ &&
+            (!explicitRequest || id == requestedInvitation_)) return;
+        invitation_.Clear();
         requestedInvitation_ = id;
         requestedExpiry_ = now + 15s;
         if (!SteamMatchmaking()->RequestLobbyData(id)) requestedInvitation_.Clear();
