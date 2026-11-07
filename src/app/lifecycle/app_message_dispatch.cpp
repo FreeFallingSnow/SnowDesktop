@@ -405,6 +405,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
+            // The hidden desktop bypasses OnLeftButtonDown, including its
+            // outside-click dismissal for Dock collection popups.
+            if ((dockFolderPopupOpen_ || popupAnchoredToDock_) &&
+                !dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+            {
+                pendingCollectionPopupOpen_.reset();
+                CloseCollectionPopup();
+            }
             // The render child does not activate on clicks. Match the normal
             // press path so shell flyouts lose focus even while icons are hidden.
             RestoreInteractionInputFocus(true);
