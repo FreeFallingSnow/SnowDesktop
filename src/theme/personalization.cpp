@@ -92,10 +92,13 @@ static bool ReadBoolField(const std::string& text, const char* field, bool& out)
 bool LoadPersonalization(
     const wchar_t* path,
     PersonalizationSettings& s,
-    bool* categorizedTabHeightLoaded)
+    bool* categorizedTabHeightLoaded,
+    bool* contextMenuStyleMigrated)
 {
     if (categorizedTabHeightLoaded)
         *categorizedTabHeightLoaded = false;
+    if (contextMenuStyleMigrated)
+        *contextMenuStyleMigrated = false;
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
     std::ostringstream ss;
@@ -226,6 +229,11 @@ bool LoadPersonalization(
     if (!versionedMenuStyle && s.contextMenuStyle == 0)
         s.contextMenuStyle = static_cast<int>(
             snowdesktop::modern_menu::appearance_rules::LegacyFollowForCurrentWindows());
+    const int compatibleMenuStyle = snowdesktop::modern_menu::appearance_rules::
+        CompatibleStoredStyleForCurrentWindows(s.contextMenuStyle);
+    if (contextMenuStyleMigrated && documentParsed)
+        *contextMenuStyleMigrated = compatibleMenuStyle != s.contextMenuStyle;
+    s.contextMenuStyle = compatibleMenuStyle;
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     s.widgetTransformCursors = true;
@@ -371,7 +379,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"windowPinBorderWidth\": " << pinAppearance.windowPinBorderWidth << ",\n";
     file << "  \"windowPinBorderOpacity\": " << pinAppearance.windowPinBorderOpacity << ",\n";
     file << "  \"contextMenuStyle\": "
-         << std::clamp(s.contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance) << ",\n";
+         << snowdesktop::modern_menu::appearance_rules::
+            CompatibleStoredStyleForCurrentWindows(s.contextMenuStyle) << ",\n";
     file << "  \"contextMenuStyleVersion\": 1,\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";

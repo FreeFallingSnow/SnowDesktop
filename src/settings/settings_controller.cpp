@@ -9,6 +9,7 @@
 #include "settings_store.h"
 #include "dock/dock_settings.h"
 #include "desktop/desktop_style_presets.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 
 #include <array>
 #include <stdexcept>
@@ -289,6 +290,8 @@ void SettingsController::UpdatePersonalization(
     SettingsUpdateMode mode)
 {
     if (state_->externalReplacementPending_) return;
+    settings.contextMenuStyle = modern_menu::appearance_rules::
+        CompatibleStoredStyleForCurrentWindows(settings.contextMenuStyle);
     state_->values_.personalization = std::move(settings);
     MarkChanged(SettingsDomain::Personalization, mode);
 }

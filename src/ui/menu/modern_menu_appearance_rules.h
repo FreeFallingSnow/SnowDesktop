@@ -2,6 +2,8 @@
 
 #include "modern_menu.h"
 
+#include <algorithm>
+
 namespace snowdesktop::modern_menu::appearance_rules
 {
 
@@ -100,9 +102,36 @@ inline Appearance LegacyFollowForCurrentWindows()
     return LegacyFollowForWindows(version.major, version.build);
 }
 
-inline constexpr Appearance ResolveForCurrentWindows(
+inline constexpr Appearance CompatibleForWindows(Appearance requested,
+    unsigned long majorVersion, unsigned long buildNumber)
+{
+    if (IsWindows11OrGreater(majorVersion, buildNumber))
+        return requested;
+    switch (requested)
+    {
+    case Appearance::FollowSystem: return Appearance::OpaqueFollowSystem;
+    case Appearance::SystemLightBlur: return Appearance::OpaqueLight;
+    case Appearance::SystemDarkBlur: return Appearance::OpaqueDark;
+    default: return requested;
+    }
+}
+
+inline Appearance CompatibleForCurrentWindows(Appearance requested)
+{
+    const auto version = CurrentWindowsVersion();
+    return CompatibleForWindows(requested, version.major, version.build);
+}
+
+inline int CompatibleStoredStyleForCurrentWindows(int style)
+{
+    return static_cast<int>(CompatibleForCurrentWindows(static_cast<Appearance>(
+        std::clamp(style, 0, kMaximumAppearance))));
+}
+
+inline Appearance ResolveForCurrentWindows(
     Appearance requested, bool lightTheme)
 {
+    requested = CompatibleForCurrentWindows(requested);
     if (requested == Appearance::OpaqueFollowSystem)
         return lightTheme ? Appearance::OpaqueLight : Appearance::OpaqueDark;
     if (requested == Appearance::FollowSystem)

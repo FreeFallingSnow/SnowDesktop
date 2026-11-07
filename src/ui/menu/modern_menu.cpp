@@ -2,7 +2,6 @@
 #include "ui/render/app_font.h"
 #include "modern_menu.h"
 #include "menu_control_snapshot.h"
-#include "app/render/desktop_backdrop_compositor.h"
 #include "ui/input/text_input_state.h"
 #include "platform/foreground_fullscreen.h"
 #include "ui/render/smooth_corner_geometry.h"
@@ -74,7 +73,8 @@ Appearance ResolveEffectiveAppearance(const Options& options)
 
 // SetWindowCompositionAttribute is intentionally resolved dynamically: it is
 // available on supported Windows versions but is not part of the public SDK
-// import library. Windows 11 also uses an acrylic accent for layered menus.
+// import library. The documented DWM transient backdrop and acrylic accent
+// supply the Windows 11 layered menu material.
 enum class WindowCompositionAttribute
 {
     AccentPolicy = 19,
@@ -118,7 +118,6 @@ struct Popup
     MenuController* controller = nullptr;
     std::vector<Item>* items = nullptr;
     HWND hwnd = nullptr;
-    std::unique_ptr<DesktopBackdropCompositor> backdrop;
     int depth = 0;
     int parentItem = -1;
     int hoveredItem = -1;
@@ -158,17 +157,13 @@ public:
               effectiveAppearance_, options.lightTheme)),
           blurEnabled_(appearance_rules::UsesSystemBlur(
               effectiveAppearance_)),
-          useCompositionBackdrop_(blurEnabled_ && [] {
-              const auto version = appearance_rules::CurrentWindowsVersion();
-              return !appearance_rules::IsWindows11OrGreater(version.major, version.build);
-          }()),
           palette_(menu_icon::ResolvePalette(lightTheme_)),
           metrics_(menu_icon::ResolveMetrics(options.dpi,
               appearance_rules::IsWin10Style(effectiveAppearance_))),
-          // The Windows 11 accent covers the whole content HWND. The separate
-          // Windows 10 backdrop is clipped to the panel and leaves room for
-          // the same bitmap shadow used by opaque menus.
-          shadowSize_(blurEnabled_ && !useCompositionBackdrop_ ? 0 : Scale(
+          // Acrylic is composed for the complete HWND and does not respect an
+          // inset alpha-only shadow margin.  Its window must therefore match
+          // the panel bounds exactly; DWM supplies the material shadow.
+          shadowSize_(blurEnabled_ ? 0 : Scale(
               appearance_rules::IsWin10Style(effectiveAppearance_) ? 6 : 12,
               options.dpi)),
           panelPadding_(Scale(appearance_rules::PanelPaddingDip(
@@ -678,22 +673,6 @@ public:
             if (wParam != 0)
                 CloseFromDepth(0);
             return 0;
-        case WM_SHOWWINDOW:
-            if (!wParam && useCompositionBackdrop_)
-            {
-                if (popup.backdrop)
-                    popup.backdrop->SetVisible(false);
-                if (popup.depth == 0)
-                {
-                    for (const auto& child : popups_)
-                        if (child->depth > 0 && child->backdrop)
-                            child->backdrop->SetVisible(false);
-                }
-            }
-            break;
-        case WM_NCDESTROY:
-            popup.backdrop.reset();
-            break;
         case WM_ERASEBKGND:
             return 1;
         case WM_SETCURSOR:
@@ -903,12 +882,7 @@ public:
             memoryDc, &source, 0,
             &blend, ULW_ALPHA);
         if (presented && !wasVisible)
-        {
-            if (popup.backdrop)
-                popup.backdrop->ShowPopupWindowPair(popup.hwnd);
-            else
-                ShowWindow(popup.hwnd, SW_SHOWNOACTIVATE);
-        }
+            ShowWindow(popup.hwnd, SW_SHOWNOACTIVATE);
 
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
@@ -1135,18 +1109,8 @@ private:
         if (!popup->hwnd)
             return false;
 
-        if (useCompositionBackdrop_)
-        {
-            auto backdrop = std::make_unique<DesktopBackdropCompositor>();
-            const bool topmost = (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
-            if (backdrop->InitializePopup(popup->hwnd, topmost, false))
-                popup->backdrop = std::move(backdrop);
-            else if (options_.eventPump.traceDiagnostic)
-                options_.eventPump.traceDiagnostic(L"ModernMenuBackdrop initialize: " + backdrop->LastError());
-        }
-        UpdatePopupMaterial(*popup);
-        if (!useCompositionBackdrop_)
-            ApplyWindowAppearance(popup->hwnd);
+        ApplyBlurClipRegion(*popup);
+        ApplyWindowAppearance(popup->hwnd);
 
         Popup* rawPopup = popup.get();
         popups_.push_back(std::move(popup));
@@ -2616,7 +2580,7 @@ private:
                 popup.panelScreenOrigin.y - shadowSize_,
                 popup.windowWidth, popup.windowHeight,
                 SWP_NOACTIVATE | SWP_NOZORDER);
-            UpdatePopupMaterial(popup);
+            ApplyBlurClipRegion(popup);
             Render(popup);
         }
     }
@@ -2681,7 +2645,7 @@ private:
             SetWindowPos(popup.hwnd, nullptr,
                 popup.panelScreenOrigin.x - shadowSize_, popup.panelScreenOrigin.y - shadowSize_,
                 popup.windowWidth, popup.windowHeight, SWP_NOACTIVATE | SWP_NOZORDER);
-            UpdatePopupMaterial(popup);
+            ApplyBlurClipRegion(popup);
             Render(popup);
         }
     }
@@ -2914,15 +2878,6 @@ private:
         const HWND companion = candidate && IsWindow(candidate) &&
                 IsWindowVisible(candidate) ? candidate : nullptr;
         const bool keepTopmost = options_.topmost || floor;
-        // Activation can move content away from its separate glass layer.
-        // Reattach the helper without raising the menu again.
-        if (useCompositionBackdrop_)
-        {
-            for (const auto& popup : popups_)
-                if (popup->backdrop && IsWindowVisible(popup->hwnd) &&
-                    !popup->backdrop->IsBackdropWindow(GetWindow(popup->hwnd, GW_HWNDNEXT)))
-                    popup->backdrop->Reattach(popup->hwnd);
-        }
         if (!keepTopmost && !companion)
             return;
         bool needsRestore = floor &&
@@ -2969,9 +2924,6 @@ private:
                 {
                     allRepositionsSucceeded = false;
                 }
-                if (popup->backdrop && !popup->backdrop->SetPopupWindowPairZOrder(
-                        popup->hwnd, keepTopmost ? HWND_TOPMOST : HWND_TOP, keepTopmost))
-                    allRepositionsSucceeded = false;
             }
         }
         // Menu restacks must end with the preview; a one-time raise when it
@@ -3039,15 +2991,12 @@ private:
             static_cast<float>(panel.bottom-panel.top), radius);
         const float shadow = static_cast<float>(shadowSize_);
         constexpr float opaquePanelAlpha = 255.0f;
-        const bool hasBlur = blurEnabled_ && (!useCompositionBackdrop_ || popup.backdrop);
-        // Composition supplies untinted blur. Apply the tint in the bitmap
-        // alongside the text and rounded edge so there is only one color layer.
-        float panelAlpha = opaquePanelAlpha;
-        if (hasBlur)
-            panelAlpha = popup.backdrop ? (lightTheme_ ? 145.0f : 155.0f)
-                : static_cast<float>(appearance_rules::BlurPanelAlpha(lightTheme_));
-        const float blurHoverAlpha = popup.backdrop ? 195.0f : 124.0f;
-        const float blurContentAlpha = popup.backdrop ? opaquePanelAlpha : 246.0f;
+        // The acrylic backdrop already supplies its own tint.  Keeping the
+        // custom surface comparatively translucent lets the blurred desktop
+        // remain visible instead of stacking two nearly opaque colour layers.
+        const float blurPanelAlpha = static_cast<float>(appearance_rules::BlurPanelAlpha(lightTheme_));
+        constexpr float blurHoverAlpha = 124.0f;
+        constexpr float blurContentAlpha = 246.0f;
         const float shadowAlpha =
             appearance_rules::IsWin10Style(effectiveAppearance_) ? 14.0f : 34.0f;
         const COLORREF borderColor = lightTheme_
@@ -3084,10 +3033,10 @@ private:
                         (static_cast<std::uint32_t>(GetRValue(color)) << 16);
                 };
                 float surfaceAlpha = opaquePanelAlpha;
-                if (hasBlur)
+                if (blurEnabled_)
                 {
                     if (rgb == dibColor(palette_.background))
-                        surfaceAlpha = panelAlpha;
+                        surfaceAlpha = blurPanelAlpha;
                     else if (rgb == dibColor(palette_.hoverBackground))
                         surfaceAlpha = blurHoverAlpha;
                     else
@@ -3127,7 +3076,7 @@ private:
                             (static_cast<float>(horizontalTrack.right - x) - 0.5f) / fadeWidth);
                     opacity = std::clamp(opacity, 0.0f, 1.0f);
                     const float contentAlpha = surfaceAlpha * opacity;
-                    const float backgroundAlpha = panelAlpha * (1.0f - opacity);
+                    const float backgroundAlpha = (blurEnabled_ ? blurPanelAlpha : opaquePanelAlpha) * (1.0f - opacity);
                     surfaceAlpha = contentAlpha + backgroundAlpha;
                     // Fade the row content into the same material as the rest
                     // of the panel; acrylic must not gain an opaque edge strip.
@@ -3162,31 +3111,10 @@ private:
         }
     }
 
-    void UpdatePopupMaterial(Popup& popup)
+    void ApplyBlurClipRegion(Popup& popup)
     {
         if (!blurEnabled_ || !popup.hwnd)
             return;
-
-        if (useCompositionBackdrop_)
-        {
-            if (!popup.backdrop)
-                return;
-            popup.backdrop->Reattach(popup.hwnd);
-            popup.backdrop->BeginFrame(true);
-            const RECT panel{shadowSize_, shadowSize_,
-                shadowSize_ + popup.panelWidth, shadowSize_ + popup.panelHeight};
-            if (popup.backdrop->AddPanel(panel, static_cast<float>(panelRadius_),
-                    static_cast<float>(Scale(24, options_.dpi)), 1))
-            {
-                popup.backdrop->EndFrame();
-                if (popup.backdrop->LastError().empty())
-                    return;
-            }
-            if (options_.eventPump.traceDiagnostic)
-                options_.eventPump.traceDiagnostic(L"ModernMenuBackdrop update: " + popup.backdrop->LastError());
-            popup.backdrop.reset();
-            return;
-        }
 
         // DWM applies Acrylic to the whole HWND, including the transparent
         // margin reserved for our analytic shadow.  Restrict composition to
@@ -3289,7 +3217,6 @@ private:
     Appearance effectiveAppearance_ = Appearance::FollowSystem;
     bool lightTheme_ = true;
     bool blurEnabled_ = false;
-    bool useCompositionBackdrop_ = false;
     menu_icon::Palette palette_;
     menu_icon::Metrics metrics_;
     int shadowSize_ = 0;

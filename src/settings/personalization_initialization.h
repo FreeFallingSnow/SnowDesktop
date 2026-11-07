@@ -13,7 +13,8 @@ namespace snowdesktop
 inline bool LoadInitialPersonalization(
     const std::filesystem::path& path,
     PersonalizationSettings& settings,
-    bool* categorizedTabHeightLoaded = nullptr)
+    bool* categorizedTabHeightLoaded = nullptr,
+    bool* contextMenuStyleMigrated = nullptr)
 {
     const auto hasUserState = [](const std::filesystem::path& candidate) {
         std::error_code error;
@@ -46,6 +47,7 @@ inline bool LoadInitialPersonalization(
     else if (!appearanceHasUserState)
         settings.contextMenuStyle = static_cast<int>(
             modern_menu::appearance_rules::LegacyFollowForCurrentWindows());
-    return LoadPersonalization(path.c_str(), settings, categorizedTabHeightLoaded);
+    return LoadPersonalization(path.c_str(), settings, categorizedTabHeightLoaded,
+        contextMenuStyleMigrated);
 }
 }

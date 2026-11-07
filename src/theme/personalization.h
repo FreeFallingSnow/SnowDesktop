@@ -33,7 +33,8 @@ PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId);
 bool LoadPersonalization(
     const wchar_t* path,
     PersonalizationSettings& s,
-    bool* categorizedTabHeightLoaded = nullptr);
+    bool* categorizedTabHeightLoaded = nullptr,
+    bool* contextMenuStyleMigrated = nullptr);
 
 /**
  * @brief 将个性化设置保存到 JSON 文件

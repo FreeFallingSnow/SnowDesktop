@@ -79,34 +79,53 @@ void Settings()
     PersonalizationSettings migratedSettings;
     Require(LoadPersonalization(appearanceFile.c_str(), migratedSettings) && migratedSettings.contextMenuStyle == legacyFollow,
         "migrated follow remains stable after save and reload");
+    constexpr int win10Styles[] = {0, 3, 4, 3, 4, 5, 6, 0, 8};
+    const auto windows = appearance::CurrentWindowsVersion();
+    const bool supportsBlur = appearance::IsWindows11OrGreater(windows.major, windows.build);
     for (int storedStyle = 0; storedStyle <= 8; ++storedStyle)
     {
+        const auto requested = static_cast<menu::Appearance>(storedStyle);
+        Require(static_cast<int>(appearance::CompatibleForWindows(requested, 10, 19045)) == win10Styles[storedStyle] &&
+            appearance::CompatibleForWindows(requested, 10, 22000) == requested,
+            "Windows 10 maps just the three transparent styles and Windows 11 keeps their IDs");
+        const int expectedStyle = supportsBlur ? storedStyle : win10Styles[storedStyle];
         if (storedStyle >= 1 && storedStyle <= 6)
         {
             Write(appearanceFile, "{\"contextMenuStyle\":" + std::to_string(storedStyle) + "}");
-            Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == storedStyle,
-                "legacy explicit light/dark choices retain their stored style");
+            Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) && menuSettings.contextMenuStyle == expectedStyle,
+                "unversioned explicit light/dark choices are compatible with the running OS");
         }
         Write(appearanceFile, "{\"contextMenuStyleVersion\":1,\"contextMenuStyle\":" + std::to_string(storedStyle) + "}");
-        Require(LoadPersonalization(appearanceFile.c_str(), menuSettings) &&
-            menuSettings.contextMenuStyle == storedStyle && SavePersonalization(appearanceFile.c_str(), menuSettings),
-            "legacy and new menu choices keep their stable stored IDs");
+        bool styleMigrated = false;
+        Require(LoadPersonalization(appearanceFile.c_str(), menuSettings, nullptr, &styleMigrated) &&
+            menuSettings.contextMenuStyle == expectedStyle && styleMigrated == (expectedStyle != storedStyle) &&
+            SavePersonalization(appearanceFile.c_str(), menuSettings),
+            "stored choices migrate only when the selected material is unavailable");
         PersonalizationSettings reloaded;
-        Require(LoadPersonalization(appearanceFile.c_str(), reloaded) && reloaded.contextMenuStyle == storedStyle,
-            "all nine menu choices survive a physical save/reload");
+        Require(LoadPersonalization(appearanceFile.c_str(), reloaded, nullptr, &styleMigrated) &&
+            reloaded.contextMenuStyle == expectedStyle && !styleMigrated,
+            "compatible choices remain stable after a physical save and reload");
     }
     Require(appearance::ResolveForCurrentWindows(static_cast<menu::Appearance>(0), true) == menu::Appearance::OpaqueLight &&
         appearance::ResolveForCurrentWindows(static_cast<menu::Appearance>(0), false) == menu::Appearance::OpaqueDark,
         "new explicit opaque-follow remains opaque in both system themes");
-    Require(appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, true) == menu::Appearance::SystemLightBlur &&
-        appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, false) == menu::Appearance::SystemDarkBlur &&
+    Require(appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, true) ==
+            (supportsBlur ? menu::Appearance::SystemLightBlur : menu::Appearance::OpaqueLight) &&
+        appearance::ResolveForCurrentWindows(menu::Appearance::FollowSystem, false) ==
+            (supportsBlur ? menu::Appearance::SystemDarkBlur : menu::Appearance::OpaqueDark) &&
         appearance::ResolveForCurrentWindows(menu::Appearance::Win10FollowSystem, true) == menu::Appearance::Win10Light &&
         appearance::ResolveForCurrentWindows(menu::Appearance::Win10FollowSystem, false) == menu::Appearance::Win10Dark,
-        "new follow choices retain their style family in both system themes");
+        "follow styles resolve light and dark using the compatible material");
     auto store = CreateNativeSettingsStore();
+    const auto nativeAppearance = GetPersonalizationPath();
+    Write(nativeAppearance, "{\"contextMenuStyleVersion\":1,\"contextMenuStyle\":7,\"categorizedTabHeight\":32}");
     SettingsObserver observer;
     SettingsController controller(store, &observer);
     Require(controller.Initialize().Succeeded(), "load real settings store");
+    bool styleMigrated = false;
+    Require(LoadPersonalization(nativeAppearance.c_str(), migratedSettings, nullptr, &styleMigrated) &&
+        migratedSettings.contextMenuStyle == (supportsBlur ? 7 : 0) && !styleMigrated,
+        "native store persists the compatibility migration on startup");
     SettingsValues before; Require(store->Load(before).Succeeded(), "read baseline settings");
     auto draft = before.general; draft.doubleClickHideDesktop = !before.general.doubleClickHideDesktop;
     controller.UpdateGeneral(draft, SettingsUpdateMode::Draft);
