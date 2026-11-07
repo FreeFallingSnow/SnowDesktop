@@ -1299,8 +1299,12 @@ bool DesktopBackdropCompositor::InitializeInternal(
         return false;
     }
 
+    // A popup backdrop can cover transparent space outside its content HWND.
+    // Layered transparency passes cross-thread hit tests through to the real
+    // drop target while the Composition visual supplies the popup's pixels.
     const DWORD extendedStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
         WS_EX_TRANSPARENT |
+        (popupMode ? WS_EX_LAYERED | WS_EX_NOREDIRECTIONBITMAP : 0) |
         (impl_->popupTopmost ? WS_EX_TOPMOST : 0);
     const DWORD windowStyle = popupMode ? WS_POPUP : WS_CHILD;
     impl_->backdropWindow = snowdesktop::CreateShellOverlayWindowEx(
