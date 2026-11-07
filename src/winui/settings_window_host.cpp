@@ -206,6 +206,45 @@ bool SupportsMicaBackdrop() noexcept
     return WindowsBuildNumber() >= 22000;
 }
 
+void ApplyWindows10PopupBackgrounds()
+{
+    if (SupportsMicaBackdrop())
+        return;
+
+    // WinUI's ComboBox and compact NavigationView flyout use in-app acrylic.
+    // Build a fresh dictionary before creating the controls so the override
+    // can be attached to the application resources exactly once.
+    try
+    {
+        const auto backgrounds = mux::Markup::XamlReader::Load(LR"(
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="{ThemeResource SystemColorWindowColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>)").as<mux::ResourceDictionary>();
+        mux::Application::Current().Resources().MergedDictionaries().Append(backgrounds);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        const std::wstring message = L"SettingsUI Win10 popup resources: " +
+            std::wstring(error.message());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message.c_str(),
+            DiagnosticLogLevel::Warning);
+    }
+}
+
 bool SupportsDwmSystemBackdrop() noexcept
 {
     // DWMWA_SYSTEMBACKDROP_TYPE is formally supported starting with 22H2.
@@ -3896,16 +3935,7 @@ bool SettingsWindowHost::Initialize(
 
     try
     {
-        if (!SupportsMicaBackdrop())
-        {
-            // These templates use in-app acrylic by default, including the
-            // child-item flyout opened from a compact NavigationView pane.
-            // Install the solid theme resources before creating any controls.
-            const auto resources = mux::Application::Current().Resources();
-            const auto popupBackgrounds = resources.Lookup(
-                winrt::box_value(L"SettingsOpaquePopupBackgrounds")).as<mux::ResourceDictionary>();
-            resources.MergedDictionaries().Append(popupBackgrounds);
-        }
+        ApplyWindows10PopupBackgrounds();
         impl_->callbacks =
             std::make_shared<Impl::CallbackState>();
         impl_->callbacks->owner = impl_.get();
