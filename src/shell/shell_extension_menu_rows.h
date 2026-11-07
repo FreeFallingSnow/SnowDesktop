@@ -6,6 +6,21 @@
 
 namespace snowdesktop::shell_extensions::presentation_detail
 {
+inline const wchar_t* CommandGlyph(std::string_view verb)
+{
+    if (StatePairForVerb(verb)) return L"\uF601";
+    const auto key = StateCommandLower(verb);
+    if (key == "link" || key == "open" || key == "openwith") return L"\uF582";
+    if (key == "sendto") return L"\uF699";
+    if (key == "includeinlibrary") return L"\uF418";
+    if (key == "cut") return L"\uF33A";
+    if (key == "copy") return L"\uF32B";
+    if (key == "paste" || key == "pastelink") return L"\uF2D5";
+    if (key == "delete") return L"\uF34C";
+    if (key == "rename") return L"\uF669";
+    if (key == "properties") return L"\uF6A9";
+    return nullptr;
+}
 template<class Item>
 inline void RemoveEmptySeparators(std::vector<Item>& items)
 {

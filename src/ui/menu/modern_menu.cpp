@@ -10,6 +10,8 @@
 #include "modern_menu_appearance_rules.h"
 #include "modern_menu_scroll_hint.h"
 #include "modern_menu_dynamic_items_rules.h"
+#include "modern_menu_root_placement.h"
+#include "modern_menu_dismissal_rules.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -20,6 +22,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <cwchar>
 #include <cwctype>
 #include <memory>
 #include <sstream>
@@ -70,8 +73,8 @@ Appearance ResolveEffectiveAppearance(const Options& options)
 
 // SetWindowCompositionAttribute is intentionally resolved dynamically: it is
 // available on supported Windows versions but is not part of the public SDK
-// import library.  The documented DWM transient backdrop remains the primary
-// path, with Acrylic accent providing the Windows 10 and layered-window path.
+// import library. The documented DWM transient backdrop and acrylic accent
+// supply the Windows 11 layered menu material.
 enum class WindowCompositionAttribute
 {
     AccentPolicy = 19,
@@ -173,10 +176,40 @@ public:
         const int submenuArrowHeight = -metrics_.submenuArrowFontHeight;
         const int quickTextHeight = -metrics_.quickActionTextFontHeight;
         const int quickIconHeight = -metrics_.quickActionFontHeight;
-        textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
-            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+        const bool win10Style = appearance_rules::IsWin10Style(effectiveAppearance_);
+        if (win10Style)
+        {
+            // Match native menu typography, including the user's text size,
+            // at the popup DPI. Explicit application font choices still win.
+            NONCLIENTMETRICSW systemMetrics{};
+            systemMetrics.cbSize = sizeof(systemMetrics);
+            if (SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,
+                    sizeof(systemMetrics), &systemMetrics, 0, metrics_.dpi))
+            {
+                LOGFONTW font = systemMetrics.lfMenuFont;
+                const auto family = snowdesktop::app_fonts::GdiFamily(font.lfFaceName);
+                wcsncpy_s(font.lfFaceName, family.c_str(), _TRUNCATE);
+                textFont_ = CreateFontIndirectW(&font);
+            }
+        }
+        if (!textFont_)
+            textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
+                FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+        if (win10Style && textFont_)
+        {
+            if (HDC dc = GetDC(nullptr))
+            {
+                HGDIOBJ previousFont = SelectObject(dc, textFont_);
+                TEXTMETRICW textMetrics{};
+                if (GetTextMetricsW(dc, &textMetrics))
+                    metrics_.rowHeight = std::max(metrics_.rowHeight,
+                        static_cast<int>(textMetrics.tmHeight) + Scale(6, metrics_.dpi));
+                if (previousFont) SelectObject(dc, previousFont);
+                ReleaseDC(nullptr, dc);
+            }
+        }
         // Only the official Regular face is embedded.  Requesting Semibold
         // makes GDI synthesize thicker outlines, which distorts the 20px
         // Fluent masters most visibly on 96-DPI / low-resolution screens.
@@ -212,6 +245,7 @@ public:
 
     ~MenuController()
     {
+        StopOutsideClickObserver();
         CloseFromDepth(0);
         if (fontAwesomeIconFont_)
             DeleteObject(fontAwesomeIconFont_);
@@ -257,6 +291,7 @@ public:
             }
             snowdesktop::private_pointer::SetInputForeground(rootWindow);
             snowdesktop::private_pointer::SetInputFocus(rootWindow);
+            StartOutsideClickObserver();
             RestoreOwnedPopupZOrder();
             TraceOwnedPopupZOrder(
                 L"session-start", nullptr, true);
@@ -267,13 +302,22 @@ public:
         std::optional<std::vector<Item>> pendingItems;
         while (!done_ && !quitReceived)
         {
+            if (outsideClickHook_)
+            {
+                RECT companionBounds{};
+                const HWND companion = options_.zOrderCompanion ? options_.zOrderCompanion() : nullptr;
+                if (companion && IsWindowVisible(companion)) GetWindowRect(companion,&companionBounds);
+                outsideClickCompanionBounds_ = companionBounds;
+            }
             if (options_.pollItems)
             {
                 const bool pointerSafe = !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
                                       !(snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) &&
                                       !(snowdesktop::private_pointer::AsyncKeyState(VK_RBUTTON) & 0x8000);
-                const bool canApply = popups_.size() == 1 &&
-                                      (popups_.front()->hoveredItem < 0 ||
+                POINT pointer{};
+                const bool hoveringRoot = !snowdesktop::private_pointer::CursorPosition(&pointer) ||
+                    snowdesktop::private_pointer::WindowAtPoint(pointer) == popups_.front()->hwnd;
+                const bool canApply = (!hoveringRoot || popups_.front()->hoveredItem < 0 ||
                                        (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
                                       pointerSafe;
                 if (!pendingItems)
@@ -307,7 +351,7 @@ public:
                 }
                 bool stable = true;
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
-                if (pendingItems && hovered >= 0)
+                if (pendingItems && hoveringRoot && hovered >= 0)
                 {
                     stable = options_.pollItemsStablePrefix &&
                         PreservesHoveredRow(rootItems_, *pendingItems, hovered);
@@ -317,11 +361,19 @@ public:
                     const int selected = popups_.front()->keyboardItem;
                     const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
                         ? rootItems_[selected].command : 0;
-                    rootItems_ = std::move(*pendingItems);
+                    const UINT hoveredCommand = hovered >= 0 && static_cast<size_t>(hovered) < rootItems_.size()
+                        ? rootItems_[hovered].command : 0;
+                    ApplyPolledItems(std::move(*pendingItems));
                     pendingItems.reset();
-                    RefreshPopup(*popups_.front(), true);
-                    if (hovered >= 0)
-                        SetHoveredItem(*popups_.front(), hovered, false, false);
+                    const int activeDepth = activeDepth_;
+                    RefreshPopup(*popups_.front(), true, true);
+                    if (hoveredCommand)
+                        for (size_t i = 0; i < rootItems_.size(); ++i)
+                            if (rootItems_[i].command == hoveredCommand)
+                            {
+                                SetHoveredItem(*popups_.front(), static_cast<int>(i), false, false);
+                                break;
+                            }
                     if (selectedCommand)
                         for (size_t i = 0; i < rootItems_.size(); ++i)
                             if (rootItems_[i].command == selectedCommand)
@@ -332,6 +384,7 @@ public:
                                 SetHoveredItem(*popups_.front(), static_cast<int>(i), true, false);
                                 break;
                             }
+                    activeDepth_ = activeDepth;
                     if (!options_.pollItemsFinished || options_.pollItemsFinished())
                         options_.pollItems = {};
                 }
@@ -609,6 +662,11 @@ public:
             // which drops every command selected from a submenu.
             return popup.depth > 0 ? MA_NOACTIVATE : MA_ACTIVATE;
         case kCancelMessage:
+            if (lParam)
+            {
+                const HWND foreground = reinterpret_cast<HWND>(lParam);
+                if (!IsSessionWindow(foreground) && !IsOwnerWindow(foreground)) externalActivation_ = true;
+            }
             if (wParam != 0)
                 superseded_ = true;
             Cancel();
@@ -780,13 +838,6 @@ public:
             }
             RestoreDC(memoryDc, savedRowDc);
         }
-        if (MaxHorizontalScroll(popup) > 0)
-        {
-            if (popup.horizontalScrollOffset > 0)
-                DrawHorizontalScrollIndicator(memoryDc, popup, true);
-            if (popup.horizontalScrollOffset < MaxHorizontalScroll(popup))
-                DrawHorizontalScrollIndicator(memoryDc, popup, false);
-        }
         if (popup.quickSeparatorRect.right >
             popup.quickSeparatorRect.left)
         {
@@ -811,6 +862,8 @@ public:
             DrawScrollIndicator(memoryDc, popup, false);
         }
 
+        // Finish queued GDI writes before setting per-pixel alpha in the DIB.
+        GdiFlush();
         ApplyAlphaMask(popup, pixels, panel);
 
         POINT destination{
@@ -933,6 +986,60 @@ public:
     }
 
 private:
+    static LRESULT CALLBACK OutsideMouseProc(int code, WPARAM message, LPARAM data) try
+    {
+        auto* self = outsideClickController_;
+        if (code == HC_ACTION && data && self && self->outsideClickHook_ &&
+            !snowdesktop::private_pointer::Active() && !self->done_ && !self->closing_ && !self->popups_.empty() &&
+            gActiveRootMenu.load() == self->popups_.front()->hwnd)
+        {
+            const POINT point = reinterpret_cast<const MSLLHOOKSTRUCT*>(data)->pt;
+            const RECT companion = self->outsideClickCompanionBounds_;
+            const bool overCompanion = point.x >= companion.left && point.x < companion.right &&
+                point.y >= companion.top && point.y < companion.bottom;
+            if (!overCompanion && dismissal_rules::OutsidePress(static_cast<UINT>(message),point,self->popups_,
+                [](const auto& popup) {
+                    return RECT{popup->panelScreenOrigin.x,popup->panelScreenOrigin.y,
+                        popup->panelScreenOrigin.x+popup->panelWidth,
+                        popup->panelScreenOrigin.y+popup->panelHeight};
+                }))
+            {
+                // The foreground may still belong to the same external app:
+                // a keyboard-opened menu need not receive WM_ACTIVATE then.
+                // Only post cancellation; keep the original click untouched.
+                PostMessageW(self->popups_.front()->hwnd,kCancelMessage,0,
+                    reinterpret_cast<LPARAM>(snowdesktop::private_pointer::ForegroundWindow()));
+            }
+        }
+        return CallNextHookEx(nullptr,code,message,data);
+    }
+    catch (...) { return CallNextHookEx(nullptr,code,message,data); }
+
+    void StartOutsideClickObserver()
+    {
+        if (snowdesktop::private_pointer::Active() || outsideClickHook_ || popups_.empty() ||
+            snowdesktop::private_pointer::ForegroundWindow() == popups_.front()->hwnd) return;
+        previousOutsideClickController_ = outsideClickController_;
+        outsideClickController_ = this;
+        outsideClickHook_ = SetWindowsHookExW(WH_MOUSE_LL,OutsideMouseProc,GetModuleHandleW(nullptr),0);
+        if (!outsideClickHook_)
+        {
+            outsideClickController_ = previousOutsideClickController_;
+            previousOutsideClickController_ = nullptr;
+            if (options_.eventPump.traceDiagnostic)
+                options_.eventPump.traceDiagnostic(L"Outside-click observer unavailable: "+std::to_wstring(GetLastError()));
+        }
+    }
+
+    void StopOutsideClickObserver() noexcept
+    {
+        if (!outsideClickHook_) return;
+        UnhookWindowsHookEx(outsideClickHook_);
+        outsideClickHook_ = nullptr;
+        if (outsideClickController_ == this) outsideClickController_ = previousOutsideClickController_;
+        previousOutsideClickController_ = nullptr;
+    }
+
     bool RegisterWindowClass()
     {
         static const bool registered = [] {
@@ -1340,6 +1447,12 @@ private:
                     static_cast<int>(options_.anchorRect.top -
                         popup.workArea.top));
             }
+            else if (options_.rootPlacement == RootPlacement::AboveCenteredAnchorRect)
+            {
+                const int above = static_cast<int>(options_.anchorRect.top - popup.workArea.top);
+                if (above >= metrics_.rowHeight + panelPadding_ * 2)
+                    availablePanelHeight = std::min(availablePanelHeight, above);
+            }
             else if (options_.rootPlacement ==
                 RootPlacement::BelowAnchorRect)
             {
@@ -1400,6 +1513,13 @@ private:
         {
             switch (options_.rootPlacement)
             {
+            case RootPlacement::AboveCenteredAnchorRect:
+            {
+                const POINT origin = root_placement::CenteredAbove(options_.anchorRect,
+                    {popup.panelWidth, popup.panelHeight}, popup.workArea);
+                left = origin.x; top = origin.y;
+                break;
+            }
             case RootPlacement::AboveAnchorRect:
                 top = options_.anchorRect.top - popup.panelHeight;
                 break;
@@ -2399,9 +2519,36 @@ private:
         ImmReleaseContext(focusWindow, context);
     }
 
-    void RefreshPopup(Popup &popup, bool preservePosition = false)
+    void ApplyPolledItems(std::vector<Item> items)
     {
-        CloseFromDepth(popup.depth + 1);
+        if (popups_.size() > 1)
+        {
+            Popup& child = *popups_[1];
+            Item& previous = rootItems_[child.parentItem];
+            const auto next = std::ranges::find_if(items, [&](const Item& item) {
+                return item.command == previous.command && item.label == previous.label &&
+                    item.enabled && !item.children.empty();
+            });
+            if (next == items.end())
+                CloseFromDepth(1);
+            else
+            {
+                // Keep the visible subtree's storage, selections and lazy
+                // preparation. Only its root vector object changes address;
+                // deeper popup vectors remain in the same retained storage.
+                next->children = std::move(previous.children);
+                child.parentItem = static_cast<int>(std::distance(items.begin(), next));
+                child.items = &next->children;
+            }
+        }
+        rootItems_ = std::move(items);
+    }
+
+    void RefreshPopup(Popup &popup, bool preservePosition = false,
+        bool preserveChildren = false)
+    {
+        if (!preserveChildren)
+            CloseFromDepth(popup.depth + 1);
         popup.hoveredItem = -1;
         popup.keyboardItem = -1;
         const int previousOffset = popup.scrollOffset;
@@ -2412,7 +2559,10 @@ private:
             // Async additions must not move existing actions under the cursor.
             // Grow downward from the visible origin; use the existing scrolling
             // viewport when the remaining work area cannot fit the new rows.
-            const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
+            const bool above = options_.rootPlacement == RootPlacement::AboveAnchorRect ||
+                (options_.rootPlacement == RootPlacement::AboveCenteredAnchorRect &&
+                    options_.anchorRect.top > popup.panelScreenOrigin.y);
+            const auto bottom = above
                                     ? std::min(popup.workArea.bottom, options_.anchorRect.top)
                                     : popup.workArea.bottom;
             popup.panelHeight =
@@ -2833,41 +2983,6 @@ private:
             palette_.separator, lightTheme_ ? RGB(38, 38, 38) : RGB(238, 238, 238));
     }
 
-    void DrawHorizontalScrollIndicator(
-        HDC dc, const Popup& popup, bool left)
-    {
-        RECT track = popup.horizontalScrollRect;
-        OffsetRect(&track, 0, -popup.scrollOffset);
-        const int indicatorWidth = Scale(14, options_.dpi);
-        RECT background = track;
-        if (left)
-            background.right = background.left + indicatorWidth;
-        else
-            background.left = background.right - indicatorWidth;
-        HBRUSH brush = CreateSolidBrush(palette_.background);
-        if (brush)
-        {
-            FillRect(dc, &background, brush);
-            DeleteObject(brush);
-        }
-
-        const int centerX = (background.left + background.right) / 2;
-        const int centerY = (background.top + background.bottom) / 2;
-        const int half = Scale(3, options_.dpi);
-        HPEN pen = CreatePen(PS_SOLID, 1,
-            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
-        if (!pen)
-            return;
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        MoveToEx(dc, centerX + (left ? half / 2 : -half / 2),
-            centerY - half, nullptr);
-        LineTo(dc, centerX + (left ? -half / 2 : half / 2), centerY);
-        LineTo(dc, centerX + (left ? half / 2 : -half / 2),
-            centerY + half);
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
-    }
-
     void ApplyAlphaMask(Popup& popup, std::uint32_t* pixels,
         const RECT& panel)
     {
@@ -2879,8 +2994,8 @@ private:
         // The acrylic backdrop already supplies its own tint.  Keeping the
         // custom surface comparatively translucent lets the blurred desktop
         // remain visible instead of stacking two nearly opaque colour layers.
-        const float blurPanelAlpha = lightTheme_ ? 70.0f : 76.0f;
-        constexpr float blurHoverAlpha = 146.0f;
+        const float blurPanelAlpha = static_cast<float>(appearance_rules::BlurPanelAlpha(lightTheme_));
+        constexpr float blurHoverAlpha = 124.0f;
         constexpr float blurContentAlpha = 246.0f;
         const float shadowAlpha =
             appearance_rules::IsWin10Style(effectiveAppearance_) ? 14.0f : 34.0f;
@@ -2889,6 +3004,19 @@ private:
         const unsigned borderBlue = GetBValue(borderColor);
         const unsigned borderGreen = GetGValue(borderColor);
         const unsigned borderRed = GetRValue(borderColor);
+
+        RECT horizontalTrack = popup.horizontalScrollRect;
+        OffsetRect(&horizontalTrack, 0, -popup.scrollOffset);
+        horizontalTrack.top = std::max(horizontalTrack.top,
+            panel.top + panelPadding_ + popup.scrollTopBand);
+        horizontalTrack.bottom = std::min(horizontalTrack.bottom,
+            panel.bottom - panelPadding_ - popup.scrollBottomBand);
+        const int maximumHorizontalScroll = MaxHorizontalScroll(popup);
+        const bool fadeLeft = popup.horizontalScrollOffset > 0;
+        const bool fadeRight = popup.horizontalScrollOffset < maximumHorizontalScroll;
+        const float fadeWidth = static_cast<float>(std::max(1, std::min(
+            Scale(24, metrics_.dpi),
+            static_cast<int>(horizontalTrack.right - horizontalTrack.left) / 2)));
 
         for (int y = 0; y < popup.windowHeight; ++y)
         {
@@ -2935,6 +3063,27 @@ private:
                 float blue = static_cast<float>(pixel & 0xFFu);
                 float green = static_cast<float>((pixel >> 8) & 0xFFu);
                 float red = static_cast<float>((pixel >> 16) & 0xFFu);
+                if (maximumHorizontalScroll > 0 &&
+                    y >= horizontalTrack.top && y < horizontalTrack.bottom &&
+                    x >= horizontalTrack.left && x < horizontalTrack.right)
+                {
+                    float opacity = 1.0f;
+                    if (fadeLeft)
+                        opacity = std::min(opacity,
+                            (static_cast<float>(x - horizontalTrack.left) + 0.5f) / fadeWidth);
+                    if (fadeRight)
+                        opacity = std::min(opacity,
+                            (static_cast<float>(horizontalTrack.right - x) - 0.5f) / fadeWidth);
+                    opacity = std::clamp(opacity, 0.0f, 1.0f);
+                    const float contentAlpha = surfaceAlpha * opacity;
+                    const float backgroundAlpha = (blurEnabled_ ? blurPanelAlpha : opaquePanelAlpha) * (1.0f - opacity);
+                    surfaceAlpha = contentAlpha + backgroundAlpha;
+                    // Fade the row content into the same material as the rest
+                    // of the panel; acrylic must not gain an opaque edge strip.
+                    blue = (blue * contentAlpha + GetBValue(palette_.background) * backgroundAlpha) / surfaceAlpha;
+                    green = (green * contentAlpha + GetGValue(palette_.background) * backgroundAlpha) / surfaceAlpha;
+                    red = (red * contentAlpha + GetRValue(palette_.background) * backgroundAlpha) / surfaceAlpha;
+                }
                 blue += (static_cast<float>(borderBlue) - blue) *
                     borderCoverage;
                 green += (static_cast<float>(borderGreen) - green) *
@@ -3043,7 +3192,7 @@ private:
             return;
 
         const COLORREF tint = palette_.background;
-        const DWORD tintAlpha = lightTheme_ ? 0x58 : 0x60;
+        const DWORD tintAlpha = appearance_rules::BlurTintAlpha(lightTheme_);
         AccentPolicy accent;
         accent.state = AccentState::AcrylicBlurBehind;
         accent.flags = 2;
@@ -3093,6 +3242,10 @@ private:
     size_t textInputCompositionCursor_ = 0;
     bool textCaretVisible_ = true;
     bool done_ = false;
+    HHOOK outsideClickHook_ = nullptr;
+    RECT outsideClickCompanionBounds_{};
+    MenuController* previousOutsideClickController_ = nullptr;
+    inline static thread_local MenuController* outsideClickController_ = nullptr;
     bool pointerPressed_ = false;
     bool closing_ = false;
     bool superseded_ = false;

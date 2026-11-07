@@ -14,9 +14,8 @@ struct MenuView
     std::string error;
     // Transient status captured with MenuDisplay; excluded from IPC/cache data.
     bool attributionPending = false;
-    // Independent display queries, never serialized as a complete snapshot.
+    // Metadata queries only for dynamic sources with no recorded command map.
     std::vector<Request> sources;
-    bool sourcesOnly = false;
     // Host-only interim headers. Excluded from IPC, durable snapshots and proof.
     std::optional<Reply> roots;
 };
@@ -71,8 +70,6 @@ class MenuService
     bool MenuAttributionPending(const Request &request, const Preferences &fallback);
     bool MenuEnabled(const Request &request, const Preferences &fallback);
     void Query(const Request &request, QueryPriority priority = QueryPriority::Menu, bool force = false);
-    // One compatibility retry after an isolated source fails or is unavailable.
-    void QueryFullMenu(const Request &request);
     void Prewarm(const Request &request);
     void Configure(Preferences preferences);
     void Manage(const Request &request);

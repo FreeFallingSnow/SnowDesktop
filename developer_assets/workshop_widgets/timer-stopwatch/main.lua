@@ -70,7 +70,7 @@ local function desktop(_,m)
                 hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})}})
     elseif not cd and t.value==0 and not t.running then
         local size=math.min(tileH*1.8,width*0.61)
-        children[#children+1]=view.column({key="start.area",width="fill",height=tileH*2+gap,justifyContent="center",alignItems="center",
+        children[#children+1]=view.column({key="start.area",width="fill",height="fill",justifyContent="center",alignItems="center",
             children={icon("toggle",0xF04B,c.start,size,true)}})
     else
         local valueHeight=side*0.36
@@ -114,7 +114,7 @@ local function panel(_,m)
         style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
         hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})
     local content=view.column({key="duration.panel",width="fill",height="auto",minHeight=layout.contentHeight(),
-        flexShrink=0,justifyContent="center",padding=r*0.6,gap=r*0.5,children=children})
+        flexShrink=0,justifyContent="center",padding=r*0.2,gap=r*0.5,children=children})
     return view.scroll({key="duration.viewport",width="fill",height="fill",children={content}})
 end
 local function startCountdown(m,duration)

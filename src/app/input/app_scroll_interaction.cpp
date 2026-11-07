@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "app/dock/dock_tray_popup_state.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "navigation/quick_navigation_rules.h"
 
@@ -85,13 +89,13 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         return;
     }
 
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
-        RECT overlay = quickNavigationRect_;
+        RECT overlay = quickNavigation_->rect;
         if (PtInRect(&overlay, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
-            if (quickNavigationInitialJumpOpen_)
+            if (quickNavigation_->initialJumpOpen)
             {
                 InvalidateQuickNavigationWindow(true);
                 return;
@@ -109,44 +113,60 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                             overlay);
                     snowdesktop::quick_navigation_rules::SetTabScrollOffset(
                         std::clamp(
-                            quickNavigationTabScrollOffset_ -
+                            quickNavigation_->tabScrollOffset -
                                 delta / 2,
                             0, maxTabScroll),
-                        quickNavigationTabScrollOffset_,
-                        quickNavTabDragIndex_ != static_cast<size_t>(-1),
-                        quickNavTabDragStartPoint_,
-                        quickNavTabDragDeltaX_);
+                        quickNavigation_->tabScrollOffset,
+                        quickNavigation_->tabDragIndex != static_cast<size_t>(-1),
+                        quickNavigation_->tabDragStartPoint,
+                        quickNavigation_->tabDragDeltaX);
                 }
             }
             else
             {
                 int maxScroll = GetQuickNavigationMaxScrollOffset(overlay);
-                quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_ - delta / 2, 0, maxScroll);
+                quickNavigation_->scrollOffset = std::clamp(quickNavigation_->scrollOffset - delta / 2, 0, maxScroll);
             }
             InvalidateQuickNavigationWindow(true);
             return;
         }
     }
 
+    if (IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, pt))
+    {
+        (void)ScrollLuaWidgetStack(luaStackIndicator_.stackId, GET_WHEEL_DELTA_WPARAM(wp));
+        return;
+    }
     size_t luaWidget = HitTestStandaloneWidgetIndex(pt);
     if (luaWidget != static_cast<size_t>(-1) &&
-        widgets_[luaWidget].type == DesktopWidgetType::LuaScript &&
+        IsLuaDesktopSurface(widgets_[luaWidget]) &&
         HitTestStandaloneWidget(luaWidget, pt) == WidgetHit::Content &&
         widgetEngine_)
     {
+        auto* luaContent = ResolveLuaWidgetContent(&widgets_[luaWidget]);
+        if (!luaContent) return;
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         RECT frame = GetStandaloneWidgetFrameRect(widgets_[luaWidget]);
-        widgetEngine_->EnsureWidgetLoaded(widgets_[luaWidget].id, widgets_[luaWidget].packageId);
+        widgetEngine_->EnsureWidgetLoaded(luaContent->id, luaContent->packageId);
         int localX = pt.x - frame.left;
         int localY = pt.y - frame.top;
+        if (widgets_[luaWidget].type == DesktopWidgetType::LuaStack)
+        {
+            if (!widgetEngine_->OwnsDesktopWheel(luaContent->id, localX, localY, delta))
+            {
+                (void)ScrollLuaWidgetStack(widgets_[luaWidget].id, delta);
+                return;
+            }
+            (void)luaStackWheel_.Consume(widgets_[luaWidget].id, delta, GetTickCount64(), true);
+        }
         if (!widgetEngine_->HandleHostUiPointer(
-                widgets_[luaWidget].id, localX, localY,
+                luaContent->id, localX, localY,
                 delta, true))
-            widgetEngine_->InvokeMouseEvent(widgets_[luaWidget].id, "onWheel",
+            widgetEngine_->InvokeMouseEvent(luaContent->id, "onWheel",
                 localX, localY, 0, delta);
         else
             UpdateHostInputImePosition();
-        (void)QueueDesktopWidgetComposition(widgets_[luaWidget].id);
+        (void)QueueDesktopWidgetComposition(luaContent->id);
         return;
     }
 

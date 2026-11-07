@@ -1,4 +1,6 @@
 #include "native_component_preview_export.h"
+#include "ui/preview/component_preview.h"
+#include "data/data_paths.h"
 
 #include "app/app.h"
 #include "common/constants.h"
@@ -152,7 +154,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "demo-scene" || component == "all" || component == "storage-hover" || component == "storage-privacy";
 }
 
 std::optional<IconBeautifyPreset> ResolveIconPreset(std::string_view preset)
@@ -555,7 +557,9 @@ DesktopApp::ExportNativeComponentPreviews(
     };
     for (const ComponentDefinition& definition : definitions)
     {
-        if (request.component != "all" && request.component != definition.id)
+        const bool privacyPreview = request.component == "storage-privacy";
+        if (privacyPreview ? std::string_view(definition.id) != "folder-mapping" :
+            request.component != "all" && request.component != "storage-hover" && request.component != definition.id)
             continue;
         component_preview::Model model =
             BuildAddWidgetMenuPreview(definition.command);
@@ -567,8 +571,9 @@ DesktopApp::ExportNativeComponentPreviews(
         }
         for (const Variant& variant : buildVariants(definition.id))
         {
+            if (privacyPreview && variant.id != "grid") continue;
             if (request.iconOnly && variant.id != "icon" && variant.id != "icon-hover") continue;
-            if (request.theme && variant.id != (request.component == "folder-mapping" ? "grid" : "compact")) continue;
+            if (request.theme && variant.id != (request.component == "folder-mapping" || privacyPreview ? "grid" : "compact")) continue;
             component_preview::Card& card = model.cards[variant.cardIndex];
             const int width = card.previewWidth;
             const int height = card.previewHeight;
@@ -583,6 +588,7 @@ DesktopApp::ExportNativeComponentPreviews(
             const int placementX = (request.canvasWidth - width) / 2;
             const int placementY = (request.canvasHeight - height) / 2;
             component_preview::ApplySettings settings = card.applySettings;
+            settings.previewPrivacyMode = privacyPreview;
             if (variant.scrollContainerMode)
                 settings.scrollContainerMode = *variant.scrollContainerMode;
             if (variant.listMode) settings.listMode = *variant.listMode;
@@ -601,7 +607,8 @@ DesktopApp::ExportNativeComponentPreviews(
                 sourceWallpaper ? &*sourceWallpaper : nullptr,
                 request.transparent || request.contentOnly };
             component_preview::Bitmap rendered = card.render(
-                width, height, request.dpi, placement, settings, variant.hovered);
+                width, height, request.dpi, placement, settings,
+                variant.hovered || request.component == "storage-hover");
             if (rendered.width != width || rendered.height != height ||
                 rendered.pixels.size() !=
                     static_cast<std::size_t>(width) * height)

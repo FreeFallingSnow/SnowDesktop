@@ -244,8 +244,8 @@ private:
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
     RECT GetVisualScrollViewport(POINT pointer) const;
-    // Folder entries share the Dock's single scroll viewport/offset. These
-    // accessors keep the semantic group boundary explicit for hit testing.
+    // Only fixed, running and frequent applications scroll. Files and utility
+    // controls keep their trailing layout in every Dock mode.
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;

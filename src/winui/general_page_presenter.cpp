@@ -1,4 +1,9 @@
 #include "pch.h"
+#include "theme/surface_theme.h"
+#include "../../steam_bridge/src/steam_connection_feedback.h"
+#include "start_page_presenter.h"
+#include "hotkey_recorder.h"
+#include "settings/settings_snapshot.h"
 #include "quick_navigation_options.h"
 
 #include "general_page_presenter.h"
@@ -178,6 +183,19 @@ struct GeneralPagePresenter::Impl
     muxc::Button enableWindowSupport{nullptr}, disableWindowSupport{nullptr};
     winrt::event_token enableWindowSupportToken{}, disableWindowSupportToken{};
     SettingsCard advancedFeaturesCard;
+    SettingsCard steamRoomCard;
+    SettingRow steamRoomRow;
+    muxc::Grid steamRoomFeatureRow{nullptr};
+    muxc::ContentControl steamRoomFeatureIcon{nullptr};
+    muxc::TextBlock steamRoomFeatureName{nullptr}, steamRoomFeatureDescription{nullptr}, steamRoomFeatureUsage{nullptr};
+    muxc::TextBlock steamRoomSummary{nullptr};
+    muxc::Button steamRoomToggle{nullptr}, steamRoomPrimary{nullptr}, steamRoomLeave{nullptr};
+    winrt::event_token steamRoomToggleToken{};
+    winrt::event_token steamRoomPrimaryToken{}, steamRoomLeaveToken{};
+    steam_room::Status steamRoomState;
+    steam_room::Command steamRoomPrimaryCommand = steam_room::Command::Query;
+    bool steamRoomVisible = false;
+    bool steamRoomListening = false;
     SettingsCard desktopBehaviorCard;
     SettingsCard languageCard;
     SettingsCard quickNavigationCard;
@@ -464,41 +482,74 @@ struct GeneralPagePresenter::Impl
         advancedFeaturesCard.title = advancedFeatureRow.label;
         advancedFeaturesCard.title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
         advancedFeatureExpander.Header(advancedFeatureRow.root);
-        muxc::StackPanel featureBody;
-        featureBody.Spacing(4.0);
-        advancedFeatureName = muxc::TextBlock{};
-        advancedFeatureName.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        advancedFeatureName.TextWrapping(mux::TextWrapping::Wrap);
-        advancedFeatureDescription = muxc::TextBlock{};
-        advancedFeatureDescription.TextWrapping(mux::TextWrapping::Wrap);
-        advancedFeatureUsage = muxc::TextBlock{};
-        advancedFeatureUsage.TextWrapping(mux::TextWrapping::Wrap);
-        advancedFeatureUsage.FontSize(12.0);
-        advancedFeatureUsage.Opacity(0.68);
-        featureBody.Children().Append(advancedFeatureName);
-        featureBody.Children().Append(advancedFeatureDescription);
-        featureBody.Children().Append(advancedFeatureUsage);
-        muxc::Grid featureRow;
-        featureRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition iconColumn;
-        iconColumn.Width(mux::GridLengthHelper::Auto());
-        muxc::ColumnDefinition featureColumn;
-        featureColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
-        featureRow.ColumnDefinitions().Append(iconColumn);
-        featureRow.ColumnDefinitions().Append(featureColumn);
-        advancedFeatureIconHost = muxc::ContentControl{};
-        advancedFeatureIconHost.Width(24.0);
-        advancedFeatureIconHost.Height(24.0);
-        advancedFeatureIconHost.VerticalAlignment(mux::VerticalAlignment::Top);
-        advancedFeatureIconHost.Margin({0.0, 4.0, 0.0, 0.0});
-        muxc::Grid::SetColumn(featureBody, 1);
-        featureRow.Children().Append(advancedFeatureIconHost);
-        featureRow.Children().Append(featureBody);
-        featureRow.Margin({0.0, 12.0, 0.0, 0.0});
-        advancedFeatureExpander.Content(featureRow);
+        const auto featureRow = [](muxc::ContentControl& icon, muxc::TextBlock& name,
+            muxc::TextBlock& description, muxc::TextBlock& usage, const muxc::Button& action) {
+            muxc::StackPanel body;
+            body.Spacing(4.0);
+            name = muxc::TextBlock{};
+            name.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+            name.TextWrapping(mux::TextWrapping::Wrap);
+            description = muxc::TextBlock{};
+            description.TextWrapping(mux::TextWrapping::Wrap);
+            usage = muxc::TextBlock{};
+            usage.TextWrapping(mux::TextWrapping::Wrap);
+            usage.FontSize(12.0);
+            usage.Opacity(0.68);
+            body.Children().Append(name);
+            body.Children().Append(description);
+            body.Children().Append(usage);
+            muxc::Grid row;
+            row.ColumnSpacing(12.0);
+            muxc::ColumnDefinition iconColumn;
+            iconColumn.Width(mux::GridLengthHelper::Auto());
+            muxc::ColumnDefinition bodyColumn;
+            bodyColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+            row.ColumnDefinitions().Append(iconColumn);
+            row.ColumnDefinitions().Append(bodyColumn);
+            icon = muxc::ContentControl{};
+            icon.Width(24.0);
+            icon.Height(24.0);
+            icon.VerticalAlignment(mux::VerticalAlignment::Top);
+            icon.Margin({0.0, 4.0, 0.0, 0.0});
+            muxc::Grid::SetColumn(body, 1);
+            row.Children().Append(icon);
+            row.Children().Append(body);
+            if (action)
+            {
+                muxc::ColumnDefinition actionColumn;
+                actionColumn.Width(mux::GridLengthHelper::Auto());
+                row.ColumnDefinitions().Append(actionColumn);
+                action.VerticalAlignment(mux::VerticalAlignment::Center);
+                muxc::Grid::SetColumn(action, 2);
+                row.Children().Append(action);
+            }
+            row.Margin({0.0, 12.0, 0.0, 0.0});
+            return row;
+        };
+        steamRoomToggle = muxc::Button{};
+        steamRoomFeatureRow = featureRow(steamRoomFeatureIcon, steamRoomFeatureName,
+            steamRoomFeatureDescription, steamRoomFeatureUsage, steamRoomToggle);
+        steamRoomFeatureRow.Visibility(mux::Visibility::Collapsed);
+        steamRoomToggleToken = steamRoomToggle.Click([this](const auto&, const auto&) {
+            if (!steamRoomVisible && steamRoomState.phase == steam_room::Phase::Locked)
+            {
+                UpdateSteamRoom(steam_room::Command::Create);
+                return;
+            }
+            if (steamRoomVisible || steamRoomState.phase != steam_room::Phase::Unavailable)
+                CommitGeneral([visible = !steamRoomVisible](GeneralSettings& settings) {
+                    settings.steamRoomVisible = visible;
+                });
+        });
+        muxc::StackPanel featureList;
+        featureList.Spacing(8.0);
+        featureList.Children().Append(featureRow(advancedFeatureIconHost, advancedFeatureName,
+            advancedFeatureDescription, advancedFeatureUsage, muxc::Button{nullptr}));
+        featureList.Children().Append(steamRoomFeatureRow);
+        advancedFeatureExpander.Content(featureList);
         // Header sizing is owned by the native template's star column. Only
         // stretch the expanded body to the card's available content width.
-        const auto weakBody = winrt::make_weak(featureRow);
+        const auto weakBody = winrt::make_weak(featureList);
         advancedFeatureExpander.SizeChanged([weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
             const double width = static_cast<double>(args.NewSize().Width);
             if (const auto body = weakBody.get()) body.Width(std::max(0.0, width));
@@ -614,6 +665,30 @@ struct GeneralPagePresenter::Impl
             root.Children().RemoveAt(advancedFeaturesIndex);
             root.Children().Append(advancedFeaturesCard.root);
         }
+
+        InitializeCard(steamRoomCard, cardStyle, root, false);
+        steamRoomSummary = muxc::TextBlock{};
+        steamRoomSummary.TextWrapping(mux::TextWrapping::Wrap);
+        steamRoomSummary.MaxWidth(205);
+        steamRoomSummary.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::StackPanel roomButtons;
+        roomButtons.Orientation(muxc::Orientation::Horizontal);
+        roomButtons.Spacing(8);
+        steamRoomPrimary = muxc::Button{};
+        steamRoomLeave = muxc::Button{};
+        roomButtons.Children().Append(steamRoomSummary);
+        roomButtons.Children().Append(steamRoomPrimary);
+        roomButtons.Children().Append(steamRoomLeave);
+        steamRoomRow.Initialize(roomButtons, 0.0);
+        steamRoomRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        steamRoomCard.content.Children().Append(steamRoomRow.root);
+        steamRoomCard.root.Visibility(mux::Visibility::Collapsed);
+        steamRoomPrimaryToken = steamRoomPrimary.Click([this](const auto&, const auto&) {
+            UpdateSteamRoom(steamRoomPrimaryCommand);
+        });
+        steamRoomLeaveToken = steamRoomLeave.Click([this](const auto&, const auto&) {
+            UpdateSteamRoom(steam_room::Command::Leave);
+        });
 
         quickRoot = muxc::StackPanel{}; quickRoot.Spacing(8);
         InitializeCard(quickNavigationCard, cardStyle, quickRoot);
@@ -958,6 +1033,11 @@ struct GeneralPagePresenter::Impl
     {
         autoStartToggle.IsOn(settings.autoStartEnabled);
         steamPresenceToggle.IsOn(settings.steamShowRunningStatus);
+        if (steamRoomVisible != settings.steamRoomVisible)
+        {
+            steamRoomVisible = settings.steamRoomVisible;
+            ApplySteamRoom(steamRoomState);
+        }
         softwareDesktopToggle.IsOn(settings.softwareDesktopEnabled);
         softwareDesktopHotkeyToggle.IsOn(settings.softwareDesktopHotkeyEnabled);
         softwareDesktopHotkey.SetValue(Chord(settings.softwareDesktopHotkeyModifiers,
@@ -1130,24 +1210,29 @@ struct GeneralPagePresenter::Impl
         HIGHCONTRASTW contrast{sizeof(contrast)};
         const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST,
             sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON);
-        if (highContrast)
-        {
-            muxc::FontIcon icon;
-            icon.Glyph(L"\xE793");
-            icon.FontSize(24.0);
-            advancedFeatureIconHost.Content(icon);
-        }
-        else
-        {
-            mux::Media::Imaging::SvgImageSource source;
-            source.UriSource(winrt::Windows::Foundation::Uri{
-                L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg"});
-            muxc::ImageIcon icon;
-            icon.Source(source);
-            icon.Width(24.0);
-            icon.Height(24.0);
-            advancedFeatureIconHost.Content(icon);
-        }
+        const auto setIcon = [highContrast](const muxc::ContentControl& host, const wchar_t* asset,
+            const wchar_t* fallback) {
+            if (highContrast)
+            {
+                muxc::FontIcon icon;
+                icon.Glyph(fallback);
+                icon.FontSize(24.0);
+                host.Content(icon);
+            }
+            else
+            {
+                mux::Media::Imaging::SvgImageSource source;
+                source.UriSource(winrt::Windows::Foundation::Uri{asset});
+                muxc::ImageIcon icon;
+                icon.Source(source);
+                icon.Width(24.0);
+                icon.Height(24.0);
+                host.Content(icon);
+            }
+        };
+        setIcon(advancedFeatureIconHost,
+            L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg", L"\xE793");
+        setIcon(steamRoomFeatureIcon, L"ms-appx:///Assets/Settings/Icons/steam-multiplayer.svg", L"\xE716");
     }
 
     void RefreshLocalizedText()
@@ -1162,6 +1247,7 @@ struct GeneralPagePresenter::Impl
         startupCard.title.Visibility(mux::Visibility::Collapsed);
         SetCardText(advancedFeaturesCard,
             "settings.general.advancedFeatures");
+        ApplySteamRoom(steamRoomState);
         SetCardText(desktopBehaviorCard, "settings.desktop.behavior");
         SetCardText(languageCard, "app.settings.language");
         languageCard.title.Visibility(mux::Visibility::Collapsed);
@@ -1179,6 +1265,9 @@ struct GeneralPagePresenter::Impl
             L("settings.general.advancedFeatures"));
         advancedFeatureName.Text(L("settings.general.advancedFeatures.largeIcons"));
         advancedFeatureDescription.Text(L("settings.general.advancedFeatures.largeIconsDescription"));
+        steamRoomFeatureName.Text(L("settings.general.steamRoom"));
+        steamRoomFeatureDescription.Text(L("settings.general.steamRoom.description"));
+        steamRoomFeatureUsage.Text(L("settings.general.steamRoom.usage"));
         RefreshAdvancedFeatureIcon();
         advancedFeatureInfoTitle.Text(L("settings.general.advancedFeatures.infoTitle"));
         muxa::AutomationProperties::SetName(advancedFeatureInfoButton,
@@ -1345,6 +1434,82 @@ struct GeneralPagePresenter::Impl
             message.replace(marker, 3, conflict.ownerCommand);
         }
         startupOwnershipNotice.Message(message);
+    }
+
+    void ApplySteamRoom(const steam_room::Status& status)
+    {
+        using steam_room::Command;
+        using steam_room::Failure;
+        using steam_room::Phase;
+        steamRoomState = status;
+        const bool available = status.phase != Phase::Unavailable;
+        const bool cardVisible = steamRoomVisible && (available || status.inRoom);
+        steamRoomFeatureRow.Visibility(available || steamRoomVisible
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        const auto toggleLabel = L(steamRoomVisible
+            ? "settings.general.steamRoom.hideCard" : "settings.general.steamRoom.showCard");
+        steamRoomToggle.Content(winrt::box_value(toggleLabel));
+        muxa::AutomationProperties::SetName(steamRoomToggle, toggleLabel);
+        steamRoomCard.root.Visibility(cardVisible ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        steamRoomRow.SetText(L("settings.general.steamRoom"));
+        const char* summary = "settings.general.steamRoom.idle";
+        const char* primary = "settings.general.steamRoom.create";
+        steamRoomPrimaryCommand = Command::Create;
+        switch (status.phase)
+        {
+        case Phase::Unavailable:
+            steamRoomPrimaryCommand = Command::Query;
+            break;
+        case Phase::Locked:
+            summary = "settings.general.advancedFeatures.unregistered";
+            primary = "settings.general.advancedFeatures.unlock";
+            break;
+        case Phase::Invited:
+            summary = "settings.general.steamRoom.invited";
+            primary = "settings.general.steamRoom.join";
+            steamRoomPrimaryCommand = Command::Join;
+            break;
+        case Phase::Waiting:
+            summary = "settings.general.steamRoom.waiting";
+            primary = "settings.general.steamRoom.invite";
+            steamRoomPrimaryCommand = status.host ? Command::Invite : Command::Query;
+            break;
+        case Phase::Connected:
+            summary = "settings.general.steamRoom.connected";
+            steamRoomPrimaryCommand = Command::Query;
+            break;
+        case Phase::Idle:
+            break;
+        }
+        if (status.busy) summary = "settings.general.steamRoom.busy";
+        else if (status.failure == Failure::SteamUnavailable) summary = "settings.general.steamRoom.offline";
+        else if (status.failure == Failure::NoFriends) summary = "settings.general.steamRoom.noFriends";
+        else if (status.failure == Failure::ActionFailed) summary = "settings.general.steamRoom.failed";
+        steamRoomSummary.Text(L(summary));
+        steamRoomPrimary.Content(winrt::box_value(L(primary)));
+        steamRoomPrimary.Visibility(steamRoomPrimaryCommand != Command::Query
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        steamRoomPrimary.IsEnabled(!status.busy);
+        steamRoomLeave.Content(winrt::box_value(L(status.inRoom ? "settings.general.steamRoom.leave" : "app.settings.cancel")));
+        steamRoomLeave.Visibility(status.inRoom || status.busy ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        SetSteamRoomListening(active && cardVisible);
+    }
+
+    void UpdateSteamRoom(steam_room::Command command = steam_room::Command::Query) noexcept
+    {
+        try { ApplySteamRoom(actions.steamRoom ? actions.steamRoom(command) : steam_room::Status{}); }
+        catch (...) {}
+    }
+
+    void SetSteamRoomListening(bool listening) noexcept
+    {
+        if (steamRoomListening == listening || !actions.steamRoom) return;
+        try
+        {
+            (void)actions.steamRoom(listening ? steam_room::Command::Listen : steam_room::Command::StopListening);
+            steamRoomListening = listening;
+        }
+        catch (...) {}
     }
 
     void RefreshAdvancedFeatureStatus()
@@ -1580,6 +1745,7 @@ struct GeneralPagePresenter::Impl
     {
         if (closed) return;
         active = false;
+        SetSteamRoomListening(false);
         CancelCaptures();
         closed = true;
         try
@@ -1588,6 +1754,9 @@ struct GeneralPagePresenter::Impl
             root.ActualThemeChanged(themeToken);
             autoStartToggle.Toggled(autoStartToken);
             steamPresenceToggle.Toggled(steamPresenceToken);
+            steamRoomToggle.Click(steamRoomToggleToken);
+            steamRoomPrimary.Click(steamRoomPrimaryToken);
+            steamRoomLeave.Click(steamRoomLeaveToken);
             enableWindowSupport.Click(enableWindowSupportToken);
             disableWindowSupport.Click(disableWindowSupportToken);
             registerAdvancedFeaturesButton.Click(
@@ -1640,6 +1809,7 @@ void GeneralPagePresenter::SetActions(GeneralPageActions actions)
     impl_->onboarding->SetActions(actions.onboarding);
     impl_->actions = std::move(actions);
     impl_->RefreshLocalizedText();
+    impl_->UpdateSteamRoom();
 }
 
 muxc::StackPanel GeneralPagePresenter::Root() const noexcept
@@ -1679,6 +1849,7 @@ void GeneralPagePresenter::RefreshRuntimeState() noexcept
     {
         impl_->RefreshStartupConflict();
         impl_->RefreshAdvancedFeatureStatus();
+        impl_->UpdateSteamRoom();
     }
     catch (...)
     {
@@ -1699,6 +1870,8 @@ void GeneralPagePresenter::RegisterFocusTargets(
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
     registerAliases(impl_->steamPresenceToggle, {"general.steamRunningStatus"});
+    registerAliases(impl_->steamRoomRow.root, {"general.steamRoom"});
+    registerAliases(impl_->steamRoomToggle, {"general.steamRoom.toggle"});
     registerAliases(impl_->windowSupportExpander, {"general.windowSupport"});
     registerAliases(impl_->advancedFeatureExpander,
         {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
@@ -1758,6 +1931,19 @@ mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId
         if (reveal) impl_->windowSupportExpander.IsExpanded(true);
         return impl_->windowSupportExpander;
     }
+    if (focusId == "general.steamRoom" || focusId == "general.steamRoom.toggle")
+    {
+        if (focusId == "general.steamRoom" && impl_->steamRoomCard.root.Visibility() == mux::Visibility::Visible)
+        {
+            return impl_->steamRoomRow.root;
+        }
+        if (impl_->steamRoomFeatureRow.Visibility() == mux::Visibility::Visible)
+        {
+            if (reveal) impl_->advancedFeatureExpander.IsExpanded(true);
+            return impl_->steamRoomToggle;
+        }
+        return nullptr;
+    }
     const auto hotkeyTarget = [prerequisite](const HotkeyRecorder& recorder,
         const muxc::ToggleSwitch& parent, std::wstring_view parentName)
         -> mux::FrameworkElement {
@@ -1816,6 +2002,7 @@ void GeneralPagePresenter::Activate(std::string_view focusId) noexcept
         impl_->UpdateDependentEnabledStates();
         impl_->RefreshStartupConflict();
         impl_->RefreshAdvancedFeatureStatus();
+        impl_->UpdateSteamRoom();
     }
     catch (...)
     {
@@ -1826,6 +2013,7 @@ void GeneralPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed) return;
     impl_->active = false;
+    impl_->SetSteamRoomListening(false);
     impl_->onboarding->Activate(false);
     impl_->CancelCaptures();
     try

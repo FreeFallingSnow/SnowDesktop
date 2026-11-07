@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "settings/animation_settings.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 
 void DesktopApp::AppendDockFolderPopupDisplayMenu(HMENU menu)

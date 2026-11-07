@@ -9,6 +9,7 @@
 #include "theme/personalization.h"
 #include "platform/operation_feedback.h"
 
+#include <objbase.h>
 #include <sddl.h>
 #include <shellapi.h>
 #include <algorithm>

@@ -1,5 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
 #include "app/input/widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
@@ -69,12 +71,45 @@ void DesktopApp::ShowFolderEntryContextMenu(
         IsAdministratorRunnablePath(selectedPaths.front());
     const bool canShowProperties = singleSelection;
     HWND menuOwner = keepQuickNavigationOpen &&
-        quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
+        quickNavigation_->hwnd &&
+        IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd
         : hwnd_;
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
+    auto quickNavigationFavorite = singleSelection
+        ? CreateQuickNavigationFavoriteFromPath(
+            fullPath,
+            snowdesktop::shell_item_display_name::ForPath(
+                fullPath,
+                searchSelection
+                    ? FileNameFromPath(fullPath)
+                    : widgets_[widgetIndex].
+                        folderEntries[memberIndex].
+                        name,
+                searchSelection ||
+                    widgets_[widgetIndex].
+                        folderEntries[memberIndex].
+                        isDirectory))
+        : QuickNavigationFavorite{};
+    if (searchSelection ||
+        (widgetIndex < widgets_.size() &&
+            memberIndex <
+                widgets_[widgetIndex].folderEntries.size()))
+    {
+        const DWORD attributes = searchSelection
+            ? GetFileAttributesW(fullPath.c_str())
+            : INVALID_FILE_ATTRIBUTES;
+        const bool isDirectory = searchSelection
+            ? attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            : widgets_[widgetIndex].
+                folderEntries[memberIndex].
+                isDirectory;
+        quickNavigationFavorite.type = isDirectory
+            ? QuickNavigationFavoriteType::Folder
+            : QuickNavigationFavoriteType::File;
+    }
 
     AppendMenuW(menu,
         canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -90,6 +125,8 @@ void DesktopApp::ShowFolderEntryContextMenu(
             : MF_STRING | MF_GRAYED,
         kContextRevealLocationCommand,
         _LW("app.menu.open_file_location"));
+    AppendQuickNavigationFavoriteMenuItem(
+        menu, quickNavigationFavorite);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -174,6 +211,11 @@ void DesktopApp::ShowFolderEntryContextMenu(
         break;
     case kContextCopyPathCommand:
         CopyPathsToClipboard(selectedPaths);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(
+                quickNavigationFavorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     case kContextRunAsAdministratorCommand:
         if (canRunAsAdministrator)

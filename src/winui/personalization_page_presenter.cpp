@@ -1,4 +1,10 @@
 #include "pch.h"
+#include "dock/dock_settings.h"
+#include "theme/personalization.h"
+#include "theme/surface_theme.h"
+#include "ui/render/native_tooltip_settings.h"
+#include "settings/settings_snapshot.h"
+#include "ui/render/app_font.h"
 
 #include "personalization_page_presenter.h"
 #include "settings_presenter_controls.h"
@@ -10,6 +16,7 @@
 #include "quick_navigation_options.h"
 #include "theme/theme_library_settings.h"
 #include "theme_library_controls.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -23,6 +30,7 @@
 #include <cmath>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -37,6 +45,36 @@ using presenter_controls::SettingRow;
 
 namespace
 {
+
+struct ContextMenuStyleChoice
+{
+    modern_menu::Appearance style;
+    std::string_view key;
+    std::wstring_view fallback;
+};
+
+const std::vector<ContextMenuStyleChoice>& ContextMenuStyleChoices()
+{
+    static const auto available = [] {
+        using modern_menu::Appearance;
+        std::vector<ContextMenuStyleChoice> choices = {
+            {Appearance::FollowSystem, "app.settings.context_menu_follow_system", L"Win11 Style - Follow Light/Dark"},
+            {Appearance::SystemLightBlur, "app.settings.context_menu_system_light_blur", L"Win11 Style - Light"},
+            {Appearance::SystemDarkBlur, "app.settings.context_menu_system_dark_blur", L"Win11 Style - Dark"},
+            {Appearance::OpaqueFollowSystem, "app.settings.context_menu_opaque_follow_system", L"Win11 Style - Opaque - Follow Light/Dark"},
+            {Appearance::OpaqueLight, "app.settings.context_menu_opaque_light", L"Win11 Style - Light Opaque"},
+            {Appearance::OpaqueDark, "app.settings.context_menu_opaque_dark", L"Win11 Style - Dark Opaque"},
+            {Appearance::Win10FollowSystem, "app.settings.context_menu_win10_follow_system", L"Win10 Style - Follow Light/Dark"},
+            {Appearance::Win10Light, "app.settings.context_menu_win10_light", L"Win10 Style - Light"},
+            {Appearance::Win10Dark, "app.settings.context_menu_win10_dark", L"Win10 Style - Dark"},
+        };
+        std::erase_if(choices, [](const ContextMenuStyleChoice& choice) {
+            return modern_menu::appearance_rules::CompatibleForCurrentWindows(choice.style) != choice.style;
+        });
+        return choices;
+    }();
+    return available;
+}
 
 constexpr std::array<int, 8> kPresetIds = {
     kAppearancePresetDark,
@@ -1231,11 +1269,13 @@ struct PersonalizationPagePresenter::Impl
         contextMenuToken = contextMenuCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int value = contextMenuCombo.SelectedIndex();
-                if (value < 0)
+                const auto& choices = ContextMenuStyleChoices();
+                if (value < 0 || value >= static_cast<int>(choices.size()))
                     return;
+                const auto style = choices[value].style;
                 Emit(SettingsUpdateMode::PreviewAndCommit,
-                    [value](PersonalizationSettings& settings) {
-                        settings.contextMenuStyle = std::clamp(value, 0, 6);
+                    [style](PersonalizationSettings& settings) {
+                        settings.contextMenuStyle = static_cast<int>(style);
                     });
             });
         showGroupTabCountsToken = showGroupTabCounts.Toggled(
@@ -1468,8 +1508,15 @@ struct PersonalizationPagePresenter::Impl
         widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
-        contextMenuCombo.SelectedIndex(
-            std::clamp(settings.contextMenuStyle, 0, 6));
+        const auto& choices = ContextMenuStyleChoices();
+        const int menuStyle = modern_menu::appearance_rules::
+            CompatibleStoredStyleForCurrentWindows(settings.contextMenuStyle);
+        const auto selected = std::find_if(choices.begin(), choices.end(),
+            [menuStyle](const ContextMenuStyleChoice& choice) {
+                return static_cast<int>(choice.style) == menuStyle;
+            });
+        contextMenuCombo.SelectedIndex(selected == choices.end()
+            ? 0 : static_cast<int>(selected - choices.begin()));
         UpdateDependentStates();
     }
 
@@ -1871,15 +1918,13 @@ struct PersonalizationPagePresenter::Impl
 
         contextMenuRow.SetText(
             L("app.settings.context_menu_style", L"Menu Style"));
-        ReplaceComboItems(contextMenuCombo, {
-            {"app.settings.context_menu_follow_system", L"Follow System"},
-            {"app.settings.context_menu_system_light_blur", L"Light"},
-            {"app.settings.context_menu_system_dark_blur", L"Dark"},
-            {"app.settings.context_menu_opaque_light", L"Light (Opaque)"},
-            {"app.settings.context_menu_opaque_dark", L"Dark (Opaque)"},
-            {"app.settings.context_menu_win10_light", L"Win10 Light"},
-            {"app.settings.context_menu_win10_dark", L"Win10 Dark"},
-        });
+        const auto& menuStyles = ContextMenuStyleChoices();
+        const int selectedStyle = contextMenuCombo.SelectedIndex();
+        contextMenuCombo.Items().Clear();
+        for (const auto& choice : menuStyles)
+            contextMenuCombo.Items().Append(winrt::box_value(L(choice.key, choice.fallback)));
+        contextMenuCombo.SelectedIndex(std::clamp(
+            selectedStyle, 0, static_cast<int>(menuStyles.size()) - 1));
 
         SetContinuousText(cornerRadius,
             "app.settings.corner_radius", L"Corner Radius");

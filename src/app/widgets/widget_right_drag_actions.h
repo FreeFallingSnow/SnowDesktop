@@ -59,7 +59,7 @@ inline std::vector<PairChoice> PairChoices(DesktopWidgetType source,
         choices.push_back({5, MK_SHIFT, Action::Merge,
             source == DesktopWidgetType::Collection
                 ? "app.widget_drop.merge_collections" : "app.widget_drop.merge_desktop_files"});
-    if (options.group != Action::None && groupFits)
+    if (options.group != Action::None && options.group != Action::CreateLuaStack && groupFits)
         choices.push_back({6, MK_CONTROL, options.group,
             options.group == Action::CreateCollectionGroup
                 ? "app.widget_drop.create_collection_group" : "app.widget_drop.create_file_group"});

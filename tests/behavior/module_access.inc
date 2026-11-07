@@ -4,10 +4,10 @@ static std::vector<std::wstring> QuickNavigationNames(DesktopApp& app,
     const std::vector<std::filesystem::path>& files, const std::wstring& query)
 {
     PopulateModel(app, files, 0);
-    app.quickNavigationSearchType_ = QuickNavigationSearchType::All;
-    app.quickNavigationActiveWidgetIndex_ = static_cast<std::size_t>(-1);
-    app.quickNavigationSearchText_ = app.quickNavigationEffectiveSearchText_ = query;
-    app.quickNavigationSearchCompositionText_.clear();
+    app.quickNavigation_->searchType = QuickNavigationSearchType::All;
+    app.quickNavigation_->activeWidgetIndex = static_cast<std::size_t>(-1);
+    app.quickNavigation_->searchText = app.quickNavigation_->effectiveSearchText = query;
+    app.quickNavigation_->searchCompositionText.clear();
     app.dockEntries_.clear();
     std::vector<std::wstring> names;
     for (const auto& entry : app.BuildQuickNavigationContentModel().entries)
@@ -23,6 +23,25 @@ static snowdesktop::SettingsController& HostSettings(DesktopApp& app)
 }
 static std::uint32_t AppliedLogModules(const DesktopApp& app)
 { return app.generalSettings_.diagnosticLogModules; }
+static WidgetEngine& InitializeWidgetRuntime(DesktopApp& app)
+{
+    app.widgetEngine_ = std::make_unique<WidgetEngine>();
+    if (!app.widgetEngine_->Init(nullptr, nullptr))
+        throw std::runtime_error("initialize isolated widget runtime without rendering");
+    return *app.widgetEngine_;
+}
+static void ReleaseWidgetRuntime(DesktopApp& app)
+{
+    app.containers_.clear();
+    app.widgetEngine_.reset();
+}
+static std::wstring CreateLuaWidget(DesktopApp& app, const std::wstring& packageId)
+{
+    snowdesktop::component_preview::ApplySettings settings;
+    settings.kind = snowdesktop::component_preview::ApplyKind::LuaScript;
+    settings.packageId = packageId;
+    return app.ApplyWidgetPreviewSettings(POINT{100, 100}, settings);
+}
 // User decision (2026-10-31): retain each source section and sort within it.
 // Only the external SDK answer is supplied (no additional recursive matches);
 // local identities, sorting and source-section projection execute production.
@@ -34,10 +53,22 @@ static void SeedGroupTypeSources(DesktopApp& app,
     first.id = L"type-desktop"; first.type = DesktopWidgetType::FileCategories;
     first.title = first.customTitle = L"Desktop source";
     first.gridCell = {L"__page:1",0,0}; first.gridSpan = {4,3}; first.autoCollect = false;
+    // Use the same Shell-produced identities as the subsequent real refresh.
+    // A path spelling (for example TMP's 8.3 alias) is not a desktop item key.
+    snowdesktop::shell_refresh::Request request;
+    request.iconVisibility = app.settingsIconVisibility_;
+    snowdesktop::shell_refresh::Snapshot snapshot;
+    if (!snowdesktop::shell_refresh::ReadLocalDesktop(request, snapshot, false))
+        throw std::runtime_error("enumerate the isolated desktop through the production reader");
+    app.items_ = std::move(snapshot.desktopItems);
     for (const auto& path : desktop)
     {
-        auto item = FileItem(path);
-        first.itemKeys.push_back(item.layoutKey); app.items_.push_back(std::move(item));
+        const auto found = std::find_if(app.items_.begin(), app.items_.end(), [&](const auto& item) {
+            return std::filesystem::equivalent(item.parsingName, path);
+        });
+        if (found == app.items_.end())
+            throw std::runtime_error("production desktop enumeration must contain every seeded source item");
+        first.itemKeys.push_back(found->layoutKey);
     }
     DesktopWidget second;
     second.id = L"type-mapped"; second.type = DesktopWidgetType::FolderMapping;
@@ -76,7 +107,9 @@ static std::vector<std::filesystem::path> GroupTypeOrder(DesktopApp& app, bool a
     const auto deadline = GetTickCount64() + 8000;
     while (view->folderSearch_->pending)
     {
-        if (GetTickCount64() > deadline) throw std::runtime_error("group search completion deadline");
+        if (GetTickCount64() > deadline)
+            throw std::runtime_error("waiting for grouped file search; pending=1 workerPresent=" +
+                std::to_string(static_cast<bool>(view->folderSearch_->worker)) + "; " + AsyncState(app));
         MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         view->EnsureFolderSearch();
     }

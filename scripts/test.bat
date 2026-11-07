@@ -41,10 +41,9 @@ exit /b %ERRORLEVEL%
 :usage
 echo Usage:
 echo   scripts\test.bat                         Show usage; does not build or run tests
-echo   scripts\test.bat full                    Full application suite, excludes tools and manual diagnostics
+echo   scripts\test.bat full                    Full application suite, excludes manual and temporary diagnostics
 echo   scripts\test.bat fast                    Exclude integration tests
 echo   scripts\test.bat core                    Core tests only
-echo   scripts\test.bat tools                   Build tool regression tests, excludes manual diagnostics
 echo   scripts\test.bat label ^<regex^>           Tests matching a CTest label
 echo   scripts\test.bat name ^<regex^>            Tests matching a CTest name
 echo   scripts\test.bat list                    List tests and labels

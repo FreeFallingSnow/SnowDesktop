@@ -343,8 +343,10 @@ local function render(context, model)
     if model.rows[#model.rows].kind ~= "header" then
         contentHeight = contentHeight - itemGap
     end
+    local scrollViewport = { type = "rect", x = contentInset, y = listTop,
+        width = width - contentInset, height = viewportHeight }
     local scroll = interaction.scroll({
-        key = "quick-results", shape = viewport,
+        key = "quick-results", shape = scrollViewport,
         contentHeight = math.ceil(contentHeight),
     })
     local iconSize = math.max(fontSize + metrics.spacingXs,

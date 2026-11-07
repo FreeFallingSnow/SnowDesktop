@@ -1,5 +1,12 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "app/dock/dock_tray_popup_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "widget_search_context_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "layout/page_navigation_rules.h"
@@ -191,10 +198,10 @@ void DesktopApp::OnRightButtonDown(
         return;
     }
     POINT cursor{};
-    if (quickNavigationOpen_ && snowdesktop::private_pointer::CursorPosition(&cursor))
+    if (quickNavigation_->open && snowdesktop::private_pointer::CursorPosition(&cursor))
     {
         const POINT quickNavigationPoint{cursor.x - virtualLeft_, cursor.y - virtualTop_};
-        if (!PtInRect(&quickNavigationRect_, quickNavigationPoint)) CloseQuickNavigation(false);
+        if (!PtInRect(&quickNavigation_->rect, quickNavigationPoint)) CloseQuickNavigation(false);
     }
     CancelPopupHover(true);
     CancelRenameClick();
@@ -777,6 +784,11 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         {
             ClearSelection();
             InvalidateRect(hwnd_, nullptr, FALSE);
+            if (dock->IsWindowsButtonPoint(pt) && !dock->IsMergedWithStatusBar())
+            {
+                ShowDockContextMenu(screenPt, true);
+                return;
+            }
             ShowDockContextMenu(screenPt);
             return;
         }
@@ -785,13 +797,12 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     const size_t standaloneInputWidget =
         popupGroup ? static_cast<size_t>(-1) : HitTestStandaloneWidgetIndex(pt);
     if (standaloneInputWidget < widgets_.size() &&
-        widgets_[standaloneInputWidget].type ==
-            DesktopWidgetType::LuaScript)
+        IsLuaDesktopSurface(widgets_[standaloneInputWidget]))
     {
         const RECT frame = GetStandaloneWidgetFrameRect(
             widgets_[standaloneInputWidget]);
         if (ShowHostInputContextMenu(
-                screenPt, widgets_[standaloneInputWidget].id,
+                screenPt, ResolveLuaWidgetContent(&widgets_[standaloneInputWidget])->id,
                 POINT{ pt.x - frame.left, pt.y - frame.top }))
             return;
     }

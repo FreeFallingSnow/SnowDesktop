@@ -1,4 +1,5 @@
 #include "system_control_windows.h"
+#include "system_control_vpn.h"
 
 namespace snowdesktop::system_control
 {
@@ -11,7 +12,8 @@ class WindowsBackend final : public Backend
         {"brightness", windows::CreateBrightnessBackend()}, {"wifi", windows::CreateWifiBackend()},
         {"bluetooth", windows::CreateBluetoothBackend()}, {"media", windows::CreateMediaBackend()},
         {"projection", windows::CreateProjectionBackend()}, {"hotspot", windows::CreateHotspotBackend()},
-        {"airplane", windows::CreateAirplaneBackend()}, {"awake", windows::CreateAwakeBackend()}};
+        {"airplane", windows::CreateAirplaneBackend()}, {"awake", windows::CreateAwakeBackend()},
+        {"vpn", windows::CreateVpnBackend()}};
 public:
     std::map<std::string, Snapshot> Sample(std::string_view source, const Cancellation& cancel) override
     { const auto found = sources_.find(source); return found == sources_.end() ? std::map<std::string, Snapshot>{} : found->second->Sample(source, cancel); }

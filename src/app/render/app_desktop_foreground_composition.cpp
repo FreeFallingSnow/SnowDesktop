@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
 
 #include <array>
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "settings/settings_controller.h"
+#include "settings/settings_snapshot.h"
 
 #include <algorithm>
 #include <string_view>

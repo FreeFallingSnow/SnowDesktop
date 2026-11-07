@@ -1,4 +1,10 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "settings/settings_snapshot.h"
+#include "common/utils.h"
+#include "desktop/desktop_source.h"
+#include "settings/settings_controller.h"
 #include "drag_drop/pending_drop_completion.h"
 #include "widgets/collection_group_rules.h"
 #include "widgets/widget_group_drop.h"
@@ -70,7 +76,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         dialog.cButtons = static_cast<UINT>(std::size(buttons));
         dialog.nDefaultButton = IDCANCEL;
         int selected = IDCANCEL;
-        return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+        return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
     };
     services.confirmPrograms = [this] {
         const TASKDIALOG_BUTTON buttons[] = {
@@ -86,7 +92,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         dialog.cButtons = static_cast<UINT>(std::size(buttons));
         dialog.nDefaultButton = IDCANCEL;
         int selected = IDCANCEL;
-        return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+        return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
     };
     services.exiting = [this] { return exitRequested_; };
     services.createConvertedView = [this](DesktopWidget* widget) {

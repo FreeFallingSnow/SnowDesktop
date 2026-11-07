@@ -1,7 +1,8 @@
 #pragma once
 
-#include "settings/settings_controller.h"
-#include "backup_data_page_presenter.h"
+#include "settings/settings_action_result.h"
+#include "settings/settings_fwd.h"
+#include "backup_data_page_model.h"
 
 #include <windows.h>
 

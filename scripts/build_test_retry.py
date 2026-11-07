@@ -18,7 +18,8 @@ from build_wait_tasks import atomic, lease, process_owner, reader, utc
 
 # Reviewed tests only. A label by itself cannot opt an arbitrary test into retries.
 # Only pre-assertion ephemeral port acquisition failure, after cleanup, is retryable.
-POLICY = {'build_dashboard': 60, 'build_dashboard_browser': 180}
+# No current tests are admitted after retiring the tool regression suite.
+POLICY = {}
 LABEL = 'retry-isolated-resource'
 FAILURE_CLASS = 'isolated-port-race'
 

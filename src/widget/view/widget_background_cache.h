@@ -12,7 +12,7 @@
 
 namespace snowdesktop::widget_runtime
 {
-// UI-thread cache of completed decorative blur pixels. Lua still records its
+// UI-thread cache of completed decorative blur and rounded-mask pixels. Lua still records its
 // commands every draw. Only fully understood commands with immutable images
 // qualify, so dynamic scripts and unsupported commands retain their behavior.
 class WidgetBackgroundCache
@@ -30,7 +30,7 @@ public:
     using ImmutableBitmap = std::function<bool(ID2D1Bitmap*)>;
 
     Result Resolve(std::wstring_view owner, ID2D1DeviceContext* context,
-        ID2D1CommandList* commands, D2D1_RECT_F bounds, float blurRadius,
+        ID2D1CommandList* commands, D2D1_RECT_F bounds, float blurRadius, float cornerRadius,
         const ImmutableBitmap& immutableBitmap) noexcept;
     void Erase(std::wstring_view owner) noexcept;
     void Clear() noexcept;

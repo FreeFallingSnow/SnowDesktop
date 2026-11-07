@@ -1,37 +1,18 @@
 #pragma once
 
-#include <algorithm>
-#include <cmath>
-
 inline constexpr bool kDefaultDockEnabled = false;
 inline constexpr float kDockMinimumScale = 0.50f;
 inline constexpr float kDockMaximumScale = 2.00f;
 inline constexpr float kDockMinimumEdgeDistanceScale = 0.10f;
 inline constexpr float kDockMaximumEdgeDistanceScale = 5.00f;
 
-inline float ClampDockEdgeDistanceScale(float scale)
-{
-    return std::isfinite(scale)
-        ? std::clamp(scale, kDockMinimumEdgeDistanceScale, kDockMaximumEdgeDistanceScale)
-        : 1.0f;
-}
+float ClampDockEdgeDistanceScale(float scale);
 
-inline int ScaleDockEdgeDistance(int baseMargin, float scale)
-{
-    if (baseMargin <= 0) return 0;
-    return std::max(1, static_cast<int>(std::lround(
-        baseMargin * ClampDockEdgeDistanceScale(scale))));
-}
+int ScaleDockEdgeDistance(int baseMargin, float scale);
 
-inline float ClampMergedDockIconScale(float scale)
-{
-    return std::clamp(scale, kDockMinimumScale, 1.00f);
-}
+float ClampMergedDockIconScale(float scale);
 
-inline float ClampDockScale(float scale)
-{
-    return std::clamp(scale, kDockMinimumScale, kDockMaximumScale);
-}
+float ClampDockScale(float scale);
 
 enum class DockPosition
 {
@@ -74,7 +55,4 @@ struct DockLayoutSettings
     float mergedIconScale = 1.0f;
 };
 
-inline float ResolveDockScale(const DockLayoutSettings& settings, bool merged)
-{
-    return merged ? ClampMergedDockIconScale(settings.mergedIconScale) : ClampDockScale(settings.thicknessScale);
-}
+float ResolveDockScale(const DockLayoutSettings& settings, bool merged);

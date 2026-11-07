@@ -1,4 +1,7 @@
 #pragma once
+#include <cmath>
+#include <algorithm>
+#include "navigation/navigation_settings.h"
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "app/navigation/quick_navigation_theme.h"
@@ -66,6 +69,7 @@ public:
         if (!appearanceOnly_)
         {
             Panel suggestions;
+            suggestions.Spacing(8);
             appSuggestions_.Toggled([this](auto&&, auto&&) {
                 if (!sync_) commit_([enabled = appSuggestions_.IsOn()](auto& value) {
                     value.appSuggestionsEnabled = enabled;
@@ -73,6 +77,15 @@ public:
             });
             AddRow(suggestions, "quickNav.appSuggestions", appSuggestions_, [](auto& value) {
                 value.appSuggestionsEnabled = false;
+            });
+            presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
+            favorites_.Toggled([this](auto&&, auto&&) {
+                if (!sync_) commit_([enabled = favorites_.IsOn()](auto& value) {
+                    value.favoritesEnabled = enabled;
+                });
+            });
+            AddRow(suggestions, "quickNav.favorites", favorites_, [](auto& value) {
+                value.favoritesEnabled = false;
             });
             presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
             root_.Children().Append(suggestions);
@@ -179,6 +192,7 @@ public:
         if (!appearanceOnly_)
         {
             appSuggestions_.IsOn(values.appSuggestionsEnabled);
+            favorites_.IsOn(values.favoritesEnabled);
             for (size_t i = 0; i < prefixes_.size(); ++i)
                 if (prefixes_[i].Text() != winrt::to_hstring(values.prefixes[i])) prefixes_[i].Text(winrt::to_hstring(values.prefixes[i]));
             if (enginesChanged) BuildEngines();
@@ -389,6 +403,7 @@ private:
     std::vector<Panel> groupPanels_;
     winrt::Microsoft::UI::Xaml::Controls::ComboBox defaultEngine_;
     winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch appSuggestions_;
+    winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch favorites_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;
     winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton addEngine_;
     std::string expandedEngine_;

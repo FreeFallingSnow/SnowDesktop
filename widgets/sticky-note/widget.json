@@ -11,7 +11,7 @@
   "license": "GPL-3.0-only",
   "name": "Sticky Note",
   "nameKey": "lua_widget.sticky_note.name",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "description": "An editable desktop sticky note.",
   "descriptionKey": "lua_widget.sticky_note.description",
   "locales": {
@@ -186,6 +186,16 @@
       "lua_widget.common.font_scale": "Escala da fonte"
     }
   },
+  "preview": "preview.png",
+  "previewGallery": [
+    "previews/zh-CN.png",
+    "previews/en-theme-white.png",
+    "previews/en-theme-pink.png",
+    "previews/en-theme-blue.png",
+    "previews/en-theme-green.png",
+    "previews/en-theme-purple.png",
+    "previews/en-theme-dark.png"
+  ],
   "defaultSize": {
     "columns": 2,
     "rows": 2

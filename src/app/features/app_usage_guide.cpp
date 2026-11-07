@@ -1,5 +1,11 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "platform/usage_guide.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "data/data_paths.h"
+#include "settings/settings_window.h"
 #include "ui/menu/modern_menu.h"
 
 void DesktopApp::LoadUsageGuidePreferences()

@@ -1,24 +1,25 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon', 'task-open', 'task-new', 'task-stage', 'task-close', 'task-list', 'event-post', 'event-read', 'event-wait', 'event-ack', 'edit-verify', 'execute', 'publish-run', 'evidence-list', 'acceptance-start', 'acceptance-complete', 'acceptance-list')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$ExecutionRun,
-    [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
+    [ValidateRange(0, 86400)][int]$WaitSeconds = 86400,
     [switch]$ConfirmStopped,
     [switch]$ReloadShell,
     [switch]$CloseApplication,
     [string]$Reason,
     [long]$Revision = -1,
-    [ValidateSet('unknown','module','docs','component','tool','public','infrastructure')][string]$Scope = 'unknown',
+    [ValidateSet('unknown','module','docs','component','tool','test','public','infrastructure')][string]$Scope = 'unknown',
     [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
-    [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
+    [switch]$AdoptExistingChanges, [switch]$Add, [switch]$DeferBatchResult, [switch]$Compact, [switch]$FullResult, [switch]$CliSummary, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
     [ValidateRange(0,4096)][int]$ResourceCpuSlots=0,[ValidateRange(0,1048576)][int]$ResourceMemoryMiB=0,
     [switch]$ResourceShared,
     [switch]$AutoCheck,
     [ValidateLength(0,160)][string]$TaskName='',
+    [ValidateSet('host','independent')][string]$HostParticipation='host',
     [ValidateLength(0,300)][string]$Capabilities='',
     [ValidateSet('investigating','editing','waiting','awaiting_input','blocked','validating','completed','cancelled')][string]$TaskPhase='investigating',
     [long]$TaskRevision=-1, [long]$RequirementsRevision=-1,
@@ -42,10 +43,10 @@ param(
 
 # Foreground execution needs neither Python nor a hidden worker launch. It uses
 # the same finish/check/freeze/lease path and returns the original batch code.
+if($Command -in 'ready-and-wait','finish','wait','event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=0}
 if($Command -eq 'ready-and-wait') {
-    if(-not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=1800}
     if($Revision -lt 0){throw 'ready-and-wait requires the latest -Revision.'}
-    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell -CloseApplication:$CloseApplication
+    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell -CloseApplication:$CloseApplication -Compact:$Compact -FullResult:$FullResult -CliSummary:$CliSummary
     exit $LASTEXITCODE
 }
 Set-StrictMode -Version Latest
@@ -59,6 +60,7 @@ $stateRoot = Join-Path $repositoryRoot '.build\collaboration'
 $statePath = Join-Path $stateRoot 'state.json'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $lastNotice = -30
+$lastWaitMessage = $null
 $hasFinishedCurrentBatch = $false
 $finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -144,7 +146,7 @@ function Get-BatchWaitMessage($Current) {
 }
 
 function Wait-Again([string]$Message,$Current=$null) {
-    if ($clock.Elapsed.TotalSeconds -ge $WaitSeconds) {
+    if ($WaitSeconds -gt 0 -and $clock.Elapsed.TotalSeconds -ge $WaitSeconds) {
         if($Current){$Message=Get-BatchWaitMessage $Current}
         throw "Wait timed out. Registration was retained; use status and repeat the same command. $Message"
     }
@@ -152,7 +154,7 @@ function Wait-Again([string]$Message,$Current=$null) {
         # Stage reads happen only when reporting, after releasing the state
         # transaction. Observing must never relaunch or cancel the Run.
         if($Current){$Message=Get-BatchWaitMessage $Current}
-        [Console]::Error.WriteLine($Message)
+        if($Message -ne $script:lastWaitMessage){[Console]::Error.WriteLine($Message);$script:lastWaitMessage=$Message}
         $script:lastNotice = $clock.Elapsed.TotalSeconds
     }
     Start-Sleep -Milliseconds 200
@@ -323,7 +325,9 @@ function Complete-CheckRecord($Selection) {
     return [pscustomobject]@{ check=$report; exitCode=$code }
 }
 function Emit-Result($Result) {
-    ConvertTo-Json -InputObject $Result -Depth 20
+    if($Compact -or ($CliSummary -and -not $FullResult)){
+        Get-CompactBatchResult $Result (Result-Path $Result.batchId)|ConvertTo-Json -Depth 8
+    }else{ConvertTo-Json -InputObject $Result -Depth 20}
     exit $Result.exitCode
 }
 
@@ -340,6 +344,10 @@ try {
     if ($Command -in 'ready','check','plan','claim','commit','repair' -and $Revision -lt 0) { throw "$Command requires -Revision from begin; stale commands must not finish a new edit round." }
     if($Command -eq 'status') {
         $state=Read-State;$current=if($Batch){Find-BoundBatch $state $Batch}else{$state.current};$result=if($Batch){Read-Result $Batch}else{$null}
+        if($Compact){
+            if($Batch -and -not $current -and -not $result){throw 'Unknown batch.'}
+            Get-CompactCollaborationStatus $state $Participant $current $result|ConvertTo-Json -Depth 12;exit 0
+        }
         if($result){$result|ConvertTo-Json -Depth 20;exit 0}
         if($Batch -and (-not $current -or $current.id -ne $Batch)){throw 'Unknown batch.'}
         $diagnostic=if($current){[pscustomobject]@{batch=$current;ownerState=(Owner-State $current.owner);persistedResult=(Read-Result $current.id);
@@ -396,8 +404,7 @@ try {
         }
         exit 0
     }
-    if($Command -in 'task-open','task-stage','task-close','event-post','event-wait','event-ack','edit-verify' -and -not $Participant){throw "$Command requires a task ID."}
-    if($Command -eq 'event-wait' -and -not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=30}
+    if($Command -in 'task-open','task-new','task-stage','task-close','event-post','event-wait','event-ack','edit-verify' -and -not $Participant){throw "$Command requires a task ID."}
     [void][IO.Directory]::CreateDirectory($stateRoot)
     while ($true) {
         $metadata = Lock-State
@@ -410,10 +417,18 @@ try {
             $state = Read-State
             $current = $state.current
             if($Batch -and (-not $current -or $current.id -ne $Batch)){$bound=Find-BoundBatch $state $Batch;if($bound){$current=$bound}}
-            if($Command -in 'task-open','task-stage','task-close','event-post','event-wait','event-ack') {
+            if($Command -in 'task-open','task-new','task-stage','task-close','event-post','event-wait','event-ack') {
                 $ledger=Get-TaskLedger $state
-                if($Command -eq 'task-open') {
+                if($Command -eq 'task-new') {
+                    $task=New-VisibleTask $ledger $Participant $TaskName
+                    if($PSBoundParameters.ContainsKey('HostParticipation')){Set-TaskHostParticipation $state $task $HostParticipation}
+                } elseif($Command -eq 'task-open') {
+                    $existingTask=@($ledger.tasks|Where-Object id -eq $Participant).Count -gt 0
                     $task=Open-VisibleTask $ledger $Participant $TaskName $Adapter 'task-open'
+                    if($PSBoundParameters.ContainsKey('HostParticipation')){
+                        if($existingTask -and (Get-Field $task 'hostParticipation' 'host') -ne $HostParticipation){throw 'Use task-stage with the current TaskRevision to change host participation.'}
+                        Set-TaskHostParticipation $state $task $HostParticipation
+                    }
                     if($PSBoundParameters.ContainsKey('Capabilities')){
                         if($task.adapter -ne $Adapter){throw 'Capability declaration must name the registered adapter.'}
                         Set-TaskCapabilities $task $Capabilities
@@ -423,29 +438,59 @@ try {
                 if($Command -in 'task-stage','task-close') {
                     Assert-TaskRevision $task $TaskRevision
                     if($task.phase -in 'completed','cancelled'){throw 'Closed task cannot change phase.'}
-                    if($TaskPhase -in 'completed','awaiting_input','cancelled') {
-                        $sourceLease=Try-Lease 'git.lock';if(-not $sourceLease){throw 'Git transaction is active; retry task closure without changing its revision.'}
-                        try {
-                            $audit=Get-SourceChangeAudit $state
-                            $pending=@($audit.changes|Where-Object task -eq $Participant)
-                            if($pending.Count -and $TaskPhase -ne 'cancelled'){throw ('Uncommitted task paths: '+(($pending|ForEach-Object path) -join ', ')+'. Commit or explicitly hand off these paths before awaiting input/completion.')}
-                            Set-Field $task 'sourceChanges' ([pscustomobject]@{checkedUtc=$audit.checkedUtc;pending=$pending})
-                        } finally {$sourceLease.Dispose()}
+                    $now=[DateTime]::UtcNow.ToString('o')
+                    $naming=$Command -eq 'task-stage' -and $PSBoundParameters.ContainsKey('TaskName')
+                    $participation=$Command -eq 'task-stage' -and $PSBoundParameters.ContainsKey('HostParticipation')
+                    if($participation){Set-TaskHostParticipation $state $task $HostParticipation}
+                    if($naming){
+                        if([string]::IsNullOrWhiteSpace($TaskName) -or $TaskName -match '[\r\n]'){throw 'TaskName must be a nonempty single-line task label.'}
+                        $task.displayName=$TaskName.Trim()
                     }
-                    if($Command -eq 'task-close') {
-                        if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
-                        if($state.current -and @($state.current.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the edit batch has ended; task-close never withdraws editing authority.'}
-                        if(@(Get-Field $state 'activeCandidates' @()|ForEach-Object participants|Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count){throw 'Close only after the captured candidate attempts have ended; task-close never cancels their Runs.'}
-                        if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
-                        $task.closedUtc=[DateTime]::UtcNow.ToString('o')
-                    } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
-                    $task.phase=$TaskPhase;$task.progress=$Progress;$task.blocker=$Blocker
-                    $task.lastHeartbeatUtc=[DateTime]::UtcNow.ToString('o');$task.lastProgressUtc=$task.lastHeartbeatUtc
+                    $nameOnly=($naming -or $participation) -and -not ($PSBoundParameters.ContainsKey('TaskPhase') -or $PSBoundParameters.ContainsKey('Progress') -or $PSBoundParameters.ContainsKey('Blocker') -or $PSBoundParameters.ContainsKey('RequirementsRevision'))
+                    if(-not $nameOnly){
+                        if($TaskPhase -in 'completed','awaiting_input','cancelled') {
+                            $sourceLease=Try-Lease 'git.lock';if(-not $sourceLease){throw 'Git transaction is active; retry task closure without changing its revision.'}
+                            try {
+                                $audit=Get-SourceChangeAudit $state
+                                $pending=@($audit.changes|Where-Object task -eq $Participant)
+                                if($pending.Count -and $TaskPhase -ne 'cancelled'){throw ('Uncommitted task paths: '+(($pending|ForEach-Object path) -join ', ')+'. Commit or explicitly hand off these paths before awaiting input/completion.')}
+                                Set-Field $task 'sourceChanges' ([pscustomobject]@{checkedUtc=$audit.checkedUtc;pending=$pending})
+                            } finally {$sourceLease.Dispose()}
+                        }
+                        if($Command -eq 'task-close') {
+                            if($TaskPhase -notin 'completed','cancelled'){throw 'task-close requires completed/cancelled.'}
+                            $associatedBatches=@($(if($state.current){$state.current});@(Get-Field $state 'activeCandidates' @()))
+                            $pendingBatches=@($associatedBatches | Where-Object {
+                                @($_.participants | Where-Object {$_.id -eq $Participant -and $_.state -ne 'withdrawn'}).Count
+                            })
+                            if($pendingBatches.Count -and -not $DeferBatchResult){throw 'Close only after the edit batch and captured candidate attempts have ended, or use -DeferBatchResult after finishing your own edit/check. task-close never cancels their Runs.'}
+                            foreach($pendingBatch in $pendingBatches){
+                                $member=@($pendingBatch.participants|Where-Object id -eq $Participant)[0]
+                                $memberCheck=Get-Field $member 'check'
+                                if($member.state -ne 'finished' -or ($memberCheck -and $memberCheck.status -ne 'passed')){throw 'Deferred closure requires your own finished edit and passed check; no editing authority was removed.'}
+                                if(-not (Get-Field $pendingBatch 'runId')){
+                                    if($pendingBatch.phase -eq 'building'){throw 'Wait until the common Run reservation is published before deferring this task result.'}
+                                    $activePeers=@($pendingBatch.participants|Where-Object {
+                                        $peerId=$_.id
+                                        $peerId -ne $Participant -and $_.state -ne 'withdrawn' -and
+                                            @($ledger.tasks|Where-Object {$_.id -eq $peerId -and $_.phase -notin 'completed','cancelled' -and -not $_.closedUtc}).Count
+                                    })
+                                    if(-not $activePeers.Count){throw 'Keep one active participant until the common Run is submitted; deferred closure never abandons execution.'}
+                                }
+                            }
+                            if($pendingBatches.Count){Set-Field $task 'deferredBatchIds' @($pendingBatches|ForEach-Object id)}
+                            if(@((Get-Field $ledger 'acceptances' @())|Where-Object {$_.task -eq $Participant -and $_.status -eq 'running'}).Count){throw 'Complete or cancel the open acceptance interval before closing its task.'}
+                            $task.closedUtc=[DateTime]::UtcNow.ToString('o')
+                        } elseif($TaskPhase -in 'completed','cancelled'){throw 'Use task-close for terminal phases.'}
+                        $task.phase=$TaskPhase;$task.progress=$Progress;$task.blocker=$Blocker
+                        $task.lastProgressUtc=$now
+                        if($RequirementsRevision -ge 0){
+                            if($RequirementsRevision -lt $task.requirementsRevision){throw 'Requirements revision cannot move backwards.'}
+                            $task.requirementsRevision=$RequirementsRevision
+                        }
+                    }
+                    $task.lastHeartbeatUtc=$now
                     $task.revision=[long]$task.revision+1
-                    if($RequirementsRevision -ge 0){
-                        if($RequirementsRevision -lt $task.requirementsRevision){throw 'Requirements revision cannot move backwards.'}
-                        $task.requirementsRevision=$RequirementsRevision
-                    }
                 }
                 if($Command -eq 'event-post') {
                     if(-not $EventKey -or [string]::IsNullOrWhiteSpace($Text)){throw 'event-post requires EventKey and Text.'}
@@ -484,10 +529,14 @@ try {
                 }
                 if($Command -eq 'event-wait') {
                     $events=@(Get-TaskEvents $ledger $Participant $AfterSequence | Select-Object -First 100)
-                    if($events.Count -or $clock.Elapsed.TotalSeconds -ge $WaitSeconds){[pscustomobject]@{events=$events;sequence=$ledger.sequence;timedOut=($events.Count -eq 0);delivery='No automatic agent acknowledgement or host wake.'}|ConvertTo-Json -Depth 20;exit 0}
+                    if($events.Count -or ($WaitSeconds -gt 0 -and $clock.Elapsed.TotalSeconds -ge $WaitSeconds)){[pscustomobject]@{events=$events;sequence=$ledger.sequence;timedOut=($events.Count -eq 0);delivery='No automatic agent acknowledgement or host wake.'}|ConvertTo-Json -Depth 20;exit 0}
                 } else {
                     Write-AtomicJson $state $statePath
                     $response=[pscustomobject]@{task=$task;editingAuthority=$false;next=@('task-stage','begin then claim before writing');observation='Task presence does not join the edit barrier.'}
+                    if((Get-Field $task 'hostParticipation' 'host') -eq 'independent'){
+                        $response.next=@('task-stage for progress and changed paths/commit references','task-close after independent validation and local commits')
+                        $response.observation='Independent task is recorded without a host edit member, build barrier or host execution lease.'
+                    }
                     if($Command -eq 'task-stage') { # Active progress must surface pending urgent notices.
                         $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
                         Set-Field $response 'urgentEvents' @($urgent | Select-Object -First 8 -Property sequence,key,sender,kind,requirementsRevision,createdUtc)
@@ -505,6 +554,27 @@ try {
                     $urgent=@(Get-TaskEvents $ledger $Participant 0 -UrgentUnacknowledged)
                     if($urgent.Count){[pscustomobject]@{attention='urgent-event';events=$urgent;batchId=$Batch;editRevision=$Revision;registrationRetained=$true;next='Read event, acknowledge explicitly, then re-evaluate current revision.'}|ConvertTo-Json -Depth 20;exit 6}
                 }
+            }
+            $visibleTask=@(Get-Field (Get-Field $state 'taskLedger') 'tasks' @()|Where-Object id -eq $Participant|Select-Object -First 1)
+            if($visibleTask.Count -and (Get-Field $visibleTask[0] 'hostParticipation' 'host') -eq 'independent' -and $Command -in 'begin','repair','edit-verify'){
+                $task=$visibleTask[0]
+                if($task.phase -in 'completed','cancelled' -or $task.closedUtc){throw 'Independent task is closed; register the next task before continuing.'}
+                if($Command -eq 'repair'){throw 'Host repair requires host participation; independent tasks do not join host batches.'}
+                if($Command -eq 'edit-verify'){
+                    if($Batch){throw 'Independent write verification does not accept a host batch.'}
+                    Assert-TaskRevision $task $TaskRevision
+                    $paths=@($Files.Split(',')|Where-Object {$_}|ForEach-Object {Assert-IndependentTaskPath $_})
+                    if(-not $paths.Count){throw 'edit-verify requires explicit Files.'}
+                    foreach($batchRecord in @($(if($state.current){$state.current});@(Get-Field $state 'activeCandidates' @()))){
+                        foreach($member in @($batchRecord.participants|Where-Object state -ne 'withdrawn')){
+                            foreach($owned in @(Get-Field $member 'ownedFiles' @())){foreach($path in $paths){
+                                if($path -ieq $owned -or $path.StartsWith($owned+'/',[StringComparison]::OrdinalIgnoreCase) -or $owned.StartsWith($path+'/',[StringComparison]::OrdinalIgnoreCase)){throw "Independent write conflicts with host member $($member.id): $path"}
+                            }}
+                        }
+                    }
+                    [pscustomobject]@{allowed=$true;hostParticipation='independent';taskRevision=$task.revision;paths=$paths;observation='Independent source paths only; no host batch or execution authority granted.'}|ConvertTo-Json -Depth 10;exit 0
+                }
+                [pscustomobject]@{participant=$Participant;task=$task;hostParticipation='independent';editingAuthority=$false;next='Continue independent work and report progress; begin does not create a host member for this task.'}|ConvertTo-Json -Depth 10;exit 0
             }
             if($Command -eq 'edit-verify') {
                 if(-not $current -or $current.id -ne $Batch -or $current.phase -ne 'editing'){throw 'No active editing window.'}
@@ -721,11 +791,14 @@ try {
                     if($Command -eq 'claim'){
                         $claimLease=Try-Lease 'git.lock';if(-not $claimLease){throw 'Git checkpoint is active; retry claim. No ownership was changed.'}
                         try {
-                            Set-Ownership $current $entry $Files $AdoptExistingChanges
+                            Set-Ownership $current $entry $Files $AdoptExistingChanges ([bool]$Add)
                             Register-SourceOwnership $state $entry $Batch
                             Write-AtomicJson $state $statePath
                         } finally {$claimLease.Dispose()}
-                        $entry | ConvertTo-Json -Depth 10; exit 0
+                        $receipt=$entry.PSObject.Copy()
+                        Set-Field $receipt 'claimMode' $(if($Add){'add'}else{'set'})
+                        Set-Field $receipt 'claimInstruction' 'ownedFiles is the complete current set. Default claim replaces it; -Add retains previous paths.'
+                        $receipt | ConvertTo-Json -Depth 10; exit 0
                     }
                 } else {
 
@@ -738,6 +811,20 @@ try {
                     if($ResourceCpuSlots -or $ResourceMemoryMiB){
                         if($entry.testPlan.suites -contains 'none'){throw 'An empty plan cannot reserve weighted resources.'}
                         Set-Field $entry.testPlan 'projectResources' (Get-ProjectResourceBinding $repositoryRoot $true $ResourceCpuSlots $ResourceMemoryMiB (-not $ResourceShared))
+                    }elseif($Scope -eq 'tool' -and $entry.testPlan.suites -notcontains 'none'){
+                        # Freeze the tool-sized default during planning so its
+                        # actual request is visible before ready/submission.
+                        Set-Field $entry.testPlan 'projectResources' (Get-DefaultProjectResourceBinding $repositoryRoot -Workload tools)
+                    }
+                    $requestBudget=Get-Field $entry.testPlan 'projectResources'
+                    if($requestBudget){
+                        Initialize-ResourceRuntime
+                        $availableMiB=[long][Math]::Floor([SnowDesktop.Build.Job]::AvailableMemoryBytes()/1048576.0)
+                        Set-Field $entry.testPlan 'resourceAdvice' ([pscustomobject]@{source=$(if($ResourceCpuSlots){'explicit'}else{'default-tools'});
+                            cpuSlots=$requestBudget.cpuSlots;memoryMiB=$requestBudget.memoryMiB;compileJobs=(Get-CompileResourceJobs $requestBudget);
+                            availableMemoryMiB=$availableMiB;headroomMiB=$requestBudget.headroomMiB;
+                            admission=$(if($availableMiB -lt $requestBudget.headroomMiB+$requestBudget.reservedMemoryMiB){'waiting-memory'}else{'memory-probe-fits'});
+                            observation='This member request is frozen. The shared batch takes the maximum declared needs; an unweighted/product member can require the normal build default. Actual admission rechecks memory and leases.'})
                     }
                     $visible=Find-VisibleTask (Get-TaskLedger $state) $Participant
                     Set-Field $entry.testPlan 'requirementsRevision' $visible.requirementsRevision
@@ -887,7 +974,9 @@ try {
                         [pscustomobject]@{status='attention';batchId=$Batch;participant=$Participant;editRevision=$observedRevision;reason='A declared check needs explicit repair/reopen; no automatic repeat was started.';checks=@($badChecks | ForEach-Object {[pscustomobject]@{participant=$_.id;check=$_.check}})} | ConvertTo-Json -Depth 10
                         exit 2
                     }
-                    if (@($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and -not (Checks-BlockFreeze $current) -and
+                    $observerTask=@(Get-Field (Get-Field $state 'taskLedger') 'tasks' @()|Where-Object id -eq $Participant|Select-Object -First 1)
+                    $closedObserver=$observerTask.Count -gt 0 -and ($observerTask[0].phase -in 'completed','cancelled' -or [bool]$observerTask[0].closedUtc)
+                    if (-not $closedObserver -and @($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and -not (Checks-BlockFreeze $current) -and
                         ((Get-Field $current 'protocolVersion' 1) -lt 4 -or @(Get-Field $state 'activeCandidates' @()).Count -lt 32)) {
                         $buildLease = Try-Lease 'build.lock'
                         if ($null -eq $buildLease) { throw 'Unexpected occupied build lease; inspect status without clearing registrations.' }
@@ -980,7 +1069,13 @@ try {
                             $reserved=Get-Field $ownedBatch 'runId'
                             $runRecord=if($reserved){Read-EntryJson (Join-Path $stateRoot ('runs/'+$reserved+'.json'))}else{$null}
                             if($runRecord -and $runRecord.status -ne 'start-failed'){throw ('Run '+$reserved+' is already reserved; inspect its owner and saved result. Submission observation failed, so no replacement outcome was published.')}
-                            $result=New-Result $ownedBatch 'failed' 2 $submissionError;Publish-Result $state $result
+                            $result=New-Result $ownedBatch 'failed' 2 $submissionError
+                            if($runRecord -and $runRecord.status -eq 'start-failed'){
+                                Set-Field $result 'recovery' ([pscustomobject]@{diagnose='scripts/build.bat diagnose';begin=('scripts/build.bat begin '+$Participant);
+                                    next='Fix the launch context, begin, claim reviewed paths with -AdoptExistingChanges, plan, then ready-and-wait using the NEW batch/revision. The unchanged frozen checkpoint remains committable through the OLD batch/revision.';
+                                    details='scripts/README.md#构建环境诊断与启动恢复'})
+                            }
+                            Publish-Result $state $result
                         }
                     }
                     finally {$metadata.Dispose()}
@@ -1072,5 +1167,8 @@ try {
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)
+    if($_.Exception.GetBaseException() -is [UnauthorizedAccessException] -or $_.Exception.Message -match 'access.*denied|拒绝访问|unauthorized|EACCES|EPERM'){
+        [Console]::Error.WriteLine('Check scripts/build.bat diagnose in this same caller context. Sandbox policy and ACL permissions are separate; do not automatically edit ACLs. An authorized full-access context, capable adapter Host, or external terminal may be required.')
+    }
     exit 2
 }

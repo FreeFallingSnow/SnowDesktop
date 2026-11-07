@@ -5,8 +5,10 @@
 // Contains modified portions derived from TranslucentTB's ExplorerTAP,
 // effects, XamlBlurBrush, visual-tree watcher, and TAP initialization code at:
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
+// Taskbar source matching also follows upstream fix b8716c1207037013515a289c365918cb4aea109e.
 
 #include "taskbar_hook_protocol.h"
+#include "thumbnail_toolbar_protocol.h"
 #include "taskbar_material_render.h"
 #include "taskbar_autohide_observer.h"
 #include "taskbar_native.h"
@@ -878,7 +880,7 @@ public:
             }
             else if (type == L"Taskbar.TaskbarFrame")
             {
-                RegisterTaskbarFrame(relation.Parent, element.Handle);
+                RegisterTaskbarFrame(element.Handle);
             }
             else if (type == winrt::name_of<wux::Shapes::Rectangle>())
             {
@@ -1424,10 +1426,13 @@ private:
         return nullptr;
     }
 
-    void RegisterTaskbarFrame(InstanceHandle rootGridHandle,
-        InstanceHandle frameHandle)
+    void RegisterTaskbarFrame(InstanceHandle frameHandle)
     {
-        const auto rootGrid = FromHandle<wux::UIElement>(rootGridHandle);
+        // The content can be the frame itself or an ancestor on Insider builds.
+        const auto xamlRoot = FromHandle<wux::UIElement>(frameHandle).XamlRoot();
+        if (!xamlRoot) return;
+        const auto rootContent = xamlRoot.Content();
+        if (!rootContent) return;
         for (auto iterator = xamlSources_.begin(); iterator != xamlSources_.end();
             ++iterator)
         {
@@ -1441,7 +1446,7 @@ private:
             {
                 continue;
             }
-            if (content != rootGrid)
+            if (content != rootContent)
                 continue;
 
             HWND xamlWindow = nullptr;
@@ -1460,7 +1465,7 @@ private:
             auto& info = taskbars_[frameHandle];
             info.xamlWindow = xamlWindow;
             info.taskbar = taskbar;
-            info.rootElement = rootGrid.try_as<wux::FrameworkElement>();
+            info.rootElement = rootContent.try_as<wux::FrameworkElement>();
             info.appliedContentTheme = -1;
             if (info.rootElement)
                 info.nativeRequestedTheme = info.rootElement.RequestedTheme();
@@ -1979,6 +1984,9 @@ SnowDesktopRegistryQueryHookProc(int code, WPARAM wParam, LPARAM lParam)
         {
             ProcessRegistryQuery(static_cast<DWORD>(message->wParam));
         }
+        if (message->message == RegisterWindowMessageW(snowdesktop::thumbnail_toolbar::kMessage))
+            snowdesktop::thumbnail_toolbar::Process(message->hwnd, static_cast<DWORD>(message->wParam),
+                static_cast<std::uint64_t>(message->lParam));
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }

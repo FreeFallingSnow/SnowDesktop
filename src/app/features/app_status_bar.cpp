@@ -1,7 +1,21 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "platform/runtime_module_policy.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/settings_snapshot.h"
+#include "shell/native_start_menu.h"
+#include "shell/power_user_menu.h"
+#include "common/utils.h"
+#include "dock/dock_settings.h"
+#include "system/panel/system_panel.h"
+#include "settings/settings_controller.h"
+#include "app/dock/persistent_dock_host.h"
 #include "system/panel/system_panel_model.h"
 #include "system/calendar/system_calendar_editor.h"
 #include "system/controls/system_controls.h"
+#include "system/controls/system_quick_controls.h"
 #include "ui/menu/modern_menu.h"
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
@@ -11,7 +25,6 @@
 #include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_native.h"
 #include <shellscalingapi.h>
-#include <powrprof.h>
 
 namespace
 {
@@ -106,7 +119,7 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
         menu && GetWindow(menu, GW_OWNER) == statusBarMenuOwner_)
         snowdesktop::modern_menu::DismissActive();
     if ((!monitor || monitor == statusBarQuickNavigationMonitor_) &&
-        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar)
+        quickNavigation_->invocationSource == QuickNavigationInvocationSource::StatusBar)
         // Cancellation also runs from WA_INACTIVE. It must not turn into an
         // explicit dismissal and reactivate the desktop before that returns.
         CloseQuickNavigation(false);
@@ -141,7 +154,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
     const bool dismissDock = action == Action::Dismiss;
-    if ((snowdesktop::IsStatusBarContextMenuAction(action) || action == Action::SystemMenu) &&
+    if (snowdesktop::IsStatusBarContextMenuAction(action) &&
         action == statusBarMenuAction_ && statusBarMenuMonitor_ == statusBarActivationMonitor_ &&
         statusBarMenuOwner_ && activeMenu && GetWindow(activeMenu, GW_OWNER) == statusBarMenuOwner_)
         action = Action::Dismiss;
@@ -151,7 +164,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     if (action == Action::Dismiss)
     {
         if (dockStartMenu_) dockStartMenu_->DismissThen({});
-        quickNavigationPostCloseAction_ = {};
+        quickNavigation_->postCloseAction = {};
         DismissActiveContextMenuForPopupTransition();
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
@@ -325,6 +338,20 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             return command;
         });
         systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
+        systemPanel_->SetShortcutHandler([this](snowdesktop::SystemPanelShortcut shortcut, HWND source) {
+            if(exitRequested_||!systemPanel_)return;
+            const HWND launchOwner=ShellLaunchOwnerHwnd(source);
+            const std::weak_ptr<std::uint64_t> life=statusBarActivationGeneration_;
+            systemPanel_->CloseThen([this,life,shortcut,launchOwner] {
+                if(life.expired()||exitRequested_)return;
+                RestoreInteractionInputFocus();
+                using Shortcut=snowdesktop::SystemPanelShortcut;
+                if(shortcut==Shortcut::Terminal||shortcut==Shortcut::TerminalAdmin)
+                    (void)snowdesktop::power_user_menu::OpenTerminal(launchOwner,shortcut==Shortcut::TerminalAdmin);
+                else ShellExecuteW(launchOwner,L"open",shortcut==Shortcut::TaskManager?L"taskmgr.exe":L"ms-settings:",
+                    nullptr,nullptr,SW_SHOWNORMAL);
+            },launchOwner);
+        });
         systemPanel_->SetTrayStateChanged([this](HMONITOR monitor,bool expanded) {
             if(statusBar_)statusBar_->SetTrayExpanded(monitor,expanded);
         });
@@ -365,11 +392,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         });
         return;
     }
-    if (action != Action::QuickSearch && (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden()))
+    if (action != Action::QuickSearch && (quickNavigation_->open || !quickNavigation_->animation.IsHidden()))
     {
         TraceStatusBarShellActivation(action, generation, L"wait-quick-navigation", hold->shortcutStartedMilliseconds);
-        quickNavigationPostCloseAction_ = resume;
-        if (quickNavigationOpen_) CloseQuickNavigation();
+        quickNavigation_->postCloseAction = resume;
+        if (quickNavigation_->open) CloseQuickNavigation();
         return;
     }
     if (action == Action::InputMethodPanel && systemPanel_ && systemPanel_->IsInputMethodOpen())
@@ -378,7 +405,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->Hide();
         return;
     }
-    const bool externalSurface = action == Action::SystemMenu || snowdesktop::IsStatusBarContextMenuAction(action) ||
+    const bool externalSurface = snowdesktop::IsStatusBarContextMenuAction(action) ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
@@ -409,7 +436,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 hold->shortcutFinished = true;
                 if (result != S_OK)
                 {
-                    MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                    snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                     return;
                 }
                 const auto selection = input::CaptureSelection(target);
@@ -429,14 +456,14 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             if (!current()) return;
                             if (restored == S_OK) next(resolved);
                             else if (restored != HRESULT_FROM_WIN32(ERROR_CANCELLED))
-                                MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                         });
                     };
                     statusBarActivationToken_ = input::ScheduleTarget(uiAnimationScheduler_, original, std::move(callbacks));
                     if (!statusBarActivationToken_)
                     {
                         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar input method stage=restore-scheduler-unavailable", DiagnosticLogLevel::Error);
-                        MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                        snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                     }
                 };
                 snowdesktop::SystemPanelInputMethodActions actions;
@@ -457,7 +484,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             swprintf_s(message, L"StatusBar input method profile selection hr=0x%08lX", static_cast<unsigned long>(selected));
                             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, message, selected != S_OK ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
                             if (selected != S_OK)
-                                MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
                         });
                     }, selection.target.foreground);
                 };
@@ -492,7 +519,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (!statusBarActivationToken_)
         {
             WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, L"StatusBar input method stage=capture-scheduler-unavailable", DiagnosticLogLevel::Error);
-            MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+            snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
     }
     else if (action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::SystemInputMethodPanel)
@@ -509,7 +536,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             SUCCEEDED(result) ? L"requested" : L"failed");
         if (FAILED(result))
         {
-            MessageBoxW(owner, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+            snowdesktop::operation_feedback::ShowMessageBox(owner, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
         statusBarActivationMonitor_ = nullptr;
     }
@@ -670,63 +697,15 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             MessageBeep(MB_ICONWARNING);
         }
     }
-    else if (action == Action::SystemMenu)
-    {
-        CloseQuickNavigation();
-        if (systemPanel_) systemPanel_->Hide();
-        HMENU menu = CreatePopupMenu();
-        if (!menu) return;
-        PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
-        const char* labels[]{"statusBar.taskManager", "statusBar.terminal", "statusBar.systemSettings",
-            "controlCenter.lock", "controlCenter.sleep", "controlCenter.hibernate", "controlCenter.restart", "controlCenter.shutdown"};
-        // Fluent Regular 20 glyphs from the same embedded, pinned font as Dock.
-        const wchar_t* icons[]{L"\uE49D",L"\uEE6F",L"\uF6A9",L"\uE78F",L"\uEB2D",L"\uEB2D",L"\uF13D",L"\uF60E"};
-        for (UINT index = 0; index < std::size(labels); ++index)
-        {
-            if (index == 3) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(menu, MF_STRING|(index==5&&!IsPwrHibernateAllowed()?MF_GRAYED:0), index + 1, _LW(labels[index]));
-            SetMenuItemIcon(menu,index+1,icons[index],MenuIconFont::FluentRegular);
-        }
-        statusBarMenuMonitor_ = monitor;
-        statusBarMenuOwner_ = owner;
-        statusBarMenuAction_ = action;
-        const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
-        statusBarMenuMonitor_ = nullptr;
-        statusBarMenuOwner_ = nullptr;
-        statusBarMenuAction_ = Action::None;
-        DestroyMenu(menu);
-        ClearMenuIcons();
-        if (!current()) return;
-        if (command >= 1 && command <= 3)
-        {
-            const wchar_t* target = command == 1 ? L"taskmgr.exe" : command == 2 ? L"wt.exe" : L"ms-settings:";
-            auto opened = reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", target, nullptr, nullptr, SW_SHOWNORMAL));
-            if (opened <= 32 && command == 2)
-                opened = reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", L"powershell.exe", nullptr, nullptr, SW_SHOWNORMAL));
-            if (opened <= 32) MessageBeep(MB_ICONWARNING);
-        }
-        else if (command >= 4 && command <= 8)
-        {
-            const char* tasks[]{"system.power.lock", "system.power.sleep", "host.power.hibernate", "system.power.restart", "system.power.shutdown"};
-            if (command >= 5)
-            {
-                ensureSystemPanel();
-                systemPanel_->ShowPowerConfirmation(tasks[command - 4], owner, anchor,
-                    collectionPopupAppearance_, generalSettings_.statusBar, systemDataProvider_);
-            }
-            else
-            {
-                snowdesktop::system_control::Request request;
-                request.name = tasks[command - 4];
-                if (!systemDataProvider_->Controls()->Start("statusBarVolume", std::move(request))) MessageBeep(MB_ICONWARNING);
-            }
-        }
-    }
     else if (snowdesktop::IsStatusBarContextMenuAction(action))
     {
         if (systemPanel_) systemPanel_->Hide();
         PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
         const bool merged = statusBar_ && statusBar_->MergedStripBounds(monitor).has_value();
+        POINT dockPoint{anchor.left, anchor.top};
+        const DockContainer* contextDock = merged && hwnd_ && ScreenToClient(hwnd_, &dockPoint)
+            ? GetDockContainerAtPoint(dockPoint) : nullptr;
+        const bool powerUserMenu = contextDock && contextDock->IsWindowsButtonPoint(dockPoint);
         HMENU menu = merged ? CreateDockContextMenu(true) : CreatePopupMenu();
         if (!menu) { ClearMenuIcons(); return; }
         if (!merged)
@@ -734,7 +713,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             AppendMenuW(menu, MF_STRING, 1, _LW("statusBar.menu.settings"));
             AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
             SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
-            SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
+            SetMenuItemIcon(menu,2,snowdesktop::system_menu_icon::taskManager,MenuIconFont::FluentRegular);
         }
         // Use the clicked item's identity for direct quick settings. All changes
         // go through the same controller as the settings window, after dismissal.
@@ -955,6 +934,15 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             AppendMenuW(settingsMenu, MF_STRING, detailedCommand, _LW("statusBar.menu.detailed"));
             SetMenuItemIcon(settingsMenu, detailedCommand, L"\uF6A9", MenuIconFont::FluentRegular);
         }
+        if (powerUserMenu)
+        {
+            const HMENU root = snowdesktop::power_user_menu::Create(menu,
+                [this](HMENU parent, UINT_PTR command, const wchar_t* glyph) {
+                    SetMenuItemIcon(parent, command, glyph, MenuIconFont::FluentRegular);
+                });
+            if (!root) { DestroyMenu(menu); ClearMenuIcons(); return; }
+            menu = root;
+        }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
         statusBarMenuAction_ = action;
@@ -965,6 +953,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
+        if (snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(owner))) return;
         if (settingsController_)
         {
             auto settings = settingsController_->Snapshot()->values.general;
@@ -1023,7 +1012,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     else if (action == Action::QuickSearch)
     {
         if (systemPanel_) systemPanel_->Hide();
-        if (quickNavigationOpen_) CloseQuickNavigation();
+        if (quickNavigation_->open) CloseQuickNavigation();
         else
         {
             statusBarQuickNavigationMonitor_ = monitor;
@@ -1174,7 +1163,7 @@ void DesktopApp::SyncStatusBar()
             [this](HMONITOR monitor) { CancelStatusBarActivation(monitor); },
             [this](const std::wstring& error) {
                 WriteModuleDiagnosticLogEntry(DiagnosticLogModule::System, error.c_str(), DiagnosticLogLevel::Error);
-                MessageBoxW(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
             },
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
                 auto fillAppearance = snowdesktop::StatusBarFillAppearance(appearance);
@@ -1213,8 +1202,8 @@ void DesktopApp::SyncStatusBar()
                 (statusBarMenuMonitor_ == monitor && statusBarMenuOwner_ && menu &&
                     GetWindow(menu, GW_OWNER) == statusBarMenuOwner_) ||
                 (statusBarQuickNavigationMonitor_ == monitor &&
-                    quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
-                    (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden())) ||
+                    quickNavigation_->invocationSource == QuickNavigationInvocationSource::StatusBar &&
+                    (quickNavigation_->open || !quickNavigation_->animation.IsHidden())) ||
                 (systemPanel_ && systemPanel_->IsOpenForMonitor(monitor)) ||
                 (statusBar_ && statusBar_->HasTrayMenuSession(monitor));
         });
@@ -1244,6 +1233,9 @@ void DesktopApp::SyncStatusBar()
             return state;
         });
         statusBar_->SetMergedAppearanceProvider([this](HMONITOR) { return CurrentDockAppearance(); });
+        statusBar_->SetFullscreenSourceProvider([this](HMONITOR monitor) -> std::optional<HWND> {
+            return ObservedFullscreenSource(monitor);
+        });
         statusBar_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
         statusBar_->SetGraphicsFailureHandler([this](HRESULT error) {
             (void)RequestGraphicsDeviceRecovery(L"StatusBar", error);
@@ -1253,27 +1245,10 @@ void DesktopApp::SyncStatusBar()
             const auto& settings = generalSettings_.statusBar;
             if (!settings.noWindow.enabled && !settings.maximizedWindow.enabled)
                 return scene;
-            // StartDockForegroundMonitor already owns these observations even
-            // when Dock/taskbar styling is disabled. The taskbar's own timer
-            // maintains the cache while its controls are active. Otherwise the
-            // first bar consumes dirty observations for all monitors together.
-            // Never enable the Explorer appearance hook to obtain this state.
-            const DWORD now = GetTickCount();
-            const bool dirty = systemTaskbarWindowStateChangedTick_.load() != systemTaskbarWindowStateObservedTick_;
-            const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
-            if (systemTaskbarWindowScanTick_ == 0 ||
-                (systemTaskbarMonitorWindowStates_.empty() && now - systemTaskbarWindowScanTick_ >= 1500) ||
-                (!taskbarObserverActive &&
-                    ((dirty && now - systemTaskbarWindowScanTick_ >= 250) ||
-                        now - systemTaskbarWindowScanTick_ >= 1500)))
-            {
-                RefreshSystemTaskbarWindowState();
-                systemTaskbarWindowScanTick_ = now;
-            }
             // Empty entries are published only after successful window and
             // monitor observations. A missing entry remains unknown/default.
-            if (const auto found = systemTaskbarMonitorWindowStates_.find(monitor);
-                found != systemTaskbarMonitorWindowStates_.end())
+            if (const auto found = observedMonitorWindows_.find(monitor);
+                found != observedMonitorWindows_.end())
             {
                 scene.noWindow = !found->second.visible && !found->second.maximized;
                 scene.maximizedWindow = found->second.maximized;
@@ -1328,4 +1303,7 @@ void DesktopApp::SyncStatusBar()
                 false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
             brushCache_.clear(); brushCacheContext_ = nullptr;
         });
+    // Re-apply the host-owned Show Desktop guard to bars created or replaced
+    // by this configuration pass.
+    statusBar_->SetSystemShowDesktopActive(systemShowDesktopLayerGuardActive_);
 }

@@ -1,3 +1,5 @@
+#include "settings_controller_interface.h"
+#include "settings_snapshot.h"
 #include "control_environment_settings.h"
 
 #include "data/debug_environment_catalog.h"

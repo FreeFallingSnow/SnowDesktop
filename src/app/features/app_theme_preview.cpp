@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "ui/preview/native_component_preview_export.h"
+#include "common/utils.h"
 #include "ui/render/app_font.h"
 #include "ui/preview/preview_png_writer.h"
 #include "widget/preview/widget_preview_stage.h"

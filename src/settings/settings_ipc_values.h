@@ -2,7 +2,8 @@
 
 #include "settings_ipc_codec.h"
 #include "platform/runtime_module_status.h"
-#include "settings_controller.h"
+#include "settings_snapshot.h"
+#include "settings_host_actions.h"
 #include "widget/settings/widget_settings_service.h"
 #include "layout/page_layout_settings.h"
 #include "icons/large_icon_settings.h"
@@ -51,12 +52,13 @@ SD_IPC_FIELDS(DockSettings,
     v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
-    v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled);
+    v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled, v.favoritesEnabled, v.favorites);
 SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,
     v.visibleRows, v.padding, v.searchHeight, v.iconSize, v.gridGap, v.rowGap,
     v.fontSize, v.secondaryFontSize, v.searchFontSize, v.resultRowHeight, v.labelLines,
     v.cornerRadius, v.searchRadius, v.tabRadius, v.itemRadius);
 SD_IPC_FIELDS(QuickNavigationSearchEngine, v.id, v.name, v.prefix, v.url);
+SD_IPC_FIELDS(QuickNavigationFavorite, v.type, v.target, v.desktopKey, v.name);
 SD_IPC_FIELDS(calendar::DisplayPreferences, v.enabled, v.calendar, v.holidaysEnabled, v.region);
 SD_IPC_FIELDS(shell_extensions::Selection, v.provider, v.command, v.label, v.placement);
 SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);
@@ -79,7 +81,7 @@ SD_IPC_FIELDS(runtime_modules::Status, v.module, v.allowed, v.active, v.error, v
 SD_IPC_FIELDS(runtime_modules::Snapshot, v.policyRevision, v.modules);
 SD_IPC_FIELDS(runtime_modules::Policy, v.allowed);
 SD_IPC_FIELDS(GeneralSettings,
-    v.showAdvancedSettings, v.steamShowRunningStatus, v.runtimeModules,
+    v.showAdvancedSettings, v.steamShowRunningStatus, v.steamRoomVisible, v.runtimeModules,
     v.diagnosticLogModules, v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopIdleHideEnabled, v.desktopIdleHideDelaySeconds, v.desktopIdleHidePauseWithWindows,
     v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,

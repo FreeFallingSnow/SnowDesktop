@@ -125,7 +125,7 @@ std::string ConfigHash(const CaptureOptions& options)
 {
     std::string canonical;
     const auto add = [&](std::string_view part) { canonical += std::to_string(part.size()); canonical += ':'; canonical += part; };
-    add("snowdesktop.capture.config.v4"); add(ProcessRole(options.processRole)); add(PresetName(options.preset)); add(std::to_string(options.seconds));
+    add("snowdesktop.capture.config.v5-native-cpu-raster"); add(ProcessRole(options.processRole)); add(PresetName(options.preset)); add(std::to_string(options.seconds));
     add(std::to_string(options.bufferKiB)); add(std::to_string(options.maximumFileBytes)); add(options.scopeCpu ? "cpu" : "wall");
     add(std::to_string(options.selectedInstances.size()));
     for (const auto& owner : options.selectedInstances) add(Utf8(owner));
@@ -306,7 +306,7 @@ std::string Manifest(const Record& record, bool complete)
     SYSTEM_INFO system{}; GetSystemInfo(&system);
     const auto allProcessors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
     std::ostringstream out; out.imbue(std::locale::classic()); out << std::setprecision(12);
-    out << "{\"schemaVersion\":2,\"probeSchemaVersion\":2,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
+    out << "{\"schemaVersion\":2,\"probeSchemaVersion\":4,\"format\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"sessionId\":" << Quote(record.snapshot.session)
         << ",\"generation\":" << record.snapshot.generation << ",\"requestId\":" << Quote(record.snapshot.requestId)
         << ",\"state\":" << Quote(complete ? "completed" : "failed") << ",\"completion\":" << (complete ? "true" : "false")
         << ",\"errorCode\":" << Quote(record.snapshot.error) << ",\"hostVersion\":" << Quote(SNOWDESKTOP_VERSION)
@@ -332,7 +332,9 @@ std::string Manifest(const Record& record, bool complete)
         out << "{\"ordinal\":" << i + 1 << ",\"owner\":" << Quote(owner.str()) << '}';
     }
     out << ']'
-        << ",\"threadCpuSource\":" << (record.options.scopeCpu ? "\"perfetto.thread_time\"" : "null")
+        << ",\"threadCpuSource\":" << (record.options.scopeCpu ? "\"windows.GetThreadTimes/native-scope\"" : "null")
+        << ",\"cpuCycleSource\":" << (record.options.scopeCpu ? "\"windows.QueryThreadCycleTime/raw\"" : "null")
+        << ",\"widgetGpuTiming\":{\"source\":\"d3d11.timestamp.disjoint\",\"range\":\"host-widget-raster-only\",\"submission\":\"d2d-command-flush-before-endpoint-and-commit\",\"readback\":\"nonblocking-DONOTFLUSH\",\"includesDwm\":false}"
         << ",\"requestedSeconds\":" << record.options.seconds << ",\"bufferKiB\":" << record.options.bufferKiB
         << ",\"firstTraceNs\":" << Quote(std::to_string(record.firstTraceNs)) << ",\"lastTraceNs\":" << Quote(std::to_string(record.lastTraceNs))
         << ",\"durationMs\":" << record.snapshot.elapsedMs << ",\"traceFile\":" << Quote(Utf8(record.snapshot.trace.filename().wstring()))
@@ -344,7 +346,11 @@ std::string Manifest(const Record& record, bool complete)
         << ",\"included\":true},{\"role\":\"settings\",\"included\":false}],\"probeQuality\":{\"droppedOwners\":" << record.quality.droppedOwners
         << ",\"droppedCounters\":" << record.quality.droppedCounters << ",\"droppedLinks\":" << record.quality.droppedLinks
         << ",\"droppedTracks\":" << record.quality.droppedTracks
-        << ",\"probeErrors\":" << record.quality.probeErrors << "}}";
+        << ",\"probeErrors\":" << record.quality.probeErrors
+        << ",\"drawRequests\":" << record.quality.drawRequests
+        << ",\"drawCoalesced\":" << record.quality.drawCoalesced
+        << ",\"drawConsumed\":" << record.quality.drawConsumed
+        << ",\"drawPending\":" << record.quality.drawPending << "}}";
     return out.str();
 }
 void Worker(std::shared_ptr<Record> record) noexcept
@@ -411,7 +417,8 @@ void Worker(std::shared_ptr<Record> record) noexcept
         std::uint64_t salt = 0;
         if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&salt), sizeof(salt), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
             throw std::runtime_error("captureIdentityRandomFailed");
-        ActivateTrace(record->snapshot.generation, salt, record->options.selectedInstances, record->options.inputSampleEvery);
+        ActivateTrace(record->snapshot.generation, salt, record->options.selectedInstances,
+            record->options.inputSampleEvery, record->options.scopeCpu);
         for (const auto& instance : record->options.selectedInstances) record->selectedOwners.push_back(OwnerId(instance));
         record->firstTraceNs = native_trace::TrackEvent::GetTraceTimeNs();
         {
@@ -548,7 +555,7 @@ bool Start(const CaptureOptions& requested, std::string& error)
     if ((options.processRole != CaptureProcessRole::Host && options.processRole != CaptureProcessRole::WidgetPreview) ||
         !ValidId(options.session) || !ValidId(options.requestId) || options.seconds < 1 || options.seconds > 600 ||
         options.bufferKiB < 64 || options.bufferKiB > 65536 || options.maximumFileBytes < 1024 ||
-        options.maximumFileBytes > 256ULL * 1024 * 1024 || options.selectedInstances.size() > 8 ||
+        options.maximumFileBytes > 256ULL * 1024 * 1024 || options.selectedInstances.size() > 64 ||
         (options.preset != CapturePreset::Resource && options.preset != CapturePreset::Interaction && options.preset != CapturePreset::Widget) ||
         (options.preset == CapturePreset::Widget && options.selectedInstances.empty()) ||
         std::any_of(options.selectedInstances.begin(), options.selectedInstances.end(), [](const auto& id) { return id.empty() || id.size() > 256; }))
@@ -679,7 +686,7 @@ std::string SnapshotJson(const CaptureSnapshot& snapshot, std::string_view reply
         << ",\"errorCode\":" << Quote(snapshot.error) << ",\"retryable\":" << (snapshot.error == "captureBusy" ? "true" : "false")
         << ",\"paths\":{\"trace\":" << Quote(Utf8(snapshot.trace.wstring())) << ",\"manifest\":" << Quote(Utf8(snapshot.manifest.wstring()))
         << ",\"report\":" << Quote(Utf8(snapshot.report.wstring()))
-        << "},\"capabilities\":{\"backend\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"hostOnly\":true,\"protocol\":3,\"moduleFilter\":true,\"inputSampling\":true},"
+        << "},\"capabilities\":{\"backend\":\"perfetto\",\"sdkVersion\":\"v58.2\",\"hostOnly\":true,\"protocol\":3,\"moduleFilter\":true,\"inputSampling\":true,\"maxWidgetFilter\":64},"
         << "\"participants\":[{\"role\":\"host\",\"pid\":" << GetCurrentProcessId() << ",\"included\":true}]}";
     return out.str();
 }
@@ -738,7 +745,7 @@ std::string ProcessControlRequest(std::string_view request) noexcept
         { if (!cpu->IsBoolean()) throw std::runtime_error("invalidThreadCpu"); options.scopeCpu = cpu->boolean; }
         if (const auto* widgets = value.Find("widgetIds"))
         {
-            if (!widgets->IsArray() || widgets->array.size() > 8) throw std::runtime_error("invalidWidgetFilter");
+            if (!widgets->IsArray() || widgets->array.size() > 64) throw std::runtime_error("invalidWidgetFilter");
             for (const auto& item : widgets->array)
             { if (!item.IsString() || item.string.empty() || item.string.size() > 256) throw std::runtime_error("invalidWidgetFilter"); options.selectedInstances.push_back(Wide(item.string)); }
         }

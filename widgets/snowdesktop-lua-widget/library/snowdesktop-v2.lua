@@ -344,6 +344,7 @@
 ---@field debugName? string Developer-readable node name, 1..256 UTF-8 bytes without control characters when present; it only appears in copied host diagnostics and does not affect behavior.
 ---@field testId? string Developer test selector, 1..128 ASCII letters/digits or ._:-/ when present; it is diagnostics-only and does not replace key or UIA AutomationId. Requires view.identity.diagnostics.
 ---@field text? string Used by text nodes.
+---@field glowRadius? number Text-only radius from 0 to 128 layout units. Positive values draw eight offset copies without the center glyph. Probe view.textGlow first.
 ---@field spans? SnowViewTextSpan[] Required by styledText; 1 to 64 bounded spans. Interactive span fields require view.styledText.actions.
 ---@field label? string Required by button, link, toggle, and checkbox nodes.
 ---@field glyph? string Required by icon and iconButton nodes.
@@ -353,6 +354,7 @@
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
 ---@field interpolation? SnowViewImageInterpolation Defaults to linear smooth sampling with cached high-quality downscaling; nearest preserves point samples. Older hosts retain their original linear quality.
 ---@field tint? SnowViewColor Image-only RGB or host theme tint that replaces source RGB while preserving source alpha.
+---@field spinSpeed? number Clockwise degrees per second (0–360) for a circular desktop image on a separate composition layer. Zero pauses the rotation. Probe view.imageSpin first.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
 ---@field shape? 'rectangle'|'roundedRectangle'|'circle'|'ellipse'
@@ -738,6 +740,9 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
+---@field state? 'unavailable'|'locked'|'idle'|'listening'|'invited'|'connecting'|'waiting'|'roomReady'|'waitingPeer'|'connected'|'busy' Steam multiplayer.state.
+---@field host? boolean Whether this instance owns the active Steam lobby.
+---@field fromHost? boolean Whether a multiplayer.message came from the lobby owner.
 ---@field task? 'audio.play'|'audio.pause'|'audio.resume'|'audio.stop'|'audio.seek'|'audio.setVolume'|'audio.setLoop'|'audio.setPlaybackRate'|'audio.setPlaybackMode'|'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'native.request'|'native.watch'|'shell.openUri'|string
 ---@field ok? boolean
 ---@field value? SnowAudioPlayValue|SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowNativeTaskValue|SnowLocationTaskValue|SnowStateValue
@@ -1715,8 +1720,18 @@ function animation.cancelFrame(id) end
 ---@field warmingUp boolean
 ---@field error? string
 
+---@class SnowDataHistoryPoint
+---@field timestamp integer Unix epoch milliseconds.
+---@field ageMs integer Age at the history read, from 0 to 60000 milliseconds.
+---@field value? number CPU, physical memory or selected GPU percent; network download bytes per second. Nil marks missing data.
+---@field secondary? number Network upload bytes per second; nil marks missing data.
+
+---@class SnowDataHistoryOptions
+---@field adapterId? string Required for GPU: opaque current adapter ID or confirmed alias; 1–1024 bytes. Other topics omit it.
+
 ---@class SnowDataSubscription<T>
 ---@field value fun(self: SnowDataSubscription<T>): SnowDataSnapshot<T>
+---@field history fun(self: SnowDataSubscription<T>, options?: SnowDataHistoryOptions): SnowDataHistoryPoint[], string? Requires data.subscription.history. CPU/network: no options. Memory: data.system.memory.history. GPU: data.system.gpu.history, includeDetails=true and adapterId. Empty plus reason on error; previews return empty.
 ---@field unsubscribe fun(self: SnowDataSubscription<T>): boolean
 
 ---@class snow.data
@@ -2089,6 +2104,9 @@ function data.subscribe(topic, options) end
 ---@field timestampMs integer UTC epoch milliseconds of the system reading.
 ---@field source 'satellite'|'wifi'|'cellular'|'ip'|'default'|'obfuscated'|'unknown' System source; never assume GPS accuracy.
 
+---@class SnowMultiplayerSendArguments
+---@field text string UTF-8 text of 1 to 1024 bytes, without NUL.
+
 ---@class SnowNativeRequestArguments
 ---@field helper string ID declared in widget.json nativeHelpers; never a path or command.
 ---@field operation string 1-64 ASCII letters, digits, dot, underscore or hyphen.
@@ -2257,6 +2275,11 @@ task = {}
 ---@overload fun(name: 'calendar.series.create', arguments: SnowCalendarSeriesArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.series.update', arguments: SnowCalendarSeriesUpdateArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.series.remove', arguments: SnowCalendarSeriesRemoveArguments): taskId: integer?, error: string?
+--- On hosts with multiplayer.room, legacy room tasks open General settings and return hostManaged.
+---@overload fun(name: 'multiplayer.create'|'multiplayer.invite'|'multiplayer.listen'|'multiplayer.join'|'multiplayer.leave'): taskId: integer?, error: string?
+---@overload fun(name: 'multiplayer.openSettings'): taskId: integer?, error: string?
+---@overload fun(name: 'multiplayer.activate'|'multiplayer.deactivate'): taskId: integer?, error: string?
+---@overload fun(name: 'multiplayer.send', arguments: SnowMultiplayerSendArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'native.request', arguments: SnowNativeRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'native.watch', arguments: SnowNativeWatchArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
@@ -2695,6 +2718,7 @@ function control.blur(key) end
 
 ---@class SnowUiMetrics
 ---@field layoutRowHeight number Visible content height for a search field, input, ordinary button or single-line item. Exterior insets and row gaps are excluded.
+---Auxiliary panel/dialog/popover callbacks use the page baseline without desktop-span growth; page row settings and system text scaling still apply.
 
 ---@class snow.ui
 ui = {}

@@ -1,4 +1,5 @@
 #include "widget_background_cache.h"
+#include "ui/render/smooth_corner_geometry.h"
 
 #include <d2d1effects.h>
 #include <wrl/implements.h>
@@ -166,13 +167,15 @@ void WidgetBackgroundCache::Clear() noexcept
 
 WidgetBackgroundCache::Result WidgetBackgroundCache::Resolve(std::wstring_view owner,
     ID2D1DeviceContext* context, ID2D1CommandList* commands, D2D1_RECT_F bounds,
-    float blurRadius, const ImmutableBitmap& immutableBitmap) noexcept
+    float blurRadius, float cornerRadius, const ImmutableBitmap& immutableBitmap) noexcept
 {
     try
     {
         const auto bypass = [&]() { Erase(owner); return Result{}; };
         if (owner.empty() || !context || !commands || !std::isfinite(blurRadius) ||
-            blurRadius <= 0.0f || blurRadius > 48.0f) return bypass();
+            blurRadius <= 0.0f || blurRadius > 48.0f ||
+            !std::isfinite(cornerRadius) || cornerRadius < 0.0f ||
+            context->GetPrimitiveBlend() != D2D1_PRIMITIVE_BLEND_SOURCE_OVER) return bypass();
         float dpiX = 96.0f, dpiY = 96.0f;
         context->GetDpi(&dpiX, &dpiY);
         const auto unit = context->GetUnitMode();
@@ -201,7 +204,7 @@ WidgetBackgroundCache::Result WidgetBackgroundCache::Resolve(std::wstring_view o
         if (!device) return bypass();
         if (device.Get() != device_.Get()) { Clear(); device_ = device; }
         auto signature = Microsoft::WRL::Make<CommandSignature>(immutableBitmap);
-        if (!signature || FAILED(signature->Add(0, bounds, blurRadius, dpiX, dpiY, unit)) ||
+        if (!signature || FAILED(signature->Add(0, bounds, blurRadius, cornerRadius, dpiX, dpiY, unit)) ||
             FAILED(commands->Stream(signature.Get())) || signature->failed)
             return bypass();
         const auto bytes = pixelBytes + signature->imageBytes + signature->bytes.size();
@@ -232,7 +235,22 @@ WidgetBackgroundCache::Result WidgetBackgroundCache::Resolve(std::wstring_view o
         raster->SetTarget(bitmap.Get());
         raster->BeginDraw();
         raster->Clear(D2D1::ColorF(0, 0, 0, 0));
+        ComPtr<ID2D1Factory> factory;
+        raster->GetFactory(&factory);
+        const auto clip = smooth_corners::Geometry(factory.Get(), bounds, cornerRadius);
+        if (!clip)
+        {
+            (void)raster->EndDraw();
+            raster->SetTarget(nullptr);
+            return {};
+        }
+        // The exact supported pixel transform is already part of admission.
+        // Bake the static rounded mask once instead of replaying an offscreen
+        // layer whenever only the foreground animation changes.
+        raster->PushLayer(D2D1::LayerParameters(bounds, clip.Get(),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
         raster->DrawImage(blur.Get());
+        raster->PopLayer();
         const HRESULT hr = raster->EndDraw();
         raster->SetTarget(nullptr);
         if (FAILED(hr)) return {};

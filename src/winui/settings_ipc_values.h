@@ -4,7 +4,7 @@
 #include "home_about_ipc_values.h"
 #include "general_advanced_feature_ipc_values.h"
 #include "window_support_ipc_values.h"
-#include "settings_window_host.h"
+#include "settings_window_host_options.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
 // runtime pointers, object layout, native padding or persistence APIs.
@@ -127,5 +127,6 @@ SD_IPC_FIELDS(winui::BackupDataActionRequest,
     v.command, v.subjectId, v.displayName, v.selectedPath,
     v.completionPolicy);
 
+SD_IPC_FIELDS(steam_room::Status, v.phase, v.failure, v.busy, v.inRoom, v.host);
 #undef SD_IPC_FIELDS
 } // namespace snowdesktop::settings_ipc

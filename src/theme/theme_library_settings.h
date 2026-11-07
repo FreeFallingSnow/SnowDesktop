@@ -1,206 +1,33 @@
 #pragma once
 #include "theme_library.h"
-#include "settings/settings_controller.h"
-#include "data/data_paths.h"
+#include "settings/settings_values.h"
 #include "widget/settings/widget_settings_model.h"
-#include "system/status_bar/status_bar_appearance.h"
-#include "taskbar_appearance.h"
 #include <array>
-#include <cwctype>
-#include <locale>
-#include <sstream>
 
 namespace snowdesktop::themes
 {
-inline std::wstring ExportFileName(std::wstring name)
-{
-    for (auto& character : name)
-        if (character < 32 || std::wstring_view(L"<>:\"/\\|?*").find(character) != std::wstring_view::npos) character = L'_';
-    const auto trim = [&] {
-        while (!name.empty() && (name.back() == L'.' || std::iswspace(name.back()))) name.pop_back();
-        while (!name.empty() && std::iswspace(name.front())) name.erase(0, 1);
-    };
-    trim();
-    constexpr std::wstring_view extension = L".snowtheme";
-    while (name.size() >= extension.size())
-    {
-        std::wstring suffix = name.substr(name.size() - extension.size());
-        for (auto& character : suffix) character = static_cast<wchar_t>(std::towlower(character));
-        if (suffix != extension) break;
-        name.resize(name.size() - extension.size()); trim();
-    }
-    if (name.size() > 120)
-    {
-        name.resize(120);
-        if (name.back() >= 0xd800 && name.back() <= 0xdbff) name.pop_back();
-        trim();
-    }
-    if (name.empty()) name = L"theme";
-    auto device = name.substr(0, name.find(L'.'));
-    while (!device.empty() && device.back() == L' ') device.pop_back();
-    for (auto& character : device) character = static_cast<wchar_t>(std::towupper(character));
-    if (device == L"CON" || device == L"PRN" || device == L"AUX" || device == L"NUL" ||
-        device == L"CONIN$" || device == L"CONOUT$" || (device.size() == 4 &&
-        (device.starts_with(L"COM") || device.starts_with(L"LPT")) &&
-        ((device[3] >= L'1' && device[3] <= L'9') || device[3] == L'\u00b9' || device[3] == L'\u00b2' || device[3] == L'\u00b3')))
-        name.insert(0, L"_");
-    return name + std::wstring(extension);
-}
-inline std::filesystem::path LibraryPath() { return GetDataFilePath(L"SnowDesktop.themes.json"); }
-inline widget_runtime::WidgetHostAppearancePatch WidgetPatch(const Theme& theme)
-{
-    widget_runtime::WidgetHostAppearancePatch patch;
-    const auto& appearance = theme.appearance;
-    const auto rgb = [](float r, float g, float b) { return (static_cast<int>(std::lround(r * 255)) << 16) |
-        (static_cast<int>(std::lround(g * 255)) << 8) | static_cast<int>(std::lround(b * 255)); };
-    patch.followPersonalization = false;
-    patch.presetId = "__custom";
-    patch.backgroundColor = rgb(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB);
-    patch.borderColor = rgb(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB);
-    patch.backgroundOpacity = appearance.widgetAlpha; patch.borderOpacity = appearance.widgetBorderAlpha;
-    patch.borderWidth = appearance.widgetBorderWidth; patch.edgeHighlightEnabled = appearance.widgetEdgeHighlightEnabled;
-    patch.edgeHighlightWidth = appearance.widgetEdgeHighlightWidth; patch.edgeHighlightStrength = appearance.widgetEdgeHighlightStrength;
-    patch.edgeLight = appearance.edgeLight; patch.gradientEndOpacity = appearance.gradientEndA;
-    patch.glassEnabled = appearance.glassEnabled; patch.acrylicEnabled = appearance.acrylicEnabled;
-    patch.contentTheme = appearance.contentTheme; patch.panelGradient = appearance.panelGradient;
-    return patch;
-}
-inline bool WidgetMatches(const widget_runtime::WidgetHostAppearanceState& state, const Theme& theme)
-{
-    const auto patch = WidgetPatch(theme);
-    return !state.followPersonalization && state.backgroundColor == patch.backgroundColor &&
-        state.borderColor == patch.borderColor && state.backgroundOpacity == patch.backgroundOpacity &&
-        state.borderOpacity == patch.borderOpacity && state.borderWidth == patch.borderWidth &&
-        state.edgeHighlightEnabled == patch.edgeHighlightEnabled && state.edgeHighlightWidth == patch.edgeHighlightWidth &&
-        state.edgeHighlightStrength == patch.edgeHighlightStrength && state.edgeLight == patch.edgeLight &&
-        state.gradientEndOpacity == patch.gradientEndOpacity && state.glassEnabled == patch.glassEnabled &&
-        state.acrylicEnabled == patch.acrylicEnabled && state.contentTheme == patch.contentTheme && state.panelGradient == patch.panelGradient;
-}
-inline Kind TargetKind(std::string_view target)
-{ return target == "icon" ? Kind::Icon : target == "quickPanel" ? Kind::QuickPanel : target == "popup" ? Kind::Popup : Kind::Global; }
-inline unsigned TargetScope(std::string_view target)
-{ return target == "dock" ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
+std::wstring ExportFileName(std::wstring name);
+std::filesystem::path LibraryPath();
+widget_runtime::WidgetHostAppearancePatch WidgetPatch(const Theme& theme);
+bool WidgetMatches(const widget_runtime::WidgetHostAppearanceState& state, const Theme& theme);
+Kind TargetKind(std::string_view target);
+unsigned TargetScope(std::string_view target);
 // Private settings source identities.
 inline constexpr std::array<std::string_view, 12> AppearanceTargets{
     "global", "dock", "statusBar", "taskbar", "quickPanel", "popup", "icon",
     "statusBar/noWindow", "statusBar/maximizedWindow", "taskbar/shellUi", "taskbar/maximizedWindow", "taskbar/visibleWindow"};
-inline StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target)
-{
-    return target == "statusBar/noWindow" ? &StatusBarSettings::noWindow :
-        target == "statusBar/maximizedWindow" ? &StatusBarSettings::maximizedWindow : nullptr;
-}
-inline SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view target)
-{
-    return target == "taskbar/shellUi" ? &DockSettings::systemTaskbarShellUi :
-        target == "taskbar/maximizedWindow" ? &DockSettings::systemTaskbarMaximizedWindow :
-        target == "taskbar/visibleWindow" ? &DockSettings::systemTaskbarVisibleWindow : nullptr;
-}
-inline Theme CaptureTarget(std::string_view target, const SettingsValues& values)
-{
-    if (target == "icon")
-    {
-        Theme theme; theme.kind = Kind::Icon; theme.scopes = Components;
-        theme.icon = values.desktop.iconBeautify; theme.icon.mode = 0; theme.icon.preset = IconBeautifyPreset::Custom;
-        return theme;
-    }
-    auto appearance = values.personalization;
-    if (target == "dock") appearance = ResolveDockAppearance(values.dock, values.personalization);
-    if (target == "taskbar") appearance = ResolveTaskbarAppearance(values.dock, values.personalization);
-    if (target == "statusBar") appearance = ResolveStatusBarAppearance(values.general.statusBar.theme, values.personalization);
-    if (const auto member = StatusRule(target)) appearance = ResolveStatusBarAppearance((values.general.statusBar.*member).theme, values.personalization);
-    if (const auto member = TaskbarRule(target)) appearance = ResolveTaskbarRuleAppearance(values.dock.*member, values.personalization);
-    if (target == "quickPanel") appearance = ResolveSurfaceTheme(values.general.quickNavigationAppearance,
-        values.personalization, values.general.quickNavTheme, true, &values.general.globalQuickNavigationAppearance);
-    if (target == "popup") appearance = ResolveSurfaceTheme(values.general.collectionPopupAppearance,
-        values.personalization, values.general.collectionPopupTheme, false, &values.general.globalCollectionPopupAppearance);
-    auto theme = Capture(TargetKind(target), appearance, values.navigation);
-    theme.scopes = TargetScope(target);
-    return theme;
-}
-inline Theme CaptureGlobalBinding(Kind kind, const SettingsValues& values, const std::optional<Theme>& source)
-{
-    const bool quick = kind == Kind::QuickPanel;
-    SurfaceTheme follow; follow.mode = -1;
-    const auto appearance = ResolveSurfaceTheme(follow, values.personalization,
-        quick ? values.general.quickNavTheme : values.general.collectionPopupTheme, quick,
-        quick ? &values.general.globalQuickNavigationAppearance : &values.general.globalCollectionPopupAppearance);
-    auto theme = Capture(kind, appearance, values.navigation);
-    // An independent quick panel owns the current navigation values. Saving its
-    // global parent must keep the bound child's layout/colors instead.
-    if (quick && values.general.quickNavigationAppearance.mode != -1 && source && source->kind == kind)
-    { theme.layout = source->layout; theme.colors = source->colors; }
-    return theme;
-}
-inline bool PrepareGlobalCustomEdit(GeneralSettings& settings,
-    const PersonalizationSettings& previous, const PersonalizationSettings& edited)
-{
-    const auto quickBefore = settings.globalQuickNavigationAppearance;
-    const auto popupBefore = settings.globalCollectionPopupAppearance;
-    if (edited.backgroundPreset != kAppearancePresetCustom)
-    {
-        if (edited.backgroundPreset != previous.backgroundPreset)
-        {
-            settings.globalQuickNavigationAppearance = {};
-            settings.globalCollectionPopupAppearance = {};
-        }
-    }
-    else
-    {
-        // A global draft contains separate bound surface appearances. Capture
-        // each current effective appearance once; edits to the global material
-        // must not continuously rewrite those bound drafts.
-        if (!settings.globalQuickNavigationAppearance.customized)
-        {
-            const auto appearance = ResolveSurfaceTheme(settings.quickNavigationAppearance,
-                previous, settings.quickNavTheme, true, &settings.globalQuickNavigationAppearance);
-            settings.globalQuickNavigationAppearance = {4, true, Capture(Kind::QuickPanel, appearance).appearance};
-        }
-        if (!settings.globalCollectionPopupAppearance.customized)
-        {
-            const auto appearance = ResolveSurfaceTheme(settings.collectionPopupAppearance,
-                previous, settings.collectionPopupTheme, false, &settings.globalCollectionPopupAppearance);
-            settings.globalCollectionPopupAppearance = {4, true, Capture(Kind::Popup, appearance).appearance};
-        }
-    }
-    return quickBefore != settings.globalQuickNavigationAppearance ||
-        popupBefore != settings.globalCollectionPopupAppearance;
-}
-inline void EditSurfaceAppearance(GeneralSettings& settings, bool quick,
-    const PersonalizationSettings& appearance, const PersonalizationSettings& global)
-{
-    auto& local = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
-    auto& binding = quick ? settings.globalQuickNavigationAppearance : settings.globalCollectionPopupAppearance;
-    auto& draft = local.mode == -1 && global.backgroundPreset == kAppearancePresetCustom ? binding : local;
-    draft = {4, true, Capture(quick ? Kind::QuickPanel : Kind::Popup, appearance).appearance};
-}
-inline void CopyComponentAppearanceToPopup(GeneralSettings& settings,
-    const PersonalizationSettings& componentAppearance)
-{
-    EditSurfaceAppearance(settings, false, componentAppearance, componentAppearance);
-}
-inline bool AppliedAppearanceMatches(const PersonalizationSettings& saved,
-    const PersonalizationSettings& current)
-{
-    // Older personalization files wrote six significant digits. Accept only
-    // that exact serialization round trip, rather than a general tolerance
-    // which could conceal a real appearance edit.
-    const auto same = [](float original, float value) {
-        if (original == value) return true;
-        if (!std::isfinite(original) || !std::isfinite(value)) return false;
-        std::stringstream legacy; legacy.imbue(std::locale::classic());
-        legacy.precision(6); legacy << original;
-        float persisted = 0; legacy >> persisted;
-        return !legacy.fail() && persisted == value;
-    };
-    bool matches = saved.panelGradient == current.panelGradient &&
-        saved.edgeLight == current.edgeLight && saved.contentTheme == current.contentTheme &&
-        same(saved.gradientEndA, current.gradientEndA);
-    VisitPanelAppearanceFields([&](auto, auto field, double, double) {
-        matches = matches && same(saved.*field, current.*field);
-    });
-    VisitPanelAppearanceFlags([&](auto, auto field) { matches = matches && saved.*field == current.*field; });
-    return matches;
-}
+StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target);
+SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view target);
+Theme CaptureTarget(std::string_view target, const SettingsValues& values);
+Theme CaptureGlobalBinding(Kind kind, const SettingsValues& values, const std::optional<Theme>& source);
+bool PrepareGlobalCustomEdit(GeneralSettings& settings,
+    const PersonalizationSettings& previous, const PersonalizationSettings& edited);
+void EditSurfaceAppearance(GeneralSettings& settings, bool quick,
+    const PersonalizationSettings& appearance, const PersonalizationSettings& global);
+void CopyComponentAppearanceToPopup(GeneralSettings& settings,
+    const PersonalizationSettings& componentAppearance);
+bool AppliedAppearanceMatches(const PersonalizationSettings& saved,
+    const PersonalizationSettings& current);
 // Private settings draft transaction. Existing child identities are updated only
 // when explicitly saving back to an editable global source.
 struct BindingDraft
@@ -208,277 +35,32 @@ struct BindingDraft
     Theme effective;
     std::string selectedId, sourceId;
 };
-inline bool SaveDraft(Library& library, Theme theme, const std::array<BindingDraft, 2>& bindings,
+bool SaveDraft(Library& library, Theme theme, const std::array<BindingDraft, 2>& bindings,
     bool update, std::string& savedId, std::vector<std::string>& updatedIds, std::string& error,
-    const NewId& newId = CreateId)
-{
-    const auto subscribed = [&](const std::string& id) {
-        for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(id)) return true; }
-        return false;
-    };
-    if (update && subscribed(theme.id)) { error = "copyRequired"; return false; }
-    Library next = library; std::vector<std::string> changed;
-    if (theme.kind == Kind::Global && FullScope(theme.scopes))
-    {
-        for (std::size_t i = 0; i < bindings.size(); ++i)
-        {
-            const auto kind = i == 0 ? Kind::QuickPanel : Kind::Popup;
-            const auto& draft = bindings[i]; auto& binding = i == 0 ? theme.quickPanel : theme.popup;
-            if (!draft.selectedId.empty())
-            {
-                const auto selected = Resolve(next.themes, draft.selectedId);
-                if (!selected || selected->kind != kind) { error = "missingDependency"; return false; }
-                binding = selected->id; continue;
-            }
-            if (draft.effective.kind != kind) { error = "invalidPackage"; return false; }
-            const auto source = Resolve(next.themes, draft.sourceId);
-            if (source && source->kind != kind) { error = "invalidSelection"; return false; }
-            const bool same = source && AppliedAppearanceMatches(source->appearance, draft.effective.appearance) &&
-                (kind != Kind::QuickPanel || (source->layout == draft.effective.layout && source->colors == draft.effective.colors));
-            if (same) { binding = source->id; continue; }
-            if (source && subscribed(source->id)) { error = "copyRequired"; return false; }
-            if (update && !draft.sourceId.empty() && !source) { error = "themeNotFound"; return false; }
-            auto child = draft.effective;
-            const bool updateChild = update && source && !Builtin(source->id);
-            child.id = updateChild ? source->id : std::string{};
-            if (updateChild) child.name = source->name;
-            std::string childId;
-            if (!Save(next, std::move(child), {}, updateChild, childId, error, newId, true)) return false;
-            binding = childId; if (updateChild) changed.push_back(childId);
-        }
-    }
-    std::string rootId;
-    if (!Save(next, std::move(theme), {}, update, rootId, error, newId, true)) return false;
-    if (update) changed.push_back(rootId);
-    library = std::move(next); savedId = std::move(rootId); updatedIds = std::move(changed); return true;
-}
-inline void ReconcileReferences(Library& library, const SettingsValues& values)
-{
-    for (const auto target : AppearanceTargets)
-    {
-        auto found = library.references.find(std::string(target));
-        if (found == library.references.end() || found->second.id.empty()) continue;
-        const auto saved = Resolve(found->second.snapshot, found->second.id);
-        auto current = CaptureTarget(target, values);
-        if (!saved || (current.kind == Kind::Icon ? !SameIconTheme(saved->icon, current.icon) : !AppliedAppearanceMatches(saved->appearance, current.appearance)) ||
-            (current.kind == Kind::QuickPanel && (saved->layout != current.layout || saved->colors != current.colors)))
-            Detach(library, target);
-    }
-}
-inline bool FollowQuickBinding(const Library& library, NavigationSettings& navigation)
-{
-    const auto reference = library.references.find("global");
-    if (reference == library.references.end()) return false;
-    for (const auto& [id, theme] : reference->second.snapshot)
-    {
-        (void)id;
-        if (theme.kind != Kind::Global || !FullScope(theme.scopes)) continue;
-        const auto quick = Resolve(reference->second.snapshot, theme.quickPanel);
-        if (!quick || quick->kind != Kind::QuickPanel) return false;
-        ApplyQuickPanel(navigation, *quick);
-        return true;
-    }
-    return false;
-}
+    const NewId& newId = CreateId);
+void ReconcileReferences(Library& library, const SettingsValues& values);
+bool FollowQuickBinding(const Library& library, NavigationSettings& navigation);
 // Built-in selections own the complete quick-panel appearance, including the
 // palette and layout stored separately from its material. Legacy conditional
 // profiles and independent custom drafts retain their historical values.
-inline bool RestoreBuiltinQuickPanel(NavigationSettings& navigation,
-    const GeneralSettings& general, const PersonalizationSettings& global)
-{
-    const int mode = general.quickNavigationAppearance.mode;
-    const bool builtin = (mode >= 0 && mode <= 3) ||
-        (mode == -1 && global.backgroundPreset != kAppearancePresetCustom &&
-            !general.globalQuickNavigationAppearance.customized);
-    if (!builtin) return false;
-    const QuickNavigationLayout defaults;
-    const bool changed = navigation.layout != defaults || !navigation.colors.empty();
-    navigation.layout = defaults;
-    navigation.colors.clear();
-    return changed;
-}
-inline bool PrepareGlobalThemeEdit(SettingsValues& values,
-    const PersonalizationSettings& previous)
-{
-    const bool generalChanged = PrepareGlobalCustomEdit(values.general, previous, values.personalization);
-    if (values.personalization.backgroundPreset != previous.backgroundPreset &&
-        values.general.quickNavigationAppearance.mode == -1)
-        RestoreBuiltinQuickPanel(values.navigation, values.general, values.personalization);
-    return generalChanged;
-}
-inline void PrepareQuickPanelSelectionEdit(SettingsValues& values,
-    const GeneralSettings& previous, const Library* library = nullptr)
-{
-    if (values.general.quickNavigationAppearance.mode == previous.quickNavigationAppearance.mode)
-        return;
-    RestoreBuiltinQuickPanel(values.navigation, values.general, values.personalization);
-    if (values.general.quickNavigationAppearance.mode == -1 &&
-        values.general.globalQuickNavigationAppearance.customized && library)
-        FollowQuickBinding(*library, values.navigation);
-}
-inline bool ApplyTarget(const Library& library, std::string_view target, std::string_view id,
-    SettingsValues& values, std::string& error)
-{
-    const auto theme = Resolve(library.themes, id);
-    if (!theme || theme->kind != TargetKind(target) || (theme->kind == Kind::Global &&
-        (target != "global" && !(theme->scopes & TargetScope(target))))) { error = "invalidSelection"; return false; }
-    const SurfaceTheme snapshot{4, true, Capture(theme->kind, theme->appearance).appearance};
-    if (target == "icon")
-    {
-        const int strategy = values.desktop.iconBeautify.mode;
-        values.desktop.iconBeautify = theme->icon;
-        values.desktop.iconBeautify.mode = strategy;
-        values.desktop.iconBeautify.preset = IconBeautifyPreset::Custom;
-    }
-    else if (target == "global")
-    {
-        if (!FullScope(theme->scopes))
-        {
-            // Partial bar themes are never a new global appearance source.
-            // Apply only their explicit objects, preserving unrelated surfaces.
-            for (const auto& [scope, source] : {std::pair{Dock, "dock"}, {StatusBar, "statusBar"}, {Taskbar, "taskbar"}})
-                if ((theme->scopes & scope) && !ApplyTarget(library, source, id, values, error)) return false;
-            return true;
-        }
-        const auto quick = Resolve(library.themes, theme->quickPanel), popup = Resolve(library.themes, theme->popup);
-        if (!quick || !popup) { error = "missingDependency"; return false; }
-        ApplyAppearance(values.personalization, theme->appearance);
-        values.general.globalQuickNavigationAppearance = {4, true, Capture(Kind::QuickPanel, quick->appearance).appearance};
-        values.general.globalCollectionPopupAppearance = {4, true, Capture(Kind::Popup, popup->appearance).appearance};
-        if (values.general.quickNavigationAppearance.mode == -1) ApplyQuickPanel(values.navigation, *quick);
-    }
-    else if (target == "quickPanel")
-    { values.general.quickNavigationAppearance = snapshot; ApplyQuickPanel(values.navigation, *theme); }
-    else if (target == "popup") values.general.collectionPopupAppearance = snapshot;
-    else if (target == "statusBar") values.general.statusBar.theme = snapshot;
-    else if (target == "dock")
-    { ApplyAppearance(values.dock.customAppearance, theme->appearance); values.dock.appearancePreset = kAppearancePresetCustom; values.dock.followComponentAppearance = false; }
-    else if (target == "taskbar")
-    { ApplyAppearance(values.dock.systemTaskbarAppearance, theme->appearance); values.dock.systemTaskbarFollowPersonalization = false; values.dock.systemTaskbarContentTheme = theme->appearance.contentTheme; }
-    else if (const auto statusMember = StatusRule(target)) (values.general.statusBar.*statusMember).theme = snapshot;
-    else if (const auto taskbarMember = TaskbarRule(target))
-    {
-        auto& rule = values.dock.*taskbarMember;
-        ApplyAppearance(rule.appearance, theme->appearance);
-        rule.themeMode = SystemTaskbarThemeMode::Custom; rule.contentTheme = theme->appearance.contentTheme;
-    }
-    else { error = "invalidSelection"; return false; }
-    return true;
-}
+bool RestoreBuiltinQuickPanel(NavigationSettings& navigation,
+    const GeneralSettings& general, const PersonalizationSettings& global);
+bool PrepareGlobalThemeEdit(SettingsValues& values,
+    const PersonalizationSettings& previous);
+void PrepareQuickPanelSelectionEdit(SettingsValues& values,
+    const GeneralSettings& previous, const Library* library = nullptr);
+bool ApplyTarget(const Library& library, std::string_view target, std::string_view id,
+    SettingsValues& values, std::string& error);
 // Change only a currently followed child and its last-successful graph. This
 // graph is separate from the authored package and can select a different source.
-inline bool ApplyFollowedGlobalBinding(Reference& reference, const Theme& nextTheme,
-    std::string_view previous, SettingsValues& values, bool& changed, std::string& error)
-{
-    changed = false;
-    if (reference.id.empty() || (nextTheme.kind != Kind::QuickPanel && nextTheme.kind != Kind::Popup)) return true;
-    const bool quick = nextTheme.kind == Kind::QuickPanel;
-    const auto parent = Resolve(reference.snapshot, reference.id);
-    const auto saved = Resolve(reference.snapshot, previous);
-    const auto current = CaptureTarget(quick ? "quickPanel" : "popup", values);
-    const auto& surface = quick ? values.general.quickNavigationAppearance : values.general.collectionPopupAppearance;
-    if (!parent || parent->kind != Kind::Global || !FullScope(parent->scopes) ||
-        (quick ? parent->quickPanel : parent->popup) != previous ||
-        !saved || saved->kind != nextTheme.kind || surface.mode != -1 ||
-        !AppliedAppearanceMatches(parent->appearance, CaptureTarget("global", values).appearance)) return true;
-    const auto matches = [&](const Theme& source) {
-        return AppliedAppearanceMatches(source.appearance, current.appearance) &&
-            (!quick || (source.layout == current.layout && source.colors == current.colors));
-    };
-    // Saving a live draft can flush its preview before this reference commits.
-    // Same-ID updates may record those exact new values; source changes still
-    // require the old snapshot, preserving unrelated edits.
-    if (!matches(*saved) && (previous != nextTheme.id || !matches(nextTheme))) return true;
-    Library snapshotLibrary;
-    snapshotLibrary.themes = reference.snapshot;
-    auto& snapshotParent = snapshotLibrary.themes.at(reference.id);
-    (quick ? snapshotParent.quickPanel : snapshotParent.popup) = nextTheme.id;
-    snapshotLibrary.themes[nextTheme.id] = nextTheme;
-    Package snapshot;
-    if (!Export(snapshotLibrary, reference.id, snapshot, error)) return false;
-    auto& binding = quick ? values.general.globalQuickNavigationAppearance : values.general.globalCollectionPopupAppearance;
-    binding = {4, true, Capture(nextTheme.kind, nextTheme.appearance).appearance};
-    if (quick) ApplyQuickPanel(values.navigation, nextTheme);
-    reference.snapshot = std::move(snapshot);
-    changed = true;
-    return true;
-}
-inline std::vector<std::string> ApplySavedUpdate(const Library& library, std::string_view changedId,
+bool ApplyFollowedGlobalBinding(Reference& reference, const Theme& nextTheme,
+    std::string_view previous, SettingsValues& values, bool& changed, std::string& error);
+std::vector<std::string> ApplySavedUpdate(const Library& library, std::string_view changedId,
     SettingsValues& values, std::string& error,
-    std::map<std::string, Reference>* appliedReferences = nullptr)
-{
-    std::vector<std::string> targets;
-    for (const auto target : AppearanceTargets)
-    {
-        const auto reference = library.references.find(std::string(target));
-        if (reference == library.references.end() || reference->second.id.empty()) continue;
-        if ((target == "quickPanel" && values.general.quickNavigationAppearance.mode != 4) ||
-            (target == "popup" && values.general.collectionPopupAppearance.mode != 4)) continue;
-        const auto theme = Resolve(library.themes, reference->second.id);
-        if (!theme) continue;
-        if (theme->id == changedId && ApplyTarget(library, target, theme->id, values, error))
-            targets.emplace_back(target);
-        else if (target == "global")
-        {
-            const auto child = Resolve(library.themes, changedId);
-            auto applied = reference->second;
-            if (appliedReferences)
-                if (const auto staged = appliedReferences->find("global"); staged != appliedReferences->end()) applied = staged->second;
-            bool changed = false;
-            if (child && ApplyFollowedGlobalBinding(applied, *child, changedId, values, changed, error) && changed)
-            {
-                targets.emplace_back(target);
-                // The controller may still fail to persist. Keep the library's
-                // successful snapshot untouched until its commit is confirmed.
-                if (appliedReferences) (*appliedReferences)["global"] = std::move(applied);
-            }
-        }
-    }
-    return targets;
-}
+    std::map<std::string, Reference>* appliedReferences = nullptr);
 // A saved snapshot preserves appearance after detach, not an active selection.
 // Source switches require a live reference and matching current values.
-inline bool SwitchAppliedVersion(Library& library, std::string_view previous,
+bool SwitchAppliedVersion(Library& library, std::string_view previous,
     std::string_view replacement, SettingsValues& values,
-    std::vector<std::string>& targets, std::string& error)
-{
-    const auto nextTheme = Resolve(library.themes, replacement);
-    if (!nextTheme) { error = "themeNotFound"; return false; }
-    auto nextLibrary = library;
-    auto nextValues = values;
-    std::vector<std::string> changed;
-    for (const auto target : AppearanceTargets)
-    {
-        const auto found = library.references.find(std::string(target));
-        if (found == library.references.end() || found->second.id != previous || previous.empty()) continue;
-        // Following surfaces belong to the global binding below, even if an
-        // old independent reference still happens to have identical values.
-        if ((target == "quickPanel" && values.general.quickNavigationAppearance.mode != 4) ||
-            (target == "popup" && values.general.collectionPopupAppearance.mode != 4)) continue;
-        const auto saved = Resolve(found->second.snapshot, previous);
-        if (!saved || saved->kind != TargetKind(target) || nextTheme->kind != saved->kind) continue;
-        if (nextTheme->kind == Kind::Global &&
-            (target == "global" ? !FullScope(nextTheme->scopes) :
-                !(nextTheme->scopes & TargetScope(target)))) continue;
-        const auto current = CaptureTarget(target, values);
-        if (current.kind == Kind::Icon ? !SameIconTheme(saved->icon, current.icon) :
-            !AppliedAppearanceMatches(saved->appearance, current.appearance)) continue;
-        if (current.kind == Kind::QuickPanel &&
-            (saved->layout != current.layout || saved->colors != current.colors)) continue;
-        if (!ApplyTarget(nextLibrary, target, replacement, nextValues, error) ||
-            !Select(nextLibrary, std::string(target), replacement, TargetKind(target),
-                target == "global" ? nextTheme->scopes : TargetScope(target), error)) return false;
-        changed.emplace_back(target);
-    }
-    if (const auto global = nextLibrary.references.find("global"); global != nextLibrary.references.end())
-    {
-        bool applied = false;
-        if (!ApplyFollowedGlobalBinding(global->second, *nextTheme, previous, nextValues, applied, error)) return false;
-        if (applied) changed.emplace_back(nextTheme->kind == Kind::QuickPanel ? "global/quickPanel" : "global/popup");
-    }
-    library = std::move(nextLibrary);
-    values = std::move(nextValues);
-    targets = std::move(changed);
-    return true;
-}
+    std::vector<std::string>& targets, std::string& error);
 }

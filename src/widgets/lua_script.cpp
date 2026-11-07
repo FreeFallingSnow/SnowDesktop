@@ -11,10 +11,16 @@
 #include "core/widget.h"
 #include "widget/view/widget_title_layout.h"
 #include "widget/view/widget_clip_geometry.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "widget_chrome_rules.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "widget/runtime/widget_engine.h"
 #include "widget/preview/widget_preview_scene.h"
+#include "diagnostics/performance_trace.h"
+#include <optional>
 
 namespace
 {
@@ -134,11 +140,11 @@ void LuaScript::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 
 void LuaScript::DrawCompositionSurface(
     ID2D1DeviceContext* context, RECT rect, int state,
-    bool registerBackdrop)
+    bool registerBackdrop, snowdesktop::widget_runtime::WidgetSurfacePaint* surfacePaint)
 {
     DrawInternal(context, rect, state,
         app_ ? app_->widgetEngine_.get() : nullptr,
-        false, registerBackdrop);
+        false, registerBackdrop, surfacePaint);
 }
 
 void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
@@ -152,14 +158,25 @@ void LuaScript::DrawPreview(ID2D1DeviceContext* context, RECT frame,
 
 void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     int state, WidgetEngine* engine, bool preview,
-    bool registerBackdrop)
+    bool registerBackdrop, snowdesktop::widget_runtime::WidgetSurfacePaint* surfacePaint)
 {
     if (!context || !data_ || !app_) return;
 
+    std::optional<snowdesktop::performance::Scope> recordingPhase;
+
+    struct RestoreData { DesktopWidget*& data; DesktopWidget* previous; ~RestoreData() { data = previous; } } restore{data_, data_};
+    if (data_->type == DesktopWidgetType::LuaStack)
+    {
+        data_ = app_->ResolveLuaWidgetContent(data_);
+        if (!data_) return;
+    }
+    const auto& presentation = preview ? *data_ : app_->ResolveLuaWidgetFrameOwner(*data_);
+    recordingPhase.emplace("widget.composition", "state.prepare", data_->id);
+    GridCell renderCell = presentation.gridCell;
     RECT frame = preview ? rect : app_->GetStandaloneWidgetFrameRect(*data_);
     if (IsRectEmptyRect(frame)) return;
 
-    const bool selected = data_->selected || state == 2;
+    const bool selected = presentation.selected || state == 2;
     const POINT renderPointer = preview
         ? GetRenderPointer() : app_->lastMousePoint_;
     const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
@@ -174,7 +191,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             (frame.left + frame.right) / 2,
             (frame.top + frame.bottom) / 2 };
         const GridPage* preloadPage = preview
-            ? FindGridPage(app_->gridPages_, data_->gridCell.pageId)
+            ? FindGridPage(app_->gridPages_, renderCell.pageId)
             : nullptr;
         if (!preloadPage && !preview)
         {
@@ -188,22 +205,22 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             }
             if (!preloadPage)
                 preloadPage = FindGridPage(
-                    app_->gridPages_, data_->gridCell.pageId);
+                    app_->gridPages_, renderCell.pageId);
         }
         const int preloadCellWidth = preloadPage
             ? preloadPage->cellWidth
             : std::max(1, static_cast<int>(frame.right - frame.left) /
-                  std::max(1, data_->gridSpan.columns));
+                  std::max(1, presentation.gridSpan.columns));
         const int preloadCellHeight = preloadPage
             ? preloadPage->cellHeight
             : std::max(1, static_cast<int>(frame.bottom - frame.top) /
-                  std::max(1, data_->gridSpan.rows));
+                  std::max(1, presentation.gridSpan.rows));
         engine->SetWidgetLayoutMetrics(data_->id,
-            data_->gridSpan.columns, data_->gridSpan.rows,
+            presentation.gridSpan.columns, presentation.gridSpan.rows,
             preloadCellWidth, preloadCellHeight,
             preloadPage ? preloadPage->gapY : Cu(8.0f),
             static_cast<int>(GetBarHeight()), app_->GetItemFontWeight(),
-            preloadPage ? GetGridPageCuScale(*preloadPage) : data_->cellScale,
+            preloadPage ? GetGridPageCuScale(*preloadPage) : presentation.cellScale,
             { app_->CurrentPersonalization().luaWidgetContentRowHeight });
     }
 
@@ -278,7 +295,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         if (preview)
         {
             realPage = FindGridPage(
-                app_->gridPages_, data_->gridCell.pageId);
+                app_->gridPages_, renderCell.pageId);
             int cellWidth = 0;
             int cellHeight = 0;
             int gapY = 0;
@@ -292,18 +309,18 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             {
                 cellWidth = std::max(1,
                     static_cast<int>(frame.right - frame.left) /
-                        std::max(1, data_->gridSpan.columns));
+                        std::max(1, presentation.gridSpan.columns));
                 cellHeight = std::max(1,
                     static_cast<int>(frame.bottom - frame.top) /
-                        std::max(1, data_->gridSpan.rows));
+                        std::max(1, presentation.gridSpan.rows));
                 gapY = Cu(8.0f);
             }
             engine->SetWidgetLayoutMetrics(data_->id,
-                data_->gridSpan.columns, data_->gridSpan.rows,
+                presentation.gridSpan.columns, presentation.gridSpan.rows,
                 cellWidth, cellHeight, gapY,
                 static_cast<int>(GetBarHeight()),
                 app_->GetItemFontWeight(),
-                realPage ? GetGridPageCuScale(*realPage) : data_->cellScale,
+                realPage ? GetGridPageCuScale(*realPage) : presentation.cellScale,
                 { app_->CurrentPersonalization().luaWidgetContentRowHeight });
         }
         else
@@ -318,23 +335,23 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             }
             if (!realPage)
                 realPage = FindGridPage(
-                    app_->gridPages_, data_->gridCell.pageId);
+                    app_->gridPages_, renderCell.pageId);
             if (realPage)
             {
                 engine->SetWidgetLayoutMetrics(data_->id,
-                    data_->gridSpan.columns, data_->gridSpan.rows,
+                    presentation.gridSpan.columns, presentation.gridSpan.rows,
                     realPage->cellWidth, realPage->cellHeight,
                     realPage->gapY,
                     static_cast<int>(GetBarHeight()),
                     app_->GetItemFontWeight(),
                     GetGridPageCuScale(*realPage),
                     { app_->CurrentPersonalization().luaWidgetContentRowHeight });
-                if (data_->gridCell.pageId != realPage->id)
+                if (renderCell.pageId != realPage->id)
                 {
-                    data_->gridCell.pageId = realPage->id;
+                    renderCell.pageId = realPage->id;
                     RECT correctBounds = GetGridRect(
-                        app_->gridPages_, data_->gridCell,
-                        data_->gridSpan);
+                        app_->gridPages_, renderCell,
+                        presentation.gridSpan);
                     const int hgx = std::max(
                         Cu(2.0f), realPage->gapX / 2);
                     const int hgy = std::max(
@@ -374,6 +391,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         engine->SetWidgetSurfaceContext(data_->id, surfaceContext);
     }
 
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "material.record", data_->id);
     const float configuredStroke = std::clamp(
         effectSettings.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
@@ -385,6 +404,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
     const bool hasBackgroundLayer = engine && widgetOk &&
         engine->HasBackgroundLayer(data_->id);
+    if (surfacePaint)
+    {
+        surfacePaint->authoredBackground = hasBackgroundLayer;
+        surfacePaint->backgroundKnown = !hasBackgroundLayer;
+    }
     if (hasBackgroundLayer)
     {
         PersonalizationSettings materialEffects = backgroundEffects;
@@ -396,7 +420,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         const float inheritedBlurRadius = effectSettings.glassEnabled
             ? effectSettings.glassBlurRadius : 0.0f;
         (void)SafeRenderBackgroundLayer(data_->id, engine, context, frame,
-            data_->gridSpan.columns, data_->gridSpan.rows,
+            presentation.gridSpan.columns, presentation.gridSpan.rows,
             inheritedBlurRadius, panelRadius);
 
         D2D1_COLOR_F transparentFill = fillColor;
@@ -415,12 +439,51 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             &backgroundEffects, !preview && registerBackdrop);
     }
 
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "size.validate", data_->id);
+    bool incompatibleSize = false;
+    if (!preview)
+    {
+        // The loaded VM already owns the manifest for this exact generation.
+        // Resolving the package path and reparsing widget.json on each frame
+        // performs synchronous filesystem work on the desktop input thread.
+        const LuaWidgetManifest* loadedManifest = nullptr;
+        if (engine)
+        {
+            const auto& loaded = engine->GetWidgets();
+            for (auto position = loaded.rbegin(); position != loaded.rend(); ++position)
+            {
+                if (position->widgetId == data_->id)
+                {
+                    loadedManifest = &position->manifest;
+                    break;
+                }
+            }
+        }
+        std::optional<LuaWidgetManifest> unloadedManifest;
+        if (!loadedManifest)
+        {
+            // Missing/failed instances still need their authored size bounds
+            // for the host placeholder. Successful hot reload replaces the VM
+            // and therefore the manifest used by the next frame.
+            unloadedManifest.emplace(WidgetEngine::GetWidgetManifest(data_->packageId));
+            loadedManifest = &*unloadedManifest;
+        }
+        const auto& manifest = *loadedManifest;
+        incompatibleSize = manifest.hasManifest &&
+            (presentation.gridSpan.columns < manifest.minColumns || presentation.gridSpan.rows < manifest.minRows ||
+             (manifest.maxColumns && presentation.gridSpan.columns > manifest.maxColumns) ||
+             (manifest.maxRows && presentation.gridSpan.rows > manifest.maxRows));
+        if (incompatibleSize) widgetOk = false;
+    }
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "content.commands", data_->id);
     context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
     {
         widgetOk = SafeRenderWidget(
             data_->id, data_->packageId, engine, context, frame,
-            data_->gridSpan.columns, data_->gridSpan.rows);
+            presentation.gridSpan.columns, presentation.gridSpan.rows);
         if (widgetOk)
         {
             widgetOk = engine->GetWidgetHostState(
@@ -529,6 +592,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             break;
         }
 
+        if (incompatibleSize)
+        {
+            body = _LW("app.lua_stack.unsupported_size");
+            action.clear();
+        }
         const int horizontalPadding = Cu(14.0f);
         const RECT actionRect =
             app_->GetLuaWidgetHostActionRect(*data_);
@@ -582,6 +650,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     }
     context->PopAxisAlignedClip();
 
+    recordingPhase.reset();
+    recordingPhase.emplace("widget.composition", "chrome.record", data_->id);
+
     if (engine && widgetOk)
         SafeReadFlags(engine, data_->packageId,
             data_->showTitle, data_->bottomBarHover);
@@ -589,6 +660,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     if (engine && widgetOk)
     {
         auto scrollControls = engine->GetScrollControls(data_->id);
+        if (surfacePaint && surfacePaint->revision != 0 &&
+            !selected && !hovered && !data_->showTitle && scrollControls.empty())
+            surfacePaint->appearance = effectSettings;
         for (const auto& ctrl : scrollControls)
         {
             const int contentExtent = ctrl.horizontal
@@ -624,7 +698,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         data_->showTitle, data_->bottomBarHover, hovered);
     const bool showResizeHandle =
         snowdesktop::widget_chrome_rules::ShowsResizeHandle(
-            data_->showTitle, data_->bottomBarHover, hovered);
+            data_->showTitle, data_->bottomBarHover, hovered) &&
+        (presentation.type != DesktopWidgetType::LuaStack || presentation.minGridSpan.columns != presentation.maxGridSpan.columns ||
+         presentation.minGridSpan.rows != presentation.maxGridSpan.rows);
     const bool showCompactMoveHandle =
         snowdesktop::widget_chrome_rules::ShowsCompactMoveHandle(
             data_->showTitle, hovered);

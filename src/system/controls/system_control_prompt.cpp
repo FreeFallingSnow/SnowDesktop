@@ -1,4 +1,5 @@
 #include "system_control_prompt.h"
+#include "platform/operation_feedback.h"
 #include "ui/input/text_input_window.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "ui/render/native_form_style.h"
@@ -106,7 +107,7 @@ struct Prompt
         const wchar_t* labels[]{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"};
         for(int i=0;i<3;++i){modern_menu::Item item;item.command=static_cast<UINT>(i+1);item.label=labels[i];item.checked=i==securityChoice;choices.push_back(std::move(item));}
         modern_menu::Options options;options.owner=security;options.zOrderOwner=window;options.dpi=dpi;
-        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(appearance.contextMenuStyle,0,6));
+        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(appearance.contextMenuStyle,0,modern_menu::kMaximumAppearance));
         options.lightTheme=modern_menu::appearance_rules::IsLightThemeForCurrentWindows(options.appearance);
         GetWindowRect(security,&options.anchorRect);options.anchor={options.anchorRect.left,options.anchorRect.bottom};
         options.rootPlacement=modern_menu::RootPlacement::BelowAnchorRect;
@@ -377,7 +378,7 @@ bool ConfirmSystemControl(HWND owner,system_control::Request& request,const std:
     const bool password=hidden||(system_control::RequiresPasswordPrompt(request)&&security!="open");
     if(!password&&!system_control::RequiresConfirmation(request.name))return true;
     Prompt prompt(request);prompt.state=state;prompt.appearance=appearance;prompt.hidden=hidden;prompt.passwordForm=password;prompt.actor=actor;prompt.target=target;prompt.dpi=owner?GetDpiForWindow(owner):96;if(!prompt.dpi)prompt.dpi=96;
-    auto form=FormTemplate();const auto result=DialogBoxIndirectParamW(GetModuleHandleW(nullptr),&form.dialog,owner,Prompt::Procedure,reinterpret_cast<LPARAM>(&prompt));
+    auto form=FormTemplate();const auto result=operation_feedback::ShowDialog(GetModuleHandleW(nullptr),&form.dialog,owner,Prompt::Procedure,reinterpret_cast<LPARAM>(&prompt));
     state->window=nullptr;const bool confirmed=result==IDOK&&PromptValid(state);
     if(!confirmed){request.password.Clear();request.hostConfirmed=false;if(state->error.empty())state->error=result==-1?"confirmationUnavailable":"userCanceled";}
     return confirmed;

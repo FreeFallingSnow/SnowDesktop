@@ -1,5 +1,11 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "layout/collection_popup_layout.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
 #include "desktop/desktop_hover_rules.h"
 #include "layout/collection_titleless_rules.h"
 #include "dock/dock_magnification.h"
@@ -35,7 +41,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
         return;
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-    if (quickNavigationOpen_) return;
+    if (quickNavigation_->open) return;
     if (GetDockContainerAtPoint(pt)) return;
     if (IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size())
@@ -53,7 +59,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
             !widgets_[candidate].keepWhenDesktopHidden)
             continue;
         bool hit = HitTestStandaloneWidget(candidate, pt) != WidgetHit::None;
-        if (!hit && widgets_[candidate].type != DesktopWidgetType::LuaScript)
+        if (!hit && !IsLuaDesktopSurface(widgets_[candidate]))
         {
             for (auto& container : containers_)
             {
@@ -367,6 +373,12 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdateLuaStackIndicator(current);
+    if (IsLuaStackIndicatorVisible() && PtInRect(&luaStackIndicator_.bounds, current))
+    {
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+        return;
+    }
     UpdateListTitleHover();
     UpdatePopupHover(current);
     if (UpdateWidgetHoverExpansion(current))
@@ -426,18 +438,19 @@ void DesktopApp::OnMouseMoveAt(
                 const size_t interactionWidget =
                     HitTestStandaloneWidgetIndex(current);
                 if (interactionWidget < widgets_.size() &&
-                    widgets_[interactionWidget].type ==
-                        DesktopWidgetType::LuaScript &&
+                    IsLuaDesktopSurface(widgets_[interactionWidget]) &&
                     HitTestStandaloneWidget(interactionWidget, current) ==
                         WidgetHit::Content)
                 {
+                    const auto* luaContent = ResolveLuaWidgetContent(&widgets_[interactionWidget]);
+                    if (!luaContent) return;
                     const RECT frame = GetStandaloneWidgetFrameRect(
                         widgets_[interactionWidget]);
                     widgetEngine_->EnsureWidgetLoaded(
-                        widgets_[interactionWidget].id,
-                        widgets_[interactionWidget].packageId);
+                        luaContent->id,
+                        luaContent->packageId);
                     widgetEngine_->UpdateInteractionHover(
-                        widgets_[interactionWidget].id,
+                        luaContent->id,
                         current.x - frame.left,
                         current.y - frame.top);
                     interactionHoverRouted = true;
@@ -622,30 +635,32 @@ void DesktopApp::OnMouseMoveAt(
 
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
-        widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
+        IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]) &&
         widgetEngine_)
     {
+        auto* luaContent = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]);
+        if (!luaContent) return;
         WidgetHit hit = HitTestStandaloneWidget(mouseDownWidgetIndex_, current);
         RECT frame =
             GetStandaloneWidgetFrameRect(
                 widgets_[mouseDownWidgetIndex_]);
         widgetEngine_->EnsureWidgetLoaded(
-            widgets_[mouseDownWidgetIndex_].id,
-            widgets_[mouseDownWidgetIndex_].packageId);
+            luaContent->id,
+            luaContent->packageId);
         const bool hostInputHandled =
             widgetEngine_->HandleHostInputPointerMove(
-                widgets_[mouseDownWidgetIndex_].id,
+                luaContent->id,
                 current.x - frame.left,
                 current.y - frame.top);
         if (hostInputHandled)
             UpdateHostInputImePosition();
         const bool pointerCaptured =
             widgetEngine_->HasInteractionPointerCapture(
-                widgets_[mouseDownWidgetIndex_].id);
+                luaContent->id);
         if (!hostInputHandled &&
             (hit == WidgetHit::Content || pointerCaptured))
         {
-            widgetEngine_->InvokeMouseEvent(widgets_[mouseDownWidgetIndex_].id, "onMouseMove",
+            widgetEngine_->InvokeMouseEvent(luaContent->id, "onMouseMove",
                 current.x - frame.left, current.y - frame.top,
                 (snowdesktop::private_pointer::AsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, 0);
         }
@@ -654,7 +669,7 @@ void DesktopApp::OnMouseMoveAt(
         // the desktop marquee-selection state machine: a drag inside a Lua
         // widget has meaning only to the widget or its host input control.
         (void)QueueDesktopWidgetComposition(
-            widgets_[mouseDownWidgetIndex_].id);
+            luaContent->id);
         return;
     }
 
@@ -819,6 +834,53 @@ void DesktopApp::OnMouseMoveAt(
         UpdateCollectionGroupTabDwell(current);
     }
 
+    bool memberDragModeChanged = false;
+    const auto syncMemberDragMode = [&]() {
+        memberDragModeChanged = false;
+        if (mouseDownWidgetIndex_ >= widgets_.size()) return false;
+        if (widgets_[mouseDownWidgetIndex_].type != DesktopWidgetType::LuaStack) return true;
+        const bool detach = !rightButtonItemDrag_ &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) == 0 &&
+            (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) == 0;
+        if (detach == luaStackMemberDrag_.Armed()) return true;
+        const std::wstring sourceId = widgets_[mouseDownWidgetIndex_].id;
+        const auto* previous = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]);
+        const std::wstring previousId = previous ? previous->id : L"";
+        if (detach)
+        {
+            if (!luaStackMemberDrag_.Begin(widgets_, mouseDownWidgetIndex_))
+            {
+                CancelPointerPressWithoutCaptureRelease();
+                snowdesktop::private_pointer::ReleasePointerCapture();
+                return false;
+            }
+        }
+        else luaStackMemberDrag_.Reset();
+        if (widgetEngine_)
+        {
+            widgetEngine_->BlurHostInput(false);
+            UpdateHostInputImePosition();
+            widgetEngine_->CancelInteractionPointerPress("desktop");
+            if (!previousId.empty()) widgetEngine_->SetWidgetDesktopVisible(previousId, false);
+        }
+        if (!previousId.empty() && !luaWidgetPanelRequest_.modal && luaWidgetPanelRequest_.widgetId == previousId)
+            CloseLuaWidgetPanel(previousId, "host");
+        const size_t source = FindWidgetIndexById(sourceId);
+        if (source >= widgets_.size() || widgets_[source].type != DesktopWidgetType::LuaStack ||
+            widgetAction_ != WidgetAction::Move || luaWidgetPanelRequest_.modal)
+        {
+            CancelPointerPressWithoutCaptureRelease();
+            snowdesktop::private_pointer::ReleasePointerCapture();
+            return false;
+        }
+        mouseDownWidgetIndex_ = source;
+        memberDragModeChanged = true;
+        InvalidateDragStaticScene();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    };
+
     if (mouseDown_ && !dragSession_.IsActive()
         && (widgetAction_ == WidgetAction::PendingMove || widgetAction_ == WidgetAction::PendingResize)
         && mouseDownWidgetIndex_ < widgets_.size()
@@ -840,10 +902,11 @@ void DesktopApp::OnMouseMoveAt(
         UpdateWidgetHandleCursor(current);
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
+        if (widgetAction_ == WidgetAction::Move && !syncMemberDragMode()) return;
         HideDockWindowPreview();
         InvalidateRect(hwnd_, nullptr, FALSE);
-        // The transition paint hides the source widget composition and
-        // establishes the initial overlay. Later samples can update only the
+        // The transition paint establishes source visibility (including a
+        // stack's remaining member) and the initial overlay. Later samples update the
         // foreground composition without walking the complete desktop scene.
         PresentDesktopPointerUpdate();
     }
@@ -883,9 +946,46 @@ void DesktopApp::OnMouseMoveAt(
 
         const DesktopWidgetType movingType =
             widgets_[mouseDownWidgetIndex_].type;
+        // Hovering a stack target must not resize the source preview, including
+        // the next sample after leaving that target or changing modifiers.
+        widgetPreviewSpan_ = widgetDragOriginalSpan_;
         namespace pair = snowdesktop::widget_pair_drop;
         widgetPairTargetIndex_ = static_cast<size_t>(-1);
         widgetPairAction_ = pair::Action::None;
+        if (!syncMemberDragMode()) return;
+        if (memberDragModeChanged)
+        {
+            const std::wstring sourceId = widgets_[mouseDownWidgetIndex_].id;
+            PresentDesktopPointerUpdate();
+            mouseDownWidgetIndex_ = FindWidgetIndexById(sourceId);
+            if (mouseDownWidgetIndex_ >= widgets_.size() || widgets_[mouseDownWidgetIndex_].type != DesktopWidgetType::LuaStack)
+            {
+                CancelPointerPressWithoutCaptureRelease();
+                snowdesktop::private_pointer::ReleasePointerCapture();
+                return;
+            }
+        }
+        if (luaStackMemberDrag_.Armed())
+        {
+            const size_t owner = luaStackMemberDrag_.OwnerIndex(widgets_);
+            if (owner >= widgets_.size() || luaStackMemberDrag_.MemberIndex(widgets_) >= widgets_.size())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+                snowdesktop::private_pointer::ReleasePointerCapture();
+                return;
+            }
+            mouseDownWidgetIndex_ = owner;
+            widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
+            widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
+            widgetDockTarget_ = false;
+            widgetDockTargetContainer_ = nullptr;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            UpdateWidgetDragPageNavigation(current);
+            widgetPreviewCell_ = ResolveGridSpanDragCell(gridPages_, current,
+                widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
+            ShowDragHintWindow(current, _LW("app.lua_stack.release"));
+            return;
+        }
         const auto movingPayload = snowdesktop::slot_contract::
             PayloadForWidgetType(movingType);
         const bool movingCollection =
@@ -977,7 +1077,8 @@ void DesktopApp::OnMouseMoveAt(
                 (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0,
                 (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0);
             if ((widgetPairAction_ == pair::Action::CreateCollectionGroup ||
-                 widgetPairAction_ == pair::Action::CreateFileGroup) &&
+                 widgetPairAction_ == pair::Action::CreateFileGroup ||
+                 widgetPairAction_ == pair::Action::CreateLuaStack) &&
                 !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
                 widgetPairAction_ = pair::Action::None;
             if (widgetPairAction_ != pair::Action::None)
@@ -992,10 +1093,16 @@ void DesktopApp::OnMouseMoveAt(
                         ? "core.drag.merge_collections" : "core.drag.merge_desktop_files")
                     : (widgetPairAction_ == pair::Action::CreateCollectionGroup
                         ? "core.drag.create_collection_group" : "core.drag.create_file_group");
+                if (widgetPairAction_ == pair::Action::CreateLuaStack)
+                {
+                    key = "core.drag.create_lua_stack";
+                    widgetPreviewCell_ = ResolveGridSpanDragCell(gridPages_, current,
+                        widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
+                }
                 ShowDragHintWindow(current, _LW(key), true);
                 return;
             }
-            pairHint = _LW(options.merge
+            pairHint = options.group == pair::Action::CreateLuaStack ? _LW("core.drag.lua_stack_hint") : _LW(options.merge
                 ? (movingType == DesktopWidgetType::Collection
                     ? "core.drag.collection_pair_hint" : "core.drag.desktop_files_pair_hint")
                 : "core.drag.file_source_pair_hint");
@@ -1032,8 +1139,10 @@ void DesktopApp::OnMouseMoveAt(
         {
             widgetPreviewCell_ = cell;
         }
-        ShowDragHintWindow(current, pairHint.empty()
-            ? _LW("core.drag.move_widget") : pairHint);
+        std::wstring moveHint = pairHint.empty() ? _LW("core.drag.move_widget") : pairHint;
+        if (movingType == DesktopWidgetType::LuaStack && !rightButtonItemDrag_)
+            moveHint += std::wstring(L" · ") + _LW("core.drag.lua_stack_detach_hint");
+        ShowDragHintWindow(current, moveHint);
         return;
     }
 

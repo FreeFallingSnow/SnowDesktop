@@ -1,4 +1,5 @@
 #pragma once
+#include "theme/surface_theme.h"
 
 #include <string_view>
 

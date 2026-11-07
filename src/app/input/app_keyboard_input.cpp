@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "widget/runtime/widget_engine.h"
+#include "desktop/desktop_source.h"
+#include "system/panel/system_panel.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_keyboard_rules.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -29,7 +33,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
     const auto navigationAction =
         snowdesktop::page_navigation_rules::ResolveKeyboardNavigationAction(
             generalSettings_.pageNavigationKeyboardEnabled, textInputActive,
-            quickNavigationOpen_ || IsCollectionPopupInteractive() ||
+            quickNavigation_->open || IsCollectionPopupInteractive() ||
                 !luaWidgetPanelRequest_.widgetId.empty() ||
                 (systemPanel_ && systemPanel_->IsOpen()) ||
                 keyboardNavInsideWidget_ ||
@@ -140,7 +144,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
 void DesktopApp::DispatchLuaWidgetViewKeyEvent(
     WPARAM key, bool pressed, bool repeated)
 {
-    if (!widgetEngine_ || quickNavigationOpen_ ||
+    if (!widgetEngine_ || quickNavigation_->open ||
         IsCollectionPopupInteractive())
         return;
     const bool ctrl = (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -234,7 +238,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
     }
 
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
         if (key == VK_ESCAPE)
         {
@@ -316,7 +320,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
     }
 
-    if (widgetEngine_ && !quickNavigationOpen_ &&
+    if (widgetEngine_ && !quickNavigation_->open &&
         !luaWidgetPanelRequest_.widgetId.empty() &&
         widgetEngine_->HandleHostViewKey(
             luaWidgetPanelRequest_.widgetId,
@@ -386,7 +390,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             if (!widgets_[index].selected) continue;
             if (selectedLua != static_cast<size_t>(-1) ||
-                widgets_[index].type != DesktopWidgetType::LuaScript)
+                !IsLuaDesktopSurface(widgets_[index]))
             {
                 multipleSelected = true;
                 break;
@@ -397,9 +401,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             if (repeated) return true;
             const bool redo = key == 'Y' || shift;
-            const auto& widgetId = widgets_[selectedLua].id;
+            const auto* content = ResolveLuaWidgetContent(&widgets_[selectedLua]);
+            if (!content) return true;
+            const auto& widgetId = content->id;
             widgetEngine_->EnsureWidgetLoaded(
-                widgetId, widgets_[selectedLua].packageId);
+                widgetId, content->packageId);
             const bool available = redo
                 ? widgetEngine_->RuntimeCanRedoHostLogicalSlot(widgetId)
                 : widgetEngine_->RuntimeCanUndoHostLogicalSlot(widgetId);
@@ -427,11 +433,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             return true;
         }
         if (std::any_of(widgets_.begin(), widgets_.end(), [](const auto& widget) {
-                return widget.selected && widget.type == DesktopWidgetType::LuaScript;
+                return widget.selected && (widget.type == DesktopWidgetType::LuaScript || widget.type == DesktopWidgetType::LuaStack);
             })) return true;
     }
 
-    if (widgetEngine_ && !quickNavigationOpen_ &&
+    if (widgetEngine_ && !quickNavigation_->open &&
         luaWidgetPanelRequest_.widgetId.empty() &&
         !IsCollectionPopupInteractive())
     {
@@ -441,7 +447,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         {
             if (!widgets_[index].selected) continue;
             if (selectedLua != static_cast<size_t>(-1) ||
-                widgets_[index].type != DesktopWidgetType::LuaScript)
+                !IsLuaDesktopSurface(widgets_[index]))
             {
                 multipleSelected = true;
                 break;
@@ -450,9 +456,11 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         }
         if (!multipleSelected && selectedLua < widgets_.size())
         {
-            const auto& widgetId = widgets_[selectedLua].id;
+            const auto* content = ResolveLuaWidgetContent(&widgets_[selectedLua]);
+            if (!content) return true;
+            const auto& widgetId = content->id;
             widgetEngine_->EnsureWidgetLoaded(
-                widgetId, widgets_[selectedLua].packageId);
+                widgetId, content->packageId);
             if (widgetEngine_->HandleHostViewKey(
                     widgetId, key, ctrl, shift, alt,
                     "desktop", repeated))
@@ -479,7 +487,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     {
     case 'Z':
     case 'Y':
-        if (!ctrl || quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty()) break;
+        if (!ctrl || quickNavigation_->open || !luaWidgetPanelRequest_.widgetId.empty()) break;
         if (!repeated && !QueueFileHistory(key == 'Y' || shift)) MessageBeep(MB_ICONWARNING);
         return true;
     case 'N':
@@ -555,6 +563,16 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             break;
         }
 
+        const auto selectedStack = std::find_if(widgets_.begin(), widgets_.end(), [](const auto& widget) {
+            return widget.selected && widget.type == DesktopWidgetType::LuaStack;
+        });
+        if (selectedStack != widgets_.end())
+        {
+            const std::wstring id = selectedStack->id;
+            POINT screen = lastMousePoint_; ClientToScreen(hwnd_, &screen);
+            (void)RemoveLuaStackMember(id, screen);
+            break;
+        }
         cutPaths_.clear();
         std::vector<std::wstring> paths;
         for (const auto& item : items_)
@@ -882,7 +900,7 @@ bool DesktopApp::TryDismissPopupForEscape()
 {
     using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
     const auto action = snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction(
-        quickNavigationOpen_, !luaWidgetPanelRequest_.widgetId.empty(),
+        quickNavigation_->open, !luaWidgetPanelRequest_.widgetId.empty(),
         luaWidgetPanelRequest_.dismissOnEscape, GetOpenPopupWidget() != nullptr);
     switch (action)
     {

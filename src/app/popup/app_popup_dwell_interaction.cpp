@@ -1,5 +1,11 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "theme/personalization.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/menus/sort_menu.h"
 #include "app/menus/background_menu_order.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -82,7 +88,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         CancelPopupHover(true);
         return;
     }
-    if (quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty() ||
+    if (quickNavigation_->open || !luaWidgetPanelRequest_.widgetId.empty() ||
         IsPointInUsageGuide(point))
     {
         CancelPopupHover();
@@ -984,6 +990,26 @@ ShowDockFolderPopupContextMenu(
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
+    auto quickNavigationFavorite =
+        singleSelection
+        ? CreateQuickNavigationFavoriteFromPath(
+            selectedPaths.front(),
+            (memberIndex &&
+                *memberIndex <
+                    dockFolderPopupWidget_.folderEntries.size())
+                ? dockFolderPopupWidget_.folderEntries[*memberIndex].DisplayName()
+                : std::wstring{})
+        : QuickNavigationFavorite{};
+    if (singleSelection)
+    {
+        const DWORD attributes =
+            GetFileAttributesW(selectedPaths.front().c_str());
+        quickNavigationFavorite.type =
+            attributes != INVALID_FILE_ATTRIBUTES &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+            ? QuickNavigationFavoriteType::Folder
+            : QuickNavigationFavoriteType::File;
+    }
     HMENU sortMenu = nullptr;
     const std::wstring newItemDirectory = dockFolderPopupWidget_.sourceFolderPath;
     std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
@@ -1016,6 +1042,8 @@ ShowDockFolderPopupContextMenu(
             kContextRevealLocationCommand,
             _LW(
                 "app.menu.open_file_location"));
+        AppendQuickNavigationFavoriteMenuItem(
+            menu, quickNavigationFavorite);
         AppendMenuW(
             menu, MF_SEPARATOR,
             0, nullptr);
@@ -1214,6 +1242,11 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextCopyPathCommand:
         CopyPathsToClipboard(selectedPaths);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(
+                quickNavigationFavorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     case kContextRunAsAdministratorCommand:
         if (selectedPaths.size() == 1 &&

@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "theme/panel_gradient_renderer.h"
 

@@ -5,6 +5,7 @@
 
 #include "core/widget.h"
 #include "app/app.h"
+#include "common/utils.h"
 #include "common/l10n.h"
 
 #include <algorithm>

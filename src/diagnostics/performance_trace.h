@@ -10,8 +10,9 @@ namespace detail { struct TraceContext; }
 bool Enabled() noexcept;
 std::uint64_t OwnerId(std::wstring_view instance) noexcept;
 
-// A business activity whose explicit SDK BEGIN/END enclose this object's real
-// lifetime. Only owner/operation context is nested here, never timing state.
+// SDK BEGIN/END enclose this object's synchronous lifetime. Capture-only native
+// CPU/cycle snapshots preserve measured zeros; there is no private event store,
+// timing stack or histogram beside the SDK.
 class Scope final
 {
 public:
@@ -25,6 +26,9 @@ private:
     std::uint64_t previousOwner_ = 0, previousOperation_ = 0, previousGeneration_ = 0;
     std::uint8_t category_ = 0;
     bool open_ = false;
+    std::uint64_t nativeCpuStart_ = 0, nativeCyclesStart_ = 0;
+    std::uint32_t nativeThread_ = 0;
+    bool nativeCpuSampled_ = false, nativeCyclesSampled_ = false;
 };
 
 // Gauges use native counter tracks; the finite event catalog uses instants.

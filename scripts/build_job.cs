@@ -102,7 +102,7 @@ namespace SnowDesktop.Build
             { resourceCpuSlots = 0; resourceLogicalProcessors = 0; resourceMemoryMiB = 0; return; }
             if (logicalProcessors != LogicalProcessors() || cpuSlots < 1 || cpuSlots > logicalProcessors ||
                 memoryMiB < 256 || memoryMiB > PhysicalMemoryBytes() / 1048576UL)
-                throw new ArgumentException("A resource budget needs valid CPU slots and committed-memory MiB on this machine");
+                throw new ArgumentException("A resource budget needs valid CPU slots and memory reservation MiB on this machine");
             resourceCpuSlots = cpuSlots; resourceLogicalProcessors = logicalProcessors; resourceMemoryMiB = memoryMiB;
         }
         static string cancelPath, cancelNonce, metricsPath;
@@ -174,6 +174,7 @@ namespace SnowDesktop.Build
                 ",\"peakJobMemoryBytes\":" + (memoryAvailable ? limits.peakJobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"requestedCpuSlots\":" + (resourceCpuSlots > 0 ? resourceCpuSlots.ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"requestedMemoryMiB\":" + (resourceMemoryMiB > 0 ? resourceMemoryMiB.ToString(CultureInfo.InvariantCulture) : "null") +
+                ",\"memoryBudgetMode\":\"" + (resourceMemoryMiB > 0 ? "advisory" : "unbudgeted") + "\"" +
                 ",\"cpuLimitBasisPoints\":" + (cpuAvailable && (cpu.flags & 5) == 5 ? cpu.rate.ToString(CultureInfo.InvariantCulture) : "null") +
                 ",\"committedMemoryLimitBytes\":" + (memoryAvailable && (limits.basic.flags & 0x200) != 0 ? limits.jobMemory.ToUInt64().ToString(CultureInfo.InvariantCulture) : "null") + "}";
             string temporary = metricsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -240,11 +241,9 @@ namespace SnowDesktop.Build
                 Check(job != IntPtr.Zero);
                 Limits limits = new Limits();
                 limits.basic.flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                if (resourceMemoryMiB > 0)
-                {
-                    limits.basic.flags |= 0x200; // JOB_OBJECT_LIMIT_JOB_MEMORY: committed memory, not working set.
-                    limits.jobMemory = new UIntPtr(checked(resourceMemoryMiB * 1048576UL));
-                }
+                // Memory reservations govern admission and compiler parallelism.
+                // A link may legitimately peak above that estimate: do not turn
+                // the reservation into an allocation-failing Job memory limit.
                 Check(SetInformationJobObject(job, 9, ref limits, Marshal.SizeOf(typeof(Limits))));
                 if (resourceCpuSlots > 0)
                 {
@@ -357,6 +356,13 @@ namespace SnowDesktop.Build
         { directory = folder; path = file; RunId = run; Sequence = order; lease = held; }
         static bool Sharing(IOException error)
         { int code = error.HResult & 0xffff; return code == 32 || code == 33; }
+        public static bool HasPending(string resourceDirectory)
+        {
+            string folder = Path.Combine(resourceDirectory, "admission");
+            if (!Directory.Exists(folder)) return false;
+            using (FileStream transaction = new FileStream(Path.Combine(folder, "queue.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+                return Active(folder, null).Count != 0;
+        }
         static List<string> Active(string folder, string own)
         {
             List<string> alive = new List<string>(); int inspected = 0;
@@ -463,6 +469,34 @@ namespace SnowDesktop.Build
     }
     public static class ResourceBroker
     {
+        // Caller holds the same budget.lock as initial admission. A stage
+        // supplement never acquires another CPU lane or releases base tokens.
+        public static int MemoryOccupancy(string directory, int capacity)
+        {
+            if (capacity < 1 || capacity > 4096) throw new ArgumentException("Invalid memory capacity");
+            int occupied; List<FileStream> free = Scan(directory, "memory", capacity, 0, out occupied);
+            foreach (FileStream stream in free) stream.Dispose();
+            return occupied;
+        }
+        public static ResourceAttempt TrySupplementMemory(string directory, int capacity, int baseSlots, int extraSlots,
+            ulong availableBytes, ulong headroomBytes)
+        {
+            if (capacity < 1 || capacity > 4096 || baseSlots < 1 || extraSlots < 1 || baseSlots + extraSlots > capacity)
+                throw new ArgumentException("Supplement exceeds validated memory capacity");
+            List<FileStream> memory = null;
+            try
+            {
+                int occupied; memory = Scan(directory, "memory", capacity, extraSlots, out occupied);
+                ResourceAttempt result = new ResourceAttempt { OccupiedMemorySlots = occupied, AvailablePhysicalBytes = availableBytes };
+                if (occupied < baseSlots) throw new InvalidOperationException("Admitted base memory reservation disappeared");
+                if (memory.Count < extraSlots) result.BusyKind = "memory-capacity";
+                else if (availableBytes < checked(headroomBytes + (ulong)(occupied + extraSlots) * 268435456UL))
+                    result.BusyKind = "memory-headroom";
+                else { result.Lease = new ResourceReservation(memory); memory = null; }
+                return result;
+            }
+            finally { if (memory != null) foreach (FileStream stream in memory) stream.Dispose(); }
+        }
         static List<FileStream> Scan(string directory, string kind, int capacity, int requested, out int occupied)
         {
             List<FileStream> held = new List<FileStream>(); occupied = 0;

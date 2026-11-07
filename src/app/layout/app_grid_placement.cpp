@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/utils.h"
+#include "layout/item_layout_rules.h"
 #include "layout/grid_occupancy.h"
 
 // Grid occupancy, free-cell search and displaced-item relayout.

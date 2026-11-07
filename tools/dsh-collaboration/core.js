@@ -26,8 +26,9 @@ function dashboardPortAt(root,configured){
   return preference.port;
  }finally{fs.closeSync(fd);}
 }
-const allowedCommands=new Set(['task-open','task-stage','task-list','event-read','event-wait','event-ack','begin','claim','edit-verify','plan','status']);
+const allowedCommands=new Set(['task-open','task-new','task-stage','task-close','task-list','event-read','event-wait','event-ack','begin','claim','edit-verify','plan','ready','status']);
 export function taskId(agentId){return 'dsh-'+createHash('sha256').update(agentId).digest('hex').slice(0,24);}
+const closed=task=>Boolean(task?.closedUtc)||['completed','cancelled'].includes(task?.phase);
 // Historical broadcasts remain readable, but cannot activate sessions outside
 // their still-active batch. Explicitly addressed events retain their target.
 export function eventInScope(state,event,id){
@@ -73,33 +74,60 @@ export class CollaborationBridge{
   if(!fs.existsSync(this.script)||!fs.existsSync(path.join(this.root,'.git')))throw new Error('Not a SnowDesktop coordinator checkout');
  }
  state(){return stateAt(this.root);}
+ taskId(agentId,state=this.state()){
+  const base=taskId(agentId),tasks=(state.taskLedger?.tasks||[]).filter(task=>task.adapter==='dsh'&&(task.id===base||task.continuationRoot===base));
+  return tasks.sort((a,b)=>(b.generation||1)-(a.generation||1))[0]?.id||base;
+ }
  grant(id,files=[]){
   const current=grantFor(this.state(),id,files),accepted=this.grants.get(id);
   if(!accepted)throw new Error('This plugin has not acquired a grant; call begin before claim or write.');
   if(current.batchId!==accepted.batchId||current.revision!==accepted.revision){this.grants.delete(id);throw new Error('Edit grant was superseded; re-evaluate and explicitly begin again.');}
   return accepted;
  }
- async call(command,id,args=[],{timeout=15000}={}){
+ async call(command,id,args=[],{timeout=15000,signal}={}){
   if(!allowedCommands.has(command))throw new Error('Unsupported plugin coordinator operation');
   if(id&&!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(id))throw new Error('Invalid task ID');
   const parameters={Command:command,...(id?{Participant:id}:{})};
   for(let index=0;index<args.length;index++){
    if(!/^-[A-Za-z][A-Za-z0-9]*$/.test(args[index])||/^-(Command|Participant)$/i.test(args[index]))throw new Error('Invalid coordinator argument name');
    const name=args[index].slice(1);
-   if(name==='AdoptExistingChanges')parameters[name]=true;
+   if(['AdoptExistingChanges','Add','DeferBatchResult','Compact'].includes(name))parameters[name]=true;
    else{if(index+1>=args.length)throw new Error('Missing coordinator argument value');parameters[name]=args[++index];}
   }
   const invocation={script:this.script,parameters};
   const argv=['-NoProfile','-EncodedCommand',coordinatorBootstrap];
   try{
-   const result=await execFileAsync(this.powershell,argv,{cwd:this.root,windowsHide:true,shell:false,timeout,maxBuffer:8*1024*1024,env:{...process.env,PSExecutionPolicyPreference:'Bypass',SNOWDESKTOP_DSH_COORDINATOR_ARGS:JSON.stringify(invocation)}});
+   const result=await execFileAsync(this.powershell,argv,{cwd:this.root,windowsHide:true,shell:false,timeout,signal,maxBuffer:8*1024*1024,env:{...process.env,PSExecutionPolicyPreference:'Bypass',SNOWDESKTOP_DSH_COORDINATOR_ARGS:JSON.stringify(invocation)}});
    return JSON.parse(result.stdout.replace(/^\uFEFF/,''));
   }catch(error){
    if(error.code===6&&error.stdout){return JSON.parse(error.stdout.replace(/^\uFEFF/,''));}
-   throw new Error(String(error.stderr||error.message).trim());
+   const message=String(error.stderr||error.message).trim();
+   throw new Error(message+(/access.*denied|拒绝访问|unauthorized|EACCES|EPERM/i.test(message)?'\nCheck scripts/build.bat diagnose in the failing tool context. Host and tool sandbox permissions can differ; ACL changes do not establish sandbox write permission. Use an authorized full-access context or external terminal; preserve the request and logs.':''));
   }
  }
- async open(agentId){return this.call('task-open',taskId(agentId),['-TaskName','DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none']);}
+ async open(agentId,name,hostParticipation){
+  if(name!==undefined&&(typeof name!=='string'||!name.trim()||name.trim().length>160||/[\r\n]/.test(name)))throw new Error('open text must be a nonempty single-line task name of at most 160 characters.');
+  if(hostParticipation!==undefined&&!['host','independent'].includes(hostParticipation))throw new Error('hostParticipation must be host or independent.');
+  const title=name?.trim(),state=this.state();let id=this.taskId(agentId,state);
+  const previous=state.taskLedger?.tasks?.find(task=>task.id===id);
+  if(closed(previous)){
+   this.grants.delete(id);
+   if(!title)return {task:previous,status:'closed',editingAuthority:false,next:'Use open with text to register the next task in this session.'};
+   const next=await this.call('task-new',id,['-TaskName',title,...(hostParticipation?['-HostParticipation',hostParticipation]:[])]);
+   id=next.task.id;
+  }
+  const opened=await this.call('task-open',id,['-TaskName',title||'DSH '+agentId.slice(0,12),'-Adapter','dsh','-Capabilities',this.capabilities().join(',')||'none',...(!previous&&hostParticipation?['-HostParticipation',hostParticipation]:[])]);
+  const rename=title&&opened.task.displayName!==title,select=hostParticipation&&(opened.task.hostParticipation||'host')!==hostParticipation;
+  if(!rename&&!select)return opened;
+  const updated=await this.call('task-stage',opened.task.id,['-TaskRevision',String(opened.task.revision),...(rename?['-TaskName',title]:[]),...(select?['-HostParticipation',hostParticipation]:[])]);
+  if(select)this.grants.delete(opened.task.id);
+  return updated;
+ }
+ requireTaskName(agentId){
+  const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));
+  if(closed(task))throw new Error('The task is closed. Use snow_collaboration action="open", text="<next task goal>" before continuing in this session.');
+  if(!task?.displayName?.trim()||task.displayName===task.id||task.displayName==='DSH '+agentId.slice(0,12))throw new Error('Set a specific task name before continuing: snow_collaboration action="open", text="<task goal>". A session ID is not a task name.');
+ }
  async verifyWrite(agentId,file){
   const target=canonicalTarget(file);
   if(!inside(this.root,target)){
@@ -108,15 +136,18 @@ export class CollaborationBridge{
   }
   const relative=path.relative(this.root,target).replaceAll('\\','/');
   if(!relative)throw new Error('Writing the repository root is not supported');
-  const id=taskId(agentId),grant=this.grant(id,[relative]);
+  const state=this.state(),id=this.taskId(agentId,state),task=state.taskLedger?.tasks?.find(task=>task.id===id);
+  if(task?.hostParticipation==='independent')return this.call('edit-verify',id,['-TaskRevision',String(task.revision),'-Files',relative]);
+  const grant=this.grant(id,[relative]);
   return this.call('edit-verify',id,['-Batch',grant.batchId,'-Revision',String(grant.revision),'-Files',relative]);
  }
  async progress(agentId,text){
-  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
+  const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));
+  if(!task||closed(task))return {status:task?'closed':'not-registered',task:task||null,progressSaved:false,next:'Use open with text for the next task; include the final summary in close text before closing.'};
   return this.call('task-stage',task.id,['-TaskRevision',String(task.revision),'-TaskPhase',task.phase,'-Progress',text.slice(0,2000)]);
  }
  async heartbeat(agentId){
-  const task=this.state().taskLedger?.tasks?.find(x=>x.id===taskId(agentId));if(!task||['completed','cancelled'].includes(task.phase))return;
+  const state=this.state(),task=state.taskLedger?.tasks?.find(x=>x.id===this.taskId(agentId,state));if(!task||closed(task))return {status:'inactive'};
   return this.open(agentId);
  }
  async snapshot(){return this.read('/api/status');}
@@ -139,22 +170,40 @@ export class CollaborationBridge{
   if(health.service!=='SnowDesktop build dashboard'||health.instance!==receipt.instance||health.fixture!==false||receipt.fixture!==false)throw new Error('Dashboard listener identity did not match this checkout');
   return read(route);
  }
- async operate(agentId,args){
-  const id=taskId(agentId),action=args.action;
-  if(action==='status')return this.call('status');
-  if(action==='open')return this.open(agentId);
+ async operate(agentId,args,{signal}={}){
+  const id=this.taskId(agentId),action=args.action;
+  if(action==='status')return this.call('status',id,args.detail==='full'?[]:['-Compact']);
+  if(action==='open')return this.open(agentId,args.text,args.hostParticipation);
   if(action==='progress')return this.progress(agentId,args.text||'');
+  if(action==='close'){
+   const task=this.state().taskLedger?.tasks?.find(task=>task.id===id);
+   if(!task)throw new Error('Open a task first.');
+   if(closed(task))return {status:'closed',task,editingAuthority:false};
+   const result=await this.call('task-close',id,['-TaskRevision',String(task.revision),'-TaskPhase','completed','-Progress',args.text||'',...(args.deferBatchResult?['-DeferBatchResult']:[])]);
+   this.grants.delete(id);return result;
+  }
   if(action==='begin'){
    const registered=await this.call('begin',id,['-WaitSeconds','1']);
+   if(registered.hostParticipation==='independent'){this.grants.delete(id);return registered;}
    this.grants.set(id,{batchId:registered.batchId,revision:registered.editRevision});return registered;
   }
   if(action==='messages')return this.call('event-read',id,['-AfterSequence',String(args.afterSequence||0)]);
-  if(action==='wait-messages')return this.call('event-wait',id,['-AfterSequence',String(args.afterSequence||0),'-WaitSeconds','30'],{timeout:35000});
+  if(action==='wait-messages'){
+   const seconds=args.waitSeconds??0;
+   if(!Number.isInteger(seconds)||seconds<0||seconds>86400)throw new Error('waitSeconds must be 0 (no deadline) or 1..86400');
+   return this.call('event-wait',id,['-AfterSequence',String(args.afterSequence||0),'-WaitSeconds',String(seconds)],{timeout:seconds?seconds*1000+5000:0,signal});
+  }
   if(action==='acknowledge')return this.call('event-ack',id,['-Sequence',String(args.sequence),'-AckLevel','agent']);
+  if(this.state().taskLedger?.tasks?.find(task=>task.id===id)?.hostParticipation==='independent')throw new Error('Independent tasks use progress/close without host claim/plan/ready. Report changed paths, checks and local commits; select host participation only when host/shared work is needed.');
   const grant=this.grant(id),bound=['-Batch',grant.batchId,'-Revision',String(grant.revision)];
+  if(action==='ready'){
+   const result=await this.call('ready',id,bound,{timeout:35000});
+   this.grants.delete(id);return {...result,executionContext:'DSH Host',next:'Observe status/messages; ready explicitly selects background waiting. A start-failed attempt requires begin/claim/plan with the new revision before retry.'};
+  }
   if(action==='claim'){
    if(!args.files)throw new Error('Explicit files are required');
-   return this.call('claim',id,[...bound,'-Files',args.files,...(args.adoptExistingChanges?['-AdoptExistingChanges']:[])]);
+   if(args.claimMode!==undefined&&!['add','set'].includes(args.claimMode))throw new Error('claimMode must be add or set');
+   return this.call('claim',id,[...bound,'-Files',args.files,...(args.claimMode!=='set'?['-Add']:[]),...(args.adoptExistingChanges?['-AdoptExistingChanges']:[])]);
   }
   if(action==='plan'){
    if(!args.inputs||!args.reason)throw new Error('Inputs and reviewed test mapping are required');

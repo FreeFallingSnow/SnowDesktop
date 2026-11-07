@@ -8,12 +8,13 @@ namespace snowdesktop::taskbar_hook
 // matching the installed image; layouts are accepted only when the named
 // methods still demonstrate the expected ABI. No Windows-build RVA table.
 enum class ModernTraySymbol : std::size_t
-{ CopyData, Notify, GetRect, Identity, SendOwner, SetIcon, SetTooltip, StringBuffer, Promoted, Overflow, VectorSize, VectorAt, Count };
+{ CopyData, Notify, GetRect, Identity, SendOwner, Icon, Tooltip, StringBuffer, Promoted, Overflow, VectorSize, VectorAt, Count };
 struct ModernTrayLayout
 {
     DWORD model = 0, manager = 0;
     DWORD window = 0, id = 0, guid = 0, callback = 0, version = 0, icon = 0, tip = 0;
     DWORD promoted = 0, overflow = 0, vectorAdjustment = 0, vectorBegin = 0, vectorEnd = 0;
+    bool softwareBitmap = false;
     friend bool operator==(const ModernTrayLayout&, const ModernTrayLayout&) = default;
 };
 struct ModernTrayAdapter
@@ -36,7 +37,8 @@ inline std::optional<std::size_t> FindTrayInstruction(std::span<const BYTE> code
     }
     return found;
 }
-inline std::optional<ModernTrayLayout> DecodeModernTrayLayout(std::span<const BYTE> image, const ModernTrayAdapter& adapter)
+inline std::optional<ModernTrayLayout> DecodeModernTrayLayout(std::span<const BYTE> image,
+    const ModernTrayAdapter& adapter, bool softwareBitmap)
 {
     const AutoHideImageView view(image);
     if (view.Identity() != std::optional(adapter.image) || !adapter.root || !adapter.itemVtable ||
@@ -69,28 +71,61 @@ inline std::optional<ModernTrayLayout> DecodeModernTrayLayout(std::span<const BY
     };
     using S = ModernTraySymbol;
     ModernTrayLayout result;
+    result.softwareBitmap = softwareBitmap;
     // CopyData obtains the taskbar model, then its shared notification manager.
     const auto copy = code(S::CopyData);
-    const auto call = FindTrayInstruction(copy, {0x48,0x8d,0x4d,0xe0,0xe8,-1,-1,-1,-1,0x90,
-        0x49,0x8b,0xd0,0x48,0x8b,0x4d,0xe0,0xe8,-1,-1,-1,-1,0x0f,0xb6,0xc0});
-    if (!call || *call < 19) return {};
-    const auto start = *call - 19;
-    if (!FindTrayInstruction(copy.subspan(start, 19), {0x48,0x8b,0x97,-1,-1,-1,-1,
-        0x48,0x85,0xd2,0x74,-1,0x48,0x81,0xc2,-1,-1,-1,-1})) return {};
-    std::int32_t relative = 0; std::memcpy(&relative, copy.data() + *call + 18, 4);
-    if (static_cast<std::int64_t>(adapter.Get(S::CopyData).begin) + static_cast<std::int64_t>(*call) + 22 + relative != adapter.Get(S::Notify).begin) return {};
-    std::memcpy(&result.model, copy.data() + start + 3, 4);
-    std::memcpy(&result.manager, copy.data() + start + 15, 4);
+    std::size_t notifyCall = 0;
+    if (softwareBitmap)
+    {
+        // This variant inlines the shared_ptr copy before passing its manager
+        // to the same named ShellNotifyIcon method.
+        const auto model = FindTrayInstruction(copy, {0x4c,0x8b,0x87,-1,-1,-1,-1,0x4d,0x85,0xc0,0x75,0x05,
+            0x4c,0x21,0x06,0xeb,-1,0x49,0x8b,0x80,-1,-1,-1,-1,0x48,0x85,0xc0,0x74,0x04,0xf0,0xff,0x40,0x08,
+            0x49,0x8b,0x88,-1,-1,-1,-1,0x48,0x89,0x4d,0xe0,0x49,0x8b,0x98,-1,-1,-1,-1,
+            0x48,0x89,0x5d,0xe8,0xe8,-1,-1,-1,-1,0x0f,0xb6,0xc0});
+        if (!model) return {};
+        DWORD firstControl = 0, secondControl = 0;
+        std::memcpy(&result.model, copy.data() + *model + 3, 4);
+        std::memcpy(&firstControl, copy.data() + *model + 20, 4);
+        std::memcpy(&result.manager, copy.data() + *model + 36, 4);
+        std::memcpy(&secondControl, copy.data() + *model + 47, 4);
+        if (firstControl != secondControl || firstControl != result.manager + 8) return {};
+        notifyCall = *model + 55;
+    }
+    else
+    {
+        const auto call = FindTrayInstruction(copy, {0x48,0x8d,0x4d,0xe0,0xe8,-1,-1,-1,-1,0x90,
+            0x49,0x8b,0xd0,0x48,0x8b,0x4d,0xe0,0xe8,-1,-1,-1,-1,0x0f,0xb6,0xc0});
+        if (!call || *call < 19) return {};
+        const auto start = *call - 19;
+        if (!FindTrayInstruction(copy.subspan(start, 19), {0x48,0x8b,0x97,-1,-1,-1,-1,
+            0x48,0x85,0xd2,0x74,-1,0x48,0x81,0xc2,-1,-1,-1,-1})) return {};
+        std::memcpy(&result.model, copy.data() + start + 3, 4);
+        std::memcpy(&result.manager, copy.data() + start + 15, 4);
+        notifyCall = *call + 17;
+    }
+    std::int32_t relative = 0; std::memcpy(&relative, copy.data() + notifyCall + 1, 4);
+    if (static_cast<std::int64_t>(adapter.Get(S::CopyData).begin) + static_cast<std::int64_t>(notifyCall) + 5 + relative != adapter.Get(S::Notify).begin) return {};
     // The manager owns a bounded vector of implementation pointers, not a map.
     if (!FindTrayInstruction(code(S::GetRect), {0x4c,0x8b,0x43,0x08,0x48,0x8b,0x13}) ||
         !FindTrayInstruction(code(S::Identity), {0x48,0x89,0x02})) return {};
-    const auto window = displacement(S::Identity, {0x48,0x8b,0x41,-1,0x48,0x8b,0xda,0x48,0x89,0x02}, 3, true);
-    const auto id = displacement(S::Identity, {0x8b,0x41,-1,0x89,0x42,0x08}, 2, true);
-    const auto guid = displacement(S::Identity, {0x0f,0x10,0x41,-1,0xf3,0x0f,0x7f,0x42,0x0c}, 3, true);
+    const auto window = softwareBitmap
+        ? displacement(S::Identity, {0x48,0x8b,0x41,-1,0x4c,0x8d,0x79,0x70,0x48,0x89,0x02}, 3, true)
+        : displacement(S::Identity, {0x48,0x8b,0x41,-1,0x48,0x8b,0xda,0x48,0x89,0x02}, 3, true);
+    const auto id = softwareBitmap
+        ? displacement(S::Identity, {0x8b,0x41,-1,0x48,0x8b,0xda,0x89,0x42,0x08}, 2, true)
+        : displacement(S::Identity, {0x8b,0x41,-1,0x89,0x42,0x08}, 2, true);
+    const auto guid = softwareBitmap
+        ? displacement(S::Identity, {0x0f,0x10,0x41,-1,0x8d,0x4f,0x07,0x48,0x89,0x54,0x24,0x30,0xf3,0x0f,0x7f,0x42,0x0c}, 3, true)
+        : displacement(S::Identity, {0x0f,0x10,0x41,-1,0xf3,0x0f,0x7f,0x42,0x0c}, 3, true);
     const auto callback = displacement(S::SendOwner, {0x8b,0x93,-1,-1,-1,-1,0x85,0xd2}, 2);
     const auto version = displacement(S::SendOwner, {0x83,0xbb,-1,-1,-1,-1,0x04}, 2);
-    const auto icon = displacement(S::SetIcon, {0x48,0x8d,0x9e,-1,-1,-1,-1,0x48,0x39,0x3b,0x0f,0x84}, 3);
-    const auto tip = displacement(S::SetTooltip, {0x49,0x8d,0x8e,-1,-1,-1,-1,0x48,0x8d,0x44,0x24,0x20}, 3);
+    const auto icon = softwareBitmap
+        ? displacement(S::Icon, {0x48,0x8b,0x87,-1,-1,-1,-1,0x48,0x8b,0xcb,0x48,0x89,0x03,0xe8}, 3)
+        : displacement(S::Icon, {0x48,0x8d,0x9e,-1,-1,-1,-1,0x48,0x39,0x3b,0x0f,0x84}, 3);
+    const auto tip = softwareBitmap
+        ? displacement(S::Tooltip, {0x48,0x8b,0xb6,-1,-1,-1,-1,0x48,0x85,0xf6,0x0f,0x85,-1,-1,-1,-1,0x48,0x8d,0x35}, 3)
+        : displacement(S::Tooltip, {0x49,0x8d,0x8e,-1,-1,-1,-1,0x48,0x8d,0x44,0x24,0x20}, 3);
     const auto promoted = displacement(S::Promoted, {0x48,0x8b,0x41,-1,0x48,0x8b,0xda,0x48,0x8b,0xca,0x48,0x89,0x02}, 3, true);
     const auto overflow = displacement(S::Overflow, {0x48,0x8b,0x41,-1,0x48,0x8b,0xda,0x48,0x8b,0xca,0x48,0x89,0x02}, 3, true);
     const auto adjustment = displacement(S::VectorSize, {0x48,0x8d,0x41,-1,0x48,0xf7,0xd9}, 3, true);

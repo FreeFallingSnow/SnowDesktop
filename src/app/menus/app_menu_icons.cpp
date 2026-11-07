@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "layout/floating_popup_rules.h"
+#include "app/dock/persistent_dock_host.h"
 #include "sort_menu.h"
 #include "background_menu_order.h"
 #include "tray_context_menu_placement.h"
@@ -9,6 +13,7 @@
 #include "ui/menu/menu_label.h"
 #include "ui/menu/modern_menu.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
+#include "shell/power_user_menu.h"
 #include "widget/packages/widget_package_image_cache.h"
 #include "app/popup/popup_window_pair_z_order.h"
 
@@ -221,7 +226,7 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     menuIconDpi_ = dpi;
     const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
-        appearance.contextMenuStyle, 0, 6);
+        appearance.contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance);
     menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
         static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
 }
@@ -560,11 +565,17 @@ UINT DesktopApp::ShowModernMenu(
             return kContextMoreCommand;
     }
 
+    const UINT moreState = GetMenuState(rootMenu, kContextMoreCommand, MF_BYCOMMAND);
+    if (shellRequest && moreState != static_cast<UINT>(-1) && !(moreState & (MF_DISABLED | MF_GRAYED)))
+        snowdesktop::shell_extensions::NativeMenuSession::PrepareWorker(*shellRequest);
+
     std::vector<snowdesktop::modern_menu::Item> items =
         BuildModernMenuItems(rootMenu);
     snowdesktop::background_menu_order::Apply(rootMenu, items,
         static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
     snowdesktop::modern_menu::Options options;
+    const bool powerUserMenu = snowdesktop::power_user_menu::IsRootMenu(rootMenu);
+    const HMONITOR sourceMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
     options.owner = owner;
     options.anchor = screenPoint;
     options.dpi = menuIconDpi_;
@@ -594,7 +605,10 @@ UINT DesktopApp::ShowModernMenu(
     for (const auto& host : persistentDockHosts_)
     {
         if (!host || !host->active || !host->container || !host->hwnd ||
-            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd)) continue;
+            !IsWindow(host->hwnd)) continue;
+        const bool powerUserSource = powerUserMenu && generalSettings_.dockEnabled &&
+            host->monitor == sourceMonitor;
+        if (!powerUserSource && !IsWindowVisible(host->hwnd)) continue;
         RECT inputBounds = host->container->GetInteractiveBounds();
         OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
         // The side controls belong to the same merged strip as the center
@@ -602,10 +616,10 @@ UINT DesktopApp::ShowModernMenu(
         // Options::owner still restores keyboard focus to the bar itself.
         const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
             statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
-        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
+        if (powerUserSource || owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
         { menuDockHost = host.get(); break; }
     }
-    const bool floatingDockHostWindowVisible = menuDockHost != nullptr;
+    const bool floatingDockHostWindowVisible = menuDockHost && IsWindowVisible(menuDockHost->hwnd);
     const bool floatingDockHostEffectivelyFloating =
         menuDockHost &&
         (menuDockHost->container->IsMergedWithStatusBar() ||
@@ -728,6 +742,27 @@ UINT DesktopApp::ShowModernMenu(
                 : snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
         }
         statusBarMenuOwner_ = options.zOrderOwner ? options.zOrderOwner : options.owner;
+    }
+    if (powerUserMenu)
+    {
+        RECT start = menuDockHost && generalSettings_.dockEnabled
+            ? menuDockHost->container->GetWindowsButtonRect() : RECT{};
+        const int gap = std::max(1, MulDiv(6, static_cast<int>(options.dpi), 96));
+        if (!IsRectEmpty(&start) && hwnd_ && IsWindow(hwnd_))
+        {
+            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&start), 2);
+            OffsetRect(&start, 0, -gap);
+            options.anchorRect = start;
+            options.anchor = {(start.left + start.right) / 2, start.top};
+            options.rootPlacement = snowdesktop::modern_menu::RootPlacement::AboveCenteredAnchorRect;
+        }
+        else
+        {
+            MONITORINFO monitor{sizeof(monitor)};
+            if (GetMonitorInfoW(sourceMonitor, &monitor))
+                options.anchor = {monitor.rcWork.right - gap, monitor.rcWork.bottom - gap};
+            options.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
+        }
     }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);

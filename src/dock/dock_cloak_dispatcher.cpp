@@ -73,8 +73,9 @@ LRESULT CloakDispatcher::Apply(const CloakRequest& request) noexcept
     DWORD_PTR ignored = 0;
     SetLastError(0);
     // Forward the caller's frozen lease; never substitute a newer ReadOwner.
-    const bool sent = SendCloakRequest(source, request, 120, ignored);
-    const DWORD sendError = GetLastError();
+    const DWORD timeout = cloak ? CloakSendBudget(owner.window, 120) : 120;
+    const bool sent = timeout && SendCloakRequest(source, request, timeout, ignored);
+    const DWORD sendError = timeout ? GetLastError() : ERROR_TIMEOUT;
     api_.remove(hook);
     { std::lock_guard lock(mutex_); --activeHooks_; }
     return sent ? S_OK : HRESULT_FROM_WIN32(sendError ? sendError : ERROR_TIMEOUT);

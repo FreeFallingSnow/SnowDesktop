@@ -1,10 +1,16 @@
 #pragma once
 #include "settings/settings_ipc_codec.h"
 #include "settings/shell_extension_settings.h"
+#include "shell_extension_state_commands.h"
 #include "shell_start_pin_protocol.h"
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <tuple>
+#include <vector>
 #include <windows.h>
 #include <shlobj.h>
 
@@ -98,6 +104,9 @@ struct NativeMenuSelection
 class NativeMenuSession
 {
 public:
+    // Optional owning-STA preparation, with no target menu query. Returns true
+    // only once the bounded worker has finished registration/provider loading.
+    static bool PrepareWorker(const Request&);
     NativeMenuSession(const Request&, POINT, HWND owner, NativeMenuSelection selection = {}, DWORD timeoutMs = 8000);
     ~NativeMenuSession();
     NativeMenuSession(const NativeMenuSession&) = delete;

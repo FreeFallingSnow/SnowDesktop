@@ -57,10 +57,30 @@ function Open-VisibleTask($Ledger, [string]$Id, [string]$Name, [string]$Adapter,
     $now=[DateTime]::UtcNow.ToString('o')
     $task=[pscustomobject]@{id=$Id; displayName=$Name; phase='investigating'; revision=[long]0; requirementsRevision=[long]0;
         openedUtc=$now; lastHeartbeatUtc=$now; lastProgressUtc=$now; progress=''; blocker=''; closedUtc=$null;
-        registrationOrigin=$Origin; adapter=$Adapter;
+        registrationOrigin=$Origin; adapter=$Adapter; hostParticipation='host';
         capabilities=[pscustomobject]@{taskRegistration=$true; beforeWriteGate=$false; boundedWait=$false; liveProgress=$false; activeTurnSteering=$false; idleWake=$false}}
     $Ledger.tasks=@($Ledger.tasks)+@($task)
     return $task
+}
+function Set-TaskHostParticipation($State,$Task,[string]$Participation) {
+    if((Get-Field $Task 'hostParticipation' 'host') -eq $Participation){return}
+    $batches=@($(if($State.current){$State.current});@(Get-Field $State 'activeCandidates' @()))
+    if(@($batches|Where-Object {@($_.participants|Where-Object {$_.id -eq $Task.id -and $_.state -ne 'withdrawn'}).Count}).Count){
+        throw 'Host participation cannot change while the task belongs to an active batch. Finish/retire it or recover only your stopped editing registration first.'
+    }
+    Set-Field $Task 'hostParticipation' $Participation
+}
+function Assert-IndependentTaskPath([string]$Relative) {
+    $path=Normalize-OwnedPath $Relative
+    if(@($path.Split('/')|Where-Object {$_ -ieq '.git'}).Count){throw 'Independent task paths cannot target Git metadata.'}
+    $top=$path.Split('/')[0]
+    $external=$top -in 'website','SnowDesktop_Website','SnowDesktop_SteamAssets','SnowDesktop_Marketing','SnowDesktop-Marketing'
+    $community=$path -ieq 'developer_assets/workshop_widgets' -or $path.StartsWith('developer_assets/workshop_widgets/',[StringComparison]::OrdinalIgnoreCase)
+    $document=-not $path.Contains('/') -and $path -ine 'AGENTS.md' -and [IO.Path]::GetExtension($path) -in '.md','.txt','.csv','.pdf','.docx','.xlsx','.pptx' -and -not (Test-BuildInputPath $path)
+    if(-not ($external -or $community -or $document)){
+        throw "Independent tasks cannot write host/shared inputs: $path. Select host participation, then begin and claim before writing."
+    }
+    return $path
 }
 function Set-TaskCapabilities($Task,[string]$Names) {
     $supported=@('beforeWriteGate','boundedWait','liveProgress','activeTurnSteering','idleWake')
@@ -71,6 +91,73 @@ function Set-TaskCapabilities($Task,[string]$Names) {
     foreach($name in $supported){$value[$name]=$declared -ccontains $name}
     # Adapter declarations are metadata, never an edit grant or message receipt.
     $Task.capabilities=[pscustomobject]$value
+}
+function New-VisibleTask($Ledger,[string]$PreviousId,[string]$Name) {
+    $previous=Find-VisibleTask $Ledger $PreviousId
+    if($previous.phase -notin 'completed','cancelled'){throw 'Finish the current task before task-new; use task-stage to rename an active task.'}
+    if([string]::IsNullOrWhiteSpace($Name) -or $Name -match '[\r\n]'){throw 'task-new requires a specific, nonempty single-line TaskName.'}
+    $root=Get-Field $previous 'continuationRoot' $previous.id
+    $generation=[long](Get-Field $previous 'generation' 1)
+    if(@($Ledger.tasks|Where-Object {(Get-Field $_ 'continuationRoot') -eq $root -and (Get-Field $_ 'generation' 1) -gt $generation}).Count){throw 'A later task already exists in this task series; read task-list and use its current ID.'}
+    $task=Open-VisibleTask $Ledger ('task-'+[Guid]::NewGuid().ToString('N')) $Name.Trim() $previous.adapter 'task-new'
+    Set-Field $task 'previousTask' $previous.id
+    Set-Field $task 'continuationRoot' $root
+    Set-Field $task 'generation' ($generation+1)
+    return $task
+}
+function Get-CompactBatch($Batch,[string]$Participant) {
+    if(-not $Batch){return $null}
+    $members=@($Batch.participants)
+    $own=@($members|Where-Object id -eq $Participant|Select-Object -First 1)
+    $member=$null
+    if($own.Count){
+        $entry=$own[0];$files=@(Get-Field $entry 'ownedFiles' @())
+        $member=[pscustomobject]@{id=$entry.id;state=$entry.state;editRevision=(Get-EditRevision $entry);
+            ownedFiles=@($files|Select-Object -First 32);ownedFileCount=$files.Count;ownedFilesTruncated=($files.Count -gt 32);
+            checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiterStatus=(Get-Field (Get-Field $entry 'waiter') 'status')}
+    }
+    return [pscustomobject]@{id=$Batch.id;phase=$Batch.phase;runId=(Get-Field $Batch 'runId');participant=$member;
+        participantCount=$members.Count;participants=@($members|Select-Object -First 32|ForEach-Object {[pscustomobject]@{id=$_.id;state=$_.state;editRevision=(Get-EditRevision $_)}});
+        participantsTruncated=($members.Count -gt 32)}
+}
+function Get-CompactCollaborationStatus($State,[string]$Participant,$Current,$Result) {
+    $ledger=Get-Field $State 'taskLedger';$tasks=@(Get-Field $ledger 'tasks' @())
+    $own=@($tasks|Where-Object id -eq $Participant|Select-Object -First 1)
+    $candidates=@(Get-Field $State 'activeCandidates' @())
+    $events=@(Get-TaskEvents $ledger $Participant)
+    $recent=@($events|Select-Object -Last 8|ForEach-Object {
+        [pscustomobject]@{sequence=$_.sequence;sender=$_.sender;kind=$_.kind;importance=$_.importance;
+            text=$_.text.Substring(0,[Math]::Min(400,$_.text.Length));textTruncated=($_.text.Length -gt 400);createdUtc=$_.createdUtc;
+            agentAcknowledged=(@($_.receipts|Where-Object {$_.task -eq $Participant -and $_.level -eq 'agent'}).Count -gt 0)}
+    })
+    $task=$null
+    if($own.Count){
+        $entry=$own[0]
+        $task=[pscustomobject]@{id=$entry.id;displayName=$entry.displayName;phase=$entry.phase;revision=$entry.revision;requirementsRevision=$entry.requirementsRevision;hostParticipation=(Get-Field $entry 'hostParticipation' 'host');
+            lastHeartbeatUtc=$entry.lastHeartbeatUtc;lastProgressUtc=$entry.lastProgressUtc;progress=$entry.progress;blocker=$entry.blocker;closedUtc=$entry.closedUtc;
+            previousTask=(Get-Field $entry 'previousTask');continuationRoot=(Get-Field $entry 'continuationRoot');generation=(Get-Field $entry 'generation' 1);
+            deferredBatchIds=@(Get-Field $entry 'deferredBatchIds' @()|Select-Object -First 32)}
+    }
+    return [pscustomobject]@{schemaVersion=1;detail='compact';taskId=$Participant;task=$task;
+        current=(Get-CompactBatch $Current $Participant);activeCandidates=@($candidates|Select-Object -Last 8|ForEach-Object {Get-CompactBatch $_ $Participant});
+        activeCandidateCount=$candidates.Count;activeCandidatesTruncated=($candidates.Count -gt 8);recentEvents=$recent;recentEventsTruncated=($events.Count -gt 8);
+        result=$(if($Result){[pscustomobject]@{batchId=$Result.batchId;outcome=$Result.outcome;exitCode=$Result.exitCode;runId=(Get-Field $Result 'runId');recovery=(Get-Field $Result 'recovery')}}else{$null});
+        observation='Atomic read-only summary; use status without -Compact for full details, event-read for event text. Reading does not acknowledge events.'}
+}
+function Get-CompactBatchResult($Result,[string]$ResultPath) {
+    $coverage=Get-Field $Result 'coverage';$completed=@(Get-Field $coverage 'completed' @())
+    $failures=@($completed|Where-Object {$_.status -in 'failed','invalidated','interrupted','cancelled'}|ForEach-Object name)
+    $selectedCount=@(Get-Field $coverage 'selected' @()).Count
+    $referencesCount=@(Get-Field $coverage 'references' @()).Count
+    return [pscustomobject]@{schemaVersion=1;detail='compact';batchId=$Result.batchId;runId=(Get-Field $Result 'runId');
+        outcome=$Result.outcome;exitCode=$Result.exitCode;error=(Get-Field $Result 'error' '');resultPath=$ResultPath;
+        inputCheck=(Get-Field $Result 'inputCheck');recovery=(Get-Field $Result 'recovery');
+        selectedCount=$selectedCount;completedCount=$completed.Count;
+        passedCount=@($completed|Where-Object status -eq 'passed').Count;failedCount=$failures.Count;
+        notRunCount=(@($completed|Where-Object status -eq 'not-run').Count+[Math]::Max(0,$selectedCount-$completed.Count-$referencesCount));
+        failedTests=@($failures|Select-Object -First 16);failedTestsTruncated=($failures.Count -gt 16);
+        referencesCount=$referencesCount;
+        observation='Full immutable plan, evidence and logs are retained at resultPath. -FullResult opts into full CLI output; compact output does not change execution or evidence.'}
 }
 function Get-TaskEvents($Ledger, [string]$Id, [long]$After=0, [switch]$UrgentUnacknowledged) {
     if(-not $Ledger){return @()}
@@ -118,7 +205,7 @@ function Get-EffectiveTaskPlan($Entry) {
     $plan.suites=@($requirements|ForEach-Object {$_.suites}|Sort-Object -Unique)
     if($plan.suites.Count -gt 1){$plan.suites=@($plan.suites|Where-Object {$_ -ne 'none'})}
     $plan.inputs=@(if(-not @($requirements|Where-Object {@($_.inputs).Count -eq 0}).Count){$requirements|ForEach-Object {$_.inputs}|Sort-Object -Unique})
-    $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}else{'component'}
+    $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool','test'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}elseif(@($requirements|Where-Object scope -eq 'test').Count){'test'}else{'component'}
     $plan.source='repair-carried';$plan.requiredFull=$plan.suites -contains 'full'
     Set-Field $plan 'mergedRepairRequirements' $extra
     $resources=@($requirements|Where-Object {$_.suites -notcontains 'none'}|ForEach-Object {Get-Field $_ 'projectResources'}|Where-Object {$_})
@@ -175,9 +262,21 @@ function Add-RepairSource($Current,$Result,[string]$Parent,[string]$Requester,[s
         Set-Field $Current 'attempt' $source.attempt;Set-Field $Current 'repairReason' $Reason
     }
 }
+function Assert-TestOnlyPlan($Plan) {
+    if((Get-Field $Plan 'scope' 'unknown') -ne 'test'){return}
+    $suites=@(Get-Field $Plan 'suites' @())
+    $inputs=@(Get-Field $Plan 'inputs' @())
+    if($suites.Count -ne 1 -or $suites[0] -ne 'selected' -or -not @(Get-Field $Plan 'tests' @()).Count){
+        throw 'Test-only plans require an explicit nonempty selected test set.'
+    }
+    if(-not $inputs.Count -or @($inputs|Where-Object {$_ -cne 'tests' -and -not $_.StartsWith('tests/',[StringComparison]::Ordinal)}).Count){
+        throw 'Test-only plans require reviewed inputs within tests/; product or build input changes keep their normal scope.'
+    }
+}
 function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason) {
     $suiteList = @($Suites.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
     if ($suiteList.Count -eq 0 -or @($suiteList | Where-Object { $_ -notin 'full','core','fast','tools','selected','none' }).Count) { throw 'Suites must be full/core/fast/tools/selected/none.' }
+    if ($suiteList -contains 'tools') { throw 'Tool tests have been removed; use task-scoped temporary verification instead.' }
     $names = @($Tests.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
     foreach ($name in $names) { if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$') { throw 'Tests must be literal CTest names; shell syntax and regex are not accepted.' } }
     $paths = @($Inputs.Split(',') | Where-Object { $_ } | ForEach-Object {$_.Replace('\','/').TrimEnd('/')} | Sort-Object -Unique)
@@ -191,9 +290,11 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     # Whole-product coverage must be requested explicitly with its necessity
     # reviewed in Reason; unknown impact is resolved before declaring a plan.
     $requiredFull = $suiteList -contains 'full'
-    return [pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
+    $plan=[pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
         reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; lightChecks=@('builtin-basic'); requiredFull=$requiredFull;
         escalationReason=$(if($requiredFull){$Reason}else{''}); inputIdentity=$null }
+    Assert-TestOnlyPlan $plan
+    return $plan
 }
 function Default-TaskPlan($Entry) {
     throw "Missing test plan for $($Entry.id); declare inputs, impact and selected tests with plan before ready/finish. No build or full suite was started."
@@ -264,6 +365,11 @@ function New-FrozenPlan($Current) {
     $tasks=@(); $full=$false; $build=$false; $testing=$false;$resources=@();$exclusive=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
+        # Recheck original obligations, not the merged repair input union:
+        # docs/tool exemptions can join a test-only repair, while any product
+        # obligation must still require its normal complete product build.
+        $declared=@((Get-Field $entry 'testPlan'))+@(Get-Field $entry 'repairRequirements' @()|ForEach-Object {$_.requirement})
+        foreach($requirement in $declared){Assert-TestOnlyPlan $requirement}
         $plan=Get-EffectiveTaskPlan $entry
         if ($plan.editRevision -ne (Get-EditRevision $entry)) { throw "Plan is stale for $($entry.id); reopen/update plan before ready." }
         if ($plan.source -eq 'task-declared' -and $plan.inputIdentity -and (Get-TaskIdentity $plan).digest -ne $plan.inputIdentity.digest) { throw "Declared inputs changed after ready for $($entry.id); reopen and update plan." }
@@ -279,7 +385,7 @@ function New-FrozenPlan($Current) {
             if($request){$resources+=@($request)}else{$exclusive=$true}
             # Test selection and a complete host build are distinct needs.
             # Targeted test builds still use the inventory's real dependencies.
-            if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool'){$build=$true}
+            if((Get-Field $plan 'scope' 'unknown') -notin 'docs','component','tool','test'){$build=$true}
         }
         $tasks += [pscustomobject]@{ participant=$entry.id; editRevision=(Get-EditRevision $entry); requirement=$plan }
     }
@@ -311,7 +417,7 @@ function Resolve-PlanTests($Plan, $Inventory) {
     }
     foreach ($test in $Inventory) {
         $labels=@($test.properties | Where-Object name -eq 'LABELS' | ForEach-Object { $_.value })
-        if ($labels -contains 'manual') { continue } # explicit names above remain
+        if ($labels -contains 'manual' -or $labels -contains 'temporary') { continue } # explicit names above remain
         if ($labels -contains 'tools') {
             if ($Plan.suites -contains 'tools') { [void]$selected.Add($test.name) }
             continue

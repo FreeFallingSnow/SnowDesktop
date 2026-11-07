@@ -534,6 +534,8 @@ SteamBridgeConfiguration ParseSteamBridgeConfiguration(
     configuration.version = version->string;
     configuration.protocolVersion = *protocolVersion;
     configuration.expectedAppId = *expectedAppId;
+    configuration.widgetMultiplayerProtocolVersion =
+        Uint32Field(*root, "widgetMultiplayerProtocolVersion").value_or(0);
     configuration.steamworksCompiled = steamworksCompiled->boolean;
     return configuration;
 }
@@ -551,8 +553,9 @@ bool IsSteamBridgeConfigurationCompatible(
 
 bool IsSteamBridgeExecutableCompatible(
     const std::filesystem::path& executable,
-    std::string_view expectedVersion)
+    std::string_view expectedVersion, bool* widgetMultiplayerAvailable)
 {
+    if (widgetMultiplayerAvailable) *widgetMultiplayerAvailable = false;
     const auto traceId = ++nextTraceId;
     if (!IsSafeRegularFile(executable))
     {
@@ -564,6 +567,8 @@ bool IsSteamBridgeExecutableCompatible(
     const auto configuration = result ? ParseSteamBridgeConfiguration(
         result->output, result->exitCode) : SteamBridgeConfiguration{};
     const bool compatible = IsSteamBridgeConfigurationCompatible(configuration, expectedVersion);
+    if (widgetMultiplayerAvailable)
+        *widgetMultiplayerAvailable = compatible && configuration.widgetMultiplayerProtocolVersion == 2;
     Trace(traceId, L"configuration compatible=" + std::to_wstring(compatible) +
         L" valid=" + std::to_wstring(configuration.valid) +
         L" host_version=" + DiagnosticText(expectedVersion) +
@@ -637,7 +642,7 @@ struct Service::Impl
             L" runtime=" + steamRuntime.wstring());
         snapshot.bridgeAvailable = runtimeAvailable &&
             IsSteamBridgeExecutableCompatible(
-                bridgeExecutable, SNOWDESKTOP_VERSION);
+                bridgeExecutable, SNOWDESKTOP_VERSION, &snapshot.widgetMultiplayerAvailable);
         snapshot.state = snapshot.bridgeAvailable
             ? State::Unregistered : State::BridgeUnavailable;
         const auto cached = UnprotectCache(protectedCache, traceId);

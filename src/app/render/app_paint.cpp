@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "app/render/desktop_backdrop_update_rules.h"
+#include "widget/view/widget_accessibility_provider.h"
 #include "diagnostics/performance_trace.h"
 #include "desktop_backdrop_update_rules.h"
 
@@ -110,7 +113,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
                 dcompUpdate,
                 clientRect);
     desktopBackdropCompositor_.BeginFrame(completeGlassCollection);
-    if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size())
+    if (widgetPreviewActive && mouseDownWidgetIndex_ < widgets_.size() && !luaStackMemberDrag_.Armed())
     {
         desktopBackdropCompositor_.RemovePanel(
             GetStandaloneWidgetFrameRect(

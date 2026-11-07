@@ -1,7 +1,10 @@
 #pragma once
 
 #include "settings/settings_ipc_channel.h"
-#include "settings_window_host.h"
+#include "settings_window_host_options.h"
+#include "settings/settings_fwd.h"
+
+class WidgetEngine;
 
 namespace snowdesktop::settings_ipc
 {

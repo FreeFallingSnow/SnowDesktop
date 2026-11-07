@@ -9,7 +9,9 @@ cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 rem Shared-directory collaboration commands reuse the standard build below.
 if /i "%~1"=="run" goto persistent
 if /i "%~1"=="candidate" goto candidate
+if /i "%~1"=="diagnose" goto diagnose
 if /i "%~1"=="task-open" goto collaboration
+if /i "%~1"=="task-new" goto collaboration
 if /i "%~1"=="task-stage" goto collaboration
 if /i "%~1"=="task-close" goto collaboration
 if /i "%~1"=="task-list" goto collaboration
@@ -24,15 +26,15 @@ if /i "%~1"=="event-ack" goto collaboration
 if /i "%~1"=="edit-verify" goto collaboration
 if /i "%~1"=="watch" goto localwait
 if /i "%~1"=="resource" goto resource
-if /i "%~1"=="ready-and-wait" goto collaboration
+if /i "%~1"=="ready-and-wait" goto observation
 if /i "%~1"=="repair" goto collaboration
 if /i "%~1"=="repair-abandon" goto collaboration
 if /i "%~1"=="begin" goto collaboration
-if /i "%~1"=="finish" goto collaboration
+if /i "%~1"=="finish" goto observation
 if /i "%~1"=="status" goto collaboration
 if /i "%~1"=="recover" goto collaboration
 if /i "%~1"=="ready" goto collaboration
-if /i "%~1"=="wait" goto collaboration
+if /i "%~1"=="wait" goto observation
 if /i "%~1"=="check" goto collaboration
 if /i "%~1"=="plan" goto collaboration
 
@@ -151,6 +153,14 @@ exit /b %ERRORLEVEL%
 
 :collaboration
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_manager.ps1 %*
+exit /b %ERRORLEVEL%
+
+:observation
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_manager.ps1 %* -CliSummary
+exit /b %ERRORLEVEL%
+
+:diagnose
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_diagnose.ps1" %*
 exit /b %ERRORLEVEL%
 
 :resource

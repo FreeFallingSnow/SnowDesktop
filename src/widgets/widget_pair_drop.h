@@ -15,6 +15,7 @@ enum class Action
     Merge,
     CreateCollectionGroup,
     CreateFileGroup,
+    CreateLuaStack,
 };
 
 struct Options
@@ -27,6 +28,9 @@ struct Options
 
 constexpr Options GetOptions(DesktopWidgetType source, DesktopWidgetType target)
 {
+    if ((source == DesktopWidgetType::LuaScript || source == DesktopWidgetType::LuaStack) &&
+        (target == DesktopWidgetType::LuaScript || target == DesktopWidgetType::LuaStack))
+        return {false, Action::CreateLuaStack};
     if (source == DesktopWidgetType::Collection &&
         target == DesktopWidgetType::Collection)
         return {true, Action::CreateCollectionGroup};
@@ -43,6 +47,8 @@ constexpr Options GetOptions(DesktopWidgetType source, DesktopWidgetType target)
 
 constexpr Action ResolveAction(Options options, bool control, bool shift, bool alt)
 {
+    if (options.group == Action::CreateLuaStack)
+        return !control && !shift && !alt ? Action::CreateLuaStack : Action::None;
     // Ambiguous combinations never arm a merge or a new group.
     if (alt || control == shift) return Action::None;
     if (control) return options.group;

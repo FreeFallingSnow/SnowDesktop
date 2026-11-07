@@ -1,6 +1,10 @@
 #pragma once
 
-#include "dock/dock_settings.h"
+#include "settings/settings_fwd.h"
+#include "dock/dock_fullscreen_types.h"
+#include <string>
+#include <string_view>
+#include <vector>
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <functional>
 #include <memory>

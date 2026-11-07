@@ -1,6 +1,12 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
+#include "desktop/desktop_source.h"
+#include "app/dock/persistent_dock_host.h"
 #include "shell/shell_call_diagnostics.h"
 
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -19,19 +25,19 @@ void DesktopApp::BeginQuickNavigationItemRename(
     const std::wstring& name, const std::wstring& filePath, bool isDirectory)
 {
     if (renameInputWindow_ || name.empty() ||
-        !quickNavigationOpen_ ||
-        !quickNavigationHwnd_ ||
-        !IsWindow(quickNavigationHwnd_) ||
+        !quickNavigation_->open ||
+        !quickNavigation_->hwnd ||
+        !IsWindow(quickNavigation_->hwnd) ||
         IsRectEmptyRect(
-            quickNavigationRenameItemRect_))
+            quickNavigation_->renameItemRect))
         return;
 
     const RECT itemRect =
-        quickNavigationRenameItemRect_;
+        quickNavigation_->renameItemRect;
     const RECT iconRect =
         GetQuickNavItemIconRect(itemRect);
-    const float fontSize = quickNavItemTextFormat_
-        ? quickNavItemTextFormat_->GetFontSize() : static_cast<float>(QuickNavScale(13));
+    const float fontSize = quickNavigation_->itemTextFormat
+        ? quickNavigation_->itemTextFormat->GetFontSize() : static_cast<float>(QuickNavScale(13));
     const int textHeight = QuickNavScale(kQuickNavigationTextHeight);
     RECT editRect = QuickNavigationItemTextRect(itemRect, iconRect, QuickNavScale(4),
         std::max(1, QuickNavScale(2)), textHeight);
@@ -54,7 +60,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
         editRect.top + virtualTop_,
         editRect.right - editRect.left,
         editRect.bottom - editRect.top,
-        quickNavigationHwnd_, nullptr,
+        quickNavigation_->hwnd, nullptr,
         instance_, nullptr);
     if (!renameInputWindow_)
     {
@@ -168,7 +174,7 @@ BeginQuickNavigationFolderEntryRename(
  */
 void DesktopApp::ToggleQuickNavigation()
 {
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
         CloseQuickNavigation();
     else
         OpenQuickNavigation(
@@ -181,11 +187,11 @@ bool DesktopApp::ActivateQuickNavigationTab(size_t tab)
     if (tab >= 2 && tab - 2 >= indices.size())
         return false;
     CancelQuickNavigationTabHover();
-    quickNavigationActiveWidgetIndex_ = tab == 0 ? static_cast<size_t>(-1) :
+    quickNavigation_->activeWidgetIndex = tab == 0 ? static_cast<size_t>(-1) :
         tab == 1 ? static_cast<size_t>(-2) : indices[tab - 2];
     UpdateQuickNavTabWidths();
-    quickNavigationScrollOffset_ = 0;
-    quickNavigationInitialJumpOpen_ = false;
+    quickNavigation_->scrollOffset = 0;
+    quickNavigation_->initialJumpOpen = false;
     ResetQuickNavigationKeyboardTarget();
     InvalidateQuickNavigationWindow();
     return true;
@@ -198,12 +204,12 @@ bool DesktopApp::ActivateQuickNavigationTab(size_t tab)
  */
 bool DesktopApp::HandleQuickNavigationClick(POINT point)
 {
-    if (!quickNavigationOpen_)
+    if (!quickNavigation_->open)
         return false;
     CancelQuickNavigationTabHover();
     ResetQuickNavigationKeyboardTarget();
 
-    RECT overlay = quickNavigationRect_;
+    RECT overlay = quickNavigation_->rect;
     if (!PtInRect(&overlay, point))
     {
         if (DockContainer* dock =
@@ -212,7 +218,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         {
             PersistentDockHost* requestedDockHost =
                 FindPersistentDockHost(dock);
-            RECT screenPanel = quickNavigationRect_;
+            RECT screenPanel = quickNavigation_->rect;
             OffsetRect(&screenPanel, virtualLeft_, virtualTop_);
             const POINT screenPoint{point.x + virtualLeft_, point.y + virtualTop_};
             const bool sameScreen = MonitorFromRect(&screenPanel, MONITOR_DEFAULTTONEAREST) ==
@@ -235,7 +241,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
 
     if (DismissQuickNavigationMenuAtPoint(point)) return true;
     if (HandleQuickNavigationToolbarClick(point)) return true;
-    if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None)
+    if (UseQuickNavigationList() || quickNavigation_->menu != QuickNavigationMenu::None)
         return HandleQuickNavigationListClick(point);
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
@@ -257,6 +263,25 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
             point))
         return true;
 
+    if (!searching)
+    {
+        const QuickNavigationContentModel model =
+            BuildQuickNavigationContentModel();
+        for (size_t sectionIndex = 0;
+            sectionIndex < model.sections.size();
+            ++sectionIndex)
+        {
+            const RECT add = GetQuickNavigationSectionAddRect(
+                overlay, sectionIndex, model);
+            if (!PtInRect(&add, point))
+                continue;
+            ShowQuickNavigationFavoriteAddMenu({
+                point.x + virtualLeft_,
+                point.y + virtualTop_});
+            return true;
+        }
+    }
+
     if (!searching &&
         GetQuickNavigationViewMode() ==
             QuickNavigationDesktopViewMode::Initial)
@@ -277,12 +302,12 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 model.sections[sectionIndex].label;
             if (label.size() == 1)
             {
-                quickNavigationInitialJumpSelection_ =
+                quickNavigation_->initialJumpSelection =
                     snowdesktop::
                         quick_navigation_rules::
                             InitialJumpBucketIndex(
                                 label.front());
-                quickNavigationInitialJumpOpen_ =
+                quickNavigation_->initialJumpOpen =
                     true;
                 ResetQuickNavigationKeyboardTarget();
                 InvalidateQuickNavigationWindow();
@@ -291,11 +316,12 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         }
     }
 
-    if (!everythingSearchAvailable_ && searching)
+    if (!quickNavigation_->everythingSearchAvailable && searching)
     {
         std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
         bool onNotice = false;
-        if (entries.empty() && quickNavigationEverythingResults_.empty())
+        if (entries.empty() && quickNavigation_->appResultIndices.empty() &&
+            quickNavigation_->everythingResults.empty())
         {
             onNotice = true;
         }
@@ -310,13 +336,13 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
             const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
             const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
                 QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
-            const int appSectionHeight = quickNavigationAppResultIndices_.empty()
+            const int appSectionHeight = quickNavigation_->appResultIndices.empty()
                 ? 0
                 : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
                     (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
             const int listHeaderTop = content.top +
                 QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
-                + appSectionHeight - quickNavigationScrollOffset_;
+                + appSectionHeight - quickNavigation_->scrollOffset;
             RECT noticeHeader = MakeRect(
                 content.left + QuickNavScale(8),
                 listHeaderTop,
@@ -326,7 +352,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         }
         if (onNotice)
         {
-            if (!quickNavigationAppsIndexed_)
+            if (!quickNavigation_->appsIndexed)
             {
                 StartQuickNavigationAppIndexing();
                 InvalidateQuickNavigationWindow();
@@ -441,6 +467,24 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                         nullptr, launchPath);
                 });
         }
+        else if (entry.kind == QuickNavigationEntry::Kind::PathFavorite &&
+            !entry.path.empty())
+        {
+            const std::wstring launchPath = entry.path;
+            CloseQuickNavigationThen(
+                [this, launchPath]() {
+                    LaunchPathWithShortcutPolicy(
+                        nullptr, launchPath);
+                });
+        }
+        else if (entry.kind ==
+            QuickNavigationEntry::Kind::ApplicationFavorite)
+        {
+            const auto* favoriteAppEntry =
+                FindQuickNavigationAppEntryByParsingName(entry.path);
+            if (favoriteAppEntry)
+                CloseQuickNavigationThenLaunchApp(*favoriteAppEntry);
+        }
         return true;
     }
 
@@ -449,12 +493,12 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
 
 bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
 {
-    if (!quickNavigationOpen_)
+    if (!quickNavigation_->open)
         return false;
     if (IsLuaLogicalSlotPickerOpen())
         return true;
     if (DismissQuickNavigationMenuAtPoint(point)) return true;
-    if (quickNavigationMenu_ != QuickNavigationMenu::None) return true;
+    if (quickNavigation_->menu != QuickNavigationMenu::None) return true;
     if (UseQuickNavigationList()) return HandleQuickNavigationListClick(point, true, screenPoint);
 
     const QuickNavigationAppEntry* appEntry = nullptr;
@@ -471,7 +515,7 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
         return true;
     }
 
-    const RECT overlay = quickNavigationRect_;
+    const RECT overlay = quickNavigation_->rect;
     const RECT content = GetQuickNavigationContentRect(overlay);
     if (!PtInRect(&content, point))
         return false;
@@ -493,7 +537,7 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
 
         const QuickNavigationEntry selectedEntry =
             std::move(entries[i]);
-        quickNavigationRenameItemRect_ =
+        quickNavigation_->renameItemRect =
             itemRect;
 
         if (selectedEntry.kind ==
@@ -531,6 +575,34 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
                 true);
             return true;
         }
+
+        if (selectedEntry.kind ==
+            QuickNavigationEntry::Kind::PathFavorite)
+        {
+            QuickNavigationEverythingEntry favoriteEntry;
+            favoriteEntry.name = selectedEntry.name;
+            favoriteEntry.path = selectedEntry.path;
+            favoriteEntry.isDirectory = selectedEntry.isDirectory;
+            favoriteEntry.systemIconIndex =
+                GetQuickNavigationEverythingIconIndex(
+                    favoriteEntry.path,
+                    favoriteEntry.isDirectory);
+            ShowQuickNavigationEverythingContextMenu(
+                favoriteEntry, screenPoint);
+            return true;
+        }
+
+        if (selectedEntry.kind ==
+            QuickNavigationEntry::Kind::ApplicationFavorite)
+        {
+            const auto* favoriteAppEntry =
+                FindQuickNavigationAppEntryByParsingName(
+                    selectedEntry.path);
+            if (favoriteAppEntry)
+                ShowQuickNavigationAppContextMenu(
+                    *favoriteAppEntry, screenPoint);
+            return true;
+        }
         return true;
     }
 
@@ -542,8 +614,8 @@ bool DesktopApp::CopyTextToClipboard(const std::wstring& text)
     if (text.empty())
         return false;
 
-    HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
+    HWND owner = quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd
         : hwnd_;
     if (!OpenClipboard(owner))
         return false;
@@ -888,6 +960,9 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
             : MF_STRING | MF_GRAYED,
         kAppReveal, _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kAppCreateShortcut, _LW("app.nav.send_to_desktop"));
+    const auto favorite =
+        CreateQuickNavigationFavoriteFromApp(entry);
+    AppendQuickNavigationFavoriteMenuItem(menu, favorite);
 
     SetMenuItemIcon(menu, kAppOpen, L"");
     SetMenuItemIcon(menu, kAppRunAsAdministrator,
@@ -895,8 +970,8 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
         MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kAppReveal, L"");
     SetMenuItemIcon(menu, kAppCreateShortcut, L"");
-    HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
+    HWND owner = quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd
         : hwnd_;
     snowdesktop::private_pointer::SetInputForeground(owner);
     const UINT command = ShowModernMenu(menu, screenPoint, owner);
@@ -930,6 +1005,10 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     case kAppReveal:
         snowdesktop::item_location::Reveal(
             hwnd_, entry.parsingName);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(favorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     default:
         break;
@@ -979,6 +1058,12 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         _LW("app.menu.open_file_location"));
     AppendMenuW(menu, MF_STRING, kEverythingCreateShortcut, _LW("app.nav.send_to_desktop"));
     AppendMenuW(menu, MF_STRING, kEverythingCopyPath, _LW("app.nav.copy_path"));
+    auto favorite =
+        CreateQuickNavigationFavoriteFromPath(entry.path, entry.name);
+    favorite.type = entry.isDirectory
+        ? QuickNavigationFavoriteType::Folder
+        : QuickNavigationFavoriteType::File;
+    AppendQuickNavigationFavoriteMenuItem(menu, favorite);
 
     SetMenuItemIcon(menu, kEverythingOpen, L"");
     SetMenuItemIcon(menu, kEverythingRunAsAdministrator,
@@ -987,8 +1072,8 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     SetMenuItemIcon(menu, kEverythingReveal, L"");
     SetMenuItemIcon(menu, kEverythingCreateShortcut, L"");
     SetMenuItemIcon(menu, kEverythingCopyPath, L"");
-    HWND owner = quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
+    HWND owner = quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd
         : hwnd_;
     snowdesktop::private_pointer::SetInputForeground(owner);
     const UINT command = ShowModernMenu(menu, screenPoint, owner);
@@ -1031,6 +1116,10 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     case kEverythingCreateShortcut:
         CreateDesktopShortcutForPath(entry.path, entry.isDirectory,
             entry.name.empty() ? FileNameFromPath(entry.path) : entry.name);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(favorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     default:
         break;

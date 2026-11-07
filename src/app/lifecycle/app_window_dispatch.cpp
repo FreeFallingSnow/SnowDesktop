@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/settings_window.h"
+#include "app/dock/persistent_dock_host.h"
 #include "ui/input/private_pointer.h"
 #include "desktop/desktop_keyboard_rules.h"
 #include "settings/animation_settings.h"

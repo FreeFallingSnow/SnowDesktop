@@ -17,7 +17,9 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cctype>
+#include <cwctype>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -496,6 +498,16 @@ void ReadSize(const JsonValue& root, const char* name, int& columns, int& rows)
 
 std::string ManifestJson(const PackageManifest& manifest)
 {
+    auto writeSize = [](std::ostringstream& out, int columns, int rows,
+        const std::optional<AspectGridSize>& aspect) {
+        out << '{';
+        if (aspect)
+            out << (aspect->fixedRows ? "\"rows\": " : "\"columns\": ")
+                << (aspect->fixedRows ? rows : columns)
+                << ", \"aspectRatio\": " << std::setprecision(17) << aspect->ratio;
+        else out << "\"columns\": " << columns << ", \"rows\": " << rows;
+        out << '}';
+    };
     auto appendArray = [](std::ostringstream& out,
         const std::vector<std::string>& values) {
         out << '[';
@@ -535,8 +547,18 @@ std::string ManifestJson(const PackageManifest& manifest)
         << "  \"description\": \"" << JsonEscape(manifest.description) << "\",\n"
         << "  \"author\": \"" << JsonEscape(manifest.author) << "\",\n"
         << "  \"license\": \"" << JsonEscape(manifest.license) << "\",\n"
-        << "  \"preview\": \"" << JsonEscape(manifest.preview) << "\",\n"
-        << "  \"previewData\": {\"storage\": {";
+        << "  \"preview\": \"" << JsonEscape(manifest.preview) << "\",\n";
+    if (manifest.previewGallery)
+    {
+        out << "  \"previewGallery\": [";
+        for (std::size_t index = 0; index < manifest.previewGallery->size(); ++index)
+        {
+            if (index) out << ',';
+            out << '"' << JsonEscape((*manifest.previewGallery)[index]) << '"';
+        }
+        out << "],\n";
+    }
+    out << "  \"previewData\": {\"storage\": {";
     appendStringMap(out, manifest.previewStorage);
     out << "}, \"storageKeys\": {";
     appendStringMap(out, manifest.previewStorageKeys);
@@ -556,17 +578,35 @@ std::string ManifestJson(const PackageManifest& manifest)
             << JsonEscape(variant.description)
             << "\", \"descriptionKey\": \""
             << JsonEscape(variant.descriptionKey)
-            << "\", \"size\": {\"columns\": " << variant.columns
-            << ", \"rows\": " << variant.rows << "}, \"storage\": {";
+            << "\", \"size\": ";
+        writeSize(out, variant.columns, variant.rows, variant.aspectSize);
+        out << ", \"storage\": {";
         appendStringMap(out, variant.storage);
         out << "}, \"storageKeys\": {";
         appendStringMap(out, variant.storageKeys);
         out << "}}";
     }
-    out << "]},\n"
-        << "  \"defaultSize\": {\"columns\": " << manifest.defaultColumns
-        << ", \"rows\": " << manifest.defaultRows << "},\n"
-        << "  \"minSize\": {\"columns\": " << manifest.minColumns
+    out << "]},\n  \"creationPresets\": [";
+    for (std::size_t i = 0; i < manifest.creationPresets.size(); ++i)
+    {
+        if (i) out << ", ";
+        const auto& preset = manifest.creationPresets[i];
+        out << "{\"id\": \"" << JsonEscape(preset.id)
+            << "\", \"title\": \"" << JsonEscape(preset.title)
+            << "\", \"titleKey\": \"" << JsonEscape(preset.titleKey)
+            << "\", \"values\": {";
+        appendStringMap(out, preset.values);
+        out << '}';
+        if (preset.size)
+        {
+            out << ", \"size\": ";
+            writeSize(out, preset.size->columns, preset.size->rows, preset.size->aspect);
+        }
+        out << '}';
+    }
+    out << "],\n  \"defaultSize\": ";
+    writeSize(out, manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize);
+    out << ",\n  \"minSize\": {\"columns\": " << manifest.minColumns
         << ", \"rows\": " << manifest.minRows << "},\n"
         << "  \"maxSize\": {\"columns\": " << manifest.maxColumns
         << ", \"rows\": " << manifest.maxRows << "},\n"
@@ -951,6 +991,8 @@ PackageManifest LocalizedManifest(PackageManifest manifest,
         };
         translate(manifest.previewIntroductionKey,
             manifest.previewIntroduction);
+        for (auto& preset : manifest.creationPresets)
+            translate(preset.titleKey, preset.title);
         for (auto& helper : manifest.nativeHelpers)
         {
             translate(helper.purposeKey, helper.purpose);
@@ -1530,6 +1572,14 @@ bool WidgetPackageValidator::ReadManifest(
         ReadString(root, "publisher", manifest.author);
     ReadString(root, "license", manifest.license);
     ReadString(root, "preview", manifest.preview);
+    if (root.Find("previewGallery"))
+    {
+        bool valid = true;
+        manifest.previewGallery = ReadStringArray(root, "previewGallery", valid);
+        if (!valid || manifest.previewGallery->size() > 7)
+            report.Add(ValidationSeverity::Error, "manifest.previewGallery", manifestPath,
+                "previewGallery must be an array of at most seven image paths");
+    }
     if (const JsonValue* previewData = root.Find("previewData"))
     {
         if (!previewData->IsObject())
@@ -1671,6 +1721,11 @@ bool WidgetPackageValidator::ReadManifest(
                             variant.descriptionKey);
                         ReadSize(value, "size",
                             variant.columns, variant.rows);
+                        std::string sizeError;
+                        if (!ReadAspectGridSize(value.Find("size"), variant.columns,
+                                variant.rows, variant.aspectSize, sizeError))
+                            report.Add(ValidationSeverity::Error,
+                                "manifest.aspectSize", manifestPath, sizeError);
                         if (variant.id.empty() || variant.id.size() > 64 ||
                             !std::all_of(variant.id.begin(), variant.id.end(),
                                 [](unsigned char ch) {
@@ -1696,8 +1751,85 @@ bool WidgetPackageValidator::ReadManifest(
             }
         }
     }
+    if (const JsonValue* presets = root.Find("creationPresets"))
+    {
+        if (!presets->IsArray() || presets->array.size() > 32)
+            report.Add(ValidationSeverity::Error, "manifest.creationPresets",
+                manifestPath, "creationPresets must be an array of at most 32 entries");
+        else
+        {
+            std::set<std::string> ids;
+            for (const auto& item : presets->array)
+            {
+                CreationPreset preset;
+                ReadString(item, "id", preset.id);
+                ReadString(item, "title", preset.title);
+                ReadString(item, "titleKey", preset.titleKey);
+                if (const auto* size = item.Find("size"))
+                {
+                    WidgetSizeDefinition definition;
+                    ReadSize(item, "size", definition.columns, definition.rows);
+                    std::string sizeError;
+                    const auto* c = size->Find("columns");
+                    const auto* r = size->Find("rows");
+                    const bool validGrid = size->Find("aspectRatio") ||
+                        (c && r && c->IsNumber() && r->IsNumber() &&
+                         std::isfinite(c->number) && std::isfinite(r->number) &&
+                         c->number >= 1 && c->number <= 8 && r->number >= 1 && r->number <= 8 &&
+                         c->number == std::floor(c->number) && r->number == std::floor(r->number));
+                    if (!size->IsObject() || !ReadAspectGridSize(size, definition.columns,
+                            definition.rows, definition.aspect, sizeError) ||
+                        !validGrid ||
+                        definition.columns < 1 || definition.columns > 8 ||
+                        definition.rows < 1 || definition.rows > 8)
+                        report.Add(ValidationSeverity::Error, "manifest.creationPresetSize",
+                            manifestPath, sizeError.empty() ? "creation preset size must define a valid grid or aspect size" : sizeError);
+                    preset.size = definition;
+                }
+                if (!item.IsObject() || preset.id.empty() || preset.id.size() > 64 ||
+                    !std::all_of(preset.id.begin(), preset.id.end(), [](unsigned char ch) {
+                        return std::isalnum(ch) || ch == '-' || ch == '_'; }) ||
+                    !ids.insert(preset.id).second || preset.title.empty())
+                {
+                    report.Add(ValidationSeverity::Error, "manifest.creationPreset",
+                        manifestPath, "creation presets require a unique ASCII id and fallback title");
+                    continue;
+                }
+                const auto* values = item.Find("values");
+                if (!values || !values->IsObject() || values->object.empty() || values->object.size() > 64)
+                {
+                    report.Add(ValidationSeverity::Error, "manifest.creationPresetValues",
+                        manifestPath, "creation preset values must contain 1 to 64 ordinary setting strings");
+                    continue;
+                }
+                std::size_t bytes = 0;
+                for (const auto& [key, value] : values->object)
+                {
+                    if (key.empty() || key.size() > 128 || key.find('\0') != std::string::npos || key.starts_with("__") ||
+                        !value.IsString() || value.string.size() > 16 * 1024)
+                    {
+                        report.Add(ValidationSeverity::Error, "manifest.creationPresetValue",
+                            manifestPath, "creation presets accept only ordinary setting names and string values");
+                        continue;
+                    }
+                    bytes += key.size() + value.string.size();
+                    preset.values[key] = value.string;
+                }
+                if (bytes > 64 * 1024)
+                    report.Add(ValidationSeverity::Error, "manifest.creationPresetQuota",
+                        manifestPath, "creation preset values exceed 64 KiB");
+                manifest.creationPresets.push_back(std::move(preset));
+            }
+        }
+    }
     ReadInteger(root, "refreshIntervalMs", manifest.refreshIntervalMs);
     ReadSize(root, "defaultSize", manifest.defaultColumns, manifest.defaultRows);
+    {
+        std::string sizeError;
+        if (!ReadAspectGridSize(root.Find("defaultSize"), manifest.defaultColumns,
+                manifest.defaultRows, manifest.defaultAspectSize, sizeError))
+            report.Add(ValidationSeverity::Error, "manifest.aspectSize", manifestPath, sizeError);
+    }
     ReadSize(root, "minSize", manifest.minColumns, manifest.minRows);
     ReadSize(root, "maxSize", manifest.maxColumns, manifest.maxRows);
     bool arraysValid = true;
@@ -1708,6 +1840,20 @@ bool WidgetPackageValidator::ReadManifest(
         ReadStringArray(root, "networkDomains", arraysValid);
     manifest.requiredFeatures =
         ReadStringArray(root, "requiredFeatures", arraysValid);
+    const bool adaptiveSize = manifest.defaultAspectSize.has_value() ||
+        std::any_of(manifest.previewVariants.begin(), manifest.previewVariants.end(),
+            [](const auto& variant) { return variant.aspectSize.has_value(); }) ||
+        std::any_of(manifest.creationPresets.begin(), manifest.creationPresets.end(),
+            [](const auto& preset) { return preset.size.has_value(); });
+    if (adaptiveSize && std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+            "widget.size.aspectRatio") == manifest.requiredFeatures.end())
+        report.Add(ValidationSeverity::Error, "manifest.aspectSizeFeature", manifestPath,
+            "aspect sizes and per-preset sizes require widget.size.aspectRatio");
+    if (!manifest.creationPresets.empty() &&
+        std::find(manifest.requiredFeatures.begin(), manifest.requiredFeatures.end(),
+            "widget.creationPresets") == manifest.requiredFeatures.end())
+        report.Add(ValidationSeverity::Error, "manifest.creationPresetFeature",
+            manifestPath, "creationPresets require widget.creationPresets");
     manifest.optionalFeatures =
         ReadStringArray(root, "optionalFeatures", arraysValid);
     {
@@ -1944,8 +2090,17 @@ bool WidgetPackageValidator::ReadManifest(
             manifestPath, "a license identifier is recommended");
     for (auto& variant : manifest.previewVariants)
     {
+        if (variant.columns == 0 && variant.rows == 0 && !variant.aspectSize)
+            variant.aspectSize = manifest.defaultAspectSize;
         if (variant.columns == 0) variant.columns = manifest.defaultColumns;
         if (variant.rows == 0) variant.rows = manifest.defaultRows;
+        if (variant.aspectSize)
+        {
+            const auto span = ResolveWidgetSize({variant.columns, variant.rows, variant.aspectSize},
+                StandardWidgetSizeGridMetrics(), manifest.minColumns, manifest.minRows,
+                manifest.maxColumns, manifest.maxRows);
+            variant.columns = span.first; variant.rows = span.second;
+        }
         if (variant.columns < manifest.minColumns ||
             variant.rows < manifest.minRows ||
             (manifest.maxColumns > 0 &&
@@ -1960,6 +2115,13 @@ bool WidgetPackageValidator::ReadManifest(
     if (!arraysValid)
         report.Add(ValidationSeverity::Error, "manifest.array", manifestPath,
             "permissions, domains, and feature declarations must be string arrays");
+    for (const auto& preset : manifest.creationPresets)
+        if (preset.size && !preset.size->aspect &&
+            (preset.size->columns < manifest.minColumns || preset.size->rows < manifest.minRows ||
+             (manifest.maxColumns > 0 && preset.size->columns > manifest.maxColumns) ||
+             (manifest.maxRows > 0 && preset.size->rows > manifest.maxRows)))
+            report.Add(ValidationSeverity::Error, "manifest.creationPresetSize", manifestPath,
+                "creation preset grid sizes must stay within minSize and maxSize");
     std::set<std::string> uniquePermissions;
     for (const auto& permission : manifest.permissions)
     {
@@ -2193,6 +2355,30 @@ ValidationReport WidgetPackageValidator::ValidateDirectory(
             root / Utf8ToWide(manifest.preview), ec)))
         report.Add(ValidationSeverity::Error, "package.previewMissing",
             manifest.preview, "preview path is unsafe or missing");
+    if (manifest.previewGallery)
+    {
+        std::set<std::wstring> unique;
+        for (const auto& image : *manifest.previewGallery)
+        {
+            const std::filesystem::path relative = Utf8ToWide(image);
+            auto normalized = relative.lexically_normal().generic_wstring();
+            std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+            auto extension = relative.extension().wstring();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+            ec.clear();
+            const auto path = root / relative;
+            const bool regular = std::filesystem::is_regular_file(path, ec);
+            const auto size = regular && !ec ? std::filesystem::file_size(path, ec) : 0;
+            if (!IsSafeRelativePath(relative) || !unique.insert(normalized).second ||
+                (extension != L".png" && extension != L".jpg" &&
+                 extension != L".jpeg" && extension != L".gif") ||
+                !regular || ec || size == 0 || size >= 1024 * 1024)
+                report.Add(ValidationSeverity::Error, "package.previewGallery", relative,
+                    "gallery images must be unique safe relative PNG/JPG/GIF files, nonempty and smaller than 1 MiB");
+        }
+    }
     std::size_t fontCount = 0;
     for (const auto& [name, resource] : manifest.resources)
     {
@@ -3018,20 +3204,26 @@ SteamLibrarySubscriptionHistory WidgetPackageManager::SteamLibraryHistory() cons
 std::optional<InstalledPackage> WidgetPackageManager::Resolve(
     const std::string& packageId) const
 {
+    const auto* package = FindResolved(packageId);
+    return package ? std::optional<InstalledPackage>(*package) : std::nullopt;
+}
+
+const InstalledPackage* WidgetPackageManager::FindResolved(
+    const std::string& packageId) const
+{
     if (const auto registry = registry_.find(packageId);
         registry != registry_.end() && !registry->second.enabled &&
         !developmentOverrides_.contains(packageId))
-        return std::nullopt;
+        return nullptr;
     const InstalledPackage* builtinFallback = nullptr;
     for (const auto& package : packages_)
     {
         if (package.manifest.id != packageId) continue;
-        if (package.active && package.enabled) return package;
+        if (package.active && package.enabled) return &package;
         if (package.builtin && package.enabled && !builtinFallback)
             builtinFallback = &package;
     }
-    if (builtinFallback) return *builtinFallback;
-    return std::nullopt;
+    return builtinFallback;
 }
 
 std::optional<InstalledPackage> WidgetPackageManager::ResolveSelected(

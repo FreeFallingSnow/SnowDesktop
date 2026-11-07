@@ -1,7 +1,9 @@
 #include "pch.h"
+#include <algorithm>
+#include "settings/settings_snapshot.h"
 #include "animation_performance_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "settings/animation_settings.h"
+#include "settings/animation_preferences.h"
 #include "common/l10n.h"
 
 #include <array>

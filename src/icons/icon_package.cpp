@@ -1,4 +1,5 @@
 #include "icon_package.h"
+#include "common/json_value.h"
 #include "icon_library.h"
 #include "icon_image_codec.h"
 #include "icon_pack_archive.h"

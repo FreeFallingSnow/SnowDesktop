@@ -1,5 +1,6 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/utils.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "widgets/single_cell_widget_rules.h"
@@ -93,7 +94,7 @@ bool DesktopApp::IsItemInAnyWidget(const DesktopItem& item) const
  */
 float DesktopApp::GetWidgetCellScale(const DesktopWidget& widget) const
 {
-    return widget.cellScale;
+    return ResolveLuaWidgetFrameOwner(widget).cellScale;
 }
 
 int DesktopApp::GetComponentEdgeMargin(
@@ -109,6 +110,9 @@ int DesktopApp::GetComponentEdgeMargin(
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
+    const auto& owner = ResolveLuaWidgetFrameOwner(widget);
+    if (&owner != &widget)
+        return ResolveLuaWidgetContent(&owner) == &widget ? GetStandaloneWidgetFrameRect(owner) : RECT{};
     if (snowdesktop::single_cell_widget::IsDesktopSingleCell(widget) && widget.singleCellIconMode)
     {
         if (IsRectEmpty(&widget.bounds)) return widget.bounds;
@@ -299,7 +303,8 @@ RECT DesktopApp::GetStandaloneWidgetResizeHandleRect(const DesktopWidget& widget
     const float barHeight = CurrentPersonalization().barHeight;
     const int preferredWidth = ScaleWidgetCu(
         barHeight, GetWidgetCellScale(widget));
-    const int handleWidth = widget.showTitle
+    const auto* content = ResolveLuaWidgetContent(&widget);
+    const int handleWidth = (content ? content->showTitle : widget.showTitle)
         ? preferredWidth
         : snowdesktop::widget_chrome_rules::CompactEdgeHandleWidth(
             handle.right - handle.left, preferredWidth);
@@ -323,13 +328,16 @@ WidgetHit DesktopApp::HitTestStandaloneWidget(size_t widgetIndex, POINT pt) cons
     const DesktopWidget& widget = widgets_[widgetIndex];
     if (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)
         return WidgetHit::None;
-    if (widget.type != DesktopWidgetType::LuaScript) return WidgetHit::None;
+    if (!IsLuaDesktopSurface(widget) || IsGroupedWidget(widget)) return WidgetHit::None;
 
     RECT frame = GetStandaloneWidgetFrameRect(widget);
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
     RECT resize = GetStandaloneWidgetResizeHandleRect(widget);
-    if (PtInRect(&resize, pt)) return WidgetHit::ResizeHandle;
-    if (!snowdesktop::widget_chrome_rules::HasBottomBar(widget.showTitle))
+    if (PtInRect(&resize, pt) && (widget.type != DesktopWidgetType::LuaStack ||
+        widget.minGridSpan.columns != widget.maxGridSpan.columns || widget.minGridSpan.rows != widget.maxGridSpan.rows))
+        return WidgetHit::ResizeHandle;
+    const auto* content = ResolveLuaWidgetContent(&widget);
+    if (!snowdesktop::widget_chrome_rules::HasBottomBar(content ? content->showTitle : widget.showTitle))
     {
         RECT move = GetStandaloneWidgetCompactMoveHandleRect(widget);
         if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
@@ -350,6 +358,24 @@ size_t DesktopApp::HitTestStandaloneWidgetIndex(POINT pt) const
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         size_t i = n - 1;
+        const auto& widget = widgets_[i];
+        if (IsGroupedWidget(widget) || (desktopIconsHidden_ && !widget.keepWhenDesktopHidden)) continue;
+        if (!IsLuaDesktopSurface(widget))
+        {
+            RECT frame = widget.bounds;
+            for (const auto& container : containers_)
+            {
+                const auto* native = dynamic_cast<const WidgetContainer*>(container.get());
+                if (native && native->GetWidgetData() == &widget)
+                {
+                    frame = native->GetFrameRect();
+                    break;
+                }
+            }
+            // A foreground native card also blocks Lua hover/cursor hits.
+            if (!IsRectEmpty(&frame) && PtInRect(&frame, pt)) return static_cast<size_t>(-1);
+            continue;
+        }
         if (HitTestStandaloneWidget(i, pt) != WidgetHit::None)
             return i;
     }

@@ -31,6 +31,8 @@
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
 #include "presence_lifetime.h"
+#include "widget_multiplayer.h"
+#include "widget_multiplayer_wire.h"
 #include "workshop_project.h"
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -207,8 +209,12 @@ int PrintConfiguration()
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
               << ",\"componentWorkflowProtocolVersion\":1"
+              << ",\"componentPreviewGalleryProtocolVersion\":1"
               << ",\"iconPackWorkflowProtocolVersion\":1"
-              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]"
+              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.icon-pack.v1\",\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\""
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? ",\"multiplayer.lobby.v2\"" : "") << ']'
+              << ",\"widgetMultiplayerProtocolVersion\":"
+              << (SNOWDESKTOP_HAS_STEAMWORKS ? snowdesktop::steam_widget_multiplayer::kRoomProtocolVersion : 0)
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";
@@ -1078,8 +1084,31 @@ void PrintComponentPlan(
         WorkshopAssetSourceName(project.publishPreferences.previewSource));
     std::cout << ",\"path\":";
     if (plan.preview)
-        WriteJsonString(std::cout, WideToUtf8(plan.preview->wstring()));
+        WriteJsonString(std::cout, WideToUtf8((plan.preparedPreviews && plan.preparedPreviews->primary ?
+            plan.preparedPreviews->primary->source : *plan.preview).wstring()));
     else std::cout << "null";
+    if (plan.preparedPreviews && plan.preparedPreviews->primary)
+    {
+        std::cout << ",\"sha256\":";
+        WriteJsonString(std::cout, plan.preparedPreviews->primary->sha256);
+    }
+    std::cout << ",\"gallery\":";
+    if (!plan.previewGallery) std::cout << "null";
+    else
+    {
+        std::cout << '[';
+        for (std::size_t index = 0; index < plan.previewGallery->size(); ++index)
+        {
+            if (index) std::cout << ',';
+            const auto& image = (*plan.previewGallery)[index];
+            std::cout << "{\"path\":";
+            WriteJsonString(std::cout, WideToUtf8(image.source.wstring()));
+            std::cout << ",\"sha256\":";
+            WriteJsonString(std::cout, image.sha256);
+            std::cout << '}';
+        }
+        std::cout << ']';
+    }
     std::cout << "},\"tags\":{\"source\":";
     WriteJsonString(std::cout,
         WorkshopAssetSourceName(project.publishPreferences.tagsSource));
@@ -1680,6 +1709,16 @@ int wmain(int argc, wchar_t* argv[])
     }
     if (command == L"configuration" && argc == 2)
         return PrintConfiguration();
+    if (command == L"widget-multiplayer" && argc == 4)
+    {
+#if SNOWDESKTOP_HAS_STEAMWORKS
+        SteamApiSession session;
+        if (!session.IsInitialized()) return 4;
+        return snowdesktop::steam_bridge::RunWidgetMultiplayer(argc, argv);
+#else
+        return kSteamworksUnavailable;
+#endif
+    }
     if (command == L"presence")
     {
 #if SNOWDESKTOP_HAS_STEAMWORKS

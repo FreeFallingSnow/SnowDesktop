@@ -1,5 +1,11 @@
 local album = module.require("modules/album.lua")
 local sample = resource.image("sample")
+local fluent={
+    fill=utf8.char(0xE42B), -- crop_20_regular
+    remove=utf8.char(0xF369), -- dismiss_20_regular
+    clear=utf8.char(0xF34C), -- delete_20_regular
+    manage=utf8.char(0xE725), -- image_multiple_20_regular
+}
 
 local function copy()
     return {
@@ -40,6 +46,7 @@ local function button(key, label, row, active, icon)
         action={id=key},accessibility={label=label},tooltip=label}
     if key=="previous" or key=="next" then options.events={doubleClick={id=key}} end
     if icon then options.label=nil;options.glyph=utf8.char(glyphs[icon]);options.iconFont="fa";return view.iconButton(options) end
+    options.padding={horizontal=row*0.32}
     return view.button(options)
 end
 
@@ -158,7 +165,7 @@ local function panel(context,m)
         if a.error then children[#children+1]=text("clear.error",c[a.error] or c.error,row,true) end
         children[#children+1]=view.row({key="clear.actions",width="fill",height=row,gap=row*0.25,
             children={button("clear.cancel",c.cancel,row),button("clear.confirm",c.clearAll,row,not m.preview)}})
-        return view.column({key="clear",width="fill",height="fill",padding=row*0.6,gap=row*0.4,children=children})
+        return view.column({key="clear",width="fill",height="fill",padding=row*0.2,gap=row*0.4,children=children})
     end
     local header={}
     if a:canChangeMode() then
@@ -234,12 +241,29 @@ local function panel(context,m)
             button("page.previous",c.previous,row,page>1),text("page",tostring(page).." / "..math.ceil(total/pageSize),row),
             button("page.next",c.next,row,page*pageSize<total)}})
     end
-    header[#header+1]=view.scroll({key="list."..m.tab..":"..m.page,width="fill",height="fill",children={
-        view.column({key="items",width="fill",height="auto",gap=row*0.25,children=items})}})
     local footer={button("settings",c.settings,row,true)}
     if #a.sources>0 or a.importing or a.picking then footer[#footer+1]=button("clear",c.clearAll,row,not m.preview) end
-    header[#header+1]=view.row({key="footer",width="fill",height=row,gap=row*0.25,children=footer})
-    return view.column({key="album.panel",width="fill",height="fill",padding=row*0.6,gap=row*0.4,children=header})
+    local footerRow=view.row({key="footer",width="fill",height=row,flexShrink=0,gap=row*0.25,children=footer})
+    local list=view.column({key="items",width="fill",height="auto",gap=row*0.25,children=items})
+    -- A work-area constraint or large text can leave no room for a fixed list.
+    -- Scroll the whole form instead of committing a zero-height inner viewport.
+    local fixedRows=#header+1
+    if layout.contentHeight()<row*(fixedRows*1.4+2.4) then
+        header[#header+1]=list
+        header[#header+1]=footerRow
+        return view.scroll({key="album.panel.scroll."..m.tab..":"..m.page,width="fill",height="fill",children={
+            view.column({key="album.panel.body",width="fill",height="auto",padding=row*0.2,gap=row*0.4,children=header})}})
+    end
+    -- Keep fixed controls inset, while the viewport reaches the host gutter.
+    for i,control in ipairs(header) do
+        header[i]=view.column({key=control.key..".inset",width="fill",height="auto",flexShrink=0,
+            padding={horizontal=row*0.2},children={control}})
+    end
+    list.padding={horizontal=row*0.2}
+    header[#header+1]=view.scroll({key="list."..m.tab..":"..m.page,width="fill",height="fill",children={list}})
+    footerRow.padding={horizontal=row*0.2}
+    header[#header+1]=footerRow
+    return view.column({key="album.panel",width="fill",height="fill",padding={vertical=row*0.2},gap=row*0.4,children=header})
 end
 
 local function event(context,m,e)
@@ -312,10 +336,10 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         if request.id~="album.menu" then return nil end
         local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
         m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
-        return ui.menu({{id="fill",label=l10n.tr("album.fill"),checked=enabled("fill",true)},
-            {id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
-            {id="clear",label=copy().clearAll,enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
-            {id="manage",label=copy().manage}})
+        return ui.menu({{id="fill",label=l10n.tr("album.fill"),icon=fluent.fill,iconFont="fluent",checked=enabled("fill",true)},
+            {id="removePhoto",label=copy().removePhoto,icon=fluent.remove,iconFont="fluent",enabled=photo~=nil and not m.preview},
+            {id="clear",label=copy().clearAll,icon=fluent.clear,iconFont="fluent",enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
+            {id="manage",label=copy().manage,icon=fluent.manage,iconFont="fluent"}})
     end,
     -- The host retires this VM's timers. A named cancel here can target the
     -- replacement VM, which is already set up when hotReload disposes us.

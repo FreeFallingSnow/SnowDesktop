@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
 
 #include "steam/steam_app_identity.h"
 #include "steam/steam_workshop_cache.h"

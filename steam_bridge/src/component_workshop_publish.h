@@ -4,6 +4,7 @@
 #pragma once
 
 #include "package_tool.h"
+#include "component_preview_gallery.h"
 #include "steam_workshop_core.h"
 #include "workshop_project.h"
 
@@ -44,6 +45,8 @@ struct ComponentPublishPlan
     std::string sha256;
     std::vector<SteamWorkshopLocalization> localizations;
     std::optional<std::filesystem::path> preview;
+    std::optional<std::vector<ComponentPreviewImage>> previewGallery;
+    std::shared_ptr<const PreparedComponentPreviews> preparedPreviews;
     std::optional<std::vector<std::string>> tags;
     std::string metadata;
     std::optional<int> visibility;

@@ -17,6 +17,7 @@
 #include <vector>
 #include "widget/runtime/widget_logical_slot.h"
 #include "widget/permissions/widget_permission_state.h"
+#include "widget_size_rules.h"
 
 namespace snowdesktop::widget
 {
@@ -83,8 +84,19 @@ struct PreviewVariant
     std::string descriptionKey;
     int columns = 0;
     int rows = 0;
+    std::optional<AspectGridSize> aspectSize;
     std::unordered_map<std::string, std::string> storage;
     std::unordered_map<std::string, std::string> storageKeys;
+};
+
+/** Ordinary initial settings selected in the component picker, never a theme. */
+struct CreationPreset
+{
+    std::string id;
+    std::string title;
+    std::string titleKey;
+    std::unordered_map<std::string, std::string> values;
+    std::optional<WidgetSizeDefinition> size;
 };
 
 struct NativeHelper
@@ -112,13 +124,17 @@ struct PackageManifest
     std::string author;
     std::string license;
     std::string preview;
+    // Absent preserves the existing Steam gallery; an empty array clears our images.
+    std::optional<std::vector<std::string>> previewGallery;
     std::string previewIntroduction;
     std::string previewIntroductionKey;
     std::unordered_map<std::string, std::string> previewStorage;
     std::unordered_map<std::string, std::string> previewStorageKeys;
     std::vector<PreviewVariant> previewVariants;
+    std::vector<CreationPreset> creationPresets;
     int defaultColumns = 1;
     int defaultRows = 1;
+    std::optional<AspectGridSize> defaultAspectSize;
     int minColumns = 1;
     int minRows = 1;
     int maxColumns = 0;
@@ -357,6 +373,9 @@ public:
         std::string& error,
         const SteamLibrarySubscriptions* libraries = nullptr);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
+    // Synchronous inspection only; invalidated by any catalog mutation.
+    // Callers needing ownership across callbacks must use Resolve instead.
+    const InstalledPackage* FindResolved(const std::string& packageId) const;
     // Selection and inspection do not grant execution of a disabled package.
     std::optional<InstalledPackage> ResolveSelected(const std::string& packageId) const;
     std::optional<std::filesystem::path> ResolveSelectedEntry(const std::string& packageId) const;

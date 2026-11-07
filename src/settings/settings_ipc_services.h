@@ -1,7 +1,7 @@
 #pragma once
 
 #include "settings_ipc_channel.h"
-#include "settings_controller.h"
+#include "settings_controller_interface.h"
 #include "shell/shell_extension_service.h"
 #include "widget/settings/widget_settings_service.h"
 

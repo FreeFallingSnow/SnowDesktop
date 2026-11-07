@@ -57,6 +57,34 @@ Exit codes:
 | 6 | Download or upload timeout |
 | 64 | Invalid command line |
 
+### Shared widget rooms v2
+
+SDK-enabled `configuration` advertises `widgetMultiplayerProtocolVersion: 2`
+and `multiplayer.lobby.v2`. The host also requires the matching Bridge version
+and Steam App ID. The private `widget-multiplayer` worker uses two explicitly
+inherited pipe handles with fixed-size v2 frames and an owned child lifetime.
+The normal JSON CLI protocol remains version 1.
+
+The worker uses an online, entitled Steam user and keeps at most one private
+two-player lobby per host. With the room card shown and Steam running status
+enabled, the host listens in the background and automatically joins valid
+invitations from Steam friends for the current app. With running status off,
+the worker starts when the user creates a room or selects Join in Steam. The
+host accepts the room ID from that explicit Steam request. The worker checks
+the room protocol marker before and after joining. Only the other current
+member can send messages. The application routes messages by package UUID,
+version and source to an authorized Lua instance. The host keeps Steam IDs
+and friend details within its native settings and Bridge boundary. Payloads
+are UTF-8 with a 1024-byte limit and per-direction room quotas.
+When a room ends with Steam running status off, the host closes the worker.
+The host reserves the `snowdesktop.room.participation` channel for readiness
+announcements. A `+` or `-` prefix followed by the package channel announces
+or withdraws the sender's participation. A host still waiting for readiness
+can send `?` with the same package channel. A participating peer answers with
+`+`, even if it has already seen the requester's readiness. These messages
+are handled by the host and never delivered to Lua. The Bridge uses the same
+v2 lobby envelope.
+
 ## Content contract
 
 One Workshop `PublishedFileId` represents one SnowDesktop package. Its content
@@ -143,6 +171,38 @@ the corresponding project values, while Steam preview/tags preserve the
 remote values. Steam-managed sources are invalid for creation. When the packed
 SHA-256 is unchanged, listing, preview, tag, and visibility changes use a
 metadata-only update unless `--force-content` is specified.
+
+### Component preview gallery
+
+`configuration.componentPreviewGalleryProtocolVersion = 1` advertises this
+additive publishing contract. Component schema/API versions remain 2; this
+metadata adds no runtime dependency. Use matching bundled `snowwidget` and
+bridge versions when publishing a gallery.
+
+The manifest keeps `preview` as the primary cover and may add `previewGallery`,
+an ordered array of up to seven package-relative PNG/JPG/GIF paths. Each
+additional image must be nonempty and strictly smaller than 1 MiB. Paths must
+be safe, distinct under Windows path comparison, and present in the package.
+The primary cover is separate from the array. All images form one public
+Steam gallery; there are no per-language image variants.
+
+With local preview policy, `component-plan.preview.gallery` is an ordered
+array of source image paths and prepared SHA-256 hashes. Source paths remain
+usable after the offline CLI exits; frozen copies live only for that attempt.
+`null` preserves additional
+previews (including legacy manifests); `[]` removes only this tool's images.
+Steam preview policy preserves both primary cover and gallery. The Manager
+confirmation displays the frozen cover and gallery. Prepared files and staged
+upload copies are checked against their hashes before submission. Gallery
+images are submitted once, on the base update, independently of listing text
+localizations.
+
+Managed filenames reserve
+`SnowDesktop-widget-<package UUID>-<0..6>-<64 lowercase SHA-256 digits>.<extension>`.
+After verifying item ownership and package identity, updates remove only
+matching image names for this package, in descending Steam preview index
+order, then append the new images. Manually uploaded images, videos and other
+packages' images are preserved. Do not manually use this reserved namespace.
 
 ## Author query and association
 

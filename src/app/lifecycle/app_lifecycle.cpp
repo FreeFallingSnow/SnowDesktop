@@ -2,6 +2,30 @@
 #include "platform/force_restart_hotkey.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "common/l10n.h"
+#include "taskbar_dynamic/search_visibility_detector.h"
+#include "shell/native_start_menu.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "common/utils.h"
+#include "dock/dock_settings.h"
+#include "system/panel/system_panel.h"
+#include "dock/dock_appbar.h"
+#include "dock/dock_external_minimize.h"
+#include "widget/view/widget_accessibility_provider.h"
+#include "widget/view/widget_surface_renderer.h"
+#include "icons/large_icon_assets.h"
+#include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
+#include "settings/settings_window.h"
+#include "settings/settings_controller.h"
+#include "app/features/recycle_bin_poll_state.h"
+#include "app/features/steam_workshop_subscription_poll_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -19,10 +43,19 @@
 
 // Desktop host lifecycle.
 
-DesktopApp::DesktopApp() = default;
+DesktopApp::DesktopApp()
+    : quickNavigation_(std::make_unique<snowdesktop::quick_navigation::State>()),
+      steamWorkshopSubscriptionPollState_(
+        std::make_shared<SteamWorkshopSubscriptionPollState>()),
+      recycleBinPollState_(std::make_shared<RecycleBinPollState>())
+{
+}
 
 DesktopApp::~DesktopApp()
 {
+    // Closed draw lists retain images and fonts. Join before releasing any
+    // graphics/runtime caches, not just before the final device teardown.
+    widgetSurfaceRenderer_.reset();
     applicationControl_.Stop();
     if (applicationControlRuntime_) applicationControlRuntime_->Stop();
     filePreview_.Stop();
@@ -52,7 +85,7 @@ DesktopApp::~DesktopApp()
     popupAnimationFrameToken_ = 0;
     popupFanScrollFrameToken_ = 0;
     luaPanelAnimationFrameToken_ = 0;
-    quickNavigationAnimationFrameToken_ = 0;
+    quickNavigation_->animationFrameToken = 0;
     dockBounceAnimationFrameToken_ = 0;
     pageNotifyAnimationFrameToken_ = 0;
     navHotEdgeHintToken_ = 0;
@@ -82,7 +115,7 @@ DesktopApp::~DesktopApp()
     UnregisterFloatingDockHotkey();
     DestroyDragPreviewWindow();
     DestroyFloatingDockWindow();
-    quickNavigationEverythingSearch_.Stop();
+    quickNavigation_->everythingSearch.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();
@@ -491,7 +524,9 @@ bool DesktopApp::FocusKeyboardWindow(
                                   requestForeground, deliberateFullscreenExit,
                                   &foregroundAttempted, &foregroundAccepted]() {
         const bool deliberateExitAllowed = deliberateFullscreenExit &&
-            !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr);
+            !FullscreenBlocksDockReveal(DockRevealSource::Hotkey,
+                floatingDockHost_ ? floatingDockHost_->monitor :
+                    MonitorFromWindow(activationWindow, MONITOR_DEFAULTTONULL));
         return snowdesktop::fullscreen::GuardFocusRequest(deliberateExitAllowed,
             snowdesktop::fullscreen::ObserveForeground, [=, &foregroundAttempted, &foregroundAccepted]() {
                 if (requestForeground)
@@ -570,7 +605,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
     for (const auto& host : persistentDockHosts_) if (host) host->promotionInputBorrowedFocus = false;
     floatingDockInputDeactivated_ = false;
-    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
+    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey,
+        floatingDockHost_ ? floatingDockHost_->monitor : nullptr)) return;
     if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
         return;
     if (floatingDockKeyboardSessionActive_)
@@ -631,7 +667,8 @@ void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 
 void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
-    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
+    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey,
+        floatingDockHost_ ? floatingDockHost_->monitor : nullptr)) return;
     // Menu/file-operation completions must not reclaim the keyboard after the
     // user returned to a fullscreen application. Only an allowed explicit
     // Dock hotkey can deliberately exit fullscreen at the start of a session.
@@ -1158,6 +1195,8 @@ void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
     exitRequested_ = true;
+    steamPresenceService_.reset();
+    if (steamEntitlementService_) steamEntitlementService_->Stop();
     dataCleanupWorker_.Stop();
     // A confirmation may be pumping messages inside task dispatch. Invalidate
     // tasks now, keeping the engine alive until that modal stack has unwound.
@@ -1170,7 +1209,7 @@ void DesktopApp::CompleteExitRequest()
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
     StopWebsiteIconWorker();
-    quickNavigationEverythingSearch_.Stop();
+    quickNavigation_->everythingSearch.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();
@@ -1204,7 +1243,7 @@ bool DesktopApp::RequestRestart()
         nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
     if (pathLen == 0 || pathLen >= std::size(exePath))
     {
-        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+        snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_,
             _LW("app.run.no_path"), _LW("app.run.restart_failed"),
             MB_OK | MB_ICONERROR);
         return false;
@@ -1217,7 +1256,7 @@ bool DesktopApp::RequestRestart()
     {
         std::wstring message =
             _LFW("app.run.restart_error", std::to_wstring(error));
-        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
+        snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
             _LW("app.run.restart_failed"), MB_OK | MB_ICONERROR);
         return false;
     }

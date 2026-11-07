@@ -576,6 +576,69 @@ bool NotifyExistingInstance(const InstanceInfo& instance)
         kActivateExistingInstanceMessage, 0, 0) != FALSE;
 }
 
+std::uint64_t ParseSteamWidgetLobby(std::wstring_view commandLine)
+{
+    int count = 0;
+    auto* arguments = CommandLineToArgvW(std::wstring(commandLine).c_str(), &count);
+    if (!arguments) return 0;
+    std::uint64_t lobby = 0;
+    for (int index = 1; index + 1 < count; ++index)
+    {
+        if (std::wstring_view(arguments[index]) != L"+connect_lobby") continue;
+        const std::wstring_view value(arguments[index + 1]);
+        if (!value.empty() && value.size() <= 20 &&
+            value.find_first_not_of(L"0123456789") == std::wstring_view::npos)
+        {
+            for (const auto digit : value)
+            {
+                const auto number = static_cast<std::uint64_t>(digit - L'0');
+                if (lobby > ((std::numeric_limits<std::uint64_t>::max)() - number) / 10)
+                {
+                    lobby = 0;
+                    break;
+                }
+                lobby = lobby * 10 + number;
+            }
+        }
+        break;
+    }
+    LocalFree(arguments);
+    return lobby;
+}
+
+bool ForwardSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby)
+{
+    static_assert(sizeof(WPARAM) >= sizeof(lobby));
+    return lobby && instance.controlWindow && IsWindow(instance.controlWindow) &&
+        PostMessageW(instance.controlWindow, kActivateExistingInstanceMessage,
+            static_cast<WPARAM>(lobby), kSteamWidgetLobbyActivation) != FALSE;
+}
+
+SteamWidgetLobbyHandoff RequestSteamWidgetLobby(const InstanceInfo& instance, std::uint64_t lobby)
+{
+    DWORD owner = 0;
+    if (!lobby || !instance.controlWindow ||
+        !GetWindowThreadProcessId(instance.controlWindow, &owner) || owner != instance.processId)
+        return SteamWidgetLobbyHandoff::DeliveryFailed;
+
+    DWORD_PTR reply = 0;
+    if (!SendMessageTimeoutW(instance.controlWindow, kSteamWidgetLobbyRequestMessage,
+            static_cast<WPARAM>(lobby), 0, SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 1500, &reply))
+        return SteamWidgetLobbyHandoff::DeliveryFailed;
+
+    switch (reply)
+    {
+    case static_cast<DWORD_PTR>(SteamWidgetLobbyHandoff::Accepted):
+        return SteamWidgetLobbyHandoff::Accepted;
+    case static_cast<DWORD_PTR>(SteamWidgetLobbyHandoff::Busy):
+        return SteamWidgetLobbyHandoff::Busy;
+    case static_cast<DWORD_PTR>(SteamWidgetLobbyHandoff::Unavailable):
+        return SteamWidgetLobbyHandoff::Unavailable;
+    default:
+        return SteamWidgetLobbyHandoff::Unsupported;
+    }
+}
+
 bool NotifyExistingInstance(DWORD timeoutMilliseconds)
 {
     const auto instance =

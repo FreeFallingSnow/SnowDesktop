@@ -152,7 +152,7 @@ public:
     static std::string Key(const Request& request)
     {
         std::string result = request.name;
-        for (const auto* field : {"monitorId", "endpointId", "interfaceId", "deviceId", "radioId", "sessionId"})
+        for (const auto* field : {"monitorId", "endpointId", "interfaceId", "deviceId", "radioId", "entryName", "sessionId"})
             if (const auto it = request.arguments.find(field); it != request.arguments.end())
                 result += ":" + std::string(field) + ":" + std::to_string(it->second.size()) + ":" + it->second;
         return result;

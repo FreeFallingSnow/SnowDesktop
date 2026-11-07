@@ -1,5 +1,12 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "settings/animation_settings.h"
+#include "common/utils.h"
+#include "layout/folder_sort_rules.h"
+#include "app/dock/dock_tray_popup_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "diagnostics/performance_trace.h"
 
 // Popup open/close lifecycle and animation.
@@ -710,10 +717,11 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
     if (popupAnimation_.IsClosing())
         return;
 
+    PreserveFloatingPopupDragCapture();
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
     PreserveDockFolderPopupDragSourceForTransition();
-    if (clearSelection)
+    if (clearSelection && !dragSession_.HasContext())
     {
         ClearSelection();
         for (auto& entry :

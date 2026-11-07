@@ -1,6 +1,8 @@
 set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
     src/system/controls/system_controls.cpp
     src/system/controls/system_control_hotspot_cache.h
+    src/system/controls/system_control_vpn.h
+    src/system/controls/system_control_vpn.cpp
     src/system/controls/system_control_windows.cpp
     src/system/controls/system_control_audio.cpp
     src/system/controls/system_control_power.cpp
@@ -10,7 +12,7 @@ set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
     src/system/controls/system_control_media.cpp
     src/system/controls/system_control_quick_actions.cpp)
 set(SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES
-    dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid)
+    dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid rasapi32)
 
 set(SNOWDESKTOP_SOURCES
     ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
@@ -45,6 +47,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/render/app_desktop_foreground_composition.cpp
     src/app/layout/app_desktop_layout.cpp
     src/app/shell/app_desktop_reload.cpp
+    src/app/shell/app_window_observation.cpp
     src/app/dock/app_dock_drop.cpp
     src/app/dock/app_dock_running_drag.cpp
     src/app/dock/dock_running_drag_state.h
@@ -306,7 +309,10 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_taskbar_integration.cpp
     src/app/dock/app_dock_start_menu.cpp
     src/shell/native_start_menu.cpp
+    src/shell/power_user_menu.cpp
+    src/shell/power_user_menu.h
     src/app/features/app_steam_workshop.cpp
+    src/app/features/app_widget_multiplayer.cpp
     src/app/lifecycle/app_timer_dispatch.cpp
     src/app/tray/app_tray.cpp
     src/app/lifecycle/app_window_dispatch.cpp
@@ -326,6 +332,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
     src/dock/dock_window_preview.cpp
+    src/dock/dock_window_preview_toolbar.cpp
+    src/dock/dock_thumbnail_toolbar.cpp
     src/dock/dock_window_preview_layout.h
     src/dock/dock_window_pin.cpp
     src/dock/dock_window_transition.cpp
@@ -349,6 +357,7 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_entitlement.cpp
     src/steam/steam_entitlement.h
     src/steam/steam_presence.cpp
+    src/steam/steam_widget_multiplayer.cpp
     src/steam/steam_presence.h
     src/system/calendar/calendar_service.cpp
     src/system/calendar/calendar_display.cpp
@@ -478,9 +487,41 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/ui_animation_scheduler.cpp
     src/theme/personalization.cpp
     src/theme/personalization_path.cpp
+    src/theme/theme_library_settings.cpp
     src/theme/theme_library.cpp
     src/theme/theme_preview.cpp
     src/theme/theme_workshop.cpp
+    src/platform/foreground_fullscreen.cpp
+    src/platform/window_observation.cpp
+    src/dock/dock_fullscreen_policy.cpp
+    src/dock/dock_tray_rules.cpp
+    src/dock/dock_layout_settings.cpp
+    src/dock/dock_attention_dot.cpp
+    src/dock/dock_settings_rules.cpp
+    src/dock/dock_fullscreen_storage.cpp
+    src/dock/dock_tray_storage.cpp
+    src/dock/dock_tray_targets.cpp
+    src/dock/dock_gradient_storage.cpp
+    src/desktop/desktop_idle_hide_preferences.cpp
+    src/settings/settings_action_result.cpp
+    src/settings/animation_settings.cpp
+    src/settings/shell_extension_settings.cpp
+    src/platform/runtime_module_policy.cpp
+    src/ui/render/native_tooltip_preferences.cpp
+    src/dock/dock_magnification.cpp
+    src/dock/dock_running_animation.cpp
+    src/dock/dock_rename_layout.cpp
+    src/dock/floating_dock_rules.cpp
+    src/settings/settings_update_rules.cpp
+    src/settings/bar_settings_rules.cpp
+    src/theme/personalization_presets.cpp
+    src/theme/panel_gradient.cpp
+    src/theme/edge_light_settings.cpp
+    src/theme/edge_light_codec.cpp
+    src/theme/surface_theme.cpp
+    src/system/status_bar/status_bar_settings.cpp
+    src/navigation/navigation_settings_rules.cpp
+    src/dock/dock_window_rules.cpp
     src/dock/dock_settings.cpp
     src/dock/dock_attention_dot.h
     src/taskbar_hook/taskbar_symbol_resolver.cpp
@@ -504,6 +545,8 @@ set(SNOWDESKTOP_SOURCES
     src/ui/menu/menu_icon_render.cpp
     src/ui/menu/menu_builtin_icon.cpp
     src/ui/menu/modern_menu.cpp
+    src/ui/menu/modern_menu_root_placement.h
+    src/ui/menu/modern_menu_dismissal_rules.h
     src/ui/menu/menu_control_snapshot.h
     src/navigation/search_match.cpp
     src/navigation/everything_search.cpp
@@ -515,6 +558,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_l10n_format.cpp
     src/widget/runtime/widget_time.cpp
     src/widget/preview/widget_preview_context.cpp
+    src/widget/preview/widget_preset_preview.h
     src/widget/data/widget_data_broker.cpp
     src/widget/data/widget_calendar_event_query.cpp
     src/widget/data/widget_calendar_event_query.h
@@ -542,8 +586,11 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_gpu_sampler.cpp
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/view/widget_draw_geometry.cpp
+    src/widget/view/widget_surface_renderer.cpp
+    src/widget/view/widget_gpu_timing.cpp
     src/widget/view/widget_background_cache.cpp
     src/widget/view/widget_image_sampling.cpp
+    src/widget/view/widget_text_glow_cache.cpp
     src/widget/view/widget_interaction_region.cpp
     src/widget/view/widget_accessibility_events.cpp
     src/widget/view/widget_accessibility_provider.cpp
@@ -577,6 +624,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_calendar_provider.h
     src/widget/runtime/widget_data_subscribe_lua.inc
     src/widget/runtime/widget_engine.cpp
+    src/widget/runtime/widget_multiplayer.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
     src/widget/packages/widget_package.cpp
@@ -596,6 +644,68 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/file_category_auto_collect_rules.h
     src/widgets/folder_mapping.cpp
     src/widgets/lua_script.cpp
+    src/widgets/lua_stack.cpp
+    src/app/widgets/app_lua_stack.cpp
     src/widgets/lua_logical_slot.cpp
     src/widgets/guide_widget.cpp
+    # Lightweight contracts and state declarations.
+    src/layout/collection_popup_types.h
+    src/app/dock/persistent_dock_host.h
+    src/app/dock/dock_runtime_types.h
+    src/app/lifecycle/auto_start_result.h
+    src/app/navigation/quick_navigation_models.h
+    src/app/navigation/quick_navigation_state.h
+    src/app/render/composition_state_types.h
+    src/app/render/demo_icon_load_types.h
+    src/app/render/drag_render_cache.h
+    src/app/features/recycle_bin_poll_state.h
+    src/app/features/steam_workshop_subscription_poll_state.h
+    src/app/shell/icon_load_task.h
+    src/desktop/desktop_idle_hide_preferences.h
+    src/dock/dock_fullscreen_applications.h
+    src/dock/dock_fullscreen_types.h
+    src/dock/dock_settings_defaults.h
+    src/dock/dock_settings_types.h
+    src/dock/dock_tray_types.h
+    src/platform/fullscreen_rules.h
+    src/platform/runtime_module_types.h
+    src/settings/animation_preferences.h
+    src/settings/category_settings_types.h
+    src/settings/general_settings_types.h
+    src/settings/settings_action_result.h
+    src/settings/settings_controller_interface.h
+    src/settings/settings_domain.h
+    src/settings/settings_fwd.h
+    src/settings/settings_host_actions.h
+    src/settings/settings_snapshot.h
+    src/settings/settings_store.h
+    src/settings/settings_values.h
+    src/settings/shell_extension_settings_types.h
+    src/ui/render/app_font_types.h
+    src/ui/render/native_tooltip_settings.h
+    src/widget/runtime/widget_host_requests.h
+    src/widget/view/widget_interaction_types.h
+    src/widget/view/widget_native_marquee.h
+    src/winui/backup_data_page_model.h
+    src/winui/calendar_page_actions.h
+    src/winui/desktop_page_actions.h
+    src/winui/dock_page_actions.h
+    src/winui/general_page_actions.h
+    src/winui/general_page_types.h
+    src/winui/home_about_page_actions.h
+    src/winui/hotkey_recorder_types.h
+    src/winui/page_layout_page_actions.h
+    src/winui/personalization_page_actions.h
+    src/winui/runtime_modules_query.h
+    src/winui/settings_window_host_options.h
+    src/winui/start_page_actions.h
+    src/winui/widgets_page_model.h
+    src/dock/dock_window_preview_types.h
+    src/dock/dock_window_types.h
+    src/navigation/navigation_settings_types.h
+    src/system/status_bar/status_bar_settings_types.h
+    src/theme/edge_light_types.h
+    src/theme/panel_gradient_types.h
+    src/theme/personalization_types.h
+    src/theme/surface_theme_types.h
 )

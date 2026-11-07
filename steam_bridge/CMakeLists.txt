@@ -27,13 +27,13 @@ target_link_libraries(SnowDesktopSteamWorkshopCore PUBLIC
 add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/authoring_toolchain.cpp
     src/component_workshop_publish.cpp
+    src/component_preview_gallery.cpp
     src/manager_localization.cpp
     src/package_tool.cpp
     src/workshop_localization.cpp
     src/workshop_project.cpp
     src/theme_workshop_publish.cpp
     src/icon_pack_workshop_publish.cpp
-    "${CMAKE_SOURCE_DIR}/src/theme/theme_library.cpp"
     "${CMAKE_SOURCE_DIR}/src/theme/personalization.cpp"
     "${CMAKE_SOURCE_DIR}/src/data/atomic_file.cpp")
 target_compile_features(SnowDesktopWorkshopManagerSupport PUBLIC cxx_std_20)
@@ -41,9 +41,11 @@ target_include_directories(SnowDesktopWorkshopManagerSupport PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(SnowDesktopWorkshopManagerSupport PUBLIC
-    SnowDesktopSteamAppIdentity ole32 shell32 bcrypt shlwapi windowscodecs)
+    SnowDesktopSteamAppIdentity SnowDesktopThemeLibrary
+    ole32 shell32 bcrypt shlwapi windowscodecs)
 
-add_executable(SnowDesktopSteamBridge src/main.cpp src/presence_lifetime.h)
+add_executable(SnowDesktopSteamBridge src/main.cpp src/presence_lifetime.h
+    src/widget_multiplayer.cpp)
 target_link_libraries(SnowDesktopSteamBridge PRIVATE
     SnowDesktopSteamWorkshopCore
     SnowDesktopWorkshopManagerSupport)

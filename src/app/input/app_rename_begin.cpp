@@ -1,6 +1,10 @@
 #include "ui/input/private_pointer.h"
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "common/l10n.h"
+#include "layout/collection_popup_layout.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
 #include "widget/view/widget_title_layout.h"
 #include "icons/large_icon_shape_geometry.h"
 
@@ -54,6 +58,12 @@ void DesktopApp::BeginRenameSelected(
     }
     if (selectedWidgetCount == 1 && selectedWidgetIndex < widgets_.size())
     {
+        if (widgets_[selectedWidgetIndex].type == DesktopWidgetType::LuaStack)
+        {
+            const auto* content = ResolveLuaWidgetContent(&widgets_[selectedWidgetIndex]);
+            if (!content) return;
+            selectedWidgetIndex = FindWidgetIndexById(content->id);
+        }
         if (!CanRenameWidget(widgets_[selectedWidgetIndex])) return;
 
         size_t visibilityWidgetIndex =

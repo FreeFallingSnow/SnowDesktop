@@ -18,7 +18,7 @@ namespace snowdesktop::performance
 {
 namespace detail
 {
-struct DrawOrigins { std::array<std::uint64_t, 16> flows{}; std::size_t count = 0; };
+struct DrawOrigins { std::uint64_t flow = 0, count = 0; };
 struct TraceContext
 {
     struct TaskOrigin { std::uint64_t flow = 0, operation = 0, owner = 0; std::wstring instance; };
@@ -28,12 +28,14 @@ struct TraceContext
     std::atomic<std::uint64_t> droppedOwners{ 0 }, droppedCounters{ 0 }, droppedLinks{ 0 }, probeErrors{ 0 };
     std::atomic<std::uint64_t> animationTracks{0}, droppedTracks{0};
     unsigned inputSampleEvery = 1;
+    bool scopeCpu = false;
     std::atomic<std::uint64_t> filteredProbeCalls{0}, inputOperationsObserved{0}, inputOperationsSelected{0}, ownerFilteredProbeCalls{0};
     std::mutex identityMutex, counterMutex, drawMutex, taskMutex;
     std::unordered_map<std::uint64_t, std::wstring> owners;
     // Bounded identity and correlation registries, not event/timing storage.
     std::unordered_set<std::uint64_t> counters;
     std::unordered_map<std::uint64_t, DrawOrigins> origins;
+    std::uint64_t drawRequests = 0, drawCoalesced = 0, drawConsumed = 0;
     std::unordered_map<std::uint64_t, TaskOrigin> tasks;
 };
 }
@@ -66,7 +68,7 @@ Category CategoryFor(std::string_view module) noexcept
     if (module.starts_with("animation.") || module == "timer.callback") return Category::Frame;
     if (module == "lua" || module == "widget" || module.starts_with("widget.event")) return Category::Lua;
     if (module.starts_with("task.") || module.starts_with("shared.")) return Category::Task;
-    if (module.find("memory") != module.npos || module == "process" ||
+    if (module.find("memory") != module.npos || module == "process" || module == "widget.gpu" ||
         module.ends_with(".state") || module == "widget.package") return Category::Resource;
     if (module.find("cache") != module.npos) return Category::Cache;
     if (module.find("layout") != module.npos) return Category::Layout;
@@ -153,9 +155,22 @@ bool Begin(Category category, std::string_view module, std::string_view phase,
 #undef SNOW_BEGIN_CASE
     return false;
 }
-void End(Category category)
+bool NativeCpu(std::uint64_t& ticks) noexcept
 {
-#define SNOW_END_CASE(kind, label) case Category::kind: TRACE_EVENT_END(label); break;
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return false;
+    ticks = ((std::uint64_t(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime) +
+        ((std::uint64_t(user.dwHighDateTime) << 32) | user.dwLowDateTime);
+    return true;
+}
+void End(Category category, bool cpuSampled, std::uint64_t cpuNs,
+    bool cyclesSampled, std::uint64_t cycles)
+{
+#define SNOW_END_CASE(kind, label) case Category::kind: \
+    TRACE_EVENT_END(label, [=](perfetto::EventContext event) { \
+        if (cpuSampled) { auto* value = event.event()->add_debug_annotations(); value->set_name("cpu_ns"); value->set_uint_value(cpuNs); } \
+        if (cyclesSampled) { auto* value = event.event()->add_debug_annotations(); value->set_name("cpu_cycles"); value->set_uint_value(cycles); } \
+    }); break;
     switch (category) { SNOW_TRACE_CATEGORIES(SNOW_END_CASE) }
 #undef SNOW_END_CASE
 }
@@ -204,14 +219,40 @@ Scope::Scope(std::string_view module, std::string_view phase,
         if (phase.size() > 256 || module.size() > 64) { ++context_->probeErrors; return; }
         if (Selected(*context_, currentOwner) && RecordCategory(*context_, category) &&
             (category != Category::Input || RecordInputOperation(*context_, currentOperation)))
+        {
+            if (context_->scopeCpu)
+            {
+                nativeThread_ = GetCurrentThreadId();
+                nativeCpuSampled_ = NativeCpu(nativeCpuStart_);
+                ULONG64 cycles = 0;
+                nativeCyclesSampled_ = QueryThreadCycleTime(GetCurrentThread(), &cycles) != FALSE;
+                nativeCyclesStart_ = cycles;
+                if (!nativeCpuSampled_ || !nativeCyclesSampled_) ++context_->probeErrors;
+            }
             open_ = Begin(category, module, phase, currentOwner, currentOperation);
+        }
     }
     catch (...) { ++context_->probeErrors; }
 }
 Scope::~Scope()
 {
     if (!context_) return;
-    try { if (open_ && Enabled() && context.load() == context_) End(static_cast<Category>(category_)); }
+    try
+    {
+        if (open_ && Enabled() && context.load() == context_)
+        {
+            std::uint64_t cpu = 0;
+            ULONG64 cycles = 0;
+            const bool sameThread = nativeThread_ == GetCurrentThreadId();
+            const bool cpuSampled = nativeCpuSampled_ && sameThread && NativeCpu(cpu) && cpu >= nativeCpuStart_;
+            const bool cyclesSampled = nativeCyclesSampled_ && sameThread &&
+                QueryThreadCycleTime(GetCurrentThread(), &cycles) && cycles >= nativeCyclesStart_;
+            if ((nativeCpuSampled_ && !cpuSampled) || (nativeCyclesSampled_ && !cyclesSampled)) ++context_->probeErrors;
+            End(static_cast<Category>(category_), cpuSampled,
+                cpuSampled ? (cpu - nativeCpuStart_) * 100 : 0,
+                cyclesSampled, cyclesSampled ? cycles - nativeCyclesStart_ : 0);
+        }
+    }
     catch (...) { ++context_->probeErrors; }
     currentOwner = previousOwner_;
     currentOperation = previousOperation_;
@@ -298,32 +339,40 @@ void DrawLink(std::string_view surface, std::wstring_view owner, bool consume) n
         std::string safeSurface;
         if (surface != "desktop" && surface != "panel") { safeSurface = "surface-" + std::to_string(Hash(surface, state->salt)); surface = safeSurface; }
         detail::DrawOrigins origins;
-        std::uint64_t flow = 0;
+        bool first = false;
         {
             std::lock_guard lock(state->drawMutex);
+            if (!Enabled() || context.load() != state) return;
             const auto found = state->origins.find(key);
             if (consume)
             {
-                if (found != state->origins.end()) { origins = found->second; state->origins.erase(found); }
+                if (found != state->origins.end())
+                {
+                    origins = found->second;
+                    state->drawConsumed += origins.count;
+                    state->origins.erase(found);
+                }
             }
             else
             {
                 if (found == state->origins.end() && state->origins.size() >= 1024)
                 { ++state->droppedLinks; return; }
                 auto& entry = state->origins[key];
-                if (entry.count == entry.flows.size()) { ++state->droppedLinks; return; }
-                flow = state->nextOperation.fetch_add(1);
-                entry.flows[entry.count++] = flow;
+                first = entry.count == 0;
+                if (first) entry.flow = state->nextOperation.fetch_add(1);
+                else ++state->drawCoalesced;
+                ++entry.count;
+                ++state->drawRequests;
+                origins = entry;
             }
         }
-        if (!consume)
-            TRACE_EVENT_INSTANT("snow.frame", "draw.invalidate", perfetto::Flow::ProcessScoped(flow),
+        if (!consume && first)
+            TRACE_EVENT_INSTANT("snow.frame", "draw.invalidate", perfetto::Flow::ProcessScoped(origins.flow),
                 "surface", perfetto::DynamicString(surface.data(), surface.size()), "owner", ownerId);
-        else
-            for (std::size_t index = 0; index < origins.count; ++index)
-                TRACE_EVENT_INSTANT("snow.frame", "draw.consume", perfetto::TerminatingFlow::ProcessScoped(origins.flows[index]),
-                    "surface", perfetto::DynamicString(surface.data(), surface.size()), "owner", ownerId,
-                    "coalesced_count", origins.count);
+        else if (consume && origins.count)
+            TRACE_EVENT_INSTANT("snow.frame", "draw.consume", perfetto::TerminatingFlow::ProcessScoped(origins.flow),
+                "surface", perfetto::DynamicString(surface.data(), surface.size()), "owner", ownerId,
+                "coalesced_count", origins.count);
     }
     catch (...) { ++state->probeErrors; }
 }
@@ -392,12 +441,14 @@ TaskExecution::~TaskExecution()
     if (flow_ && Enabled() && context.load() == context_)
         TRACE_EVENT_INSTANT("snow.task", "task.execute.end", perfetto::Flow::ProcessScoped(flow_), "operation", operation_, "owner", owner_);
 }
-void ActivateTrace(std::uint64_t generation, std::uint64_t salt, const std::vector<std::wstring>& selected, unsigned inputSampleEvery)
+void ActivateTrace(std::uint64_t generation, std::uint64_t salt, const std::vector<std::wstring>& selected,
+    unsigned inputSampleEvery, bool scopeCpu)
 {
     auto state = std::make_shared<detail::TraceContext>();
     state->generation = generation;
     state->salt = salt;
     state->inputSampleEvery = (std::max)(1U, inputSampleEvery);
+    state->scopeCpu = scopeCpu;
     for (const auto& owner : selected) state->selected.push_back(RegisterOwner(*state, owner));
     context.store(std::move(state));
     active.store(true, std::memory_order_release);
@@ -409,8 +460,14 @@ TraceQuality DeactivateTrace() noexcept
     activeGeneration.store(0, std::memory_order_release);
     const auto state = context.exchange(nullptr);
     if (!state) return {};
-    return { state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load(),
+    std::lock_guard lock(state->drawMutex);
+    TraceQuality quality{ state->droppedOwners.load(), state->droppedCounters.load(), state->droppedLinks.load(), state->probeErrors.load(), state->droppedTracks.load(),
         state->filteredProbeCalls.load(), state->inputOperationsObserved.load(), state->inputOperationsSelected.load(), state->ownerFilteredProbeCalls.load() };
+    quality.drawRequests = state->drawRequests;
+    quality.drawCoalesced = state->drawCoalesced;
+    quality.drawConsumed = state->drawConsumed;
+    for (const auto& [key, origin] : state->origins) { (void)key; quality.drawPending += origin.count; }
+    return quality;
 }
 std::vector<TraceOwnerDescription> DescribeTraceOwners()
 {

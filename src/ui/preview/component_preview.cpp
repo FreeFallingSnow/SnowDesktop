@@ -709,6 +709,8 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
         effectiveAppearance);
     menuPanelPaddingDip_ = modern_menu::appearance_rules::PanelPaddingDip(
         effectiveAppearance);
+    panelRadiusDip_ = modern_menu::appearance_rules::CompanionPanelRadiusDip(
+        effectiveAppearance);
     onApply_ = std::move(onApply);
     componentHovered_ = false;
     waitingForWallpaperEngineFrame_ = false;
@@ -765,7 +767,9 @@ bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
         if (resolvedLightTheme != lightTheme_ ||
             resolvedBlur != blurEnabled_ ||
             modern_menu::appearance_rules::PanelPaddingDip(effectiveAppearance) !=
-                menuPanelPaddingDip_)
+                menuPanelPaddingDip_ ||
+            modern_menu::appearance_rules::CompanionPanelRadiusDip(effectiveAppearance) !=
+                panelRadiusDip_)
         {
             return Show(model, menuBounds, owner, dpi, lightTheme,
                 std::move(onApply), itemBounds, appearance);
@@ -1319,7 +1323,7 @@ bool Window::RenderCurrent()
         previewRect_.bottom + previewInset };
     const int cardWidth = cardRect_.right - cardRect_.left;
     const int cardHeight = cardRect_.bottom - cardRect_.top;
-    const int cardRadius = Scale(8, dpi_);
+    const int cardRadius = Scale(std::min(8, panelRadiusDip_), dpi_);
     snowdesktop::widget_preview::Wallpaper wallpaper;
     const widget_preview::Wallpaper* desktopWallpaper =
         desktopWallpaperEngineFrame_
@@ -1573,10 +1577,15 @@ bool Window::RenderCurrent()
     if (glyphFont) DeleteObject(glyphFont);
 
     GdiFlush();
-    const int radius = Scale(10, dpi_);
+    const int radius = Scale(panelRadiusDip_, dpi_);
+    // Opaque companion panels have no DWM outline. Match the menu's visible
+    // one-pixel frame, including its small Win10 rounded corners.
+    if (!blurEnabled_)
+        RoundedOutline(pixels, width_, height_, panel, radius,
+            lightTheme_ ? RGB(215, 215, 215) : RGB(73, 73, 73));
     const unsigned contentAlpha = blurEnabled_ ? 246u : 255u;
     const unsigned materialAlpha = blurEnabled_
-        ? (lightTheme_ ? 70u : 76u)
+        ? modern_menu::appearance_rules::BlurPanelAlpha(lightTheme_)
         : 255u;
     for (int y = 0; y < height_; ++y)
     {
@@ -1727,7 +1736,7 @@ void Window::ApplyWindowAppearance()
     }
     const COLORREF tint =
         menu_icon::ResolvePalette(lightTheme_).background;
-    const DWORD tintAlpha = lightTheme_ ? 0x58 : 0x60;
+    const DWORD tintAlpha = modern_menu::appearance_rules::BlurTintAlpha(lightTheme_);
     AccentPolicy accent;
     accent.state = AccentState::AcrylicBlurBehind;
     accent.flags = 2;

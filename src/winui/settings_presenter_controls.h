@@ -1,6 +1,6 @@
 #pragma once
 
-#include "settings/settings_controller.h"
+#include "settings/settings_domain.h"
 #include "number_box_update_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

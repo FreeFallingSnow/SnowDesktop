@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "dock/dock_collection_icon_rules.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"

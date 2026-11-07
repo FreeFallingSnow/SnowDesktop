@@ -4,9 +4,24 @@ if (BUILD_TESTING)
     set(SNOWDESKTOP_CORE_TEST_TARGETS)
     set(SNOWDESKTOP_FAST_TEST_TARGETS)
     set(SNOWDESKTOP_APP_TEST_TARGETS)
-    set(SNOWDESKTOP_TOOL_TEST_TARGETS)
 
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/testing/Support.cmake")
+
+    # Store activation and ordinary EXE relaunch share the real argument/receipt
+    # path. Keep Shell execution isolated from the user's running desktop.
+    snowdesktop_add_test(SnowDesktopStartupLaunchTests startup_launch
+        SOURCES tests/platform/startup_launch_tests.cpp
+        INCLUDE_DIRECTORIES src "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        LINK_LIBRARIES shell32 user32 ole32 oleaut32 advapi32 comctl32
+        LABELS core contract security)
+
+    # The shared fullscreen gate controls bar hiding, Dock reveal and focus.
+    # Reproduce native geometry without touching the user's desktop windows.
+    snowdesktop_add_test(SnowDesktopForegroundFullscreenTests foreground_fullscreen
+        SOURCES tests/platform/foreground_fullscreen_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 dwmapi SnowDesktopDockPolicy SnowDesktopFullscreen
+        LABELS core contract)
 
     # Admitted module contracts complement the host behavior matrix. Each
     # target is isolated because it owns a language runtime, store, pipe server,
@@ -68,15 +83,8 @@ if (BUILD_TESTING)
             src/ui/input/control_pointer.cpp
             src/ui/render/demo_cursor.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32 advapi32 gdi32 bcrypt
+        LINK_LIBRARIES SnowDesktopPointerInput user32 advapi32 gdi32 bcrypt
         LABELS contract integration ipc)
-
-    snowdesktop_add_test(
-        SnowDesktopDeploymentPackagingContractTests
-        deployment_packaging_contract
-        SOURCES tests/deployment_packaging_contract_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS tools integration packaging)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorTestRunnerTests
@@ -106,11 +114,29 @@ if (BUILD_TESTING)
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32
         LABELS authoring contract data permission security widget)
 
+    # Stable publication contract: preserve manual media and submit the exact
+    # confirmed gallery once. Reuse production code with only Steam substituted.
+    snowdesktop_add_test(
+        SnowDesktopComponentPublishGalleryTests
+        component_publish_gallery
+        SOURCES tests/steam/component_publish_gallery_tests.cpp steam_bridge/src/preview_cache.cpp
+        INCLUDE_DIRECTORIES tests steam_bridge/src
+        LINK_LIBRARIES SnowDesktopSteamWorkshopCore SnowDesktopWorkshopManagerSupport d3d11 winhttp
+        COMMAND_ARGUMENTS "${CMAKE_SOURCE_DIR}/developer_assets/workshop_widgets/single-monitor/workshop-preview.png"
+        LABELS contract publishing widget)
+    if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
+        add_custom_command(TARGET SnowDesktopComponentPublishGalleryTests POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SNOWDESKTOP_STEAMWORKS_SDK_ROOT}/redistributable_bin/win64/steam_api64.dll"
+                "$<TARGET_FILE_DIR:SnowDesktopComponentPublishGalleryTests>/steam_api64.dll")
+    endif()
+
     snowdesktop_add_test(
         SnowDesktopWidgetStorageTransactionTests
         widget_storage_transaction
         SOURCES
             tests/widget_storage_transaction_tests.cpp
+            src/widget/settings/widget_setting_rules.cpp
             src/widget/storage/widget_storage_transaction.cpp
             src/widget/storage/widget_storage_value.cpp
         INCLUDE_DIRECTORIES src
@@ -177,39 +203,70 @@ if (BUILD_TESTING)
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe")
     set_tests_properties(hook_stable_entry_cross32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHookEntryTests>")
+    # Both 32-bit scenarios publish into the same intentionally stable entry
+    # cache. Their private target processes do not isolate that shared catalog.
+    set_tests_properties(hook_stable_entry hook_stable_entry32 hook_stable_entry_cross32
+        PROPERTIES RESOURCE_LOCK snowdesktop_hook_entry_cache)
 
 
-    # Existing host behavior scenarios unrelated to drag tests.
+    # Four module contracts need native services, not DesktopApp/WinUI. Their
+    # driver links the same production owners as the application; selecting one
+    # cannot bring in the host executable or its XAML compilation.
+    snowdesktop_add_test(SnowDesktopModuleBehaviorTests behavior_settings
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/behavior/module_contracts_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopSettingsPersistence SnowDesktopLayoutStorage
+            SnowDesktopWidgetTasks SnowDesktopWidgetPermissions
+            SnowDesktopWidgetApiRegistry SnowDesktopDockWindowPin
+        COMMAND_ARGUMENTS settings
+        LABELS core integration behavior)
+    foreach(row IN ITEMS recovery widget dock)
+        add_test(NAME behavior_${row} COMMAND SnowDesktopModuleBehaviorTests ${row})
+        set_tests_properties(behavior_${row} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopModuleBehaviorTests>"
+            TIMEOUT 60 LABELS "core;integration;behavior")
+    endforeach()
+    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+
+    # Preserve the real host graph only for routing, commit and refresh paths.
     set(SNOWDESKTOP_BEHAVIOR_SOURCES ${SNOWDESKTOP_SOURCES})
     list(REMOVE_ITEM SNOWDESKTOP_BEHAVIOR_SOURCES src/main.cpp)
-    snowdesktop_add_test(SnowDesktopBehaviorTests behavior_settings
+    snowdesktop_add_test(SnowDesktopBehaviorTests behavior_search
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/behavior/core_interactions_tests.cpp ${SNOWDESKTOP_BEHAVIOR_SOURCES}
-        COMMAND_ARGUMENTS settings
+        COMMAND_ARGUMENTS search
         LABELS core integration isolated-native-model interaction)
     snowdesktop_configure_native_test_host(SnowDesktopBehaviorTests)
-    foreach(row IN ITEMS recovery search widget dock settings-host manifest group-type-contract)
+    foreach(row IN ITEMS settings-host group-type-contract native-dialog
+            drag-source drag-files drag-batches drag-partial drag-release drag-popup widget-focus dock-overflow)
         add_test(NAME behavior_${row} COMMAND SnowDesktopBehaviorTests ${row})
         set_tests_properties(behavior_${row} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBehaviorTests>"
             TIMEOUT 60 PROCESSORS 3 LABELS "core;integration;isolated-native-model;behavior")
     endforeach()
-    set_tests_properties(behavior_settings PROPERTIES TIMEOUT 60 PROCESSORS 3)
-    set_tests_properties(behavior_dock PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+    set_tests_properties(behavior_search PROPERTIES TIMEOUT 60 PROCESSORS 3)
+    set_tests_properties(behavior_drag-popup PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
 
-    include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
-    snowdesktop_add_native_tool_test(SnowDesktopBuildProductArtifactsTests build_product_artifacts
-        build_tools/build_product_artifacts_tests.cpp "tools;integration;packaging" 120)
+    # Deployment is a product integration contract. Its explicit output input
+    # and dependency stay on this driver, outside the four module scenarios.
+    snowdesktop_add_test(SnowDesktopDeploymentManifestTests behavior_manifest
+        SOURCES tests/behavior/deployment_manifest_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopWidgetPackages
+        COMMAND_ARGUMENTS "$<TARGET_FILE_DIR:SnowDesktop>"
+        LABELS core integration deployment behavior)
+    add_dependencies(SnowDesktopDeploymentManifestTests SnowDesktop)
+    set_property(TEST behavior_manifest APPEND PROPERTY REQUIRED_FILES
+        "$<TARGET_FILE_DIR:SnowDesktop>/SnowDesktop.deployment.json")
+
     # Shared desktop/Explorer/host resources are serialized. Isolated fixtures
     # and pure logic cases can execute alongside these tests.
     get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     foreach(test_name IN LISTS SNOWDESKTOP_REGISTERED_TESTS)
         get_test_property(${test_name} LABELS test_labels)
-        # These tests exercise a host graph or launch tool subprocesses. Budget
-        # their CPU demand independently of the global CTest job count; running
-        # 20 native hosts alongside tool workflows saturated the 24-core test
-        # machine and caused timeouts, while eight heavy natives passed.
-        if("isolated-native-model" IN_LIST test_labels OR "tools" IN_LIST test_labels)
+        # Native host scenarios reserve their own CPU budget.
+        if("isolated-native-model" IN_LIST test_labels)
             get_property(test_has_processor_budget TEST ${test_name} PROPERTY PROCESSORS SET)
             if(NOT test_has_processor_budget)
                 set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
@@ -217,7 +274,6 @@ if (BUILD_TESTING)
         endif()
         if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
             "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)
-            AND NOT "tools" IN_LIST test_labels
             AND NOT "isolated-native-model" IN_LIST test_labels)
             set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
         endif()
@@ -229,9 +285,6 @@ if (BUILD_TESTING)
     add_custom_target(
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
-    add_custom_target(
-        SnowDesktopBuildToolTests
-        DEPENDS ${SNOWDESKTOP_TOOL_TEST_TARGETS})
     add_custom_target(
         SnowDesktopAppTests
         COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile

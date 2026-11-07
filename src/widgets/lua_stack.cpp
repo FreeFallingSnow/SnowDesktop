@@ -1,0 +1,261 @@
+#include "lua_stack.h"
+
+#include <algorithm>
+#include <set>
+
+namespace snowdesktop::lua_stack
+{
+bool IsSurface(DesktopWidgetType type) noexcept
+{
+    return type == DesktopWidgetType::LuaScript || type == DesktopWidgetType::LuaStack;
+}
+
+size_t Owner(const std::vector<DesktopWidget>& widgets, std::wstring_view member)
+{
+    for (size_t i = 0; i < widgets.size(); ++i)
+        if (widgets[i].type == DesktopWidgetType::LuaStack &&
+            std::find(widgets[i].childWidgetIds.begin(), widgets[i].childWidgetIds.end(), member) !=
+                widgets[i].childWidgetIds.end()) return i;
+    return widgets.size();
+}
+
+size_t Active(const std::vector<DesktopWidget>& widgets, size_t owner, const MemberDrag* presentation)
+{
+    if (owner >= widgets.size()) return widgets.size();
+    if (presentation && presentation->OwnerIndex(widgets) == owner)
+        if (const size_t preview = presentation->PreviewMemberIndex(widgets); preview < widgets.size()) return preview;
+    const auto& widget = widgets[owner];
+    if (widget.type == DesktopWidgetType::LuaScript) return owner;
+    if (widget.type != DesktopWidgetType::LuaStack) return widgets.size();
+    const auto find = [&](const std::wstring& id) {
+        const auto it = std::find_if(widgets.begin(), widgets.end(), [&](const auto& child) {
+            return child.id == id && child.type == DesktopWidgetType::LuaScript;
+        });
+        return static_cast<size_t>(it - widgets.begin());
+    };
+    if (std::find(widget.childWidgetIds.begin(), widget.childWidgetIds.end(), widget.activeCategoryId) !=
+            widget.childWidgetIds.end())
+        if (const size_t active = find(widget.activeCategoryId); active < widgets.size()) return active;
+    for (const auto& id : widget.childWidgetIds)
+        if (const size_t active = find(id); active < widgets.size()) return active;
+    return widgets.size();
+}
+
+std::vector<std::wstring> Members(const DesktopWidget& widget)
+{
+    return widget.type == DesktopWidgetType::LuaStack ? widget.childWidgetIds
+        : std::vector<std::wstring>{widget.id};
+}
+
+bool MemberDrag::Begin(const std::vector<DesktopWidget>& widgets, size_t owner)
+{
+    Reset();
+    if (owner >= widgets.size() || widgets[owner].type != DesktopWidgetType::LuaStack ||
+        widgets[owner].childWidgetIds.size() < 2) return false;
+    const size_t member = Active(widgets, owner);
+    if (member >= widgets.size()) return false;
+    ownerId_ = widgets[owner].id;
+    memberId_ = widgets[member].id;
+    return true;
+}
+
+size_t MemberDrag::OwnerIndex(const std::vector<DesktopWidget>& widgets) const
+{
+    if (!Armed()) return widgets.size();
+    const size_t owner = Owner(widgets, memberId_);
+    return owner < widgets.size() && widgets[owner].id == ownerId_ ? owner : widgets.size();
+}
+
+size_t MemberDrag::MemberIndex(const std::vector<DesktopWidget>& widgets) const
+{
+    const size_t owner = OwnerIndex(widgets);
+    if (owner >= widgets.size()) return widgets.size();
+    const size_t member = Active(widgets, owner);
+    return member < widgets.size() && widgets[member].id == memberId_ ? member : widgets.size();
+}
+
+size_t MemberDrag::PreviewMemberIndex(const std::vector<DesktopWidget>& widgets) const
+{
+    const size_t owner = OwnerIndex(widgets);
+    if (owner >= widgets.size() || MemberIndex(widgets) >= widgets.size()) return widgets.size();
+    // Match Normalize's fallback after detachment, while leaving the saved
+    // active member untouched until placement commits.
+    for (const auto& id : widgets[owner].childWidgetIds)
+    {
+        if (id == memberId_) continue;
+        const auto found = std::find_if(widgets.begin(), widgets.end(), [&](const auto& widget) {
+            return widget.id == id && widget.type == DesktopWidgetType::LuaScript;
+        });
+        if (found != widgets.end()) return static_cast<size_t>(found - widgets.begin());
+    }
+    return widgets.size();
+}
+
+bool MemberDrag::Detach(std::vector<DesktopWidget>& widgets, GridCell landing) const
+{
+    const size_t owner = OwnerIndex(widgets), member = MemberIndex(widgets);
+    if (owner >= widgets.size() || member >= widgets.size() || landing.pageId.empty() ||
+        landing.column < 0 || landing.row < 0) return false;
+    widgets[member].gridCell = std::move(landing);
+    widgets[member].gridSpan = widgets[owner].gridSpan;
+    widgets[member].selected = true;
+    widgets[owner].selected = false;
+    std::erase(widgets[owner].childWidgetIds, memberId_);
+    Normalize(widgets);
+    Dissolve(widgets);
+    return true;
+}
+
+size_t SurfaceOwner(const std::vector<DesktopWidget>& widgets, std::wstring_view instance,
+    const MemberDrag* presentation)
+{
+    const auto child = std::find_if(widgets.begin(), widgets.end(), [&](const auto& w) {
+        return w.id == instance && w.type == DesktopWidgetType::LuaScript;
+    });
+    if (child == widgets.end()) return widgets.size();
+    const size_t index = static_cast<size_t>(child - widgets.begin());
+    const size_t owner = Owner(widgets, instance);
+    if (owner >= widgets.size()) return index;
+    return Active(widgets, owner, presentation) == index ? owner : widgets.size();
+}
+
+int WheelGesture::Consume(std::wstring_view stack, int delta, std::uint64_t now,
+    bool controlOwnsWheel)
+{
+    if (stack_ != stack || !seen_ || now < lastEvent_ || now - lastEvent_ >= QuietMilliseconds)
+    {
+        stack_ = stack;
+        switched_ = false;
+        remainder_ = 0;
+    }
+    lastEvent_ = now;
+    seen_ = true;
+    if (controlOwnsWheel)
+    {
+        // An internal control owns this entire burst, including its momentum
+        // after reaching an edge. Only a quiet gap can rearm stack switching.
+        remainder_ = 0;
+        switched_ = true;
+        return 0;
+    }
+    if (switched_) return 0;
+    const std::int64_t total = static_cast<std::int64_t>(remainder_) + delta;
+    if (total >= 120 || total <= -120)
+    {
+        switched_ = true;
+        remainder_ = 0;
+        return total > 0 ? -1 : 1;
+    }
+    remainder_ = static_cast<int>(total);
+    return 0;
+}
+
+void WheelGesture::Hold(std::wstring_view stack, std::uint64_t now)
+{
+    stack_ = stack;
+    lastEvent_ = now;
+    remainder_ = 0;
+    seen_ = switched_ = true;
+}
+
+bool Supports(const DesktopWidget& widget, GridSpan span) noexcept
+{
+    return span.columns >= widget.minGridSpan.columns && span.rows >= widget.minGridSpan.rows &&
+        (!widget.maxGridSpan.columns || span.columns <= widget.maxGridSpan.columns) &&
+        (!widget.maxGridSpan.rows || span.rows <= widget.maxGridSpan.rows);
+}
+
+bool CanCombine(const std::vector<DesktopWidget>& widgets, size_t source, size_t target,
+    bool checkCachedSizes)
+{
+    if (source >= widgets.size() || target >= widgets.size() || source == target ||
+        !IsSurface(widgets[source].type) || !IsSurface(widgets[target].type) ||
+        Owner(widgets, widgets[source].id) < widgets.size() ||
+        Owner(widgets, widgets[target].id) < widgets.size()) return false;
+    const auto destination = Members(widgets[target]);
+    const auto incoming = Members(widgets[source]);
+    if (destination.empty() || incoming.empty()) return false;
+    std::set<std::wstring> unique;
+    for (const auto& ids : {destination, incoming})
+        for (const auto& id : ids)
+        {
+            const auto child = std::find_if(widgets.begin(), widgets.end(), [&](const auto& value) {
+                return value.id == id && value.type == DesktopWidgetType::LuaScript;
+            });
+            if (id.empty() || !unique.insert(id).second || child == widgets.end() ||
+                (checkCachedSizes && !Supports(*child, widgets[target].gridSpan))) return false;
+        }
+    return true;
+}
+
+bool Combine(std::vector<DesktopWidget>& widgets, size_t source, size_t target, std::wstring newId)
+{
+    if (!CanCombine(widgets, source, target)) return false;
+    auto destination = Members(widgets[target]);
+    const auto incoming = Members(widgets[source]);
+    const std::wstring sourceId = widgets[source].id;
+    const bool removeSource = widgets[source].type == DesktopWidgetType::LuaStack;
+    if (widgets[target].type == DesktopWidgetType::LuaScript)
+    {
+        if (newId.empty() || std::any_of(widgets.begin(), widgets.end(), [&](const auto& w) { return w.id == newId; }))
+            return false;
+        DesktopWidget wrapper;
+        wrapper.id = std::move(newId);
+        wrapper.type = DesktopWidgetType::LuaStack;
+        wrapper.gridCell = widgets[target].gridCell;
+        wrapper.gridSpan = widgets[target].gridSpan;
+        wrapper.showOnHoverOnly = widgets[target].showOnHoverOnly;
+        wrapper.keepWhenDesktopHidden = widgets[target].keepWhenDesktopHidden;
+        wrapper.activeCategoryId = widgets[target].id;
+        wrapper.childWidgetIds = destination;
+        widgets.push_back(std::move(wrapper));
+        target = widgets.size() - 1;
+    }
+    auto& wrapper = widgets[target];
+    wrapper.childWidgetIds.insert(wrapper.childWidgetIds.end(), incoming.begin(), incoming.end());
+    for (auto& child : widgets)
+        if (std::find(wrapper.childWidgetIds.begin(), wrapper.childWidgetIds.end(), child.id) != wrapper.childWidgetIds.end())
+            child.selected = false;
+    wrapper.selected = true;
+    if (removeSource) std::erase_if(widgets, [&](const auto& value) { return value.id == sourceId; });
+    return true;
+}
+
+void Normalize(std::vector<DesktopWidget>& widgets)
+{
+    std::set<std::wstring> claimed;
+    for (auto& wrapper : widgets)
+    {
+        if (wrapper.type != DesktopWidgetType::LuaStack) continue;
+        std::erase_if(wrapper.childWidgetIds, [&](const auto& id) {
+            const auto child = std::find_if(widgets.begin(), widgets.end(), [&](const auto& w) {
+                return w.id == id && w.type == DesktopWidgetType::LuaScript;
+            });
+            return child == widgets.end() || !claimed.insert(id).second;
+        });
+        if (std::find(wrapper.childWidgetIds.begin(), wrapper.childWidgetIds.end(), wrapper.activeCategoryId) == wrapper.childWidgetIds.end())
+            wrapper.activeCategoryId = wrapper.childWidgetIds.empty() ? L"" : wrapper.childWidgetIds.front();
+    }
+}
+
+void Dissolve(std::vector<DesktopWidget>& widgets)
+{
+    for (size_t i = widgets.size(); i-- > 0;)
+    {
+        const auto& wrapper = widgets[i];
+        if (wrapper.type != DesktopWidgetType::LuaStack || wrapper.childWidgetIds.size() > 1) continue;
+        if (!wrapper.childWidgetIds.empty())
+            for (auto& child : widgets)
+                if (child.id == wrapper.childWidgetIds.front() && child.type == DesktopWidgetType::LuaScript)
+                {
+                    child.gridCell = wrapper.gridCell;
+                    child.gridSpan = wrapper.gridSpan;
+                    child.selected = wrapper.selected;
+                    child.showOnHoverOnly = wrapper.showOnHoverOnly;
+                    child.keepWhenDesktopHidden = wrapper.keepWhenDesktopHidden;
+                    break;
+                }
+        widgets.erase(widgets.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+}
+}

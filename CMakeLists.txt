@@ -46,6 +46,8 @@ snowdesktop_configure_host(SnowDesktop)
 include(cmake/targets/WidgetTool.cmake)
 include(cmake/targets/Distribution.cmake)
 include(cmake/targets/TextInput.cmake)
+include(cmake/targets/RuntimeModules.cmake)
+include(cmake/targets/HostObjects.cmake)
 include(cmake/testing/Tests.cmake)
 
 snowdesktop_install_shared_guard()

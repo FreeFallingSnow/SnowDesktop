@@ -1,5 +1,12 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "settings/settings_snapshot.h"
+#include "common/utils.h"
+#include "settings/settings_controller.h"
+#include "dock/dock_settings.h"
+#include "shell/power_user_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "settings/bar_settings_rules.h"
 #include "dock/dock_settings_rules.h"
@@ -80,7 +87,7 @@ bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* messa
         return S_OK;
     };
     int selected = IDCANCEL;
-    return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+    return SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
 }
 }
 
@@ -331,10 +338,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     return menu;
 }
 
-void DesktopApp::ShowDockContextMenu(POINT screenPoint)
+void DesktopApp::ShowDockContextMenu(POINT screenPoint, bool powerUserMenu)
 {
     POINT clientPoint = screenPoint;
-    if (statusBar_ && hwnd_ && ScreenToClient(hwnd_, &clientPoint))
+    if (!powerUserMenu && statusBar_ && hwnd_ && ScreenToClient(hwnd_, &clientPoint))
     {
         const DockContainer* dock = GetDockContainerAtPoint(clientPoint);
         if (dock && dock->IsMergedWithStatusBar())
@@ -353,6 +360,15 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     PrepareMenuIconsForPoint(screenPoint);
     HMENU menu = CreateDockContextMenu(false);
     if (!menu) return;
+    if (powerUserMenu)
+    {
+        const HMENU root = snowdesktop::power_user_menu::Create(menu,
+            [this](HMENU parent, UINT_PTR command, const wchar_t* glyph) {
+                SetMenuItemIcon(parent, command, glyph, MenuIconFont::FluentRegular);
+            });
+        if (!root) { DestroyMenu(menu); ClearMenuIcons(); return; }
+        menu = root;
+    }
     RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     DestroyMenu(menu);
@@ -360,7 +376,8 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     RestoreDesktopWindowLayer();
     if (command != kContextDockDetailedSettings)
         RestoreInteractionInputFocus();
-    ExecuteDockContextMenuCommand(command, hwnd_);
+    if (!powerUserMenu || !snowdesktop::power_user_menu::Execute(command, ShellLaunchOwnerHwnd(hwnd_)))
+        ExecuteDockContextMenuCommand(command, hwnd_);
 }
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
@@ -403,7 +420,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         auto result = settingsController_->InvokeHostAction(request);
         if (result.Succeeded()) result = settingsController_->FlushPending();
         if (!result.Succeeded())
-        { MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
+        { snowdesktop::operation_feedback::ShowMessageBox(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
         if (snowdesktop::NeedsDesktopStyleAnimations(preset, settingsController_->Snapshot()->values.dock))
         {
             const auto description = std::wstring(_LW("settings.desktopStyle.animationPrompt.description")) + L"\n\n" + _LW(kDesktopStyleAnimations[index]);
@@ -413,7 +430,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
                 request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStyleAnimations;
                 result = settingsController_->InvokeHostAction(request);
                 if (result.Succeeded()) result = settingsController_->FlushPending();
-                if (!result.Succeeded()) MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+                if (!result.Succeeded()) snowdesktop::operation_feedback::ShowMessageBox(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
             }
         }
         return;
@@ -684,6 +701,33 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                     snowdesktop::menu_fluent_glyphs::kLinkAdd,
                     MenuIconFont::FluentRegular);
         }
+        QuickNavigationFavorite quickNavigationFavorite;
+        if (!matchingDesktopKey.empty())
+        {
+            const size_t itemIndex =
+                FindItemIndexByKey(matchingDesktopKey);
+            quickNavigationFavorite =
+                CreateQuickNavigationFavoriteFromDesktopItem(
+                    itemIndex);
+        }
+        else if (application)
+        {
+            quickNavigationFavorite =
+                CreateQuickNavigationFavoriteFromApp(
+                    application->entry);
+        }
+        else
+        {
+            quickNavigationFavorite =
+                CreateQuickNavigationFavoriteFromPath(
+                    running.executablePath,
+                    running.title.empty()
+                        ? FileNameFromPath(
+                            running.executablePath)
+                        : running.title);
+        }
+        AppendQuickNavigationFavoriteMenuItem(
+            menu, quickNavigationFavorite);
         AppendMenuW(
             menu, MF_STRING,
             kContextDockCloseApplication,
@@ -702,6 +746,13 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         if (!hwnd_ || !IsWindow(hwnd_) || dragSession_.HasContext() ||
             dragDropController_.IsTransportActive())
             return;
+        if (command == kContextFavoriteQuickNavigationCommand)
+        {
+            if (!ToggleQuickNavigationFavorite(
+                    quickNavigationFavorite))
+                MessageBeep(MB_ICONWARNING);
+            return;
+        }
 
         auto adoptRunning = [this, runningKey = running.identityKey](size_t itemIndex) {
             AdoptDockRunningPresentation(runningKey, itemIndex);
@@ -804,9 +855,9 @@ void DesktopApp::ShowDockRunningAppContextMenu(
     }
 
     auto applications = std::make_shared<std::vector<QuickNavigationAppEntry>>();
-    if (!explorer && quickNavigationAppsIndexed_)
+    if (!explorer && quickNavigation_->appsIndexed)
     {
-        for (const auto& entry : quickNavigationAppEntries_)
+        for (const auto& entry : quickNavigation_->appEntries)
         {
             QuickNavigationAppEntry copy;
             copy.name = entry.name;
@@ -815,7 +866,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             if (copy.absolutePidl.get()) applications->push_back(std::move(copy));
         }
     }
-    const bool indexed = quickNavigationAppsIndexed_;
+    const bool indexed = quickNavigation_->appsIndexed;
     const std::wstring explorerName = _LW("app.dock.explorer_name");
     const auto pinSources = readPinSources();
     const bool submitted = shellVisualWork_.Submit(

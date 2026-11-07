@@ -1,3 +1,5 @@
+#include "settings_window_host.h"
+#include "settings/settings_controller_interface.h"
 #include "settings/settings_process.h"
 #include "settings/settings_ipc_services.h"
 #include "settings_ipc_backends.h"

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "auto_start_rules.h"
 #include "startup_privileges_dialog.h"
 
 #include <windows.h>
+#include <appmodel.h>
 #include <shellapi.h>
 #pragma push_macro("ShellExecute")
 #undef ShellExecute
@@ -13,6 +13,8 @@
 #include <wrl/client.h>
 #include <sddl.h>
 
+#include <cstddef>
+#include <iterator>
 #include <new>
 #include <string>
 #include <string_view>
@@ -78,21 +80,6 @@ inline void AcknowledgeExplorerLaunch(std::wstring_view command) noexcept
         }
     }
     catch (...) {} // An optional receipt must never prevent the child from starting.
-}
-
-inline bool IsOwnerArgument(std::wstring_view value)
-{
-    return value == L"--snowdesktop-autostart-owner=portable" ||
-        value == L"--snowdesktop-autostart-owner=packaged" ||
-        value == L"--snowdesktop-autostart-owner=steam";
-}
-
-inline bool IsAutoStartCommand(std::wstring_view command)
-{
-    const Arguments arguments(command);
-    for (int index = 1; index < arguments.count; ++index)
-        if (IsOwnerArgument(arguments.value[index])) return true;
-    return false;
 }
 
 inline bool IsPreviewHostCommand(std::wstring_view command) noexcept
@@ -215,13 +202,16 @@ inline void ExecuteThroughExplorer(const std::wstring& executable,
 using ShellExecutor = decltype(&ExecuteThroughExplorer);
 using AckEventCreator = decltype(&CreateEventW);
 using AckWaiter = decltype(&WaitForSingleObject);
+using ApplicationIdQuery = decltype(&GetCurrentApplicationUserModelId);
 
 class NativePlatform final
 {
 public:
     explicit NativePlatform(ShellExecutor execute = &ExecuteThroughExplorer, DWORD handoffTimeout = 15000,
-        AckEventCreator createAckEvent = &CreateEventW, AckWaiter waitForAck = &WaitForSingleObject)
-        : execute_(execute), handoffTimeout_(handoffTimeout), createAckEvent_(createAckEvent), waitForAck_(waitForAck) {}
+        AckEventCreator createAckEvent = &CreateEventW, AckWaiter waitForAck = &WaitForSingleObject,
+        ApplicationIdQuery queryApplicationId = &GetCurrentApplicationUserModelId)
+        : execute_(execute), handoffTimeout_(handoffTimeout), createAckEvent_(createAckEvent),
+          waitForAck_(waitForAck), queryApplicationId_(queryApplicationId) {}
 
     bool IsElevated()
     {
@@ -282,11 +272,32 @@ private:
 public:
     DWORD Relaunch(std::wstring_view command)
     {
-        std::wstring executable(32768, L'\0');
-        const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
-            static_cast<DWORD>(executable.size()));
-        Require(length != 0 && length < executable.size(), L"GetModuleFileNameW(autostart)");
-        executable.resize(length);
+        wchar_t applicationId[APPLICATION_USER_MODEL_ID_MAX_LENGTH]{};
+        UINT32 applicationIdLength = static_cast<UINT32>(std::size(applicationId));
+        const LONG identified = queryApplicationId_(&applicationIdLength, applicationId);
+        std::wstring executable;
+        if (identified == ERROR_SUCCESS)
+        {
+            if (applicationIdLength < 2 || applicationIdLength > std::size(applicationId) ||
+                applicationId[applicationIdLength - 1] != L'\0')
+                throw Failure{ERROR_INVALID_DATA, L"GetCurrentApplicationUserModelId(autostart)"};
+            // Activate the registered app through the ordinary Explorer. Opening
+            // the WindowsApps EXE directly can fail before a child can acknowledge.
+            executable = L"shell:AppsFolder\\";
+            executable.append(applicationId, applicationIdLength - 1);
+        }
+        else if (identified == APPMODEL_ERROR_NO_APPLICATION || identified == APPMODEL_ERROR_NO_PACKAGE)
+        {
+            executable.resize(32768, L'\0');
+            const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+                static_cast<DWORD>(executable.size()));
+            Require(length != 0 && length < executable.size(), L"GetModuleFileNameW(autostart)");
+            executable.resize(length);
+        }
+        else
+        {
+            throw Failure{static_cast<DWORD>(identified), L"GetCurrentApplicationUserModelId(autostart)"};
+        }
         const DWORD directorySize = GetCurrentDirectoryW(0, nullptr);
         Require(directorySize != 0, L"GetCurrentDirectoryW(size)");
         std::wstring directory(directorySize, L'\0');
@@ -298,9 +309,7 @@ public:
         for (int index = 1; index < arguments.count; ++index)
         {
             if (!parameters.empty()) parameters.push_back(L' ');
-            // Retain background intent, but do not delegate the child again.
-            parameters += QuoteArgument(IsOwnerArgument(arguments.value[index]) ?
-                kAutoStartBackgroundArgument : arguments.value[index]);
+            parameters += QuoteArgument(arguments.value[index]);
         }
         if (!parameters.empty()) parameters.push_back(L' ');
         parameters += QuoteArgument(kExplorerRelaunchArgument);
@@ -357,6 +366,7 @@ private:
     DWORD handoffTimeout_;
     AckEventCreator createAckEvent_;
     AckWaiter waitForAck_;
+    ApplicationIdQuery queryApplicationId_;
 };
 
 template<typename Platform>
@@ -377,22 +387,21 @@ Result Normalize(std::wstring_view command, Platform& platform,
         // Helpers with inherited handles cannot survive an Explorer handoff.
         // Their real dispatch/validation runs separately from desktop startup.
         if (!desktopLaunch) return {};
+        // Signal the parent before an ordinary child takes the direct path.
         AcknowledgeExplorerLaunch(command);
         // Only the supervising launcher's PID-bound startup channel supplies
         // this decision. It is not a persistent setting or a command-line flag.
         if (currentPrivilegesAccepted) return {false, ERROR_SUCCESS, 0, L"Startup privileges accepted", true};
-        const bool elevated = platform.IsElevated();
+        // Every ordinary desktop launch continues in this process. Startup
+        // intent belongs to the caller and does not require a privilege handoff.
+        if (!platform.IsElevated()) return {};
         const Arguments arguments(command);
-        bool autoStart = false;
         bool relaunched = false;
         for (int index = 1; index < arguments.count; ++index)
         {
-            autoStart = autoStart || IsOwnerArgument(arguments.value[index]);
             relaunched = relaunched || arguments.value[index] ==
                 std::wstring_view(kExplorerRelaunchArgument);
         }
-        if (relaunched && !elevated) return {};
-        if (!autoStart && !elevated) return {};
         // A high-privilege Explorer cannot lower us. Match that desktop
         // without another process, including login and already-handed-off launches.
         if (platform.IsExplorerElevated()) return {};

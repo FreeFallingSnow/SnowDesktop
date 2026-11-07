@@ -62,6 +62,14 @@ struct WorkshopEulaStatus
     std::uint32_t actionTime = 0;
 };
 
+struct PublishedPreview
+{
+    std::string url;
+    std::string filename;
+    int type = 0; // Steam EItemPreviewType; zero is an image.
+    bool operator==(const PublishedPreview&) const = default;
+};
+
 struct PublishedItem
 {
     std::uint64_t publishedFileId = 0;
@@ -79,6 +87,7 @@ struct PublishedItem
     std::string previewUrl;
     std::vector<std::string> tags;
     std::vector<std::string> additionalPreviewFilenames;
+    std::vector<PublishedPreview> additionalPreviews;
     std::uint64_t subscriptions = 0;
     std::uint64_t favorites = 0;
     std::uint64_t views = 0;
@@ -129,7 +138,8 @@ struct PublishRequest
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&)> validateStagedArtifacts;
     std::function<bool(const std::vector<std::filesystem::path>&)> validateStagedPreviews;
     std::vector<std::filesystem::path> additionalPreviews;
-    // Only this theme's generated images may be replaced on an update.
+    bool syncAdditionalPreviews = false;
+    // Only this item's generated images may be replaced on an update.
     std::string managedPreviewPrefix;
     // Previous remote identity, verified from the owned item's metadata.
     std::string previousManagedPreviewPrefix;
@@ -153,6 +163,20 @@ struct PublishResult
     std::uint64_t publishedFileId = 0;
     bool needsLegalAgreement = false;
     std::string communityUrl;
+};
+
+struct WorkshopPreviewEdit
+{
+    std::uint32_t index = 0;
+    std::filesystem::path replacement; // Empty removes this image.
+};
+
+struct WorkshopPreviewUpdate
+{
+    PublishedItem expected;
+    std::optional<std::filesystem::path> primary;
+    std::vector<WorkshopPreviewEdit> edits;
+    std::vector<std::filesystem::path> additions;
 };
 
 using PublishProgressCallback = std::function<void(const PublishProgress&)>;
@@ -179,6 +203,8 @@ public:
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
     std::optional<PublishedItem> FindItem(std::uint64_t id, CoreError& error);
+    bool UpdatePreviews(const WorkshopPreviewUpdate& request,
+        const PublishProgressCallback& progress, CoreError& error);
     std::optional<WorkshopEulaStatus> GetEulaStatus(CoreError& error);
     bool SetSubscribed(std::uint64_t publishedFileId, bool subscribed,
         std::chrono::seconds timeout, CoreError& error);

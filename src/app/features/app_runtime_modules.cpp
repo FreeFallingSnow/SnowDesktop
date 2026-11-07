@@ -1,4 +1,9 @@
 #include "app/app.h"
+#include "dock/dock_window_transition.h"
+#include "shell/native_start_menu.h"
+#include "system/panel/system_panel.h"
+#include "dock/dock_external_minimize.h"
+#include "app/dock/dock_tray_popup_state.h"
 
 void DesktopApp::ApplyRuntimeModulePolicy()
 {

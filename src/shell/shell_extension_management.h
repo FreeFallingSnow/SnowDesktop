@@ -23,6 +23,11 @@ struct ManagementRow
     std::vector<Application> applications;
     unsigned contexts = 0;
 };
+inline std::string ManagementRegistrationVisibilityId(const std::string& id)
+{
+    if (StateCommandLower(id) == "clsid:{470c0ebd-5d73-4d58-9ced-e91e22e23282}") return "state:start-pin";
+    return StateVisibilityId(id);
+}
 inline int ManagementGroup(const ManagementRow &row, Category category)
 {
     const unsigned mask = category == Category::Objects ? 3 : 12;
@@ -54,7 +59,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
         if (!entry.systemEnabled || (!registeredSources && !entry.linked) ||
             (registeredSources && entry.kind == RegistrationKind::Observed) || !(entry.contexts & mask)) continue;
         const auto *pair = StatePairForVerb(entry.display.key);
-        if (!pair) pair = StatePairForId(entry.id);
+        if (!pair) pair = StatePairForId(ManagementRegistrationVisibilityId(entry.id));
         const auto id = pair ? std::string(pair->id) : entry.commandIdentity.empty() ? entry.id : "command:" + entry.commandIdentity;
         auto [it, added] = grouped.try_emplace(id);
         auto &row = it->second;
@@ -97,13 +102,18 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
 }
 
 inline std::vector<ManagementRow> ApplicationRegistrationRows(const Catalogue& registrations,
-    const ManagementRow& software, Category category)
+    const ManagementRow& software, Category category, const std::wstring& startPinLabel = {})
 {
     std::set<std::string> members;
     for (const auto& member : software.members) members.insert(member.id);
     Catalogue selected;
     for (const auto& source : registrations.rows)
-        if (members.contains(source.id) && source.kind != RegistrationKind::Observed) selected.rows.push_back(source);
+    {
+        const auto id = ManagementRegistrationVisibilityId(source.id);
+        if (!members.contains(id) || source.kind == RegistrationKind::Observed) continue;
+        auto& selectedSource = selected.rows.emplace_back(source);
+        if (id == "state:start-pin" && !startPinLabel.empty()) selectedSource.display.label = startPinLabel;
+    }
     // This projection exposes original registered switches without pretending
     // any native command has been observed or uniquely attributed.
     auto result = ManagementRows(selected, category, {}, {}, {}, true);
@@ -114,22 +124,31 @@ inline std::vector<ManagementRow> ApplicationRegistrationRows(const Catalogue& r
 // Installed sources and observed commands have different completeness. This
 // view lists registered extensions without claiming they produced a live menu.
 inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& registrations,
-                                                         Category category, std::wstring filter = {})
+    Category category, std::wstring filter = {}, const std::wstring& startPinLabel = {})
 {
     std::map<std::string, ManagementRow> groups;
-    std::map<std::string, std::wstring> searchable;
+    for (auto& c : filter) c = towlower(c);
     const unsigned mask = category == Category::Objects ? 3 : 12;
     for (const auto& source : registrations.rows)
     {
         if (!source.systemEnabled || !(source.contexts & mask) || source.kind == RegistrationKind::Observed) continue;
         const bool application = !source.application.id.empty() && UsableShellDisplayName(source.application.name);
         if (!application && (source.kind == RegistrationKind::Verb || !UsableShellDisplayName(source.display.label))) continue;
+        const auto memberId = ManagementRegistrationVisibilityId(source.id);
+        const auto label = memberId == "state:start-pin" && !startPinLabel.empty() ? startPinLabel : source.display.label;
+        // Filter individual registrations before grouping so expanded children
+        // and the result switch have exactly the same search scope.
+        auto text = label + L" " + source.display.label;
+        if (application) text += L" " + source.application.name;
+        for (const auto& type : source.types) text += L" " + type;
+        for (auto& c : text) c = towlower(c);
+        if (!filter.empty() && text.find(filter) == std::wstring::npos) continue;
         const auto id = application ? "app:" + source.application.id : "extension:" + source.id;
         auto& row = groups[id];
         if (row.id.empty())
         {
             row.id = id; row.display = source.display;
-            row.display.label = application ? source.application.name : source.display.label;
+            row.display.label = application ? source.application.name : label;
             row.display.provider.clear(); row.display.registration.clear();
             row.display.key.clear(); row.display.token = 0; row.display.children.clear();
         }
@@ -139,28 +158,21 @@ inline std::vector<ManagementRow> ExtensionManagementRows(const Catalogue& regis
             row.display.width = source.display.width; row.display.height = source.display.height;
             row.display.pixels = source.display.pixels; row.display.imageLogicalSize = source.display.imageLogicalSize;
         }
-        auto memberId = source.id;
-        if (StateCommandLower(memberId) == "clsid:{470c0ebd-5d73-4d58-9ced-e91e22e23282}") memberId = "state:start-pin";
         auto member = std::find_if(row.members.begin(), row.members.end(), [&](const auto& item) { return item.id == memberId; });
         if (member == row.members.end()) row.members.push_back({memberId, source.contexts, {}, memberId});
         else member->contexts |= source.contexts;
         row.contexts |= source.contexts;
         row.types.insert(row.types.end(), source.types.begin(), source.types.end());
         if (application && std::find(row.applications.begin(), row.applications.end(), source.application) == row.applications.end()) row.applications.push_back(source.application);
-        searchable[id] += L" " + source.display.label;
-        for (const auto& type : source.types) searchable[id] += L" " + type;
     }
     std::vector<ManagementRow> result;
-    for (auto& c : filter) c = towlower(c);
     for (auto& [id, row] : groups)
     {
         // This view owns only registration rules. Command observations and
         // exceptions belong to the independent actual-object view.
         std::sort(row.members.begin(), row.members.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
         std::sort(row.types.begin(), row.types.end()); row.types.erase(std::unique(row.types.begin(), row.types.end()), row.types.end());
-        auto text = row.display.label + searchable[id];
-        for (auto& c : text) c = towlower(c);
-        if (filter.empty() || text.find(filter) != std::wstring::npos) result.push_back(std::move(row));
+        result.push_back(std::move(row));
     }
     std::stable_sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
         const auto names = CompareShellDisplayNames(a.display.label, b.display.label);

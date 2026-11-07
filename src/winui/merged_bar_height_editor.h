@@ -2,9 +2,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include "dock_page_presenter.h"
+#include "dock_page_actions.h"
+#include "settings_focus_feedback.h"
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <memory>
 #include "settings_presenter_controls.h"
 #include "settings/bar_settings_rules.h"
+#include "settings/settings_snapshot.h"
 
 namespace snowdesktop::winui
 {
@@ -12,7 +16,7 @@ namespace snowdesktop::winui
 // into AppBar placement, so dragging cannot create a work-area feedback loop.
 class MergedBarHeightEditor
 {
-    using Localize = DockPagePresenter::LocalizeCallback;
+    using Localize = std::function<std::wstring(std::string_view)>;
     using Row = presenter_controls::SettingRow;
     Localize localize_;
     DockPageActions actions_;

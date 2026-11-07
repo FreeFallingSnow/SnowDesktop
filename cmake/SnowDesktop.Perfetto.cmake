@@ -1,5 +1,5 @@
 # Fixed upstream input, offline and byte-verified. Keep upstream amalgamations
-# unchanged; reproducibly adapt their two known MSVC narrowing sites below.
+# unchanged; reproducibly adapt MSVC narrowing and Windows CPU accounting below.
 set(SNOWDESKTOP_PERFETTO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/perfetto")
 file(SHA256 "${SNOWDESKTOP_PERFETTO_ROOT}/perfetto.h" SNOWDESKTOP_PERFETTO_HEADER_SHA256)
 file(SHA256 "${SNOWDESKTOP_PERFETTO_ROOT}/perfetto.cc" SNOWDESKTOP_PERFETTO_SOURCE_SHA256)
@@ -27,6 +27,22 @@ string(REPLACE "${SNOWDESKTOP_PERFETTO_INDEX_INPUT}"
 # Express that bounded length in the uint32_t type returned by this function.
 string(REPLACE "${SNOWDESKTOP_PERFETTO_LENGTH_INPUT}"
     "const auto size_field_len = static_cast<uint32_t>(*out - size_field_start);"
+    SNOWDESKTOP_PERFETTO_COMPILER_SOURCE "${SNOWDESKTOP_PERFETTO_COMPILER_SOURCE}")
+# QueryThreadCycleTime is not an elapsed-time clock. Its TSC calibration also
+# returns zero for the first 50ms, then jumps to the thread's lifetime total.
+# Use the upstream Windows/Arm GetThreadTimes path on all Windows processors.
+# Keep the original signed SDK clock and trace format; short scopes retain the
+# OS accounting granularity, which the report documents explicitly.
+set(SNOWDESKTOP_PERFETTO_CPU_INPUT
+    "TimeNanos GetThreadCPUTimeNs() {\n#if PERFETTO_BUILDFLAG(PERFETTO_ARCH_CPU_ARM64)")
+string(FIND "${SNOWDESKTOP_PERFETTO_COMPILER_SOURCE}" "${SNOWDESKTOP_PERFETTO_CPU_INPUT}" SNOWDESKTOP_PERFETTO_CPU_POSITION)
+if(SNOWDESKTOP_PERFETTO_CPU_POSITION LESS 0)
+    message(FATAL_ERROR "Perfetto v58.2 Windows CPU clock input changed; review before updating")
+endif()
+string(REPLACE "${SNOWDESKTOP_PERFETTO_CPU_INPUT}"
+    "TimeNanos GetThreadCPUTimeNs() {\n#if 1 // SnowDesktop: OS thread CPU accounting, no cycle-to-time conversion."
+    SNOWDESKTOP_PERFETTO_COMPILER_SOURCE "${SNOWDESKTOP_PERFETTO_COMPILER_SOURCE}")
+string(REPLACE "double TSCTicksPerSecond() {" "[[maybe_unused]] double TSCTicksPerSecond() {"
     SNOWDESKTOP_PERFETTO_COMPILER_SOURCE "${SNOWDESKTOP_PERFETTO_COMPILER_SOURCE}")
 set(SNOWDESKTOP_PERFETTO_COMPILER_FILE "${CMAKE_BINARY_DIR}/generated/perfetto/perfetto.cc")
 set(SNOWDESKTOP_PERFETTO_EXISTING_SOURCE "")
@@ -97,6 +113,9 @@ set(SNOWDESKTOP_PERFETTO_PROBE_SOURCES
     src/widget/data/widget_system_data_provider.cpp
     src/widget/runtime/lua_runtime.cpp
     src/widget/runtime/widget_engine.cpp
+    src/widget/view/widget_surface_renderer.cpp
+    src/widget/view/widget_gpu_timing.cpp
+    src/widgets/lua_script.cpp
     src/widget/runtime/widget_lua_lifecycle.cpp
     src/widget/tasks/widget_task_broker.cpp
     src/widget/tasks/widget_filesystem_task_executor.cpp

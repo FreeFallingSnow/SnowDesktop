@@ -1,4 +1,12 @@
 #include "pch.h"
+#include "general_page_presenter.h"
+#include "hotkey_recorder.h"
+#include "settings/settings_controller_interface.h"
+#include "settings/settings_snapshot.h"
+#include "settings/general_settings.h"
+#include "theme/personalization.h"
+#include "navigation/navigation_settings.h"
+#include "dock/dock_settings.h"
 #include "platform/force_restart_hotkey.h"
 
 #include "settings_window_host.h"
@@ -196,6 +204,45 @@ DWORD WindowsBuildNumber() noexcept
 bool SupportsMicaBackdrop() noexcept
 {
     return WindowsBuildNumber() >= 22000;
+}
+
+void ApplyWindows10PopupBackgrounds()
+{
+    if (SupportsMicaBackdrop())
+        return;
+
+    // WinUI's ComboBox and compact NavigationView flyout use in-app acrylic.
+    // Build a fresh dictionary before creating the controls so the override
+    // can be attached to the application resources exactly once.
+    try
+    {
+        const auto backgrounds = mux::Markup::XamlReader::Load(LR"(
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="{StaticResource SolidBackgroundFillColorTertiary}" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="{ThemeResource SystemColorWindowColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>)").as<mux::ResourceDictionary>();
+        mux::Application::Current().Resources().MergedDictionaries().Append(backgrounds);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        const std::wstring message = L"SettingsUI Win10 popup resources: " +
+            std::wstring(error.message());
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Settings, message.c_str(),
+            DiagnosticLogLevel::Warning);
+    }
 }
 
 bool SupportsDwmSystemBackdrop() noexcept
@@ -1102,10 +1149,11 @@ struct SettingsWindowHost::Impl
                 snapshot ? snapshot->values.personalization.contextMenuStyle : 0,
                 snapshot && ResolveBarSettingsAvailability(snapshot->values.general.dockEnabled,
                     snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
-                options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable);
+                options.advancedFeatureStatus && options.advancedFeatureStatus().bridgeAvailable,
+                options.steamRoom && options.steamRoom(steam_room::Command::Query).phase != steam_room::Phase::Unavailable);
         }
-        if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
-            snapshot->values.personalization.contextMenuStyle == 6))
+        if (snapshot && modern_menu::appearance_rules::IsWin10Style(
+            static_cast<modern_menu::Appearance>(snapshot->values.personalization.contextMenuStyle)))
         {
             std::erase_if(input.staticSettings, [](const auto& descriptor) {
                 return descriptor.focusId == "contextMenu.expandQuickActions";
@@ -2012,6 +2060,11 @@ struct SettingsWindowHost::Impl
                 return;
             }
             state->owner->options.registerAdvancedFeatures();
+        };
+        general.steamRoom = [weak](steam_room::Command command) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner && state->owner->options.steamRoom
+                ? state->owner->options.steamRoom(command) : steam_room::Status{};
         };
         general.openAdvancedFeaturesStore = [weak]() {
             const auto state = weak.lock();
@@ -3882,6 +3935,7 @@ bool SettingsWindowHost::Initialize(
 
     try
     {
+        ApplyWindows10PopupBackgrounds();
         impl_->callbacks =
             std::make_shared<Impl::CallbackState>();
         impl_->callbacks->owner = impl_.get();
@@ -4069,7 +4123,8 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
 
     // Reopening the same destination must replay its locator after the HWND
     // is visible, including when a previous visit already consumed the pulse.
-    if (impl_->shell && route.page == SettingsPage::General && route.focusId == "general.windowSupport")
+    if (impl_->shell && route.page == SettingsPage::General &&
+        (route.focusId == "general.windowSupport" || route.focusId == "general.steamRoom"))
         (void)impl_->shell->Navigate(route, false);
 
     if (snapshot && impl_->shell &&

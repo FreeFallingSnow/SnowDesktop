@@ -65,8 +65,8 @@ inline bool PreserveOwnedMenuZOrder(
  * 同时再用另一个正在跨边界的窗口作为 hWndInsertAfter。跨带时按视觉
  * 安全顺序归一化：降级先移动 backdrop；提升在同一事务内分别指定
  * TOPMOST（backdrop 在先、内容窗在后），不从边界窗口推断所属带。
- * 同线程窗口在固定带内使用延迟事务；具体窗口锚点使用隐藏背景层的
- * 单独定位，避免外部锚点在检查后失效时遗留 HDWP。
+ * 同线程、同带的自有锚点也使用延迟事务，保持背景可见；外部锚点
+ * 使用隐藏背景层的单独定位，避免其在检查后失效时遗留 HDWP。
  */
 inline bool Apply(
     HWND contentWindow,
@@ -196,10 +196,16 @@ inline bool Apply(
     // IsWindow cannot retain an external anchor's lifetime. User32 can leave
     // the original HDWP alive when DeferWindowPos rejects an expired HWND;
     // its failure contract also forbids ending that rejected transaction.
-    // Batch only this thread's pair against fixed band sentinels. Individual
-    // positioning already provides the guarded fallback for all other cases.
+    // A concrete anchor owned by this UI thread stays alive while the batch
+    // is collected: positioning callbacks run at EndDeferWindowPos. Fused
+    // bars use their Dock HWND as that anchor. Hiding their glass for an
+    // ordinary same-band repair exposes a missing background during popup
+    // and window animations, even though its retained pixels are complete.
     const DWORD thread = GetCurrentThreadId();
-    if ((contentInsertAfter != bandInsertAfter && contentInsertAfter != HWND_BOTTOM) ||
+    const bool localAnchor = contentInsertAfter && IsWindow(contentInsertAfter) &&
+        GetWindowThreadProcessId(contentInsertAfter, nullptr) == thread &&
+        IsTopmost(contentWindow) == topmost && IsTopmost(backdropWindow) == topmost;
+    if ((contentInsertAfter != bandInsertAfter && contentInsertAfter != HWND_BOTTOM && !localAnchor) ||
         GetWindowThreadProcessId(contentWindow, nullptr) != thread ||
         GetWindowThreadProcessId(backdropWindow, nullptr) != thread)
         return placeSeparately();

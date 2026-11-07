@@ -74,6 +74,12 @@ struct ApplySettings
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
+    /// Offline render fixture only; never applied when creating a widget.
+    bool previewPrivacyMode = false;
+    /// Registered ordinary settings to validate again before creating a Lua instance.
+    std::string creationPresetId;
+    /// Keeps the selected authored size so adding can resolve the current page again.
+    std::string sizeVariantId;
 };
 
 enum class OptionSetting
@@ -264,6 +270,7 @@ private:
     bool lightTheme_ = true;
     bool blurEnabled_ = true;
     int menuPanelPaddingDip_ = modern_menu::kSubmenuPanelPaddingDip;
+    int panelRadiusDip_ = 10;
     bool pointerTracking_ = false;
     bool componentHovered_ = false;
     ApplyHandler onApply_;

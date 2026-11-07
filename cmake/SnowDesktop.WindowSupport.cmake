@@ -1,19 +1,27 @@
 include_guard(GLOBAL)
 
 # This is an implementation identity, independent of version.json, build paths,
-# timestamps and PE version resources. It covers helper targets, their quoted
-# local include closure, and the x86 companion sources. Main-only changes do
+# timestamps and PE version resources. It covers helper targets, their linked
+# production owners, local include closure, and x86 companion sources. Main-only changes do
 # not advertise a helper update.
 function(snowdesktop_window_support_build_identity)
     set(queue
         "${CMAKE_SOURCE_DIR}/src/dock/dock_minimize_hook_host.cpp"
         "${CMAKE_SOURCE_DIR}/src/dock/dock_cloak_dispatcher.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/runtime_module_policy.cpp"
         "${CMAKE_SOURCE_DIR}/src/dock/CMakeLists.txt")
-    set(identity "window-support-implementation-v1\n${CMAKE_CXX_COMPILER_ID};${CMAKE_CXX_COMPILER_VERSION}\n")
-    foreach(target SnowDesktopWindowHelper SnowDesktopWindowSupport SnowDesktopDockMinimizeHook SnowDesktopPerfetto)
+    set(identity "window-support-implementation-v2\n${CMAKE_CXX_COMPILER_ID};${CMAKE_CXX_COMPILER_VERSION}\n")
+    set(target_queue SnowDesktopWindowHelper SnowDesktopWindowSupport SnowDesktopDockMinimizeHook SnowDesktopPerfetto)
+    set(visited_targets)
+    while(target_queue)
+        list(POP_FRONT target_queue target)
         if(NOT TARGET "${target}")
             continue()
         endif()
+        if(target IN_LIST visited_targets)
+            continue()
+        endif()
+        list(APPEND visited_targets "${target}")
         get_target_property(sources "${target}" SOURCES)
         get_target_property(source_dir "${target}" SOURCE_DIR)
         foreach(source IN LISTS sources)
@@ -22,13 +30,24 @@ function(snowdesktop_window_support_build_identity)
                 list(APPEND queue "${path}")
             endif()
         endforeach()
-        foreach(property COMPILE_OPTIONS COMPILE_DEFINITIONS LINK_OPTIONS)
+        foreach(property COMPILE_OPTIONS COMPILE_DEFINITIONS LINK_OPTIONS MSVC_RUNTIME_LIBRARY LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
             get_target_property(value "${target}" "${property}")
             if(value)
                 string(APPEND identity "${target}.${property}=${value}\n")
             endif()
         endforeach()
-    endforeach()
+        foreach(property LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+            get_target_property(dependencies "${target}" "${property}")
+            foreach(dependency IN LISTS dependencies)
+                if(dependency MATCHES "^\\$<LINK_ONLY:([^>]+)>$")
+                    set(dependency "${CMAKE_MATCH_1}")
+                endif()
+                if(TARGET "${dependency}")
+                    list(APPEND target_queue "${dependency}")
+                endif()
+            endforeach()
+        endforeach()
+    endwhile()
     set(visited)
     while(queue)
         list(POP_FRONT queue path)

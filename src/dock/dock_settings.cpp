@@ -1,6 +1,15 @@
 #include "data/atomic_file.h"
+#include "common/json_value.h"
 #include <sstream>
 #include "dock_settings.h"
+#include "dock_settings_rules.h"
+#include "dock_minimize_protocol.h"
+#include "dock_fullscreen_policy.h"
+#include "dock_tray_rules.h"
+#include "platform/runtime_module_policy.h"
+#include "settings/animation_settings.h"
+#include <cmath>
+#include "theme/personalization.h"
 #include "theme/taskbar_appearance.h"
 #include "dock_gradient_storage.h"
 #include "dock_fullscreen_storage.h"
@@ -14,6 +23,7 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
 #include "taskbar_minimize_input.h"
+#include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "diagnostics/diagnostic_log.h"
@@ -39,6 +49,104 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+void ConfigureSystemTaskbarTargetProtection(
+    SystemTaskbarTargetAppearance& target,
+    bool suppressionRequested, bool protectActivation, bool hasDock,
+    bool allMonitors) noexcept
+{
+    // Permanent hiding follows the selected monitor scope. Passive activation
+    // from a minimized application can reach taskbars on screens without a
+    // Dock; intentional shell-panel access still releases that protection.
+    target.suppressTaskbar = suppressionRequested && (allMonitors || hasDock);
+    // Keep the controller attached while a shell panel is open. Its per-window
+    // decision releases the current request without disabling future requests.
+    target.protectAutoHideActivation = protectActivation;
+}
+
+bool ShouldSuppressSystemTaskbar(const DockSettings& settings,
+    bool dockEnabled) noexcept
+{
+    return settings.suppressSystemTaskbar &&
+        (settings.suppressSystemTaskbarAllMonitors || dockEnabled);
+}
+
+bool ShowDockWindowsButton(const DockSettings& settings) noexcept
+{
+    return settings.showWindowsButton;
+}
+
+bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
+    bool dockEnabled, bool autoHideEnabled) noexcept
+{
+    // Protection belongs to an active Dock on any edge. Windows auto-hide
+    // alone must not activate integration. Permanent hiding also needs it
+    // when the original Windows auto-hide preference was disabled.
+    return snowdesktop::runtime_modules::ProtectAutoHide(dockEnabled, autoHideEnabled, settings.suppressSystemTaskbar);
+}
+
+PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
+{
+    auto value = settings.followComponentAppearance ? global :
+        settings.appearancePreset == kAppearancePresetCustom ? settings.customAppearance : MakeAppearancePreset(settings.appearancePreset);
+    value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
+    return value;
+}
+
+void SelectDockAppearance(DockSettings& settings, bool followGlobal,
+    int preset, const PersonalizationSettings& global)
+{
+    if (!followGlobal && preset == kAppearancePresetCustom &&
+        (settings.followComponentAppearance || settings.appearancePreset != kAppearancePresetCustom))
+    {
+        settings.customAppearance = ResolveDockAppearance(settings, global);
+        settings.customAppearance.backgroundPreset = kAppearancePresetCustom;
+    }
+    settings.followComponentAppearance = followGlobal;
+    if (!followGlobal) settings.appearancePreset = preset;
+}
+
+void NormalizeDockSettings(DockSettings& settings)
+{
+    settings.edgeDistanceScale = ClampDockEdgeDistanceScale(settings.edgeDistanceScale);
+    settings.attentionDotSizeScale = snowdesktop::dock_attention_dot::NormalizeSizeScale(settings.attentionDotSizeScale);
+    settings.attentionDotOffset = snowdesktop::dock_attention_dot::NormalizeOffset(settings.attentionDotOffset);
+    settings.cornerRadius = std::isfinite(settings.cornerRadius)
+        ? std::clamp(settings.cornerRadius, 0.0f, 28.0f) : DockSettings{}.cornerRadius;
+    switch (settings.appearancePreset)
+    {
+    case kAppearancePresetDark: case kAppearancePresetLight:
+    case kAppearancePresetGlassDark: case kAppearancePresetGlassLight:
+    case kAppearancePresetGlassTransparent:
+    case kAppearancePresetAcrylicDark: case kAppearancePresetAcrylicLight:
+    case kAppearancePresetCustom: break;
+    default: settings.appearancePreset = kAppearancePresetCustom; break;
+    }
+    settings.hoverEffect = snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect);
+    settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(settings.hoverScale);
+    settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
+    settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
+    settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
+    settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(settings.edgeHoverDelayMs);
+    settings.fullscreenPolicy = snowdesktop::dock_fullscreen::Normalize(static_cast<int>(settings.fullscreenPolicy));
+    snowdesktop::dock_fullscreen::NormalizeExceptions(settings.fullscreenExceptions);
+    snowdesktop::dock_tray::NormalizeRules(settings.trayApplications);
+    snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
+        settings.showRunningApps,
+        settings.showWindowPreviews);
+}
+
+PersonalizationSettings MakeTransparentTaskbarAppearance()
+{
+    auto appearance = PersonalizationSettings::DarkPreset();
+    appearance.widgetBgR = appearance.widgetBgG = appearance.widgetBgB = 0.f;
+    appearance.widgetBorderR = appearance.widgetBorderG = appearance.widgetBorderB = 0.f;
+    appearance.widgetAlpha = appearance.widgetBorderAlpha = appearance.gradientEndA = 0.f;
+    appearance.widgetEdgeHighlightEnabled = false;
+    appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
+    appearance.glassEnabled = appearance.acrylicEnabled = false;
+    return appearance;
+}
 
 namespace
 {
@@ -627,9 +735,9 @@ public:
         InterlockedIncrement(&state_->generation); // even: snapshot complete
         snowdesktop::performance::Value("shared.taskbar", "publish", {}, 1);
 
-        const bool watchMinimizeInput = hookEnabled && std::any_of(targets.begin(), targets.end(), [](const auto& target) {
+        const bool watchMinimizeInput = hookEnabled && (suppressTaskbar || std::any_of(targets.begin(), targets.end(), [](const auto& target) {
             return target.protectAutoHideActivation;
-        });
+        }));
         if (!watchMinimizeInput)
         {
             minimizeInput_.Stop();
@@ -757,14 +865,15 @@ public:
         return true;
     }
 
-    bool BeginMinimizeProtection(HWND source, bool observed)
+    bool BeginMinimizeProtection(HWND source, bool observed, DWORD deadline)
     {
         using namespace snowdesktop::taskbar_hook;
         std::vector<HWND> taskbars;
         {
             std::lock_guard lock(mutex_);
             Snapshot snapshot;
-            if (!source || !ReadSharedSnapshot(state_, snapshot) ||
+            if (!source || (deadline && !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) ||
+                !ReadSharedSnapshot(state_, snapshot) ||
                 snapshot.ownerProcessId != GetCurrentProcessId() || !HasMinimizeProtection(snapshot)) return false;
             const ULONGLONG now = GetTickCount64();
             for (LONG i = 0; i < snapshot.targetCount; ++i)
@@ -803,13 +912,24 @@ public:
         }
         bool applied = !taskbars.empty();
         const UINT message = RegisterWindowMessageW(kApplyMessageName);
+        // Leave most of the CBT budget for preparing and presenting the image.
+        constexpr DWORD externalProtectionBudgetMs = 32;
+        const DWORD started = GetTickCount();
         for (HWND taskbar : taskbars)
         {
+            DWORD timeout = 150;
+            if (deadline)
+            {
+                const DWORD elapsed = GetTickCount() - started;
+                const DWORD remaining = snowdesktop::dock_minimize::RemainingRequestTime(deadline, GetTickCount());
+                if (!remaining || elapsed >= externalProtectionBudgetMs) return false;
+                timeout = (std::min)(remaining, externalProtectionBudgetMs - elapsed);
+            }
             DWORD_PTR result = 0;
             // Complete the existing native cloak on every taskbar thread before
             // returning to the application's original minimize operation.
             applied &= SendMessageTimeoutW(taskbar, message, 0, 0,
-                SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &result) != 0 &&
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, timeout, &result) != 0 &&
                 result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
                 GetPropW(taskbar, native::kAttachedProperty) != nullptr;
         }
@@ -1063,9 +1183,9 @@ bool IsSystemTaskbarAutoHideEnabled()
     return ReadSystemTaskbarAutoHideEnabled();
 }
 
-bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed)
+bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed, DWORD deadline)
 {
-    return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed);
+    return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed, deadline);
 }
 
 bool UpdateSystemTaskbarStartMenuProtection(bool active, bool begin)

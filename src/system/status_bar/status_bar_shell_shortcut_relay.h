@@ -105,7 +105,19 @@ public:
     static std::shared_ptr<StatusBarShellShortcutRelay> Start(HWND initialForeground, StatusBarShellChord chord)
     { return Start(initialForeground, chord, Api{}); }
 
-    ~StatusBarShellShortcutRelay() { Cancel(); }
+    // One-shot Shell commands keep only the bounded worker state alive. They
+    // do not retain a DesktopApp pointer or need an owner to poll the result.
+    static bool Invoke(HWND initialForeground, StatusBarShellChord chord, Api api)
+    {
+        const auto relay = Start(initialForeground, chord, std::move(api));
+        if (!relay) return false;
+        relay->cancelOnDestroy_ = false;
+        return true;
+    }
+    static bool Invoke(HWND initialForeground, StatusBarShellChord chord)
+    { return Invoke(initialForeground, chord, Api{}); }
+
+    ~StatusBarShellShortcutRelay() { if (cancelOnDestroy_) Cancel(); }
     StatusBarShellShortcutRelay(const StatusBarShellShortcutRelay&) = delete;
     StatusBarShellShortcutRelay& operator=(const StatusBarShellShortcutRelay&) = delete;
 
@@ -356,5 +368,6 @@ private:
 
     inline static std::atomic<bool> inFlight_{false};
     std::shared_ptr<State> state_;
+    bool cancelOnDestroy_ = true;
 };
 }

@@ -1,4 +1,6 @@
 #include "system_panel_model.h"
+#include "common/json_value.h"
+#include "system/controls/system_quick_controls.h"
 #include "system/status_bar/status_bar_battery.h"
 #include "system/controls/system_control_wifi_presentation.h"
 #include "system/controls/system_control_audio_presentation.h"
@@ -11,7 +13,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <utility>
 
@@ -102,6 +107,7 @@ void SystemPanelModel::SyncSubscriptions()
 {
     std::set<std::string> needed;
     if(IsSystemResourceAction(action_))needed.insert(Topic(action_));
+    else if(action_==StatusBarAction::SystemMenu)needed.insert("host.power.actions");
     else if(action_!=StatusBarAction::Tray&&action_!=StatusBarAction::Calendar&&action_!=StatusBarAction::InputMethodPanel)
     {
         if(settings_.mediaControls){needed.insert("media.sessions");needed.insert("media.artwork");}
@@ -187,6 +193,7 @@ void SystemPanelModel::SubmitControl(system_control::Request request,const std::
         const auto argument=[&](const char* field){const auto at=request.arguments.find(field);return at==request.arguments.end()?std::string{}:at->second;};
         if(request.name.starts_with("network.wifi.")){pending.topic="network.wifi";pending.collection="interfaces";pending.device=argument("interfaceId");}
         else if(request.name.starts_with("bluetooth.")){pending.topic="bluetooth.devices";pending.collection=request.name=="bluetooth.setRadio"?"radios":"devices";pending.device=argument(request.name=="bluetooth.setRadio"?"radioId":"deviceId");}
+        else if(request.name.starts_with("host.vpn.")){pending.topic="host.vpn";pending.collection="entries";pending.device=argument("entryName");}
         else if(request.name.starts_with("audio.")){pending.topic="audio.devices";pending.collection="devices";pending.device=binding->target;}
         else if(request.name.starts_with("media.")){pending.topic="media.sessions";pending.device=argument("sessionId");}
         else if(request.name=="system.power.setPlan"){pending.topic="system.power.plans";pending.collection="plans";pending.device=argument("planId");}
@@ -684,7 +691,12 @@ void SystemPanelModel::Overview(float& y)
 }
 bool SystemPanelModel::QuickControlVisible(std::string_view id) const
 {
-    return FindSystemQuickControl(id)&&std::find(settings_.hiddenQuickControls.begin(),settings_.hiddenQuickControls.end(),id)==settings_.hiddenQuickControls.end();
+    // Visibility is opt-in: the control must be in the saved order and not
+    // explicitly hidden. Controls outside the order (for example the system VPN)
+    // stay out of the grid until the management page adds them.
+    if(!FindSystemQuickControl(id))return false;
+    if(std::find(settings_.quickControlOrder.begin(),settings_.quickControlOrder.end(),id)==settings_.quickControlOrder.end())return false;
+    return std::find(settings_.hiddenQuickControls.begin(),settings_.hiddenQuickControls.end(),id)==settings_.hiddenQuickControls.end();
 }
 void SystemPanelModel::SaveQuickControls()
 {
@@ -716,6 +728,7 @@ void SystemPanelModel::QuickControls(float& y)
         const auto name=std::wstring(_LW(control.label));
         std::wstring status=_LW(!snapshot?"controlCenter.loading":!usable?"controlCenter.unavailable":busy?"controlCenter.working":enabled?"controlCenter.on":"controlCenter.off");
         if(id=="projection"&&available)status=_LW(("controlCenter.projection."+j::String(state,"mode")).c_str());
+        if(id=="vpn"&&available)status=_LW(enabled?"controlCenter.connected":"controlCenter.disconnected");
         if(id=="power"&&available)status=_LW("controlCenter.openMenu");
         if(id=="awake"&&available)status=_LW(j::String(state,"mode")=="timed"?"controlCenter.awake.timed":enabled?"controlCenter.awake.indefinite":"controlCenter.awake.plan");
         const auto nodeId="quick:"+id;
@@ -813,6 +826,7 @@ void SystemPanelModel::QuickControlMenu(float& y)
             Add("awake.remaining",ui::Role::Text,Rect(16,y,scene_.width-32,30),std::wstring(_LW("controlCenter.awake.remaining"))+L": "+two(remaining/3600)+L":"+two(remaining/60%60)+L":"+two(remaining%60)).fontSize=12;y+=36;
         }
     }
+    else if(page_=="vpn")VpnPage(y);
     else
     {
         auto& reason=Add("quick.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,64),_LW("controlCenter.systemControlUnavailable"));
@@ -824,9 +838,18 @@ void SystemPanelModel::QuickControlMenu(float& y)
 }
 void SystemPanelModel::ManageQuickControls(float& y)
 {
-    for(std::size_t index=0;index<settings_.quickControlOrder.size();++index)
+    // Configured buttons keep their order; every other supported control is
+    // listed after them so it can be shown without a separate settings switch.
+    std::vector<std::string> ids=settings_.quickControlOrder;
+    for(const auto& control:SystemQuickControls)
+        if(std::find(ids.begin(),ids.end(),control.id)==ids.end())ids.emplace_back(control.id);
+    for(const auto& id:ids)
     {
-        const auto id=settings_.quickControlOrder[index];const auto* control=FindSystemQuickControl(id);if(!control)continue;
+        const auto* control=FindSystemQuickControl(id);if(!control)continue;
+        const auto found=std::find(settings_.quickControlOrder.begin(),settings_.quickControlOrder.end(),id);
+        const bool configured=found!=settings_.quickControlOrder.end();
+        const auto position=configured?static_cast<std::size_t>(found-settings_.quickControlOrder.begin()):0;
+        const bool visible=QuickControlVisible(id);
         const auto name=std::wstring(_LW(control->label));const auto prefix="quick.manage:"+id;
         const float right=scene_.width-16;
         auto& label=Add(prefix+".label",ui::Role::Text,Rect(16,y,scene_.width-136,40),name,control->glyph);label.fontSize=12;
@@ -834,13 +857,27 @@ void SystemPanelModel::ManageQuickControls(float& y)
         {
             const auto nodeId=prefix+(delta<0?".up":".down");
             auto& move=Add(nodeId,ui::Role::Icon,Rect(right-(delta<0?100.f:68.f),y+4,28,32),L"",delta<0?L"\uE70E":L"\uE70D");
-            move.enabled=delta<0?index>0:index+1<settings_.quickControlOrder.size();
+            // A control outside the order has no slot to reorder yet.
+            move.enabled=configured&&(delta<0?position>0:position+1<settings_.quickControlOrder.size());
             move.tooltip=move.accessibilityLabel=name+L" · "+_LW(delta<0?"controlCenter.moveUp":"controlCenter.moveDown");
-            Command(nodeId,[this,id,delta]{auto& order=settings_.quickControlOrder;const auto found=std::find(order.begin(),order.end(),id);if(found==order.end())return;const auto at=found-order.begin();const auto next=at+delta;if(next<0||next>=static_cast<std::ptrdiff_t>(order.size()))return;std::swap(order[static_cast<std::size_t>(at)],order[static_cast<std::size_t>(next)]);SaveQuickControls();});
+            Command(nodeId,[this,id,delta]{auto& order=settings_.quickControlOrder;const auto at=std::find(order.begin(),order.end(),id);if(at==order.end())return;const auto next=at-order.begin()+delta;if(next<0||next>=static_cast<std::ptrdiff_t>(order.size()))return;std::swap(order[static_cast<std::size_t>(at-order.begin())],order[static_cast<std::size_t>(next)]);SaveQuickControls();});
         }
-        auto& show=Add(prefix+".visible",ui::Role::Toggle,Rect(right-36,y+4,36,32),L"",QuickControlVisible(id)?L"\uE73E":L"\uE739");
-        show.selected=QuickControlVisible(id);show.tooltip=show.accessibilityLabel=name+L" · "+_LW(show.selected?"controlCenter.hideButton":"controlCenter.showButton");
-        Command(show.id,[this,id]{auto& hidden=settings_.hiddenQuickControls;const auto found=std::find(hidden.begin(),hidden.end(),id);if(found==hidden.end())hidden.push_back(id);else hidden.erase(found);SaveQuickControls();});y+=48;
+        auto& show=Add(prefix+".visible",ui::Role::Toggle,Rect(right-36,y+4,36,32),L"",visible?L"\uE73E":L"\uE739");
+        show.selected=visible;show.tooltip=show.accessibilityLabel=name+L" · "+_LW(visible?"controlCenter.hideButton":"controlCenter.showButton");
+        Command(show.id,[this,id]{
+            if(QuickControlVisible(id))
+            {
+                auto& hidden=settings_.hiddenQuickControls;
+                if(std::find(hidden.begin(),hidden.end(),id)==hidden.end())hidden.push_back(id);
+            }
+            else
+            {
+                auto& order=settings_.quickControlOrder;
+                if(std::find(order.begin(),order.end(),id)==order.end())order.push_back(id);
+                std::erase(settings_.hiddenQuickControls,id);
+            }
+            SaveQuickControls();
+        });y+=48;
     }
     y+=8;Add("quick.restore",ui::Role::Button,Rect(16,y,scene_.width-32,38),_LW("controlCenter.restoreButtons"));
     Command("quick.restore",[this]{const StatusBarSettings defaults;settings_.quickControlOrder=defaults.quickControlOrder;settings_.hiddenQuickControls.clear();SaveQuickControls();});y+=46;
@@ -982,6 +1019,49 @@ void SystemPanelModel::Bluetooth(float& y)
     }
     if(devices.empty()){Add("bluetooth.empty",ui::Role::Text,Rect(16,y,scene_.width-32,52),_LW(!available?"controlCenter.unavailable":!powered?"controlCenter.off":"controlCenter.noDevices"));y+=60;}
 }
+void SystemPanelModel::VpnPage(float& y)
+{
+    const auto snapshot=source_.current?source_.current("host.vpn"):std::nullopt;
+    const auto value=snapshot&&snapshot->available?snapshot->value:j::Object();
+    const auto& entries=Items(value,"entries");
+    if(!snapshot||!snapshot->available)
+    {
+        auto& unavailable=Add("vpn.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,56),
+            _LW(snapshot&&snapshot->error=="accessDenied"?"controlCenter.accessDenied":"controlCenter.unavailable"));
+        unavailable.wrap=true;y+=64;return;
+    }
+    for(const auto& entry:entries)
+    {
+        const auto id=j::String(entry,"id");if(id.empty())continue;
+        const auto name=j::String(entry,"name");
+        const bool connected=j::Flag(entry,"connected"),busy=j::Flag(entry,"busy"),open=id==vpn_;
+        const auto card="vpn.card:"+id;
+        Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?98.f:54.f)).hoverGroup=card;
+        auto& row=Add("vpn.entry:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,54),Wide(name.empty()?id:name),L"\uE705");
+        row.hoverGroup=card;row.enabled=!busy;
+        row.detail=connected?std::wstring(_LW("controlCenter.connected")):
+            busy?std::wstring(_LW("controlCenter.working")):std::wstring(_LW("controlCenter.disconnected"));
+        Command(row.id,[this,id]{vpn_=vpn_==id?std::string{}:id;});y+=54;
+        if(open)
+        {
+            const bool canConnect=j::Flag(entry,"canConnect"),canDisconnect=j::Flag(entry,"canDisconnect");
+            auto& button=Add("vpn.connect:"+id,ui::Role::Button,Rect(scene_.width-158,y,134,36),
+                _LW(connected?"controlCenter.disconnect":"controlCenter.connect"));
+            button.hoverGroup=card;button.enabled=connected?canDisconnect:canConnect;
+            BindAction(button.id,"vpn.connection:"+id,id);
+            Command(button.id,[this,id,connected]{
+                Start(connected?"host.vpn.disconnect":"host.vpn.connect",{{"entryName",id}});
+            });
+            y+=44;
+        }
+        y+=8;
+    }
+    if(entries.empty())
+    {
+        auto& empty=Add("vpn.empty",ui::Role::Text,Rect(16,y,scene_.width-32,64),_LW("controlCenter.noVpnProfiles"));
+        empty.wrap=true;empty.fontSize=12;y+=72;
+    }
+}
 void SystemPanelModel::Power(float& y)
 {
     const auto value=Current("system.power.plans");
@@ -1004,14 +1084,44 @@ void SystemPanelModel::Power(float& y)
 void SystemPanelModel::PowerActions(float& y)
 {
     const auto capabilities=Current("host.power.actions");
-    for(const auto& action:SystemPowerActions)
+    const bool compact=action_==StatusBarAction::SystemMenu;
+    for(std::size_t index=0;index<SystemPowerActions.size();++index)
     {
+        const auto& action=SystemPowerActions[index];
         const std::string id="power."+std::string(action.id);
-        auto& item=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(action.label));
+        const float inset=compact?4.f:16.f;
+        auto& item=Add(id,ui::Role::ListItem,Rect(inset,y,scene_.width-2*inset,compact?32.f:44.f),_LW(action.label),
+            compact?action.glyph:L"");
+        if(compact){item.glyphSize=16;item.fluentGlyph=true;}
         item.enabled=std::string_view(action.id)!="hibernate"||j::Flag(capabilities,"hibernateSupported");
         BindAction(id,"power.action",action.id);const std::string task=action.task;
-        Command(id,[this,task]{Start(task);});y+=48;
+        Command(id,[this,task]{
+            if(action_==StatusBarAction::SystemMenu&&system_control::RequiresConfirmation(task))
+                BeginPowerConfirmation(task,true);
+            else Start(task);
+        });y+=compact?32.f:48.f;
     }
+}
+void SystemPanelModel::SystemMenu(float& y)
+{
+    struct Shortcut { const char* id; const char* label; const wchar_t* glyph; SystemPanelShortcut target; };
+    const Shortcut shortcuts[]{
+        {"system.taskManager","statusBar.taskManager",system_menu_icon::taskManager,SystemPanelShortcut::TaskManager},
+        {"system.terminal","statusBar.terminal",system_menu_icon::terminal,SystemPanelShortcut::Terminal},
+        {"system.terminalAdmin","winx.terminalAdmin",system_menu_icon::terminalAdmin,SystemPanelShortcut::TerminalAdmin},
+        {"system.settings","statusBar.systemSettings",system_menu_icon::settings,SystemPanelShortcut::Settings}};
+    for(const auto& shortcut:shortcuts)
+    {
+        auto& item=Add(shortcut.id,ui::Role::ListItem,Rect(4,y,scene_.width-8,32),_LW(shortcut.label),shortcut.glyph);
+        item.glyphSize=16;item.fluentGlyph=true;
+        item.enabled=static_cast<bool>(source_.launchShortcut);
+        Command(item.id,[this,target=shortcut.target]{
+            const auto launch=source_.launchShortcut;
+            if(launch){dismissRequested_=true;launch(target);}
+        });y+=32;
+    }
+    Add("system.power.separator",ui::Role::Separator,Rect(8,y+4,scene_.width-16,1));
+    y+=8;PowerActions(y);
 }
 void SystemPanelModel::PrepareMedia()
 {
@@ -1113,7 +1223,8 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     scene_.width=336;
     // The old offline "media" preset still selects the overview; media has no detail page.
     if(page_=="media")page_.clear();
-    PrepareMedia();
+    const bool systemMenu=action_==StatusBarAction::SystemMenu;
+    if(!systemMenu)PrepareMedia();
     const auto* quick=FindSystemQuickControl(page_);
     const char* title=page_=="quick-manage"?"controlCenter.manageButtons":quick?quick->label:page_=="audio"?"statusBar.audioControls":page_=="brightness"?"statusBar.brightnessControls":page_.starts_with("wifi")?"statusBar.wifiControls":page_=="bluetooth"?"statusBar.bluetoothControls":"statusBar.powerControls";
     std::uint64_t inlineCompletion=0;
@@ -1135,8 +1246,10 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     {
         auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(title));heading.bold=true;heading.fontSize=16;bodyStart_=56;
     }
+    else if(systemMenu){scene_.width=192;bodyStart_=4;}
     else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
+    else if(systemMenu)SystemMenu(y);
     else if(page_.empty())Overview(y);else if(page_=="quick-manage")ManageQuickControls(y);else if(quick&&page_!="power")QuickControlMenu(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);else if(page_=="power-actions")PowerActions(y);
     PrunePendingActions();
     for(const auto& completion:completions)
@@ -1160,11 +1273,12 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
             // device state without adding a banner or replacing its details.
             if(completion.error=="accessDenied")error_=_LW("controlCenter.accessDenied");
             else if(completion.error=="timeout")error_=_LW("controlCenter.timeout");
+            else if(origin&&origin->topic=="host.vpn")error_=_LW(completion.error=="credentialsRequired"?"controlCenter.vpnCredentials":"controlCenter.vpnFailed");
             if(!error_.empty()&&origin){errorControl_=origin->control;errorTarget_=origin->target;errorGroup_=actionBindings_.at(errorControl_).group;}
         }
     }
     ApplyError(y);
-    Finish(y,settings_.mediaControls&&!standalone);
+    Finish(y,settings_.mediaControls&&!standalone&&!systemMenu);
     ApplyPendingActions();
     std::erase_if(pendingValues_,[&](const auto& entry){const auto* node=scene_.Find(entry.first);if(!node)return false;const auto target=sliderTargets_.find(entry.first);return !node->enabled||target==sliderTargets_.end()||target->second!=entry.second.target;});
     for(auto& node:scene_.nodes)

@@ -604,6 +604,10 @@ region 声明过该作用域，其返回项就会注册到整个组件表面，�
 可信手势规则约束。例如没有实际焦点的节点不会收到 key 事件，selectionMode 为 none 的集合也
 不会产生 change。所有事件动作继续使用 `SnowInteractionAction`，不能保存 Lua 闭包或取消宿主默认行为。
 
+探测 `view.textGlow` 后，普通 `text` 可用 `glowRadius`（0–128 布局单位）绘制八方向
+偏移的发光字形。正值只绘制发光副本，正文可由独立 `text` 绘制。副本沿用该节点的前景色、
+透明度和变换。省略或传 0 时照常绘制文字。宿主可缓存发光位图，资源不可用时直接绘制副本。
+
 探测 `view.text.flow` 后，普通 `text`、按钮/链接等 label 节点和 `styledText` 可使用
 `textWrap="noWrap|wrap"`、`maxLines=0..64`、`overflowText="clip|ellipsis"` 和
 `verticalAlign="start|center|end"`。普通文本/label 默认 noWrap+ellipsis，styledText 为保持
@@ -1121,6 +1125,20 @@ UIA VirtualizedItem，
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
 `view.image`。图片节点的 `style.cornerRadius` 同时裁切位图内容和节点表面；半径最大按
 节点短边的一半处理，因此可用正方形节点和半边长半径显示圆形图片。
+
+`view.imageSpin` 为 `image` 提供可选 `spinSpeed`，单位为顺时针度每秒，范围 0–360。
+使用前探测 `widget.hasFeature("view.imageSpin")`。宿主将首个符合条件的圆形装饰图片放在
+组件表面之上的独立视觉层，旋转由桌面合成器推进。节点应为正方形，圆角为边长的一半，
+图片铺满节点且位于组件内部，使用普通无色调图片并避免祖先裁剪、缩放或旋转。避免用
+该层遮盖其他前景内容。`0` 暂停当前角度，隐藏或更换表面后可从初始角度恢复。减少动态效果、
+预览、弹窗及无法提供独立合成层的场景使用静止呈现。旧宿主按原先的 `transform.rotate` 路径处理。
+
+`view.localRefresh` 允许 `spectrum`、`slider` 和 `text` 使用可选的布尔字段
+`localRefresh`。先探测 `widget.hasFeature("view.localRefresh")`，旧宿主省略字段。
+在桌面异步绘制中，如果只有标记节点的 `values`、`value` 或 `text` 变化，
+宿主可以只更新这些节点影响的像素。布局、样式和输入事件仍按完整视图树处理。
+组件应把随帧变化的绘制内容通过视图树或 `backgroundLayer` 提供。
+
 `linear` 是默认平滑模式：宿主在大幅缩小不可变图片时先做高质量预滤波，按实际像素尺寸
 缓存缩图，计入 DPI、变换和源图裁切；`nearest` 保留原始最近邻采样，适合像素画。
 这项质量改进不新增 API 或 feature，旧宿主仍接受相同参数并沿用原有平滑质量。
@@ -1339,6 +1357,8 @@ panel、dialog 或 popover 打开后，宿主在其首棵成功场景中自动�
 可聚焦元素，使方向键、Enter 和空格立即作用于辅助界面；同一打开回调中通过
 `control.focus()` 提交的显式目标优先。该自动聚焦每次打开只执行一次，后续重绘不会在用户按
 Escape 清除焦点后再次抢回；首帧尚无可聚焦元素时会等到首次成功提交此类元素。
+打开回调中的聚焦许可仅用于 `control.focus()`，其他操作仍执行各自的手势和权限检查。
+较早构建可能错误地以 `trustedGestureRequired` 拒绝此类聚焦请求，需要更新宿主；接口与 API 版本不变。
 
 探测 `view.surface.popover` 后，`popover(context, model)` 复用辅助 surface 场景管线，但位置
 来自 `widget.openPopover({ anchorKey=... })` 指向的当前成功 desktop scene 元素，而不是鼠标
@@ -1604,6 +1624,8 @@ end
 外边距和行间距。宿主在“外观 > 界面与布局”中以页面 `cu` 保存 Lua 组件行高；运行时
 结合页面 CU、纵向跨度和 Windows 文本缩放解析该值。一至两行组件使用页面基准，更高
 组件的行高缓慢增长；同一纵向跨度的组件获得相同行高，横向跨度不会改变它。
+`panel`、`dialog` 和 `popover` 回调使用页面基础行高，不叠加桌面组件的纵向跨度增长；
+页面行高设置和 Windows 文本缩放仍然生效。弹窗的字号及控件尺寸因此不随来源组件的跨度变化。
 宿主会在包入口和 `setup()` 执行前应用当前初始跨度；后续调整大小仍会改变该值，因此组件应在
 每次 `view` 或 `render` 中读取，不要在 `setup()` 中缓存。
 
@@ -1800,6 +1822,36 @@ end
 差分采样可能暂时 `warmingUp=true`；无电池设备返回
 `available=false,error="notPresent"`。`handle:unsubscribe()` 主动释放；卸载、
 热重载和关闭也会自动释放。
+
+能力 `data.subscription.history` 为订阅句柄增加只读 `handle:history(options?)`，API 版本仍为 2。
+支持 `system.cpu`、`system.memory`、`system.gpu` 和 `system.network.traffic`，
+沿用该主题的读取权限，不启动额外采样。内存和 GPU 历史分别用新增能力
+`data.system.memory.history`、`data.system.gpu.history` 探测；早期只有基础历史能力的宿主仅支持 CPU/网络。
+若宿主已有其他监控消费者，创建订阅后即可读取共享缓存；无缓存时返回空数组。
+返回 `points, error?`：最多 61 个点，按时间递增，每秒最多一个点，限定最近 60 秒。
+每点包含 Unix 毫秒 `timestamp`、读取时的 `ageMs`，以及可选的 `value/secondary`。
+CPU、内存、GPU 的 `value` 为 0–100 百分比，其中内存为已用物理内存占比；
+网络的 `value/secondary` 分别为下载/上传字节每秒。
+GPU 订阅必须启用 `includeDetails=true`，并调用 `handle:history({adapterId=id})`，
+其中 `id` 来自 `value.adapters`；可接受宿主已确认的逻辑别名，读取其当前物理显卡对应的同一条历史。
+不同显卡独立缓存，不提供隐式首选显卡或合计值。其他三个主题使用无参 `history()`。
+缺失值代表采样不可用，绘图应保留断点；不能将其补零或插值成有效样本。
+组件可使用 `time.monotonic() - point.ageMs` 定位横轴，避免混用时钟。
+预览返回空数组，不读取实时历史；取消订阅后返回空数组和 `unsubscribed`，
+权限不足返回 `permissionDenied`，不支持的主题返回 `historyUnavailable`。
+GPU 未启用详细订阅时返回 `detailsRequired`，未提供显卡时返回 `adapterRequired`，
+显卡不在当前快照中返回 `adapterNotFound`。选项非表、`adapterId` 非字符串/为空/超过 1024 字节，
+或给非 GPU 主题传入显卡选择时返回 `invalidHistoryOptions`。这些错误均伴随空数组。
+此方法不保存持久历史；最后一个消费者停止后的缓存生命周期由宿主采样器管理。
+发布依赖此能力的组件前应先发布宿主。兼容旧宿主及同版本早期构建时，
+将能力列入 `optionalFeatures`，先用 `widget.hasFeature` 探测，再退回组件自己采集的历史。
+
+```lua
+if widget.hasFeature("data.system.gpu.history") then
+    -- gpu is an existing includeDetails=true subscription; selected.id comes from its adapters.
+    local points, reason = gpu:history({adapterId=selected.id})
+end
+```
 
 所有轮询采样 provider 都在 API 层统一稳定包络语义：数值、速率和仍处于可用态的
 value 会逐样本更新；从可用态进入 `warmingUp`、不可用或错误态时，必须连续两次采样
@@ -3347,6 +3399,52 @@ local sky = lazy and resource.image("sky", {lazy=true}) or resource.image("sky")
 该 feature 时必须使用原调用；不要仅根据版本号传入新选项。官方社区组件采用此能力时应先
 交付对应宿主，再发布组件，或像上例保留可运行的降级路径。
 
+## 添加预设（`widget.creationPresets`）
+
+默认尺寸与预设尺寸支持能力 `widget.size.aspectRatio`，API/schema 仍为 2。
+例如 `"defaultSize":{"rows":2,"aspectRatio":1}` 固定高 2 格，添加时按目标屏幕
+实际网格尺寸和间距选择最接近 1:1 的列数。也可定义
+`{"columns":3,"aspectRatio":1.7777777777777777}`，固定 3 列并求最接近 16:9 的行数。
+`aspectRatio` 是有限正数（外框宽/高）；必须且只能提供 `rows` 或 `columns` 其中一轴，
+该轴为 1–8 的整数。另一轴在可用页面、1–8 格及组件 `minSize/maxSize` 范围内选择，
+以实际宽高比绝对误差最小为准；误差相同时选更小的跨度。固定轴同样受页面与边界约束。
+
+此写法可用于 `defaultSize`、`previewData.variants[].size`、`creationPresets[].size`。
+内容预设 `size` 优先于尺寸预览预设，未提供时沿用对应尺寸预设或默认尺寸。
+内容预设也可使用 `"size":{"columns":3,"rows":2}` 覆盖初始格数。
+使用比例定义或内容预设尺寸覆盖时，必须在 `requiredFeatures` 中声明
+`widget.size.aspectRatio`。旧的 `columns/rows` 清单继续按固定格数工作；
+旧宿主及同版本早期构建不支持新能力时会拒绝加载，分发组件前须先发布支持它的宿主。
+
+添加预览与实际添加使用同一换算规则，点击添加时会按当时的目标网格重新解析。
+没有目标屏幕的离屏工具使用标准 92×116、间距 8 的网格作为参考。
+组件保存的仍是整数网格跨度；本能力不锁定后续缩放比例，不重排已有实例，
+也不改变 Lua 绘制、布局单位或渲染规则。
+
+清单的 `creationPresets` 注册可在“添加组件”预览中切换的内容预设。它与
+`settings.presets` 外观主题分开，不向主题菜单添加项目，也不改变材质或前景。
+必须在 `requiredFeatures` 中声明 `widget.creationPresets`；API/schema 保持 v2。
+不支持该能力的旧宿主或同版本早期构建会拒绝加载，不能仅凭版本号判断支持情况。
+
+```json
+"creationPresets": [
+  {"id":"cpu", "title":"CPU", "titleKey":"monitor.cpu", "values":{"metric":"cpu"}},
+  {"id":"gpu", "title":"GPU", "titleKey":"monitor.gpu", "values":{"metric":"gpu"}}
+]
+```
+
+支持 1–32 个预设，`id` 在清单内唯一，仅使用字母、数字、`-`、`_`，最多 64 字节。
+`title` 为必填回退文字，`titleKey` 按组件本地化目录翻译。每项 `values` 包含
+1–64 个以字符串编码的普通设置值；键最多 128 字节，值最多 16 KiB，总量最多 64 KiB。
+普通 `select`、文本、布尔、整数等设置使用各自原有的字符串编码。密码、文件系统句柄、
+实体引用、宿主外观键、typed range 和 multiSelect 不属于此通道。
+
+宿主在隔离预览中按组件实际设置 schema 校验值，点击添加后重新按当前声明校验，
+再以普通设置事务保存到新实例。校验或保存失败时不创建带错误预设的桌面对象。
+`previewData.storage` 及尺寸方案的示例存储保持隔离，不会随添加写入。未声明
+`creationPresets` 的组件继续使用原有的尺寸预览和默认添加行为。
+社区包要求此能力前，应先发布支持它的宿主，再发布组件。
+
 ## 清单 v2 最小要求
 
 ```json
@@ -3567,6 +3665,52 @@ only secondary dates. Disabling annotations never changes events.
 blur and edge reflections. Use the tool bundled with a supporting host; older
 tools reject this appearance. Lua API and schema versions remain unchanged.
 
+
+## Steam 组件联机（`multiplayer.room`）
+
+Lua API v2 组件可声明 `multiplayer.session`、`multiplayer.room` 和 `multiplayer.steam` 权限。
+用 `widget.hasFeature("multiplayer.room")` 判断共享房间契约，用
+`widget.hasPermission("multiplayer.steam")` 判断授权。最低宿主版本为支持该 feature 的
+1.0.14.0。同版本早期构建缺少 `multiplayer.room`。先发布宿主与 Bridge，再发布依赖组件。
+
+在「常规 → 高级功能 → Steam 联机」显示房间卡片，再从卡片管理 Steam 私密双人房。
+卡片显示且「在 Steam 显示运行状态」开启时，宿主会在空闲时自动加入经校验的好友邀请。
+关闭运行状态时，可从卡片创建房间，或在 Steam 邀请中点「加入」直接进房。房间结束后，
+宿主关闭联机会话，空闲期间由 Steam 客户端显示新邀请。
+房间在组件卸载后继续存在。
+同一房间的消息按组件 UUID、包来源和版本分开，每个组件在本机只选一个已授权实例参与。
+双方可在进房前后添加组件，预览使用单机状态。
+
+| 任务 | 参数及效果 |
+| --- | --- |
+| `multiplayer.send` | `{text=...}`，发送 1–1024 字节 UTF-8 文本，拒绝 NUL |
+| `multiplayer.openSettings` | 无参数，从可信用户手势打开联机设置。卡片隐藏时定位到显示按钮；高级功能尚未解锁时定位到解锁入口。 |
+| `multiplayer.activate` | 无参数，从可信用户手势选择当前实例参与已连接的房间。需要 `multiplayer.steam` 授权。 |
+| `multiplayer.deactivate` | 无参数，从可信用户手势让当前实例退出联机，保留宿主房间。 |
+
+`multiplayer.openSettings` 使用可选能力 `multiplayer.room.settings`，沿用 API v2。
+调用前通过 `widget.hasFeature("multiplayer.room.settings")` 探测，旧宿主可隐藏该入口。
+打开设置不需要 Steam 消息权限，也不会修改卡片显隐或房间状态。
+
+声明可选能力 `multiplayer.room.participation` 可让同一台机器上的玩家选择参与实例。
+该能力沿用 API v2。旧宿主可继续提供本地功能。
+房间连通后未选择的实例收到 `roomReady`。本机已有同渠道实例参与时，其他实例收到
+`busy`。选中后收到 `waitingPeer`，双方都选中相同包渠道后收到 `connected`。
+退出、撤销权限或卸载会结束该实例的联机参与。未声明选择能力的组件沿用自动分配。
+
+`task.complete.value.accepted` 表示 Steam 接受发送。需要应用层确认时，由组件实现确认或
+重新同步。整间房每个方向每秒最多 8 条。旧的 `create`、`listen`、`invite`、`join` 和
+`leave` 任务继续识别可信用户手势，会打开房间设置并返回 `hostManaged`。好友选择和 Steam
+身份由宿主处理。
+
+- `multiplayer.state` 的 `state` 可能是 `unavailable`、`locked`、`idle`、`listening`、
+  `invited`、`connecting`、`waiting`、`roomReady`、`waitingPeer`、`connected` 或 `busy`。
+  `host` 表示已进入联机的当前实例是否是房主。
+  共享房间由宿主接收邀请，组件收到 `connected` 即可收发。离开此状态时清理未确认的游戏操作。
+- `multiplayer.message` 的 `text` 是对方发来的文本，`fromHost` 表示发送者是当前房主。
+  把消息作为不可信游戏数据解析，房主校验行动、回合和版本。双方均在房间中时才收发。
+
+Steam 断线、账号变化或任一玩家退出会结束房间。组件撤权或卸载时立即退出其消息通道。
 
 ## Native EXE helpers (feature `task.native.request`)
 

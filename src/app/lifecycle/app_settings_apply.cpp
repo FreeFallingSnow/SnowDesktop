@@ -1,6 +1,30 @@
 #include "platform/force_restart_hotkey.h"
+#include "dock/dock_fullscreen_applications.h"
+#include "dock/dock_fullscreen_policy.h"
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "platform/usage_guide.h"
+#include "navigation/navigation_settings.h"
+#include "theme/surface_theme.h"
+#include "dock/dock_window_preview.h"
+#include "common/l10n.h"
+#include "ui/render/app_font.h"
+#include "ui/render/native_tooltip_preferences.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/settings_snapshot.h"
+#include "settings/settings_store.h"
+#include "settings/general_settings.h"
+#include "common/utils.h"
+#include "data/data_paths.h"
+#include "diagnostics/crashlog.h"
+#include "desktop/desktop_source.h"
+#include "theme/taskbar_appearance.h"
+#include "settings/settings_window.h"
+#include "settings/settings_controller.h"
+#include "app/dock/persistent_dock_host.h"
+#include "dock/dock_settings.h"
 #include "system/tray/tray_service.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
@@ -1130,7 +1154,7 @@ public:
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
-            if (app_.quickNavigationOpen_)
+            if (app_.quickNavigation_->open)
             {
                 app_.RefreshQuickNavigationTypedResults();
                 app_.PositionQuickNavigationWindow();
@@ -1256,7 +1280,7 @@ public:
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
-            if (app_.quickNavigationOpen_)
+            if (app_.quickNavigation_->open)
             {
                 app_.RefreshQuickNavigationTypedResults();
                 app_.PositionQuickNavigationWindow();
@@ -1405,7 +1429,7 @@ public:
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
-            if (app_.quickNavigationOpen_)
+            if (app_.quickNavigation_->open)
             {
                 app_.RefreshQuickNavigationTypedResults();
                 app_.PositionQuickNavigationWindow();
@@ -2084,7 +2108,7 @@ void DesktopApp::ToggleDesktopPassthrough()
     }
 
     desktopPassthroughActive_ = true;
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
         CloseQuickNavigation();
         FinalizeCloseQuickNavigation();
@@ -2207,11 +2231,11 @@ void DesktopApp::ApplyQuickNavigationAppearance()
     const PersonalizationSettings appearance = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.quickNavigationAppearance, globalAppearance,
         generalSettings_.quickNavTheme, true, &generalSettings_.globalQuickNavigationAppearance);
-    quickNavLightTheme_ = appearance.contentTheme == 1;
-    quickNavGlassTheme_ = appearance.glassEnabled;
-    quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
-    quickNavAppearance_ = appearance;
-    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
+    quickNavigation_->lightTheme = appearance.contentTheme == 1;
+    quickNavigation_->glassTheme = appearance.glassEnabled;
+    quickNavigation_->blurRadius = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
+    quickNavigation_->appearance = appearance;
+    if (quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd))
         UpdateQuickNavigationBackdrop();
 }
 
@@ -2248,6 +2272,17 @@ void DesktopApp::ApplyCollectionPopupAppearance()
         InvalidateFloatingPopupWindow(true);
 }
 
+PersonalizationSettings DesktopApp::ResolveSystemTaskbarAppearance(
+    const DockSettings& settings) const
+{
+    return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
+}
+
+PersonalizationSettings DesktopApp::CurrentDockAppearance() const
+{
+    return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
+}
+
 void DesktopApp::LoadDockSettingsAndApply()
 {
     DockSettings settings;
@@ -2257,7 +2292,7 @@ void DesktopApp::LoadDockSettingsAndApply()
     ApplyAnimationPreferences();
     SyncSystemTaskbarSettingsFromWindows();
     ApplyFloatingDockHotkey();
-    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+    windowObservationRevision_.fetch_add(1,
         std::memory_order_relaxed);
     RefreshSystemTaskbarAppearance(true);
     if (hwnd_ && IsWindow(hwnd_))
@@ -2337,11 +2372,11 @@ void DesktopApp::ApplyLanguageChange()
     const bool widgetRuntimeReloadAllowed = !settingsWindow_ ||
         settingsWindow_->PrepareLanguageChange();
     PublishHomeAboutStatus();
-    if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
-        SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
-    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
+    if (quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd))
+        SetWindowTextW(quickNavigation_->hwnd, _LW("app.interact.snow_nav_title"));
+    if (quickNavigation_->searchEdit && IsWindow(quickNavigation_->searchEdit))
     {
-        SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
+        SendMessageW(quickNavigation_->searchEdit, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(_LW("app.nav.search_hint")));
     }
 
@@ -2411,7 +2446,7 @@ void DesktopApp::ApplyLanguageChange()
 
     if (titleChanged)
         SaveLayoutSlots();
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
     {
         RefreshQuickNavigationTypedResults();
         InvalidateQuickNavigationWindow();

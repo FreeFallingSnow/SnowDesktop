@@ -1,4 +1,10 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "platform/demo_asset_paths.h"
+#include "data/data_paths.h"
+#include "icons/icon_render_rules.h"
 #include "icons/icon_loading_placeholder.h"
 #include "platform/demo_mode_rules.h"
 #include "platform/demo_collection_rules.h"
@@ -500,7 +506,10 @@ void DesktopApp::DrawPrivacyFaIcon(
             if (memoryDc)
             {
                 HGDIOBJ oldBitmap = SelectObject(memoryDc, source);
-                HFONT font = CreateFontW(-static_cast<int>(bitmapSize * 0.68f),
+                // Preserve the styled source's original optical margins.
+                // Unstyled glyphs use a larger source with a small inset.
+                const float glyphScale = iconBeautifySettings_.enabled ? 0.68f : 0.88f;
+                HFONT font = CreateFontW(-static_cast<int>(bitmapSize * glyphScale),
                     0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                     ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
@@ -542,7 +551,7 @@ void DesktopApp::DrawPrivacyFaIcon(
 
     if (cached)
     {
-        // The generated glyph already includes its complete target rectangle.
+        // Upload already applies the selected style and its content inset.
         DrawIconBitmap(ctx, cached.Get(), rect, 1.0f, 0, false);
         return;
     }
@@ -558,10 +567,12 @@ void DesktopApp::DrawPrivacyFaIcon(
     const D2D1_COLOR_F border = luminance > 0.58f
         ? D2D1::ColorF(0.62f, 0.66f, 0.72f, iconBeautifySettings_.backgroundOpacity)
         : D2D1::ColorF(0.78f, 0.82f, 0.90f, iconBeautifySettings_.backgroundOpacity);
-    DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
+    if (iconBeautifySettings_.enabled)
+        DrawBeautifiedIconPlate(ctx, rect, fill, border, 1.0f);
     ComPtr<IDWriteTextFormat> format;
     format.Attach(CreateFaTextFormat(dwriteFactory_.Get(),
-        static_cast<float>(std::min(rect.right - rect.left, rect.bottom - rect.top)) * 0.52f));
+        static_cast<float>(std::min(rect.right - rect.left, rect.bottom - rect.top)) *
+            (iconBeautifySettings_.enabled ? 0.52f : 0.88f)));
     if (format)
         DrawD2DText(ctx, L"", rect, format.Get(),
             D2D1::ColorF(1.0f, 219.0f / 255.0f, 118.0f / 255.0f, 0.94f));
@@ -633,8 +644,8 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
         (static_cast<std::uint64_t>(
             static_cast<std::uint32_t>(sysIconIndex)) << 32) |
         static_cast<std::uint64_t>(sourceSize);
-    auto cached = quickNavSysIconCache_.find(cacheKey);
-    if (cached == quickNavSysIconCache_.end())
+    auto cached = quickNavigation_->sysIconCache.find(cacheKey);
+    if (cached == quickNavigation_->sysIconCache.end())
     {
         QueueSystemIconBitmap(sysIconIndex, sourceSize, iconBeautifySettings_.enabled, cacheKey, true);
         snowdesktop::icon_loading_placeholder::Draw(ctx, dstRect, 1.0f,
@@ -653,9 +664,9 @@ void DesktopApp::DrawQuickNavAppIcon(
     if (ctx && entry.iconBitmap &&
         !entry.iconCacheIdentity.empty())
     {
-        auto cached = quickNavAppIconCache_.find(
+        auto cached = quickNavigation_->appIconCache.find(
             entry.iconCacheIdentity);
-        if (cached == quickNavAppIconCache_.end())
+        if (cached == quickNavigation_->appIconCache.end())
         {
             ComPtr<ID2D1Bitmap1> iconBitmap =
                 CreateD2DBitmapFromHBitmap(
@@ -665,12 +676,12 @@ void DesktopApp::DrawQuickNavAppIcon(
             if (iconBitmap &&
                 SUCCEEDED(iconBitmap.As(&bitmap)) && bitmap)
             {
-                cached = quickNavAppIconCache_.emplace(
+                cached = quickNavigation_->appIconCache.emplace(
                     entry.iconCacheIdentity,
                     std::move(bitmap)).first;
             }
         }
-        if (cached != quickNavAppIconCache_.end())
+        if (cached != quickNavigation_->appIconCache.end())
         {
             DrawIconBitmap(
                 ctx, cached->second.Get(), dstRect);
@@ -709,7 +720,7 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             auto bitmap = CreateD2DBitmapFromHBitmap(result->bitmap, beautify);
             ComPtr<ID2D1Bitmap> converted;
             if (!bitmap || FAILED(bitmap.As(&converted))) return;
-            (quick ? quickNavSysIconCache_ : placeholderIconCache_)[key] = std::move(converted);
+            (quick ? quickNavigation_->sysIconCache : placeholderIconCache_)[key] = std::move(converted);
             if (quick)
             {
                 // Only navigation reads this cache. Its new bitmap does not
@@ -725,4 +736,10 @@ void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
             InvalidateFloatingPopupWindow(false);
             InvalidateQuickNavigationWindow();
         }, hwnd_, kBackgroundShellReadyMessage);
+}
+
+bool DesktopApp::ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
+{
+    return snowdesktop::icon_render_rules::ShouldBeautify(
+        iconBeautifySettings_.enabled, iconIsMediaThumbnail, beautifyFileThumbnails_);
 }

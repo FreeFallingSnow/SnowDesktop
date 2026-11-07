@@ -1,6 +1,11 @@
 #include "icons/icon_hbitmap_pixels.h"
 #include "icons/icon_bitmap_renderer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/utils.h"
+#include "app/render/desktop_backdrop_update_rules.h"
+#include "icons/large_icon_assets.h"
+#include "app/dock/persistent_dock_host.h"
 #include "desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
 
@@ -628,11 +633,11 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
     float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style)
 {
-    if (drawingIconAppearanceSource_) return;
+    if (drawingIconAppearanceSource_ || dragPreviewCompositionPaintInProgress_) return;
     const auto& appearance = style ? *style : iconBeautifySettings_;
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.
-    if (renderingFloatingPopup_ || quickNavCompositionPaintInProgress_) return;
+    if (renderingFloatingPopup_ || quickNavigation_->compositionPaintInProgress) return;
     DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
     bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
         desktopWidgetBackdropRequestedDuringDraw_;
@@ -766,7 +771,7 @@ void DesktopApp::RecordIconTextResources() const
         for (const auto& app : dockUnpinnedRunningApps_) add(app.iconBitmap, app.iconBitmapSize);
     });
     sources("quick_nav_app", [&](auto add) {
-        for (const auto& app : quickNavigationAppEntries_) add(app.iconBitmap, app.iconBitmapSize);
+        for (const auto& app : quickNavigation_->appEntries) add(app.iconBitmap, app.iconBitmapSize);
     });
     sources("control", [&](auto add) {
         for (const auto& [key, source] : iconControlSources_)
@@ -799,8 +804,8 @@ void DesktopApp::RecordIconTextResources() const
     mapBitmaps("legacy_icon", d2dIconCache_);
     mapBitmaps("styled_icon", styledIconCache_);
     mapBitmaps("placeholder", placeholderIconCache_);
-    mapBitmaps("quick_nav_system", quickNavSysIconCache_);
-    mapBitmaps("quick_nav_app", quickNavAppIconCache_);
+    mapBitmaps("quick_nav_system", quickNavigation_->sysIconCache);
+    mapBitmaps("quick_nav_app", quickNavigation_->appIconCache);
     mapBitmaps("grid_text_shadow", itemTextShadowCache_);
     mapBitmaps("list_text_shadow", componentListTextShadowCache_);
     bitmaps("dock_appearance", [&](auto add) {
@@ -813,7 +818,7 @@ void DesktopApp::RecordIconTextResources() const
         iconReflectionCache_.VisitValues([&](const auto& bitmap) { add(bitmap.Get()); });
     });
     bitmaps("fixed", [&](auto add) {
-        for (const auto& bitmap : quickNavActionIconCache_) add(bitmap.Get());
+        for (const auto& bitmap : quickNavigation_->actionIconCache) add(bitmap.Get());
         for (const auto& bitmap : demoIdentityIconBitmaps_) add(bitmap.Get());
         add(privacyFileIconBitmap_.Get()); add(privacyFolderIconBitmap_.Get()); add(shortcutArrowBitmap_.Get());
     });

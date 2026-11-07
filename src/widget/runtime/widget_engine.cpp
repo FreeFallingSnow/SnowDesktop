@@ -1,4 +1,5 @@
 #include "ui/input/private_pointer.h"
+#include "theme/surface_theme.h"
 #include "ui/render/app_font.h"
 #include "widget/data/widget_system_control_data.h"
 #include "widget/data/widget_gpu_lua.h"
@@ -16,6 +17,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_multiplayer.h"
 #include "widget_script_read_ahead.h"
 #include "widget/tasks/widget_audio_playback_lua.h"
 #include "ui/render/smooth_corner_geometry.h"
@@ -63,8 +65,10 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_background_cache.h"
 #include "widget/view/widget_image_sampling.h"
 #include "widget/view/widget_text_layout_cache.h"
+#include "widget/view/widget_text_glow_cache.h"
 #include "widget/view/widget_view_lua.h"
 #include "widget/view/widget_view_tree.h"
+#include "widget/view/widget_surface_renderer.h"
 #include "widget/data/widget_resource_lua.h"
 #include "widget/packages/widget_package_image_cache.h"
 #include "widget/view/widget_text_input_rules.h"
@@ -643,6 +647,7 @@ struct D2DState
     std::string storagePrefix;
     std::wstring currentWidgetId;
     const char* surfaceKind = "desktop";
+    bool openingFocusAllowed = false;
     int gridColumns = 1;
     int gridRows = 1;
     int gridCellW = 92;
@@ -655,6 +660,9 @@ struct D2DState
     float layoutContentHeight = 0.0f;
     DWRITE_FONT_WEIGHT itemFontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
     int widgetClipDepth = 0;
+    snowdesktop::widget_runtime::WidgetImageSpin* desktopImageSpin = nullptr;
+    snowdesktop::widget_runtime::WidgetSurfacePaint* desktopSurfacePaint = nullptr;
+    std::uint64_t nextDesktopPaintRevision = 0;
     bool backgroundLayerActive = false;
     std::vector<D2D1_RECT_F> immediateClipRects;
     ComPtr<ID2D1Device> bitmapDevice;
@@ -662,6 +670,7 @@ struct D2DState
     snowdesktop::widget_runtime::WidgetBackgroundCache backgroundCache;
     snowdesktop::widget_runtime::WidgetImageSamplingCache imageSamplingCache;
     snowdesktop::widget_runtime::WidgetTextLayoutCache textLayoutCache;
+    snowdesktop::widget_runtime::WidgetTextGlowCache textGlowCache;
     snowdesktop::widget_runtime::WidgetScriptReadAhead scriptReadAhead;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     std::unordered_map<std::string, std::uint64_t> imageCacheRevisions;
@@ -2150,17 +2159,22 @@ private:
 class WidgetSurfaceScope
 {
 public:
-    WidgetSurfaceScope(D2DState* state, const char* surfaceKind)
+    WidgetSurfaceScope(D2DState* state, const char* surfaceKind,
+        bool allowOpeningFocus = false)
         : state_(state)
     {
         if (!state_) return;
         previous_ = state_->surfaceKind;
+        previousOpeningFocus_ = state_->openingFocusAllowed;
         state_->surfaceKind = surfaceKind ? surfaceKind : "desktop";
+        state_->openingFocusAllowed = allowOpeningFocus;
     }
 
     ~WidgetSurfaceScope()
     {
-        if (state_) state_->surfaceKind = previous_;
+        if (!state_) return;
+        state_->surfaceKind = previous_;
+        state_->openingFocusAllowed = previousOpeningFocus_;
     }
 
     WidgetSurfaceScope(const WidgetSurfaceScope&) = delete;
@@ -2169,6 +2183,7 @@ public:
 private:
     D2DState* state_ = nullptr;
     const char* previous_ = "desktop";
+    bool previousOpeningFocus_ = false;
 };
 
 static std::string ImageUseOwner(D2DState* state, bool background = false)
@@ -5318,6 +5333,68 @@ static int lua_DataSubscriptionValue(lua_State* state)
     return 1;
 }
 
+static int lua_DataSubscriptionHistory(lua_State* state)
+{
+    auto* handle = CheckDataSubscriptionHandle(state, 1);
+    std::string error;
+    std::string adapterId;
+    if (!lua_isnoneornil(state, 2))
+    {
+        if (!lua_istable(state, 2)) error = "invalidHistoryOptions";
+        else
+        {
+            lua_getfield(state, 2, "adapterId");
+            if (!lua_isnil(state, -1))
+            {
+                if (lua_type(state, -1) != LUA_TSTRING) error = "invalidHistoryOptions";
+                else
+                {
+                    std::size_t length = 0;
+                    const char* id = lua_tolstring(state, -1, &length);
+                    if (length == 0 || length > 1024) error = "invalidHistoryOptions";
+                    else adapterId.assign(id, length);
+                }
+            }
+            lua_pop(state, 1);
+        }
+    }
+    std::vector<snowdesktop::widget_runtime::WidgetResourcePoint> points;
+    if (error.empty())
+    {
+        if (handle->engine && handle->id != 0)
+            points = handle->engine->RuntimeGetDataHistory(
+                handle->id, error, adapterId, handle->includeGpuDetails);
+        else error = "unsubscribed";
+    }
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    lua_createtable(state, static_cast<int>(points.size()), 0);
+    lua_Integer index = 0;
+    for (const auto& point : points)
+    {
+        if (point.timestampMs > now || point.timestampMs < now - 60000) continue;
+        lua_createtable(state, 0, 4);
+        lua_pushinteger(state, static_cast<lua_Integer>(point.timestampMs));
+        lua_setfield(state, -2, "timestamp");
+        lua_pushinteger(state, static_cast<lua_Integer>(now - point.timestampMs));
+        lua_setfield(state, -2, "ageMs");
+        if (point.primary)
+        {
+            lua_pushnumber(state, *point.primary);
+            lua_setfield(state, -2, "value");
+        }
+        if (point.secondary)
+        {
+            lua_pushnumber(state, *point.secondary);
+            lua_setfield(state, -2, "secondary");
+        }
+        lua_rawseti(state, -2, ++index);
+    }
+    if (error.empty()) lua_pushnil(state);
+    else lua_pushlstring(state, error.data(), error.size());
+    return 2;
+}
+
 static int lua_DataSubscriptionUnsubscribe(lua_State* state)
 {
     auto* handle = CheckDataSubscriptionHandle(state, 1);
@@ -5346,6 +5423,8 @@ static void RegisterDataSubscriptionHandle(lua_State* state)
         lua_newtable(state);
         lua_pushcfunction(state, lua_DataSubscriptionValue);
         lua_setfield(state, -2, "value");
+        lua_pushcfunction(state, lua_DataSubscriptionHistory);
+        lua_setfield(state, -2, "history");
         lua_pushcfunction(state, lua_DataSubscriptionUnsubscribe);
         lua_setfield(state, -2, "unsubscribe");
         lua_setfield(state, -2, "__index");
@@ -5383,7 +5462,26 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
         }
     }
 
-    if (taskName == "native.request" || taskName == "native.watch")
+    if (taskName == "multiplayer.send")
+    {
+        if (!hasArguments) return luaL_error(state, "task.start: multiplayer.send requires text");
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0)
+        {
+            if (lua_type(state, -2) != LUA_TSTRING || lua_type(state, -1) != LUA_TSTRING)
+                return luaL_error(state, "task.start: multiplayer.send requires text");
+            size_t keyLength = 0, length = 0;
+            const char* key = lua_tolstring(state, -2, &keyLength);
+            const char* text = lua_tolstring(state, -1, &length);
+            if (std::string_view(key, keyLength) != "text" ||
+                !snowdesktop::steam_widget_multiplayer::IsUtf8Text({text, length}))
+                return luaL_error(state, "task.start: multiplayer.send requires 1 to 1024 UTF-8 bytes");
+            arguments.emplace("text", std::string(text, length));
+            lua_pop(state, 1);
+        }
+        if (arguments.empty()) return luaL_error(state, "task.start: multiplayer.send requires text");
+    }
+    else if (taskName == "native.request" || taskName == "native.watch")
     {
         if (!hasArguments) return luaL_error(state, "task.start: native task requires arguments");
         lua_pushnil(state);
@@ -8904,8 +9002,9 @@ static int lua_UiMetrics(lua_State* L)
                 snowdesktop::widget_runtime::SemanticUiMetricTokens{},
             d2d ? d2d->semanticCuScale : 1.0f,
             static_cast<float>(system.textScale),
-            snowdesktop::widget_runtime::ResolveSemanticRowScale(
-                d2d ? d2d->gridRows : 2));
+            IsPanelSurface(CurrentWidgetSurface(d2d)) ? 1.0f :
+                snowdesktop::widget_runtime::ResolveSemanticRowScale(
+                    d2d ? d2d->gridRows : 2));
 
     lua_createtable(L, 0, 1);
     SetNumberField(L, "layoutRowHeight", metrics.layoutRowHeight);
@@ -10216,6 +10315,7 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->bitmapDevice = std::move(device);
     state->backgroundCache.Clear();
     state->textLayoutCache.Clear();
+    state->textGlowCache.Clear();
     state->imageSamplingCache.Clear();
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
@@ -12193,6 +12293,8 @@ static int lua_DrawIcon(lua_State* L)
 }
 
 // ── WidgetEngine ──────────────────────────────────────────────────
+WidgetEngine::WidgetEngine() = default;
+
 WidgetEngine::~WidgetEngine()
 {
     Shutdown();
@@ -12389,7 +12491,7 @@ void WidgetEngine::DrainAudioAnalysisChanges()
                 dataBroker_->ConsumeUpdateDue(id, now))
                 due = true;
         }
-        if (!due) continue;
+        if (!due || (widget.desktopOccluded && !widget.panelActive)) continue;
         snowdesktop::performance::DrawLink("desktop", widget.widgetId, false);
         // Audio is asynchronous data, so share an existing animation deadline
         // or request one host frame. Pointer invalidation remains synchronous.
@@ -12584,6 +12686,7 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
 
 void WidgetEngine::BeginTaskShutdown()
 {
+    StopWidgetMultiplayer("canceled");
     audioPlayback_.reset();
     if (taskBroker_) taskBroker_->Shutdown();
     nativeTaskExecutor_.reset();
@@ -12836,6 +12939,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    PumpWidgetMultiplayer();
     std::vector<snowdesktop::widget_runtime::AudioPlaybackMessage> audioEvents;
     if (audioPlayback_)
         for (auto& message : audioPlayback_->Drain())
@@ -13066,6 +13170,12 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (action.name.starts_with("multiplayer."))
+            {
+                CancelWidgetMultiplayerSend(action.id);
+                (void)taskBroker_->Complete(action.id, false);
+                continue;
+            }
             if (audioPlayback_) audioPlayback_->Cancel(action.id);
             if (nativeTaskExecutor_) (void)nativeTaskExecutor_->Cancel(action.id);
             nativeTaskCompletions_.erase(action.id);
@@ -13126,6 +13236,11 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name.starts_with("multiplayer."))
+        {
+            StartWidgetMultiplayerTask(action, *owner);
+            continue;
+        }
         if (snowdesktop::widget_runtime::WidgetAudioPlayback::SupportsAction(action.name))
         {
             using namespace snowdesktop::widget_runtime;
@@ -15832,6 +15947,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     snowdesktop::widget_runtime::TaskBrokerCancelReason reason)
 {
+    ForgetWidgetMultiplayer(widget.runtimeToken);
     if (audioPlayback_) audioPlayback_->ForgetOwner(widget.runtimeToken);
     if (notificationCenter_)
         notificationCenter_->RemoveOwner(
@@ -18627,7 +18743,7 @@ static void DrawWidgetMonthCalendar(D2DState* state,
 static void DrawWidgetViewBitmap(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     ID2D1Bitmap1* bitmap, const D2D1_RECT_F& rect,
-    float opacity, float borderWidth,
+    float opacity, float borderWidth, float clipRadius, bool reducedMotion,
     const snowdesktop::widget_runtime::ViewThemePalette& palette,
     snowdesktop::widget_runtime::PackageImageSize original = {})
 {
@@ -18686,6 +18802,40 @@ static void DrawWidgetViewBitmap(D2DState* state,
     const std::optional<std::uint32_t> imageTint =
         snowdesktop::widget_runtime::ResolveViewThemeColor(
             node.imageTint, node.imageTintToken, palette);
+    auto* spin = state->desktopImageSpin;
+    const float width = destination.right - destination.left;
+    const float height = destination.bottom - destination.top;
+    // A separate visual sits above the component surface. Only opt-in,
+    // unclipped circular artwork can be lifted out of the normal paint order.
+    if (spin && !spin->bitmap && node.imageSpinSpeed && !imageTint &&
+        state->widgetClipDepth == 0 && width >= 1.0f &&
+        std::abs(width - height) < 0.001f &&
+        clipRadius >= width * 0.5f - 0.001f &&
+        std::abs(rect.left - destination.left) < 0.001f &&
+        std::abs(rect.top - destination.top) < 0.001f &&
+        std::abs(rect.right - destination.right) < 0.001f &&
+        std::abs(rect.bottom - destination.bottom) < 0.001f)
+    {
+        D2D1_MATRIX_3X2_F transform{};
+        state->ctx->GetTransform(&transform);
+        if (transform._11 == 1.0f && transform._22 == 1.0f &&
+            transform._12 == 0.0f && transform._21 == 0.0f)
+        {
+            const auto absolute = D2D1::RectF(
+                destination.left + transform._31, destination.top + transform._32,
+                destination.right + transform._31, destination.bottom + transform._32);
+            const auto& widget = state->widgetRect;
+            if (absolute.left >= widget.left && absolute.top >= widget.top &&
+                absolute.right <= widget.right && absolute.bottom <= widget.bottom)
+            {
+                *spin = {sampled.bitmap, absolute, sourceRect, interpolation,
+                    opacity, reducedMotion ? 0.0f : *node.imageSpinSpeed};
+                snowdesktop::performance::Value("widget.composition",
+                    "image_spin.layer", state->currentWidgetId, 1);
+                return;
+            }
+        }
+    }
     if (imageTint)
     {
         ComPtr<ID2D1Effect> tintEffect;
@@ -19646,6 +19796,7 @@ static void DrawWidgetViewNode(D2DState* state,
         }
         ComPtr<ID2D1RoundedRectangleGeometry> imageClip;
         bool imageClipPushed = false;
+        float imageClipRadius = 0.0f;
         if (node.type == ViewNodeType::Image && bitmap && radius > 0.0f)
         {
             ComPtr<ID2D1Factory> factory;
@@ -19660,10 +19811,15 @@ static void DrawWidgetViewNode(D2DState* state,
                     rect, imageClip.Get(),
                     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE), nullptr);
                 imageClipPushed = true;
+                imageClipRadius = clipRadius;
             }
         }
+        if (auto* paint = state->desktopSurfacePaint;
+            paint && paint->revision != 0)
+            paint->images.emplace_back(bitmap);
         DrawWidgetViewBitmap(
-            state, node, bitmap, rect, opacity, borderWidth, palette, original);
+            state, node, bitmap, rect, opacity, borderWidth, imageClipRadius,
+            reducedMotion, palette, original);
         if (imageClipPushed)
             state->ctx->PopLayer();
     }
@@ -19795,7 +19951,35 @@ static void DrawWidgetViewNode(D2DState* state,
                         origin.y -= (overhang.bottom - overhang.top) * 0.5f;
                     }
                 }
-                state->ctx->DrawTextLayout(origin, layout.Get(), brush);
+                if (node.textGlowRadius && *node.textGlowRadius > 0.0f)
+                    state->textGlowCache.Draw(*state->ctx, *layout.Get(),
+                        *brush, origin, *node.textGlowRadius);
+                else
+                {
+                    state->ctx->DrawTextLayout(origin, layout.Get(), brush);
+                    if (auto* paint = state->desktopSurfacePaint;
+                        paint && paint->revision != 0 && node.localRefresh)
+                    {
+                        DWRITE_OVERHANG_METRICS overhang{};
+                        if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+                        {
+                            constexpr float padding = 2.0f;
+                            const RECT ink{
+                                static_cast<LONG>(std::floor(origin.x -
+                                    std::max(0.0f, overhang.left) - padding)),
+                                static_cast<LONG>(std::floor(origin.y -
+                                    std::max(0.0f, overhang.top) - padding)),
+                                static_cast<LONG>(std::ceil(origin.x + textWidth +
+                                    std::max(0.0f, overhang.right) + padding)),
+                                static_cast<LONG>(std::ceil(origin.y + layoutHeight +
+                                    std::max(0.0f, overhang.bottom) + padding)),
+                            };
+                            UnionRect(&paint->textBounds, &paint->textBounds, &ink);
+                        }
+                        else
+                            paint->revision = 0;
+                    }
+                }
             }
         }
     }
@@ -20690,7 +20874,7 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     const auto cachedBackground = d2dState_->backgroundCache.Resolve(widgetId,
         context, commands.Get(), D2D1::RectF(static_cast<float>(bounds.left),
             static_cast<float>(bounds.top), static_cast<float>(bounds.right),
-            static_cast<float>(bounds.bottom)), blurRadius,
+            static_cast<float>(bounds.bottom)), blurRadius, cornerRadius,
         [this](ID2D1Bitmap* bitmap) {
             // These caches create immutable decoded bitmaps. Arbitrary target
             // bitmaps or effect inputs must never enter the signature cache.
@@ -20708,6 +20892,30 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
             cachedBackground.outcome == CacheOutcome::Miss ? "miss" : "bypass", widgetId, 1);
     snowdesktop::performance::Value("widget.background.cache", "retained_bytes_estimate", {},
         static_cast<double>(d2dState_->backgroundCache.RetainedBytes()));
+    if (cachedBackground.bitmap)
+    {
+        if (auto* paint = d2dState_->desktopSurfacePaint)
+        {
+            paint->backgroundKnown = true;
+            paint->background = cachedBackground.bitmap;
+            paint->backgroundOpacity = opacity;
+        }
+        // Cached pixels already contain the rounded mask. Applying opacity to
+        // the premultiplied bitmap preserves the group's opacity semantics.
+        context->DrawBitmap(cachedBackground.bitmap.Get(),
+            D2D1::RectF(static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+                static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)),
+            opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+        widget.backgroundLayerError.clear();
+        return true;
+    }
+    if (auto* paint = d2dState_->desktopSurfacePaint)
+    {
+        D2D1_RECT_F ink{};
+        paint->backgroundKnown =
+            SUCCEEDED(context->GetImageLocalBounds(commands.Get(), &ink)) &&
+            (ink.left >= ink.right || ink.top >= ink.bottom);
+    }
     ComPtr<ID2D1Image> output;
     if (FAILED(commands.As(&output)) || !output)
     {
@@ -20752,19 +20960,89 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
     context->PushLayer(D2D1::LayerParameters(frame, clip.Get(),
         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
         D2D1::Matrix3x2F::Identity(), opacity), nullptr);
-    if (cachedBackground.bitmap)
-        context->DrawImage(cachedBackground.bitmap.Get(),
-            D2D1::Point2F(static_cast<float>(bounds.left), static_cast<float>(bounds.top)));
-    else context->DrawImage(output.Get());
+    context->DrawImage(output.Get());
     context->PopLayer();
     widget.backgroundLayerError.clear();
     return true;
+}
+
+static bool HasLocalRefresh(const snowdesktop::widget_runtime::ViewNode& node)
+{
+    return node.localRefresh ||
+        std::any_of(node.children.begin(), node.children.end(), HasLocalRefresh);
+}
+
+// The old tree has already supplied exit transitions and will be replaced.
+// Normalize only the supported values so the regular tree equality checks
+// every other property, including layout and SMTC-driven metadata.
+static void CollectLocalRefresh(
+    snowdesktop::widget_runtime::ViewNode& previous,
+    const snowdesktop::widget_runtime::ViewNode& current,
+    const RECT& bounds, snowdesktop::widget_runtime::WidgetSurfacePaint& paint)
+{
+    using namespace snowdesktop::widget_runtime;
+    if (current.key != previous.key || current.type != previous.type ||
+        current.transform || current.transition ||
+        current.children.size() != previous.children.size())
+        return;
+    for (std::size_t i = 0; i < current.children.size(); ++i)
+        CollectLocalRefresh(previous.children[i], current.children[i], bounds, paint);
+    if (!current.localRefresh || !previous.localRefresh || current.shadow)
+        return;
+
+    ViewRect rect = current.frame;
+    float padding = 2.0f;
+    if (current.type == ViewNodeType::Spectrum && current.values != previous.values)
+    {
+        rect = ViewNodeContentRect(current);
+        const auto peak = [](const std::vector<float>& values, float minimum) {
+            return values.empty() ? minimum :
+                *std::max_element(values.begin(), values.end());
+        };
+        const float minimum = current.seriesMinimum.value_or(0.0f);
+        const float maximum = current.seriesMaximum.value_or(1.0f);
+        const float value = std::max(peak(previous.values, minimum),
+            peak(current.values, minimum));
+        const float barHeight = rect.height *
+            std::clamp((value - minimum) / (maximum - minimum), 0.0f, 1.0f);
+        rect.y += rect.height - barHeight;
+        rect.height = barHeight;
+        previous.values = current.values;
+    }
+    else if (current.type == ViewNodeType::Slider)
+    {
+        previous.accessibilityValue = current.accessibilityValue;
+        if (current.value == previous.value) return;
+        padding += 8.0f + 0.5f * std::max(
+            current.style.borderWidth.value_or(0.0f),
+            current.disabledStyle.borderWidth.value_or(0.0f));
+        previous.value = current.value;
+    }
+    else
+    {
+        if (current.type == ViewNodeType::Text && !current.textGlowRadius &&
+            current.text != previous.text)
+        {
+            previous.text = current.text;
+            paint.textChanged = true;
+        }
+        return;
+    }
+    const RECT changed{
+        bounds.left + static_cast<LONG>(std::floor(rect.x - padding)),
+        bounds.top + static_cast<LONG>(std::floor(rect.y - padding)),
+        bounds.left + static_cast<LONG>(std::ceil(rect.x + rect.width + padding)),
+        bounds.top + static_cast<LONG>(std::ceil(rect.y + rect.height + padding)),
+    };
+    UnionRect(&paint.damage, &paint.damage, &changed);
 }
 
 void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
     ID2D1DeviceContext* context, RECT bounds, int columns, int rows)
 {
     snowdesktop::performance::Scope performanceScope("widget.render", "desktop", widgetId);
+    // A stack is a surface owner; invalidation belongs to the active Lua VM.
+    snowdesktop::performance::DrawLink("desktop", widgetId, true);
     (void)scriptPath;
 
     int idx = FindWidget(widgetId);
@@ -20798,6 +21076,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     d2dState_->ctx = context;
     DrainShellIconResults(d2dState_);
     const RECT previousBounds = found->lastBounds;
+    const auto previousPaintRevision = std::exchange(found->desktopPaintRevision, 0);
+    auto* surfacePaint = d2dState_->desktopSurfacePaint;
+    const bool resumeAfterOcclusion = std::exchange(found->desktopOcclusionResumePending, false);
     const int previousColumns = found->lastColumns;
     const int previousRows = found->lastRows;
     found->lastBounds = bounds;
@@ -20827,7 +21108,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     const bool transitionGeometryUnchanged =
         EqualRect(&previousBounds, &bounds) != FALSE &&
         previousColumns == columns && previousRows == rows;
-    if (transitionFrameRequested && transitionGeometryUnchanged &&
+    if (!resumeAfterOcclusion && transitionFrameRequested && transitionGeometryUnchanged &&
         found->viewTree)
     {
         BeginImageFrame(d2dState_);
@@ -20857,7 +21138,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     const bool nativeMarqueeFrame =
         std::exchange(found->desktopMarquee.framePending, false);
-    if (nativeMarqueeFrame && transitionGeometryUnchanged &&
+    if (!resumeAfterOcclusion && nativeMarqueeFrame && transitionGeometryUnchanged &&
         !found->desktopMarquee.requiresLuaRender &&
         found->desktopMarquee.staticCommands)
     {
@@ -20879,6 +21160,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     // A replayed command list still consumes its images. Replace demands only
     // when drawing the tree or recording a fresh Lua frame.
+    if (resumeAfterOcclusion) (void)ScheduleAnimationFrame(*found);
     BeginImageFrame(d2dState_);
     snowdesktop::widget_runtime::HostControlFrame<LuaWidget::HostControl>
         hostControlFrame([this, ownerId = widgetId]() -> std::vector<LuaWidget::HostControl>* {
@@ -21222,6 +21504,18 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                                 !widgetTimerRequestCallback_ ||
                                 HostManagedAnimationsSuppressed());
                     }
+                    if (surfacePaint && HasLocalRefresh(candidate))
+                    {
+                        surfacePaint->revision = ++d2dState_->nextDesktopPaintRevision;
+                        if (previousPaintRevision != 0 && found->viewTree &&
+                            transitionGeometryUnchanged)
+                        {
+                            CollectLocalRefresh(*found->viewTree, candidate, bounds,
+                                *surfacePaint);
+                            if (candidate == *found->viewTree)
+                                surfacePaint->baseRevision = previousPaintRevision;
+                        }
+                    }
                     found->viewTree = std::move(candidate);
                     found->viewIndeterminateProgressActive =
                         snowdesktop::widget_runtime::
@@ -21299,6 +21593,15 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             if (transitionActive ||
                 found->viewIndeterminateProgressActive)
                 (void)ScheduleAnimationFrame(*found);
+            if (surfacePaint)
+            {
+                if (transitionActive || found->viewIndeterminateProgressActive ||
+                    !found->interactionRegions.HoveredKey().empty() ||
+                    !found->interactionRegions.PressedKey().empty() ||
+                    !found->viewKeyboardFocusKey.empty())
+                    surfacePaint->revision = surfacePaint->baseRevision = 0;
+                found->desktopPaintRevision = surfacePaint->revision;
+            }
         }
         while (d2dState_->widgetClipDepth > 0)
         {
@@ -22350,6 +22653,8 @@ void WidgetEngine::SetWidgetDesktopVisible(
     widget.keepRuntimeActiveForHiddenPage =
         !visible && keepRuntimeActive;
     widget.desktopVisible = visible;
+    if (!visible)
+        widget.desktopOccluded = widget.desktopOcclusionResumePending = false;
     if (!visible && d2dState_)
         d2dState_->packageImageCache.ForgetOwner(WidgetWideToUtf8(widgetId) + "|desktop");
     if (!visible)
@@ -22367,6 +22672,8 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
             continue;
         widget.keepRuntimeActiveForHiddenPage = false;
         widget.desktopVisible = visible;
+        if (!visible)
+            widget.desktopOccluded = widget.desktopOcclusionResumePending = false;
         if (!visible && d2dState_)
             d2dState_->packageImageCache.ForgetOwner(
                 WidgetWideToUtf8(widget.widgetId) + "|desktop");
@@ -22375,6 +22682,25 @@ void WidgetEngine::SetAllWidgetDesktopVisible(bool visible)
         ApplyWidgetHostVisibility(
             widget, widget.desktopVisible || widget.panelActive);
     }
+}
+
+void WidgetEngine::SetWidgetDesktopOccluded(const std::wstring& widgetId, bool occluded)
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return;
+    auto& widget = widgets_[index];
+    if (widget.desktopOccluded == occluded) return;
+    widget.desktopOccluded = occluded;
+    widget.desktopOcclusionResumePending = !occluded && widget.desktopVisible;
+    if (!occluded) return;
+    widget.viewTransitions.Clear();
+    widget.viewTransitionFramePending = false;
+    if (widget.panelActive) return;
+    if (widget.animationTimerId && widgetTimerKillCallback_)
+        widgetTimerKillCallback_(widget.animationTimerId);
+    widget.animationTimerId = 0;
+    (void)widget.animationFrames.ConsumeDataRefresh();
+    widget.animationFrames.ResetFrameTiming();
 }
 
 void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
@@ -22399,6 +22725,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
         if (widget.animationTimerId && widgetTimerKillCallback_)
             widgetTimerKillCallback_(widget.animationTimerId);
         widget.animationTimerId = 0;
+        if (widget.desktopOccluded && !widget.panelActive) return;
         const bool dataRefreshFrame = widget.animationFrames.ConsumeDataRefresh();
         const auto now = snowdesktop::widget_runtime::
             AnimationFrameRequests::Clock::now();
@@ -22412,7 +22739,7 @@ void WidgetEngine::OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId)
             HostManagedAnimationsSuppressed();
         const bool animateIndeterminateProgress = !reducedMotion;
         const bool desktopProgressFrame = animateIndeterminateProgress &&
-            widget.hostVisible &&
+            widget.hostVisible && !widget.desktopOccluded &&
             widget.viewIndeterminateProgressActive;
         const bool panelProgressFrame = animateIndeterminateProgress &&
             widget.panelActive &&
@@ -22641,7 +22968,10 @@ void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* ca
                     : (std::strstr(callbackName, "Panel") != nullptr
                         ? "panel" : "desktop"));
         WidgetSurfaceScope surfaceScope(
-            d2dState_, eventSurface.c_str());
+            d2dState_, eventSurface.c_str(),
+            std::strcmp(callbackName, "onPanelOpened") == 0 ||
+                std::strcmp(callbackName, "onDialogOpened") == 0 ||
+                std::strcmp(callbackName, "onPopoverOpened") == 0);
         const char* kind = "pointer";
         const char* action = callbackName;
         if (std::strcmp(callbackName, "onClick") == 0 ||
@@ -23620,7 +23950,10 @@ WidgetEngine::GetWidgetHostState(const std::wstring& widgetId,
 
     if (!IsWidgetPackageInstalled(packageId))
         return { WidgetHostStateKind::PackageMissing, {} };
-    const auto package = GetWidgetPackage(packageId);
+    // This synchronous check performs no catalog mutation or callbacks. Keep
+    // permission evaluation fresh without copying the manifest and locales
+    // on every animated frame. The borrow ends before leaving this call.
+    const auto* package = GetWidgetPackageManager().FindResolved(WidgetWideToUtf8(packageId));
     if (!package)
         return { WidgetHostStateKind::LoadFailed, {} };
     const auto grant = snowdesktop::widget::WidgetPermissionBroker::Evaluate(
@@ -23802,6 +24135,41 @@ bool WidgetEngine::RuntimeUnsubscribeData(
         snowdesktop::widget_runtime::WidgetDataBroker::Clock::now());
     ApplyWidgetDataBrokerActions();
     return removed;
+}
+
+std::vector<snowdesktop::widget_runtime::WidgetResourcePoint>
+WidgetEngine::RuntimeGetDataHistory(std::uint64_t subscriptionId, std::string& error,
+    std::string_view adapterId, bool includeGpuDetails) const
+{
+    error.clear();
+    const auto binding = dataBroker_ ? dataBroker_->SubscriptionSnapshot(subscriptionId) : std::nullopt;
+    if (!binding) { error = "unsubscribed"; return {}; }
+    if (previewOnly_ || binding->options.preview) return {};
+    if (!binding->options.permissionGranted) { error = "permissionDenied"; return {}; }
+    if (binding->topic != "system.cpu" && binding->topic != "system.memory" &&
+        binding->topic != "system.gpu" && binding->topic != "system.network.traffic")
+    {
+        error = "historyUnavailable";
+        return {};
+    }
+    if (!widgetSystemDataProvider_) { error = "providerUnavailable"; return {}; }
+    if (binding->topic == "system.gpu")
+    {
+        if (!includeGpuDetails) { error = "detailsRequired"; return {}; }
+        if (adapterId.empty()) { error = "adapterRequired"; return {}; }
+        const auto snapshot = widgetSystemDataProvider_->Gpu(true);
+        if (snapshot)
+        {
+            for (const auto& adapter : snapshot->adapters)
+                if (adapter.id == adapterId ||
+                    std::find(adapter.aliasIds.begin(), adapter.aliasIds.end(), adapterId) != adapter.aliasIds.end())
+                    return widgetSystemDataProvider_->ResourceHistory(binding->topic, adapter.id);
+        }
+        error = "adapterNotFound";
+        return {};
+    }
+    if (!adapterId.empty()) { error = "invalidHistoryOptions"; return {}; }
+    return widgetSystemDataProvider_->ResourceHistory(binding->topic);
 }
 
 std::optional<LuaWidgetDataSnapshot>
@@ -27033,6 +27401,8 @@ WidgetEngine::RuntimeStartTask(
     std::unordered_map<std::string, std::string> arguments)
 {
     using snowdesktop::widget_runtime::TaskStartOptions;
+    if (name.starts_with("multiplayer.") && snowdesktop::widget_runtime::IsDryLoad())
+        return {0, "previewUnavailable"};
     if ((name == "native.request" || name == "native.watch") && snowdesktop::widget_runtime::IsDryLoad())
         return { 0, "previewUnavailable" };
     if (!taskBroker_)
@@ -27450,6 +27820,9 @@ std::string WidgetEngine::RuntimeRequestAnimationFrame(
         return "reducedMotion";
     if (!widget.animationFrames.Request(name))
         return "quotaExceeded";
+    // Retain author requests for the first live frame after uncovering.
+    if ((widget.desktopOccluded || widget.desktopOcclusionResumePending) && !widget.panelActive)
+        return {};
     if (ScheduleAnimationFrame(widget))
         return {};
     (void)widget.animationFrames.Cancel(name);
@@ -27535,16 +27908,19 @@ void WidgetEngine::RescheduleNamedTimer(LuaWidget& widget)
 
 bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
 {
+    if ((widget.desktopOccluded || widget.desktopOcclusionResumePending) && !widget.panelActive)
+        return false;
     if (widget.animationTimerId)
         return true;
     const bool indeterminateProgressActive =
         !HostManagedAnimationsSuppressed() &&
-        ((widget.hostVisible && widget.viewIndeterminateProgressActive) ||
+        ((widget.hostVisible && !widget.desktopOccluded &&
+            widget.viewIndeterminateProgressActive) ||
             (widget.panelActive &&
                 widget.panelIndeterminateProgressActive));
     const bool nativeMarqueeActive =
         !HostManagedAnimationsSuppressed() &&
-        widget.desktopVisible &&
+        widget.desktopVisible && !widget.desktopOccluded &&
         !widget.desktopMarquee.compositionManaged &&
         HasActiveNativeMarquee(widget.desktopMarquee);
     const bool highRateAnimationPending =
@@ -27562,7 +27938,9 @@ bool WidgetEngine::ScheduleAnimationFrame(LuaWidget& widget)
     const UINT interval = frameLimit > 0
         ? std::max(baseInterval, static_cast<UINT>((1000 + frameLimit - 1) / frameLimit))
         : baseInterval;
-    widget.animationTimerId = widgetTimerRequestCallback_(widget.widgetId, interval);
+    const auto& requestFrame = widgetAnimationTimerRequestCallback_
+        ? widgetAnimationTimerRequestCallback_ : widgetTimerRequestCallback_;
+    widget.animationTimerId = requestFrame(widget.widgetId, interval);
     return widget.animationTimerId != 0;
 }
 
@@ -31290,6 +31668,43 @@ bool WidgetEngine::IsHostScrollbarDragging(
         hostScrollbarDrag_.surface == NormalizeWidgetSurface(surface);
 }
 
+bool WidgetEngine::OwnsDesktopWheel(const std::wstring& widgetId, int x, int y, int delta) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto& widget = widgets_[index];
+    const POINT point{x, y};
+    const auto canScroll = [&](const LuaWidget::HostControl& control) {
+        const int maximum = control.horizontal && !control.selectPopup
+            ? std::max(0, control.contentWidth - control.viewportWidth)
+            : std::max(0, control.contentHeight - control.viewportHeight);
+        return delta == 0 || snowdesktop::widget_scroll_rules::ApplyWheelDelta(
+            RuntimeGetScrollOffset(widgetId, control.id, "desktop"), maximum, delta).moved;
+    };
+    // Match HandleHostUiPointer's popup-first routing, even if an enclosing
+    // scroll container is still able to move behind the expanded list.
+    for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
+    {
+        if (!it->enabled || !HostControlBelongsToSurface(*it, "desktop") || !HostControlContainsPoint(*it, point)) continue;
+        if (it->selectPopup) return canScroll(*it);
+    }
+    std::string actionKey;
+    const bool customAction = widget.interactionRegions.ActionAt(
+        static_cast<float>(x), static_cast<float>(y), "wheel", &actionKey) != nullptr;
+    bool actionBelongsToScrollControl = false;
+    for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
+    {
+        if (!it->enabled || !HostControlBelongsToSurface(*it, "desktop") || !HostControlContainsPoint(*it, point)) continue;
+        if (it->type != LuaWidget::HostControl::Type::Scroll &&
+            !(it->type == LuaWidget::HostControl::Type::Input && it->multiline)) continue;
+        if (canScroll(*it)) return true;
+        actionBelongsToScrollControl = actionBelongsToScrollControl || actionKey == it->id;
+    }
+    // A custom region has no host-owned range to inspect. Keep its explicit
+    // event ownership; known controls can hand off at their directional limit.
+    return customAction && !actionBelongsToScrollControl;
+}
+
 bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
     int delta, bool wheel, std::string_view surface)
 {
@@ -31630,6 +32045,18 @@ void WidgetEngine::SetWidgetSurfaceContext(
         std::max<UINT>(USER_DEFAULT_SCREEN_DPI, context.dpiX);
     widgets_[index].surfaceContext.dpiY =
         std::max<UINT>(USER_DEFAULT_SCREEN_DPI, context.dpiY);
+}
+
+void WidgetEngine::SetDesktopImageSpinOutput(
+    snowdesktop::widget_runtime::WidgetImageSpin* output)
+{
+    if (d2dState_) d2dState_->desktopImageSpin = output;
+}
+
+void WidgetEngine::SetDesktopSurfacePaintOutput(
+    snowdesktop::widget_runtime::WidgetSurfacePaint* output)
+{
+    if (d2dState_) d2dState_->desktopSurfacePaint = output;
 }
 
 LuaWidgetContextState WidgetEngine::RuntimeGetWidgetContextState(
@@ -32267,6 +32694,9 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                         std::isfinite(number))
                         variant.rows = std::clamp(
                             static_cast<int>(number), 1, 8);
+                    std::string sizeError;
+                    (void)snowdesktop::widget::ReadAspectGridSize(size,
+                        variant.columns, variant.rows, variant.aspectSize, sizeError);
                 }
                 if (const JsonValue* variantStorage = value.Find("storage");
                     variantStorage && variantStorage->IsObject())
@@ -32295,6 +32725,33 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                 }
                 manifest.previewVariants.push_back(std::move(variant));
             }
+        }
+    }
+    if (const auto* presets = root.Find("creationPresets"); presets && presets->IsArray())
+    {
+        for (const auto& item : presets->array)
+        {
+            if (!item.IsObject() || manifest.creationPresets.size() >= 32) continue;
+            snowdesktop::widget::CreationPreset preset;
+            readString(item, "id", preset.id);
+            readString(item, "title", preset.title);
+            readString(item, "titleKey", preset.titleKey);
+            if (const auto* size = item.Find("size"); size && size->IsObject())
+            {
+                snowdesktop::widget::WidgetSizeDefinition definition;
+                if (const auto* c = size->Find("columns"); c && c->IsNumber() && std::isfinite(c->number))
+                    definition.columns = static_cast<int>(std::clamp(c->number, 1.0, 8.0));
+                if (const auto* r = size->Find("rows"); r && r->IsNumber() && std::isfinite(r->number))
+                    definition.rows = static_cast<int>(std::clamp(r->number, 1.0, 8.0));
+                std::string sizeError;
+                (void)snowdesktop::widget::ReadAspectGridSize(size, definition.columns,
+                    definition.rows, definition.aspect, sizeError);
+                preset.size = definition;
+            }
+            if (const auto* values = item.Find("values"); values && values->IsObject())
+                for (const auto& [key, value] : values->object)
+                    if (value.IsString()) preset.values[key] = value.string;
+            manifest.creationPresets.push_back(std::move(preset));
         }
     }
     readString(root, "entry", manifest.entry);
@@ -32524,6 +32981,11 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             rows = normalize(value);
     };
     readSize("defaultSize", manifest.defaultColumns, manifest.defaultRows, 1, 8);
+    {
+        std::string sizeError;
+        (void)snowdesktop::widget::ReadAspectGridSize(root.Find("defaultSize"),
+            manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize, sizeError);
+    }
     readSize("minSize", manifest.minColumns, manifest.minRows, 1, 1);
     readSize("maxSize", manifest.maxColumns, manifest.maxRows, 0, 0);
 
@@ -32553,8 +33015,18 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
     }
     for (auto& variant : manifest.previewVariants)
     {
+        if (variant.columns <= 0 && variant.rows <= 0 && !variant.aspectSize)
+            variant.aspectSize = manifest.defaultAspectSize;
         if (variant.columns <= 0) variant.columns = manifest.defaultColumns;
         if (variant.rows <= 0) variant.rows = manifest.defaultRows;
+        if (variant.aspectSize)
+        {
+            const auto span = snowdesktop::widget::ResolveWidgetSize(
+                {variant.columns, variant.rows, variant.aspectSize},
+                snowdesktop::widget::StandardWidgetSizeGridMetrics(), manifest.minColumns,
+                manifest.minRows, manifest.maxColumns, manifest.maxRows);
+            variant.columns = span.first; variant.rows = span.second;
+        }
         if (!variant.titleKey.empty())
             variant.title = TranslateManifest(
                 manifest, variant.titleKey, variant.title);
@@ -32569,6 +33041,10 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                     manifest, localizationKey, value->second);
         }
     }
+
+    for (auto& preset : manifest.creationPresets)
+        if (!preset.titleKey.empty()) preset.title = TranslateManifest(
+            manifest, preset.titleKey, preset.title);
 
     if (manifest.permissions.empty())
         manifest.permissions = {};
@@ -33482,7 +33958,8 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
     std::string& error)
 {
     error.clear();
-    if (!trustedGestureState_.Active())
+    if (!trustedGestureState_.Active() &&
+        !(d2dState_ && d2dState_->openingFocusAllowed))
     {
         error = "trustedGestureRequired";
         return false;

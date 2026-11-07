@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "common/utils.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "categorized_popup_scope.h"
 #include "settings/control_native_widget_settings.h"

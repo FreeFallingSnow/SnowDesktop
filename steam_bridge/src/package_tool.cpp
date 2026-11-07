@@ -305,6 +305,18 @@ bool PackageTool::Inspect(const std::filesystem::path& source,
     inspection.author = *author;
     inspection.license = *license;
     if (!preview->empty()) inspection.preview = source / Utf8ToWide(*preview);
+    if (const auto* gallery = manifest->Find("previewGallery"))
+    {
+        if (!gallery->IsArray() || gallery->array.size() > 7)
+        { error = "snowwidget inspect returned an invalid preview gallery"; return false; }
+        inspection.previewGallery.emplace();
+        for (const auto& image : gallery->array)
+        {
+            if (!image.IsString())
+            { error = "snowwidget inspect returned an invalid gallery image"; return false; }
+            inspection.previewGallery->push_back(source / Utf8ToWide(image.string));
+        }
+    }
     const auto copyArray = [&](std::string_view key,
         std::vector<std::string>& destination)
     {

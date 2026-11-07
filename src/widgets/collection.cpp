@@ -16,6 +16,8 @@
 #include "core/item.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "common/utils.h"
+#include "layout/item_layout_rules.h"
 #include "core/drop_model.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "layout/item_render_layer_rules.h"

@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "settings/settings_snapshot.h"
 #include "settings_visual_preview.h"
 #include "icon_library_page_presenter.h"
 #include "settings/settings_search_catalog.h"
@@ -1009,13 +1011,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     };
     const auto generalNotice = std::make_shared<GeneralNoticeFixture>();
     GeneralPageActions general;
+    if (focusId == "general.steamRoom" || focusId == "general.steamRoom.toggle")
+        general.steamRoom = [shown = focusId == "general.steamRoom"](steam_room::Command) {
+            if (!shown) return steam_room::Status{steam_room::Phase::Idle};
+            return steam_room::Status{steam_room::Phase::Waiting, steam_room::Failure::None, false, true, true};
+        };
     general.onboarding.settingsIndex = [] {
         SettingsSearchIndexInput index; index.developerToolsVisible = index.debugVisible = true;
         PopulateSettingsSearchCatalog(index, [](std::string_view key) { return std::wstring(_LW(std::string(key).c_str())); }, true, true);
         return index.staticSettings;
     };
     general.probeHotkey = [](SettingsHostActions::HotkeyTarget, HotkeyChord, std::uint64_t,
-        std::uint64_t, HotkeyRecorder::AvailabilityCompletion complete) { complete(true, {}); };
+        std::uint64_t, HotkeyAvailabilityCompletion complete) { complete(true, {}); };
     general.languageCatalog = [] { return std::vector<SettingsLanguageOption>{{"zh-CN", L"简体中文"}, {"en-US", L"English"}}; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
     general.queryAdvancedFeatureStatus = [generalNotice] {
         GeneralAdvancedFeatureStatus status;
@@ -1108,21 +1115,41 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         return result;
     };
     appearance.themeLibrary = themeLibrary;
-    appearance.contextMenu = [english](const shell_extensions::Request&, bool) {
-        shell_extensions::CatalogueView result; result.catalogue.revision = 1;
-        for (int index = 0; index < 3; ++index)
-        {
-            shell_extensions::Registration item;
-            item.id = "preview-menu-" + std::to_string(index);
+    appearance.contextMenu = [](const shell_extensions::Request& request, bool) {
+        namespace ext = shell_extensions;
+        ext::CatalogueView result;
+        result.selection = request;
+        result.catalogue.revision = result.registrations.revision = 1;
+        const unsigned files = ext::ContextBit(ext::Context::File);
+        const unsigned folders = ext::ContextBit(ext::Context::Folder);
+        const unsigned backgrounds = ext::ContextBit(ext::Context::FolderBackground) |
+            ext::ContextBit(ext::Context::Desktop);
+        const ext::Application explorer{"preview-windows-explorer", _LW("preview.contextMenu.fileExplorer")};
+        const ext::Application security{"preview-windows-security", _LW("preview.contextMenu.windowsSecurity")};
+        const ext::Application terminal{"preview-windows-terminal", L"Windows Terminal"};
+        const auto add = [&](const char* id, const char* label, const ext::Application& application,
+                             unsigned contexts, ext::RegistrationKind kind) {
+            ext::Registration item;
+            item.id = std::string("preview-windows-") + id;
+            item.kind = kind;
             item.display.registration = item.id;
-            item.display.label = english ? L"Example file action " : L"示例文件操作 "; // l10n-allow: isolated bilingual preview fixture, not production UI text.
-            item.display.label += std::to_wstring(index + 1);
-            item.application = {"preview-tools", english ? L"Example tools" : L"示例工具"}; // l10n-allow: isolated bilingual preview fixture, not production UI text.
-            item.contexts = shell_extensions::ContextBit(shell_extensions::Context::File) |
-                shell_extensions::ContextBit(shell_extensions::Context::Folder);
-            item.linked = true; item.types = {L"*"};
+            item.display.key = id;
+            item.display.label = _LW(label);
+            item.application = application;
+            item.contexts = contexts;
+            item.types = {L"*"};
+            // Installed sources feed By application; the linked projection
+            // feeds By object. These isolated IDs have no invocation tokens.
+            result.registrations.rows.push_back(item);
+            item.linked = true;
             result.catalogue.rows.push_back(std::move(item));
-        }
+        };
+        add("open-with", "preview.contextMenu.openWith", explorer, files, ext::RegistrationKind::Handler);
+        add("send-to", "preview.contextMenu.sendTo", explorer, files | folders, ext::RegistrationKind::Handler);
+        add("share", "preview.contextMenu.share", explorer, files, ext::RegistrationKind::Handler);
+        add("pin-to-start", "settings.contextMenu.pinToStart", explorer, folders, ext::RegistrationKind::Handler);
+        add("defender", "preview.contextMenu.scanDefender", security, files | folders, ext::RegistrationKind::Handler);
+        add("terminal", "preview.contextMenu.openTerminal", terminal, folders | backgrounds, ext::RegistrationKind::Packaged);
         return result;
     };
     appearance.listFonts = [] { return std::vector<app_fonts::Choice>{{{}, L"Segoe UI", L"Segoe UI"}}; };
@@ -1456,6 +1483,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
         snapshot.values.general.showAdvancedSettings = expanded || page == SettingsPage::RuntimeModules || page == SettingsPage::AgentOperations;
+        snapshot.values.general.steamRoomVisible = focusId == "general.steamRoom";
         snapshot.values.general.runtimeModules.allowed.fill(!disabled);
         *modulePreviewPolicy = snapshot.values.general.runtimeModules;
         snapshot.values.general.dockEnabled = !disabled;
@@ -2202,9 +2230,15 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         {
             for (int pass = 0; pass < 4; ++pass)
             {
-                Walk(cards, [](const x::DependencyObject& node) {
+                Walk(cards, [page](const x::DependencyObject& node) {
                     if (const auto expander = node.try_as<c::Expander>(); expander && expander.Visibility() == x::Visibility::Visible)
-                        expander.IsExpanded(true);
+                    {
+                        // Keep per-location editors compact while showing the
+                        // installed Windows applications and their commands.
+                        if (page != SettingsPage::ContextMenu ||
+                            !c::ToolTipService::GetToolTip(expander))
+                            expander.IsExpanded(true);
+                    }
                 });
                 Settle(shell.as<x::FrameworkElement>());
             }

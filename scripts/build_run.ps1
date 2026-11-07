@@ -115,8 +115,14 @@ function Get-RunView([string]$Id){
             $references=@($ledger.entries|Where-Object runId -eq $Id|ForEach-Object {Get-Field $_ 'references' @()})
         }
     }
-    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;
-        request=$request;record=$record;resources=$metrics;stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
+    $recovery=$null
+    if($observed -eq 'start-failed'){
+        $recovery=[pscustomobject]@{diagnose='scripts/build.bat diagnose';requestRetained=$true;automaticReplay=$false;
+            next='Fix the launch context first. For a retired batch use begin, claim reviewed paths with -AdoptExistingChanges, plan, then ready-and-wait with the NEW batch/revision. DSH may explicitly use ready from its Host. An unchanged frozen checkpoint can still be committed through the OLD batch/revision.';
+            begin=('scripts/build.bat begin '+$request.task);details='scripts/README.md#构建环境诊断与启动恢复'}
+    }
+    return [pscustomobject]@{id=$Id;task=$request.task;status=$observed;persistedStatus=$record.status;terminal=($terminal -or $observed -eq 'interrupted');ownerState=$ownerState;subscriptions=$subscriptions;references=$references;recovery=$recovery;
+        request=$request;record=$record;resources=$metrics;compileScheduling=@($stages|Where-Object {$_.PSObject.Properties['name'] -and $_.name -eq 'compile-scheduling'}|Select-Object -Last 1);stageEvents=$stages;stageError=$stageError;observation='Closing an observer does not cancel the Run. An exited owner requires an explicit new Run, never automatic takeover.'}
 }
 function Run-CancellationRequested($Request){
     $path=Run-Path $Request.id '.cancel'
@@ -164,7 +170,12 @@ try {
                 if(-not $state -or $state.repositoryRoot -ne $root -or @($state.taskLedger.tasks|Where-Object {$_.id -eq $Task -and -not $_.closedUtc}).Count -ne 1){throw 'Budget configuration requires an active Task in this checkout.'}
                 Set-WeightedResourcePolicy $root $CpuCapacity $MemoryCapacityMiB $Task $Reason|ConvertTo-Json -Depth 8
             }finally{$transaction.Dispose()}
-        }else{Get-WeightedResourcePolicy $root|ConvertTo-Json -Depth 8}
+        }else{
+            $policy=Get-WeightedResourcePolicy $root
+            $policy|Add-Member NoteProperty defaultRequest (Get-DefaultResourceRequest $policy.policy)
+            $policy|Add-Member NoteProperty defaultToolRequest (Get-DefaultResourceRequest $policy.policy -Workload tools)
+            $policy|ConvertTo-Json -Depth 8
+        }
         exit 0
     }
     if($CpuCapacity -or $MemoryCapacityMiB){throw 'Capacity changes require run budget; no execution was submitted.'}
@@ -236,7 +247,9 @@ try {
         $privateBuild=$request.action -eq 'candidate' -and $request.candidateAction -in 'release','debug'
         $exclusive=($request.action -notin 'release','debug' -and -not $privateBuild) -or $request.reloadShell -or $request.closeApplication
         if($Mode -eq 'verify'){$exclusive=$false}
-        $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
+        $request|Add-Member NoteProperty projectResources $(if($frozenResources){$frozenResources}
+            elseif($heavy -and -not $CpuSlots -and -not $MemoryMiB){Get-DefaultProjectResourceBinding $root}
+            else{Get-ProjectResourceBinding $root $heavy $CpuSlots $MemoryMiB $exclusive})
         $batchTransaction=$null;$joined=$false;$verification=$null;$referenceProposal=$null;$referenceReceipt=$null;$reused=$false
         if($Mode -eq 'verify'){
             $verification=Get-VerificationSnapshot $root $PlanBatch $Filter $(if($request.projectResources.policy -eq 'project-weighted-v1'){$request.projectResources}else{$null})

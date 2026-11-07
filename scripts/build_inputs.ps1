@@ -28,7 +28,7 @@ function Test-BuildInputPath([string]$Relative) {
     $top = $path.Split('/')[0]
     if ($top -in '.git', '.build', '.build_debug', '.codex-probes', '.codex-remote-attachments',
         '.tmp', '.vs', '.vscode', '.remotion', 'artifacts', 'out', 'build', 'bin', 'obj',
-        'release', 'TestResults', 'website', 'SnowDesktop_SteamAssets') { return $false }
+        'release', 'TestResults', 'website', 'SnowDesktop_SteamAssets', 'SnowDesktop_Website', 'SnowDesktop_Marketing', 'SnowDesktop-Marketing') { return $false }
     $leaf = [IO.Path]::GetFileName($path)
     if ($leaf -eq 'AGENTS.md' -or $path -eq 'scripts/README.md') { return $false }
     # Root documentation/reports do not feed the C++ build. Notices are an

@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <algorithm>
+#include "theme/panel_gradient.h"
 #include "system_panel_surface.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>

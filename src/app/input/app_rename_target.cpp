@@ -1,9 +1,11 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/utils.h"
 
 DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
 {
-    if (renameController_.IsActive() || quickNavigationOpen_ || largeIconGesture_ ||
+    if (renameController_.IsActive() || quickNavigation_->open || largeIconGesture_ ||
         !luaWidgetPanelRequest_.widgetId.empty() || HasActiveContextMenuSession() ||
         IsPointInUsageGuide(point))
         return {};
@@ -204,6 +206,9 @@ size_t DesktopApp::ResolveRenameVisibilityWidgetIndex(
         return RenameController::InvalidIndex;
 
     const DesktopWidget& widget = widgets_[widgetIndex];
+    const auto& frameOwner = ResolveLuaWidgetFrameOwner(widget);
+    if (&frameOwner != &widget)
+        return FindWidgetIndexById(frameOwner.id);
     if (widget.type == DesktopWidgetType::Collection)
     {
         const size_t groupIndex =

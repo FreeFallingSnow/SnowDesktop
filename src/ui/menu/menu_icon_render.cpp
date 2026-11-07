@@ -362,20 +362,21 @@ GlyphAlphaMask BuildOpticallyWeightedMask(const LOGFONTW& sourceFont,
     for (size_t i = 0; i < source.size(); ++i)
         source[i] = static_cast<std::uint8_t>(pixels[i] & 0xFFu);
 
-    // Expand the 4x mask by one sample before downsampling.  This adds only
-    // 0.25 physical pixel of optical weight and preserves counters/corners.
+    // Expand the 4x mask by one sample before downsampling for most glyphs.
+    // Keep the original stroke weight on Pages so its small grid cells stay open.
+    const int expansion = std::wstring_view(glyph) == menu_fluent_glyphs::kPages ? 0 : 1;
     std::vector<std::uint8_t> expanded(source.size(), 0);
     for (int y = 0; y < highHeight; ++y)
     {
         for (int x = 0; x < highWidth; ++x)
         {
             std::uint8_t coverage = 0;
-            for (int offsetY = -1; offsetY <= 1; ++offsetY)
+            for (int offsetY = -expansion; offsetY <= expansion; ++offsetY)
             {
                 const int sampleY = y + offsetY;
                 if (sampleY < 0 || sampleY >= highHeight)
                     continue;
-                for (int offsetX = -1; offsetX <= 1; ++offsetX)
+                for (int offsetX = -expansion; offsetX <= expansion; ++offsetX)
                 {
                     const int sampleX = x + offsetX;
                     if (sampleX < 0 || sampleX >= highWidth)
@@ -617,11 +618,12 @@ bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
 }
 
 void DrawGlyphLayer(HDC dc, const wchar_t* glyph,
-    const RECT& bounds, COLORREF color, const RECT* clip)
+    const RECT& bounds, COLORREF color, const RECT* clip,
+    bool opticalWeight = true)
 {
     if (!glyph || !*glyph)
         return;
-    if (DrawOpticallyWeightedFluentGlyph(
+    if (opticalWeight && DrawOpticallyWeightedFluentGlyph(
             dc, glyph, bounds, color, clip))
     {
         return;
@@ -766,7 +768,7 @@ void DrawSubmenuArrow(HDC dc, HFONT arrowFont, const RECT& bounds,
         bounds.bottom,
     };
     DrawGlyphLayer(dc, menu_fluent_glyphs::kChevronRight,
-        arrowBounds, color, &bounds);
+        arrowBounds, color, &bounds, false);
     SelectObject(dc, oldFont);
 }
 
@@ -837,9 +839,12 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         metrics.selectionRadius = Scale(2, effectiveDpi);
         metrics.leftPadding = Scale(8, effectiveDpi);
         metrics.iconColumnWidth = Scale(20, effectiveDpi);
+        metrics.submenuArrowFontHeight = Scale(14, effectiveDpi);
         metrics.textGap = Scale(6, effectiveDpi);
         metrics.rightPadding = Scale(8, effectiveDpi);
-        metrics.textFontHeight = Scale(11, effectiveDpi);
+        // Native menus normally use 9pt (12 DIP); this is also the fallback
+        // when the per-DPI system menu font cannot be queried.
+        metrics.textFontHeight = Scale(12, effectiveDpi);
         metrics.iconFontHeight = Scale(16, effectiveDpi);
         metrics.maximumImageSize = Scale(16, effectiveDpi);
     }
@@ -992,9 +997,13 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         SelectObject(dc, oldFont);
 
     if (item.hasSubmenu)
+    {
+        const COLORREF arrowColor = disabled ? palette.disabledText
+            : (palette.lightTheme ? RGB(100, 100, 100) : RGB(187, 187, 187));
         DrawSubmenuArrow(dc,
             submenuArrowFont ? submenuArrowFont : iconFont,
-            bounds, metrics, foreground);
+            bounds, metrics, arrowColor);
+    }
 
     SetTextColor(dc, oldTextColor);
     SetBkMode(dc, oldBackgroundMode);

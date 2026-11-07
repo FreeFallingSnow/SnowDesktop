@@ -1,4 +1,15 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
+#include "diagnostics/debug_profile.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "layout/page_management_rules.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "dock/dock_folder_rules.h"
+#include "shell/shell_item_visibility.h"
+#include "data/data_paths.h"
 #include "app/widgets/widget_package_source_capture.h"
 #include "steam/steam_app_identity.h"
 #include "desktop/folder_mapping_visibility_rules.h"
@@ -657,9 +668,13 @@ void DesktopApp::LoadLayoutSlots()
                         group.childWidgetIds, group.activeCategoryId);
                 continue;
             }
-            group.childWidgetIds.clear();
+            if (group.type != DesktopWidgetType::LuaStack) group.childWidgetIds.clear();
         }
     }
+
+    snowdesktop::lua_stack::Normalize(widgets_);
+    snowdesktop::lua_stack::Dissolve(widgets_);
+    for (auto& widget : widgets_) ConfigureWidgetGridLimits(widget);
 
     // Ensure widget-owned items have layout records (they're not in the JSON items array)
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
@@ -791,10 +806,10 @@ void DesktopApp::LoadLayoutSlots()
         savedPageRows_.erase(candidate);
     }
 
-    navTabOrder_.clear();
-    navTabOrder_.reserve(document.navTabOrder.size());
+    quickNavigation_->tabOrder.clear();
+    quickNavigation_->tabOrder.reserve(document.navTabOrder.size());
     for (const auto& id : document.navTabOrder)
-        navTabOrder_.push_back(Utf8ToWide(id));
+        quickNavigation_->tabOrder.push_back(Utf8ToWide(id));
     EnsureNavTabOrder();
     NormalizePageIds();
     releasePreservedEntries();
@@ -1194,10 +1209,10 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure, bool background)
         file << (i + 1 == orderedDockEntries.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";
-    for (size_t i = 0; i < navTabOrder_.size(); ++i)
+    for (size_t i = 0; i < quickNavigation_->tabOrder.size(); ++i)
     {
-        file << "\"" << JsonEscapeUtf8(navTabOrder_[i]) << "\"";
-        if (i + 1 != navTabOrder_.size()) file << ", ";
+        file << "\"" << JsonEscapeUtf8(quickNavigation_->tabOrder[i]) << "\"";
+        if (i + 1 != quickNavigation_->tabOrder.size()) file << ", ";
     }
     file << "]\n}\n";
     std::string saveError;

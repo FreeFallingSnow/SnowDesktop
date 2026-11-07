@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
 #include "widget/runtime/widget_visibility_rules.h"
 
 namespace
@@ -6,7 +7,7 @@ namespace
 constexpr UINT kMaximumMarqueeSurfaceDimension =
     D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
 
-bool IsFiniteMarquee(const LuaWidget::NativeMarqueeText& marquee)
+bool IsFiniteMarquee(const snowdesktop::widget_runtime::NativeMarqueeText& marquee)
 {
     const float viewportWidth =
         marquee.viewport.right - marquee.viewport.left;
@@ -42,6 +43,36 @@ D2D1_COLOR_F MarqueeColor(int rgb, float alpha)
         static_cast<float>(rgb & 0xFF) / 255.0f,
         std::clamp(alpha, 0.0f, 1.0f));
 }
+
+float MarqueePhase(const WidgetMarqueeCompositionItem& item,
+    std::chrono::steady_clock::time_point now)
+{
+    if (item.paused || !item.scrolling || item.cycle <= 0.0f)
+        return item.phase;
+    const float elapsed = std::chrono::duration<float>(now - item.phaseTime).count();
+    return std::fmod(item.phase + std::max(0.0f, elapsed) * item.speed, item.cycle);
+}
+}
+
+void DesktopApp::PauseWidgetMarqueeComposition(const std::wstring& widgetId)
+{
+    const auto owner = widgetMarqueeCompositionItems_.find(widgetId);
+    if (owner == widgetMarqueeCompositionItems_.end()) return;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto& [key, item] : owner->second)
+    {
+        if (!item.textVisual || !item.scrolling || item.paused) continue;
+        const float phase = MarqueePhase(item, now);
+        if (FAILED(item.textVisual->SetOffsetX(item.originX - phase)))
+        {
+            desktopWidgetCompositionFailurePending_ = true;
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        item.phase = phase;
+        item.paused = true;
+        (void)CommitCompositionAnimationFrame();
+    }
 }
 
 // Each marquee is a clipped DirectComposition child visual. DirectComposition
@@ -50,7 +81,7 @@ D2D1_COLOR_F MarqueeColor(int rgb, float alpha)
 
 bool DesktopApp::QueueWidgetMarqueeComposition(
     const std::wstring& widgetId,
-    const std::vector<LuaWidget::NativeMarqueeText>& marquees,
+    const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
     bool reducedMotion)
 {
     if (widgetId.empty() || !dcompDevice_ || !dcompVisual_)
@@ -93,19 +124,43 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
     auto pending = std::move(pendingWidgetMarqueeCompositions_);
     pendingWidgetMarqueeCompositions_.clear();
     const auto now = std::chrono::steady_clock::now();
+    const auto clearInstance = [&](const std::wstring& instance) {
+        for (auto owner = widgetMarqueeCompositionItems_.begin(); owner != widgetMarqueeCompositionItems_.end();)
+        {
+            const auto parent = desktopWidgetCompositionItems_.find(owner->first);
+            for (auto item = owner->second.begin(); item != owner->second.end();)
+            {
+                if (item->second.instanceId != instance) { ++item; continue; }
+                if (parent != desktopWidgetCompositionItems_.end() && parent->second.visual && item->second.clipVisual)
+                    (void)parent->second.visual->RemoveVisual(item->second.clipVisual.Get());
+                item = owner->second.erase(item);
+            }
+            if (owner->second.empty()) owner = widgetMarqueeCompositionItems_.erase(owner);
+            else ++owner;
+        }
+    };
     for (auto& [widgetId, request] : pending)
     {
+        const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, widgetId, &luaStackMemberDrag_);
+        if (request.marquees.empty() || owner >= widgets_.size())
+        {
+            // A hidden/deleted member can clear only its own text. Pending
+            // updates from the new member must survive either delivery order.
+            clearInstance(widgetId);
+            continue;
+        }
+        const std::wstring ownerId = widgets_[owner].id;
         const auto parent =
-            desktopWidgetCompositionItems_.find(widgetId);
+            desktopWidgetCompositionItems_.find(ownerId);
         if (parent == desktopWidgetCompositionItems_.end() ||
             !parent->second.visual)
         {
-            widgetMarqueeCompositionItems_.erase(widgetId);
+            clearInstance(widgetId);
             continue;
         }
-        if (!parent->second.visible)
+        if (!parent->second.visible || parent->second.occluded)
             continue;
-        auto& items = widgetMarqueeCompositionItems_[widgetId];
+        auto& items = widgetMarqueeCompositionItems_[ownerId];
         std::unordered_set<std::string> liveKeys;
         liveKeys.reserve(request.marquees.size());
 
@@ -114,7 +169,8 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             liveKeys.insert(marquee.key);
             auto position = items.find(marquee.key);
             if (position != items.end() &&
-                (!position->second.clipVisual || !position->second.textVisual || !position->second.clip))
+                (position->second.instanceId != widgetId || !position->second.clipVisual ||
+                 !position->second.textVisual || !position->second.clip))
             {
                 if (position->second.clipVisual)
                     (void)parent->second.visual->RemoveVisual(position->second.clipVisual.Get());
@@ -127,17 +183,8 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             // entry for the next refresh to mistake for an initialized item.
             WidgetMarqueeCompositionItem item = inserted
                 ? WidgetMarqueeCompositionItem{} : position->second;
-            float phase = 0.0f;
-            if (!inserted && item.scrolling && item.cycle > 0.0f &&
-                item.phaseTime.time_since_epoch().count() != 0)
-            {
-                const float elapsed = static_cast<float>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        now - item.phaseTime).count()) / 1'000'000.0f;
-                phase = std::fmod(
-                    item.phase + std::max(0.0f, elapsed) * item.speed,
-                    item.cycle);
-            }
+            item.instanceId = widgetId;
+            float phase = MarqueePhase(item, now);
 
             const bool animate = marquee.scrolling &&
                 !request.reducedMotion;
@@ -279,8 +326,10 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             item.cycle = animate ? cycle : 0.0f;
             item.speed = animate ? marquee.speed : 0.0f;
             item.phase = phase;
+            item.originX = originX;
             item.phaseTime = now;
             item.scrolling = animate;
+            item.paused = false;
             if (inserted)
             {
                 const auto published = items.try_emplace(marquee.key, std::move(item)).first;
@@ -312,7 +361,7 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             item = items.erase(item);
         }
         if (items.empty())
-            widgetMarqueeCompositionItems_.erase(widgetId);
+            widgetMarqueeCompositionItems_.erase(ownerId);
     }
     return true;
 }
@@ -330,17 +379,19 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
             desktopWidgetCompositionItems_.find(widgetId);
         const bool isPreviewSource =
             previewSourceId && widgetId == *previewSourceId;
-        const bool visible =
+        const bool ownerVisible =
             parent != desktopWidgetCompositionItems_.end() &&
             parent->second.visible &&
             !snowdesktop::widget_visibility_rules::
                 ShouldHideWidgetPreviewSource(
                     widgetAction_ == WidgetAction::Move,
                     widgetAction_ == WidgetAction::Resize,
-                    isPreviewSource);
+                    isPreviewSource && !luaStackMemberDrag_.Armed());
         for (auto& [key, item] : items)
         {
             (void)key;
+            const size_t owner = snowdesktop::lua_stack::SurfaceOwner(widgets_, item.instanceId, &luaStackMemberDrag_);
+            const bool visible = ownerVisible && owner < widgets_.size() && widgets_[owner].id == widgetId;
             if (item.visible == visible)
                 continue;
             if (item.clip &&
@@ -357,6 +408,16 @@ bool DesktopApp::SyncWidgetMarqueeCompositionVisibility()
 
 void DesktopApp::ResetWidgetMarqueeComposition()
 {
+    for (auto& [ownerId, items] : widgetMarqueeCompositionItems_)
+    {
+        const auto parent = desktopWidgetCompositionItems_.find(ownerId);
+        if (parent == desktopWidgetCompositionItems_.end() || !parent->second.visual) continue;
+        for (const auto& [key, item] : items)
+        {
+            (void)key;
+            if (item.clipVisual) (void)parent->second.visual->RemoveVisual(item.clipVisual.Get());
+        }
+    }
     pendingWidgetMarqueeCompositions_.clear();
     widgetMarqueeCompositionItems_.clear();
 }

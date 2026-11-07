@@ -665,9 +665,11 @@ local function render(context, model)
         mainFont + smallFont + metrics.spacingSm)
     local rowGap = metrics.spacingXs
     local rowHeight = cardHeight + rowGap
+    local scrollViewport = { type = "rect", x = pad, y = listTop,
+        width = width - pad, height = viewportHeight }
     local scroll = interaction.scroll({
         key = "agenda.scroll",
-        shape = viewport,
+        shape = scrollViewport,
         contentHeight = math.ceil(#items * rowHeight - rowGap),
     })
     local first = math.max(1, math.floor(scroll.offset / rowHeight) + 1)
@@ -718,6 +720,7 @@ local function panel(context, model)
     local busy=model.pendingPanelTask~=nil
     local function button(id,label,enabled)
         return view.button({key="agenda."..id,label=label,width="fill",height=row,fontSize=row*0.46,textAlign="center",
+            padding={horizontal=row*0.32},
             style={foreground="textPrimary",cornerRadius=row*0.12},
             enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
@@ -898,7 +901,7 @@ local function panel(context, model)
     local page=model.timePicker and "time"
         or model.datePicker and "date" or "editor"
     return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",children={
-        view.column({key="agenda.form",width="fill",height="auto",padding=row*0.65,gap=row*0.25,children=children})}})
+        view.column({key="agenda.form",width="fill",height="auto",padding=row*0.2,gap=row*0.25,children=children})}})
 end
 
 local function setup()

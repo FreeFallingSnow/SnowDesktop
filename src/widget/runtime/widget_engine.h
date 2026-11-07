@@ -19,7 +19,12 @@
  * - 渲染通过 D2DState 结构管理资源，支持逐小部件独立绘制
  */
 #pragma once
+
+namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
+#include "steam/steam_room_status.h"
 #include "ui/input/text_input_state.h"
+#include "widget_host_requests.h"
+#include "widget/view/widget_native_marquee.h"
 
 #include <windows.h>
 #include <d2d1_1.h>
@@ -71,6 +76,8 @@ namespace snowdesktop::widget_menu { struct Entry; }
 
 namespace snowdesktop::widget_runtime
 {
+struct WidgetImageSpin;
+struct WidgetSurfacePaint;
 struct PackageImageSource;
 class WidgetEngineSettingsBackend;
 }
@@ -175,6 +182,7 @@ struct LuaWidgetManifest
         std::unordered_map<std::string, std::string>> locales; ///< 组件自带的多语言文本
     int defaultColumns = 1;            ///< 默认占据列数（桌面栅格）
     int defaultRows = 1;               ///< 默认占据行数（桌面栅格）
+    std::optional<snowdesktop::widget::AspectGridSize> defaultAspectSize;
     int minColumns = 1;                ///< 最少占据列数
     int minRows = 1;                   ///< 最少占据行数
     int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
@@ -201,6 +209,7 @@ struct LuaWidgetManifest
     /// Maps preview storage names to keys in the manifest locale catalogs.
     std::unordered_map<std::string, std::string> previewStorageKeys;
     std::vector<snowdesktop::widget::PreviewVariant> previewVariants;
+    std::vector<snowdesktop::widget::CreationPreset> creationPresets;
     std::string entry;
     std::string signature;
     bool signatureValid = true;
@@ -208,22 +217,7 @@ struct LuaWidgetManifest
     std::vector<std::string> optionalPermissions; ///< 可拒绝并降级的权限列表
 };
 
-/**
- * @struct LuaDesktopItemInfo
- * @brief 桌面项目基本信息，由宿主提供给 Lua 沙箱的快照条目
- *
- * 当 Lua 脚本调用桌面查询 API 时，宿主通过回调返回该项目列表，
- * 用于支持小部件内的文件浏览、快速启动等功能。
- */
-struct LuaDesktopItemInfo
-{
-    std::string id;         ///< 项目唯一标识符
-    std::string title;      ///< 项目显示标题
-    std::string path;       ///< 项目完整路径
-    std::string source;     ///< 来源标识（如 "desktop", "startmenu", "custom"）
-    std::string type;       ///< 项目类型（如 "file", "folder", "shortcut"）
-    bool selected = false;  ///< 当前是否处于选中状态
-};
+
 
 /**
  * @struct LuaWidgetMenuItem
@@ -289,44 +283,9 @@ struct WidgetDiagnosticEntry
     std::string auxiliarySurface;
 };
 
-/**
- * @struct LuaInlineTextEditRequest
- * @brief 内联文本编辑请求，由 Lua 脚本发起，宿主编排文本输入
- *
- * 当 Lua 小部件需要就地编辑文本时（如重命名文件），引擎通过回调将此结构
- * 传递给宿主，由宿主显示内联输入框并将结果写回存储。
- */
-struct LuaInlineTextEditRequest
-{
-    std::wstring widgetId;   ///< 发起请求的小部件 ID
-    std::string storageKey;  ///< 存储键名，宿主完成编辑后通过该键写回
-    std::string text;        ///< 初始文本内容
-    RECT localRect{};        ///< 输入框在小部件本地坐标系中的位置和尺寸
-    bool multiline = false;  ///< 是否支持多行输入
-    bool selectAll = true;   ///< 是否自动全选文本
-    bool liveUpdate = false; ///< 输入过程中是否实时写回存储
-    int textColor = 0x000000; ///< 文本颜色（ARGB 格式，默认黑色）
-    int backgroundColor = 0xFFFFFF; ///< 编辑框背景颜色（RGB，默认白色）
-    float fontSize = 15.0f;  ///< 编辑框字号（像素，默认 15）
-};
 
-struct LuaWidgetPanelRequest
-{
-    std::wstring widgetId;
-    std::wstring title;
-    std::string surface = "panel";
-    std::string placement = "auto";
-    std::string anchorKey;
-    RECT anchorRect{};
-    bool hasAnchor = false;
-    bool showHeader = true;
-    int width = 520;
-    int height = 620;
-    bool dismissOnOutside = true;
-    bool dismissOnEscape = true;
-    bool modal = false;
-    bool desktopGesture = false;
-};
+
+
 
 enum class LuaWidgetFilePickerKind
 {
@@ -597,22 +556,7 @@ struct LuaWidget
         std::string itemId;
     };
 
-    struct NativeMarqueeText
-    {
-        std::string key;
-        D2D1_RECT_F viewport{};
-        ComPtr<IDWriteTextLayout> layout;
-        float originX = 0.0f;
-        float originY = 0.0f;
-        float textWidth = 0.0f;
-        float textHeight = 0.0f;
-        float speed = 24.0f;
-        float gap = 24.0f;
-        float offset = 0.0f;
-        int color = 0xFFFFFF;
-        float alpha = 1.0f;
-        bool scrolling = false;
-    };
+    using NativeMarqueeText = snowdesktop::widget_runtime::NativeMarqueeText;
 
     struct NativeMarqueeSurface
     {
@@ -659,6 +603,8 @@ struct LuaWidget
     snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
     bool desktopVisible = false;
     bool keepRuntimeActiveForHiddenPage = false;
+    bool desktopOccluded = false;
+    bool desktopOcclusionResumePending = false;
     bool hostVisible = false;
     bool usesSystemSnapshot = false;
     bool usesMediaSnapshot = false;
@@ -693,6 +639,7 @@ struct LuaWidget
     bool viewFocusCueVisible = false;
     snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
     std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    std::uint64_t desktopPaintRevision = 0;
     snowdesktop::widget_runtime::ViewLayoutCache viewLayoutCache;
     snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
     bool viewTransitionFramePending = false;
@@ -755,17 +702,7 @@ struct LogicalSlotHostSurface
     std::vector<ItemRegion> items;
 };
 
-struct LogicalSlotPickerRequest
-{
-    std::wstring widgetId;
-    std::uint64_t ownerToken = 0;
-    std::string slotId;
-    snowdesktop::widget_runtime::LogicalSlotKind kind =
-        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
-    std::vector<std::string> accepts;
-    std::string referenceType;
-    std::size_t targetIndex = 0;
-};
+
 
 class WidgetEngine
 {
@@ -773,7 +710,7 @@ public:
     /**
      * @brief 默认构造函数
      */
-    WidgetEngine() = default;
+    WidgetEngine();
 
     /**
      * @brief 析构函数，释放所有小部件实例和 Lua 状态
@@ -905,11 +842,22 @@ public:
     }
     /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
     void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
+    // Desktop hosts can pace animation/data frames independently of named
+    // timers. Preview hosts may keep the ordinary timer fallback.
+    void SetWidgetAnimationTimerRequestCallback(WidgetTimerRequestCallback callback)
+    { widgetAnimationTimerRequestCallback_ = std::move(callback); }
     /** @brief 设置组件独立刷新定时器关闭回调 */
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
     /** @brief 设置音频分析线程发布新快照时的 UI 线程唤醒回调。 */
     void SetAudioAnalysisWakeCallback(AudioAnalysisWakeCallback callback);
     void SetTaskWakeCallback(TaskWakeCallback callback);
+    void ConfigureSteamMultiplayer(std::filesystem::path executable,
+        std::function<int()> availability, std::function<void(bool)> openSettings,
+        std::function<std::optional<std::size_t>(const std::vector<std::string>&)> chooseFriend,
+        std::function<void()> changed);
+    snowdesktop::steam_room::Status SteamRoomStatus() const;
+    snowdesktop::steam_room::Status ControlSteamRoom(snowdesktop::steam_room::Command command);
+    void OpenSteamWidgetInvitation(std::uint64_t lobby);
     /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
     void RebindHostTimers();
 
@@ -983,6 +931,7 @@ public:
     void SetWidgetDesktopVisible(
         const std::wstring& widgetId, bool visible,
         bool keepRuntimeActive = false);
+    void SetWidgetDesktopOccluded(const std::wstring& widgetId, bool occluded);
     /** Hide or show the desktop surface of every loaded non-preview widget. */
     void SetAllWidgetDesktopVisible(bool visible);
     // Applies host-owned presentation settings without changing Lua callbacks,
@@ -1049,14 +998,7 @@ public:
     void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
         int button = 0, int delta = 0);
     bool HasFileDropTarget(const std::wstring& widgetId, int x, int y) const;
-    struct FileDropTarget
-    {
-        std::wstring widgetId;
-        std::string packageId;
-        std::string targetKey;
-        std::uint64_t runtimeToken = 0;
-        snowdesktop::widget_runtime::InteractionAction action;
-    };
+    using FileDropTarget = snowdesktop::widget_runtime::WidgetFileDropTarget;
     std::optional<FileDropTarget> CaptureFileDropTarget(
         const std::wstring& widgetId, int x, int y) const;
     bool InvokeFileDrop(const std::wstring& widgetId, int x, int y,
@@ -1294,6 +1236,9 @@ public:
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
+    std::vector<snowdesktop::widget_runtime::WidgetResourcePoint> RuntimeGetDataHistory(
+        std::uint64_t subscriptionId, std::string& error,
+        std::string_view adapterId = {}, bool includeGpuDetails = false) const;
 
     /**
      * @brief 添加一条运行时日志
@@ -1573,6 +1518,8 @@ public:
             semanticUiMetrics);
     void SetWidgetSurfaceContext(const std::wstring& widgetId,
         const LuaWidgetSurfaceContext& context);
+    void SetDesktopImageSpinOutput(snowdesktop::widget_runtime::WidgetImageSpin* output);
+    void SetDesktopSurfacePaintOutput(snowdesktop::widget_runtime::WidgetSurfacePaint* output);
     LuaWidgetContextState RuntimeGetWidgetContextState(
         const std::wstring& widgetId) const;
     void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
@@ -1723,6 +1670,7 @@ public:
         std::string_view alignment, int& offset, int& maximum,
         bool& changed, std::string& error,
         std::string_view surface = {});
+    bool OwnsDesktopWheel(const std::wstring& widgetId, int x, int y, int delta) const;
     bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
         int delta, bool wheel, std::string_view surface = "desktop");
     std::vector<LuaWidget::HostControl> GetScrollControls(
@@ -1855,6 +1803,14 @@ private:
     void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
     void InitializeWidgetTaskBroker();
     void ApplyWidgetTaskBrokerActions();
+    void PumpWidgetMultiplayer();
+    void StartWidgetMultiplayerTask(const snowdesktop::widget_runtime::TaskBrokerAction& action,
+        LuaWidget& widget);
+    void StopWidgetMultiplayer(std::string_view error);
+    void CancelWidgetMultiplayerSend(std::uint64_t request);
+    void ForgetWidgetMultiplayer(std::uint64_t owner);
+    std::string WidgetMultiplayerIdentity(const LuaWidget& widget);
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetMultiplayer> widgetMultiplayer_;
     void LoadNotificationSchedules();
     bool SaveNotificationSchedules();
     void RestoreNotificationSchedules(LuaWidget& widget);
@@ -1908,6 +1864,7 @@ private:
     FilePickerCallback filePickerCallback_;             ///< 系统文件选择器回调
     LogicalSlotPickerCallback logicalSlotPickerCallback_;
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
+    WidgetTimerRequestCallback widgetAnimationTimerRequestCallback_;
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
     TaskWakeCallback taskWakeCallback_;

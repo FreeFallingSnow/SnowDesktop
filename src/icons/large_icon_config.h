@@ -1,4 +1,5 @@
 #pragma once
+#include <locale>
 
 #include "common/json_value.h"
 #include "icon_library.h"

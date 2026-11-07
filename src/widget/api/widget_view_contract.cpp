@@ -327,11 +327,13 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     Property("debugName", ViewPropertyValueKind::String),
     Property("testId", ViewPropertyValueKind::String),
     Property("text", ViewPropertyValueKind::String),
+    RangedProperty("glowRadius", ViewPropertyValueKind::Number, 0.0, 128.0),
     Property("spans", ViewPropertyValueKind::Spans),
     Property("label", ViewPropertyValueKind::String),
     Property("glyph", ViewPropertyValueKind::String),
     EnumProperty("iconFont", ViewPropertyEnumSet::IconFont),
     Property("source", ViewPropertyValueKind::Resource),
+    RangedProperty("spinSpeed", ViewPropertyValueKind::Number, 0.0, 360.0),
     Property("font", ViewPropertyValueKind::Resource),
     EnumProperty("fit", ViewPropertyEnumSet::ImageFit),
     EnumProperty("alignment", ViewPropertyEnumSet::ImageAlignment),
@@ -341,6 +343,7 @@ constexpr auto kProperties = std::to_array<ViewPropertyContract>({
     EnumProperty("orientation", ViewPropertyEnumSet::Orientation),
     Property("value", ViewPropertyValueKind::StringOrNumber),
     Property("values", ViewPropertyValueKind::NumberArray),
+    Property("localRefresh", ViewPropertyValueKind::Boolean),
     Property("min", ViewPropertyValueKind::Number),
     Property("max", ViewPropertyValueKind::Number),
     RangedProperty("step", ViewPropertyValueKind::Number,
@@ -511,6 +514,17 @@ constexpr auto PropertyNames() noexcept
 }
 
 constexpr auto kPropertyNames = PropertyNames();
+
+constexpr auto kPropertiesByName = [] {
+    std::array<const ViewPropertyContract*, kProperties.size()> result{};
+    for (std::size_t index = 0; index < result.size(); ++index)
+        result[index] = &kProperties[index];
+    std::sort(result.begin(), result.end(),
+        [](const auto* left, const auto* right) {
+            return left->name < right->name;
+        });
+    return result;
+}();
 
 constexpr auto kCommonProperties = std::to_array<std::string_view>({
     "type", "key", "debugName", "testId", "width", "height", "minWidth", "maxWidth",
@@ -741,11 +755,13 @@ std::span<const ViewPropertyContract> ViewPropertyContracts() noexcept
 const ViewPropertyContract* FindViewPropertyContract(
     std::string_view name) noexcept
 {
-    const auto found = std::find_if(kProperties.begin(), kProperties.end(),
-        [name](const ViewPropertyContract& contract) {
-            return contract.name == name;
+    const auto found = std::lower_bound(kPropertiesByName.begin(),
+        kPropertiesByName.end(), name,
+        [](const ViewPropertyContract* contract, std::string_view value) {
+            return contract->name < value;
         });
-    return found == kProperties.end() ? nullptr : &*found;
+    return found != kPropertiesByName.end() && (*found)->name == name
+        ? *found : nullptr;
 }
 
 std::string_view ViewPropertyValueKindName(
@@ -859,6 +875,9 @@ bool IsKnownViewNodeProperty(std::string_view property) noexcept
 bool ViewNodeAllowsProperty(
     ViewNodeType type, std::string_view property) noexcept
 {
+    if (property == "localRefresh")
+        return IsType(type, { ViewNodeType::Spectrum, ViewNodeType::Slider,
+            ViewNodeType::Text });
     if (property == "children")
     {
         const ViewNodeContract* contract = FindViewNodeContract(type);
@@ -883,11 +902,13 @@ bool ViewNodeAllowsProperty(
     if (Contains(kCommonProperties, property)) return true;
     if (property == "text")
         return type == ViewNodeType::Text || type == ViewNodeType::Badge;
+    if (property == "glowRadius") return type == ViewNodeType::Text;
     if (property == "spans") return type == ViewNodeType::StyledText;
     if (property == "label") return IsLabelNode(type);
     if (property == "glyph" || property == "iconFont")
         return type == ViewNodeType::Icon || type == ViewNodeType::IconButton;
-    if (property == "source") return type == ViewNodeType::Image;
+    if (property == "source" || property == "spinSpeed")
+        return type == ViewNodeType::Image;
     if (property == "font") return IsTextResourceNode(type);
     if (property == "locale" || property == "textDirection")
         return IsTextualNode(type);

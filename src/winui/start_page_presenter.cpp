@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "settings/settings_snapshot.h"
 #include "start_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "platform/usage_guide_settings.h"

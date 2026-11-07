@@ -25,6 +25,7 @@ local function text(key,s,r,secondary)
 end
 local function button(key,s,r,enabled)
     return view.button({key=key,label=s,height=r,width="fill",fontSize=r*0.46,textAlign="center",
+        padding={horizontal=r*0.3},
         style={foreground="textPrimary",cornerRadius=r*0.12},
         action={id=key},enabled=enabled~=false,accessibility={label=s}})
 end
@@ -205,12 +206,16 @@ local function panel(context,m)
             local control=table.remove(children,1);control.flexShrink=0;frame[#frame+1]=control
         end
     end
+    for i,control in ipairs(frame) do
+        frame[i]=view.column({key=control.key..".inset",width="fill",height="auto",flexShrink=0,
+            padding={horizontal=r*0.2},children={control}})
+    end
     -- Each page owns its offset; only replacing search results resets the list.
     local scrollKey="countdown.scroll."..page
     if page=="choose" then scrollKey=scrollKey..":"..tostring(m.listRevision or 0) end
     frame[#frame+1]=view.scroll({key=scrollKey,width="fill",height="fill",children={
-        view.column({key="countdown.body."..page,width="fill",height="auto",padding=r*0.10,gap=r*0.3,children=children})}})
-    return view.column({key="countdown.panel",width="fill",height="fill",padding=r*0.65,gap=r*0.3,children=frame})
+        view.column({key="countdown.body."..page,width="fill",height="auto",padding={horizontal=r*0.2,vertical=r*0.1},gap=r*0.3,children=children})}})
+    return view.column({key="countdown.panel",width="fill",height="fill",padding={vertical=r*0.2},gap=r*0.3,children=frame})
 end
 local function event(context,m,e)
     if not m.alive then return end

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "control_settings.h"
-#include "settings_controller.h"
+#include "settings_fwd.h"
 #include <filesystem>
 #include <functional>
 

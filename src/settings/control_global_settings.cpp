@@ -1,3 +1,16 @@
+#include <cmath>
+#include <algorithm>
+#include "theme/panel_gradient.h"
+#include "theme/edge_light_settings.h"
+#include "diagnostics/diagnostic_log_modules.h"
+#include "shell_extension_settings.h"
+#include "system/status_bar/status_bar_settings.h"
+#include "dock/dock_settings.h"
+#include "general_settings.h"
+#include "navigation/navigation_settings.h"
+#include "theme/personalization.h"
+#include "settings_controller_interface.h"
+#include "settings_snapshot.h"
 #include "control_global_settings.h"
 #include "control_settings_values.h"
 #include "layout/layout_spacing_rules.h"
@@ -44,7 +57,7 @@ void Enrich(Value& schema, const std::string& path)
         Range(schema, "categorizedTabHeight", 24, 48); Range(schema, "luaWidgetContentRowHeight", 18, 48);
         Range(schema, "cornerRadius", 0, 100); Range(schema, "windowPinBorderWidth", 1, 20);
         Range(schema, "popupHoverDelayMs", 100, 3000); Range(schema, "tabHoverDelayMs", 100, 3000);
-        Choices(schema, "contentTheme", {0, 1}); Choices(schema, "contextMenuStyle", {0, 1, 2, 3, 4, 5, 6});
+        Choices(schema, "contentTheme", {0, 1}); Choices(schema, "contextMenuStyle", {0, 1, 2, 3, 4, 5, 6, 7, 8});
         Choices(schema, "backgroundPreset", {0, 1, 6, 7, 9, 10, 11, 12, 13});
     }
     if (Child(schema, "minimumWidth") && Child(schema, "feather"))

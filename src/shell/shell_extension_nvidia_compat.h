@@ -9,14 +9,15 @@ namespace snowdesktop::shell_extensions
 {
 inline constexpr wchar_t NvidiaControlPanelClsid[] = L"{3D1975AF-48C6-4F8E-A182-BE0E08FA86A9}";
 inline constexpr char NvidiaControlPanelRegistration[] = "clsid:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+inline constexpr wchar_t NvidiaAppClsid[] = L"{F2E8B4A1-9C7D-4F6E-B3A5-8D2C1F4E9B7A}";
 
 // The legacy nvshext factory rejects non-Explorer processes with
 // CLASS_E_CLASSNOTAVAILABLE. Use the installed application's Shell open verb
 // only for that exact failure; never change NVIDIA's machine-wide policy.
-inline bool NvidiaControlPanelRegistered(HKEY classes = HKEY_CLASSES_ROOT)
+inline bool NvidiaDesktopHandlerRegistered(const wchar_t* clsid, HKEY classes = HKEY_CLASSES_ROOT)
 {
     CLSID expected{};
-    if (FAILED(CLSIDFromString(NvidiaControlPanelClsid, &expected))) return false;
+    if (FAILED(CLSIDFromString(clsid, &expected))) return false;
     for (const auto *path : {L"Directory\\Background\\shellex\\ContextMenuHandlers",
                              L"DesktopBackground\\shellex\\ContextMenuHandlers"})
     {
@@ -37,6 +38,10 @@ inline bool NvidiaControlPanelRegistered(HKEY classes = HKEY_CLASSES_ROOT)
         if (found) return true;
     }
     return false;
+}
+inline bool NvidiaControlPanelRegistered(HKEY classes = HKEY_CLASSES_ROOT)
+{
+    return NvidiaDesktopHandlerRegistered(NvidiaControlPanelClsid, classes);
 }
 inline bool NvidiaCompatibilityRequired(const Request &request, bool registered, bool enabled, HRESULT factory)
 {
@@ -92,6 +97,27 @@ inline Microsoft::WRL::ComPtr<IShellItem> NvidiaControlPanelApplication()
         if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
         if (SUCCEEDED(SHCreateItemFromParsingName(path, nullptr, IID_PPV_ARGS(&item)))) return item;
     }
+    return {};
+}
+inline Microsoft::WRL::ComPtr<IShellItem> NvidiaAppApplication()
+{
+    // Resolve only the installation identified by this registered provider.
+    // No PATH search, arbitrary command string or global driver-policy change.
+    wchar_t module[32768]{}; DWORD bytes = sizeof(module);
+    const std::wstring key = std::wstring(L"CLSID\\") + NvidiaAppClsid + L"\\InprocServer32";
+    if (RegGetValueW(HKEY_CLASSES_ROOT, key.c_str(), nullptr, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+            nullptr, module, &bytes) != ERROR_SUCCESS) return {};
+    PathUnquoteSpacesW(module);
+    const std::filesystem::path provider(module);
+    if (!provider.is_absolute() || PathIsNetworkPathW(module) ||
+        GetDriveTypeW(provider.root_path().c_str()) == DRIVE_REMOTE ||
+        _wcsicmp(provider.filename().c_str(), L"nvui.dll") ||
+        _wcsicmp(provider.parent_path().filename().c_str(), L"NvCpl")) return {};
+    const auto target = provider.parent_path().parent_path() / L"CEF" / L"NVIDIA App.exe";
+    const auto attributes = GetFileAttributesW(target.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return {};
+    Microsoft::WRL::ComPtr<IShellItem> item;
+    if (SUCCEEDED(SHCreateItemFromParsingName(target.c_str(), nullptr, IID_PPV_ARGS(&item)))) return item;
     return {};
 }
 } // namespace snowdesktop::shell_extensions

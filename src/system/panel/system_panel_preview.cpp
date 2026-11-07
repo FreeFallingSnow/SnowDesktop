@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "system_panel_preview.h"
+#include "system/controls/system_quick_controls.h"
 #include "system_panel_model.h"
 #include "system/calendar/system_calendar_editor.h"
 #include "system/controls/system_control_prompt.h"
@@ -174,6 +175,10 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         if(topic=="host.airplane")ParseJson(R"({"enabled":false})",value);
         if(topic=="host.awake")ParseJson(state->awakeTimed?R"({"enabled":true,"mode":"timed","keepScreenOn":false,"durationSeconds":3600,"remainingSeconds":3540})":R"({"enabled":false,"mode":"plan","keepScreenOn":false,"durationSeconds":0,"remainingSeconds":0})",value);
         if(topic=="host.power.actions")ParseJson(R"({"hibernateSupported":true})",value);
+        if(topic=="host.vpn")ParseJson(R"({"entries":[
+            {"id":"Snow VPN","name":"Snow VPN","state":"connected","connected":true,"busy":false,"canConnect":false,"canDisconnect":true},
+            {"id":"Office VPN","name":"Office VPN","state":"disconnected","connected":false,"busy":false,"canConnect":true,"canDisconnect":false}],
+            "enabled":true,"busy":false})",value);
         if (topic == "bluetooth.devices" && !state->unavailable && !state->bluetoothOn)
         {
             value.object["radios"].array.front().object["enabled"] = j::Boolean(false);
@@ -235,6 +240,7 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
     source.unsubscribe = [state](std::string_view topic) { state->subscriptions.erase(std::string(topic)); };
     source.close = [state] { ++state->closes; state->subscriptions.clear(); };
     source.settings = [](const wchar_t*) { throw std::runtime_error("offline panel must not launch Windows Settings"); };
+    source.launchShortcut = [](SystemPanelShortcut) { throw std::runtime_error("offline panel must not launch a system shortcut"); };
     source.nativeControls = [state] { ++state->nativeControls; };
     source.prompt = [](system_control::Request&) -> bool { throw std::runtime_error("offline panel must not show confirmation or credential prompts"); };
     source.media = [state]() -> std::optional<wr::WidgetMediaSessionsDataSnapshot> {
@@ -1517,7 +1523,8 @@ void CheckQuickControls()
     source.completions=[&]{return std::exchange(completions,{});};
     source.trayChanged=[&](const StatusBarSettings& settings){saved=settings;++saves;};
     source.settings=[&](const wchar_t* uri){opened=uri;};
-    SystemPanelModel model(source,{},StatusBarAction::ControlCenter);
+    StatusBarSettings quickSettings;
+    SystemPanelModel model(source,quickSettings,StatusBarAction::ControlCenter);
     CheckLayout(model.View());
     Require(!model.View().Find("hotspot.note"),"overview contains no redundant hotspot explanation");
     Require(Node(model.View(),"quick:projection").bounds.top>Node(model.View(),"brightness.value").bounds.bottom&&
@@ -1556,7 +1563,13 @@ void CheckQuickControls()
     Require(model.Invoke("quick.manage")&&model.Invoke("quick.manage:awake.up")&&saves==1&&saved.quickControlOrder[3]=="awake",
         "management moves buttons and saves their order immediately");
     const auto mutationCount=requests.size();
-    for(const auto& control:SystemQuickControls)Require(model.Invoke("quick.manage:"+std::string(control.id)+".visible"),"management can hide every quick button");
+    // Hide only buttons that are currently visible; the default-hidden VPN
+    // control must keep its visibility switch off so quick.empty can appear.
+    for(const auto& control:SystemQuickControls)
+    {
+        const auto id="quick.manage:"+std::string(control.id)+".visible";
+        if(Node(model.View(),id).selected)Require(model.Invoke(id),"management can hide every visible quick button");
+    }
     model.Select("");Require(model.View().Find("quick.manage")&&model.View().Find("quick.empty")&&!model.View().Find("quick:awake")&&
         requests.size()==mutationCount&&!fixture->subscriptions.contains("host.awake"),
         "hiding all buttons retains management, drops unused demand and does not disable active features");
@@ -1573,6 +1586,104 @@ void CheckQuickControls()
         model.Page()=="airplane"&&requests.size()==mutationCount&&model.Invoke("quick.settings")&&opened==L"ms-settings:network-airplanemode",
         "an unavailable system switch routes to settings without inferring radio state or submitting a write");
     model.Close();
+}
+void CheckVpnPage()
+{
+    // Hidden by default. The control-center visibility editor is the only opt-in
+    // for the system VPN quick control; no real RAS phone-book entry is touched.
+    auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+    auto source=FixtureSource(state);const auto read=source.current;
+    bool officeConnected=false;
+    std::vector<std::pair<std::string,system_control::Arguments>> requests;
+    std::vector<system_control::Completion> completions;
+    StatusBarSettings saved;unsigned saves=0;
+    source.current=[&](std::string_view topic) {
+        auto value=read(topic);
+        if(value&&topic=="host.vpn")
+        {
+            auto& entries=value->value.object["entries"].array;entries.clear();
+            const auto add=[&](const char* id,bool connected) {
+                auto item=j::Object();item.object["id"]=j::Text(id);item.object["name"]=j::Text(id);
+                item.object["state"]=j::Text(connected?"connected":"disconnected");
+                item.object["connected"]=j::Boolean(connected);item.object["busy"]=j::Boolean(false);
+                item.object["canConnect"]=j::Boolean(!connected);item.object["canDisconnect"]=j::Boolean(connected);
+                entries.push_back(std::move(item));
+            };
+            add("Snow VPN",true);add("Office VPN",officeConnected);
+            value->value.object["enabled"]=j::Boolean(true);
+        }
+        return value;
+    };
+    source.start=[&](system_control::Request request) {
+        Require(system_control::ValidateRequest(request),"VPN page submitted an invalid native request");
+        requests.emplace_back(request.name,request.arguments);return static_cast<std::uint64_t>(requests.size());
+    };
+    source.completions=[&]{return std::exchange(completions,{});};
+    source.trayChanged=[&](const StatusBarSettings& settings){saved=settings;++saves;};
+    SystemPanelModel model(source,StatusBarSettings{},StatusBarAction::ControlCenter);
+    Require(!model.View().Find("quick:vpn")&&!model.View().Find("vpn.entry:Snow VPN"),
+        "the system VPN button was visible without opting in");
+    model.Select("quick-manage");
+    Require(model.View().Find("quick.manage:vpn.visible")&&!Node(model.View(),"quick.manage:vpn.visible").selected,
+        "the default-hidden VPN control has no off visibility row in the management page");
+    Require(!Node(model.View(),"quick.manage:vpn.up").enabled&&!Node(model.View(),"quick.manage:vpn.down").enabled,
+        "a control outside the order exposed ordering buttons");
+    Require(model.Invoke("quick.manage:vpn.visible")&&saves==1&&
+        std::find(saved.quickControlOrder.begin(),saved.quickControlOrder.end(),"vpn")!=saved.quickControlOrder.end()&&
+        saved.quickControlOrder.back()=="vpn"&&
+        std::find(saved.hiddenQuickControls.begin(),saved.hiddenQuickControls.end(),"vpn")==saved.hiddenQuickControls.end(),
+        "showing the VPN control did not append it to the visible order");
+    Require(Node(model.View(),"quick.manage:vpn.up").enabled,"the appended VPN control cannot be reordered");
+    model.Select("");
+    Require(Node(model.View(),"quick:vpn").role==ui::Role::Button,"the enabled VPN quick control is not a menu button");
+    Require(model.Invoke("quick:vpn")&&model.Page()=="vpn","the VPN quick control did not open its page");
+    Require(Node(model.View(),"vpn.entry:Snow VPN").detail==_LW("controlCenter.connected")&&
+        Node(model.View(),"vpn.entry:Office VPN").detail==_LW("controlCenter.disconnected"),
+        "the VPN page did not show the sampled connection states");
+    Require(model.Invoke("vpn.entry:Office VPN")&&model.View().Find("vpn.connect:Office VPN"),
+        "a VPN row did not expand its own action");
+    Require(model.Invoke("vpn.connect:Office VPN")&&requests.size()==1&&
+        requests.front().first=="host.vpn.connect"&&requests.front().second.at("entryName")=="Office VPN",
+        "connecting a VPN entry dispatched the wrong native request");
+    system_control::Completion credentials;credentials.id=1;credentials.error="credentialsRequired";
+    completions.push_back(credentials);model.Refresh();
+    Require(model.View().Find("status")&&Node(model.View(),"status").text==_LW("controlCenter.vpnCredentials"),
+        "missing VPN credentials gave no actionable page hint");
+    officeConnected=true;system_control::Completion done;done.id=1;done.ok=true;completions.push_back(done);model.Refresh();
+    Require(Node(model.View(),"vpn.entry:Office VPN").detail==_LW("controlCenter.connected"),
+        "a successful VPN request did not display the read back state");
+    Require(model.Invoke("vpn.connect:Office VPN")&&requests.size()==2&&requests.back().first=="host.vpn.disconnect",
+        "a connected VPN entry did not offer disconnect");
+    model.Select("");Require(model.Invoke("quick.manage")&&Node(model.View(),"quick.manage:vpn.visible").selected,
+        "the shown VPN control is not selected in the management page");
+    Require(model.Invoke("quick.manage:vpn.visible")&&saves==2&&
+        std::find(saved.quickControlOrder.begin(),saved.quickControlOrder.end(),"vpn")!=saved.quickControlOrder.end()&&
+        std::find(saved.hiddenQuickControls.begin(),saved.hiddenQuickControls.end(),"vpn")!=saved.hiddenQuickControls.end(),
+        "hiding the VPN control did not keep its order slot");
+    model.Select("");Require(!model.View().Find("quick:vpn"),"the hidden VPN control stayed in the quick grid");
+    model.Close();
+}
+void CheckLegacyVpnOrderMigration()
+{
+    // The intermediate VPN try build always appended "vpn" to the saved
+    // quick-control order, and its management page never added it explicitly,
+    // so a file that still stores "vpnControls" returns to the default-hidden
+    // state. Current-schema settings no longer write that key; their order
+    // lists "vpn" only after the user enabled it from the management page and
+    // must keep it.
+    JsonValue legacy;StatusBarSettings migrated;
+    Require(ParseJson(R"({"vpnControls":false,"quickControlOrder":["projection","hotspot","airplane","power","microphone","awake","vpn"]})",legacy)&&
+        DecodeStatusBarSettings(legacy,migrated),"the legacy VPN settings fixture did not decode");
+    Require(std::find(migrated.quickControlOrder.begin(),migrated.quickControlOrder.end(),"vpn")==migrated.quickControlOrder.end(),
+        "legacy VPN settings kept the automatically appended quick control");
+    Require(std::find(migrated.quickControlOrder.begin(),migrated.quickControlOrder.end(),"projection")!=migrated.quickControlOrder.end()&&
+        std::find(migrated.quickControlOrder.begin(),migrated.quickControlOrder.end(),"power")!=migrated.quickControlOrder.end(),
+        "legacy VPN migration discarded the stored quick-control order");
+    JsonValue current;StatusBarSettings kept;
+    Require(ParseJson(R"({"quickControlOrder":["projection","vpn"]})",current)&&
+        DecodeStatusBarSettings(current,kept),"the current VPN settings fixture did not decode");
+    Require(std::find(kept.quickControlOrder.begin(),kept.quickControlOrder.end(),"vpn")!=kept.quickControlOrder.end(),
+        "an explicitly added VPN quick control was removed without the legacy key");
 }
 void CheckFeedbackLayouts()
 {
@@ -2513,8 +2624,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width)*stage.height); }
         Require(!stage.pixels.empty(), "cannot create system panel preview background");
         const std::vector<std::string> presets = controls ?
-            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","quick-manage",
-                "audio-many","wifi-many","bluetooth-many","media-empty","overview-bottom","audio-many-bottom"} :
+            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","vpn","quick-manage",
+                "audio-many","wifi-many","bluetooth-many","media-empty","overview-bottom","audio-many-bottom","system-menu","system-menu-confirmation"} :
             trayPanel ? std::vector<std::string>{"grid","updated","manage","empty","connecting","unavailable"} :
             resources ? std::vector<std::string>{"cpu","memory","gpu","traffic","idle","warming","unavailable","gap","gpu-partial"} :
             std::vector<std::string>{"empty","agenda"};
@@ -2523,11 +2634,13 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         {
             const bool bottom=controls&&outputPreset.ends_with("-bottom");
             const auto preset=bottom?outputPreset.substr(0,outputPreset.size()-7):outputPreset;
+            const bool systemMenu=controls&&preset.starts_with("system-menu");
             if (request.theme && controls && outputPreset != "overview") continue;
             result.stage = "panel.model."+preset;
             auto state = std::make_shared<PreviewState>(); StatusBarSettings settings;
             if(bottom)settings.position=DockPosition::Bottom;
             state->unavailable = controls && preset == "unavailable";
+            if(preset=="vpn")settings.quickControlOrder.push_back("vpn");
             state->bluetoothOn = preset != "bluetooth-off"; state->emptyMedia = preset == "media-empty";
             state->agenda = calendarPanel && preset == "agenda";
             state->awakeTimed=preset=="awake";
@@ -2546,13 +2659,18 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                     state->tray.icons[2].pixels.resize(3);
                 }
             }
-            const auto action = controls ? StatusBarAction::ControlCenter : trayPanel ? StatusBarAction::Tray :
+            const auto action = systemMenu ? StatusBarAction::SystemMenu : controls ? StatusBarAction::ControlCenter : trayPanel ? StatusBarAction::Tray :
                 calendarPanel ? StatusBarAction::Calendar : preset == "memory" ? StatusBarAction::Memory :
                 preset == "gpu" || preset == "gpu-partial" ? StatusBarAction::Gpu :
                 preset == "traffic" ? StatusBarAction::Traffic : StatusBarAction::Cpu;
             SystemPanelModel model(FixtureSource(state),settings,action);std::string renderedHover;
             model.Refresh(available,availableWidth);
-            if (controls)
+            if(systemMenu)
+            {
+                if(preset=="system-menu-confirmation")model.Invoke("power.shutdown");
+                model.Refresh(available,availableWidth);
+            }
+            else if (controls)
             {
                 model.Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" || preset == "media-empty" ? "" :
                     !state->manySection.empty() ? state->manySection : preset);
@@ -2571,6 +2689,19 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                         button.bounds.left>card.bounds.left+48&&button.hoverGroup==card.id,
                         "Bluetooth preview lost its compact right-aligned action or shared whole-card hover");
                     renderedHover=row;
+                }
+                if(preset=="vpn")
+                {
+                    Require(Node(model.View(),"vpn.entry:Snow VPN").detail==_LW("controlCenter.connected")&&
+                        Node(model.View(),"vpn.entry:Office VPN").detail==_LW("controlCenter.disconnected"),
+                        "VPN preview did not show each sampled connection state");
+                    Require(model.Invoke("vpn.entry:Office VPN"),"VPN visual fixture did not expand its entry");
+                    const auto& card=Node(model.View(),"vpn.card:Office VPN");
+                    const auto& button=Node(model.View(),"vpn.connect:Office VPN");
+                    Require(button.bounds.right==card.bounds.right-8&&button.bounds.right-button.bounds.left<=196&&
+                        button.bounds.left>card.bounds.left+48&&button.hoverGroup==card.id,
+                        "VPN preview lost its compact right-aligned action or shared whole-card hover");
+                    renderedHover="vpn.entry:Office VPN";
                 }
             }
             if (resources && preset == "gpu-partial")
@@ -2604,7 +2735,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                     if (node.id.starts_with("date:"))
                         Require((node.bounds.top>=0&&node.bounds.bottom<=scene.height)||scene.Find("scrollbar"),
                             "a constrained calendar month has no scroll affordance");
-            if (controls) CheckControls(model,state,preset);
+            if (controls&&!systemMenu) CheckControls(model,state,preset);
             if (trayPanel)
             {
                 Require(!scene.Find("tray:preview-7") && (preset == "manage" || !scene.Find("tray:preview-0")),
@@ -2650,6 +2781,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && preset == "overview" && !bottom)
             {
                 CheckQuickControls();
+                CheckVpnPage();
+                CheckLegacyVpnOrderMigration();
                 CheckClosedCallbacks();
                 CheckInputMethodPanel(device,text,request,result,appearance,background,stage);
                 CheckControlPromptVisuals(request,result,appearance);

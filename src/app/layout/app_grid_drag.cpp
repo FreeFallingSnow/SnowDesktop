@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "diagnostics/debug_profile.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "dock/dock_appbar.h"
 #include "layout/page_mapping.h"
 #include "desktop/desktop_drop_search.h"
 #include "layout/selected_desktop_move.h"
@@ -370,6 +374,15 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
  */
 GridCell DesktopApp::FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const
 {
+    // Share the nearest landing with both component previews and move hints.
+    // Keep new-page requests anchored here until the full plan is committed.
+    if (containers_.empty() || sourceList.origin != containers_.front().get())
+    {
+        const auto landings = BuildDesktopLandings(sourceList, targetCell, true);
+        if (!landings.empty() && landings.front().cell.pageId == targetCell.pageId)
+            return landings.front().cell;
+        return targetCell;
+    }
     return snowdesktop::selected_desktop_move::FindBest({items_, widgets_, gridPages_},
         {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }},
         sourceList, std::move(targetCell), bestDropCellCache_,

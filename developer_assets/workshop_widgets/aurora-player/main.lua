@@ -24,6 +24,18 @@ local glyphs = {
     sound = utf8.char(0xF028),
 }
 
+-- Fluent System Icons Regular, matching the host's embedded font.
+local fluent = {
+    settings = utf8.char(0xF6A9), -- settings_20_regular
+    clear = utf8.char(0xF369), -- dismiss_20_regular
+    stop = utf8.char(0xF72A), -- stop_20_regular
+    back10 = utf8.char(0xEAFB), -- skip_back_10_20_regular
+    forward10 = utf8.char(0xEB00), -- skip_forward_10_20_regular
+    speed = utf8.char(0xED9B), -- top_speed_20_regular
+    shuffle = utf8.char(0xEF36), -- arrow_shuffle_20_regular
+    repeatAll = utf8.char(0xF171), -- arrow_repeat_all_20_regular
+}
+
 local function settingEnabled(key, defaultValue)
     local value = storage.get(key)
     if value == nil then return defaultValue == true end
@@ -266,10 +278,11 @@ local function syncMediaIdentity(model, session, timestamp)
 end
 
 local function updateProgressTicker(model, active)
-    if active and not model.progressTicking then
-        model.progressTicking = schedule.every(PROGRESS_TICK,
+    if active then
+        -- Spectrum frames already update progress. Only schedule a fallback between frames.
+        model.progressTicking = schedule.after(PROGRESS_TICK,
             PROGRESS_TICK_MS, { whenHidden = "pause" }) == true
-    elseif not active and model.progressTicking then
+    elseif model.progressTicking then
         schedule.cancel(PROGRESS_TICK)
         model.progressTicking = false
     end
@@ -454,7 +467,7 @@ local function recordCircle(key, size, style)
     })
 end
 
-local function coverNode(artwork, size, colors, rotation)
+local function coverNode(artwork, size, colors, rotation, spinSpeed)
     local labelSize = size * 0.64
     local borderWidth = size * 0.007
     local children = {
@@ -484,11 +497,12 @@ local function coverNode(artwork, size, colors, rotation)
             width = labelSize,
             height = labelSize,
             alignSelf = "center",
-            transform = {
+            spinSpeed = spinSpeed,
+            transform = not spinSpeed and {
                 rotate = rotation,
                 originX = 0.5,
                 originY = 0.5,
-            },
+            } or nil,
             style = {
                 cornerRadius = labelSize * 0.5,
             },
@@ -539,6 +553,7 @@ local function visualizerNode(model, colors, plan)
     local snapshot = audioAnalysis and audioAnalysis:value() or nil
     return view.spectrum({
         key = "aurora.visualizer",
+        localRefresh = widget.hasFeature("view.localRefresh") or nil,
         values = player.spectrum(snapshot, 36, model.preview),
         width = "fill",
         height = "fill",
@@ -575,10 +590,12 @@ local function viewTree(context, model)
     local spinRecord = player.shouldSpinRecord(artwork ~= nil,
         playing and "playing" or "paused", model.reducedMotion,
         model.visible, model.preview)
-    if spinRecord and not model.recordFramePending then
+    local nativeSpin = not model.preview and widget.hasFeature("view.imageSpin")
+    local luaSpin = spinRecord and not nativeSpin
+    if luaSpin and not model.recordFramePending then
         local accepted = animation.requestFrame(RECORD_FRAME)
         model.recordFramePending = accepted == true
-    elseif not spinRecord and model.recordFramePending then
+    elseif not luaSpin and model.recordFramePending then
         animation.cancelFrame(RECORD_FRAME)
         model.recordFramePending = false
     end
@@ -657,6 +674,7 @@ local function viewTree(context, model)
     })
 
     local progressHeight = plan.progressHeight
+    local localRefresh = widget.hasFeature("view.localRefresh") or nil
     local progressNode = hasTimeline and view.column({
         key = "aurora.progress.group",
         width = "fill",
@@ -665,6 +683,7 @@ local function viewTree(context, model)
         children = {
             view.slider({
                 key = "aurora.progress",
+                localRefresh = localRefresh,
                 value = progress,
                 min = 0,
                 max = 1,
@@ -672,6 +691,7 @@ local function viewTree(context, model)
                 width = "fill",
                 height = plan.sliderHeight,
                 enabled = seekEnabled,
+                capturePointer = widget.hasFeature("interaction.pointerCapture"),
                 events = {
                     pointerEnter = { id = "media.hover" },
                     pointerLeave = { id = "media.hover" },
@@ -695,6 +715,7 @@ local function viewTree(context, model)
                 children = {
                     view.text({
                         key = "aurora.progress.current",
+                        localRefresh = localRefresh,
                         text = player.formatTime(position),
                         width = plan.detailWidth * 0.30,
                         height = "fill",
@@ -703,6 +724,7 @@ local function viewTree(context, model)
                     }),
                     view.text({
                         key = "aurora.progress.duration",
+                        localRefresh = localRefresh,
                         text = player.formatTime(duration),
                         width = plan.detailWidth * 0.30,
                         height = "fill",
@@ -809,7 +831,8 @@ local function viewTree(context, model)
         alignItems = "center",
         justifyContent = plan.vertical and "center" or nil,
         children = {
-            coverNode(artwork, coverSize, colors, model.recordRotation),
+            coverNode(artwork, coverSize, colors, model.recordRotation,
+                nativeSpin and (spinRecord and 24 or 0) or nil),
             details,
         },
     }
@@ -962,7 +985,8 @@ local function event(context, model, value)
         local playing = session and session.playbackStatus == "playing"
         if model.pendingPlayback == "playing" then playing = true end
         if model.pendingPlayback == "paused" then playing = false end
-        if player.shouldSpinRecord(artwork ~= nil,
+        if not widget.hasFeature("view.imageSpin") and
+            player.shouldSpinRecord(artwork ~= nil,
                 playing and "playing" or "paused", model.reducedMotion,
                 model.visible, model.preview) then
             model.recordRotation = player.advanceRecordRotation(
@@ -974,6 +998,7 @@ local function event(context, model, value)
         return
     end
     if value.kind == "schedule" and value.id == PROGRESS_TICK then
+        model.progressTicking = false
         if model.visible then widget.invalidate() end
         return
     end
@@ -1110,6 +1135,7 @@ local function menu(_context, model, request)
         {
             id = "launcher.configure",
             label = l10n.tr("workshop.aurora_player.configure_launcher"),
+            icon = fluent.settings, iconFont = "fluent",
         },
         { type = "separator" },
         {
@@ -1129,6 +1155,7 @@ local function menu(_context, model, request)
         items[#items + 1] = {
             id = "launcher.clear",
             label = l10n.tr("workshop.aurora_player.clear_launcher"),
+            icon = fluent.clear, iconFont = "fluent",
         }
     end
     items[#items + 1] = { type = "separator" }
@@ -1136,26 +1163,31 @@ local function menu(_context, model, request)
         {
             id = "media.stop",
             label = l10n.tr("workshop.aurora_player.stop"),
+            icon = fluent.stop, iconFont = "fluent",
             enabled = allowed("canStop"),
         },
         { type = "separator" },
         {
             id = "media.back10",
             label = l10n.tr("workshop.aurora_player.back10"),
+            icon = fluent.back10, iconFont = "fluent",
             enabled = allowed("canSeek"),
         },
         {
             id = "media.forward10",
             label = l10n.tr("workshop.aurora_player.forward10"),
+            icon = fluent.forward10, iconFont = "fluent",
             enabled = allowed("canSeek"),
         },
         { type = "separator" },
         {
             label = l10n.tr("workshop.aurora_player.speed"),
+            icon = fluent.speed, iconFont = "fluent",
             children = rateItems,
         },
         {
             label = l10n.tr("workshop.aurora_player.shuffle"),
+            icon = fluent.shuffle, iconFont = "fluent",
             children = {
                 {
                     id = "media.shuffle.on",
@@ -1173,6 +1205,7 @@ local function menu(_context, model, request)
         },
         {
             label = l10n.tr("workshop.aurora_player.repeat"),
+            icon = fluent.repeatAll, iconFont = "fluent",
             children = {
                 {
                     id = "media.repeat.none",

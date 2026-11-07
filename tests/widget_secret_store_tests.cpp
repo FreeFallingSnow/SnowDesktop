@@ -1,5 +1,6 @@
 #include "widget/storage/widget_secret_store.h"
 #include "widget/secret_store_legacy_fixture.h"
+#include "test_temporary_directory.h"
 
 #include <windows.h>
 
@@ -148,20 +149,17 @@ void CheckCacheAndFailedLoad(const std::filesystem::path& root)
 }
 }
 
-int main(int argc, char** argv)
+int main(int argc, char** argv) try
 {
     using snowdesktop::widget_runtime::WidgetSecretStore;
 
-    const auto root = std::filesystem::temp_directory_path() /
-        (L"SnowDesktop-widget-secret-tests-" +
-            std::to_wstring(GetCurrentProcessId()));
+    const snowdesktop::test::TemporaryDirectory temporary;
+    const auto& root = temporary.path;
     const auto path = root / L"secrets.bin";
     std::error_code filesystemError;
-    std::filesystem::remove_all(root, filesystemError);
     CheckPublishedRollback(root);
     if (argc == 2 && std::string_view(argv[1]) == "--rollback-only")
     {
-        std::filesystem::remove_all(root, filesystemError);
         return failures == 0 ? 0 : 1;
     }
     CheckCacheAndFailedLoad(root);
@@ -303,8 +301,12 @@ int main(int argc, char** argv)
             unicodeReference, error) && emptyReload.Length("package-a", "instance-a", "unicode") == 4u,
         "mask length matches UTF-16 editor characters rather than UTF-8 bytes");
 
-    std::filesystem::remove_all(root, filesystemError);
     if (failures == 0)
         std::cout << "widget secret store tests passed\n";
     return failures == 0 ? 0 : 1;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAIL: " << error.what() << '\n';
+    return 1;
 }

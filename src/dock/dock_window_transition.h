@@ -185,6 +185,7 @@ private:
     std::shared_ptr<RemoteAnimation> remoteAnimation_;
     friend struct DockWindowTransitionTestAccess;
     struct PresentationBarrier;
+    struct RestoreCloak;
     struct RetiredScene;
     enum class RestorePresentationPhase { None, PreparedImage, AlignedImage, ExposedSource, TransparentOverlay };
     static constexpr ULONGLONG kAnimationDurationMs = 240;
@@ -232,11 +233,14 @@ private:
     bool ApplyOcclusion(const RECT& hostBounds, int cornerRadius);
     void LogPresentation(int requestedEffect,
         const wchar_t* fallbackStage);
+    void LogAbort(const wchar_t* stage, HRESULT result = E_FAIL) const;
     bool OnAnimationFrame(double nowMilliseconds);
     void RequestRestoreForAnimation();
     bool PrepareRestoredWindow(double nowMilliseconds);
     bool BeginPresentationBarrier(RestorePresentationPhase phase);
     bool AcquireSourceCloak();
+    bool BeginRestoreCloak();
+    static void CALLBACK RunRestoreCloak(PTP_CALLBACK_INSTANCE instance, void* context);
     bool PrepareMinimizePresentation(double nowMilliseconds);
     void ClearExternalPresentationWait();
     bool SourceIdentityCurrent() const;
@@ -328,6 +332,7 @@ private:
     BYTE lastFrameOpacity_ = 0;
     bool hasLastFrame_ = false;
     double animationStartTimeMs_ = 0.0;
+    double transitionStartTimeMs_ = 0.0;
     double animationDurationMs_ =
         static_cast<double>(kAnimationDurationMs);
     double restoreCleanupDeadlineMs_ = 0.0;
@@ -340,6 +345,7 @@ private:
     bool restoreRequested_ = false;
     bool restoreActivated_ = false;
     std::shared_ptr<PresentationBarrier> presentationBarrier_;
+    std::shared_ptr<RestoreCloak> restoreCloak_;
     RestorePresentationPhase restorePresentationPhase_ = RestorePresentationPhase::None;
     double presentationBarrierDeadlineMs_ = 0.0;
     bool restorePresentationAcknowledged_ = false;

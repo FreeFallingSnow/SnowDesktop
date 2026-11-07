@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+#include <algorithm>
 #include "control_settings.h"
 #include "settings_ipc_values.h"
 #include <charconv>

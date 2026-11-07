@@ -28,13 +28,14 @@ using Clock = std::chrono::steady_clock;
 const std::set<std::string_view> topics{
     "audio.devices", "audio.output.default", "audio.output.volume", "audio.input.volume",
     "system.display.brightness", "network.wifi", "bluetooth.devices", "system.power.plans",
-    "host.projection", "host.hotspot", "host.airplane", "host.awake", "host.power.actions"};
+    "host.projection", "host.hotspot", "host.airplane", "host.awake", "host.power.actions", "host.vpn"};
 struct TaskRule { const char* name; std::vector<std::string_view> required, optional; };
 const std::vector<TaskRule> rules{
     {"host.projection.set", {"mode"}, {}}, {"host.hotspot.set", {"enabled"}, {}},
     {"host.airplane.set", {"enabled"}, {}}, {"host.awake.set", {"mode"}, {"durationSeconds","keepScreenOn","reason"}},
     {"host.awake.setScreen", {"enabled"}, {}},
     {"host.power.hibernate", {}, {}},
+    {"host.vpn.connect", {"entryName"}, {}}, {"host.vpn.disconnect", {"entryName"}, {}},
     {"audio.output.setVolume", {"volume"}, {}}, {"audio.output.setMute", {"muted"}, {}},
     {"audio.output.selectDevice", {"endpointId"}, {}}, {"audio.input.selectDevice", {"endpointId"}, {}},
     {"audio.input.setVolume", {"volume"}, {}}, {"audio.input.setMute", {"muted"}, {}},
@@ -72,6 +73,7 @@ std::string_view Source(std::string_view name)
 {
     if(name=="host.awake.setScreen")return "awake";
     if(name=="host.power.actions"||name=="host.power.hibernate")return "power";
+    if(name.starts_with("host.vpn"))return "vpn";
     for (const auto* source : {"projection", "hotspot", "airplane", "awake"})
         if (name == "host." + std::string(source) || name == "host." + std::string(source) + ".set") return source;
     if (name.starts_with("audio.")) return "audio";
@@ -495,7 +497,7 @@ void Service::Shutdown()
     }
     if (impl_->sampler.joinable()) impl_->sampler.join();
     for (auto& executor : impl_->executors) if (executor.joinable()) executor.join();
-    for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power", "media", "hotspot"}) impl_->backend->Release(source);
+    for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power", "media", "hotspot", "vpn"}) impl_->backend->Release(source);
     impl_->pending.clear(); impl_->active.clear();
 }
 }

@@ -1,10 +1,17 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_transition.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "system/panel/system_panel.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
-#include "platform/foreground_fullscreen.h"
 #include "desktop/display_color_mode.h"
 #include "desktop_composition_effect.h"
 #include "platform/window_support/window_support_runtime.h"
+#include <d3d11_4.h>
 
 // Graphics-device and composition-surface lifecycle.
 
@@ -39,13 +46,17 @@ HRESULT DesktopApp::InitGraphicsDevices()
     if (FAILED(hr)) return hr;
     d3dDevice->GetImmediateContext(&d3dImmediateContext);
     if (!d3dImmediateContext) return E_FAIL;
+    ComPtr<ID3D11Multithread> multithread;
+    hr = d3dImmediateContext.As(&multithread);
+    if (FAILED(hr)) return hr;
+    multithread->SetMultithreadProtected(TRUE);
 
     // The factory and its geometries are device-independent. Keep their
     // identity across GPU loss; only the D2D device/context must be replaced.
     if (!d2dFactory)
     {
         D2D1_FACTORY_OPTIONS factoryOptions{};
-        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED,
             __uuidof(ID2D1Factory1), &factoryOptions,
             reinterpret_cast<void**>(d2dFactory.GetAddressOf()));
         if (FAILED(hr)) return hr;
@@ -252,10 +263,10 @@ void DesktopApp::ResetCompositionRenderCaches()
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });
     dockIconWork_.Cancel(L"dock-folder:");
-    quickNavSysIconCache_.clear();
-    quickNavAppIconCache_.clear();
-    for (auto& icon : quickNavActionIconCache_) icon.Reset();
-    quickNavActionIconContext_ = nullptr;
+    quickNavigation_->sysIconCache.clear();
+    quickNavigation_->appIconCache.clear();
+    for (auto& icon : quickNavigation_->actionIconCache) icon.Reset();
+    quickNavigation_->actionIconContext = nullptr;
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();
@@ -409,12 +420,14 @@ void DesktopApp::InitializeDockWindowTransition()
                             if (!IntersectRect(&intersection, &candidate, &viewport)) continue;
                             MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&candidate), 2);
                             const bool sameMonitor = MonitorFromRect(&candidate, MONITOR_DEFAULTTONEAREST) == sourceMonitor;
-                            if (IsRectEmpty(&anchor) || (sameMonitor && !foundOnMonitor))
+                            if (sameMonitor || IsRectEmpty(&anchor)) anchor = candidate;
+                            if (sameMonitor)
                             {
-                                anchor = candidate;
-                                foundOnMonitor = sameMonitor;
+                                foundOnMonitor = true;
+                                break;
                             }
                         }
+                        if (foundOnMonitor) break;
                     }
                 }
                 if (IsRectEmpty(&anchor)) return std::nullopt;
@@ -431,7 +444,7 @@ void DesktopApp::InitializeDockWindowTransition()
                 // for native animations instead of resolving from the source.
                 if (generalSettings_.dockEnabled && !reloading_ &&
                     dockSettings_.summonOnAppMinimize &&
-                    !snowdesktop::fullscreen::ObserveMonitor(target.monitor).has_value())
+                    !RecheckFullscreenSource(target.monitor).has_value())
                 {
                     for (const auto& host : persistentDockHosts_)
                         if (host && host->active && host->hwnd == target.dock &&
@@ -450,7 +463,7 @@ void DesktopApp::InitializeDockWindowTransition()
                             { matching = host.get(); return true; }
                         return false;
                     },
-                    [](HMONITOR monitor) { return snowdesktop::fullscreen::ObserveMonitor(monitor).has_value(); },
+                    [this](HMONITOR monitor) { return RecheckFullscreenSource(monitor).has_value(); },
                     [this, &matching](const auto&) {
                         auto& host = *matching;
                         if (host.promoted)
@@ -548,11 +561,11 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
     floatingPopupCompositionRenderRecoveryPending_ = false;
     releaseRoot(dragPreviewDcompTarget_, dragPreviewDcompVisual_);
     ResetQuickNavCompositionResources();
-    releaseRoot(quickNavDcompTarget_, quickNavDcompVisual_);
-    quickNavDcompEffect_.Reset();
-    quickNavDcompScaleTransform_.Reset();
-    quickNavDcompDevice_.Reset();
-    quickNavCompositionRenderRecoveryPending_ = false;
+    releaseRoot(quickNavigation_->dcompTarget, quickNavigation_->dcompVisual);
+    quickNavigation_->dcompEffect.Reset();
+    quickNavigation_->dcompScaleTransform.Reset();
+    quickNavigation_->dcompDevice.Reset();
+    quickNavigation_->compositionRenderRecoveryPending = false;
     if (widgetEngine_) widgetEngine_->ResetGraphicsResources(nullptr);
     if (d3dImmediateContext_) d3dImmediateContext_->ClearState();
 }
@@ -581,7 +594,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
         desktopWidgetCompositionDrawInProgress_ ||
         dragPreviewCompositionPaintInProgress_ ||
         floatingPopupCompositionPaintInProgress_ ||
-        quickNavCompositionPaintInProgress_ || IsAnyPersistentDockHostPainting();
+        quickNavigation_->compositionPaintInProgress || IsAnyPersistentDockHostPainting();
     if (!graphicsDeviceRecovery_.Ready(GetTickCount64(), drawing)) return;
 
     ReleaseGraphicsDeviceResources();
@@ -635,7 +648,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     // A failed popup frame now hides its native input surface. Hidden windows
     // cannot recover through WM_PAINT alone after the bounded retry expires.
     if (ShouldShowFloatingPopupWindow()) UpdateFloatingPopupWindowBounds(true);
-    repaint(quickNavigationHwnd_);
+    repaint(quickNavigation_->hwnd);
     repaint(dragPreviewHwnd_);
     EnsureUiAnimationFrame();
     WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Rendering, L"Graphics devices recreated; surface repaints requested");

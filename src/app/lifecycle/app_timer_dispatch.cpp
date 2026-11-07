@@ -1,5 +1,15 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_transition.h"
+#include "dock/dock_settings.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "settings/settings_window.h"
+#include "app/features/recycle_bin_poll_state.h"
+#include "app/features/steam_workshop_subscription_poll_state.h"
 #include "theme/theme_workshop.h"
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
@@ -702,15 +712,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.
         PollDisplayTopology();
-        if (quickNavigationOpen_ && quickNavigationSearchType_ == QuickNavigationSearchType::Settings &&
-            GetTickCount64() - quickNavigationSettingsRefreshTick_ >= 1000)
+        if (quickNavigation_->open && quickNavigation_->searchType == QuickNavigationSearchType::Settings &&
+            GetTickCount64() - quickNavigation_->settingsRefreshTick >= 1000)
         {
-            quickNavigationSettingsRefreshTick_ = GetTickCount64();
-            const auto previous = quickNavigationSettingsResults_;
-            const auto selection = quickNavigationListSelection_;
+            quickNavigation_->settingsRefreshTick = GetTickCount64();
+            const auto previous = quickNavigation_->settingsResults;
+            const auto selection = quickNavigation_->listSelection;
             RefreshQuickNavigationTypedResults();
-            if (previous == quickNavigationSettingsResults_) quickNavigationListSelection_ = selection;
-            else { if (quickNavigationCollapsed_) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
+            if (previous == quickNavigation_->settingsResults) quickNavigation_->listSelection = selection;
+            else { if (quickNavigation_->collapsed) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
         }
         if (widgetEngine_)
         {
@@ -764,7 +774,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         }
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "show_desktop.guard");
-            UpdateSystemShowDesktopDockLayerGuard();
+            UpdateSystemShowDesktopLayerGuard();
         }
         {
             snowdesktop::performance::Scope trace("shared.maintenance", "taskbar.diagnostics.drain");
@@ -773,23 +783,31 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
         const DWORD windowStateTick =
-            systemTaskbarWindowStateChangedTick_.load();
+            windowObservationRevision_.load();
         const bool foregroundChanged = foregroundTick != 0 &&
             foregroundTick != systemTaskbarBackdropForegroundTick_;
         const bool windowStateChanged = windowStateTick !=
-            systemTaskbarWindowStateObservedTick_;
+            observedWindowRevision_;
+        const bool observeDesktopWindows = customDesktopVisible_ ||
+            generalSettings_.statusBar.enabled;
+        const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
         const bool windowStateRefreshDue =
             windowStateChanged &&
-            (systemTaskbarWindowScanTick_ == 0 ||
-                now - systemTaskbarWindowScanTick_ >= 250);
+            (windowObservationTick_ == 0 ||
+                now - windowObservationTick_ >= (observeDesktopWindows ? 100u : 250u));
+        if ((observeDesktopWindows || taskbarObserverActive) &&
+            (windowStateRefreshDue || windowObservationTick_ == 0 ||
+                now - windowObservationTick_ >= 1000))
+            RefreshWindowObservations();
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
         // Reconcile guard ownership after Dock/display changes and external
         // auto-hide changes, including when appearance effects are disabled.
         const bool controlRefreshDue = now - systemTaskbarBackdropRefreshTick_ >= 1000;
-        if (controlRefreshDue || (IsSystemTaskbarHookRequired(dockSettings_) &&
+        if (controlRefreshDue || (taskbarObserverActive &&
             (foregroundChanged || windowStateRefreshDue ||
+                taskbarAppliedMonitorSceneRevision_ != monitorSceneRevision_ ||
                 foregroundSettling)))
         {
             if (controlRefreshDue)
@@ -800,7 +818,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 snowdesktop::performance::Value("shared.taskbar", "guard.window_dirty_due", {}, 1);
             if (foregroundSettling)
                 snowdesktop::performance::Value("shared.taskbar", "guard.foreground_settling", {}, 1);
-            RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
+            RefreshSystemTaskbarAppearance(false, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
         }
         else snowdesktop::performance::Value("shared.maintenance", "taskbar.refresh.not_due", {}, 1);

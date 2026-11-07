@@ -1,4 +1,10 @@
 #include "app/app.h"
+#include "widgets/lua_stack.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "dock/dock_folder_rules.h"
+#include "desktop/desktop_item_reference_migration.h"
+#include "data/data_paths.h"
 #include "app/shell/shell_icon_request.h"
 #include "dock_folder_popup_read.h"
 #include "common/json_value.h"
@@ -278,6 +284,7 @@ size_t DesktopApp::FindFileGroupIndexForChild(
 bool DesktopApp::IsGroupedWidget(
     const DesktopWidget& widget) const
 {
+    if (widget.type == DesktopWidgetType::LuaScript && snowdesktop::lua_stack::Owner(widgets_, widget.id) < widgets_.size()) return true;
     if (IsGroupedCollection(widget)) return true;
     return (widget.type == DesktopWidgetType::FileCategories ||
             widget.type == DesktopWidgetType::FolderMapping) &&

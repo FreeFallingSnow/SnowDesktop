@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "settings/settings_controller_interface.h"
 
 #include "backup_data_page_backend.h"
 #include "backup_operation_control.h"

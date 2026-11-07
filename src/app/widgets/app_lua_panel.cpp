@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/animation_settings.h"
+#include "layout/floating_popup_rules.h"
 
 #include <utility>
 

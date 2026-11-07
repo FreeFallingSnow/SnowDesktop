@@ -13,7 +13,6 @@
 #include <cwctype>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -99,6 +98,14 @@ inline bool ShowAppSuggestions(const NavigationSettings& settings,
         !picking && !listView && settings.desktopViewMode != QuickNavigationDesktopViewMode::Frequency;
 }
 
+inline bool ShowFavorites(const NavigationSettings& settings,
+    bool desktopPage, bool searching, bool picking, bool listView)
+{
+    return settings.favoritesEnabled && desktopPage && !searching &&
+        !picking && !listView &&
+        settings.desktopViewMode != QuickNavigationDesktopViewMode::Frequency;
+}
+
 inline RECT PlacePanel(RECT work, int width, int height, int margin,
     std::optional<int> fixedTop = std::nullopt, int minimumHeight = 1)
 {
@@ -166,7 +173,8 @@ inline std::vector<SectionLayout> BuildSectionLayouts(
     const std::vector<size_t>& itemCounts,
     int columns, int cellHeight, int rowGap,
     int headerHeight, int headerGap,
-    int sectionGap)
+    int sectionGap,
+    const std::vector<bool>& includeEmpty = {})
 {
     columns = std::max(1, columns);
     cellHeight = std::max(1, cellHeight);
@@ -179,21 +187,32 @@ inline std::vector<SectionLayout> BuildSectionLayouts(
     result.reserve(itemCounts.size());
     size_t firstItem = 0;
     int y = 0;
-    for (size_t count : itemCounts)
+    for (size_t index = 0; index < itemCounts.size(); ++index)
     {
-        if (count == 0) continue;
-        const int rows =
-            (static_cast<int>(count) + columns - 1) /
-            columns;
-        const int gridHeight =
-            rows * cellHeight +
-            std::max(0, rows - 1) * rowGap;
+        const size_t count = itemCounts[index];
+        const bool keepEmpty =
+            index < includeEmpty.size() && includeEmpty[index];
+        if (count == 0 && !keepEmpty) continue;
         SectionLayout layout;
         layout.firstItem = firstItem;
         layout.itemCount = count;
         layout.headerTop = y;
-        layout.gridTop = y + headerHeight + headerGap;
-        layout.bottom = layout.gridTop + gridHeight;
+        layout.gridTop = y + headerHeight +
+            (count == 0 ? 0 : headerGap);
+        if (count != 0)
+        {
+            const int rows =
+                (static_cast<int>(count) + columns - 1) /
+                columns;
+            const int gridHeight =
+                rows * cellHeight +
+                std::max(0, rows - 1) * rowGap;
+            layout.bottom = layout.gridTop + gridHeight;
+        }
+        else
+        {
+            layout.bottom = layout.gridTop;
+        }
         result.push_back(layout);
         firstItem += count;
         y = layout.bottom + sectionGap;
@@ -245,38 +264,6 @@ inline bool TryGetSectionItemCell(
             (std::max(1, cellHeight) +
                 std::max(0, rowGap));
     return true;
-}
-
-inline std::vector<int> AssignSourceOwners(
-    const std::vector<std::wstring>& itemKeys,
-    const std::vector<
-        std::vector<std::wstring>>& sourceKeys)
-{
-    std::unordered_map<std::wstring, int>
-        firstOwner;
-    for (size_t sourceIndex = 0;
-        sourceIndex < sourceKeys.size();
-        ++sourceIndex)
-    {
-        for (const auto& key :
-            sourceKeys[sourceIndex])
-            firstOwner.try_emplace(
-                key,
-                static_cast<int>(sourceIndex));
-    }
-
-    std::vector<int> result(
-        itemKeys.size(), -1);
-    for (size_t itemIndex = 0;
-        itemIndex < itemKeys.size();
-        ++itemIndex)
-    {
-        const auto it =
-            firstOwner.find(itemKeys[itemIndex]);
-        if (it != firstOwner.end())
-            result[itemIndex] = it->second;
-    }
-    return result;
 }
 
 /**

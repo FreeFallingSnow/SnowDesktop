@@ -8,6 +8,8 @@
 #include "core/transient_drag_slot.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "layout/collection_popup_layout.h"
+#include "common/utils.h"
 #include "core/drop_model.h"
 #include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"

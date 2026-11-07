@@ -40,6 +40,7 @@ public:
 
     void Request(std::uint64_t itemId, std::string url);
     void RequestLocal(std::uint64_t key, const std::filesystem::path& path);
+    void RefreshLocal(bool force = false);
     void Pump(ID3D11Device* device);
     PreviewTexture Get(std::uint64_t itemId) const;
     const std::filesystem::path& Root() const { return root_; }

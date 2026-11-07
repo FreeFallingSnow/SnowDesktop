@@ -746,8 +746,13 @@ int wmain(int argc, wchar_t** argv)
             << ",\"description\":" << JsonEscape(manifest.description)
             << ",\"author\":" << JsonEscape(manifest.author)
             << ",\"license\":" << JsonEscape(manifest.license)
-            << ",\"preview\":" << JsonEscape(manifest.preview)
-            << ",\"permissions\":";
+            << ",\"preview\":" << JsonEscape(manifest.preview);
+        if (manifest.previewGallery)
+        {
+            std::cout << ",\"previewGallery\":";
+            WriteStringArray(std::cout, *manifest.previewGallery);
+        }
+        std::cout << ",\"permissions\":";
         WriteStringArray(std::cout, manifest.permissions);
         std::cout << ",\"networkDomains\":";
         WriteStringArray(std::cout, manifest.networkDomains);

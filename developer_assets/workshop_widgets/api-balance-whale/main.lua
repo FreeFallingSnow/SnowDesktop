@@ -2,6 +2,13 @@ local providers=module.require("modules/providers.lua")
 local client=module.require("modules/client.lua")
 local json=module.require("modules/json.lua")
 local whale=resource.image("whale")
+local fluent={
+    refresh=utf8.char(0xF13D), -- arrow_clockwise_20_regular
+    companion=utf8.char(0xF479), -- heart_20_regular
+    data=utf8.char(0xF33F), -- data_bar_vertical_20_regular
+    console=utf8.char(0xF45A), -- globe_20_regular
+    settings=utf8.char(0xF6A9), -- settings_20_regular
+}
 local function copy()
     return {
         name=l10n.tr("lua_widget.api_balance_whale.name"),description=l10n.tr("lua_widget.api_balance_whale.description"),
@@ -347,8 +354,11 @@ local function setup(context)
 end
 local function menu()
     local c=copy()
-    return ui.menu({{id="refresh",label=c.refresh},{id="mode.whale",label=c.whale_mode},{id="mode.data",label=c.data_mode},
-        {id="console",label=c.console},{id="settings",label=c.settings}})
+    return ui.menu({{id="refresh",label=c.refresh,icon=fluent.refresh,iconFont="fluent"},
+        {id="mode.whale",label=c.whale_mode,icon=fluent.companion,iconFont="fluent"},
+        {id="mode.data",label=c.data_mode,icon=fluent.data,iconFont="fluent"},
+        {id="console",label=c.console,icon=fluent.console,iconFont="fluent"},
+        {id="settings",label=c.settings,icon=fluent.settings,iconFont="fluent"}})
 end
 local function event(_context,m,e)
     if e.kind=="task.complete" then

@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "data/data_paths.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 
 void DesktopApp::AppendWebsiteIconMenu(HMENU menu, const std::wstring& path)

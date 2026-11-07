@@ -1,5 +1,13 @@
 #include "ui/input/private_pointer.h"
+#include "dock/dock_tray_rules.h"
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_preview.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
+#include "dock/dock_settings.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/layout/interactive_layout_save.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -52,6 +60,7 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    UpdateLuaStackIndicator(POINT{LONG_MIN, LONG_MIN});
     POINT popupPoint{};
     if (hwnd_ && IsWindow(hwnd_) && snowdesktop::private_pointer::CursorPosition(&popupPoint) &&
         ScreenToClient(hwnd_, &popupPoint))
@@ -1216,7 +1225,14 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             const bool commitMove = !rightDrop || ChooseRightDragDropAction(upPoint,
                 menuKeyState, DROPEFFECT_MOVE | DROPEFFECT_COPY, false);
             const auto menuPairAction = widgetPairAction_;
-            if (commitMove && mouseDownWidgetIndex_ < widgets_.size())
+            if (commitMove && mouseDownWidgetIndex_ < widgets_.size() && luaStackMemberDrag_.Armed())
+            {
+                widgetAction_ = WidgetAction::None;
+                if (IsPointOccludedByOpenPopup(upPoint) || IsExternalDropWindowAt(upPoint) ||
+                    !CommitLuaStackMemberDrag(widgetPreviewCell_))
+                    MessageBeep(MB_ICONWARNING);
+            }
+            else if (commitMove && mouseDownWidgetIndex_ < widgets_.size())
             {
                 if (rightDrop)
                 {
@@ -1326,6 +1342,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
         }
         // PendingMove/PendingResize: just cancel without displacement
+        luaStackMemberDrag_.Reset();
         widgetAction_ = WidgetAction::None;
         rightButtonItemDrag_ = false;
         snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
@@ -1355,20 +1372,21 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             return;
         ClearDockPressedState();
         if (mouseDownWidgetIndex_ < widgets_.size() &&
-            widgets_[mouseDownWidgetIndex_].type ==
-                DesktopWidgetType::LuaScript &&
+            IsLuaDesktopSurface(widgets_[mouseDownWidgetIndex_]) &&
             widgetEngine_)
         {
+            auto* luaContent = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]);
+            if (!luaContent) return;
             RECT frame = GetStandaloneWidgetFrameRect(widgets_[mouseDownWidgetIndex_]);
             const bool loaded = widgetEngine_->EnsureWidgetLoaded(
-                widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].packageId);
+                luaContent->id,
+                luaContent->packageId);
             const bool contentClicked =
                 HitTestStandaloneWidget(mouseDownWidgetIndex_,
                     upPoint) == WidgetHit::Content;
             const auto hostState = widgetEngine_->GetWidgetHostState(
-                widgets_[mouseDownWidgetIndex_].id,
-                widgets_[mouseDownWidgetIndex_].packageId);
+                luaContent->id,
+                luaContent->packageId);
             const auto hostAction = snowdesktop::widget_runtime::
                 HostActionFor(hostState.kind);
             const RECT hostActionRect = GetLuaWidgetHostActionRect(
@@ -1380,8 +1398,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 hostAction == snowdesktop::widget_runtime::
                     WidgetHostAction::OpenPackageSource)
             {
-                OpenMissingWidgetWorkshopPage(hwnd_,
-                    widgets_[mouseDownWidgetIndex_]);
+                OpenMissingWidgetWorkshopPage(hwnd_, *luaContent);
             }
             else if (!loaded && hostActionClicked &&
                 hostAction == snowdesktop::widget_runtime::
@@ -1390,25 +1407,25 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 POINT screenPoint = upPoint;
                 ClientToScreen(hwnd_, &screenPoint);
                 BeginLuaWidgetConsent(screenPoint,
-                    widgets_[mouseDownWidgetIndex_].packageId,
-                    widgets_[mouseDownWidgetIndex_].id);
+                    luaContent->packageId,
+                    luaContent->id);
             }
             else if (!loaded && hostActionClicked &&
                 hostAction == snowdesktop::widget_runtime::
                     WidgetHostAction::Reload)
             {
                 (void)widgetEngine_->RetryWidget(
-                    widgets_[mouseDownWidgetIndex_].id,
-                    widgets_[mouseDownWidgetIndex_].packageId);
+                    luaContent->id,
+                    luaContent->packageId);
             }
             else if (loaded)
             {
                 const bool pointerCaptured =
                     widgetEngine_->HasInteractionPointerCapture(
-                        widgets_[mouseDownWidgetIndex_].id);
+                        luaContent->id);
                 const bool hostInputHandled =
                     widgetEngine_->HandleHostInputPointerUp(
-                        widgets_[mouseDownWidgetIndex_].id,
+                        luaContent->id,
                         upPoint.x - frame.left,
                         upPoint.y - frame.top);
                 if (hostInputHandled)
@@ -1417,13 +1434,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                     (contentClicked || pointerCaptured))
                 {
                     widgetEngine_->InvokeMouseEvent(
-                        widgets_[mouseDownWidgetIndex_].id,
+                        luaContent->id,
                         "onMouseUp", upPoint.x - frame.left,
                         upPoint.y - frame.top, 1, 0);
                     if (contentClicked)
                     {
                         widgetEngine_->InvokeClick(
-                            widgets_[mouseDownWidgetIndex_].id,
+                            luaContent->id,
                             upPoint.x - frame.left,
                             upPoint.y - frame.top);
                     }

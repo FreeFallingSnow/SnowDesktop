@@ -12,6 +12,8 @@
  */
 
 #include "app/app.h"
+#include "common/utils.h"
+#include "diagnostics/diagnostic_log.h"
 #include "platform/auto_start_elevation.h"
 #include "platform/auto_start_launch.h"
 #include "settings/settings_process.h"
@@ -124,6 +126,35 @@ bool SameDeployment(
     return !left.dataDirectory.empty() && !right.dataDirectory.empty() &&
         snowdesktop::single_instance::DataDirectoriesMatch(
             left.dataDirectory, right.dataDirectory);
+}
+
+bool HandleSteamWidgetLobbyLaunch(
+    const snowdesktop::single_instance::InstanceInfo& running,
+    const snowdesktop::single_instance::InstanceInfo& requested,
+    std::uint64_t lobby)
+{
+    using namespace snowdesktop::single_instance;
+    if (running.version == requested.version && SameDeployment(running, requested))
+        return ForwardSteamWidgetLobby(running, lobby);
+    if (!snowdesktop::deployment::IsSteamDeployment(
+            snowdesktop::deployment::GetRuntimeDeploymentContext().kind))
+        return false;
+
+    const auto result = RequestSteamWidgetLobby(running, lobby);
+    if (result == SteamWidgetLobbyHandoff::Accepted)
+        return true;
+
+    const char* message = nullptr;
+    if (result == SteamWidgetLobbyHandoff::Busy)
+        message = "app.steam.invite_instance_busy";
+    else if (result == SteamWidgetLobbyHandoff::DeliveryFailed)
+        message = "app.startup.instanceUnavailable";
+    if (!message) return false;
+
+    InitializeStartupLocale();
+    MessageBoxW(nullptr, _LW(message), _LW("settings.general.steamRoom"),
+        MB_OK | MB_ICONWARNING);
+    return true;
 }
 
 VersionConflictChoice ShowVersionConflictPrompt(
@@ -520,6 +551,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
 
     const auto launchIntent = snowdesktop::single_instance::
         ParseLaunchIntent(GetCommandLineW());
+    const auto steamWidgetLobby = snowdesktop::single_instance::ParseSteamWidgetLobby(GetCommandLineW());
     snowdesktop::single_instance::Guard singleInstance;
     const auto requestedInstance =
         snowdesktop::single_instance::DescribeCurrentInstance(
@@ -529,6 +561,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     const auto acquisition = snowdesktop::single_instance::AcquireForStartup(singleInstance,
         [](DWORD timeout) { return snowdesktop::single_instance::FindExistingInstance(timeout); },
         [&](const snowdesktop::single_instance::InstanceInfo& running) {
+            if (steamWidgetLobby && HandleSteamWidgetLobbyLaunch(running, requestedInstance, steamWidgetLobby))
+                return ExistingInstanceResolution::ExitNewInstance;
             // Older builds do not own the mutex but do expose the stable control
             // window. Resolve it before acquiring the stable mutex.
             if (switchHandoff && SameDeployment(running, switchTarget))

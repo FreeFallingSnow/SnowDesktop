@@ -337,6 +337,16 @@ stored units (for example, opacity 0..1), not UI percentages. Collections are
 bounded, unknown keys and wrong types are rejected, and 64-bit model integers
 use decimal strings when needed to retain exact values. Target services may
 add their own schema, visibility, enablement and validation information.
+`personalization.contextMenuStyle` keeps stable stored IDs independently of UI
+order: 0 is Win11 opaque following system light/dark (the legacy compatible-follow
+selection), 1/2 are Win11 light/dark, 3/4 are Win11 opaque light/dark, 5/6 are Win10
+light/dark, 7 is Win11 following system light/dark, and 8 is Win10 following system
+light/dark. New profiles default to 8 on Windows 10 and 7 on Windows 11. Existing
+profiles with an unversioned follow value migrate to 7 on Windows 11 and 0 on
+Windows 10, retaining their previous material. Saved appearance files include
+`contextMenuStyleVersion:1`, so a new explicit opaque-follow choice remains 0
+on reload. Read the advertised enum before writing new values to an older host;
+protocol v1 and Lua API versions are unchanged.
 An internal/retired field or a system-owned projection can be readable while
 remaining read-only. `general.autoStartEnabled` is a Windows-owned projection:
 use `set-auto-start` on `general` or `global`, with `arguments:{enabled:boolean}`.
@@ -519,3 +529,14 @@ exports. Fixture data and virtual clocks belong to the private renderer; they
 do not replace the live user profile. Creating/removing live widgets, external
 application control and package publication remain outside this endpoint's
 current contract.
+
+### Lua widget stacks
+
+Desktop widget snapshots identify host-owned Lua stacks with `type: "luaStack"`,
+`activeMemberId`, ordered `memberIds` and `memberCount`. Each member retains its existing Lua instance ID
+and settings target; `grouped: true` marks its membership. Only the active member
+uses the stack frame for desktop input and accessibility. Stacks do not enter native
+storage-container or Dock APIs. These snapshot fields are additive; the control
+protocol version and Lua API version are unchanged. Layout files persist the
+`luaStack` type, ordered `childWidgets` and `activeCategory`; older hosts do not
+support round-trip editing of these stack layouts.

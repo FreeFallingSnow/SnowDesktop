@@ -1,8 +1,10 @@
 #pragma once
 
-#include "dock_settings.h"
+#include "dock_layout_settings.h"
+#include "dock_window_preview_types.h"
 #include "dock_window_pin.h"
 #include "dock_window_peek.h"
+#include "dock_thumbnail_toolbar.h"
 
 #include <dwmapi.h>
 #include <windows.h>
@@ -10,31 +12,11 @@
 #include <array>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-struct DockWindowPreviewItem
-{
-    HWND window = nullptr;
-    std::wstring title;
-};
-
-struct DockWindowPreviewGrid
-{
-    int columns = 0;
-    int rows = 0;
-    int cardWidth = 0;
-    int cardHeight = 0;
-    int panelWidth = 0;
-    int panelHeight = 0;
-};
-
-struct DockWindowPreviewZOrderPolicy
-{
-    HWND insertAfter = nullptr;
-    UINT flags = 0;
-};
 
 DockWindowPreviewZOrderPolicy
 ResolveDockWindowPreviewZOrderPolicy(
@@ -57,48 +39,11 @@ bool IsPointInDockPreviewTransitionRegion(
     int tolerance);
 bool IsPointInDockPreviewEntryRegion(POINT point, POINT origin, const RECT& preview, int tolerance);
 
-struct DockPreviewHoverTransition
-{
-    bool armTimer = false;
-    bool cancelTimer = false;
-    bool keepPreviewVisible = false;
-    bool schedulePreviewHide = false;
-};
 
 /**
  * @brief 管理 Dock 预览的延迟悬停与点击后锁定状态。
  */
-class DockPreviewHoverController
-{
-public:
-    DockPreviewHoverTransition UpdateTarget(
-        const std::wstring& targetToken,
-        bool previewVisible,
-        bool previewMatchesTarget);
-    bool ConsumeTimer(const std::wstring& observedTargetToken);
-    bool SuppressForActivation();
-    void MarkPreviewShown(const std::wstring& targetToken);
-    void Reset();
 
-    const std::wstring& CurrentTarget() const { return currentTarget_; }
-    const std::wstring& SuppressedTarget() const { return suppressedTarget_; }
-    bool TimerArmed() const { return timerArmed_; }
-    bool IsIdle() const
-    {
-        return currentTarget_.empty() &&
-            pendingTarget_.empty() &&
-            shownTarget_.empty() &&
-            suppressedTarget_.empty() &&
-            !timerArmed_;
-    }
-
-private:
-    std::wstring currentTarget_;
-    std::wstring pendingTarget_;
-    std::wstring shownTarget_;
-    std::wstring suppressedTarget_;
-    bool timerArmed_ = false;
-};
 
 /**
  * @brief 以不抢焦点的独立弹窗显示一组实时 DWM 窗口缩略图。
@@ -120,6 +65,7 @@ public:
         HINSTANCE instance,
         ActivateCallback activateCallback,
         CloseCallback closeCallback, std::function<void()> visibilityChanged = {});
+    void PrepareToolbars(const std::vector<DockWindowPreviewItem>& items);
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
@@ -159,6 +105,7 @@ private:
     static constexpr UINT kPeekTimerIntervalMs = 50;
     static constexpr UINT kTransitionHideDelayMs = 120;
     static constexpr UINT kPointerReconcileMessage = WM_APP + 1;
+    static constexpr UINT kToolbarUpdateMessage = WM_APP + 2;
 
     static LRESULT CALLBACK WindowProc(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -169,6 +116,13 @@ private:
     void RegisterThumbnails();
     void UnregisterThumbnails();
     void Paint(HWND window);
+    void StartToolbarTracking();
+    void RefreshToolbar();
+    void PaintToolbar(HDC dc, size_t index, const RECT& client);
+    int ToolbarRegionAtPoint(POINT point) const;
+    std::pair<int, int> ToolbarButtonAtPoint(POINT point) const;
+    void ClearToolbarTooltips();
+    void UpdateToolbarTooltips();
     void InvalidatePopups();
     POINT ToLayoutPoint(HWND window, POINT point) const;
     void OnMouseMove(HWND window, POINT point);
@@ -212,6 +166,11 @@ private:
     ULONGLONG peekCommitDeadline_ = 0;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
+    std::unique_ptr<snowdesktop::thumbnail_toolbar::Client> toolbarClient_;
+    std::vector<snowdesktop::thumbnail_toolbar::Snapshot> toolbars_;
+    std::vector<HWND> toolbarTooltips_;
+    std::optional<snowdesktop::thumbnail_toolbar::Click> pressedToolbar_;
+    std::pair<int, int> hoveredToolbar_{-1, -1};
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;
     std::vector<HTHUMBNAIL> thumbnails_;

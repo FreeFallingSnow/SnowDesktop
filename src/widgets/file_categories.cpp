@@ -11,6 +11,8 @@
 #include "core/slot.h"
 #include "common/types.h"
 #include "app/app.h"
+#include "layout/collection_popup_layout.h"
+#include "common/utils.h"
 #include "collection_group_rules.h"
 #include "core/drop_model.h"
 #include "navigation/search_match.h"

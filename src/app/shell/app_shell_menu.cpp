@@ -1,5 +1,13 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_transition.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "diagnostics/crashlog.h"
+#include "app/dock/persistent_dock_host.h"
 #include "desktop/desktop_hover_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
 #include "app/dock/dock_platform_helpers.h"
@@ -45,7 +53,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     // Shell menus can also reach this entry without first preparing menu icons.
     const bool lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
         static_cast<snowdesktop::modern_menu::Appearance>(
-            std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+            std::clamp(CurrentPersonalization().contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance)));
 
     HWND dockOwner = nullptr;
     for (const auto& host : persistentDockHosts_)
@@ -363,9 +371,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
     const HWND navigationWindow =
-        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::DockSearch &&
-        quickNavigationAnimation_.IsAnimating()
-            ? quickNavigationHwnd_ : nullptr;
+        quickNavigation_->invocationSource == QuickNavigationInvocationSource::DockSearch &&
+        quickNavigation_->animation.IsAnimating()
+            ? quickNavigation_->hwnd : nullptr;
     RECT dockBounds{};
     const bool hasDockBounds = GetWindowRect(host.hwnd, &dockBounds) != FALSE;
     const auto intersectsPresentation = [&dockBounds, hasDockBounds](HWND window) {
@@ -413,7 +421,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             // pair, only when necessary, so another Dock already above it is
             // never crossed while processing a later host. Reordering leaves
             // keyboard focus alone; the native edit is transparent in motion.
-            quickNavBackdropCompositor_.SetPopupWindowPairZOrder(
+            quickNavigation_->backdropCompositor.SetPopupWindowPairZOrder(
                 navigationWindow, pairEnd, true);
         }
         ApplyDragPreviewLayerPolicy();
@@ -430,7 +438,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         hostsCollectionPopup ||
         (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
     const bool systemShowDesktopGuard =
-        systemShowDesktopDockLayerGuardActive_ &&
+        systemShowDesktopLayerGuardActive_ &&
         ShouldShowPersistentDockHost(host);
 
     if (!promoted && !systemShowDesktopGuard)
@@ -444,19 +452,34 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
                 ? desktopWindows_.host : nullptr;
-        const bool restored = snowdesktop::floating_dock_rules::RestoreDesktopLayer(
-            host.hwnd, desktopHost,
-            [](HWND window) {
-                // Reject hidden/tool surfaces before the task-window query
-                // reaches DWM; background windows cannot cover this Dock.
-                return IsWindowVisible(window) && !IsIconic(window) &&
-                    snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
-                        GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
-                    IsDockTaskWindow(window);
-            },
-            [this](HWND window) {
-                return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
-            },
+        const auto isApplicationWindow = [](HWND window) {
+            // Reject hidden/tool surfaces before the task-window query
+            // reaches DWM; background windows cannot cover this Dock.
+            return IsWindowVisible(window) && !IsIconic(window) &&
+                snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
+                    GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
+                IsDockTaskWindow(window);
+        };
+        const auto isDockWindow = [this](HWND window) {
+            return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
+        };
+        const HWND desktopRoot = desktopHost ? GetAncestor(desktopHost, GA_ROOT) : nullptr;
+        const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
+        // The desktop-layer contract permits other non-application windows
+        // between the Dock and the lowest application. Requiring an exact
+        // predecessor in that case needlessly restacks the backdrop against
+        // an external HWND and can hide it during the fallback path.
+        RECT backdropBounds{};
+        const bool pairIntact = !host.backdrop.IsAvailable() ||
+            (host.backdrop.IsBackdropWindow(nextWindow) &&
+                !snowdesktop::popup_window_pair_z_order::IsTopmost(nextWindow) &&
+                hasDockBounds && GetWindowRect(nextWindow, &backdropBounds) &&
+                EqualRect(&dockBounds, &backdropBounds));
+        const bool alreadyRestored = pairIntact &&
+            snowdesktop::floating_dock_rules::IsDesktopLayerRestored(
+                host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+        const bool restored = alreadyRestored || snowdesktop::floating_dock_rules::RestoreDesktopLayer(
+            host.hwnd, desktopHost, isApplicationWindow, isDockWindow,
             [&host](HWND anchor) {
                 return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
             }, GetAncestor(snowdesktop::private_pointer::ForegroundWindow(), GA_ROOT));

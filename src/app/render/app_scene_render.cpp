@@ -1,4 +1,10 @@
 #include "app/app.h"
+#include "dock/dock_window_transition.h"
+#include "layout/collection_popup_layout.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "layout/popup_drag_rules.h"
+#include "app/dock/persistent_dock_host.h"
 #include "foreground_paint_region.h"
 #include "diagnostics/performance_trace.h"
 #include "app/layout/grid_geometry.h"
@@ -127,7 +133,7 @@ void DesktopApp::DrawStaticBackground(
             !interactionPinnedWidgetId_.empty() &&
             widgetData.id == interactionPinnedWidgetId_;
         const bool interactionRetained =
-            popupOpen || interactionPinned ||
+            popupOpen || interactionPinned || luaStackIndicator_.stackId == widgetData.id ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
                     keyboardNavVisualFocus_,
@@ -161,17 +167,30 @@ void DesktopApp::DrawStaticBackground(
         // Runtime visibility is semantic state, not a paint-frequency signal.
         // Synchronize it before dirty-region culling because DirectComposition
         // may retain a visible widget without asking the host to redraw it.
-        if (widgetEngine_ &&
-            widgetData.type == DesktopWidgetType::LuaScript)
+        if (widgetEngine_ && widgetData.type == DesktopWidgetType::LuaScript &&
+            !IsGroupedWidget(widgetData))
         {
             widgetEngine_->SetWidgetDesktopVisible(
                 widgetData.id, desktopSurfaceVisible,
                 keepTopologyHiddenPageRuntimeActive);
         }
+        else if (widgetEngine_ && widgetData.type == DesktopWidgetType::LuaStack)
+        {
+            // One owner controls visibility, hover retention and monitor
+            // topology. A member's old standalone placement is not a surface.
+            const auto* active = ResolveLuaWidgetContent(&widgetData);
+            const std::wstring activeId = active ? active->id : L"";
+            const auto members = widgetData.childWidgetIds;
+            for (const auto& id : members)
+                widgetEngine_->SetWidgetDesktopVisible(id,
+                    id == activeId && desktopSurfaceVisible,
+                    id == activeId && keepTopologyHiddenPageRuntimeActive);
+        }
         const bool isPreviewSource =
             mouseDownWidgetIndex_ < widgets_.size() &&
             &widgetData == &widgets_[mouseDownWidgetIndex_];
         const bool previewSourceHidden =
+            !(isPreviewSource && luaStackMemberDrag_.Armed()) &&
             snowdesktop::widget_visibility_rules::
                 ShouldHideWidgetPreviewSource(
                     widgetAction_ == WidgetAction::Move,
@@ -189,6 +208,9 @@ void DesktopApp::DrawStaticBackground(
         if (HasDesktopWidgetComposition(widgetData.id))
             SetDesktopWidgetCompositionVisible(
                 widgetData.id, presentWidgetSurface, widgetFrame);
+        if (presentWidgetSurface && !IsGroupedWidget(widgetData) &&
+            SyncDesktopWidgetOcclusion(widgetData, widgetFrame))
+            continue;
         if (!desktopSurfaceVisible)
             continue;
         if (!presentWidgetSurface)
@@ -340,6 +362,22 @@ void DesktopApp::DrawDynamicOverlays(
             return;
         ctx->SetTransform(previousTransform);
     };
+    auto dockPreviewBelongsToCurrentSurface =
+        [&](const DockContainer* targetDock) {
+        const bool targetHostedByDockHost =
+            targetDock && IsDockHostedByPersistentHost(targetDock);
+        const bool targetIsCurrentDock =
+            targetHostedByDockHost &&
+            (!renderingFloatingDock_ ||
+                (renderingPersistentDockHost_ &&
+                    targetDock == renderingPersistentDockHost_->container));
+        // Drawing hosted Dock guidance on the desktop as well leaves a
+        // duplicate under the glass, where it is sampled into a blue halo.
+        return snowdesktop::drag_visual_rules::
+            DropPreviewBelongsToRenderSurface(
+                renderingFloatingDock_, targetHostedByDockHost,
+                targetIsCurrentDock);
+    };
 
     // Both handle drags and Dock item drags share the pair target overlay.
     const bool pairActive = (widgetAction_ == WidgetAction::Move || dragSession_.IsActive()) &&
@@ -383,7 +421,8 @@ void DesktopApp::DrawDynamicOverlays(
                 ScaleWidgetCu(3.0f, cellScale);
             InflateRect(
                 &target, targetPadding, targetPadding);
-            if ((pairActive || widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1)) &&
+            if (!renderingFloatingDock_ &&
+                (pairActive || widgetCollectionGroupInsertIndex_ == static_cast<size_t>(-1)) &&
                 snowdesktop::foreground_paint_region::Intersects(
                     updateRect, target, ScaleWidgetCu(2.5f, cellScale) + 2))
                 DrawD2DRoundedRectangle(
@@ -397,11 +436,12 @@ void DesktopApp::DrawDynamicOverlays(
         }
         else if (widgetDockTarget_)
         {
-            if (widgetDockTargetContainer_)
+            if (widgetDockTargetContainer_ &&
+                dockPreviewBelongsToCurrentSurface(widgetDockTargetContainer_))
                 widgetDockTargetContainer_->DrawInsertionPreview(
                     ctx, widgetDockInsertIndex_);
         }
-        else
+        else if (!renderingFloatingDock_)
         {
         GridCell cell = widgetPreviewCell_;
         GridSpan span = widgetPreviewSpan_;
@@ -410,7 +450,7 @@ void DesktopApp::DrawDynamicOverlays(
         bool widgetConflict = false;
         for (size_t i = 0; i < widgets_.size(); ++i)
         {
-            if (i == mouseDownWidgetIndex_) continue;
+            if (i == mouseDownWidgetIndex_ && !luaStackMemberDrag_.Armed()) continue;
             const auto& ow = widgets_[i];
             if (!snowdesktop::collection_group_rules::
                     ShouldOccupyDesktopGrid(
@@ -459,23 +499,7 @@ void DesktopApp::DrawDynamicOverlays(
             const auto* targetDock =
                 dynamic_cast<const DockContainer*>(
                     targetContainer);
-            const bool targetHostedByDockHost =
-                targetDock &&
-                IsDockHostedByPersistentHost(targetDock);
-            const bool targetIsFloatingDock =
-                targetHostedByDockHost &&
-                (!renderingFloatingDock_ ||
-                    (renderingPersistentDockHost_ &&
-                        targetContainer ==
-                            renderingPersistentDockHost_->container));
-            // The desktop pass has no current Dock host. It must still
-            // recognize a hosted target and leave its guidance to that host;
-            // a duplicate below the Dock is blurred into a colored halo.
-            if (!snowdesktop::drag_visual_rules::
-                    DropPreviewBelongsToRenderSurface(
-                        renderingFloatingDock_,
-                        targetHostedByDockHost,
-                        targetIsFloatingDock))
+            if (!dockPreviewBelongsToCurrentSurface(targetDock))
             {
                 return;
             }
@@ -491,6 +515,12 @@ void DesktopApp::DrawDynamicOverlays(
             wc->GetWidgetData() == openPopupWidget &&
             IsPointOccludedByOpenPopup(dragSession_.CurrentPoint()) &&
             (wc == GetGroupPopupView() || targetSlot == popupDragTarget_.Get());
+        // These popup views draw their feedback with their own content clip
+        // and animation. A generic pass would blend the same indicator again.
+        if (popupTarget &&
+            (wc == GetGroupPopupView() ||
+                wc == GetDateGroupedPopupView(GetCollectionPopupRect(*openPopupWidget))))
+            return;
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
                 ResolveDropPreviewLayer(popupTarget) ==

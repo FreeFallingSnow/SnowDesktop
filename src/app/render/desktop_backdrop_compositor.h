@@ -109,6 +109,8 @@ public:
     // Dock full redraws collect plain panel data until their content surface
     // is ready. No live visual, native region, or seen flag changes here, so
     // another target's shared-controller commit cannot publish this candidate.
+    // Applied Dock frames retain the host-sized HWND fence; Composition clips
+    // own moving panel contours without prematurely clipping the old frame.
     bool BeginStagedFrame();
     bool ApplyStagedFrame();
     void DiscardStagedFrame();

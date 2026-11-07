@@ -132,11 +132,12 @@ Scene ParseScene(const Value& value)
     }
     for (const auto& entry : Entries(value, "surfaces", 12, true))
     {
-        Fields(entry, {"id", "kind", "title", "x", "y", "width", "height", "items", "visible", "listMode", "showSearch", "showCategories", "scrollContainer"});
+        Fields(entry, {"id", "kind", "title", "x", "y", "width", "height", "items", "children", "popup", "visible", "listMode", "showSearch", "showCategories", "scrollContainer"});
         Surface surface; surface.id = Identifier(entry, "id");
         if (!surfaces.insert(surface.id).second) Invalid("Duplicate scene surface identity");
         surface.kind = StringField(entry, "kind", "collection", 32);
         if (surface.kind != "collection" && surface.kind != "files" && surface.kind != "mapping" && surface.kind != "popup" &&
+            surface.kind != "collection-group" && surface.kind != "file-group" &&
             surface.kind != "dock" && surface.kind != "status-bar" && surface.kind != "navigation") Invalid("Unsupported native scene surface");
         surface.title = StringField(entry, "title", surface.id, 256);
         surface.bounds.left = Integer(entry, "x", 0, scene.width - 32); surface.bounds.top = Integer(entry, "y", 0, scene.height - 32);
@@ -145,6 +146,9 @@ Scene ParseScene(const Value& value)
         surface.visible = Flag(entry, "visible", true); surface.listMode = Flag(entry, "listMode", false);
         surface.showSearch = Flag(entry, "showSearch", true); surface.showCategories = Flag(entry, "showCategories", true);
         surface.scrollContainer = Flag(entry, "scrollContainer", true);
+        surface.popup = Flag(entry, "popup", false);
+        if (surface.popup && surface.kind != "collection" && surface.kind != "files" && surface.kind != "mapping" &&
+            surface.kind != "collection-group" && surface.kind != "file-group") Invalid("Only storage widgets support popup presentation");
         if (entry.Find("scrollContainer") && surface.kind != "collection") Invalid("Only collection supports scrollContainer");
         std::unordered_set<std::string> used;
         for (const auto& id : Entries(entry, "items", 128, false))
@@ -153,7 +157,24 @@ Scene ParseScene(const Value& value)
             surface.items.push_back(id.string);
         }
         if (surface.items.empty()) for (const auto& item : scene.items) surface.items.push_back(item.id);
+        used.clear();
+        for (const auto& id : Entries(entry, "children", 12, false))
+        {
+            if (!id.IsString() || !used.insert(id.string).second) Invalid("Group child references must be unique strings");
+            surface.children.push_back(id.string);
+        }
         scene.surfaces.push_back(std::move(surface));
+    }
+    for (const auto& surface : scene.surfaces)
+    {
+        const bool group = surface.kind == "collection-group" || surface.kind == "file-group";
+        if (group != !surface.children.empty()) Invalid("Only groups must reference child storage surfaces");
+        for (const auto& id : surface.children)
+        {
+            const auto child = std::find_if(scene.surfaces.begin(), scene.surfaces.end(), [&](const Surface& candidate) { return candidate.id == id; });
+            if (child == scene.surfaces.end() || (surface.kind == "collection-group" ? child->kind != "collection" :
+                child->kind != "files" && child->kind != "mapping")) Invalid("Group child must reference a compatible storage surface");
+        }
     }
     int previous = -1; bool pressed = false;
     for (const auto& entry : Entries(value, "timeline", 256, false))

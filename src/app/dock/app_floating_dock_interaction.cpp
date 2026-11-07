@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "dock/dock_window_transition.h"
+#include "diagnostics/diagnostic_log.h"
+#include "shell/native_start_menu.h"
+#include "app/dock/persistent_dock_host.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "dock_platform_helpers.h"
 #include "dock_input_diagnostics.h"
@@ -227,16 +231,6 @@ void DesktopApp::ShowFloatingDock(
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
     }
-    if (FullscreenBlocksDockReveal(source, targetMonitor))
-    {
-        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: foreground fullscreen");
-        return;
-    }
-    // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
-    // the keyboard proxy can change foreground ownership. The independently
-    // revealed bar remains usable until its own outside dismissal.
-    if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
-    HideDockWindowPreview();
     if (!SyncPersistentDockHost(targetMonitor))
     {
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock,
@@ -244,8 +238,16 @@ void DesktopApp::ShowFloatingDock(
         MessageBeep(MB_ICONWARNING);
         return;
     }
-    if (statusBar_ && floatingDockHost_->monitor != targetMonitor)
-        statusBar_->PrepareDockReveal(floatingDockHost_->monitor);
+    // Scope fallback can select a Dock on a different display. Protect the
+    // actual destination before revealing either the Dock or its status bar.
+    targetMonitor = floatingDockHost_->monitor;
+    if (FullscreenBlocksDockReveal(source, targetMonitor))
+    {
+        WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Dock, L"Floating Dock reveal suppressed: target monitor fullscreen");
+        return;
+    }
+    if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
+    HideDockWindowPreview();
 
     const bool hostWasVisible =
         IsWindowVisible(floatingDockHost_->hwnd) != FALSE;
@@ -321,6 +323,8 @@ void DesktopApp::ShowFloatingDock(
     if (FullscreenBlocksDockReveal(source, targetMonitor))
     {
         floatingDockHost_->promoted = false;
+        if (statusBar_) statusBar_->DismissTemporaryReveal(targetMonitor);
+        CancelStatusBarActivation(targetMonitor, false);
         RefreshFloatingDockVisibilityState();
         if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
         UpdatePersistentDockHostVisibility(*floatingDockHost_);
@@ -344,13 +348,13 @@ EnsureFloatingDockVisibleForAssociatedSurface(
         return false;
     const HMONITOR monitor = MonitorFromPoint(
         anchorScreen, MONITOR_DEFAULTTONEAREST);
-    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, monitor))
-        return false;
     if (!SyncPersistentDockHost(monitor) ||
         !floatingDockHost_)
     {
         return false;
     }
+    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, floatingDockHost_->monitor))
+        return false;
     if (!snowdesktop::floating_dock_rules::
             ShouldSummonForDockSurface(
                 true,
@@ -375,6 +379,7 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
     if (!retainPromotion && (!dockWindowTransition_ ||
         !dockWindowTransition_->GetPresentationWindow())) return nullptr;
     const HMONITOR monitor = MonitorFromRect(&anchorScreen, MONITOR_DEFAULTTONEAREST);
+    if (FullscreenBlocksDockReveal(DockRevealSource::WindowAction, monitor)) return nullptr;
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (!ownedHost || !ownedHost->active || ownedHost->monitor != monitor ||
@@ -631,18 +636,22 @@ void DesktopApp::ToggleFloatingDock()
     snowdesktop::private_pointer::CursorPosition(&cursorScreen);
     const HMONITOR monitor = MonitorFromPoint(
         cursorScreen, MONITOR_DEFAULTTONEAREST);
-    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, monitor))
+    if (!SyncPersistentDockHost(monitor) || !floatingDockHost_)
+        return;
+    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, floatingDockHost_->monitor))
     {
-        CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        if (floatingDockHost_->promoted)
+        {
+            if (statusBar_) statusBar_->DismissTemporaryReveal(floatingDockHost_->monitor);
+            CancelStatusBarActivation(floatingDockHost_->monitor, false);
+            CloseFloatingDock(*floatingDockHost_, FloatingDockCloseFocusPolicy::PreserveCurrent);
+        }
         return;
     }
-    if (!SyncPersistentDockHost(monitor) ||
-        !floatingDockHost_)
-        return;
     if (IsPersistentDockHostPromoted(*floatingDockHost_))
         CloseFloatingDock(*floatingDockHost_);
     else
-        ShowFloatingDock(monitor, DockRevealSource::Hotkey);
+        ShowFloatingDock(floatingDockHost_->monitor, DockRevealSource::Hotkey);
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(

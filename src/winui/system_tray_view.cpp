@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <algorithm>
 #include "system_tray_view.h"
 #include "common/l10n.h"
 #include "system/tray/tray_order.h"

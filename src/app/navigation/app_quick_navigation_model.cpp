@@ -1,4 +1,9 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "icons/icon_render_rules.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 #include "navigation/search_match.h"
@@ -117,10 +122,10 @@ DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd,
 
 void DesktopApp::StartQuickNavigationAppIndexing()
 {
-    if (quickNavigationAppsIndexed_ || quickNavigationAppIndexing_) return;
-    const auto serial = ++quickNavigationAppIndexSerial_;
+    if (quickNavigation_->appsIndexed || quickNavigation_->appIndexing) return;
+    const auto serial = ++quickNavigation_->appIndexSerial;
     const int size = QuickNavScale(28);
-    quickNavigationAppIndexing_ = appIndexWork_.Submit(L"apps", [serial, size] {
+    quickNavigation_->appIndexing = appIndexWork_.Submit(L"apps", [serial, size] {
         auto result = std::make_shared<QuickNavigationAppIndexResult>();
         result->serial = serial;
         result->entries = BuildQuickNavigationAppIndex(nullptr,
@@ -129,15 +134,15 @@ void DesktopApp::StartQuickNavigationAppIndexing()
     }, [this](std::shared_ptr<QuickNavigationAppIndexResult> result) {
         if (result) OnQuickNavigationAppsIndexed(0,
             reinterpret_cast<LPARAM>(new QuickNavigationAppIndexResult(std::move(*result))));
-        else quickNavigationAppIndexing_ = false;
+        else quickNavigation_->appIndexing = false;
     }, hwnd_, kBackgroundShellReadyMessage);
 }
 
 void DesktopApp::StopQuickNavigationAppIndexing()
 {
-    ++quickNavigationAppIndexSerial_;
+    ++quickNavigation_->appIndexSerial;
     appIndexWork_.Stop();
-    quickNavigationAppIndexing_ = false;
+    quickNavigation_->appIndexing = false;
 }
 
 void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
@@ -146,28 +151,29 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
         reinterpret_cast<QuickNavigationAppIndexResult*>(lParam));
 
 
-    quickNavigationAppIndexing_ = false;
+    quickNavigation_->appIndexing = false;
 
-    if (!result || result->serial != quickNavigationAppIndexSerial_)
+    if (!result || result->serial != quickNavigation_->appIndexSerial)
         return;
 
-    quickNavAppIconCache_.clear();
-    quickNavigationAppEntries_ = std::move(result->entries);
+    quickNavigation_->appIconCache.clear();
+    quickNavigation_->appEntries = std::move(result->entries);
     if (result->systemImageListSmall)
-        quickNavigationSystemImageListSmall_ = result->systemImageListSmall;
-    quickNavigationAppsIndexed_ = true;
-    quickNavigationAppsExpanded_ = false;
+        quickNavigation_->systemImageListSmall = result->systemImageListSmall;
+    quickNavigation_->appsIndexed = true;
+    quickNavigation_->appsExpanded = false;
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("applications");
 
-    if (!GetQuickNavigationEffectiveSearchText().empty())
+    if (!GetQuickNavigationEffectiveSearchText().empty() ||
+        navigationSettings_.favoritesEnabled)
     {
         RefreshQuickNavigationAppResults();
-        quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
-            GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
-        if (quickNavigationOpen_)
+        quickNavigation_->scrollOffset = std::clamp(quickNavigation_->scrollOffset, 0,
+            GetQuickNavigationMaxScrollOffset(quickNavigation_->rect));
+        if (quickNavigation_->open)
         {
-            if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
+            if (quickNavigation_->collapsed) PositionQuickNavigationWindow();
             InvalidateQuickNavigationWindow();
         }
     }
@@ -175,9 +181,9 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
 
 void DesktopApp::RefreshQuickNavigationAppResults()
 {
-    quickNavigationAppResultIndices_.clear();
+    quickNavigation_->appResultIndices.clear();
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
-    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::App) return;
+    if (quickNavigation_->searchType != QuickNavigationSearchType::All && quickNavigation_->searchType != QuickNavigationSearchType::App) return;
     if (query.empty())
         return;
     if (IsLuaLogicalSlotPickerOpen() &&
@@ -185,12 +191,12 @@ void DesktopApp::RefreshQuickNavigationAppResults()
         return;
 
     StartQuickNavigationAppIndexing();
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return;
 
-    for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i)
+    for (size_t i = 0; i < quickNavigation_->appEntries.size(); ++i)
     {
-        const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[i];
+        const QuickNavigationAppEntry& entry = quickNavigation_->appEntries[i];
         const std::wstring displayName =
             !IsLuaLogicalSlotPickerOpen() &&
             generalSettings_.demoModeEnabled &&
@@ -199,13 +205,13 @@ void DesktopApp::RefreshQuickNavigationAppResults()
             : entry.name;
         if (!NameMatchesQuery(displayName, query))
             continue;
-        quickNavigationAppResultIndices_.push_back(i);
+        quickNavigation_->appResultIndices.push_back(i);
     }
 
-    std::stable_sort(quickNavigationAppResultIndices_.begin(), quickNavigationAppResultIndices_.end(),
+    std::stable_sort(quickNavigation_->appResultIndices.begin(), quickNavigation_->appResultIndices.end(),
         [&](size_t a, size_t b) {
             const auto displayName = [&](size_t index) {
-                const auto& entry = quickNavigationAppEntries_[index];
+                const auto& entry = quickNavigation_->appEntries[index];
                 return !IsLuaLogicalSlotPickerOpen() &&
                     generalSettings_.demoModeEnabled &&
                     demoIdentityAssetsAvailable_
@@ -216,19 +222,19 @@ void DesktopApp::RefreshQuickNavigationAppResults()
                 NameSearchMatchRank(displayName(b), query);
         });
 
-    if (quickNavigationAppResultIndices_.size() > kQuickNavigationAppResultLimit)
-        quickNavigationAppResultIndices_.resize(kQuickNavigationAppResultLimit);
+    if (quickNavigation_->appResultIndices.size() > kQuickNavigationAppResultLimit)
+        quickNavigation_->appResultIndices.resize(kQuickNavigationAppResultLimit);
 }
 
 const DesktopApp::QuickNavigationAppEntry*
 DesktopApp::FindQuickNavigationEverythingAppEntry() const
 {
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return nullptr;
 
     const QuickNavigationAppEntry* bestEntry = nullptr;
     int bestRank = kNameSearchNoMatchRank;
-    for (const auto& entry : quickNavigationAppEntries_)
+    for (const auto& entry : quickNavigation_->appEntries)
     {
         const int rank = NameSearchMatchRank(entry.name, L"Everything");
         if (rank < bestRank)
@@ -242,9 +248,24 @@ DesktopApp::FindQuickNavigationEverythingAppEntry() const
     return bestEntry;
 }
 
+const DesktopApp::QuickNavigationAppEntry*
+DesktopApp::FindQuickNavigationAppEntryByParsingName(
+    const std::wstring& parsingName) const
+{
+    if (!quickNavigation_->appsIndexed || parsingName.empty())
+        return nullptr;
+    const std::wstring normalized = ToUpperInvariant(parsingName);
+    for (const auto& entry : quickNavigation_->appEntries)
+    {
+        if (ToUpperInvariant(entry.parsingName) == normalized)
+            return &entry;
+    }
+    return nullptr;
+}
+
 std::wstring DesktopApp::GetQuickNavigationEverythingNoticeText() const
 {
-    if (!quickNavigationAppsIndexed_)
+    if (!quickNavigation_->appsIndexed)
         return _LW("app.interact.everything_not_running");
     return FindQuickNavigationEverythingAppEntry()
         ? _LW("app.interact.everything_click_start")
@@ -261,7 +282,7 @@ bool DesktopApp::TryLaunchQuickNavigationEverythingApp()
 std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
 {
     return snowdesktop::quick_navigation_rules::
-        OrderTabWidgetIndices(navTabOrder_, widgets_);
+        OrderTabWidgetIndices(quickNavigation_->tabOrder, widgets_);
 }
 
 std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
@@ -278,7 +299,7 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         result.push_back(key);
     };
 
-    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+    if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-1))
     {
         std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
         for (size_t ci : collectionIndices)
@@ -290,7 +311,7 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         }
         return result;
     }
-    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+    if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-2))
     {
         std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
         for (size_t ci : collectionIndices)
@@ -302,19 +323,19 @@ std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const
         return result;
     }
 
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        (widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::Collection ||
-         widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FileCategories))
+    if (quickNavigation_->activeWidgetIndex < widgets_.size() &&
+        (widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::Collection ||
+         widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::FileCategories))
     {
-        const auto& widget = widgets_[quickNavigationActiveWidgetIndex_];
+        const auto& widget = widgets_[quickNavigation_->activeWidgetIndex];
         for (const auto& itemKey : widget.itemKeys)
             appendKey(itemKey);
         return result;
     }
-    if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-        widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
+    if (quickNavigation_->activeWidgetIndex < widgets_.size() &&
+        widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::FolderMapping)
     {
-        for (const auto& fe : widgets_[quickNavigationActiveWidgetIndex_].folderEntries)
+        for (const auto& fe : widgets_[quickNavigation_->activeWidgetIndex].folderEntries)
             appendKey(fe.fullPath);
         return result;
     }
@@ -341,7 +362,7 @@ DesktopApp::QuickNavigationContentModel
 DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
 {
     QuickNavigationContentModel model;
-    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::File) return model;
+    if (quickNavigation_->searchType != QuickNavigationSearchType::All && quickNavigation_->searchType != QuickNavigationSearchType::File) return model;
     std::unordered_set<std::wstring> seenDesktop;
     std::unordered_set<std::wstring> dockDesktopKeys;
     for (const DockEntry& dockEntry : dockEntries_)
@@ -356,11 +377,13 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
     auto appendDesktop = [&](
         std::vector<QuickNavigationEntry>& destination,
         size_t itemIndex, const std::wstring& source,
-        size_t demoCollectionIndex = static_cast<size_t>(-1)) {
+        size_t demoCollectionIndex = static_cast<size_t>(-1),
+        std::unordered_set<std::wstring>* seen = nullptr) {
         if (itemIndex >= items_.size()) return;
+        auto& visibleKeys = seen ? *seen : seenDesktop;
         const DesktopItem& item = items_[itemIndex];
         std::wstring key = ToUpperInvariant(item.layoutKey.empty() ? item.parsingName : item.layoutKey);
-        if (key.empty() || seenDesktop.contains(key)) return;
+        if (key.empty() || visibleKeys.contains(key)) return;
         if (demoCollectionIndex >= widgets_.size() &&
             generalSettings_.demoModeEnabled &&
             demoIdentityAssetsAvailable_)
@@ -394,7 +417,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             : (!IsLuaLogicalSlotPickerOpen() && ShouldUseDemoIdentity(item)
                 ? GetDemoIdentityTitle(identity) : item.name);
         if (!matches(displayName)) return;
-        seenDesktop.insert(std::move(key));
+        visibleKeys.insert(std::move(key));
 
         QuickNavigationEntry entry;
         entry.kind = QuickNavigationEntry::Kind::DesktopItem;
@@ -407,7 +430,8 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
         destination.push_back(std::move(entry));
     };
     auto appendDockDesktopItems =
-        [&](std::vector<QuickNavigationEntry>& destination) {
+        [&](std::vector<QuickNavigationEntry>& destination,
+            std::unordered_set<std::wstring>* seen = nullptr) {
         for (const DockEntry& dockEntry : dockEntries_)
         {
             if (dockEntry.type != DockEntryType::DesktopItem)
@@ -415,20 +439,24 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             appendDesktop(
                 destination,
                 FindItemIndexByKey(dockEntry.reference),
-                _LW("app.nav.source_dock"));
+                _LW("app.nav.source_dock"),
+                static_cast<size_t>(-1), seen);
         }
     };
     auto appendSection = [&](
         const std::wstring& label,
-        std::vector<QuickNavigationEntry>& entries) {
-        if (entries.empty()) return;
+        std::vector<QuickNavigationEntry>& entries,
+        bool showWhenEmpty = false,
+        bool favoriteSection = false) {
+        if (entries.empty() && !showWhenEmpty) return;
         const size_t first = model.entries.size();
         model.entries.insert(
             model.entries.end(),
             std::make_move_iterator(entries.begin()),
             std::make_move_iterator(entries.end()));
-        model.sections.push_back(
-            {label, first, model.entries.size() - first});
+        model.sections.push_back({
+            label, first, model.entries.size() - first,
+            showWhenEmpty, favoriteSection});
     };
     auto widgetTitle = [&](const DesktopWidget& widget) {
         if (ShouldUseDemoCollectionIdentity(&widget))
@@ -457,7 +485,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
         }
         return snowdesktop::quick_navigation_rules::
             OrderIndicesByTabIds(
-                navTabOrder_, widgetIds, eligible);
+                quickNavigation_->tabOrder, widgetIds, eligible);
     };
     const auto groupByInitial = [&] {
         auto entries = std::move(model.entries);
@@ -486,10 +514,12 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
 
     if (query.empty())
     {
-        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-1))
         {
             const auto mode = navigationSettings_.desktopViewMode;
             const bool showSuggestions = snowdesktop::quick_navigation_rules::ShowAppSuggestions(
+                navigationSettings_, true, false, IsLuaLogicalSlotPickerOpen(), UseQuickNavigationList());
+            const bool showFavorites = snowdesktop::quick_navigation_rules::ShowFavorites(
                 navigationSettings_, true, false, IsLuaLogicalSlotPickerOpen(), UseQuickNavigationList());
             std::vector<QuickNavigationEntry> tileEntries;
             if (mode == QuickNavigationDesktopViewMode::Tile ||
@@ -567,22 +597,122 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 return model;
             }
             const auto finishDesktop = [&](QuickNavigationContentModel content) {
-                if (!showSuggestions) return content;
-                const auto order = snowdesktop::quick_navigation_rules::LaunchFrequencyOrder(
-                    launchCounts, true, static_cast<size_t>(GetQuickNavigationColumnCount(
-                        overlay ? *overlay : quickNavigationRect_)));
-                if (order.empty()) return content;
-                const size_t count = order.size();
-                std::vector<QuickNavigationEntry> suggestions;
-                suggestions.reserve(count + content.entries.size());
-                for (size_t index : order) suggestions.push_back(tileEntries[index]);
-                suggestions.insert(suggestions.end(), std::make_move_iterator(content.entries.begin()),
-                    std::make_move_iterator(content.entries.end()));
+                std::vector<QuickNavigationEntry> prefixEntries;
+                std::vector<QuickNavigationSection> prefixSections;
+                if (showSuggestions)
+                {
+                    const auto order = snowdesktop::quick_navigation_rules::LaunchFrequencyOrder(
+                        launchCounts, true, static_cast<size_t>(GetQuickNavigationColumnCount(
+                            overlay ? *overlay : quickNavigation_->rect)));
+                    if (!order.empty())
+                    {
+                        const size_t first = prefixEntries.size();
+                        for (size_t index : order)
+                            prefixEntries.push_back(tileEntries[index]);
+                        prefixSections.push_back({
+                            _LW("app.nav.app_suggestions"),
+                            first, prefixEntries.size() - first});
+                    }
+                }
+                if (showFavorites)
+                {
+                    const size_t first = prefixEntries.size();
+                    const std::wstring favoriteLabel = _LW("app.nav.favorites");
+                    for (const auto& favorite : navigationSettings_.favorites)
+                    {
+                        QuickNavigationEntry entry;
+                        entry.source = favoriteLabel;
+                        const std::wstring target = Utf8ToWide(favorite.target);
+                        switch (favorite.type)
+                        {
+                        case QuickNavigationFavoriteType::File:
+                        case QuickNavigationFavoriteType::Folder:
+                            if (target.empty())
+                                break;
+                            entry.kind = QuickNavigationEntry::Kind::PathFavorite;
+                            entry.path = target;
+                            entry.isDirectory =
+                                favorite.type == QuickNavigationFavoriteType::Folder;
+                            entry.name = Utf8ToWide(favorite.name);
+                            if (entry.name.empty())
+                                entry.name = FileNameFromPath(target);
+                            if (!entry.name.empty())
+                                prefixEntries.push_back(std::move(entry));
+                            break;
+                        case QuickNavigationFavoriteType::DesktopItem:
+                        {
+                            size_t itemIndex = FindItemIndexByKey(
+                                Utf8ToWide(favorite.desktopKey));
+                            if (itemIndex >= items_.size())
+                            {
+                                const std::wstring normalizedTarget =
+                                    ToUpperInvariant(target);
+                                itemIndex = static_cast<size_t>(-1);
+                                for (size_t index = 0;
+                                    index < items_.size(); ++index)
+                                {
+                                    if (ToUpperInvariant(
+                                            items_[index].parsingName) ==
+                                        normalizedTarget)
+                                    {
+                                        itemIndex = index;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (itemIndex >= items_.size())
+                                break;
+                            entry.kind = QuickNavigationEntry::Kind::DesktopItem;
+                            entry.itemIndex = itemIndex;
+                            entry.name = items_[itemIndex].name;
+                            entry.path = items_[itemIndex].parsingName;
+                            if (entry.name.empty())
+                                entry.name = Utf8ToWide(favorite.name);
+                            if (!entry.name.empty())
+                                prefixEntries.push_back(std::move(entry));
+                            break;
+                        }
+                        case QuickNavigationFavoriteType::Application:
+                        {
+                            const auto* app =
+                                FindQuickNavigationAppEntryByParsingName(target);
+                            if (!app)
+                                break;
+                            entry.kind =
+                                QuickNavigationEntry::Kind::ApplicationFavorite;
+                            entry.name = app->name;
+                            entry.path = app->parsingName;
+                            if (entry.name.empty())
+                                entry.name = Utf8ToWide(favorite.name);
+                            if (!entry.name.empty())
+                                prefixEntries.push_back(std::move(entry));
+                            break;
+                        }
+                        }
+                    }
+                    prefixSections.push_back({
+                        favoriteLabel, first,
+                        prefixEntries.size() - first, true, true});
+                }
+                if (prefixSections.empty())
+                    return content;
                 if (content.sections.empty() && !content.entries.empty())
-                    content.sections.push_back({_LW("app.nav.tab_desktop"), 0, content.entries.size()});
-                for (auto& section : content.sections) section.firstEntryIndex += count;
-                content.sections.insert(content.sections.begin(), {_LW("app.nav.app_suggestions"), 0, count});
-                content.entries = std::move(suggestions);
+                    content.sections.push_back({
+                        _LW("app.nav.tab_desktop"), 0,
+                        content.entries.size()});
+                const size_t prefixCount = prefixEntries.size();
+                for (auto& section : content.sections)
+                    section.firstEntryIndex += prefixCount;
+                prefixEntries.insert(
+                    prefixEntries.end(),
+                    std::make_move_iterator(content.entries.begin()),
+                    std::make_move_iterator(content.entries.end()));
+                prefixSections.insert(
+                    prefixSections.end(),
+                    std::make_move_iterator(content.sections.begin()),
+                    std::make_move_iterator(content.sections.end()));
+                content.entries = std::move(prefixEntries);
+                content.sections = std::move(prefixSections);
                 return content;
             };
             if (navigationSettings_.desktopViewMode ==
@@ -597,68 +727,29 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                                     DesktopWidgetType::FileCategories;
                         });
 
-                std::vector<std::wstring>
-                    desktopKeys;
-                desktopKeys.reserve(items_.size());
-                for (const auto& item : items_)
-                    desktopKeys.push_back(
-                        ToUpperInvariant(
-                            item.layoutKey.empty()
-                            ? item.parsingName
-                            : item.layoutKey));
-                std::vector<std::vector<
-                    std::wstring>> sourceKeys(
-                        sourceWidgets.size() + 1);
-                for (const DockEntry& dockEntry :
-                    dockEntries_)
+                // Source view keeps one identity per source section. An item
+                // may intentionally appear in several sections, including
+                // both Dock and its original collection.
+                std::unordered_set<std::wstring> classifiedKeys;
+                for (const DockEntry& dockEntry : dockEntries_)
                 {
-                    if (dockEntry.type ==
-                        DockEntryType::DesktopItem)
-                        sourceKeys[0].push_back(
-                            ToUpperInvariant(
-                                dockEntry.reference));
+                    if (dockEntry.type == DockEntryType::DesktopItem)
+                        classifiedKeys.insert(
+                            ToUpperInvariant(dockEntry.reference));
                 }
                 for (size_t sourceIndex = 0;
-                    sourceIndex <
-                        sourceWidgets.size();
+                    sourceIndex < sourceWidgets.size();
                     ++sourceIndex)
                 {
-                    const auto& sourceWidget = widgets_[
-                        sourceWidgets[sourceIndex]];
-                    for (const auto& key : sourceWidget.itemKeys)
-                    {
-                        sourceKeys[
-                            sourceIndex + 1].
-                            push_back(
-                                ToUpperInvariant(
-                                    key));
-                    }
+                    for (const auto& key :
+                        widgets_[sourceWidgets[sourceIndex]].itemKeys)
+                        classifiedKeys.insert(ToUpperInvariant(key));
                 }
-                const std::vector<int> owners =
-                    snowdesktop::
-                        quick_navigation_rules::
-                            AssignSourceOwners(
-                                desktopKeys,
-                                sourceKeys);
 
                 std::vector<QuickNavigationEntry>
                     dockEntries;
-                for (const DockEntry& dockEntry :
-                    dockEntries_)
-                {
-                    if (dockEntry.type !=
-                        DockEntryType::DesktopItem)
-                        continue;
-                    const size_t itemIndex =
-                        FindItemIndexByKey(
-                            dockEntry.reference);
-                    if (itemIndex < owners.size() &&
-                        owners[itemIndex] == 0)
-                        appendDesktop(
-                            dockEntries, itemIndex,
-                            _LW(
-                                "app.nav.source_dock"));
-                }
+                std::unordered_set<std::wstring> dockSeen;
+                appendDockDesktopItems(dockEntries, &dockSeen);
                 appendSection(
                     _LW("app.nav.source_dock"),
                     dockEntries);
@@ -675,18 +766,15 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                     std::vector<
                         QuickNavigationEntry>
                         entries;
+                    std::unordered_set<std::wstring> widgetSeen;
                     for (const auto& key : widget.itemKeys)
                     {
                         const size_t itemIndex =
                             FindItemIndexByKey(key);
-                        if (itemIndex <
-                                owners.size() &&
-                            owners[itemIndex] ==
-                                static_cast<int>(
-                                    sourceIndex + 1))
-                            appendDesktop(
-                                entries, itemIndex,
-                                widgetTitle(widget), widgetIndex);
+                        appendDesktop(
+                            entries, itemIndex,
+                            widgetTitle(widget), widgetIndex,
+                            &widgetSeen);
                     }
                     appendSection(
                         widgetTitle(widget),
@@ -698,12 +786,16 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 for (size_t i = 0;
                     i < items_.size(); ++i)
                 {
-                    if (i < owners.size() &&
-                        owners[i] < 0)
-                        appendDesktop(
-                            looseEntries, i,
-                            _LW(
-                                "app.interact.free_desktop"));
+                    const DesktopItem& item = items_[i];
+                    const std::wstring key = ToUpperInvariant(
+                        item.layoutKey.empty()
+                            ? item.parsingName
+                            : item.layoutKey);
+                    if (classifiedKeys.contains(key))
+                        continue;
+                    appendDesktop(
+                        looseEntries, i,
+                        _LW("app.interact.free_desktop"));
                 }
                 appendSection(
                     _LW("app.interact.free_desktop"),
@@ -728,7 +820,7 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             return finishDesktop(std::move(model));
         }
 
-        if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+        if (quickNavigation_->activeWidgetIndex == static_cast<size_t>(-2))
         {
             const auto mappingWidgets =
                 orderedWidgetIndices(
@@ -767,17 +859,17 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
             return model;
         }
 
-        if (quickNavigationActiveWidgetIndex_ < widgets_.size() &&
-            widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
+        if (quickNavigation_->activeWidgetIndex < widgets_.size() &&
+            widgets_[quickNavigation_->activeWidgetIndex].type == DesktopWidgetType::FolderMapping)
         {
-            const DesktopWidget& widget = widgets_[quickNavigationActiveWidgetIndex_];
+            const DesktopWidget& widget = widgets_[quickNavigation_->activeWidgetIndex];
             std::wstring source = widget.title.empty() ? _LW("widget.folder_mapping") : widget.title;
             for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
             {
                 const FolderEntry& entryData = widget.folderEntries[ei];
                 QuickNavigationEntry entry;
                 entry.kind = QuickNavigationEntry::Kind::FolderEntry;
-                entry.widgetIndex = quickNavigationActiveWidgetIndex_;
+                entry.widgetIndex = quickNavigation_->activeWidgetIndex;
                 entry.folderEntryIndex = ei;
                 entry.name = entryData.DisplayName();
                 entry.path = entryData.fullPath;
@@ -794,8 +886,8 @@ DesktopApp::BuildQuickNavigationContentModel(const RECT* overlay) const
                 model.entries,
                 FindItemIndexByKey(key),
                 _LW("widget.collection"),
-                quickNavigationActiveWidgetIndex_ < widgets_.size()
-                    ? quickNavigationActiveWidgetIndex_
+                quickNavigation_->activeWidgetIndex < widgets_.size()
+                    ? quickNavigation_->activeWidgetIndex
                     : static_cast<size_t>(-1));
         groupWidgetEntriesByInitial();
         return model;

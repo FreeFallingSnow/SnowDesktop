@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_preview.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
 #include "drag_drop/ole_drag_rules.h"
 
 // OLE surface classification, effect choice and coordinate conversion.
@@ -9,11 +13,13 @@ size_t DesktopApp::HitTestLuaFileDropTarget(POINT point) const
     if (!widgetEngine_ || IsPointOccludedByOpenPopup(point))
         return static_cast<size_t>(-1);
     const auto index = HitTestStandaloneWidgetIndex(point);
-    if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::LuaScript ||
+    if (index >= widgets_.size() || !IsLuaDesktopSurface(widgets_[index]) ||
         HitTestStandaloneWidget(index, point) != WidgetHit::Content)
         return static_cast<size_t>(-1);
+    const auto* content = ResolveLuaWidgetContent(&widgets_[index]);
+    if (!content) return static_cast<size_t>(-1);
     const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
-    return widgetEngine_->HasFileDropTarget(widgets_[index].id,
+    return widgetEngine_->HasFileDropTarget(content->id,
         point.x - frame.left, point.y - frame.top) ? index : static_cast<size_t>(-1);
 }
 
@@ -21,8 +27,11 @@ bool DesktopApp::DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>
 {
     const auto index = HitTestLuaFileDropTarget(point);
     if (index >= widgets_.size()) return false;
+    const auto* content = ResolveLuaWidgetContent(&widgets_[index]);
+    if (!content) return false;
+    const std::wstring instanceId = content->id;
     const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
-    return widgetEngine_->InvokeFileDrop(widgets_[index].id,
+    return widgetEngine_->InvokeFileDrop(instanceId,
         point.x - frame.left, point.y - frame.top, paths);
 }
 
@@ -110,7 +119,7 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         IsPersistentDockHostWindow(root) ||
         belongsTo(floatingPopupHwnd_) ||
         belongsTo(dragPreviewHwnd_) ||
-        belongsTo(quickNavigationHwnd_))
+        belongsTo(quickNavigation_->hwnd))
         return true;
     if (dockWindowPreview_)
         for (const HWND popup : dockWindowPreview_->GetWindows())
@@ -121,8 +130,8 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         IsPersistentDockBackdropWindow(root) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(window) ||
         collectionPopupBackdropCompositor_.IsBackdropWindow(root) ||
-        quickNavBackdropCompositor_.IsBackdropWindow(window) ||
-        quickNavBackdropCompositor_.IsBackdropWindow(root);
+        quickNavigation_->backdropCompositor.IsBackdropWindow(window) ||
+        quickNavigation_->backdropCompositor.IsBackdropWindow(root);
 }
 
 bool DesktopApp::TryGetDesktopHoverPointFromCursor(

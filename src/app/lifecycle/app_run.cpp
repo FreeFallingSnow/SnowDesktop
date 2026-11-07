@@ -1,8 +1,30 @@
 #include "platform/force_restart_hotkey.h"
+#include "diagnostics/debug_profile.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "settings/settings_search_index.h"
+#include "dock/dock_window_preview.h"
+#include "common/l10n.h"
+#include "ui/render/app_font.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "platform/single_instance.h"
+#include "settings/settings_snapshot.h"
+#include "settings/general_settings.h"
+#include "settings/animation_settings.h"
+#include "common/utils.h"
+#include "ui/input/text_input_window.h"
+#include "layout/floating_popup_rules.h"
+#include "system/panel/system_panel.h"
+#include "widget/view/widget_accessibility_provider.h"
+#include "steam/steam_entitlement.h"
+#include "steam/steam_presence.h"
+#include "settings/settings_window.h"
+#include "settings/settings_controller.h"
+#include "app/features/steam_workshop_subscription_poll_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "ui/input/private_pointer.h"
 #include "app/features/app_control_runtime.h"
 #include "app/input/software_desktop_hotkey.h"
@@ -172,7 +194,7 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
                 request.extensions.front().c_str());
     }
 
-    const HRESULT shown = dialog->Show(owner);
+    const HRESULT shown = snowdesktop::operation_feedback::ShowModalWindow(dialog.Get(), owner);
     if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED))
     {
         result.canceled = true;
@@ -923,6 +945,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.registerAdvancedFeatures = [this]() {
         StartSteamEntitlementRegistration();
     };
+    settingsHostOptions.steamRoom = [this](snowdesktop::steam_room::Command command) {
+        return widgetEngine_ ? widgetEngine_->ControlSteamRoom(command) : snowdesktop::steam_room::Status{};
+    };
     settingsHostOptions.resetAdvancedFeatures = [this]() {
         const bool reset = steamEntitlementService_ &&
             steamEntitlementService_->ResetRegistration();
@@ -1374,7 +1399,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 for (const auto& widget : widgets_)
                     if (widget.id == widgetId &&
                         widget.type == DesktopWidgetType::LuaScript)
-                        return widget.selected;
+                        return ResolveLuaWidgetFrameOwner(widget).selected;
                 return false;
             });
         widgetEngine_->SetSelectedWidgetPackageProvider(
@@ -1386,9 +1411,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     if (!widget.selected)
                         continue;
                     ++selectedCount;
-                    if (widget.type ==
-                        DesktopWidgetType::LuaScript)
-                        selectedPackageId = widget.packageId;
+                    if (const auto* content = ResolveLuaWidgetContent(&widget))
+                        selectedPackageId = content->packageId;
                 }
                 return selectedCount == 1
                     ? selectedPackageId
@@ -1454,7 +1478,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         SurfaceIncludesDesktop(surface) &&
                     customDesktopVisible_ &&
                     (!desktopIconsHidden_ ||
-                        widget.keepWhenDesktopHidden))
+                        ResolveLuaWidgetFrameOwner(widget).keepWhenDesktopHidden))
                 {
                     const RECT widgetFrame =
                         GetStandaloneWidgetFrameRect(widget);
@@ -1490,7 +1514,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         });
         widgetEngine_->SetNativeMarqueeSyncCallback([this](
                 const std::wstring& widgetId,
-                const std::vector<LuaWidget::NativeMarqueeText>& marquees,
+                const std::vector<snowdesktop::widget_runtime::NativeMarqueeText>& marquees,
                 bool reducedMotion) {
             return QueueWidgetMarqueeComposition(
                 widgetId, marquees, reducedMotion);
@@ -1581,6 +1605,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     (void)PostMessageW(widgetAudioWakeWindow,
                         kWidgetTaskWakeMessage, 0, 0);
             });
+        ConfigureSteamWidgetMultiplayer(executableDirectory / L"SnowDesktopSteamBridge.exe");
+        const auto steamWidgetLobby = pendingSteamWidgetLobby_ ? pendingSteamWidgetLobby_ :
+            snowdesktop::single_instance::ParseSteamWidgetLobby(GetCommandLineW());
+        pendingSteamWidgetLobby_ = 0;
+        widgetEngine_->OpenSteamWidgetInvitation(steamWidgetLobby);
         systemDataProvider_->Controls()->SetWake([widgetAudioWakeWindow] {
             if(widgetAudioWakeWindow)(void)PostMessageW(widgetAudioWakeWindow,kWidgetTaskWakeMessage,0,0);
         });
@@ -1619,6 +1648,20 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 static_cast<snowdesktop::UiScheduleToken>(timerId));
             widgetTimerIds_.erase(timerId);
         });
+        widgetEngine_->SetWidgetAnimationTimerRequestCallback(
+            [this](const std::wstring& widgetId, UINT intervalMs) -> UINT_PTR {
+                if (!hwnd_) return 0;
+                const auto token = uiAnimationScheduler_.ScheduleAnimationFrame(
+                    intervalMs, [this, widgetId](snowdesktop::UiScheduleToken dueToken) {
+                        if (widgetEngine_)
+                            widgetEngine_->OnWidgetTimer(widgetId,
+                                static_cast<UINT_PTR>(dueToken));
+                    });
+                if (!token) return 0;
+                const auto timerId = static_cast<UINT_PTR>(token);
+                widgetTimerIds_[timerId] = widgetId;
+                return timerId;
+            });
         widgetEngine_->SetOpenWidgetSettingsCallback([this](const std::wstring& widgetId, const std::wstring&) {
             for (size_t i = 0; i < widgets_.size(); ++i)
             {
@@ -1672,7 +1715,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (index >= widgets_.size() ||
                 widgets_[index].type != DesktopWidgetType::LuaScript)
                 return false;
-            SelectWidgetOnly(index);
+            SelectWidgetOnly(FindWidgetIndexById(ResolveLuaWidgetFrameOwner(widgets_[index]).id));
             ::SetFocus(hwnd_);
             const bool focused = nodeKey.empty() ||
                 widgetEngine_->RuntimeSetAccessibilityFocus(
@@ -1688,7 +1731,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (index >= widgets_.size() ||
                 widgets_[index].type != DesktopWidgetType::LuaScript)
                 return false;
-            SelectWidgetOnly(index);
+            SelectWidgetOnly(FindWidgetIndexById(ResolveLuaWidgetFrameOwner(widgets_[index]).id));
             ::SetFocus(hwnd_);
             const bool accepted =
                 widgetEngine_->RuntimePerformAccessibilityAction(request);
@@ -1794,6 +1837,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     MSG msg{};
     bool running = true;
+    bool preferInput = true;
+    const auto peekNextMessage = [&preferInput](MSG& message) {
+        // Posted audio/data work precedes hardware input in an unfiltered
+        // PeekMessage. Alternate queue classes so neither a replenished data
+        // queue nor a continuous pointer stream can starve the other. Keep
+        // this turn across bounded message batches, including slow handlers.
+        const bool inputTurn = preferInput;
+        preferInput = !preferInput;
+        if (inputTurn && PeekMessageW(&message, nullptr, 0, 0,
+                PM_REMOVE | PM_QS_INPUT))
+            return true;
+        return PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE;
+    };
     while (running && !exitRequested_)
     {
         ProcessGraphicsDeviceRecovery();
@@ -1824,7 +1880,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 processedMessages,
                 snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
                     messageBatchStarted) &&
-            PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+            peekNextMessage(msg))
         {
             if (!snowdesktop::private_pointer::MessageAllowed(msg.hwnd, msg.message, msg.wParam, msg.lParam))
             { ++processedMessages; continue; }
@@ -1990,7 +2046,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
             snowdesktop::StatusBarSupportsSystemQuickSettings(),
             CurrentPersonalization().contextMenuStyle,
             snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged,
-            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable);
+            steamEntitlementService_ && steamEntitlementService_->Current().bridgeAvailable,
+            steamEntitlementService_ && steamEntitlementService_->Current().widgetMultiplayerAvailable);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

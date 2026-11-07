@@ -139,6 +139,7 @@ function renderPresence(snapshot){
  text("presenceCount",tasks.length+" / "+(snapshot.taskPresenceTotal||0)+" 项");
  $("taskPresence").replaceChildren(...tasks.map(task=>{
   const row=element("article",null,"presence-row");row.dataset.presenceTask=task.id;row.append(element("strong",task.displayName||task.id),element("span",phases[task.phase]||task.phase,"badge"));
+  row.append(element("span",task.hostParticipation==="independent"?"独立任务 · 不参与宿主构建":"宿主任务","badge"));
   row.append(element("p",task.progress||"尚未报告进展"));
   if(task.blocker)row.append(element("p","阻塞："+task.blocker,"warn"));
   row.append(element("small",(task.adapter||"未记录宿主")+" · 最近进展 "+time(task.lastProgressUtc)+" · 心跳距今 "+duration(task.heartbeatAgeSeconds)));
@@ -300,8 +301,8 @@ function renderRunRecords(snapshot,batch){
   if(admission?.policy==="project-weighted-v1"){
    detail(box,"项目准入",admission.compatibilityMode==="shared"?"共享额度":admission.compatibilityMode==="exclusive"?"独占执行":"未记录");
    detail(box,"CPU 预留 / 总额度",known(admission.cpuSlots)+" / "+known(admission.cpuCapacity)+" 核心额度");
-   detail(box,"内存上限 / 预留 / 总额度",known(admission.memoryMiB)+" / "+known(admission.reservedMemoryMiB)+" / "+known(admission.memoryCapacityMiB)+" MiB");
-   detail(box,"Job CPU 硬上限 / 提交内存上限",(typeof resource.cpuLimitBasisPoints==="number"?(resource.cpuLimitBasisPoints/100).toFixed(2)+"%":"未记录")+" / "+(typeof resource.committedMemoryLimitBytes==="number"?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+" MiB":"未记录"));
+   detail(box,"内存申报 / 预留 / 总额度",known(admission.memoryMiB)+" / "+known(admission.reservedMemoryMiB)+" / "+known(admission.memoryCapacityMiB)+" MiB");
+   detail(box,"Job CPU 硬上限 / 提交内存上限",(typeof resource.cpuLimitBasisPoints==="number"?(resource.cpuLimitBasisPoints/100).toFixed(2)+"%":"未记录")+" / "+(typeof resource.committedMemoryLimitBytes==="number"?(resource.committedMemoryLimitBytes/1048576).toFixed(0)+" MiB":resource.memoryBudgetMode==="advisory"?"未设置（申报为软预算）":"未记录"));
    const observation=admission.lastObservation;
    if(observation)detail(box,"排队时的额度观测",known(observation.occupiedCpuSlots)+" 核心额度 / "+known(observation.occupiedMemoryMiB)+" MiB 已预留 · "+({"cpu-capacity":"CPU 额度不足","memory-capacity":"内存额度不足","memory-headroom":"可用物理内存不足"}[observation.reason]||observation.reason)+(observation.observedUtc?" · "+time(observation.observedUtc):""));
   }else if(admission?.policy==="project-heavy-v1")detail(box,"项目准入","同项目独占执行");
@@ -543,7 +544,7 @@ function renderWorkDetail(group,snapshot,batch){
  const situation=batch?.phase==="editing"?batchDescription(batch):group.summary;text("workSituation",situation);$("workSituation").hidden=!situation;text("participantTabCount",group.members.length);text("buildTabCount",group.buildCount);
  const participants=group.members.map(task=>{
   const presence=presenceState(task,group.liveBatch||batch),card=element("article",null,"participant-card"),title=element("div",null,"section-title");title.append(element("strong",task.displayName||task.name||task.id),element("span",presence.text,"badge"+(presence.uncertain?" uncertain":"")));
-  card.append(title,element("p",task.progress||"暂无进展"));if(task.blocker)card.append(element("p","等待："+task.blocker,"warn"));
+  card.append(title,element("p",task.hostParticipation==="independent"?"独立任务 · 不参与宿主构建":"宿主任务","participant-role"),element("p",task.progress||"暂无进展"));if(task.blocker)card.append(element("p","等待："+task.blocker,"warn"));
   card.append(element("small",(task.adapter?task.adapter.toUpperCase():"来源未记录")+" · 最近进展 "+time(task.lastProgressUtc),"muted"));
   if(presence.uncertain)card.append(element("p","最后心跳 "+time(task.lastHeartbeatUtc),"participant-role"));
   const plans=group.batches.flatMap(item=>(item.tasks||[]).filter(member=>member.id===task.id&&member.plan));

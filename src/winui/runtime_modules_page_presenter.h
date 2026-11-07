@@ -1,11 +1,13 @@
 #pragma once
-#include "dock_page_presenter.h"
-#include "platform/runtime_module_status.h"
+#include "dock_page_actions.h"
+#include "settings_focus_feedback.h"
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <memory>
+#include "runtime_modules_query.h"
 #include <memory>
 
 namespace snowdesktop::winui
 {
-using RuntimeModulesQuery = std::function<void(std::function<void(runtime_modules::Snapshot)>)>;
 class RuntimeModulesPagePresenter final
 {
 public:

@@ -10,9 +10,17 @@
 | 官方社区组件 | `developer_assets/workshop_widgets/<slug>/` | 目标构建的 `data/widgets/dev/<slug>/`，独立发布 Workshop |
 | 产品 Skill | `widgets/snowdesktop-lua-widget/`、`widgets/snowdesktop-control/` | 随应用分发；分别提供组件开发与对外控制能力，不作为临时文件删除 |
 
-- 仅改 Lua 包、未改宿主原生代码/公共 API/CMake/构建脚本时，复用 `snowwidget lint`、组件测试、包校验和打包等入口，无需宿主构建或宿主全量。记录实际命令和结果；越出边界重新选检查。
+- 仅改组件包及其素材和说明、未改宿主原生代码/公共 API/CMake/共享构建脚本时，复用 `snowwidget lint`、组件测试、包校验和打包等入口，无需宿主构建或宿主全量。记录实际命令和结果；越出边界重新选检查。
+- 修改内置或官方社区组件的 Lua、manifest 或本地化后，必须实际运行 [`localization_contract`](../../tests/localization/README.md)，检查语言集合、键引用、译文及硬编码文案。独立社区组件任务仍须完成此项；组件 lint、quality 或包校验不能替代。测试程序及依赖匹配当前源码时直接补验，需要重编时按[构建与验证](validation.md)取得执行权并只构建相关目标。
 - 用户明确要求编译、任务越出纯包范围或需验证内置/开发来源切换时，运行标准 `scripts/build.bat`。独立候选构建不提前退出宿主或重启 Explorer，交付运行文件后再同步开发来源。
 - 组件开发 Skill 的加载条件见 [根规则](../../AGENTS.md#公共契约与本地化)。
+- 官方社区组件的特殊流程，包括独立任务范围、仓库来源目录、dev 同步和仓库验证要求，只维护于仓库规则，不写入随软件分发的产品 Skill；产品 Skill 只保留面向普通组件作者的通用开发与发布要求。
+
+## 独立社区组件任务
+
+- 修改范围仅限 `developer_assets/workshop_widgets/` 的官方社区组件包、素材和说明，且不修改宿主原生代码、宿主公共 API、CMake 或共享构建脚本时，按[根规则](../../AGENTS.md#任务与协作)登记为 `independent`，记录组件改动、检查、同步及本地提交；直接开发、检查、预览和打包，不加入宿主构建屏障。
+- 旧任务已经加入宿主批次时，按[宿主参与与独立任务](../../scripts/README.md#宿主参与与独立任务)停止自身等待、撤回可撤回的自身编辑登记后切换范围，保留 Task、源码、验证记录及其他任务登记。
+- 需要修改宿主或共享构建设施时，在操作前改为 `host` 并取得相应编辑权。开发来源同步、权限、用户数据保护及发布授权仍按本说明执行；仅操作目标组件的 dev 来源不要求参加宿主编辑屏障。
 
 ## 内置组件同步
 
@@ -28,13 +36,13 @@
 ## 官方社区组件与 Workshop
 
 - 社区源码不放 `widgets/`、不随应用发行；仅用户明确要求提升为内置时迁入并同步内置契约检查。
-- 先确认目标 `.build/<Configuration>/SnowDesktop.exe` 由当前源码标准构建，再运行：
+- 官方社区组件每轮开发完成并通过必要检查后，交付回复前必须同步到目标构建的 `data/widgets/dev/<slug>/`；此步骤同时适用于源码、manifest、本地化和预览图更新。先确认目标 `.build/<Configuration>/SnowDesktop.exe` 由当前源码标准构建，再运行：
 
   ```bat
   scripts/widget-dev.bat developer_assets/workshop_widgets/<slug> -Configuration <Configuration> -Once
   ```
 
-  镜像到该构建 `data/widgets/dev/<slug>/`。新候选、来源切换或尚未发现目录时，打开组件设置/“添加组件”菜单重扫；旧宿主不支持入口刷新才加 `-RestartHost`。新发现且通过校验的 UUID 默认激活开发来源，保留已保存停用决定及旧注册表现有选择。核对当前来源与权限，再完成交互验收。
+  镜像到该构建 `data/widgets/dev/<slug>/`。同步后核对源与 dev 包的 manifest UUID、版本及全部文件哈希，交付记录目标构建、dev 目录和同步结果；同步受阻时记录具体阻断和下一步，保持待交付状态。新候选、来源切换或尚未发现目录时，打开组件设置/“添加组件”菜单重扫；旧宿主不支持入口刷新才加 `-RestartHost`。新发现且通过校验的 UUID 默认激活开发来源，保留已保存停用决定及旧注册表现有选择。核对当前来源与权限，再完成交互验收。
 - Workshop 发布或更新前先同步 dev 目录；Workshop Manager 项目与 CLI `--source` 均绑定该目录，显式传同构建 `--data-directory`。由 dev 目录生成计划，核对包版本、哈希、预览及现有 PublishedFileId。
 - 曾误绑源码时，把原 PublishedFileId、发布版本、哈希、时间、偏好迁移到 dev 项目，移除重复源码登记；保留 UUID 和工坊条目，不重建条目。
 - 来源切换交付分别核对错误的 `widgets/<slug>` 不存在、目标 `data/widgets/dev/<slug>` 存在、“开发中”入口可见。

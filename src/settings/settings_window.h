@@ -1,11 +1,12 @@
 #pragma once
 
 #include "settings_route.h"
-#include "winui/settings_window_host.h"
+#include "winui/settings_window_host_options.h"
 
 #include <windows.h>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 

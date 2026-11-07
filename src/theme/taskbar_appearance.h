@@ -1,4 +1,9 @@
 #pragma once
+#include "common/json_value.h"
+#include <sstream>
+#include <cmath>
+#include <algorithm>
+#include "theme/personalization.h"
 #include "dock/dock_settings.h"
 #include "surface_theme.h"
 #include <array>

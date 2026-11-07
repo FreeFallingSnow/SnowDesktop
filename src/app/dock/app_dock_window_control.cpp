@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "common/utils.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
 #include "dock/dock_window_order.h"
@@ -24,6 +28,20 @@ const char* TaskbarDirtyEventMetric(DWORD event) noexcept
 #endif
     default: return "dirty.other";
     }
+}
+
+template <typename ReadWindowAppId>
+bool MatchesTrackedDockApp(HWND window, const DockAppIdentity& identity,
+    std::optional<DockProcessParentMap>* processParents, ReadWindowAppId readWindowAppId)
+{
+    if (DockWindowMatchesAppIdentity(window, identity, processParents))
+        return true;
+
+    // Running discovery also accepts an exact app ID for executable shortcuts.
+    // Reuse its async lookup when paths differ to keep Shell queries off hover.
+    return identity.kind == DockAppIdentityKind::Executable &&
+        !identity.appUserModelId.empty() &&
+        identity.appUserModelId == readWindowAppId(window);
 }
 }
 
@@ -61,9 +79,9 @@ bool DesktopApp::IsDockAppClosePending(
     return std::any_of(
         dockPendingCloseWindows_.begin(),
         dockPendingCloseWindows_.end(),
-        [&identity](const auto& entry) {
-            return DockWindowMatchesAppIdentity(
-                entry.first, identity);
+        [this, &identity](const auto& entry) {
+            return MatchesTrackedDockApp(entry.first, identity, nullptr,
+                [this](HWND window) { return GetDockWindowAppUserModelIdAsync(window); });
         });
 }
 
@@ -160,8 +178,10 @@ DesktopApp::CollectDockWindowPreviewItems(
                 window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
             cloaked != 0)
             return TRUE;
-        if (!DockWindowMatchesAppIdentity(window, *context->identity,
-                &context->processParents))
+        if (!MatchesTrackedDockApp(window, *context->identity, &context->processParents,
+                [owner = context->owner](HWND candidate) {
+                    return owner->GetDockWindowAppUserModelIdAsync(candidate);
+                }))
             return TRUE;
 
         wchar_t titleBuffer[512]{};
@@ -412,9 +432,14 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
         dockWindowPreview_->ScheduleHide();
     if (transition.armTimer && hwnd_)
     {
+        // Use the existing hover delay for native toolbar discovery, so the
+        // first preview layout can include its buttons and final geometry.
+        dockWindowPreview_->PrepareToolbars(CollectDockWindowPreviewItems(target.identity));
         SetTimer(hwnd_, kDockWindowPreviewHoverTimerId,
             QueryDockWindowPreviewHoverTime(), nullptr);
     }
+    else if (!hasTarget && !previewVisible)
+        dockWindowPreview_->PrepareToolbars({});
 }
 
 void DesktopApp::OnDockWindowPreviewHoverTimer()
@@ -563,8 +588,8 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
                 PostMessageW(
                     target,
                     kForegroundInteractionChangedMessage,
-                    0,
-                    0);
+                    reinterpret_cast<WPARAM>(window),
+                    static_cast<LPARAM>(eventTime));
             }
         }
     }
@@ -574,45 +599,16 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
         return;
     if (event == EVENT_OBJECT_LOCATIONCHANGE)
     {
-        if (!window || GetAncestor(window, GA_ROOT) != window)
+        const auto placement = snowdesktop::window_observation::ObservePlacement(window);
+        if (!placement) return;
+        std::scoped_lock lock(windowPlacementMutex_);
+        const auto found = observedWindowPlacements_.find(window);
+        if (found != observedWindowPlacements_.end() && found->second == *placement &&
+            !placement->maximized && !placement->fullscreenSized)
             return;
-        DWORD processId = 0;
-        GetWindowThreadProcessId(window, &processId);
-        if (!processId || processId == GetCurrentProcessId())
-            return;
-        wchar_t className[96]{};
-        GetClassNameW(window, className,
-            static_cast<int>(std::size(className)));
-        if (_wcsicmp(className, L"Progman") == 0 ||
-            _wcsicmp(className, L"WorkerW") == 0 ||
-            _wcsicmp(className, L"Shell_TrayWnd") == 0 ||
-            _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
-            return;
-        const LONG_PTR exStyle =
-            GetWindowLongPtrW(window, GWL_EXSTYLE);
-        if ((exStyle & WS_EX_TOOLWINDOW) != 0 ||
-            (GetWindow(window, GW_OWNER) &&
-                (exStyle & WS_EX_APPWINDOW) == 0))
-            return;
-        if (!IsWindowVisible(window) || IsIconic(window))
-            return;
-
-        const SystemTaskbarWindowObservation observation{
-            MonitorFromWindow(window, MONITOR_DEFAULTTONULL),
-            IsZoomed(window) != FALSE
-        };
-        std::scoped_lock lock(
-            systemTaskbarWindowObservationMutex_);
-        const auto found =
-            systemTaskbarWindowObservations_.find(window);
-        if (found !=
-                systemTaskbarWindowObservations_.end() &&
-            found->second.monitor == observation.monitor &&
-            found->second.maximized == observation.maximized)
-            return;
-        systemTaskbarWindowObservations_[window] = observation;
+        observedWindowPlacements_[window] = *placement;
     }
-    systemTaskbarWindowStateChangedTick_.fetch_add(1,
+    windowObservationRevision_.fetch_add(1,
         std::memory_order_relaxed);
     snowdesktop::performance::Value("shared.taskbar", TaskbarDirtyEventMetric(event), {}, 1);
     bool dockWindowListChanged =

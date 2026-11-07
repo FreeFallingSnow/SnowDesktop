@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "common/l10n.h"
 #include "widget/preview/widget_preview_stage.h"
 
 // Edge-highlight rendering is independent from glass diagnostics.

@@ -1,5 +1,17 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widget/view/widget_surface_renderer.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "shell/native_start_menu.h"
+#include "common/utils.h"
+#include "widget/view/widget_accessibility_provider.h"
+#include "app/dock/dock_tray_popup_state.h"
+#include "settings/settings_window.h"
 #include "widgets/widget_folder_search.h"
 #include "platform/window_support/window_support_runtime.h"
 #include "platform/window_support/window_support_pointer_metadata.h"
@@ -84,6 +96,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (!snowdesktop::private_pointer::MessageAllowed(hwnd, msg, wp, lp)) return 0;
     const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (msg >= 0xC000 &&
+        msg == snowdesktop::widget_runtime::WidgetSurfaceRenderer::ReadyMessage())
+    {
+        DrainDesktopWidgetSurfaceResults();
+        return 0;
+    }
     if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
         hwnd == dockShellHookWindow_)
     {
@@ -111,7 +129,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             0, 0, dockSystemMinimizeStartedTick_.load());
         floatingDockInputDeactivated_ = false;
         CancelDockWindowActivationObservation(source);
-        PrepareDockWindowMinimize(source, L"helper-application-minimize");
+        PrepareDockWindowMinimize(source, L"helper-application-minimize", deadline);
         if (dockWindowTransition_ && snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
             if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(source))
                 KeepDockTopmostForAction(target->anchor, dockSettings_.summonOnAppMinimize);
@@ -168,7 +186,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 HasActiveContextMenuSession(), point, RECT{},
                 snowdesktop::floating_dock_rules::DockAssociatedPopupInteractionRect(
                     popupAnchoredToDock_, floatingPopupCollectionRegion_),
-                preview, quickNavigationOpen_ ? quickNavigationRect_ : RECT{}))
+                preview, quickNavigation_->open ? quickNavigation_->rect : RECT{}))
         {
             snowdesktop::dock_input_diagnostics::RecordLayer(L"desktop-down-close", hwnd_, floatingDockVisible_,
                 static_cast<UINT>(msg));
@@ -321,16 +339,17 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             const size_t widgetIndex =
                 HitTestStandaloneWidgetIndex(point);
             if (widgetIndex < widgets_.size() &&
-                widgets_[widgetIndex].type ==
-                    DesktopWidgetType::LuaScript &&
+                IsLuaDesktopSurface(widgets_[widgetIndex]) &&
                 HitTestStandaloneWidget(widgetIndex, point) ==
                     WidgetHit::Content)
             {
+                const auto* content = ResolveLuaWidgetContent(&widgets_[widgetIndex]);
+                if (!content) break;
                 const RECT frame = GetStandaloneWidgetFrameRect(
                     widgets_[widgetIndex]);
                 const std::string cursor =
                     widgetEngine_->InteractionCursorAt(
-                        widgets_[widgetIndex].id,
+                        content->id,
                         point.x - frame.left,
                         point.y - frame.top);
                 LPCWSTR cursorId = nullptr;
@@ -386,6 +405,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
+            // The hidden desktop bypasses OnLeftButtonDown, including its
+            // outside-click dismissal for Dock collection popups.
+            if ((dockFolderPopupOpen_ || popupAnchoredToDock_) &&
+                !dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+            {
+                pendingCollectionPopupOpen_.reset();
+                CloseCollectionPopup();
+            }
             // The render child does not activate on clicks. Match the normal
             // press path so shell flyouts lose focus even while icons are hidden.
             RestoreInteractionInputFocus(true);
@@ -742,7 +769,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
 
-        if (quickNavigationOpen_)
+        if (quickNavigation_->open)
         {
             if (HandleQuickNavigationClick(pt))
                 return 0;
@@ -1036,14 +1063,16 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         size_t standaloneWidget = HitTestStandaloneWidgetIndex(pt);
         if (standaloneWidget != static_cast<size_t>(-1) &&
-            widgets_[standaloneWidget].type == DesktopWidgetType::LuaScript)
+            IsLuaDesktopSurface(widgets_[standaloneWidget]))
         {
             if (HitTestStandaloneWidget(standaloneWidget, pt) == WidgetHit::Content && widgetEngine_)
             {
+                const auto* content = ResolveLuaWidgetContent(&widgets_[standaloneWidget]);
+                if (!content) return 0;
                 RECT frame = GetStandaloneWidgetFrameRect(widgets_[standaloneWidget]);
-                widgetEngine_->EnsureWidgetLoaded(widgets_[standaloneWidget].id,
-                    widgets_[standaloneWidget].packageId);
-                widgetEngine_->InvokeMouseEvent(widgets_[standaloneWidget].id, "onDoubleClick",
+                const std::wstring instanceId = content->id;
+                widgetEngine_->EnsureWidgetLoaded(instanceId, content->packageId);
+                widgetEngine_->InvokeMouseEvent(instanceId, "onDoubleClick",
                     pt.x - frame.left, pt.y - frame.top, 1, 0);
             }
             return 0;
@@ -1446,7 +1475,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnUrlDropDownloadCompleted(lp);
         return 0;
     case kForegroundInteractionChangedMessage:
-        HandleDockForegroundInteractionChanged();
+        HandleDockForegroundInteractionChanged(
+            reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         return 0;
     case kDockWindowListChangedMessage:
         if (generalSettings_.dockEnabled && !reloading_)

@@ -11,6 +11,7 @@ inline constexpr wchar_t kFolderMapping[] = L"\uF425";    // folder_link
 inline constexpr wchar_t kCollectionGroup[] = L"\U000F0829"; // collections_empty
 inline constexpr auto kFanExpansion = kCollectionGroup; // overlapping collection cards
 inline constexpr wchar_t kFileGroup[] = L"\U000F0ADE";    // folder_multiple
+inline constexpr wchar_t kPages[] = L"\U000F0A68";        // table_multiple_24_regular
 inline constexpr wchar_t kCollectItems[] = L"\uF159";     // arrow_import
 inline constexpr wchar_t kAutoCollect[] = L"\uF190";      // arrow_sync
 inline constexpr wchar_t kContentLayout[] = L"\uE064";    // apps_list_detail

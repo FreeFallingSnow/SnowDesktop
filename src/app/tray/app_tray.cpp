@@ -1,4 +1,8 @@
 #include "app/app.h"
+#include "common/l10n.h"
+#include "common/utils.h"
+#include "dock/dock_settings.h"
+#include "shell/shell_item_visibility.h"
 
 #include "desktop/desktop_namespace_registry.h"
 
@@ -257,7 +261,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         break;
     case kTrayRestartExplorerCommand:
         if (!RestartWindowsExplorer())
-            MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+            snowdesktop::operation_feedback::ShowMessageBox(controlHwnd_ ? controlHwnd_ : hwnd_,
                 _LW("app.interact.restart_explorer_fail"),
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;

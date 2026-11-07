@@ -130,6 +130,7 @@ public:
     bool Cancel(std::string_view name);
     bool SetVisible(bool visible);
     std::vector<Frame> Consume(TimePoint now);
+    void ResetFrameTiming();
     void Clear();
     bool HasPending() const noexcept;
     std::size_t Size() const noexcept;

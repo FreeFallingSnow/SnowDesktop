@@ -1,3 +1,5 @@
+#include "settings/settings_snapshot.h"
+#include "settings/settings_controller_interface.h"
 #include "settings_ipc_backends.h"
 #include <thread>
 #include "settings_ipc_values.h"
@@ -349,6 +351,9 @@ struct BackendServer::Impl
         channel.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();
         });
+        channel.Bind<steam_room::Status, steam_room::Command>("options.steamRoom", [this](steam_room::Command command) {
+            return options.steamRoom ? options.steamRoom(command) : steam_room::Status{};
+        });
         channel.Bind<void, bool, std::uint64_t>("options.configureWindowSupport", [this](bool enabled, std::uint64_t handle) {
             const auto owner = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(handle));
             if (!channel.OwnsPeerWindow(owner))
@@ -526,7 +531,12 @@ struct BackendServer::Impl
 BackendServer::BackendServer(Channel& channel, ISettingsController& controller,
     WidgetEngine* engine, SettingsWindowHostOptions options)
     : impl_(std::make_unique<Impl>(channel, controller, engine, std::move(options))) {}
-BackendServer::~BackendServer() { impl_->ClosePages(); }
+BackendServer::~BackendServer()
+{
+    impl_->ClosePages();
+    try { if (impl_->options.steamRoom) (void)impl_->options.steamRoom(steam_room::Command::StopListening); }
+    catch (...) {}
+}
 void BackendServer::ClosePages() noexcept { impl_->ClosePages(); }
 
 SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
@@ -558,6 +568,10 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return channel.Call<bool>("options.ensureWidget", std::wstring(id)); };
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
+    options.steamRoom = [&channel](steam_room::Command command) {
+        if (command == steam_room::Command::Invite) AllowSetForegroundWindow(channel.PeerProcessId());
+        return channel.Call<steam_room::Status>("options.steamRoom", command);
+    };
     options.configureWindowSupport = [&channel](bool enabled, HWND owner) {
         // The user clicked in this foreground settings process. Transfer the
         // foreground permission to the actual host before its worker invokes UAC.

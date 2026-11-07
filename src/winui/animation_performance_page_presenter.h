@@ -1,6 +1,9 @@
 #pragma once
 
-#include "dock_page_presenter.h"
+#include "dock_page_actions.h"
+#include "settings_focus_feedback.h"
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <memory>
 
 namespace snowdesktop::winui
 {

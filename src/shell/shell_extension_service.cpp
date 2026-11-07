@@ -2,6 +2,7 @@
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_attribution.h"
 #include "shell_extension_demand.h"
+#include "shell_extension_menu_rows.h"
 #include "shell_menu_read_projection.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
@@ -175,7 +176,6 @@ struct MenuService::Impl
         // A finite management request, independent of ordinary query priority
         // and of whether settings happened to be opened earlier in this process.
         bool managementAttributionRequested = false;
-        bool fullMenuRequested = false;
         std::vector<Click> clicks;
     };
     struct Running
@@ -371,6 +371,11 @@ struct MenuService::Impl
     bool AttributionPending(const Request &request, const Preferences &fallback) const
     {
         if ((configured ? preferences : fallback).showAll) return false;
+        const auto it = rows.find(PopupKey(request, true));
+        if (it != rows.end())
+            for (const auto& source : it->second.view.sources)
+                if (const auto probe = rows.find(SelectionKey(source)); probe != rows.end() &&
+                    probe->second.view.pending) return true;
         if (configured && !managementActive && request.sourceClsid.empty() && !request.startPinOnly)
         {
             // An aggregate can finish before cold source paths are recovered.
@@ -386,7 +391,6 @@ struct MenuService::Impl
             // Inventory attribution enumerates the whole machine and can outlast a
             // single helper. Known rows remain visible throughout this bounded wait.
             (scanning && ActiveScanElapsed() >= kInventoryWaitMs)) return false;
-        const auto it = rows.find(SelectionKey(request));
         const unsigned contexts = it != rows.end() && it->second.view.contexts ? it->second.view.contexts :
             request.context == Context::Desktop ? ContextBit(Context::Desktop) :
             request.background ? ContextBit(Context::FolderBackground) : 3u;
@@ -497,18 +501,6 @@ struct MenuService::Impl
         for (auto &[id, source] : selected) result.push_back(std::move(source));
         return result;
     }
-    bool KnownSelectionSources(unsigned contexts) const
-    {
-        bool wanted = false;
-        for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
-            for (const auto &id : shown[i])
-            {
-                wanted = true;
-                const auto source = ConfiguredSource(id, 1u << i);
-                if (!source || (source->kind != RegistrationKind::Verb && source->kind != RegistrationKind::Handler)) return false;
-            }
-        return wanted;
-    }
     bool RuntimeProof(const Request &request, unsigned contexts) const
     {
         if ((ShortcutSelection(request) && request.sourceClsid.empty()) || !contexts || !sourceCatalogue.revision || checkedSourceRegistryRevision != registryRevision ||
@@ -594,19 +586,18 @@ struct MenuService::Impl
                 for (auto &[key, row] : rows)
                     if (row.registryInvalid && row.view.snapshot && !row.view.pending) row.checkRequested = true;
                 RebuildAvailable();
-                // Initial dispatch may have had no source paths yet. Supplement
-                // that existing aggregate rather than restarting it or waiting
-                // for a second opening to discover the independent sources.
+                // Recover only missing ownership metadata. The popup itself
+                // always reads and filters one aggregate menu.
                 std::vector<std::tuple<Request, QueryPriority, bool>> queries;
                 for (auto& [key, row] : rows)
                 {
                     if (row.inspection || row.priority == QueryPriority::Inspect || row.priority == QueryPriority::Execute ||
                         !row.request.sourceClsid.empty() || row.request.startPinOnly || row.request.originalShortcutOnly ||
                         !row.view.contexts || (!row.view.snapshot && !row.view.pending && !row.queued)) continue;
-                    const auto plan = PlanDemandQueries(catalogue, available, preferences, row.request, row.view.contexts);
-                    if (row.view.sources != plan.sources) { row.view.sources = plan.sources; ++row.view.revision; }
-                    for (const auto& source : plan.sources)
-                        queries.emplace_back(source, row.priority, row.force || !RuntimeProof(row.request, row.view.contexts));
+                    const auto sources = UnmappedMenuSources(catalogue, available, preferences, row.request, row.view.contexts);
+                    if (row.view.sources != sources) { row.view.sources = sources; ++row.view.revision; }
+                    for (const auto& source : sources)
+                        queries.emplace_back(source, row.priority, row.force);
                 }
                 for (const auto& [request, priority, force] : queries) Queue(request, priority, force);
                 MenuTrace("catalogue.sources", "completed", 0, static_cast<unsigned>(sourceCatalogue.rows.size()));
@@ -1190,10 +1181,12 @@ struct MenuService::Impl
             static_cast<unsigned>(reply.entries.size()));
         return true;
     }
-    std::set<std::string> CurrentSourceOwners(const Request& request, const Entry& entry) const
+    std::set<std::string> CurrentSourceOwners(const Request& request, const Entry& entry, unsigned contexts) const
     {
         std::set<std::string> owners;
         if (entry.provider.empty()) return owners;
+        if (const auto* source = DemandSource(catalogue, available, entry.provider, contexts);
+            source && DependsOn(*source, request, contexts)) owners.insert(source->id);
         const auto now = MenuSnapshotCache::Now();
         for (const auto& [sourceKey, source] : rows)
         {
@@ -1206,6 +1199,60 @@ struct MenuService::Impl
                     owners.insert(root.registration);
         }
         return owners;
+    }
+    void ProjectCommandOwnership(Reply& reply, const Request& request, unsigned contexts) const
+    {
+        // A fresh aggregate can have multiple applicable registrations for one
+        // verb (for example Directory/Background and DesktopBackground). Use
+        // the same unique recorded ownership for display and click filtering;
+        // executable tokens still belong exclusively to the fresh aggregate.
+        for (auto& entry : reply.entries) if (entry.registration.empty())
+        {
+            const auto owners = CurrentSourceOwners(request, entry, contexts);
+            if (owners.size() > 1) continue;
+            if (owners.size() == 1) { entry.registration = *owners.begin(); continue; }
+            std::string registration;
+            bool ambiguous = false;
+            unsigned associatedContexts = 0;
+            for (const auto& association : catalogue.associations)
+                if (association.provider == entry.provider && (ContextBit(association.context) & contexts))
+                {
+                    if (!registration.empty() && registration != association.registration) ambiguous = true;
+                    registration = association.registration;
+                    associatedContexts |= ContextBit(association.context);
+                }
+            if (!ambiguous && associatedContexts == contexts) entry.registration = std::move(registration);
+        }
+    }
+    void FillDisplayIcons(std::vector<Entry>& entries, unsigned contexts, const Registration* inherited = nullptr) const
+    {
+        for (auto& entry : entries)
+        {
+            if (entry.separator) continue;
+            const Registration* owner = nullptr;
+            for (const auto* source : {&catalogue, &available})
+            {
+                const auto known = std::find_if(source->rows.begin(), source->rows.end(), [&](const auto& item) {
+                    return contexts && (item.contexts & contexts) == contexts && item.systemEnabled &&
+                        ((!entry.registration.empty() && item.id == entry.registration) ||
+                         (item.id == entry.provider && item.display.key == entry.key));
+                });
+                if (known != source->rows.end()) { owner = &*known; break; }
+            }
+            if (!owner) owner = inherited;
+            if (entry.pixels.empty() && !presentation_detail::CommandGlyph(entry.key) && owner)
+            {
+                const Entry* image = &owner->display;
+                if (image->pixels.empty() && !owner->application.id.empty())
+                    for (const auto& item : catalogue.rows)
+                        if (item.systemEnabled && item.application.id == owner->application.id && !item.display.pixels.empty())
+                        { image = &item.display; break; }
+                entry.width = image->width; entry.height = image->height; entry.pixels = image->pixels;
+                entry.imageLogicalSize = image->imageLogicalSize ? image->imageLogicalSize : 16;
+            }
+            // Only a proven application can supply artwork for unnamed descendants.
+            FillDisplayIcons(entry.children, contexts, owner && !owner->application.id.empty() ? owner : nullptr);
+        }
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
@@ -1310,12 +1357,7 @@ struct MenuService::Impl
             // Apply the same current, unique proof to this fresh executable
             // copy. Tokens still come exclusively from the fresh aggregate;
             // derived ownership never enters the durable display snapshot.
-            if (request.sourceClsid.empty())
-                for (auto& entry : executable.entries) if (entry.registration.empty())
-                {
-                    const auto owners = CurrentSourceOwners(request, entry);
-                    if (owners.size() == 1) entry.registration = *owners.begin();
-                }
+            if (request.sourceClsid.empty()) ProjectCommandOwnership(executable, request, contexts);
         }
         if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, executable, contexts);
         bool invoked = false;
@@ -1882,7 +1924,7 @@ struct MenuService::Impl
                     return !job.startPinOnly && job.rootMetadataOnly;
                 });
                 const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs - metadataJobs + (sourceJob ? 1 : 0);
-                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false, allExtensions = false;
+                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, dispatchManagementGeneration = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
                     auto best = rows.end(); const auto now = GetTickCount64();
@@ -1895,7 +1937,6 @@ struct MenuService::Impl
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
                     dispatchManagementGeneration = managementGeneration;
                     sequence = row.sequence; dependency = row.dependency; invalid = row.invalid; row.queued = false;
-                    allExtensions = configured && preferences.showAll;
                 }
                 if (priority == QueryPriority::Prewarm && !Local(request))
                 {
@@ -1912,13 +1953,6 @@ struct MenuService::Impl
                     {
                         row.view.pending = false; row.checkRequested = row.checkInspection = false; row.targetCheckDemand.reset();
                         MenuTrace("schedule", "no_enabled_items"); continue;
-                    }
-                    if (priority != QueryPriority::Inspect && priority != QueryPriority::Execute &&
-                        request.sourceClsid.empty() && !request.startPinOnly && sourceScanning &&
-                        KnownSelectionSources(contexts) && GetTickCount64() - sourceScanStarted < (sourceMetadataRecovery ? 8000 : kInventoryWaitMs))
-                    {
-                        row.queued = true; row.due = GetTickCount64() + 20;
-                        break;
                     }
                     ticket.dependency = SnapshotDependency(request, contexts, priority == QueryPriority::Inspect);
                     diskAllowed = ticket.dependency != 0;
@@ -1971,64 +2005,23 @@ struct MenuService::Impl
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key];
-                    // Classification and planning run on the worker. UI reads
-                    // only this plan and immutable, separately keyed snapshots.
+                    // A popup always reads one aggregate. Already recorded
+                    // command ownership is enough for display filtering; only
+                    // previously unmapped dynamic extensions need metadata.
                     if (!row.inspection && priority != QueryPriority::Execute && !preferences.showAll &&
-                        !row.fullMenuRequested && configured &&
+                        configured &&
                         request.sourceClsid.empty() && !request.startPinOnly && !request.originalShortcutOnly)
                     {
-                        auto plan = PlanDemandQueries(catalogue, available, preferences, request, contexts);
-                        const bool verifying = !RuntimeProof(request, contexts);
-                        // Only a current exact-source check can remove the root
-                        // fallback. Old complete inventories are routing hints.
-                        if (verifying) plan.full = true;
-                        row.view.sources = plan.sources;
-                        row.view.sourcesOnly = !plan.full;
+                        row.view.sources = UnmappedMenuSources(catalogue, available, preferences, request, contexts);
                         row.view.contexts = contexts;
-                        for (const auto &source : plan.sources) Queue(source, priority, row.force || verifying);
-                        if (priority == QueryPriority::Prewarm && plan.full)
-                        {
-                            // Unknown roots need actual menu demand. Known
-                            // enabled sources above still prefetch their children.
-                            row.view.pending = false; row.view.sourcesOnly = true;
-                            row.force = row.fullMenuRequested = false;
-                            MenuTrace("schedule", "prewarm_sources_only", 0, static_cast<unsigned>(plan.sources.size()));
-                            continue;
-                        }
-                        if (!plan.full)
-                        {
-                            row.view.pending = false; row.view.error.clear(); row.checkRequested = row.checkInspection = false;
-                            row.targetCheckDemand.reset();
-                            row.force = false; ++row.view.revision;
-                            MenuTrace("schedule", "sources_only", 0, static_cast<unsigned>(plan.sources.size()));
-                            continue;
-                        }
-                        if (!plan.sources.empty())
-                        {
-                            // Start useful partial results before the aggregate
-                            // fallback. A concurrent background query may already
-                            // occupy the other slot; consuming both with full
-                            // queries would defeat incremental display entirely.
-                            row.fullMenuRequested = true;
-                            row.queued = true; row.due = GetTickCount64() + 1;
-                            continue;
-                        }
+                        for (const auto &source : row.view.sources) Queue(source, priority, row.force);
                     }
-                    else row.view.sourcesOnly = false;
-                }
-                if (priority == QueryPriority::Prewarm && request.sourceClsid.empty() && !request.startPinOnly && !allExtensions)
-                {
-                    std::lock_guard lock(mutex);
-                    auto &row = rows[key]; row.view.pending = false; row.fullMenuRequested = false;
-                    MenuTrace("schedule", "prewarm_no_aggregate");
-                    continue;
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, request.rootMetadataOnly, contexts, {}, 0, 0};
                 job.managementOnly = priority == QueryPriority::Inspect;
                 job.managementGeneration = dispatchManagementGeneration;
                 { std::lock_guard lock(mutex);
-                  if (job.managementOnly && (!managementActive || job.managementGeneration != managementGeneration)) continue;
-                  rows[key].fullMenuRequested = false; }
+                  if (job.managementOnly && (!managementActive || job.managementGeneration != managementGeneration)) continue; }
                 try { job.work = DispatchQuery(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
@@ -2188,17 +2181,6 @@ void MenuService::Query(const Request &request, QueryPriority priority, bool for
     if (!key.empty() && priority != QueryPriority::Prewarm) impl_->RequestForegroundScan();
     impl_->RememberView(request, key);
 }
-void MenuService::QueryFullMenu(const Request &request)
-{
-    std::lock_guard lock(impl_->mutex);
-    const auto key = impl_->Queue(request, QueryPriority::Menu, true);
-    if (!key.empty())
-    {
-        impl_->RequestForegroundScan();
-        impl_->rows[key].fullMenuRequested = true;
-    }
-    impl_->RememberView(request, key);
-}
 bool MenuService::MenuEnabled(const Request &request, const Preferences &fallback)
 {
     std::lock_guard lock(impl_->mutex);
@@ -2235,26 +2217,11 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         view.pending = false; view.error.clear();
     }
     const auto project = [&](Reply &reply) {
-        // Snapshots created before attribution still use provider IDs. Apply
-        // only a unique, proven association when consulting current rules.
-        for (auto &entry : reply.entries) if (entry.registration.empty())
-        {
-            const auto owners = impl_->CurrentSourceOwners(row.request, entry);
-            if (owners.size() > 1) continue;
-            if (owners.size() == 1) { entry.registration = *owners.begin(); continue; }
-            std::string registration;
-            bool ambiguous = false;
-            unsigned associatedContexts = 0;
-            for (const auto &a : impl_->catalogue.associations)
-                if (a.provider == entry.provider && (ContextBit(a.context) & view.contexts))
-                {
-                    if (!registration.empty() && registration != a.registration) ambiguous = true;
-                    registration = a.registration;
-                    associatedContexts |= ContextBit(a.context);
-                }
-            if (!ambiguous && associatedContexts == view.contexts) entry.registration = std::move(registration);
-        }
+        impl_->ProjectCommandOwnership(reply, row.request, view.contexts);
         reply.entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, reply, view.contexts);
+        // Reuse the same command/application artwork already shown by settings.
+        // This is a memory-only display copy; stored snapshots and commands stay unchanged.
+        impl_->FillDisplayIcons(reply.entries, view.contexts);
     };
     if (view.snapshot) project(*view.snapshot);
     if (view.roots) project(*view.roots);

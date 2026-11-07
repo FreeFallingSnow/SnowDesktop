@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "layout/floating_popup_rules.h"
+#include "app/dock/persistent_dock_host.h"
 #include "ui/render/ui_presentation_scope.h"
 #include "drag_drop/drag_input_rules.h"
 #include "popup_window_pair_z_order.h"
@@ -17,6 +21,7 @@ namespace
 {
 constexpr UINT_PTR kPopupMouseLeaveTimerId = 1;
 constexpr UINT kPopupMouseLeavePollIntervalMs = 50;
+constexpr UINT kStackIndicatorMouseLeavePollIntervalMs = 30;
 constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
 constexpr UINT kPopupPresentationRetryIntervalMs = 100;
 constexpr unsigned kPopupPresentationRetryLimit = 5;
@@ -133,7 +138,7 @@ bool DesktopApp::IsLuaPanelHostedByFloatingWindow() const
 
 bool DesktopApp::ShouldShowFloatingPopupWindow() const
 {
-    return snowdesktop::floating_popup_rules::ShouldShow(
+    return IsLuaStackIndicatorVisible() || snowdesktop::floating_popup_rules::ShouldShow(
         IsCollectionPopupHostedByFloatingWindow(),
         IsLuaPanelHostedByFloatingWindow());
 }
@@ -353,7 +358,7 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
 
 RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
 {
-    RECT bounds{};
+    RECT bounds = IsLuaStackIndicatorVisible() ? InflateCopy(luaStackIndicator_.bounds, 6) : RECT{};
     if (IsCollectionPopupHostedByFloatingWindow())
     {
         if (const DesktopWidget* popup = GetOpenPopupWidget())
@@ -567,6 +572,7 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
 {
     // A transparent DComp frame does not make its native HWND click-through.
     // Retire input before discarding the last usable pixels.
+    PreserveFloatingPopupDragCapture();
     collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupDcompVisual_)
         floatingPopupDcompVisual_->SetContent(nullptr);
@@ -577,12 +583,29 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
 
 void DesktopApp::SuspendFloatingPopupPresentation()
 {
+    PreserveFloatingPopupDragCapture();
     collectionPopupBackdropCompositor_.HidePopupWindowPair(floatingPopupHwnd_);
     if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_) &&
         ShouldShowFloatingPopupWindow() &&
         floatingPopupPresentationRetryCount_ < kPopupPresentationRetryLimit)
         SetTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId,
             kPopupPresentationRetryIntervalMs, nullptr);
+}
+
+void DesktopApp::PreserveFloatingPopupDragCapture()
+{
+    const bool dragging = dragSession_.IsActive() ||
+        widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize || largeIconGesture_;
+    if (dragging && !dragDropController_.IsTransportActive() &&
+        floatingPopupHwnd_ &&
+        snowdesktop::private_pointer::Capture() == floatingPopupHwnd_ &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        // Capture changes synchronously notify the old host. Its existing
+        // owned-host guard preserves the gesture once the desktop owns it.
+        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
+    }
 }
 
 void DesktopApp::RecoverFloatingPopupCompositionFailure(
@@ -748,6 +771,7 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
     brushCacheContext_ = context.Get();
     renderingFloatingPopup_ = true;
     DrawDynamicOverlays(context.Get(), false);
+    DrawLuaStackIndicator(context.Get());
     renderingFloatingPopup_ = false;
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -890,6 +914,13 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
     if (!collectionPopupBackdropCompositor_.IsAvailable())
         return;
 
+    if (IsLuaStackIndicatorVisible())
+    {
+        collectionPopupBackdropCompositor_.SetVisualTransform(1.0f, 1.0f, 0.0f, 0.0f);
+        collectionPopupBackdropCompositor_.SetVisible(floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_));
+        collectionPopupBackdropCompositor_.CommitVisualChanges();
+        return;
+    }
     if (popupAnimationCompositorDriven_ &&
         popupAnimation_.IsAnimating())
     {
@@ -942,7 +973,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         collectionPopupBackdropCompositor_.Reset();
         return;
     }
-    if (!popup || IsRectEmpty(&floatingPopupWindowBounds_))
+    if ((!popup && !IsLuaStackIndicatorVisible()) || IsRectEmpty(&floatingPopupWindowBounds_))
     {
         collectionPopupBackdropCompositor_.SetVisible(false);
         return;
@@ -983,13 +1014,13 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         zOrderStage, menuZOrderBefore,
         CaptureMenuHostZOrder(floatingPopupHwnd_));
 
-    RECT panel = GetCollectionPopupRect(*popup);
+    RECT panel = popup ? GetCollectionPopupRect(*popup) : luaStackIndicator_.bounds;
     OffsetRect(
         &panel,
         -floatingPopupWindowBounds_.left,
         -floatingPopupWindowBounds_.top);
-    const float cornerRadius = 18.0f *
-        GetCollectionPopupLayoutMetrics(*popup).scale;
+    const float cornerRadius = popup ? 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale
+        : static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(widgets_[FindWidgetIndexById(luaStackIndicator_.stackId)])));
     collectionPopupBackdropCompositor_.BeginFrame(true);
     collectionPopupBackdropCompositor_.AddPanel(
         panel, cornerRadius, collectionPopupBlurRadius_,
@@ -1005,6 +1036,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
     {
+        PreserveFloatingPopupDragCapture();
         if (floatingPopupHwnd_) KillTimer(floatingPopupHwnd_, kPopupPresentationRetryTimerId);
         floatingPopupPresentationRetryCount_ = 0;
         StopFloatingPopupOutsideClickMonitor();
@@ -1022,7 +1054,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             L"Floating popup window creation FAILED", DiagnosticLogLevel::Warning);
         return;
     }
-    StartFloatingPopupOutsideClickMonitor();
+    if (!IsLuaStackIndicatorVisible()) StartFloatingPopupOutsideClickMonitor();
+    else StopFloatingPopupOutsideClickMonitor();
 
     const RECT nextBounds =
         CalculateFloatingPopupWindowBounds();
@@ -1033,7 +1066,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     const bool boundsChanged =
         !EqualRect(&nextBounds, &floatingPopupWindowBounds_);
 
-    RECT nextCollectionRegion{};
+    RECT nextCollectionRegion = IsLuaStackIndicatorVisible() ? luaStackIndicator_.bounds : RECT{};
     if (IsCollectionPopupHostedByFloatingWindow())
     {
         if (const DesktopWidget* popup = GetOpenPopupWidget())
@@ -1261,14 +1294,16 @@ void DesktopApp::PresentFloatingPopupPointerFrame(
 
 void DesktopApp::SyncPopupMouseLeaveTimer()
 {
-    const bool shouldPoll = personalizationSettings_.popupCloseOnMouseLeave &&
-        IsCollectionPopupInteractive() && floatingPopupHwnd_ &&
-        IsWindow(floatingPopupHwnd_);
+    const bool shouldPoll = ((!luaStackIndicator_.stackId.empty() && !IsRectEmpty(&luaStackIndicator_.bounds)) ||
+        (personalizationSettings_.popupCloseOnMouseLeave && IsCollectionPopupInteractive())) &&
+        floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_);
     if (shouldPoll)
     {
         if (!popupMouseLeaveTimerArmed_)
             popupMouseLeaveTimerArmed_ = SetTimer(floatingPopupHwnd_,
-                kPopupMouseLeaveTimerId, kPopupMouseLeavePollIntervalMs, nullptr) != 0;
+                kPopupMouseLeaveTimerId,
+                IsLuaStackIndicatorVisible() ? kStackIndicatorMouseLeavePollIntervalMs : kPopupMouseLeavePollIntervalMs,
+                nullptr) != 0;
     }
     else
     {
@@ -1320,9 +1355,6 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
     // drag. The existing close transition snapshots a Dock-folder source and
     // detaches only the outgoing popup target; keep the drag selection intact.
     popupMouseLeaveController_.Reset();
-    if (dragging && !dragDropController_.IsTransportActive() &&
-        snowdesktop::private_pointer::Capture() == floatingPopupHwnd_ && hwnd_ && IsWindow(hwnd_))
-        snowdesktop::private_pointer::SetPointerCapture(hwnd_);
     CloseCollectionPopup(!dragging);
 }
 
@@ -1413,6 +1445,14 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             ? HTCLIENT : HTTRANSPARENT;
     case WM_SETCURSOR:
     {
+        POINT point{};
+        if (IsLuaStackIndicatorVisible() &&
+            snowdesktop::private_pointer::CursorPosition(&point) &&
+            hwnd_ && ScreenToClient(hwnd_, &point) && PtInRect(&luaStackIndicator_.bounds, point))
+        {
+            snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
+            return TRUE;
+        }
         const snowdesktop::private_pointer::ForwardScope forward(hwnd_, msg);
         return HandleMessage(hwnd_, msg, wp, lp);
     }
@@ -1465,17 +1505,46 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
             POINT point{};
             if (popupMouseLeaveTimerArmed_ && hwnd_ && IsWindow(hwnd_) &&
                 snowdesktop::private_pointer::CursorPosition(&point) && ScreenToClient(hwnd_, &point))
+            {
                 UpdatePopupCloseOnMouseLeave(point);
+                if (!luaStackIndicator_.stackId.empty())
+                {
+                    if (!IsLuaStackIndicatorVisible()) HideLuaStackIndicator();
+                    else
+                    {
+                        POINT screen = point; ClientToScreen(hwnd_, &screen);
+                        const HWND hit = snowdesktop::private_pointer::WindowAtPoint(screen);
+                        if (hit != hwnd_ && hit != floatingPopupHwnd_ && !IsChild(hwnd_, hit)) HideLuaStackIndicator();
+                        else
+                        {
+                            const size_t owner = FindWidgetIndexById(luaStackIndicator_.stackId);
+                            const RECT frame = owner < widgets_.size() ? GetStandaloneWidgetFrameRect(widgets_[owner]) : RECT{};
+                            if ((PtInRect(&frame, point) && HitTestStandaloneWidgetIndex(point) == owner) ||
+                                PtInRect(&luaStackIndicator_.bounds, point) ||
+                                PtInRect(&luaStackIndicator_.bridge, point))
+                                luaStackIndicator_.hideAfter = 0;
+                            else UpdateLuaStackIndicator(point);
+                        }
+                    }
+                }
+            }
+            else if (!luaStackIndicator_.stackId.empty()) HideLuaStackIndicator();
             return 0;
         }
         break;
     case WM_LBUTTONDOWN:
+        if (HandleLuaStackIndicatorPointer(desktopPoint(), true)) return 0;
         handlingFloatingPopupInput_ = true;
         OnLeftButtonDown(wp, desktopLParam());
         handlingFloatingPopupInput_ = false;
         InvalidateFloatingPopupWindow(true);
         return 0;
     case WM_LBUTTONUP:
+        if (!luaStackIndicator_.pressedMember.empty())
+        {
+            if (!HandleLuaStackIndicatorPointer(desktopPoint(), false)) snowdesktop::private_pointer::ReleasePointerCapture();
+            return 0;
+        }
         handlingFloatingPopupInput_ = true;
         OnLeftButtonUpAt(wp, desktopPoint());
         handlingFloatingPopupInput_ = false;
@@ -1483,6 +1552,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        luaStackIndicator_.pressedMember.clear();
         if (msg == WM_CANCELMODE) CancelRenameClick();
         ForgetLuaWidgetPanelCapture(hwnd);
         {

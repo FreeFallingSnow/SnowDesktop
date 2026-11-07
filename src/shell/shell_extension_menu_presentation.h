@@ -171,12 +171,10 @@ class Presentation
         {
             const auto view = service_.MenuDisplay(normalSource_, prefs_, true);
             ShowRoots(items, view, moreCommand);
-            SyncSources(view);
-            PollSources(items, moreCommand);
         }
-        if ((!normalDone_ || !startDone_ || !SourcesDone()) && !source_.paths.empty())
+        if ((!normalDone_ || !startDone_) && !source_.paths.empty())
         {
-            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && SourcesDone(); };
+            options.pollItemsFinished = [this] { return normalDone_ && startDone_; };
             options.pollItemsStablePrefix = true;
             options.pollPrefetchedSubmenus = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
@@ -188,11 +186,6 @@ class Presentation
                 }
                 auto updated = current;
                 bool progressed = false;
-                // The scheduler can discover the plan after the popup opens.
-                // Read it before completing the ordinary stream, including a
-                // sources-only plan with no aggregate payload at all.
-                if (!normalDone_) SyncSources(service_.MenuDisplay(normalSource_, prefs_, true));
-                progressed |= PollSources(updated, moreCommand);
                 if (!normalDone_)
                 {
                     auto view = service_.MenuDisplay(normalSource_, prefs_, true);
@@ -263,43 +256,6 @@ class Presentation
         rootCommands_.clear();
         presentation_detail::RemoveEmptySeparators(items);
         return true;
-    }
-    struct SourceLane { Request request; bool done = false; };
-    bool SourcesDone() const
-    {
-        return std::all_of(sources_.begin(), sources_.end(), [](const auto &source) { return source.done; });
-    }
-    void SyncSources(const MenuView &view)
-    {
-        for (const auto &request : view.sources)
-            if (std::none_of(sources_.begin(), sources_.end(), [&](const auto &source) { return source.request == request; }))
-                sources_.push_back({request});
-    }
-    bool PollSources(std::vector<modern_menu::Item> &items, UINT moreCommand)
-    {
-        bool progressed = false;
-        for (auto &source : sources_) if (!source.done)
-        {
-            if (!service_.MenuEnabled(source.request, prefs_))
-            {
-                source.done = true;
-                progressed = true;
-                continue;
-            }
-            auto view = service_.MenuDisplay(source.request, prefs_, true);
-            if (view.pending || view.attributionPending) continue;
-            if (view.snapshot && view.error.empty() && !view.snapshot->entries.empty())
-            {
-                auto additions = std::move(view.snapshot->entries);
-                // State-changing commands retain their per-opening refresh and
-                // dedicated execution rules, even when a source emits them too.
-                std::erase_if(additions, [](const auto &entry) { return StatePairForVerb(entry.key) != nullptr; });
-                UpdateNormal(items, additions, moreCommand);
-            }
-            source.done = true;
-            progressed = true;
-        }
-        return progressed;
     }
     // Rebind visible IDs to the fresh exact reference, including descendants
     // whose parent acquired registration metadata. Never relax execution lookup.
@@ -471,26 +427,33 @@ class Presentation
                     {
                         images_.push_back(image); item.image = image;
                     }
-                    result.push_back(std::move(item));
-                    continue;
                 }
-                BITMAPINFO info{};
-                info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-                info.bmiHeader.biWidth = e.width;
-                info.bmiHeader.biHeight = -e.height;
-                info.bmiHeader.biPlanes = 1;
-                info.bmiHeader.biBitCount = 32;
-                info.bmiHeader.biCompression = BI_RGB;
-                void *pixels = nullptr;
-                HBITMAP image = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
-                if (image && pixels)
+                else
                 {
-                    memcpy(pixels, e.pixels.data(), e.pixels.size());
-                    images_.push_back(image);
-                    item.image = image;
+                    BITMAPINFO info{};
+                    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                    info.bmiHeader.biWidth = e.width;
+                    info.bmiHeader.biHeight = -e.height;
+                    info.bmiHeader.biPlanes = 1;
+                    info.bmiHeader.biBitCount = 32;
+                    info.bmiHeader.biCompression = BI_RGB;
+                    void *pixels = nullptr;
+                    HBITMAP image = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+                    if (image && pixels)
+                    {
+                        memcpy(pixels, e.pixels.data(), e.pixels.size());
+                        images_.push_back(image);
+                        item.image = image;
+                    }
+                    else if (image)
+                        DeleteObject(image);
                 }
-                else if (image)
-                    DeleteObject(image);
+            }
+            if (!item.image && !e.separator)
+            {
+                const auto glyph = presentation_detail::CommandGlyph(e.key);
+                item.glyph = glyph ? glyph : L"\uE9E9";
+                if (StatePairForVerb(e.key)) item.builtinIcon = menu_icon::BuiltinIcon::Pin;
             }
             result.push_back(std::move(item));
         }
@@ -508,7 +471,6 @@ class Presentation
     std::map<UINT, CommandReference> commands_;
     std::set<UINT> originalCommands_;
     std::map<UINT, Entry> rowEntries_;
-    std::vector<SourceLane> sources_;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
     bool cachedOriginal_ = false;

@@ -1,4 +1,10 @@
-#include "settings_controller.h"
+#include "general_settings.h"
+#include "navigation/navigation_settings.h"
+#include "theme/personalization.h"
+#include "category_settings.h"
+#include "settings_store.h"
+#include "settings_values.h"
+#include "dock/dock_settings.h"
 #include "personalization_initialization.h"
 
 #include "common/l10n.h"
@@ -42,13 +48,15 @@ public:
         };
 
         bool categorizedTabHeightLoaded = false;
+        bool contextMenuStyleMigrated = false;
         const std::wstring personalizationPath = GetPersonalizationPath();
         const bool personalizationExists = fileExists(
             personalizationPath, SettingsDomain::Personalization);
         const bool personalizationLoaded = LoadInitialPersonalization(
             personalizationPath.c_str(),
             values.personalization,
-            &categorizedTabHeightLoaded);
+            &categorizedTabHeightLoaded,
+            &contextMenuStyleMigrated);
         if (personalizationExists && !personalizationLoaded)
         {
             recordLoadFailure(
@@ -114,8 +122,9 @@ public:
             values.general.language[sizeof(values.general.language) - 1] = '\0';
         }
 
-        if ((!personalizationExists || personalizationLoaded) &&
-            !categorizedTabHeightLoaded)
+        const bool migrateCategorizedTabHeight =
+            (!personalizationExists || personalizationLoaded) && !categorizedTabHeightLoaded;
+        if (migrateCategorizedTabHeight)
         {
             // Before 1.0.1.0 this value lived in category settings as a font
             // size. Preserve the existing one-time migration while moving the
@@ -124,15 +133,10 @@ public:
                 values.category.tabFontSize * 34.0f / 15.0f,
                 24.0f,
                 48.0f);
-            if (!::SavePersonalization(
-                    GetPersonalizationPath().c_str(),
-                    values.personalization))
-            {
-                recordLoadFailure(
-                    SettingsDomain::Personalization,
-                    L"Failed to persist the categorized-tab-height migration.");
-            }
         }
+        if ((migrateCategorizedTabHeight || (personalizationLoaded && contextMenuStyleMigrated)) &&
+            !::SavePersonalization(personalizationPath.c_str(), values.personalization))
+            recordLoadFailure(SettingsDomain::Personalization, L"Failed to save personalization settings.");
 
         // Even on a per-file read error, defaults provide a usable snapshot.
         // The failed domain remains visible so WinUI can show an InfoBar, and

@@ -1,12 +1,8 @@
 #pragma once
 
-#include "settings/settings_controller.h"
-#include "hotkey_recorder.h"
+#include "general_page_actions.h"
 #include "settings_focus_feedback.h"
-#include "general_advanced_feature_status.h"
-#include "start_page_presenter.h"
-#include "platform/window_support/window_capabilities.h"
-#include "../../steam_bridge/src/steam_connection_feedback.h"
+#include "home_about_page_model.h"
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -20,63 +16,6 @@
 
 namespace snowdesktop::winui
 {
-
-struct SettingsLanguageOption
-{
-    std::string code;
-    std::wstring label;
-};
-
-enum class GeneralStartupConflictKind : std::uint8_t
-{
-    None,
-    NonPackagedVersionOwnsStartup,
-    InstalledVersionOwnsStartup,
-};
-
-/** Runtime-only startup ownership projected by the host. */
-struct GeneralStartupConflict
-{
-    GeneralStartupConflictKind kind = GeneralStartupConflictKind::None;
-    std::wstring ownerCommand;
-};
-
-/** Commands emitted by the cached General settings presenter. */
-struct GeneralPageActions
-{
-    StartPageActions onboarding;
-    std::function<void(const SettingsRoute&)> navigate;
-    using GeneralEdit = std::function<void(GeneralSettings&)>;
-    using NavigationEdit = std::function<void(NavigationSettings&)>;
-    using DockEdit = std::function<void(DockSettings&)>;
-
-    std::function<void(std::uint64_t generation, GeneralEdit edit)>
-        commitGeneral;
-    std::function<void(std::uint64_t generation, NavigationEdit edit)>
-        commitNavigation;
-    std::function<void(std::uint64_t generation, DockEdit edit)>
-        commitDock;
-
-    /** Auto-start is a Windows/MSIX projection, not a GeneralSettings edit. */
-    std::function<void(std::uint64_t generation, bool enabled)>
-        setAutoStart;
-    std::function<GeneralStartupConflict()> queryStartupConflict;
-    std::function<window_support::SupportStatus()> queryWindowSupport;
-    std::function<void(bool)> configureWindowSupport;
-    std::function<GeneralAdvancedFeatureStatus()> queryAdvancedFeatureStatus;
-    std::function<void()> registerAdvancedFeatures;
-    std::function<void()> openAdvancedFeaturesStore;
-
-    std::function<void(
-        SettingsHostActions::HotkeyTarget target,
-        HotkeyChord chord,
-        std::uint64_t generation,
-        std::uint64_t requestId,
-        HotkeyRecorder::AvailabilityCompletion completion)>
-        probeHotkey;
-
-    std::function<std::vector<SettingsLanguageOption>()> languageCatalog;
-};
 
 /**
  * Cached programmatic WinUI controls for the General settings route.

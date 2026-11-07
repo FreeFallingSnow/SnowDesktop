@@ -1,9 +1,9 @@
 #pragma once
 
 #include "control_settings.h"
-#include "settings_controller.h"
+#include "settings_fwd.h"
 #include "winui/windows_compat.h"
-#include "winui/calendar_page_presenter.h"
+#include "winui/calendar_page_actions.h"
 
 namespace snowdesktop::control_settings
 {

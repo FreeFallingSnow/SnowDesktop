@@ -451,6 +451,10 @@ Provides native performance capture and analysis. The repository vendors the off
 
 The compiler copy has two MSVC C4267 type adaptations: a chunk index uses `size_t` to match producer and consumer APIs, and the at-most-five-byte uint32 varint length is represented as `uint32_t`. These do not change the trace format or disable compiler warnings; the compiler copy is rewritten only when its contents change.
 
+Windows CPU计时统一使用上游Windows/Arm分支的`GetThreadTimes`，避免x64周期换算的首次校准零值与时间跳变；未使用的TSC频率函数标为`maybe_unused`。原始SDK不变，计时保留OS线程记账的短区间量化限制。
+
+Windows CPU timing uses the upstream Windows/Arm `GetThreadTimes` path on all architectures, avoiding x64 cycle-conversion startup zeros and jumps; the unused TSC frequency helper is marked `maybe_unused`. Original SDK files remain unchanged, and short intervals retain OS CPU-accounting quantization.
+
 **分发 / Distribution**
 
 发行包随附 `licenses/Perfetto-LICENSE.txt`。采集、分析和回归入口见 [PERFORMANCE.md](src/diagnostics/PERFORMANCE.md)。
@@ -560,6 +564,7 @@ Includes adapted portions for taskbar integration and desktop backdrop compositi
 | --- | --- |
 | 上游 / Upstream | [TranslucentTB/TranslucentTB](https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b) |
 | 版本或提交 / Version or revision | `322e2b7395a51975150126276308b415970e080b` |
+| 任务栏关联修复 / Taskbar association fix | [`b8716c1207037013515a289c365918cb4aea109e`](https://github.com/TranslucentTB/TranslucentTB/commit/b8716c1207037013515a289c365918cb4aea109e) |
 | 版权 / Copyright | TranslucentTB contributors |
 | 许可证 / License | [GPL-3.0-only](LICENSE) |
 

@@ -1,6 +1,13 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "widgets/lua_stack.h"
+#include "common/l10n.h"
+#include "ui/preview/component_preview.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
 #include "widget_package_source_capture.h"
+#include "widget_grid_size.h"
+#include "widget/preview/widget_preset_preview.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
@@ -218,7 +225,7 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         &callbackContext);
 
     int selected = IDCANCEL;
-    if (SUCCEEDED(TaskDialogIndirect(
+    if (SUCCEEDED(snowdesktop::operation_feedback::ShowTaskDialog(
             &dialog, &selected, nullptr, nullptr)))
     {
         if (selected == 100) return WidgetConsentChoice::AllowAll;
@@ -226,7 +233,7 @@ WidgetConsentChoice ShowWidgetConsentDialog(
         if (selected == 101) return WidgetConsentChoice::Deny;
         return WidgetConsentChoice::Cancel;
     }
-    const int fallback = MessageBoxW(nullptr,
+    const int fallback = snowdesktop::operation_feedback::ShowMessageBox(nullptr,
         presentation.content.c_str(), presentation.instruction.c_str(),
         MB_ICONWARNING | MB_YESNOCANCEL |
             MB_DEFBUTTON2);
@@ -261,7 +268,7 @@ void ShowWidgetPermissionErrorAsync(
 {
     std::thread([title = std::move(title),
                     message = std::move(message)]() {
-        MessageBoxW(nullptr, message.c_str(), title.c_str(),
+        snowdesktop::operation_feedback::ShowMessageBox(nullptr, message.c_str(), title.c_str(),
             MB_OK | MB_ICONERROR);
     }).detach();
 }
@@ -295,6 +302,28 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
     widget.minGridSpan = { 1, 1 };
     widget.maxGridSpan = { 0, 0 };
 
+    if (widget.type == DesktopWidgetType::LuaStack)
+    {
+        int maxC = (std::numeric_limits<int>::max)(), maxR = maxC;
+        bool available = true;
+        for (const auto& id : widget.childWidgetIds)
+        {
+            const size_t child = FindWidgetIndexById(id);
+            if (child >= widgets_.size()) { available = false; continue; }
+            const auto manifest = WidgetEngine::GetWidgetManifest(widgets_[child].packageId);
+            if (!manifest.hasManifest) { available = false; continue; }
+            widget.minGridSpan.columns = std::max(widget.minGridSpan.columns, manifest.minColumns);
+            widget.minGridSpan.rows = std::max(widget.minGridSpan.rows, manifest.minRows);
+            if (manifest.maxColumns) maxC = std::min(maxC, manifest.maxColumns);
+            if (manifest.maxRows) maxR = std::min(maxR, manifest.maxRows);
+        }
+        if (!available || maxC < widget.minGridSpan.columns || maxR < widget.minGridSpan.rows)
+            widget.minGridSpan = widget.maxGridSpan = widget.gridSpan;
+        else widget.maxGridSpan = {maxC == (std::numeric_limits<int>::max)() ? 0 : maxC,
+            maxR == (std::numeric_limits<int>::max)() ? 0 : maxR};
+        return;
+    }
+
     if (widget.type == DesktopWidgetType::CollectionGroup ||
         widget.type == DesktopWidgetType::FileGroup ||
         widget.type == DesktopWidgetType::FileCategories ||
@@ -319,6 +348,17 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
 GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
     int availableColumns, int availableRows) const
 {
+    if (widget.type == DesktopWidgetType::LuaStack)
+    {
+        // Hot reload may change a member's limits without a layout pass.
+        // Both live resize previews and final placement use fresh limits.
+        DesktopWidget limits;
+        limits.type = DesktopWidgetType::LuaStack;
+        limits.gridSpan = widget.gridSpan;
+        limits.childWidgetIds = widget.childWidgetIds;
+        ConfigureWidgetGridLimits(limits);
+        return snowdesktop::widget_displacement::ClampSpan(limits, span, availableColumns, availableRows);
+    }
     return snowdesktop::widget_displacement::ClampSpan(widget, span, availableColumns, availableRows);
 }
 
@@ -416,7 +456,7 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     if (settings.kind == ApplyKind::None) return {};
 
     lastContextMenuScreenPoint_ = screenPoint;
-    const GridSpan span{
+    GridSpan span{
         std::clamp(settings.columns, 1, 8),
         std::clamp(settings.rows, 1, 8),
     };
@@ -463,7 +503,7 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         {
             dialog->SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
             dialog->SetTitle(_LW("app.interact.select_folder"));
-            if (SUCCEEDED(dialog->Show(hwnd_)))
+            if (SUCCEEDED(snowdesktop::operation_feedback::ShowModalWindow(dialog, hwnd_)))
             {
                 IShellItem* item = nullptr;
                 if (SUCCEEDED(dialog->GetResult(&item)))
@@ -496,6 +536,36 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     }
     case ApplyKind::LuaScript:
         if (settings.packageId.empty()) return {};
+        {
+            const auto manifest = WidgetEngine::GetWidgetManifest(settings.packageId);
+            snowdesktop::widget::WidgetSizeDefinition size{
+                manifest.defaultColumns, manifest.defaultRows, manifest.defaultAspectSize};
+            if (!settings.sizeVariantId.empty())
+                for (const auto& variant : manifest.previewVariants)
+                    if (variant.id == settings.sizeVariantId)
+                    {
+                        size = {variant.columns, variant.rows, variant.aspectSize};
+                        break;
+                    }
+            bool presetSize = false;
+            for (const auto& preset : manifest.creationPresets)
+                if (preset.id == settings.creationPresetId && preset.size)
+                {
+                    size = *preset.size; presetSize = true; break;
+                }
+            if (size.aspect || presetSize)
+            {
+                POINT point = screenPoint;
+                ScreenToClient(hwnd_, &point);
+                const auto* page = GridPageFromPoint(point);
+                const auto resolved = snowdesktop::widget::ResolveWidgetSize(size,
+                    snowdesktop::widget::WidgetSizeMetricsForPage(page, CellFromPoint(point)),
+                    manifest.minColumns, manifest.minRows, manifest.maxColumns, manifest.maxRows);
+                span = {std::clamp(resolved.first, 1, 8), std::clamp(resolved.second, 1, 8)};
+            }
+        }
+        if (!settings.creationPresetId.empty() &&
+            (!widgetEngine_ || !widgetSettingsService_ || !widgetSettingsBackend_)) return {};
         widget.type = DesktopWidgetType::LuaScript;
         widget.packageId = settings.packageId;
         CaptureWidgetPackageSource(widget);
@@ -504,7 +574,43 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         widget.bottomBarHover = true;
         if (widgetEngine_)
         {
-            widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId);
+            // Ordinary adds retain permission/error placeholders without a Lua
+            // runtime. Only a creation preset requires a live settings model.
+            if (!widgetEngine_->EnsureWidgetLoaded(widget.id, settings.packageId) &&
+                !settings.creationPresetId.empty()) return {};
+            if (!settings.creationPresetId.empty())
+            {
+                const auto manifest = WidgetEngine::GetWidgetManifest(settings.packageId);
+                const auto preset = std::find_if(manifest.creationPresets.begin(),
+                    manifest.creationPresets.end(), [&](const auto& candidate) {
+                        return candidate.id == settings.creationPresetId;
+                    });
+                bool applied = false;
+                if (preset != manifest.creationPresets.end() &&
+                    widgetSettingsService_ && widgetSettingsBackend_)
+                {
+                    const auto loaded = widgetSettingsService_->Load(widget.id);
+                    snowdesktop::widget_runtime::WidgetSettingsBackendDescriptor descriptor;
+                    if (loaded.Succeeded() && loaded.snapshot &&
+                        widgetSettingsBackend_->Describe(widget.id, descriptor).Succeeded())
+                    {
+                        std::vector<snowdesktop::widget_runtime::WidgetSettingOrdinaryWrite> writes;
+                        std::unordered_map<std::string, std::string> previewValues;
+                        std::string error;
+                        if (snowdesktop::widget_runtime::NormalizeCreationPreset(
+                                *preset, loaded.snapshot->fields, writes, previewValues, error))
+                            applied = widgetSettingsBackend_->ApplyOrdinaryTransaction(descriptor,
+                                snowdesktop::widget_runtime::WidgetSettingMutationGuard::FromSnapshot(
+                                    *loaded.snapshot), writes).Succeeded();
+                    }
+                    widgetSettingsService_->Close(widget.id);
+                }
+                if (!applied)
+                {
+                    widgetEngine_->DeleteWidgetInstance(widget.id);
+                    return {};
+                }
+            }
             widget.showTitle = widgetEngine_->ReadBoolFlag(
                 settings.packageId, "showTitle", false);
             widget.bottomBarHover = widgetEngine_->ReadBoolFlag(
@@ -614,6 +720,8 @@ std::optional<GridSpan> DesktopApp::GetWidgetPairGroupSpan(
     if (!snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, targetIndex, sourceGroupId))
         return std::nullopt;
     const auto& target = widgets_[targetIndex];
+    if (IsLuaDesktopSurface(widgets_[sourceIndex]))
+        return CanStackLuaWidgets(sourceIndex, targetIndex) ? std::optional<GridSpan>{target.gridSpan} : std::nullopt;
     DesktopWidget group;
     group.type = DesktopWidgetType::FileGroup;
     ConfigureWidgetGridLimits(group);
@@ -643,6 +751,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     snowdesktop::widget_pair_drop::Action action, std::wstring_view sourceGroupId)
 {
     namespace pair = snowdesktop::widget_pair_drop;
+    if (action == pair::Action::CreateLuaStack) return sourceGroupId.empty() && CommitLuaWidgetStack(sourceIndex, targetIndex);
     if (!pair::CanPair(widgets_, sourceIndex, targetIndex, sourceGroupId)) return false;
     const std::wstring targetId = widgets_[targetIndex].id;
     const std::wstring sourceId = widgets_[sourceIndex].id;

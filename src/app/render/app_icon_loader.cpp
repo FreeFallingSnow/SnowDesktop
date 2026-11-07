@@ -1,4 +1,14 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "dock/dock_window_transition.h"
+#include "diagnostics/diagnostic_log.h"
+#include "widget/runtime/widget_engine.h"
+#include "settings/general_settings.h"
+#include "app/shell/icon_load_task.h"
+#include "common/utils.h"
+#include "icons/icon_render_rules.h"
+#include "settings/settings_controller.h"
+#include "app/dock/persistent_dock_host.h"
 #include "shell/shortcut_category_target.h"
 #include "platform/pending_window_message.h"
 #include "app/shell/shell_icon_request.h"
@@ -251,7 +261,7 @@ void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, FALSE);
     InvalidateFloatingDockWindow(false);
-    if (quickNavigationOpen_)
+    if (quickNavigation_->open)
         InvalidateQuickNavigationWindow();
 }
 

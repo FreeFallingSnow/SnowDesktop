@@ -1,4 +1,9 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "settings/settings_window.h"
 #include "app_control_runtime.h"
 #include "platform/control/control_elements.h"
 #include "layout/widget_displacement.h"
@@ -66,12 +71,17 @@ Value WidgetValue(const DesktopWidget& widget, bool grouped)
     case DesktopWidgetType::FolderMapping: type = "folder-mapping"; break;
     case DesktopWidgetType::FileGroup: type = "file-group"; break;
     case DesktopWidgetType::LuaScript: type = "lua"; break;
+    case DesktopWidgetType::LuaStack: type = "luaStack"; break;
     }
+    Value members = Array();
+    for (const auto& id : widget.childWidgetIds) members.array.push_back(String(WideToUtf8(id)));
     return Object({{"id", String(WideToUtf8(widget.id))}, {"type", String(type)},
         {"title", String(WideToUtf8(widget.title))}, {"pageId", String(WideToUtf8(widget.gridCell.pageId))},
         {"column", Number(widget.gridCell.column)}, {"row", Number(widget.gridCell.row)},
         {"columns", Number(widget.gridSpan.columns)}, {"rows", Number(widget.gridSpan.rows)},
-        {"grouped", Boolean(grouped)}, {"bounds", Rect(widget.bounds)}});
+        {"grouped", Boolean(grouped)}, {"bounds", Rect(widget.bounds)},
+        {"activeMemberId", String(widget.type == DesktopWidgetType::LuaStack ? WideToUtf8(widget.activeCategoryId) : "")},
+        {"memberCount", Number(static_cast<double>(widget.childWidgetIds.size()))}, {"memberIds", std::move(members)}});
 }
 std::string Revision(const Value& value)
 {
@@ -225,12 +235,12 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             {"desktopEnabled", Boolean(generalSettings_.softwareDesktopEnabled)},
             {"desktopVisible", Boolean(customDesktopVisible_)},
             {"presentationReady", Boolean(!desktopStartupPresentationPending_)},
-            {"navigationOpen", Boolean(quickNavigationOpen_)},
+            {"navigationOpen", Boolean(quickNavigation_->open)},
             {"menuOpen", Boolean(snowdesktop::modern_menu::IsActive())},
             {"floatingDockVisible", Boolean(floatingDockVisible_)},
             {"popupWidgetId", String(popupId)},
             {"popupAnimating", Boolean(popupAnimation_.IsAnimating())},
-            {"navigationAnimating", Boolean(quickNavigationAnimation_.IsAnimating())},
+            {"navigationAnimating", Boolean(quickNavigation_->animation.IsAnimating())},
             {"layoutRevision", ApplicationControlLayout().object.at("layoutRevision")}});
     }
     if (method == "desktop.getLayout" || method == "widgets.list")
@@ -259,7 +269,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     {
         Fields(params, {"id", "pageId", "column", "row", "columns", "rows", "ifLayoutRevision"});
         if (!generalSettings_.softwareDesktopEnabled) throw Error("disabled", "Software desktop is disabled");
-        if (GetOpenPopupWidget() || quickNavigationOpen_)
+        if (GetOpenPopupWidget() || quickNavigation_->open)
             throw Error("busy", "Close popups and Quick Navigation before changing the layout");
         if (Text(params, "ifLayoutRevision") != ApplicationControlLayout().object.at("layoutRevision").string)
             throw Error("stale_layout", "Query the current layout before applying this placement");
@@ -292,7 +302,7 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
             throw Error("disabled", "Desktop is not visible");
         const auto index = widgetIndex();
         const auto& widget = widgets_[index];
-        if (widget.type == DesktopWidgetType::LuaScript || IsGroupedWidget(widget))
+        if (IsLuaDesktopSurface(widget) || IsGroupedWidget(widget))
             throw Error("invalid_target", "Use a standalone native storage widget");
         if (popupAnimation_.IsAnimating()) throw Error("busy", "Popup animation is active");
         const auto* current = GetOpenPopupWidget();
@@ -310,10 +320,10 @@ snowdesktop::control::Value DesktopApp::HandleApplicationControl(
     else if (method == "navigation.open")
     {
         Fields(params, {});
-        if (!quickNavigationOpen_) OpenQuickNavigation();
-        if (!quickNavigationOpen_) throw Error("unavailable", "Quick Navigation could not be opened");
+        if (!quickNavigation_->open) OpenQuickNavigation();
+        if (!quickNavigation_->open) throw Error("unavailable", "Quick Navigation could not be opened");
     }
-    else if (method == "navigation.close") { Fields(params, {}); if (quickNavigationOpen_) CloseQuickNavigation(); }
+    else if (method == "navigation.close") { Fields(params, {}); if (quickNavigation_->open) CloseQuickNavigation(); }
     else if (method == "dock.show")
     {
         Fields(params, {});

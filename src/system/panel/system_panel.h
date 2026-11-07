@@ -7,6 +7,7 @@ namespace snowdesktop
 {
 struct SystemCalendarActions;
 struct SystemPanelInputMethodActions;
+enum class SystemPanelShortcut;
 class SystemPanel
 {
 public:
@@ -38,6 +39,7 @@ public:
     void SetTrayDragFeedback(TrayDragFeedback);
     void SetTrayStateChanged(std::function<void(HMONITOR,bool)>);
     void SetNativeControlsHandler(std::function<void(HWND,RECT)>);
+    void SetShortcutHandler(std::function<void(SystemPanelShortcut,HWND)>);
     void SetCalendarMenuHandler(std::function<UINT(POINT,HWND,bool)>);
     void SetCalendarChoiceMenuHandler(std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)>);
 private:

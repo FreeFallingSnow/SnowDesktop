@@ -1,17 +1,11 @@
 #pragma once
 
-#include <algorithm>
+#include "desktop_idle_hide_preferences.h"
 #include <cstdint>
 
 namespace snowdesktop::desktop_idle_hide
 {
-inline constexpr int kDefaultDelaySeconds = 5;
-inline constexpr int kMaxDelaySeconds = 3600;
 
-inline int NormalizeDelay(int seconds) noexcept
-{
-    return std::clamp(seconds, 1, kMaxDelaySeconds);
-}
 
 enum class Action { None, Hide, Show };
 

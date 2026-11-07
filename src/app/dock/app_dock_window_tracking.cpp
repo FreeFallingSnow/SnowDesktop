@@ -1,4 +1,13 @@
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "platform/runtime_module_policy.h"
+#include "diagnostics/diagnostic_log.h"
+#include "common/utils.h"
+#include "icons/icon_render_rules.h"
+#include "app/dock/persistent_dock_host.h"
+#include "dock/dock_settings.h"
 #include "dock/dock_window_order.h"
 #include "dock/dock_window_source_cloak.h"
 #include "dock_platform_helpers.h"
@@ -395,19 +404,17 @@ DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemIndex) con
 {
     if (itemIndex >= items_.size()) return DockWindowVisualState::Closed;
     const auto found = dockRunningWindows_.find(DockItemWindowKey(items_[itemIndex]));
-    if (found == dockRunningWindows_.end() || !found->second.running)
+    if (found == dockRunningWindows_.end() || !found->second.running ||
+        !found->second.window || !IsWindow(found->second.window))
         return DockWindowVisualState::Closed;
-    if (found->second.window && IsWindow(found->second.window))
-    {
-        if (IsIconic(found->second.window))
-            return DockWindowVisualState::Minimized;
-        // A click on a non-maximized window can move foreground ownership to
-        // the desktop/Dock before this handler runs. Keep using the indicator
-        // state captured by the window refresh instead of reclassifying that
-        // click as Activate.
-        if (found->second.foreground)
-            return DockWindowVisualState::Foreground;
-    }
+    if (IsIconic(found->second.window))
+        return DockWindowVisualState::Minimized;
+    // A click on a non-maximized window can move foreground ownership to
+    // the desktop/Dock before this handler runs. Keep using the indicator
+    // state captured by the window refresh instead of reclassifying that
+    // click as Activate.
+    if (found->second.foreground)
+        return DockWindowVisualState::Foreground;
     return DockWindowVisualState::Running;
 }
 
@@ -908,14 +915,13 @@ void DesktopApp::RefreshDockRunningWindows(
     std::unordered_map<std::wstring, DockWindowInfo> updated;
     for (DockWindowTarget& target : targets)
     {
-        if (target.best.window)
-        {
-            target.best.trackedWindows = std::move(target.trackedWindows);
-            updated[target.key] = std::move(target.best);
-        }
-        else if (target.identity.kind == DockAppIdentityKind::Steam &&
-            IsDockSteamAppRunning(target.identity.steamAppId))
-            updated[target.key] = { nullptr, false, true, false };
+        // Steam keeps Apps\<id>\Running set while it reports the app as
+        // running, including when that app has no task window. The Dock
+        // indicator follows a matched window only.
+        if (!target.best.window)
+            continue;
+        target.best.trackedWindows = std::move(target.trackedWindows);
+        updated[target.key] = std::move(target.best);
     }
 
     bool changed = updated.size() != dockRunningWindows_.size();
@@ -1579,12 +1585,18 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                 ShouldSuppressDockWindowCommand(
                     IsDockWindowClosePending(target)))
         {
-            // Only submit the maximized/normal restore here. The transition
-            // restores the cloaked source before its visual timeline starts,
-            // letting the application finish its native restore underneath the
-            // animation. This remains asynchronous and submits no second restore.
-            const DockWindowActivationOutcome outcome =
-                RequestDockWindowActivation(target, true);
+            // The transition normally restores on the source thread before
+            // expansion. A second SW_RESTORE can undo maximized placement.
+            const bool minimized = IsIconic(target) != FALSE;
+            const DockWindowActivationOutcome outcome = minimized
+                ? RequestDockWindowActivation(target, true)
+                : ActivateDockWindowAfterShow(target, true);
+            if (!minimized)
+            {
+                CancelAllDockWindowActivationObservations();
+                BeginDockWindowActivationObservation(target, false);
+                UpdateDockWindowActivationObservation(target, outcome);
+            }
             UpdateDockWindowActivationState(
                 target, outcome.restored,
                 outcome.foreground);

@@ -1,6 +1,7 @@
 #include "core/widget.h"
 #include "widget_folder_search.h"
 #include "app/app.h"
+#include "common/utils.h"
 #include "common/l10n.h"
 #include "navigation/search_match.h"
 #include "widget/runtime/widget_item_layout.h"

@@ -10,6 +10,14 @@ local monitorSources = module.require("modules/monitor_sources.lua")
 local fluent = {
     refresh = utf8.char(0xF13D),
     style = utf8.char(0xF592),
+    size = utf8.char(0xF66C), -- resize_20_regular
+    orientation = utf8.char(0xE89F), -- orientation_20_regular
+    first = utf8.char(0xE32D), -- chevron_double_up_20_regular
+    previous = utf8.char(0xF19B), -- arrow_up_20_regular
+    next = utf8.char(0xF148), -- arrow_down_20_regular
+    last = utf8.char(0xE329), -- chevron_double_down_20_regular
+    reset = utf8.char(0xF19F), -- arrow_reset_20_regular
+    gpu = utf8.char(0xE4AC), -- developer_board_20_regular
 }
 
 local style = {
@@ -1156,7 +1164,8 @@ local function menu(_context, _model, request)
         end
         local heading = l10n.tr("lua_widget.system_monitor.card_size", cardTitles[cardId])
         if widget.hasFeature("interaction.contextMenu.submenu") then
-            items[#items + 1] = { label = heading, children = sizes }
+            items[#items + 1] = { label = heading, children = sizes,
+                icon = fluent.size, iconFont = "fluent" }
         else
             items[#items + 1] = { id = "system.size.heading", label = heading, enabled = false }
             for _, item in ipairs(sizes) do items[#items + 1] = item end
@@ -1172,6 +1181,7 @@ local function menu(_context, _model, request)
         for _, move in ipairs(moves) do
             items[#items + 1] = {
                 id = "system.order." .. cardId .. "." .. move[1], label = move[2],
+                icon = fluent[move[1]], iconFont = "fluent",
                 enabled = cardPreferences.move(saved, cardId, move[1], showCard) ~= nil,
             }
         end
@@ -1189,7 +1199,8 @@ local function menu(_context, _model, request)
         }
         local heading = l10n.tr("lua_widget.system_monitor.orientation")
         if widget.hasFeature("interaction.contextMenu.submenu") then
-            items[#items + 1] = { label = heading, children = directions }
+            items[#items + 1] = { label = heading, children = directions,
+                icon = fluent.orientation, iconFont = "fluent" }
         else
             items[#items + 1] = { id = "system.orientation.heading",
                 label = heading, enabled = false }
@@ -1199,6 +1210,7 @@ local function menu(_context, _model, request)
     end
     items[#items + 1] = { id = "system.order.reset",
         label = l10n.tr("lua_widget.system_monitor.order_reset"),
+        icon = fluent.reset, iconFont = "fluent",
         enabled = cardPreferences.customOrder(storage.get("card_order")) }
     items[#items + 1] = { type = "separator" }
     if showCard("gpu") or showCard("vram") then
@@ -1233,6 +1245,7 @@ local function menu(_context, _model, request)
             items[#items + 1] = {
                 label = l10n.tr("lua_widget.system_monitor.gpu_choose"),
                 children = gpuItems,
+                icon = fluent.gpu, iconFont = "fluent",
             }
         else
             -- Older hosts still expose selection as ordinary menu items.

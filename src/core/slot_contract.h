@@ -362,6 +362,13 @@ inline constexpr std::array<
             SlotSurfaceKind::Guide,
             DragPayloadKind::OtherWidget,
         },
+        {
+            DesktopWidgetType::LuaStack,
+            "lua_stack",
+            WidgetContainerRole::NonContainer,
+            SlotSurfaceKind::Guide,
+            DragPayloadKind::OtherWidget,
+        },
     }};
 
 constexpr const WidgetContractDescriptor&

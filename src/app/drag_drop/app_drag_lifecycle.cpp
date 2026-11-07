@@ -1,5 +1,9 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "dock/dock_window_rules.h"
+#include "widget/runtime/widget_engine.h"
+#include "common/utils.h"
+#include "app/dock/persistent_dock_host.h"
 #include "drag_drop/drag_visual_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
@@ -785,6 +789,9 @@ void DesktopApp::EndDragSession()
     presentedDragFeedbackRevision_ = 0;
     presentedDragNavHoverSide_ = 0;
     HideDragPreviewWindow();
+    const bool hadPreviewSurface = !!dragPreviewDcompSurface_;
+    ResetDragPreviewCompositionResources();
+    if (hadPreviewSurface) CommitCompositionAnimationFrame();
     ClearDockFolderPopupDragSourceSnapshot();
     dragRenderCache_.Reset();
     // 清除拖放预览缓存
@@ -914,6 +921,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         }
     }
     widgetAction_ = WidgetAction::None;
+    luaStackMemberDrag_.Reset();
     snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_ARROW));
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;

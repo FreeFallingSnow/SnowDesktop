@@ -51,12 +51,16 @@ if (request.component == "demo-scene")
             if (surface.kind == "dock" || surface.kind == "status-bar" || surface.kind == "navigation") continue;
             DesktopWidget widget; widget.id = L"__demo_surface_" + demo::Wide(surface.id);
             widget.type = surface.kind == "files" ? DesktopWidgetType::FileCategories :
-                surface.kind == "mapping" ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection;
+                surface.kind == "mapping" ? DesktopWidgetType::FolderMapping :
+                surface.kind == "collection-group" ? DesktopWidgetType::CollectionGroup :
+                surface.kind == "file-group" ? DesktopWidgetType::FileGroup : DesktopWidgetType::Collection;
             widget.title = demo::Wide(surface.title); widget.bounds = surface.bounds; widget.gridCell.pageId = page.id;
             widget.cellScale = 1; widget.gridSpan = {std::max(2, static_cast<int>((surface.bounds.right - surface.bounds.left) / kCellWidth)),
                 std::max(2, static_cast<int>((surface.bounds.bottom - surface.bounds.top) / kMinCellHeight))};
             widget.showTitle = true; widget.showSearchBox = surface.showSearch; widget.showFileCategories = surface.showCategories;
             widget.listMode = surface.listMode; widget.scrollContainerMode = surface.scrollContainer; widget.activeCategoryId = L"all";
+            for (const auto& child : surface.children) widget.childWidgetIds.push_back(L"__demo_surface_" + demo::Wide(child));
+            if (!widget.childWidgetIds.empty()) widget.activeCategoryId = widget.childWidgetIds.front();
             for (const auto& id : surface.items)
             {
                 const auto key = L"__demo_item_" + demo::Wide(id); widget.itemKeys.push_back(key);
@@ -87,9 +91,9 @@ if (request.component == "demo-scene")
             }
         } cleanup{this, fixture.get()};
         RefreshDesktopItemIndexCache(); EnsureNavTabOrder();
-        quickNavigationPreview_ = true; quickNavigationAppsIndexed_ = true;
-        quickNavDpiScale_ = 1; quickNavAppearance_ = appearance;
-        quickNavLightTheme_ = light; quickNavGlassTheme_ = appearance.glassEnabled; quickNavBlurRadius_ = appearance.glassBlurRadius;
+        quickNavigation_->preview = true; quickNavigation_->appsIndexed = true;
+        quickNavigation_->dpiScale = 1; quickNavigation_->appearance = appearance;
+        quickNavigation_->lightTheme = light; quickNavigation_->glassTheme = appearance.glassEnabled; quickNavigation_->blurRadius = appearance.glassBlurRadius;
         navigationSettings_ = {}; EnsureQuickNavTextFormats();
         dockSettings_ = {}; dockSettings_.followComponentAppearance = false;
         dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
@@ -176,7 +180,11 @@ if (request.component == "demo-scene")
             const auto frame = demo::Evaluate(scene, scene.FrameMilliseconds(frameIndex));
             lastMousePoint_ = {static_cast<LONG>(frame.cursor.x), static_cast<LONG>(frame.cursor.y)};
             context->SetTarget(target.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
-            context->BeginDraw(); context->DrawBitmap(background.Get());
+            context->BeginDraw();
+            if (request.transparent || request.contentOnly)
+                context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+            else
+                context->DrawBitmap(background.Get());
             brushCache_.clear(); brushCacheContext_ = context.Get();
             for (const auto& presentation : frame.surfaces)
             {
@@ -216,33 +224,44 @@ if (request.component == "demo-scene")
                 }
                 else if (surface.kind == "navigation")
                 {
-                    quickNavigationOpen_ = true; quickNavigationCollapsed_ = surface.listMode;
-                    quickNavigationSearchText_ = quickNavigationEffectiveSearchText_ = demo::Wide(surface.search);
-                    quickNavigationOpenPoint_ = {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
-                    quickNavigationRect_ = GetQuickNavigationRect(); quickNavigationHostRect_ = quickNavigationRect_;
-                    const auto fitted = fitRect(quickNavigationRect_, rect);
-                    const float scale = static_cast<float>(fitted.right - fitted.left) / (quickNavigationRect_.right - quickNavigationRect_.left);
+                    quickNavigation_->open = true; quickNavigation_->collapsed = surface.listMode;
+                    quickNavigation_->searchText = quickNavigation_->effectiveSearchText = demo::Wide(surface.search);
+                    quickNavigation_->openPoint = {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+                    quickNavigation_->rect = GetQuickNavigationRect(); quickNavigation_->hostRect = quickNavigation_->rect;
+                    const auto fitted = fitRect(quickNavigation_->rect, rect);
+                    const float scale = static_cast<float>(fitted.right - fitted.left) / (quickNavigation_->rect.right - quickNavigation_->rect.left);
                     material(fitted, navigationSettings_.layout.cornerRadius * scale);
-                    const auto mapped = mapRect(quickNavigationRect_, fitted) * transform;
-                    quickNavigationLastMousePoint_ = pointerIn(mapped, frame.cursor); UpdateQuickNavTabWidths();
+                    const auto mapped = mapRect(quickNavigation_->rect, fitted) * transform;
+                    quickNavigation_->lastMousePoint = pointerIn(mapped, frame.cursor); UpdateQuickNavTabWidths();
                     context->SetTransform(mapped); DrawQuickNavigationSurface(context.Get());
-                    quickNavigationOpen_ = false;
+                    quickNavigation_->open = false;
                 }
                 else
                 {
                     auto& widget = widgets_[indices.at(surface.id)]; widget.bounds = rect;
                     widget.listMode = surface.listMode; widget.activeCategoryId = demo::Wide(surface.category);
                     widget.gridSpan = {std::max(2, static_cast<int>((rect.right - rect.left) / kCellWidth)), std::max(2, static_cast<int>((rect.bottom - rect.top) / kMinCellHeight))};
-                    if (surface.kind == "popup")
+                    if (surface.kind == "popup" || surface.popup)
                     {
                         popupWidgetIndex_ = indices.at(surface.id); popupHasAnchor_ = popupAnchoredToDock_ = false;
+                        // Mapping popups use the same dedicated snapshot/view as
+                        // live mapping popups; their renderer reads that source.
+                        if (widget.type == DesktopWidgetType::FolderMapping)
+                        {
+                            dockFolderPopupWidget_ = widget;
+                            dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&dockFolderPopupWidget_, this);
+                            dockFolderPopupOpen_ = true;
+                            popupWidgetIndex_ = static_cast<std::size_t>(-1);
+                        }
                         collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light; collectionPopupGlassTheme_ = appearance.glassEnabled;
-                        const auto native = GetCollectionPopupRect(widget); const auto fitted = fitRect(native, rect);
+                        const auto native = GetCollectionPopupRect(*GetOpenPopupWidget()); const auto fitted = fitRect(native, rect);
                         const float scale = static_cast<float>(fitted.right - fitted.left) / (native.right - native.left);
                         material(fitted, 18.f * scale);
                         const auto mapped = mapRect(native, fitted) * transform; lastMousePoint_ = pointerIn(mapped, frame.cursor);
                         context->SetTransform(mapped); DrawCollectionPopup(context.Get(), false);
                         popupWidgetIndex_ = static_cast<std::size_t>(-1);
+                        dockFolderPopupOpen_ = false;
+                        dockFolderPopupContainer_.reset();
                     }
                     else
                     {

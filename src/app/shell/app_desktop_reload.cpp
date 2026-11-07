@@ -1,4 +1,16 @@
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "widget/runtime/widget_engine.h"
+#include "platform/single_instance.h"
+#include "steam/steam_room_status.h"
+#include "app/shell/icon_load_task.h"
+#include "common/utils.h"
+#include "dock/dock_settings.h"
+#include "desktop/desktop_source.h"
+#include "settings/settings_window.h"
+#include "app/features/recycle_bin_poll_state.h"
+#include "app/dock/persistent_dock_host.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "shell_icon_request.h"
 #include "app/lifecycle/startup_diagnostics.h"
@@ -410,8 +422,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 app->RecordIconTextResources();
                 snowdesktop::app_resource_statistics::Record(app->items_, app->widgets_,
                     app->dockFolderPopupWidget_, app->gridPages_, app->dockEntries_,
-                    app->quickNavigationAppEntries_, app->quickNavigationEverythingResults_,
-                    app->quickNavigationAppResultIndices_, app->layoutRecords_, app->itemIndexByKeyCache_);
+                    app->quickNavigation_->appEntries, app->quickNavigation_->everythingResults,
+                    app->quickNavigation_->appResultIndices, app->layoutRecords_, app->itemIndexByKeyCache_);
                 Value("host.model.memory", "desktop_app_inline_bytes", {}, static_cast<double>(sizeof(DesktopApp)));
                 if (app->widgetEngine_)
                 {
@@ -455,7 +467,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
                 };
                 recordBackdrop(app->desktopBackdropCompositor_, L"desktop");
                 recordBackdrop(app->collectionPopupBackdropCompositor_, L"collection_popup");
-                recordBackdrop(app->quickNavBackdropCompositor_, L"quick_navigation");
+                recordBackdrop(app->quickNavigation_->backdropCompositor, L"quick_navigation");
                 for (const auto& host : app->persistentDockHosts_)
                     if (host)
                         recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
@@ -487,7 +499,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (systemTaskbarTaskViewActive_ != visible)
         {
             systemTaskbarTaskViewActive_ = visible;
-            systemTaskbarWindowStateChangedTick_.fetch_add(1,
+            windowObservationRevision_.fetch_add(1,
                 std::memory_order_relaxed);
         }
         return 0;
@@ -500,7 +512,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         systemTaskbarTaskViewActive_ = false;
         systemTaskbarWindows_.clear();
         RestartSystemTaskbarShellVisibilityDetectors();
-        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+        windowObservationRevision_.fetch_add(1,
             std::memory_order_relaxed);
         DWORD currentExplorerProcessId = 0;
         if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
@@ -525,7 +537,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         ProcessLargeIconAssets();
         return 0;
     case kForegroundInteractionChangedMessage:
-        HandleDockForegroundInteractionChanged();
+        HandleDockForegroundInteractionChanged(
+            reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
         return 0;
     case kDockWindowListChangedMessage:
         if (generalSettings_.dockEnabled && !reloading_)
@@ -554,7 +567,27 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (widgetEngine_)
             widgetEngine_->OnTaskWake();
         return 0;
+    case snowdesktop::single_instance::kSteamWidgetLobbyRequestMessage:
+    {
+        using Handoff = snowdesktop::single_instance::SteamWidgetLobbyHandoff;
+        if (!wp || exitRequested_ || !widgetEngine_)
+            return static_cast<LRESULT>(Handoff::Unavailable);
+        const auto room = widgetEngine_->SteamRoomStatus();
+        if (room.inRoom || room.busy)
+            return static_cast<LRESULT>(Handoff::Busy);
+        if (room.phase == snowdesktop::steam_room::Phase::Unavailable ||
+            room.phase == snowdesktop::steam_room::Phase::Locked)
+            return static_cast<LRESULT>(Handoff::Unavailable);
+        widgetEngine_->OpenSteamWidgetInvitation(static_cast<std::uint64_t>(wp));
+        return static_cast<LRESULT>(Handoff::Accepted);
+    }
     case kActivateExistingInstanceMessage:
+        if (lp == snowdesktop::single_instance::kSteamWidgetLobbyActivation)
+        {
+            if (widgetEngine_) widgetEngine_->OpenSteamWidgetInvitation(static_cast<std::uint64_t>(wp));
+            else pendingSteamWidgetLobby_ = static_cast<std::uint64_t>(wp);
+            return 0;
+        }
         ShowSettingsWindow();
         return 0;
     case WM_DISPLAYCHANGE:
@@ -1202,7 +1235,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     EnqueueIconLoad(std::move(phase2));
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                if (quickNavigationOpen_)
+                if (quickNavigation_->open)
                     InvalidateQuickNavigationWindow();
                 break;
             }
@@ -1248,7 +1281,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         EnqueueIconLoad(std::move(phase2));
                     }
                     InvalidateRect(hwnd_, nullptr, FALSE);
-                    if (quickNavigationOpen_)
+                    if (quickNavigation_->open)
                         InvalidateQuickNavigationWindow();
                     if (dockFolderPopup)
                     {

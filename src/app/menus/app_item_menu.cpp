@@ -1,5 +1,14 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
+#include "app/navigation/quick_navigation_state.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
+#include "settings/animation_settings.h"
+#include "common/utils.h"
+#include "shell/shell_item_visibility.h"
+#include "desktop/desktop_item_reference_migration.h"
+#include "icons/large_icon_assets.h"
+#include "steam/steam_entitlement.h"
 #include "app/input/widget_search_context_menu.h"
 #include "icons/large_icon_steam.h"
 #include "icons/large_icon_preset_rules.h"
@@ -307,6 +316,11 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
+    const QuickNavigationFavorite quickNavigationFavorite =
+        selectedCount == 1
+        ? CreateQuickNavigationFavoriteFromDesktopItem(
+            static_cast<size_t>(itemIndex))
+        : QuickNavigationFavorite{};
     const auto largeIconKey = items_[itemIndex].layoutKey;
     std::vector<std::wstring> largeIconKeys{largeIconKey};
     for (const auto& item : items_)
@@ -403,6 +417,8 @@ void DesktopApp::ShowItemContextMenu(
         AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
             kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
     }
+    AppendQuickNavigationFavoriteMenuItem(
+        menu, quickNavigationFavorite);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!namespaceItem)
     {
@@ -630,9 +646,9 @@ void DesktopApp::ShowItemContextMenu(
             L"");
 
     HWND menuOwner = keepQuickNavigationOpen &&
-        quickNavigationHwnd_ &&
-        IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_
+        quickNavigation_->hwnd &&
+        IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd
         : hwnd_;
     snowdesktop::private_pointer::SetInputForeground(menuOwner);
     const bool placeOutsideDock = dockRenameAnchor.has_value() ||
@@ -670,7 +686,7 @@ void DesktopApp::ShowItemContextMenu(
                 changes.emplace_back(index, std::move(config));
             }
             if (!SetLargeIconConfigs(changes))
-                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
             else if (backgroundCommand && presets::backgrounds[command - kContextLargeIconBackgroundFirst].value == kAppearancePresetCustom)
                 OpenLargeIconSettings(largeIconKeys);
         }
@@ -895,7 +911,7 @@ void DesktopApp::ShowItemContextMenu(
                 item.gridCell.row + span.rows <= page->rows && !AreGridSlotsMarked(occupied, item.gridCell, span);
             if (!fits) BeginLargeIconPlacement(itemIndex, config);
             else if (!SetLargeIconConfig(itemIndex, config))
-                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
     case kContextLargeIconSettings:
@@ -906,7 +922,7 @@ void DesktopApp::ShowItemContextMenu(
         {
             std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
             for (const auto& key : largeIconKeys) changes.emplace_back(FindItemIndexByKey(key), std::nullopt);
-            if (!SetLargeIconConfigs(changes)) MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+            if (!SetLargeIconConfigs(changes)) snowdesktop::operation_feedback::ShowMessageBox(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
     case kContextOpenCommand:
@@ -922,6 +938,11 @@ void DesktopApp::ShowItemContextMenu(
     }
     case kContextRevealLocationCommand:
         snowdesktop::item_location::Reveal(hwnd_, itemPath);
+        break;
+    case kContextFavoriteQuickNavigationCommand:
+        if (!ToggleQuickNavigationFavorite(
+                quickNavigationFavorite))
+            MessageBeep(MB_ICONWARNING);
         break;
     case kContextCopyPathCommand:
         CopyPathsToClipboard(selectedFilePaths);
@@ -1219,14 +1240,14 @@ void DesktopApp::ShowIsolatedShellMenu(snowdesktop::shell_extensions::Request re
     // actual source surface, including its edit/popup deactivation ownership.
     const POINT navigationPoint{point.x - virtualLeft_, point.y - virtualTop_};
     keepQuickNavigationOpen = keepQuickNavigationOpen ||
-        (quickNavigationOpen_ && PtInRect(&quickNavigationRect_, navigationPoint));
-    const HWND menuOwner = keepQuickNavigationOpen && quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_)
-        ? quickNavigationHwnd_ : ShellDialogOwnerHwnd();
+        (quickNavigation_->open && PtInRect(&quickNavigation_->rect, navigationPoint));
+    const HWND menuOwner = keepQuickNavigationOpen && quickNavigation_->hwnd && IsWindow(quickNavigation_->hwnd)
+        ? quickNavigation_->hwnd : ShellDialogOwnerHwnd();
     DismissActiveContextMenuForPopupTransition();
     try
     {
         selection.lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
-            static_cast<snowdesktop::modern_menu::Appearance>(std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+            static_cast<snowdesktop::modern_menu::Appearance>(std::clamp(CurrentPersonalization().contextMenuStyle, 0, snowdesktop::modern_menu::kMaximumAppearance)));
         request.extended = request.extended || (snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000) != 0;
         auto session = std::make_shared<snowdesktop::shell_extensions::NativeMenuSession>(request, point, menuOwner, std::move(selection));
         nativeMenuSession_ = session;

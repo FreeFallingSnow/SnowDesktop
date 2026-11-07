@@ -1,6 +1,7 @@
 #pragma once
 
 #include "theme/personalization.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 
 #include <filesystem>
 
@@ -12,14 +13,16 @@ namespace snowdesktop
 inline bool LoadInitialPersonalization(
     const std::filesystem::path& path,
     PersonalizationSettings& settings,
-    bool* categorizedTabHeightLoaded = nullptr)
+    bool* categorizedTabHeightLoaded = nullptr,
+    bool* contextMenuStyleMigrated = nullptr)
 {
     const auto hasUserState = [](const std::filesystem::path& candidate) {
         std::error_code error;
         const bool exists = std::filesystem::exists(candidate, error);
         return exists || bool(error);
     };
-    bool newProfile = !hasUserState(path);
+    const bool appearanceHasUserState = hasUserState(path);
+    bool newProfile = !appearanceHasUserState;
     if (newProfile)
     {
         // Older profiles can have no separate appearance file. Their other
@@ -36,7 +39,15 @@ inline bool LoadInitialPersonalization(
         }
     }
     if (newProfile)
+    {
         settings = PersonalizationSettings::GlassDarkPreset();
-    return LoadPersonalization(path.c_str(), settings, categorizedTabHeightLoaded);
+        settings.contextMenuStyle = static_cast<int>(
+            modern_menu::appearance_rules::DefaultForCurrentWindows());
+    }
+    else if (!appearanceHasUserState)
+        settings.contextMenuStyle = static_cast<int>(
+            modern_menu::appearance_rules::LegacyFollowForCurrentWindows());
+    return LoadPersonalization(path.c_str(), settings, categorizedTabHeightLoaded,
+        contextMenuStyleMigrated);
 }
 }

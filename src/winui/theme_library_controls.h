@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "theme_library_actions.h"
 #include "theme_edit_state.h"
 #include "appearance_sections.h"

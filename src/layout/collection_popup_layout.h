@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/constants.h"
+#include "collection_popup_types.h"
 #include "layout_spacing_rules.h"
 #include "ui/render/font_cu_rules.h"
 #include "list_detail_rules.h"
@@ -47,30 +47,9 @@ inline View ResolveView(bool anchoredToDock, bool fanPopup, bool listMode,
     return listMode ? View::List : View::Grid;
 }
 
-struct Metrics
-{
-    float scale = 1.0f;
-    int cellWidth = kCellWidth;
-    int cellHeight = kMinCellHeight;
-    int minimumListHeight = 1;
-    int paddingX = kCollectionPopupPaddingX;
-    int headerHeight = kCollectionPopupHeaderHeight;
-    int bottomPadding = kCollectionPopupBottomPadding;
-    int gapX = kCollectionPopupGapX;
-    int gapY = kCollectionPopupGapY;
-    int edgeMargin = 12;
-    int anchorGap = 12;
-    int maximumWidth = 560;
-    int maximumHeight = 640;
-};
 
-struct HeaderVerticalBounds
-{
-    int titleTop = 18;
-    int titleBottom = 44;
-    int sortButtonTop = 14;
-    int sortButtonBottom = 48;
-};
+
+
 
 inline int ScaleDimension(float value, float scale)
 {
@@ -334,14 +313,8 @@ inline std::size_t FanVisibleItemCount(const Metrics& metrics, int height, std::
     return std::min(count, slots > 0 ? slots - 1 : 0);
 }
 
-struct FanPoint { float x = 0; float y = 0; };
-struct FanItem
-{
-    RECT icon{};
-    RECT label{};
-    FanPoint center{};
-    float angle = 0;
-};
+
+
 
 inline int FanLabelPadding(float scale)
 {
@@ -419,7 +392,7 @@ inline RECT FanHandoffBounds(const FanItem& item, const Metrics& metrics)
         item.icon.right + pad, item.icon.bottom + pad};
 }
 
-struct FanLine { FanPoint start, end; };
+
 inline FanLine FanInsertionLine(const FanItem& item, const Metrics& metrics,
     bool rootAbove, bool after)
 {
@@ -494,7 +467,7 @@ inline float FanItemOpacity(double position, std::size_t visible)
         (static_cast<double>(visible) - 1.0 + edge - position) / edge), 0.0, 1.0));
 }
 
-struct FanRange { std::size_t first = 0, end = 0; };
+
 inline FanRange FanVisibleRange(double offset, std::size_t visible, std::size_t count)
 {
     offset = std::clamp(offset, 0.0, FanMaximumScroll(count, visible));
@@ -510,39 +483,7 @@ inline FanPoint FanUnfoldCenter(FanPoint origin, FanPoint destination, float pro
         origin.y + (destination.y - origin.y) * t};
 }
 
-struct FanScrollState
-{
-    double position = 0, target = 0, from = 0;
-    double started = 0, duration = 0;
 
-    bool Advance(double now)
-    {
-        const double t = duration > 0 ? std::clamp((now - started) / duration, 0.0, 1.0) : 1.0;
-        const double rest = 1.0 - t;
-        position = from + (target - from) * (1.0 - rest * rest * rest);
-        if (t >= 1.0) position = target;
-        return t < 1.0 && from != target;
-    }
-    void Clamp(double maximum)
-    {
-        maximum = std::max(0.0, maximum);
-        position = std::clamp(position, 0.0, maximum);
-        from = std::clamp(from, 0.0, maximum);
-        target = std::clamp(target, 0.0, maximum);
-    }
-    void MoveTo(double value, double maximum, double now, double milliseconds)
-    {
-        Advance(now);
-        Clamp(maximum);
-        value = std::clamp(value, 0.0, std::max(0.0, maximum));
-        if (value == target && milliseconds > 0) return;
-        from = position;
-        target = value;
-        started = now;
-        duration = milliseconds;
-        if (duration <= 0) position = from = target;
-    }
-};
 
 inline float FanRevealProgress(float progress, float distanceFromRoot)
 {

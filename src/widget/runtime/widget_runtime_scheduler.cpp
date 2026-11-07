@@ -376,9 +376,14 @@ AnimationFrameRequests::Consume(TimePoint now)
 void AnimationFrameRequests::Clear()
 {
     pending_.clear();
+    ResetFrameTiming();
+    dataRefreshPending_ = false;
+}
+
+void AnimationFrameRequests::ResetFrameTiming()
+{
     previousFrames_.clear();
     frameHistoryOrder_.clear();
-    dataRefreshPending_ = false;
 }
 
 bool AnimationFrameRequests::HasPending() const noexcept

@@ -730,6 +730,11 @@ struct WidgetSystemDataProvider::NetworkStatusCache
     }
 };
 
+WidgetSystemDataProvider::WidgetSystemDataProvider(GpuSampleSource gpuSampleSource)
+    : gpuSampleSource_(std::move(gpuSampleSource))
+{
+}
+
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
 {
     StopAll();
@@ -1626,6 +1631,7 @@ void WidgetSystemDataProvider::CloseGpuResources()
 WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 {
     performance::Scope performanceScope("shared.system", "SampleGpu");
+    if (gpuSampleSource_) return gpuSampleSource_(resetGpuBaseline_.exchange(false));
     auto snapshot = gpuSampler_.Sample(resetGpuBaseline_.exchange(false));
     gpuResourcesActive_.store(gpuSampler_.Active());
     return snapshot;

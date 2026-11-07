@@ -1,7 +1,7 @@
 #pragma once
 
 #include "control_settings.h"
-#include "settings_controller.h"
+#include "settings_fwd.h"
 #include "platform/window_support/window_capabilities.h"
 #include "winui/general_advanced_feature_status.h"
 #include "winui/home_about_page_model.h"

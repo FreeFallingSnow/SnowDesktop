@@ -1,4 +1,7 @@
 #include "app/app.h"
+#include "diagnostics/diagnostic_log.h"
+#include "data/data_paths.h"
+#include "icons/large_icon_assets.h"
 #include "icons/large_icon_steam.h"
 #include "desktop/desktop_source.h"
 
