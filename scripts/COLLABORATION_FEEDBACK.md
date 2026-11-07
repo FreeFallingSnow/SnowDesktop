@@ -119,6 +119,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **测试目录查询再次受阻（2026-11-07）**：设置图标 Task `pages-header-monochrome-icon` 在批次 `46f5094bd7c24cc38e26205ff50ad871` 修订 0 执行 `scripts/test.bat list`，返回码 1，原始输出为 `Shared output busy: batch 46f5094bd7c24cc38e26205ff50ad871 / editing / task-b2f6f0cee3ba4b22be90f33da3929a7b:editing, pages-header-monochrome-icon:editing.`。改查 `cmake/testing/Tests.cmake` 确认 `behavior_manifest`，未重复配置或构建。目录查询与执行租约的分离仍待处理。
+
 - **同一只读入口复现（2026-11-06）**：Steam 组件联机 Task `task-e8cf97d08e2c41299365e068559911c4` 在编辑批次 `5048f0139d70451f918c67b612fac1f6` 时用 `scripts/test.bat list` 查验证计划的条目，返回 `Shared output busy` 并列出自身编辑登记。改为核对 `cmake/testing/Tests.cmake` 与已有 CTest 注册。未运行重复构建，目录入口与执行租约的分离仍待处理。
 
 - **只读目录也被执行租约挡住（2026-11-05）**：Task `lua-widget-stacks`、批次 `d6e9ae2780214cebbcb0d47f9747e7fc` 编辑期间执行 `scripts/test.bat list`，返回 `Shared output busy: batch d6e9ae2780214cebbcb0d47f9747e7fc / editing / lua-widget-stacks:editing`。此调用只为核对计划中的现有测试名，没有请求配置或编译；随后直接读取 `cmake/testing/Tests.cmake` 完成核对，未另建候选或绕过构建租约。新增影响为计划前的只读测试目录查询被自身编辑屏障拒绝；建议区分纯目录查询与实际执行入口，尚未审查或修改工具根因，不记作已解决。
