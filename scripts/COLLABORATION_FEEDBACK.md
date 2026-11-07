@@ -136,6 +136,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **内存排队的重复提示（2026-11-07）**：Task `task-2fd4d1befda64e58b7597f3bd2f862e6`，批次 `74d958ae21bb4c94aad34b338ee16690` 修订 0，Run `0ed3218032654c6faa899a700a836731`。`ready-and-wait` 在业务条件不变时反复交替输出 `Waiting for the collaboration state transaction.` 和 `Shared project resources busy: memory-headroom; requested 18 CPU slots / 3072 MiB`。原观察 session `82513` 持续等待，未重复提交，内存满足后原 Run 构建和定向测试通过。详细证据保存在 `.codex-probes/pages-menu-icon-weight/collaboration-feedback.md`。事务提示与业务等待仍需分别去重。
+
 - **托盘任务的观察噪音**：上述中键任务的同一 `begin` session `34855` 多次交替输出 `Waiting for the collaboration state transaction.` 和相同的 `Waiting for batch e2afef9c94df420f8ef49d7f07d7c445: editing phase; editing peers task-0eb0e940aaf647079b420cdf668166cf.`。业务等待条件未变化，原生进程仍存活；工具传输 yield 后仅续接原 session，不另起 status 或构建。后续应区分短时状态事务与业务等待去重，避免交替提示重复输出；没有为本反馈追加复现。
 - **发现**：2026-11-04，用户明确要求等待不限时长，直到下一个事件。源码确认 `ready-and-wait/watch` 默认1800秒、`event-wait`及DSH消息等待默认30秒，DSH工具另声明45000毫秒外层时限；反复返回空状态会产生额外模型调用。
 - **本轮修复**：通用 `ready-and-wait/finish/wait/event-wait` 和 `watch` 默认不设截止时间，显式0同义，正数保留有界等待；相同等待提示只输出一次。票据以 `deadlineUtc: null` 记录无期限，旧票据的截止时间保留。DSH `wait-messages` 默认 `waitSeconds=0`，移除工具外层固定截止，转发调用取消信号；取消仅结束观察子进程，不取消共享Run。
