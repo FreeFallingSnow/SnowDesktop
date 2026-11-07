@@ -172,16 +172,6 @@ inline std::wstring FindDockSteamAppInstallDirectory(const std::wstring& appId)
     return {};
 }
 
-inline bool IsDockSteamAppRunning(const std::wstring& appId)
-{
-    if (appId.empty()) return false;
-    DWORD running = 0;
-    DWORD size = sizeof(running);
-    const std::wstring subKey = L"Software\\Valve\\Steam\\Apps\\" + appId;
-    return RegGetValueW(HKEY_CURRENT_USER, subKey.c_str(), L"Running",
-        RRF_RT_REG_DWORD, nullptr, &running, &size) == ERROR_SUCCESS && running != 0;
-}
-
 inline bool IsDockPathInsideDirectory(
     const std::wstring& path, const std::wstring& directory)
 {
