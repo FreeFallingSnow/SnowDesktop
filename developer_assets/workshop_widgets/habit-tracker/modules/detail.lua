@@ -1,8 +1,8 @@
 local history = module.require("modules/history.lua")
-local previous = utf8.char(0x2039)
-local nextMonth = utf8.char(0x203A)
-local previousYear = utf8.char(0x00AB)
-local nextYear = utf8.char(0x00BB)
+local previousMonth = utf8.char(0xF104) -- angle-left
+local nextMonth = utf8.char(0xF105) -- angle-right
+local previousYear = utf8.char(0xF100) -- angles-left
+local nextYear = utf8.char(0xF101) -- angles-right
 local up = utf8.char(0x2191)
 local down = utf8.char(0x2193)
 
@@ -79,9 +79,15 @@ local function calendarView(context, model, m, weekdays)
     monthLabel.bold, monthLabel.textAlign, monthLabel.fontSize = true, "center", m.row * 16 / 28
     monthLabel.gridColumn, monthLabel.columnSpan = 3, 3
     local function nav(key, column, glyph, delta, accessible)
-        local button = command(key, glyph, m, m.navWidth, history.shiftMonth(detail.date, delta, model.today) ~= nil,
-            "habit.month", delta, accessible)
-        button.fontSize = math.min(m.row * 17 / 28, m.navWidth * 0.55)
+        local button = view.iconButton({
+            key = key, glyph = glyph, iconFont = "fa",
+            width = m.navWidth, height = m.row, flexShrink = 0,
+            fontSize = math.min(m.row * 17 / 28, m.navWidth * 0.55),
+            enabled = history.shiftMonth(detail.date, delta, model.today) ~= nil,
+            style = { foreground = "textPrimary", cornerRadius = m.row * 6 / 28 },
+            accessibility = { label = accessible },
+            events = { click = { id = "habit.month", value = delta } },
+        })
         local cell = row(key .. ".cell", m, { button })
         cell.gridColumn, cell.justifyContent = column, "center"
         return cell
@@ -91,7 +97,7 @@ local function calendarView(context, model, m, weekdays)
         columns = 7,
         children = {
             nav("detail.year.prev", 1, previousYear, -12, l10n.tr("lua_widget.habit_tracker.prev_year")),
-            nav("detail.month.prev", 2, previous, -1, l10n.tr("lua_widget.habit_tracker.prev_month")),
+            nav("detail.month.prev", 2, previousMonth, -1, l10n.tr("lua_widget.habit_tracker.prev_month")),
             monthLabel,
             nav("detail.month.next", 6, nextMonth, 1, l10n.tr("lua_widget.habit_tracker.next_month")),
             nav("detail.year.next", 7, nextYear, 12, l10n.tr("lua_widget.habit_tracker.next_year")),
