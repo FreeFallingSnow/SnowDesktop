@@ -11,13 +11,17 @@
   "name": "Habit Tracker",
   "nameKey": "lua_widget.habit_tracker.name",
   "version": "1.2.1",
-  "description": "Check off daily habits and see your week and streaks.",
+  "description": "Track your habits on the desktop in a view that fits the widget: today, the last three days, or the full week. Select a habit to see its history and streak, log missed days, or reorder your habits.",
   "descriptionKey": "lua_widget.habit_tracker.description",
   "preview": "workshop-preview.png",
+  "previewGallery": [
+    "previews/three-days.png",
+    "previews/today.png"
+  ],
   "locales": {
     "de-DE": {
       "lua_widget.habit_tracker.name": "Gewohnheiten",
-      "lua_widget.habit_tracker.description": "Hake tägliche Gewohnheiten ab und sieh deine Woche und Serien.",
+      "lua_widget.habit_tracker.description": "Verfolge deine Gewohnheiten auf dem Desktop. Je nach Widget-Größe siehst du heute, die letzten drei Tage oder die ganze Woche. Wähle eine Gewohnheit aus, um ihren Verlauf und ihre Serie zu sehen, verpasste Tage nachzutragen oder die Reihenfolge zu ändern.",
       "lua_widget.habit_tracker.preview_today": "Heute",
       "lua_widget.habit_tracker.preview_week": "Woche",
       "lua_widget.habit_tracker.read": "Lesen",
@@ -66,7 +70,7 @@
     },
     "en-US": {
       "lua_widget.habit_tracker.name": "Habit Tracker",
-      "lua_widget.habit_tracker.description": "Check off daily habits and see your week and streaks.",
+      "lua_widget.habit_tracker.description": "Track your habits on the desktop in a view that fits the widget: today, the last three days, or the full week. Select a habit to see its history and streak, log missed days, or reorder your habits.",
       "lua_widget.habit_tracker.preview_today": "Today",
       "lua_widget.habit_tracker.preview_week": "Week",
       "lua_widget.habit_tracker.read": "Reading",
@@ -115,7 +119,7 @@
     },
     "es-419": {
       "lua_widget.habit_tracker.name": "Seguimiento de hábitos",
-      "lua_widget.habit_tracker.description": "Marca tus hábitos diarios y consulta el progreso semanal y tus rachas.",
+      "lua_widget.habit_tracker.description": "Lleva el seguimiento de tus hábitos en el escritorio. Según el tamaño del widget, verás el día de hoy, los últimos tres días o la semana completa. Selecciona un hábito para consultar su historial y su racha, registrar días pasados o cambiar el orden de tus hábitos.",
       "lua_widget.habit_tracker.preview_today": "Hoy",
       "lua_widget.habit_tracker.preview_week": "Semana",
       "lua_widget.habit_tracker.read": "Leer",
@@ -164,7 +168,7 @@
     },
     "es-ES": {
       "lua_widget.habit_tracker.name": "Seguimiento de hábitos",
-      "lua_widget.habit_tracker.description": "Marca tus hábitos diarios y consulta el progreso semanal y tus rachas.",
+      "lua_widget.habit_tracker.description": "Lleva un registro de tus hábitos en el escritorio. Según el tamaño del widget, verás el día de hoy, los últimos tres días o toda la semana. Selecciona un hábito para ver su historial y su racha, registrar días pasados o cambiar el orden de tus hábitos.",
       "lua_widget.habit_tracker.preview_today": "Hoy",
       "lua_widget.habit_tracker.preview_week": "Semana",
       "lua_widget.habit_tracker.read": "Leer",
@@ -213,7 +217,7 @@
     },
     "fr-FR": {
       "lua_widget.habit_tracker.name": "Suivi des habitudes",
-      "lua_widget.habit_tracker.description": "Cochez vos habitudes quotidiennes et consultez la semaine et vos séries.",
+      "lua_widget.habit_tracker.description": "Suivez vos habitudes sur le bureau. Selon la taille du widget, affichez la journée, les trois derniers jours ou la semaine entière. Sélectionnez une habitude pour consulter son historique et sa série en cours, renseigner les jours oubliés ou changer l’ordre de vos habitudes.",
       "lua_widget.habit_tracker.preview_today": "Aujourd’hui",
       "lua_widget.habit_tracker.preview_week": "Semaine",
       "lua_widget.habit_tracker.read": "Lire",
@@ -262,7 +266,7 @@
     },
     "ja-JP": {
       "lua_widget.habit_tracker.name": "習慣トラッカー",
-      "lua_widget.habit_tracker.description": "毎日の習慣を記録し、今週の達成状況と連続日数を確認できます。",
+      "lua_widget.habit_tracker.description": "デスクトップで毎日の習慣を記録できます。ウィジェットの大きさに合わせて、今日、直近3日間、今週のいずれかを表示します。習慣を選ぶと、履歴と連続達成日数の確認、過去の日付への記録、習慣の並べ替えができます。",
       "lua_widget.habit_tracker.preview_today": "今日",
       "lua_widget.habit_tracker.preview_week": "週間",
       "lua_widget.habit_tracker.read": "読書",
@@ -311,7 +315,7 @@
     },
     "ko-KR": {
       "lua_widget.habit_tracker.name": "습관 체크",
-      "lua_widget.habit_tracker.description": "매일 습관을 체크하고 이번 주 기록과 연속 달성 일수를 확인하세요.",
+      "lua_widget.habit_tracker.description": "바탕 화면에서 습관을 기록하세요. 위젯 크기에 따라 오늘, 최근 3일 또는 이번 주 전체가 표시됩니다. 습관을 선택하면 기록과 연속 달성 일수를 확인하고, 놓친 날을 기록하거나 습관 순서를 바꿀 수 있습니다.",
       "lua_widget.habit_tracker.preview_today": "오늘",
       "lua_widget.habit_tracker.preview_week": "주간",
       "lua_widget.habit_tracker.read": "독서",
@@ -360,7 +364,7 @@
     },
     "pt-BR": {
       "lua_widget.habit_tracker.name": "Controle de hábitos",
-      "lua_widget.habit_tracker.description": "Marque seus hábitos diários e acompanhe a semana e suas sequências.",
+      "lua_widget.habit_tracker.description": "Acompanhe seus hábitos na área de trabalho. Conforme o tamanho do widget, veja o dia de hoje, os últimos três dias ou a semana inteira. Selecione um hábito para ver seu histórico e sua sequência, registrar dias anteriores ou mudar a ordem dos hábitos.",
       "lua_widget.habit_tracker.preview_today": "Hoje",
       "lua_widget.habit_tracker.preview_week": "Semana",
       "lua_widget.habit_tracker.read": "Ler",
@@ -409,7 +413,7 @@
     },
     "zh-CN": {
       "lua_widget.habit_tracker.name": "习惯打卡",
-      "lua_widget.habit_tracker.description": "勾选每日习惯，查看本周记录和连续天数。",
+      "lua_widget.habit_tracker.description": "在桌面记录每日习惯。组件会随尺寸显示今日、近三天或本周。点击习惯名称，即可查看历史记录和连续打卡天数、为漏掉的日期补打卡，或调整习惯顺序。",
       "lua_widget.habit_tracker.preview_today": "今日卡",
       "lua_widget.habit_tracker.preview_week": "周视图",
       "lua_widget.habit_tracker.read": "阅读",
@@ -458,7 +462,7 @@
     },
     "zh-TW": {
       "lua_widget.habit_tracker.name": "習慣打卡",
-      "lua_widget.habit_tracker.description": "勾選每日習慣，查看本週紀錄和連續天數。",
+      "lua_widget.habit_tracker.description": "在桌面記錄每日習慣。元件會依尺寸顯示今天、近三天或本週。點選習慣名稱，即可查看歷史紀錄和連續打卡天數、為漏掉的日期補打卡，或調整習慣順序。",
       "lua_widget.habit_tracker.preview_today": "今日卡",
       "lua_widget.habit_tracker.preview_week": "週檢視",
       "lua_widget.habit_tracker.read": "閱讀",
