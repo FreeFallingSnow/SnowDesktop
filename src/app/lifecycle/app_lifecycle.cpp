@@ -78,6 +78,8 @@ DesktopApp::~DesktopApp()
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();
     if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
+    widgetHoverExpansionFrameToken_ = 0;
+    widgetHoverExpansion_.clear();
     floatingDockPromotionInputToken_ = 0;
     floatingDockInputDeactivated_ = false;
     dockWindowActivationObservationToken_ = 0;

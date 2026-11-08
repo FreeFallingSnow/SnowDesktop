@@ -38,11 +38,12 @@ bool KeepOrRestoreWidgetPanel(Compositor& compositor, const Widget& widget)
 {
     if (!widget.visible || !widget.backdropRequested)
         return false;
-    if (compositor.KeepPanel(widget.bounds))
+    const auto ownerKey = widget.BackdropOwnerKey();
+    if (compositor.KeepPanel(widget.bounds, ownerKey))
         return true;
     return compositor.AddPanel(widget.bounds,
         static_cast<float>(widget.backdropCornerRadius),
-        static_cast<float>(widget.backdropBlurRadius), 0, true);
+        static_cast<float>(widget.backdropBlurRadius), ownerKey, true);
 }
 
 // Call after the final panel collection, so a remove/add pair in one frame

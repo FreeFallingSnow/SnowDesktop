@@ -374,6 +374,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
         const LONG rawWidth = bounds.right - bounds.left;
         const LONG rawHeight = bounds.bottom - bounds.top;
+        // Keep one surface allocation throughout a height transition. The
+        // paint and clip still follow the visible frame on every tick.
+        const LONG surfaceHeight = widgetContainer &&
+                IsWidgetHoverExpansionAnimating(*widgetData)
+            ? GetExpandedWidgetFrameRect(*widgetData).bottom - bounds.top
+            : rawHeight;
         constexpr LONG surfaceOverdraw = static_cast<LONG>(
             snowdesktop::widget_composition_layer_rules::
                 kWidgetSurfaceBorderOverdraw);
@@ -382,7 +388,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             surfaceOverdraw * 2;
         if (rawWidth <= 0 || rawHeight <= 0 ||
             rawWidth > maximumLogicalSurfaceDimension ||
-            rawHeight > maximumLogicalSurfaceDimension)
+            surfaceHeight > maximumLogicalSurfaceDimension)
         {
             surfaceFailures.push_back({
                 widgetId, L"Validate bounds", E_INVALIDARG, false });
@@ -399,7 +405,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 WidgetSurfaceExtent(rawWidth));
         const UINT height = static_cast<UINT>(
             snowdesktop::widget_composition_layer_rules::
-                WidgetSurfaceExtent(rawHeight));
+                WidgetSurfaceExtent(surfaceHeight));
+        const float clipHeight = static_cast<float>(
+            snowdesktop::widget_composition_layer_rules::WidgetSurfaceExtent(rawHeight));
         auto& item = composition->second;
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
@@ -578,11 +586,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
 
         item.backdropRequested = backdropRequested;
-        if (boundsChanged && item.backdropRegistered)
-        {
-            (void)desktopBackdropCompositor_.RemovePanel(oldBounds);
-            item.backdropRegistered = false;
-        }
         if (backdropRequested)
         {
             const bool backdropChanged =
@@ -595,14 +598,14 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                     desktopBackdropCompositor_.AddPanel(
                         bounds,
                         static_cast<float>(backdropCornerRadius),
-                        static_cast<float>(backdropBlurRadius), 0, true);
+                        static_cast<float>(backdropBlurRadius), item.BackdropOwnerKey(), true);
             }
             item.backdropCornerRadius = backdropCornerRadius;
             item.backdropBlurRadius = backdropBlurRadius;
         }
         else if (item.backdropRegistered)
         {
-            (void)desktopBackdropCompositor_.RemovePanel(bounds);
+            (void)desktopBackdropCompositor_.RemovePanel(oldBounds, item.BackdropOwnerKey());
             item.backdropRegistered = false;
         }
 
@@ -617,7 +620,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         if (SUCCEEDED(hr))
             hr = item.clip->SetRight(showContent ? static_cast<float>(width) : 0.0f);
         if (SUCCEEDED(hr))
-            hr = item.clip->SetBottom(showContent ? static_cast<float>(height) : 0.0f);
+            hr = item.clip->SetBottom(showContent ? clipHeight : 0.0f);
         if (FAILED(hr))
         {
             item.iconBackdrops.DiscardDraw();
@@ -741,7 +744,8 @@ bool DesktopApp::HasDesktopWidgetComposition(
 void DesktopApp::SetDesktopWidgetCompositionVisible(
     const std::wstring& widgetId,
     bool visible,
-    const RECT& bounds)
+    const RECT& bounds,
+    bool retainOnHeightChange)
 {
     const auto position = desktopWidgetCompositionItems_.find(widgetId);
     if (position == desktopWidgetCompositionItems_.end())
@@ -760,9 +764,12 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
             uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
             desktopWidgetHoverTailToken_ = 0;
         }
-        // FlushPendingDesktopWidgetComposition opens the clip only after
-        // EndDraw succeeds and the current surface has been attached.
-        if (item.clip)
+        // Keep the old, anchored hover frame until the new child pixels are
+        // ready, even if a pointer batch defers its draw past this commit.
+        const bool keepPresentedFrame = retainOnHeightChange && item.visible &&
+            item.surface && item.bounds.left == bounds.left &&
+            item.bounds.top == bounds.top && item.bounds.right == bounds.right;
+        if (item.clip && !keepPresentedFrame)
         {
             (void)item.clip->SetRight(0.0f);
             (void)item.clip->SetBottom(0.0f);
@@ -784,7 +791,7 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible && item.backdropRegistered)
     {
-        (void)desktopBackdropCompositor_.RemovePanel(item.bounds);
+        (void)desktopBackdropCompositor_.RemovePanel(item.bounds, item.BackdropOwnerKey());
         item.backdropRegistered = false;
     }
     if (!visible)
@@ -998,7 +1005,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     (void)RetireRenderedSurface(widgetSurfaceRenderer_.get(), position->second);
     position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
     if (position->second.backdropRegistered)
-        (void)desktopBackdropCompositor_.RemovePanel(bounds);
+        (void)desktopBackdropCompositor_.RemovePanel(bounds, position->second.BackdropOwnerKey());
     if (desktopWidgetCompositionLayer_ && position->second.visual)
     {
         (void)desktopWidgetCompositionLayer_->RemoveVisual(
@@ -1093,7 +1100,11 @@ void DesktopApp::ResetDesktopWidgetComposition()
     presentedWidgetDragFeedback_ = {};
     pendingDesktopWidgetCompositions_.clear();
     for (const auto& [_, item] : desktopWidgetCompositionItems_)
+    {
         item.iconBackdrops.Hide(desktopBackdropCompositor_);
+        if (item.backdropRegistered)
+            (void)desktopBackdropCompositor_.RemovePanel(item.bounds, item.BackdropOwnerKey());
+    }
     desktopWidgetCompositionItems_.clear();
     desktopWidgetCompositionZOrder_.clear();
     if (dcompVisual_ && desktopWidgetCompositionLayer_)

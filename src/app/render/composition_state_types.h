@@ -68,6 +68,12 @@ struct PendingWidgetMarqueeComposition
 
 struct DesktopWidgetCompositionItem
 {
+    // The unordered-map node stays in place while its glass geometry changes.
+    std::uintptr_t BackdropOwnerKey() const noexcept
+    {
+        return reinterpret_cast<std::uintptr_t>(this);
+    }
+
     Microsoft::WRL::ComPtr<IDCompositionVisual2> visual;
     Microsoft::WRL::ComPtr<IDCompositionRectangleClip> clip;
     Microsoft::WRL::ComPtr<IDCompositionSurface> surface;

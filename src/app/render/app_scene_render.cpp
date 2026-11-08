@@ -134,6 +134,7 @@ void DesktopApp::DrawStaticBackground(
             widgetData.id == interactionPinnedWidgetId_;
         const bool interactionRetained =
             popupOpen || interactionPinned || luaStackIndicator_.stackId == widgetData.id ||
+            IsWidgetHoverExpansionAnimating(widgetData) ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
                     keyboardNavVisualFocus_,
@@ -207,7 +208,8 @@ void DesktopApp::DrawStaticBackground(
                     desktopSurfaceVisible, previewSourceHidden || iconEntranceDragged);
         if (HasDesktopWidgetComposition(widgetData.id))
             SetDesktopWidgetCompositionVisible(
-                widgetData.id, presentWidgetSurface, widgetFrame);
+                widgetData.id, presentWidgetSurface, widgetFrame,
+                widgetData.titleBarExpandOnHover);
         if (presentWidgetSurface && !IsGroupedWidget(widgetData) &&
             SyncDesktopWidgetOcclusion(widgetData, widgetFrame))
             continue;

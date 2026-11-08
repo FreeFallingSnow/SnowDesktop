@@ -2339,7 +2339,7 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
 }
 
 bool DesktopBackdropCompositor::KeepPanel(
-    const RECT& frame)
+    const RECT& frame, std::uintptr_t ownerKey)
 {
     // Staged frames are full redraws, not retained/partial collections.
     if (impl_->stagingFrame) return false;
@@ -2347,8 +2347,9 @@ bool DesktopBackdropCompositor::KeepPanel(
         return false;
     const auto existing = std::find_if(
         impl_->panels.begin(), impl_->panels.end(),
-        [&frame](const Impl::PanelVisual& panel) {
-            return EqualRect(&panel.frame, &frame) != FALSE;
+        [&frame, ownerKey](const Impl::PanelVisual& panel) {
+            return (ownerKey == 0 || panel.ownerKey == ownerKey) &&
+                EqualRect(&panel.frame, &frame) != FALSE;
         });
     if (existing == impl_->panels.end())
         return false;

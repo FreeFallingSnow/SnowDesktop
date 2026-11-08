@@ -2626,7 +2626,8 @@ private:
     void SetDesktopWidgetCompositionVisible(
         const std::wstring& widgetId,
         bool visible,
-        const RECT& bounds);
+        const RECT& bounds,
+        bool retainOnHeightChange = false);
     void KeepDesktopWidgetBackdropPanels();
     void LogDesktopWidgetBackdropState(const wchar_t* phase) const;
     void RemoveDesktopWidgetComposition(
@@ -3182,8 +3183,13 @@ private:
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
     RECT GetExpandedWidgetFrameRect(const DesktopWidget& widget) const;
     bool IsWidgetCollapsed(const DesktopWidget& widget) const;
-    bool UpdateWidgetHoverExpansion(POINT point);
-    std::unordered_set<std::wstring> hoverExpandedWidgetIds_;
+    bool CanFoldWidget(const DesktopWidget& widget) const;
+    float GetWidgetExpansionProgress(const DesktopWidget& widget) const;
+    bool IsWidgetHoverExpansionAnimating(const DesktopWidget& widget) const;
+    void UpdateWidgetHoverExpansion(POINT point);
+    bool AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish = false);
+    std::unordered_map<std::wstring, snowdesktop::popup_animation_rules::State> widgetHoverExpansion_;
+    snowdesktop::UiScheduleToken widgetHoverExpansionFrameToken_ = 0;
     std::wstring hoverExpansionSuppressedWidgetId_;
     void ToggleWidgetCollapsed(size_t widgetIndex);
     RECT GetLuaWidgetHostActionRect(const DesktopWidget& widget) const;

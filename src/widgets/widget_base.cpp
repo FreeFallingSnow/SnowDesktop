@@ -3337,17 +3337,18 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             const auto color = lightTheme
                 ? D2D1::ColorF(0.11f, 0.13f, 0.17f, hot ? 1.0f : 0.72f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, hot ? 1.0f : 0.80f);
-            // Reuse the bundled official right chevron; rotate it downward
-            // while expanded. The hit target itself does not rotate.
+            const bool hoverExpanded = !IsHosted() && data_->titleBarExpandOnHover &&
+                app_->CanFoldWidget(*data_) && app_->widgetHoverExpansion_.contains(data_->id);
             D2D1_MATRIX_3X2_F previousTransform;
             context->GetTransform(&previousTransform);
-            if (!IsCollapsed())
+            if (!hoverExpanded && !IsCollapsed())
                 context->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f,
                     D2D1::Point2F((button.left + button.right) * 0.5f,
                         (button.top + button.bottom) * 0.5f)) * previousTransform);
             if (auto* format = GetCuFluentTextFormat(14.0f * GetBarScale()))
                 app_->DrawD2DText(context,
-                    snowdesktop::menu_fluent_glyphs::kChevronRight,
+                    hoverExpanded ? snowdesktop::menu_fluent_glyphs::kPin
+                                  : snowdesktop::menu_fluent_glyphs::kChevronRight,
                     button, format, color);
             context->SetTransform(previousTransform);
         }

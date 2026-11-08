@@ -138,7 +138,7 @@ public:
     /** @brief 移除玻璃面板并同步区域；非零 ownerKey 定位稳定身份，零值按矩形查找。 */
     bool RemovePanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
-    bool KeepPanel(const RECT& frame);
+    bool KeepPanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */
     bool SetPanelOpacity(const RECT& frame, float opacity);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */

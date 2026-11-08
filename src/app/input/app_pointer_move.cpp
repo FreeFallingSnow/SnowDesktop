@@ -381,8 +381,8 @@ void DesktopApp::OnMouseMoveAt(
     }
     UpdateListTitleHover();
     UpdatePopupHover(current);
-    if (UpdateWidgetHoverExpansion(current))
-        PresentPassiveHoverVisualChange();
+    // Let the pointer batch finish before painting the new widget frame.
+    UpdateWidgetHoverExpansion(current);
     if (HandleUsageGuidePointerMove(current)) return;
     if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,
