@@ -139,6 +139,10 @@ public:
     /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
     bool SetPanelTransform(std::uintptr_t ownerKey,
         const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
+    // Reserve the full footprint of an animating desktop widget in the HWND
+    // region. The panel's visual clip still owns the visible contour.
+    // An empty frame restores the normal panel fence.
+    void SetPanelAnimationFence(std::uintptr_t ownerKey, const RECT& frame);
     /** @brief 移除玻璃面板并同步区域；非零 ownerKey 定位稳定身份，零值按矩形查找。 */
     bool RemovePanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */

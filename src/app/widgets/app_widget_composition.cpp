@@ -830,10 +830,22 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
 
 void DesktopApp::KeepDesktopWidgetBackdropPanels()
 {
-    for (auto& [_, item] : desktopWidgetCompositionItems_)
+    for (auto& [id, item] : desktopWidgetCompositionItems_)
     {
         item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
             KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
+        if (item.backdropRegistered)
+        {
+            RECT animationFence{};
+            const auto expansion = widgetHoverExpansion_.find(id);
+            if (expansion != widgetHoverExpansion_.end() && expansion->second.IsAnimating())
+            {
+                const auto index = FindWidgetIndexById(id);
+                if (index < widgets_.size() && IsWidgetHoverExpansionAnimating(widgets_[index]))
+                    animationFence = GetExpandedWidgetFrameRect(widgets_[index]);
+            }
+            desktopBackdropCompositor_.SetPanelAnimationFence(item.BackdropOwnerKey(), animationFence);
+        }
         if (item.visible)
             item.iconBackdrops.Restore(desktopBackdropCompositor_);
         else

@@ -369,6 +369,7 @@ struct DesktopBackdropCompositor::Impl
         std::uintptr_t ownerKey = 0;
         float cornerRadius = 0;
         float regionCornerRadius = 0;
+        std::optional<RECT> animationFence;
         RECT synchronizedRegionFrame{};
         float synchronizedRegionRadius = 0;
         bool regionFenceSynchronized = false;
@@ -399,6 +400,15 @@ struct DesktopBackdropCompositor::Impl
         std::optional<float> submittedRadius;
         std::optional<float> submittedOpacity;
         wuc::CompositionGeometry submittedClip{nullptr};
+
+        const RECT& FenceFrame() const noexcept
+        {
+            return animationFence ? *animationFence : regionFrame;
+        }
+        float FenceRadius() const noexcept
+        {
+            return animationFence ? 0.0f : regionCornerRadius;
+        }
 
         void SetTransform(const wfn::float4x4& value)
         {
@@ -764,8 +774,8 @@ struct DesktopBackdropCompositor::Impl
             for (const auto& panel : panels)
             {
                 if (!panel.regionFenceSynchronized ||
-                    !EqualRect(&panel.synchronizedRegionFrame, &panel.regionFrame) ||
-                    panel.synchronizedRegionRadius != panel.regionCornerRadius)
+                    !EqualRect(&panel.synchronizedRegionFrame, &panel.FenceFrame()) ||
+                    panel.synchronizedRegionRadius != panel.FenceRadius())
                 {
                     inputsMatch = false;
                     break;
@@ -783,8 +793,8 @@ struct DesktopBackdropCompositor::Impl
             if (!windowGeometryKnown) return;
             for (auto& panel : panels)
             {
-                panel.synchronizedRegionFrame = panel.regionFrame;
-                panel.synchronizedRegionRadius = panel.regionCornerRadius;
+                panel.synchronizedRegionFrame = panel.FenceFrame();
+                panel.synchronizedRegionRadius = panel.FenceRadius();
                 panel.regionFenceSynchronized = true;
             }
             synchronizedPanelCount = panels.size();
@@ -812,7 +822,7 @@ struct DesktopBackdropCompositor::Impl
                 // Composition owns the AA contour. The outward region preserves
                 // its coverage but excludes the fully transparent outer corners.
                 HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
-                    panel.regionFrame, panel.regionCornerRadius);
+                    panel.FenceFrame(), panel.FenceRadius());
                 if (!frameRegion)
                 {
                     DeleteObject(panelRegion);
@@ -2329,6 +2339,25 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
         impl_->SetError(_LW("backdrop.update_panel"), error.code());
         return false;
     }
+}
+
+void DesktopBackdropCompositor::SetPanelAnimationFence(
+    std::uintptr_t ownerKey, const RECT& frame)
+{
+    if (!impl_->available || !impl_->collectingFrame || !ownerKey)
+        return;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end()) return;
+
+    // SetWindowRgn takes effect separately from the Composition commit.
+    // The whole animation path must fit both the previous and new clip.
+    const RECT& visible = panel->regionFrame;
+    if (!IsRectEmpty(&frame) && frame.left == visible.left &&
+        frame.top == visible.top && frame.right == visible.right &&
+        frame.bottom >= visible.bottom)
+        panel->animationFence = frame;
+    else
+        panel->animationFence.reset();
 }
 
 bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ownerKey)
