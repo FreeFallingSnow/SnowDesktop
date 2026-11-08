@@ -73,20 +73,29 @@ local function calendarView(context, model, m, weekdays)
     end
 
     local title = text("detail.name", item.name, m, false)
-    title.bold, title.fontSize = true, m.row * 15 / 28
+    title.bold, title.fontSize = true, m.row * 18 / 28
     local monthTitle = l10n.tr("lua_widget.habit_tracker.month", detail.month.year, detail.month.month)
     local monthLabel = text("detail.month.label", monthTitle, m, false)
-    monthLabel.bold, monthLabel.textAlign = true, "center"
-    local function nav(key, glyph, delta, accessible)
-        return command(key, glyph, m, m.navWidth, history.shiftMonth(detail.date, delta, model.today) ~= nil,
+    monthLabel.bold, monthLabel.textAlign, monthLabel.fontSize = true, "center", m.row * 16 / 28
+    monthLabel.gridColumn, monthLabel.columnSpan = 3, 3
+    local function nav(key, column, glyph, delta, accessible)
+        local button = command(key, glyph, m, m.navWidth, history.shiftMonth(detail.date, delta, model.today) ~= nil,
             "habit.month", delta, accessible)
+        button.fontSize = math.min(m.row * 17 / 28, m.navWidth * 0.55)
+        local cell = row(key .. ".cell", m, { button })
+        cell.gridColumn, cell.justifyContent = column, "center"
+        return cell
     end
-    local toolbar = row("detail.month.toolbar", m, {
-        nav("detail.year.prev", previousYear, -12, l10n.tr("lua_widget.habit_tracker.prev_year")),
-        nav("detail.month.prev", previous, -1, l10n.tr("lua_widget.habit_tracker.prev_month")),
-        monthLabel,
-        nav("detail.month.next", nextMonth, 1, l10n.tr("lua_widget.habit_tracker.next_month")),
-        nav("detail.year.next", nextYear, 12, l10n.tr("lua_widget.habit_tracker.next_year")),
+    local toolbar = view.grid({
+        key = "detail.month.toolbar", width = "fill", height = m.row, flexShrink = 0,
+        columns = 7,
+        children = {
+            nav("detail.year.prev", 1, previousYear, -12, l10n.tr("lua_widget.habit_tracker.prev_year")),
+            nav("detail.month.prev", 2, previous, -1, l10n.tr("lua_widget.habit_tracker.prev_month")),
+            monthLabel,
+            nav("detail.month.next", 6, nextMonth, 1, l10n.tr("lua_widget.habit_tracker.next_month")),
+            nav("detail.year.next", 7, nextYear, 12, l10n.tr("lua_widget.habit_tracker.next_year")),
+        },
     })
 
     local future = detail.date > model.today
@@ -99,8 +108,8 @@ local function calendarView(context, model, m, weekdays)
     local summary = text("detail.summary", l10n.tr("lua_widget.habit_tracker.summary",
         #detail.completed, detail.total, item.streak), m, true)
     summary.textWrap, summary.maxLines, summary.height = "wrap", 2, m.row * 1.3
-    local inline = m.width >= m.row * 10.5
-    local commandWidth = inline and math.min(m.row * 4.8, m.width * 0.27) or "fill"
+    local inline = m.width >= m.row * 13
+    local commandWidth = inline and math.min(m.row * 5.6, m.width * 0.30) or "fill"
     local selection = text("detail.selection", l10n.tr("lua_widget.habit_tracker.selected_date",
         detail.date, state), m, true)
     local actions = {
@@ -108,17 +117,23 @@ local function calendarView(context, model, m, weekdays)
             commandWidth, detail.date ~= model.today, "habit.jumpToday"),
         command("detail.edit", action, m, commandWidth, not future, "habit.editDate"),
     }
+    local actionHeight = m.row * 1.45
+    for _, button in ipairs(actions) do
+        button.height, button.textWrap, button.maxLines = actionHeight, "wrap", 2
+    end
     if inline then table.insert(actions, 1, selection) end
+    local actionRow = row("detail.actions", m, actions)
+    actionRow.height = actionHeight
     local fixedHeight = m.row * (inline and 4.3 or 5.3)
-        + m.gap * (inline and 4 or 5) + m.inset * 2
+        + m.gap * (inline and 4 or 5) + m.inset * 2 + actionHeight - m.row
     if model.saveFailed then fixedHeight = fixedHeight + m.row + m.gap end
-    local calendarHeight = math.max(m.row * 5.1,
-        math.min(m.row * 7.5, layout.contentHeight() - fixedHeight))
+    local calendarHeight = math.max(m.row * 6.6,
+        math.min(m.row * 9, layout.contentHeight() - fixedHeight))
     local children = {
         row("detail.header", m, {
             title,
             command("detail.order", l10n.tr("lua_widget.habit_tracker.order"), m,
-                math.min(m.row * 4.8, m.width * 0.50), true, "habit.order"),
+                math.min(m.row * 6.2, m.width * 0.50), true, "habit.order"),
         }),
         summary,
         toolbar,
@@ -127,7 +142,7 @@ local function calendarView(context, model, m, weekdays)
             year = detail.month.year, month = detail.month.month, selectedDate = detail.date,
             todayDate = model.today, firstDayOfWeek = 2, showAdjacentDates = false,
             weekdayLabels = { weekdays[7], table.unpack(weekdays, 1, 6) },
-            eventDates = detail.completed, fontSize = m.body,
+            eventDates = detail.completed, fontSize = math.min(m.row * 16 / 28, m.width * 0.54 / 7),
             style = { foreground = "textPrimary" },
             eventStyle = { foreground = context.accessibility.highContrast and "systemAccent" or "success" },
             action = { id = "habit.select" },
@@ -135,7 +150,7 @@ local function calendarView(context, model, m, weekdays)
         }),
     }
     if not inline then children[#children + 1] = selection end
-    children[#children + 1] = row("detail.actions", m, actions)
+    children[#children + 1] = actionRow
     if model.saveFailed then
         local failure = text("detail.failure", l10n.tr("lua_widget.habit_tracker.save_failed"), m, false)
         failure.style.foreground = "error"
@@ -151,9 +166,9 @@ return function(context, model, weekdays)
     local width = layout.contentWidth() - 2 * inset
     local m = {
         row = rowHeight, width = width, inset = inset,
-        body = rowHeight * 12 / 28, caption = rowHeight * 10 / 28,
+        body = rowHeight * 15 / 28, caption = rowHeight * 13 / 28,
         gap = math.min(rowHeight * 8 / 28, width * 0.035),
-        navWidth = math.min(rowHeight * 1.12, width * 0.13),
+        navWidth = math.min(rowHeight * 1.24, width * 0.13),
     }
     local children = model.detail.sorting and ordering(model, m) or calendarView(context, model, m, weekdays)
     return view.scroll({

@@ -313,7 +313,7 @@ local function habitRow(item, m, width, stacked, rowHeight)
 end
 
 local function heading(text, m, width)
-    local name = label("title", title, m.row, m.row * 0.56)
+    local name = label("title", title, m.row, m.row * 0.45)
     name.bold, name.flexShrink = true, 1
     local children = { name }
     if text and width >= m.row * 3.7 then
@@ -418,7 +418,7 @@ local function desktop(context, model)
     local row = math.max(base, math.min(base * 1.52, (height - count) / (count + 1.94)))
     local highContrast = context.accessibility.highContrast
     local m = {
-        base = base, row = row, body = row * 0.44, caption = row * 0.31, smallGap = row * 0.14,
+        base = base, row = row, body = row * 0.38, caption = row * 0.31, smallGap = row * 0.14,
         colors = {
             fill = highContrast and "systemAccent" or "success",
             check = highContrast and "accentText" or (context.theme.mode == "light" and 0xFFFFFF or 0x102017),
