@@ -184,6 +184,10 @@ end
 local lightInk = { main = 0xF8FAFF, muted = 0xD8E0EF, day = 0xFFC66D, night = 0xD7BCFF }
 local darkInk = { main = 0x152237, muted = 0x47566C, day = 0x875018, night = 0x63419B }
 
+local function glyphBounds(metrics)
+    return metrics.ink or { left = 0, top = 0, width = metrics.width, height = metrics.height }
+end
+
 local function drawDaylight(x, y, radius, daylight, palette, line)
     local color = daylight and palette.day or palette.night
     if daylight then
@@ -215,15 +219,18 @@ local function render(context, model)
         local fontSize = size * scale
         local budget = maxWidth * scale
         local measured = draw.measureText(value, fontSize, 0, bold)
-        if measured.width > budget then
-            fontSize = fontSize * budget / measured.width
+        local bounds = glyphBounds(measured)
+        local width = math.max(measured.width, bounds.width)
+        if width > budget then
+            fontSize = fontSize * budget / width
             measured = draw.measureText(value, fontSize, 0, bold)
+            bounds = glyphBounds(measured)
         end
         local start = x * scale
-        if rightAligned then start = start - measured.width end
-        draw.text(start, y - measured.height / 2,
+        if rightAligned then start = start - bounds.width end
+        draw.text(start - bounds.left, y - bounds.top - bounds.height / 2,
             value, fontSize, color, budget * 1.02, bold, true)
-        return start, measured.width
+        return start, bounds.width
     end
 
     local function rule(x1, y1, x2, y2)
@@ -263,16 +270,21 @@ local function render(context, model)
     end
 
     local headerLabelY = 22 * scale
-    local localClockY = (headerLabelY + 7 * scale + dividerY) / 2
+    local clockTop, clockBottom = headerLabelY + 15 * scale, dividerY - 11 * scale
+    local clockSize = stacked and 47 or 59
+    -- Fit against a fixed sample so the header size stays stable as the minute changes.
+    local sample = glyphBounds(draw.measureText("88:88", clockSize * scale, 0, true))
+    clockSize = clockSize * math.min(1, (clockBottom - clockTop) / math.max(sample.height, 1))
     textAt(l10n.tr("lua_widget.world_clock.local"), inset, headerLabelY, 16, 125, ink.main, true)
-    textAt(model.localTime, inset, localClockY, stacked and 47 or 59, 218, ink.main, true)
+    textAt(model.localTime, inset, (clockTop + clockBottom) / 2, clockSize, 218, ink.main, true)
     local dateStart = textAt(model.localDate, right, headerLabelY, 15, 81, ink.main, false, true)
     drawDaylight(dateStart - 14 * scale, headerLabelY, 6.5 * scale, model.localDaylight, ink, scale)
     rule(0, dividerY, canvasWidth, dividerY)
 
     if stacked then
-        local valueRight = right - 21
-        local nameWidth = valueRight - inset - 77
+        local valueWidth = 69
+        local valueStart = right - 21 - valueWidth
+        local nameWidth = valueStart - inset - 8
         local rowHeight = (h - dividerY) / #model.cities
         local halfLineGap = 8.5 * scale
         for i, city in ipairs(model.cities) do
@@ -282,7 +294,7 @@ local function render(context, model)
             cityButton(city, i, inset - 4, right + 4, top, bottom, center)
             cityName(city, inset, center - halfLineGap, nameWidth)
             textAt(city.detail, inset, center + halfLineGap, 12, nameWidth, ink.muted, false)
-            textAt(city.clock, valueRight, center, 23, 69, ink.main, true, true)
+            textAt(city.clock, valueStart, center, 23, valueWidth, ink.main, true)
             if i < #model.cities then rule(0, bottom, canvasWidth, bottom) end
         end
         return
