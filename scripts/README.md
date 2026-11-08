@@ -553,6 +553,19 @@ rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan
 第4版批次的所有要求均明确豁免宿主构建和测试时，在检查、需求修订及输入核对通过后直接归档 `skipped/not-required`。
 这种空计划只使用协调状态事务和原有 Git 协作检查，无需取得构建租约、复制候选或启动执行器。
 
+第4版批次中，`docs`、`component` 或 `tool` 的 `none` 计划可以显式加 `-Independent`。
+此选项用于已经核对可独立完成的宿主参与任务。`-Inputs` 必须覆盖自己的认领路径和这次检查需要读取的文件。
+例如只更新协作手册时可用 `plan ID -Batch B -Revision R -Scope docs -Suites none -Inputs scripts/README.md -Reason "仅更新协作手册" -Independent`。
+轻量检查限定在声明路径。检查通过后，协调器在状态事务中重核输入摘要、需求和编辑修订，
+并比较输入与其他成员认领的写入范围。其他编辑者未认领、路径重叠、涉及共享语言文件或存在续修义务时保留共同屏障。
+需要编译或运行测试的计划仍共同冻结。当前候选捕获全树，认领路径分离本身无法证明构建依赖闭合。
+
+提前完成会保存只属于该成员的 `skipped/not-required` 回执，并带 `resultScope=participant`。
+`ready-and-wait`、`wait`、`watch` 和 `commit` 继续使用原批次与修订；查询历史回执可用 `status ID -Batch B -Revision R`。
+该成员完成 Git 保存后可以关闭 Task。其余成员保留原登记并继续编辑或提交，后续共同结果只承担仍待验证的计划。
+独立计划进入就绪时仍允许新成员加入尚未封口的编辑窗口。普通计划仍按原规则封口。
+重新编辑使用原 Task 执行 `begin`，保留早前修订的回执。这里的 `-Independent` 与 `task-open -HostParticipation independent` 分别表示批次内拆分和完全不参与宿主批次。
+
 第4版批次全部就绪后捕获冻结输入，在独立编译槽中执行；原检出应用或 Hook 的占用不阻断候选，
 不得因此提示用户先关闭软件或默认追加 `ReloadShell` / `CloseApplication`。构建成功后的本检出更新
 按前述激活流程处理，编译、激活和测试结果分别报告。

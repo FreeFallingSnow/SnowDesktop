@@ -114,10 +114,11 @@ function Get-CompactBatch($Batch,[string]$Participant) {
         $entry=$own[0];$files=@(Get-Field $entry 'ownedFiles' @())
         $member=[pscustomobject]@{id=$entry.id;state=$entry.state;editRevision=(Get-EditRevision $entry);
             ownedFiles=@($files|Select-Object -First 32);ownedFileCount=$files.Count;ownedFilesTruncated=($files.Count -gt 32);
-            checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiterStatus=(Get-Field (Get-Field $entry 'waiter') 'status')}
+            checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiterStatus=(Get-Field (Get-Field $entry 'waiter') 'status');
+            independentResult=(Get-Field $entry 'independentResult')}
     }
     return [pscustomobject]@{id=$Batch.id;phase=$Batch.phase;runId=(Get-Field $Batch 'runId');participant=$member;
-        participantCount=$members.Count;participants=@($members|Select-Object -First 32|ForEach-Object {[pscustomobject]@{id=$_.id;state=$_.state;editRevision=(Get-EditRevision $_)}});
+        participantCount=$members.Count;participants=@($members|Select-Object -First 32|ForEach-Object {[pscustomobject]@{id=$_.id;state=$_.state;editRevision=(Get-EditRevision $_);independentResult=(Get-Field $_ 'independentResult')}});
         participantsTruncated=($members.Count -gt 32)}
 }
 function Get-CompactCollaborationStatus($State,[string]$Participant,$Current,$Result) {
@@ -176,6 +177,7 @@ function Assert-EditRevision($Entry, [long]$Expected) {
 function Reopen-Entry($Entry) {
     Set-Field $Entry 'editRevision' ((Get-EditRevision $Entry) + 1)
     $Entry.state = 'editing'; $Entry.finishedUtc = $null
+    $Entry.PSObject.Properties.Remove('independentResult')
     Set-Field $Entry 'reopenedUtc' ([DateTime]::UtcNow.ToString('o'))
     $check = Get-Field $Entry 'check'
     if ($check) { $check.status = 'invalidated'; Set-Field $check 'reason' 'Registration reopened; evidence belongs to an older edit revision.' }
@@ -207,6 +209,7 @@ function Get-EffectiveTaskPlan($Entry) {
     $plan.inputs=@(if(-not @($requirements|Where-Object {@($_.inputs).Count -eq 0}).Count){$requirements|ForEach-Object {$_.inputs}|Sort-Object -Unique})
     $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool','test'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}elseif(@($requirements|Where-Object scope -eq 'test').Count){'test'}else{'component'}
     $plan.source='repair-carried';$plan.requiredFull=$plan.suites -contains 'full'
+    $plan.PSObject.Properties.Remove('independent')
     Set-Field $plan 'mergedRepairRequirements' $extra
     $requirementsRevision=Get-Field $plan 'requirementsRevision'
     if($null -ne $requirementsRevision){
@@ -237,13 +240,17 @@ function Add-RepairSource($Current,$Result,[string]$Parent,[string]$Requester,[s
     if((Get-Field $Current 'protocolVersion' 1) -lt (Get-Field $Result 'protocolVersion' 1)){throw 'An older active protocol cannot import a newer failed batch; wait for its editing window to close.'}
     if(@($Current.participants|Where-Object id -eq $Requester).Count){throw 'This requester already has another active registration; use its current batch/revision instead of reopening it from another parent.'}
     $now=[DateTime]::UtcNow.ToString('o')
-    foreach($old in @($Result.participants|Where-Object state -ne 'withdrawn')){
+    $sourceMembers=@($Result.participants|Where-Object {$_.state -ne 'withdrawn' -and -not (Get-Field $_ 'independentResult')})
+    if(-not @($sourceMembers|Where-Object id -eq $Requester).Count){throw 'An independently completed member cannot request repair of the common Run.'}
+    foreach($old in $sourceMembers){
         $previous=Get-EffectiveTaskPlan $old
         $plan=$previous|ConvertTo-Json -Depth 20|ConvertFrom-Json
+        $plan.PSObject.Properties.Remove('independent')
         $existing=@($Current.participants|Where-Object id -eq $old.id)
         if($existing.Count){
             $entry=$existing[0]
             if($entry.state -eq 'withdrawn'){throw 'A withdrawn registration cannot be silently restored by another repair source.'}
+            if(Get-Field $entry 'independentResult'){throw 'Repair would replace an independent completion. Reopen its member explicitly or wait for the next editing window.'}
             $requirements=@(Get-Field $entry 'repairRequirements' @())+@([pscustomobject]@{parentBatchId=$Parent;editRevision=(Get-EditRevision $old);requirement=$plan})
             Set-Field $entry 'repairRequirements' $requirements
             # Supersede any in-flight check by replacing its operation record.
@@ -303,6 +310,30 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     Assert-TestOnlyPlan $plan
     return $plan
 }
+function Assert-IndependentPlan($Plan,$Entry) {
+    $suites=@(Get-Field $Plan 'suites' @())
+    if((Get-Field $Plan 'source') -ne 'task-declared' -or (Get-Field $Plan 'scope') -notin 'docs','component','tool' -or
+        $suites.Count -ne 1 -or $suites[0] -ne 'none' -or @(Get-Field $Plan 'tests' @()).Count -or
+        @(Get-Field $Entry 'repairRequirements' @()).Count -or (Get-Field $Entry 'carriedFrom') -or
+        (Get-Field $Plan 'acceptanceRetentionHours') -or (Get-Field $Plan 'projectResources')){
+        throw 'Independent completion requires a fresh docs, component or tool plan that explicitly exempts host build/tests and has no inherited requirements, retention or resources.'
+    }
+    $paths=@(Get-Field $Plan 'inputs' @()|ForEach-Object {Normalize-OwnedPath $_}|Sort-Object -Unique)
+    if(-not $paths.Count){throw 'Independent completion requires explicit literal input paths.'}
+    $languageFiles=@(Get-SharedResourcePaths)
+    foreach($path in $paths){
+        if(@($languageFiles|Where-Object {$_ -ieq $path -or $_.StartsWith($path+'/',[StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count){
+            throw "Independent completion cannot include shared language input: $path"
+        }
+    }
+    foreach($ownedPath in @(Get-Field $Entry 'ownedFiles' @())){
+        $path=Normalize-OwnedPath $ownedPath
+        if(-not @($paths|Where-Object {$path -ieq $_ -or $path.StartsWith($_+'/',[StringComparison]::OrdinalIgnoreCase)}).Count){
+            throw "Independent plan inputs do not cover claimed path: $path"
+        }
+    }
+    Set-Field $Plan 'inputs' $paths
+}
 function Default-TaskPlan($Entry) {
     throw "Missing test plan for $($Entry.id); declare inputs, impact and selected tests with plan before ready/finish. No build or full suite was started."
 }
@@ -312,11 +343,13 @@ function Get-TaskIdentity($Plan) {
     $listing = Invoke-InputGit $repositoryRoot 'ls-files -z --cached --others --exclude-standard'
     if ($listing.code -ne 0) { throw 'Cannot enumerate declared task inputs.' }
     $selected = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $scoped=(Get-Field $Plan 'independent' $false) -and (Get-Field $Plan 'source') -eq 'task-declared'
+    $pathComparison=if($scoped){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
     foreach ($declared in $paths) {
         $declared = $declared.Replace('\','/').TrimEnd('/')
         [void]$selected.Add($declared) # also records missing/deleted files
         foreach ($file in $listing.output.Split([char]0)) {
-            if ($file -eq $declared -or $file.StartsWith($declared + '/', [StringComparison]::Ordinal)) { [void]$selected.Add($file) }
+            if ($file -eq $declared -or $file.StartsWith($declared + '/', $pathComparison)) { [void]$selected.Add($file) }
         }
     }
     $sha = [Security.Cryptography.SHA256]::Create(); $text = New-Object Text.StringBuilder
@@ -338,7 +371,16 @@ function Get-TaskIdentity($Plan) {
 function Invoke-LightCheck($Plan) {
     # No build, shared artifacts, host startup or arbitrary user command.
     $issues=New-Object 'System.Collections.Generic.List[string]'
-    $diff=Invoke-InputGit $repositoryRoot 'diff --check'
+    $allowed=@(Get-Field $Plan 'inputs' @())
+    $scoped=(Get-Field $Plan 'independent' $false) -and (Get-Field $Plan 'source') -eq 'task-declared'
+    $pathComparison=if($scoped){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::CurrentCulture}
+    if($scoped){
+        if(-not $allowed.Count){throw 'Independent light check requires explicit literal input paths.'}
+        # Normalize-OwnedPath rejects quotes and uses forward slashes. Git
+        # receives literal, case-insensitive pathspecs through argv, no shell.
+        $pathspecs=($allowed|ForEach-Object {'":(literal,icase)'+(Normalize-OwnedPath $_)+'"'}) -join ' '
+        $diff=Invoke-InputGit $repositoryRoot ('diff --check HEAD -- '+$pathspecs)
+    }else{$diff=Invoke-InputGit $repositoryRoot 'diff --check'}
     if ($diff.code -ne 0) { $issues.Add(('git diff --check: ' + $diff.output + $diff.error).Trim()) }
     $changed=Invoke-InputGit $repositoryRoot 'diff --name-only -z HEAD'
     $untracked=Invoke-InputGit $repositoryRoot 'ls-files -z --others --exclude-standard'
@@ -346,8 +388,7 @@ function Invoke-LightCheck($Plan) {
     $candidates=@(($changed.output + $untracked.output).Split([char]0) | Where-Object { $_ } | Sort-Object -Unique)
     $checked=New-Object 'System.Collections.Generic.List[string]'
     foreach ($relative in $candidates) {
-        $allowed=@(Get-Field $Plan 'inputs' @())
-        if ($allowed.Count -gt 0 -and @($allowed | Where-Object { $relative -eq $_ -or $relative.StartsWith($_.TrimEnd('/') + '/') }).Count -eq 0) { continue }
+        if ($allowed.Count -gt 0 -and @($allowed | Where-Object { $relative -eq $_ -or $relative.StartsWith($_.TrimEnd('/') + '/', $pathComparison) }).Count -eq 0) { continue }
         $absolute=Join-Path $repositoryRoot $relative
         if (-not [IO.File]::Exists($absolute)) { continue }
         if ($relative.EndsWith('.ps1',[StringComparison]::OrdinalIgnoreCase)) {
@@ -365,13 +406,13 @@ function Invoke-LightCheck($Plan) {
 function Checks-BlockFreeze($Current) {
     return @($Current.participants | Where-Object {
         $check=Get-Field $_ 'check'
-        $_.state -eq 'finished' -and $check -and $check.status -in 'pending','running','failed','invalidated','interrupted'
+        $_.state -eq 'finished' -and -not (Get-Field $_ 'independentResult') -and $check -and $check.status -in 'pending','running','failed','invalidated','interrupted'
     }).Count -gt 0
 }
 function New-FrozenPlan($Current) {
     $tasks=@(); $full=$false; $build=$false; $testing=$false;$resources=@();$exclusive=$false
     foreach ($entry in $Current.participants) {
-        if ($entry.state -eq 'withdrawn') { continue }
+        if ($entry.state -eq 'withdrawn' -or (Get-Field $entry 'independentResult')) { continue }
         # Recheck original obligations, not the merged repair input union:
         # docs/tool exemptions can join a test-only repair, while any product
         # obligation must still require its normal complete product build.

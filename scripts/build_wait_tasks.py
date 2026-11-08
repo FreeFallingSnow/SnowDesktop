@@ -106,6 +106,32 @@ def observed_batch(ticket, state):
                  if batch.get('id') == expected), None)
 
 
+def read_participant_result(repo, directory, module, ticket):
+    if ticket['condition'] not in ('peers', 'result'):
+        return None
+    batch, participant, revision = ticket['batchId'], ticket['participant'], ticket['editRevision']
+    if not HEX.fullmatch(batch) or not TASK.fullmatch(participant) or type(revision) is not int or revision < 0:
+        raise ValueError('Invalid participant result address')
+    result = module.read_json(directory, f'split-{batch}-{participant.lower()}-{revision}.json')
+    if result is None:
+        return None
+    if (not isinstance(result, dict) or type(result.get('schemaVersion')) is not int or result['schemaVersion'] != 1 or
+            type(result.get('protocolVersion')) is not int or result['protocolVersion'] != 4 or
+            result.get('resultScope') != 'participant' or result.get('batchId') != batch or
+            not isinstance(result.get('repositoryRoot'), str) or
+            not Path(result['repositoryRoot']).is_absolute() or Path(result['repositoryRoot']).resolve() != repo or
+            result.get('outcome') != 'skipped' or result.get('inputCheck') != 'stable' or
+            result.get('runId') or type(result.get('exitCode')) is not int or result['exitCode'] != 0):
+        raise ValueError('Saved participant result identity mismatch')
+    members = result.get('participants')
+    if (not isinstance(members, list) or len(members) != 1 or not isinstance(members[0], dict) or
+            not isinstance(members[0].get('id'), str) or members[0]['id'].lower() != participant.lower() or
+            members[0].get('state') != 'finished' or
+            type(members[0].get('editRevision')) is not int or members[0]['editRevision'] != revision):
+        raise ValueError('Saved participant result registration mismatch')
+    return result
+
+
 def condition(ticket, state, result):
     current = observed_batch(ticket, state)
     expected = ticket.get('batchId')
@@ -192,18 +218,21 @@ def worker(repo, directory, module, ticket_id):
                         if state.get('repositoryRoot') and Path(state['repositoryRoot']).resolve() != repo:
                             raise ValueError('Repository identity mismatch')
                         current = observed_batch(ticket, state)
-                        if current and current.get('phase') not in ('editing', 'building'):
+                        split = read_participant_result(repo, directory, module, ticket)
+                        if not split and current and current.get('phase') not in ('editing', 'building'):
                             raise ValueError('Unknown batch phase')
-                        if current:
+                        if not split and current:
                             for entry in current['participants']:
                                 check = entry.get('check') or {}
                                 if check.get('status') == 'running' and module.owner_state(check.get('owner')) == 'exited':
                                     check['status'] = 'interrupted'  # This local snapshot is never written back.
                         result_id = ticket.get('batchId') or (current or {}).get('id')
-                        result = module.read_json(directory, result_id + '.json') if result_id and HEX.fullmatch(result_id) else None
+                        result = module.read_json(directory, result_id + '.json') if not split and result_id and HEX.fullmatch(result_id) else None
                         if result and result.get('batchId') != result_id:
                             raise ValueError('Saved result identity mismatch')
-                        if current and current.get('phase') == 'building' and module.owner_state(current.get('owner')) == 'exited':
+                        if split:
+                            status, reason = 'completed', 'Saved participant result: ' + split['outcome']
+                        elif current and current.get('phase') == 'building' and module.owner_state(current.get('owner')) == 'exited':
                             status, reason = 'attention', 'Build owner exited; diagnose and explicitly recover the frozen batch.'
                         else:
                             status, reason = condition(ticket, state, result)
@@ -235,7 +264,7 @@ def spawn(repo, directory, ticket):
     ticket['owner'] = process_owner(child.pid)
     atomic(directory/(ticket['id'] + '.wait.json'), ticket)
 
-def foreground_wait(module, directory, ticket):
+def foreground_wait(repo, module, directory, ticket):
     print('Waiting locally on ticket '+ticket['id']+'; this foreground tool call stays active.', file=sys.stderr, flush=True)
     while True:
         current = module.read_json(directory, ticket['id']+'.wait.json')
@@ -245,9 +274,14 @@ def foreground_wait(module, directory, ticket):
         if shown['status'] != 'waiting':
             batch_id=shown.get('batchId')
             if batch_id and HEX.fullmatch(batch_id):
-                result=module.read_json(directory,batch_id+'.json')
-                if result and result.get('batchId')==batch_id:
-                    shown=dict(shown,result=result)
+                try:
+                    split = read_participant_result(repo, directory, module, shown)
+                except (OSError, ValueError, KeyError, TypeError):
+                    shown = dict(shown, status='attention', reason='Saved participant result unavailable or invalid; no registration changed.')
+                else:
+                    result = split or module.read_json(directory, batch_id + '.json')
+                    if result and result.get('batchId') == batch_id:
+                        shown = dict(shown, result=result)
             print(json.dumps(shown, ensure_ascii=True), flush=True)
             return 0 if shown['status'] in ('eligible','completed') else 2
         time.sleep(.25)
@@ -284,7 +318,7 @@ def main():
         if args.new:command.append('--new')
         created=subprocess.run(command,capture_output=True,text=True,encoding='utf-8')
         if created.returncode:raise ValueError(created.stderr.strip())
-        return foreground_wait(module,directory,json.loads(created.stdout))
+        return foreground_wait(repo,module,directory,json.loads(created.stdout))
     if args.action == 'start':
         if not TASK.fullmatch(args.participant or '') or (args.batch and not HEX.fullmatch(args.batch)):
             p.error('Valid participant and optional batch IDs required')
@@ -325,7 +359,7 @@ def main():
         p.error('Unknown wait ticket')
     shown = diagnostic(module, directory, ticket)
     if args.action == 'status':
-        if foreground:return foreground_wait(module,directory,shown)
+        if foreground:return foreground_wait(repo,module,directory,shown)
         print(json.dumps(shown, ensure_ascii=False)); return 0
     if args.action == 'cancel':
         if shown['status'] == 'waiting':

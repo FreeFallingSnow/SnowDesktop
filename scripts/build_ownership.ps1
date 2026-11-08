@@ -28,6 +28,9 @@ function Assert-NoResourceCommitConflict([string[]]$Paths) {
     }
 }
 function Request-HandoffCheck($Current,$Other,[string]$Actor,[string]$File) {
+    # An independently archived result is terminal. The new owner's source
+    # claim still advances the ownership sequence and fences the old commit.
+    if(Get-Field $Other 'independentResult'){return}
     $plan=Get-Field $Other 'testPlan'
     if(-not $plan){return}
     $check=Get-Field $Other 'check'
