@@ -240,27 +240,31 @@ local function render(context, model)
     local function cityButton(city, index, startX, endX, top, bottom, arrowY)
         local key = "city." .. index
         local label = l10n.tr("lua_widget.world_clock.change_city", city.label)
-        local x, y = (startX + 2) * scale, top + 2 * scale
-        local width = (endX - startX - 4) * scale
-        local height = bottom - 2 * scale - y
-        local radius = 5 * scale
+        local x, y = startX * scale, top
+        local width = (endX - startX) * scale
+        local height = bottom - top
         interaction.region({
             key = key, cursor = "hand", focusable = true, tooltip = label,
-            shape = { type = "roundedRect", x = x, y = y, width = width, height = height, radius = radius },
+            shape = { type = "rect", x = x, y = y, width = width, height = height },
             accessibility = { role = "button", label = label },
             events = { click = { id = "open.city", value = index } },
         })
-        if interaction.isHovered(key) then
-            draw.rect(x, y, width, height, ink.main, radius, 0.08)
+        local opacity = model.pickerSlot == index and 0.15 or interaction.isHovered(key) and 0.08
+        if opacity then
+            draw.rect(x, y, width, height, ink.main, 0, opacity)
         end
         if interaction.isFocused(key) then
-            draw.strokeRect(x, y, width, height, ink.main, radius, scale, 0.8)
+            local halfStroke = scale / 2
+            draw.strokeRect(x + halfStroke, y + halfStroke, width - scale, height - scale,
+                ink.main, 0, scale, 0.8)
         end
-        local arrowX = (endX - 8) * scale
-        draw.line(arrowX - 4 * scale, arrowY - 2 * scale, arrowX, arrowY + 2 * scale,
-            0.8 * scale, ink.muted, 0.66)
-        draw.line(arrowX, arrowY + 2 * scale, arrowX + 4 * scale, arrowY - 2 * scale,
-            0.8 * scale, ink.muted, 0.66)
+        if arrowY then
+            local arrowX = (endX - inset - 4) * scale
+            draw.line(arrowX - 4 * scale, arrowY - 2 * scale, arrowX, arrowY + 2 * scale,
+                0.8 * scale, ink.muted, 0.66)
+            draw.line(arrowX, arrowY + 2 * scale, arrowX + 4 * scale, arrowY - 2 * scale,
+                0.8 * scale, ink.muted, 0.66)
+        end
     end
 
     local function cityName(city, x, y, width)
@@ -279,41 +283,44 @@ local function render(context, model)
     textAt(model.localTime, inset, (clockTop + clockBottom) / 2, clockSize, 218, ink.main, true)
     local dateStart = textAt(model.localDate, right, headerLabelY, 15, 81, ink.main, false, true)
     drawDaylight(dateStart - 14 * scale, headerLabelY, 6.5 * scale, model.localDaylight, ink, scale)
-    rule(0, dividerY, canvasWidth, dividerY)
 
     if stacked then
         local valueWidth = 69
-        local valueStart = right - 21 - valueWidth
-        local nameWidth = valueStart - inset - 8
+        local nameWidth = right - valueWidth - inset - 8
         local rowHeight = (h - dividerY) / #model.cities
         local halfLineGap = 8.5 * scale
         for i, city in ipairs(model.cities) do
             local top = dividerY + (i - 1) * rowHeight
             local bottom = top + rowHeight
             local center = (top + bottom) / 2
-            cityButton(city, i, inset - 4, right + 4, top, bottom, center)
+            cityButton(city, i, 0, canvasWidth, top, bottom)
             cityName(city, inset, center - halfLineGap, nameWidth)
             textAt(city.detail, inset, center + halfLineGap, 12, nameWidth, ink.muted, false)
-            textAt(city.clock, valueStart, center, 23, valueWidth, ink.main, true)
-            if i < #model.cities then rule(0, bottom, canvasWidth, bottom) end
+            textAt(city.clock, right, center, 23, valueWidth, ink.main, true, true)
         end
-        return
+        for i = 1, #model.cities - 1 do
+            local y = dividerY + i * rowHeight
+            rule(0, y, canvasWidth, y)
+        end
+    else
+        local columnWidth = canvasWidth / #model.cities
+        local center = (dividerY + h) / 2
+        local headingY = center - 32 * scale
+        local width = columnWidth - 2 * inset
+        for i, city in ipairs(model.cities) do
+            local columnLeft = (i - 1) * columnWidth
+            local x = columnLeft + inset
+            cityButton(city, i, columnLeft, i * columnWidth, dividerY, h, headingY)
+            cityName(city, x, headingY, width - 12)
+            textAt(city.clock, x, center - scale, 33, width, ink.main, true)
+            textAt(city.detail, x, center + 30 * scale, 13.5, width, ink.muted, false)
+        end
+        for i = 1, #model.cities - 1 do
+            local x = i * columnWidth
+            rule(x, dividerY, x, h)
+        end
     end
-
-    local columnWidth = canvasWidth / #model.cities
-    local center = (dividerY + h) / 2
-    local headingY = center - 32 * scale
-    local width = columnWidth - 2 * inset
-    for i, city in ipairs(model.cities) do
-        local columnLeft = (i - 1) * columnWidth
-        local columnRight = columnLeft + columnWidth
-        local x = columnLeft + inset
-        if i > 1 then rule(columnLeft, dividerY, columnLeft, h) end
-        cityButton(city, i, columnLeft + 4, columnRight - 9, dividerY, h, headingY)
-        cityName(city, x, headingY, width - 12)
-        textAt(city.clock, x, center - scale, 33, width, ink.main, true)
-        textAt(city.detail, x, center + 30 * scale, 13.5, width, ink.muted, false)
-    end
+    rule(0, dividerY, canvasWidth, dividerY)
 end
 
 return widget.define({
