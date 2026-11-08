@@ -2848,5 +2848,11 @@
   "settings.general.steamRoom.usage": "Com o status de execução desativado, selecione «Entrar» no Steam. Com o status ativado e o cartão visível, você entra automaticamente ao receber um convite.",
   "app.steam.invite_instance_busy": "A instância em execução do SnowDesktop já está em uma sala ou processando uma ação multijogador. Tente entrar novamente pelo Steam quando ela estiver disponível.",
   "settings.dock.blurReservedSpace": "Desfocar a área de trabalho atrás do Dock",
-  "settings.dock.blurReservedSpace.description": "Desfoca levemente a área de trabalho no espaço reservado ao Dock flutuante quando há uma janela maximizada nessa tela."
+  "settings.dock.blurReservedSpace.description": "Desfoca levemente a área de trabalho no espaço reservado ao Dock flutuante quando há uma janela maximizada nessa tela.",
+  "settings.animation.widgetHoverExpand": "Animação ao expandir o widget",
+  "settings.animation.widgetHoverExpand.description": "Para widgets que se expandem automaticamente ao passar o ponteiro.",
+  "settings.animation.widgetHoverVisibility": "Animação ao exibir o widget",
+  "settings.animation.widgetHoverVisibility.description": "Para widgets exibidos apenas ao passar o ponteiro.",
+  "settings.animation.option.none": "Nenhuma",
+  "settings.animation.option.roll": "Desenrolar"
 }

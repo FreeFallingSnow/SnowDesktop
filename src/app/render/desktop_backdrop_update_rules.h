@@ -27,7 +27,7 @@ void ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
         return;
     }
     if (compositor.AddIconPanel(frame, shape, blurRadius, ownerKey, contentClip))
-        (void)compositor.SetPanelOpacity(frame, opacity);
+        (void)compositor.SetPanelOpacity(frame, opacity, ownerKey);
 }
 
 // A retained widget can be painted before its backdrop target exists, or

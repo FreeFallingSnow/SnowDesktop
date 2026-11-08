@@ -158,13 +158,17 @@ float DesktopApp::GetWidgetExpansionProgress(const DesktopWidget& widget) const
     if (!CanFoldWidget(widget)) return 1.0f;
     if (!widget.titleBarExpandOnHover) return 0.0f;
     const auto expansion = widgetHoverExpansion_.find(widget.id);
-    return expansion == widgetHoverExpansion_.end()
-        ? 0.0f : expansion->second.GetVisual().progress;
+    if (expansion == widgetHoverExpansion_.end()) return 0.0f;
+    if (generalSettings_.widgetHoverExpandEffect != snowdesktop::animation::Roll)
+        return expansion->second.IsInteractive() ? 1.0f : 0.0f;
+    return expansion->second.GetVisual().progress;
 }
 
 bool DesktopApp::IsWidgetHoverExpansionAnimating(const DesktopWidget& widget) const
 {
-    if (!widget.titleBarExpandOnHover || !CanFoldWidget(widget)) return false;
+    if (generalSettings_.widgetHoverExpandEffect != snowdesktop::animation::Roll ||
+        !widget.titleBarExpandOnHover || !CanFoldWidget(widget))
+        return false;
     const auto expansion = widgetHoverExpansion_.find(widget.id);
     return expansion != widgetHoverExpansion_.end() && expansion->second.IsAnimating();
 }
@@ -224,7 +228,8 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         changed = true;
 
         auto& expansion = widgetHoverExpansion_[widget.id];
-        if (hwnd_ && CanFoldWidget(widget) && motion::RuntimeAnimationsEnabled())
+        if (hwnd_ && generalSettings_.widgetHoverExpandEffect == motion::Roll &&
+            CanFoldWidget(widget) && motion::RuntimeAnimationsEnabled())
         {
             expansion.Configure(false, motion::RuntimeDurationScale(), true);
             const auto tick = static_cast<std::uint64_t>(
@@ -259,7 +264,9 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
 bool DesktopApp::AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish)
 {
     namespace layers = snowdesktop::widget_composition_layer_rules;
-    const bool animate = !finish && snowdesktop::animation::RuntimeAnimationsEnabled();
+    const bool animate = !finish &&
+        generalSettings_.widgetHoverExpandEffect == snowdesktop::animation::Roll &&
+        snowdesktop::animation::RuntimeAnimationsEnabled();
     const auto tick = static_cast<std::uint64_t>(nowMilliseconds);
     const bool canPresentChild = animate && !desktopBackdropFullCollectionPending_ &&
         !widgetGroupTransition_.ShouldDeferPaint() &&

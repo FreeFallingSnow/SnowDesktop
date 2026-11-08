@@ -30,7 +30,7 @@ public:
     void DiscardDraw() { candidate_.clear(); }
 
     template<class Compositor>
-    void Publish(Compositor& compositor)
+    void Publish(Compositor& compositor, float opacity = 1.0f)
     {
         while (panels_.size() > candidate_.size())
         {
@@ -42,17 +42,17 @@ public:
         for (std::size_t i = 0; i < candidate_.size(); ++i)
             panels_[i]->request = std::move(candidate_[i]);
         candidate_.clear();
-        Restore(compositor);
+        Restore(compositor, opacity);
     }
 
     template<class Compositor>
-    void Restore(Compositor& compositor) const
+    void Restore(Compositor& compositor, float opacity = 1.0f) const
     {
         for (const auto& panel : panels_)
         {
             const auto& r = panel->request;
             desktop_backdrop_update_rules::ReconcileIconPanel(compositor,
-                r.frame, r.shape, r.blurRadius, r.opacity, Key(*panel),
+                r.frame, r.shape, r.blurRadius, r.opacity * opacity, Key(*panel),
                 r.inheritedGlass, r.clip ? &*r.clip : nullptr);
         }
     }

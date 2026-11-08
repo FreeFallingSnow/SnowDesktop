@@ -115,12 +115,20 @@ struct AnimationPerformancePagePresenter::Impl
             {L10N_KEY("settings.animation.option.off"),
              L10N_KEY("settings.animation.option.fade"),
              L10N_KEY("settings.animation.option.scale")});
+        AddChoice(widgetHoverExpand, generalCard, "widgetHoverExpand", "animation.widgetHoverExpand",
+            animation::NoEffect, {L10N_KEY("settings.animation.option.none"),
+                L10N_KEY("settings.animation.option.roll")});
+        AddChoice(widgetHoverVisibility, generalCard, "widgetHoverVisibility", "animation.widgetHoverVisibility",
+            animation::NoEffect, {L10N_KEY("settings.animation.option.none"),
+                L10N_KEY("settings.animation.option.fade")});
         AddChoice(speed, generalCard, "speed", "animation.speed", 1,
                   {L10N_KEY("settings.animation.option.fast"), L10N_KEY("settings.animation.option.standard"),
                    L10N_KEY("settings.animation.option.slow"), L10N_KEY("settings.animation.option.slower"),
                    L10N_KEY("settings.animation.option.verySlow"), L10N_KEY("settings.animation.option.slowest")});
         HookGeneral(mode, &GeneralSettings::animationMode);
         HookGeneral(popup, &GeneralSettings::popupAnimationEffect);
+        HookGeneral(widgetHoverExpand, &GeneralSettings::widgetHoverExpandEffect);
+        HookGeneral(widgetHoverVisibility, &GeneralSettings::widgetHoverVisibilityEffect);
         HookGeneral(speed, &GeneralSettings::animationSpeed);
 
         dockNotice = muxc::TextBlock{};
@@ -223,7 +231,8 @@ struct AnimationPerformancePagePresenter::Impl
         HookGeneral(frameLimit, &GeneralSettings::animationFrameLimit, true);
         AddSwitch(energySaver, "energySaver", &GeneralSettings::animationEnergySaver, true);
         AddSwitch(onBattery, "onBattery", &GeneralSettings::animationOnBattery, false);
-        for (const auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
+        for (const auto* choice : {&mode, &popup, &widgetHoverExpand, &widgetHoverVisibility,
+            &speed, &hover, &launch, &window, &frameLimit})
             presenter_controls::StyleSettingsSubrow(choice->row.root,
                 choice == &mode || choice == &hover || choice == &frameLimit, 0);
         presenter_controls::StyleSettingsSubrow(scaleRow.root, false, 0);
@@ -238,7 +247,7 @@ struct AnimationPerformancePagePresenter::Impl
     muxc::StackPanel root{nullptr};
     Card generalCard, dockCard, dockOverview, performanceCard;
     muxc::ContentControl dockHost;
-    Choice mode, popup, speed, hover, launch, window, frameLimit;
+    Choice mode, popup, widgetHoverExpand, widgetHoverVisibility, speed, hover, launch, window, frameLimit;
     Switch energySaver, onBattery;
     SettingRow scaleRow;
     muxc::Slider hoverScale{nullptr};
@@ -362,6 +371,8 @@ struct AnimationPerformancePagePresenter::Impl
     {
         const bool enabled = mode.combo.SelectedIndex() != animation::Disabled;
         popup.row.SetEnabled(enabled);
+        widgetHoverExpand.row.SetEnabled(enabled);
+        widgetHoverVisibility.row.SetEnabled(enabled);
         speed.row.SetEnabled(enabled);
         for (auto* choice : {&hover, &launch, &window})
             choice->row.SetEnabled(enabled && dockEnabled && (choice != &window || windowModuleAllowed));
@@ -376,9 +387,11 @@ struct AnimationPerformancePagePresenter::Impl
         generalCard.title.Text(L("settings.animation.general"));
         dockOverview.title.Text(L("settings.animation.dock"));
         performanceCard.title.Text(L("settings.animation.performance"));
-        for (auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
+        for (auto* choice : {&mode, &popup, &widgetHoverExpand, &widgetHoverVisibility,
+            &speed, &hover, &launch, &window, &frameLimit})
         {
-            const bool needsHelp = choice == &speed || choice == &window || choice == &frameLimit;
+            const bool needsHelp = choice == &speed || choice == &window || choice == &frameLimit ||
+                choice == &widgetHoverExpand || choice == &widgetHoverVisibility;
             choice->row.SetText(L(choice->key), needsHelp ? L(choice->key + ".description") : std::wstring{});
             const int selected = choice->combo.SelectedIndex();
             choice->combo.Items().Clear();
@@ -426,6 +439,8 @@ struct AnimationPerformancePagePresenter::Impl
             windowModuleAllowed = general.runtimeModules.Allows(runtime_modules::Module::WindowMinimize);
             mode.combo.SelectedIndex(animation::NormalizeMode(general.animationMode));
             popup.combo.SelectedIndex(animation::NormalizePopupEffect(general.popupAnimationEffect));
+            widgetHoverExpand.combo.SelectedIndex(animation::NormalizeWidgetHoverEffect(general.widgetHoverExpandEffect));
+            widgetHoverVisibility.combo.SelectedIndex(animation::NormalizeWidgetHoverEffect(general.widgetHoverVisibilityEffect));
             speed.combo.SelectedIndex(animation::NormalizeSpeed(general.animationSpeed));
             const int frames = animation::NormalizeFrameLimit(general.animationFrameLimit);
             frameLimit.combo.SelectedIndex(frames == 30 ? 1 : frames == 60 ? 2 : frames == 120 ? 3 : 0);
@@ -500,6 +515,7 @@ void AnimationPerformancePagePresenter::Close() noexcept { if (impl_) impl_->Clo
 void AnimationPerformancePagePresenter::RegisterFocusTargets(const FocusRegistrar& registrar) const
 {
     for (const auto* choice : {&impl_->mode, &impl_->popup, &impl_->speed,
+        &impl_->widgetHoverExpand, &impl_->widgetHoverVisibility,
         &impl_->hover, &impl_->launch, &impl_->window, &impl_->frameLimit})
         registrar(choice->focusId, choice->combo);
     registrar("animation.hoverScale", impl_->hoverScale);

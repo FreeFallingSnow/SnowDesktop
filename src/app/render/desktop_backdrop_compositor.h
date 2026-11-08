@@ -148,7 +148,7 @@ public:
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
     bool KeepPanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */
-    bool SetPanelOpacity(const RECT& frame, float opacity);
+    bool SetPanelOpacity(const RECT& frame, float opacity, std::uintptr_t ownerKey = 0);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
     bool SetVisualOpacity(float opacity);
     // Translation stays inside the stable popup allocation; no AppBar movement.

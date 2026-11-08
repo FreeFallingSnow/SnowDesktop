@@ -2848,5 +2848,11 @@
   "settings.general.steamRoom.usage": "実行中の状態表示がオフの場合は、Steam の招待で「参加」を選んでください。オンでカードを表示している場合は、フレンドからの招待に自動で参加します。",
   "app.steam.invite_instance_busy": "実行中の SnowDesktop はすでにルームに参加しているか、マルチプレイの操作を処理中です。ルームから退出するか、処理が終わってから Steam で再度参加してください。",
   "settings.dock.blurReservedSpace": "Dock の背後のデスクトップをぼかす",
-  "settings.dock.blurReservedSpace.description": "そのディスプレイに最大化されたウィンドウがある場合、フローティング Dock のために確保した領域のデスクトップを軽くぼかします。"
+  "settings.dock.blurReservedSpace.description": "そのディスプレイに最大化されたウィンドウがある場合、フローティング Dock のために確保した領域のデスクトップを軽くぼかします。",
+  "settings.animation.widgetHoverExpand": "ホバーで展開するときのアニメーション",
+  "settings.animation.widgetHoverExpand.description": "ホバーで自動展開するウィジェットに適用されます。",
+  "settings.animation.widgetHoverVisibility": "ホバーで表示するときのアニメーション",
+  "settings.animation.widgetHoverVisibility.description": "ホバー時のみ表示するウィジェットに適用されます。",
+  "settings.animation.option.none": "なし",
+  "settings.animation.option.roll": "巻物"
 }

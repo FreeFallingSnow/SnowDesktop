@@ -63,6 +63,8 @@ bool IsGeneralShortcutOnlyCommit(
         before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&
+        before.widgetHoverExpandEffect == after.widgetHoverExpandEffect &&
+        before.widgetHoverVisibilityEffect == after.widgetHoverVisibilityEffect &&
         before.animationSpeed == after.animationSpeed &&
         before.animationFrameLimit == after.animationFrameLimit &&
         before.animationEnergySaver == after.animationEnergySaver &&
@@ -112,6 +114,8 @@ bool IsGeneralLoggingOnlyCommit(const GeneralSettings& before,
         before.widgetDeveloperToolsEnabled == after.widgetDeveloperToolsEnabled &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&
+        before.widgetHoverExpandEffect == after.widgetHoverExpandEffect &&
+        before.widgetHoverVisibilityEffect == after.widgetHoverVisibilityEffect &&
         before.animationSpeed == after.animationSpeed &&
         before.animationFrameLimit == after.animationFrameLimit &&
         before.animationEnergySaver == after.animationEnergySaver &&

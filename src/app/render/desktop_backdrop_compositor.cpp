@@ -2423,11 +2423,12 @@ bool DesktopBackdropCompositor::KeepPanel(
 }
 
 bool DesktopBackdropCompositor::SetPanelOpacity(
-    const RECT& frame, float opacity)
+    const RECT& frame, float opacity, std::uintptr_t ownerKey)
 {
     if (impl_->stagingFrame)
     {
-        auto panel = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
+        auto panel = ownerKey ? impl_->FindStagedPanel(frame, ownerKey) :
+            std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
             [&](const auto& value) { return EqualRect(&value.frame, &frame) != FALSE; });
         if (panel == impl_->stagedPanels.end()) return false;
         panel->opacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -2435,7 +2436,7 @@ bool DesktopBackdropCompositor::SetPanelOpacity(
     }
     if (!impl_->available)
         return false;
-    const auto existing = std::find_if(
+    const auto existing = ownerKey ? impl_->FindPanel(frame, ownerKey) : std::find_if(
         impl_->panels.begin(), impl_->panels.end(),
         [&frame](const Impl::PanelVisual& panel) {
             return !panel.background && EqualRect(&panel.frame, &frame) != FALSE;

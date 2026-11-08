@@ -28,6 +28,8 @@ void NormalizeGeneralAnimationSettings(GeneralSettings& settings) noexcept
     using namespace snowdesktop::animation;
     settings.animationMode = NormalizeMode(settings.animationMode);
     settings.popupAnimationEffect = NormalizePopupEffect(settings.popupAnimationEffect);
+    settings.widgetHoverExpandEffect = NormalizeWidgetHoverEffect(settings.widgetHoverExpandEffect);
+    settings.widgetHoverVisibilityEffect = NormalizeWidgetHoverEffect(settings.widgetHoverVisibilityEffect);
     settings.animationSpeed = NormalizeSpeed(settings.animationSpeed);
     settings.animationFrameLimit = NormalizeFrameLimit(settings.animationFrameLimit);
 }
@@ -241,6 +243,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     ReadIntField(text, "animationMode", settings.animationMode);
     ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
+    settings.widgetHoverExpandEffect = snowdesktop::animation::NoEffect;
+    settings.widgetHoverVisibilityEffect = snowdesktop::animation::NoEffect;
+    ReadIntField(text, "widgetHoverExpandEffect", settings.widgetHoverExpandEffect);
+    ReadIntField(text, "widgetHoverVisibilityEffect", settings.widgetHoverVisibilityEffect);
     ReadIntField(text, "animationSpeed", settings.animationSpeed);
     ReadIntField(text, "animationFrameLimit", settings.animationFrameLimit);
     ReadBoolField(text, "animationEnergySaver", settings.animationEnergySaver);
@@ -295,6 +301,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
+    file << "  \"widgetHoverExpandEffect\": " << snowdesktop::animation::NormalizeWidgetHoverEffect(settings.widgetHoverExpandEffect) << ",\n";
+    file << "  \"widgetHoverVisibilityEffect\": " << snowdesktop::animation::NormalizeWidgetHoverEffect(settings.widgetHoverVisibilityEffect) << ",\n";
     file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";
     file << "  \"animationFrameLimit\": " << snowdesktop::animation::NormalizeFrameLimit(settings.animationFrameLimit) << ",\n";
     file << "  \"animationEnergySaver\": " << (settings.animationEnergySaver ? "true" : "false") << ",\n";

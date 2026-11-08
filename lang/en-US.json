@@ -2848,5 +2848,11 @@
   "settings.general.steamRoom.usage": "With running status off, select Join in Steam. Turn it on to join friends’ invites automatically while this card is shown.",
   "app.steam.invite_instance_busy": "The running SnowDesktop instance is already in a room or processing a multiplayer action. Try joining again in Steam when it is free.",
   "settings.dock.blurReservedSpace": "Blur desktop behind Dock",
-  "settings.dock.blurReservedSpace.description": "Softens the desktop in the space reserved for the floating Dock when that display has a maximized window."
+  "settings.dock.blurReservedSpace.description": "Softens the desktop in the space reserved for the floating Dock when that display has a maximized window.",
+  "settings.animation.widgetHoverExpand": "Widget hover expansion animation",
+  "settings.animation.widgetHoverExpand.description": "For widgets that expand automatically on hover.",
+  "settings.animation.widgetHoverVisibility": "Widget hover visibility animation",
+  "settings.animation.widgetHoverVisibility.description": "For widgets that appear only on hover.",
+  "settings.animation.option.none": "None",
+  "settings.animation.option.roll": "Roll"
 }

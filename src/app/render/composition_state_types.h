@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/render/widget_icon_backdrops.h"
+#include "layout/popup_animation_rules.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/view/widget_native_marquee.h"
 #include <d2d1_1.h>
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,6 +77,7 @@ struct DesktopWidgetCompositionItem
     }
 
     Microsoft::WRL::ComPtr<IDCompositionVisual2> visual;
+    Microsoft::WRL::ComPtr<IDCompositionEffectGroup> opacityEffect;
     Microsoft::WRL::ComPtr<IDCompositionRectangleClip> clip;
     Microsoft::WRL::ComPtr<IDCompositionSurface> surface;
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSurfaceTarget> renderTarget;
@@ -88,6 +91,17 @@ struct DesktopWidgetCompositionItem
     UINT height = 0;
     std::uint64_t hiddenSince = 0;
     bool visible = false;
+    struct HoverFade
+    {
+        snowdesktop::popup_animation_rules::State motion;
+        bool waitingForPixels = false;
+    };
+    std::optional<HoverFade> hoverFade;
+    float submittedOpacity = 1.0f;
+    float HoverOpacity() const
+    {
+        return hoverFade ? hoverFade->motion.GetVisual().opacity : 1.0f;
+    }
     bool backdropRequested = false;
     bool backdropRegistered = false;
     int backdropCornerRadius = 0;

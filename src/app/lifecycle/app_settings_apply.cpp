@@ -1041,6 +1041,8 @@ public:
                 app_.SyncStatusBar();
             }
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
+            app_.generalSettings_.widgetHoverExpandEffect = general.widgetHoverExpandEffect;
+            app_.generalSettings_.widgetHoverVisibilityEffect = general.widgetHoverVisibilityEffect;
             app_.generalSettings_.animationSpeed = general.animationSpeed;
             app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;
             app_.generalSettings_.animationEnergySaver = general.animationEnergySaver;

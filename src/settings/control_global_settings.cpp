@@ -101,6 +101,8 @@ void Enrich(Value& schema, const std::string& path)
     if (path == "general")
     {
         Choices(schema, "animationMode", {0, 1, 2}); Choices(schema, "popupAnimationEffect", {0, 1, 2});
+        Choices(schema, "widgetHoverExpandEffect", {0, 1});
+        Choices(schema, "widgetHoverVisibilityEffect", {0, 1});
         Choices(schema, "animationSpeed", {0, 1, 2, 3, 4, 5}); Choices(schema, "animationFrameLimit", {0, 30, 60, 120});
         Choices(schema, "quickNavTheme", {0, 1, 2, 3}); Choices(schema, "collectionPopupTheme", {0, 1, 2, 3});
         Range(schema, "tooltipFontSize", kMinimumTooltipFontSize, kMaximumTooltipFontSize);

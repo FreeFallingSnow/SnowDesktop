@@ -2848,5 +2848,11 @@
   "settings.general.steamRoom.usage": "Ist der Ausführungsstatus aus, wähle in Steam „Beitreten“. Ist er an und die Karte sichtbar, trittst du bei Einladungen von Freunden automatisch bei.",
   "app.steam.invite_instance_busy": "Die laufende SnowDesktop-Instanz befindet sich bereits in einem Raum oder verarbeitet eine Mehrspieleraktion. Versuche es danach in Steam erneut.",
   "settings.dock.blurReservedSpace": "Desktop hinter dem Dock weichzeichnen",
-  "settings.dock.blurReservedSpace.description": "Zeichnet den Desktop im reservierten Bereich des schwebenden Docks weich, wenn auf diesem Bildschirm ein Fenster maximiert ist."
+  "settings.dock.blurReservedSpace.description": "Zeichnet den Desktop im reservierten Bereich des schwebenden Docks weich, wenn auf diesem Bildschirm ein Fenster maximiert ist.",
+  "settings.animation.widgetHoverExpand": "Animation beim Aufklappen",
+  "settings.animation.widgetHoverExpand.description": "Für Widgets, die sich beim Darüberfahren automatisch aufklappen.",
+  "settings.animation.widgetHoverVisibility": "Animation beim Einblenden",
+  "settings.animation.widgetHoverVisibility.description": "Für Widgets, die nur beim Darüberfahren sichtbar sind.",
+  "settings.animation.option.none": "Keine",
+  "settings.animation.option.roll": "Aus- und Einrollen"
 }

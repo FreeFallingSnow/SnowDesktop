@@ -2848,5 +2848,11 @@
   "settings.general.steamRoom.usage": "실행 상태 표시가 꺼져 있으면 Steam 초대에서 「참가」를 선택하세요. 실행 상태 표시가 켜져 있고 카드가 표시되면 친구의 초대에 자동으로 참가합니다.",
   "app.steam.invite_instance_busy": "실행 중인 SnowDesktop이 이미 방에 참가했거나 멀티플레이 작업을 처리하고 있습니다. 방에서 나가거나 처리가 끝난 후 Steam에서 다시 참가하세요.",
   "settings.dock.blurReservedSpace": "Dock 뒤의 바탕 화면 흐리게 표시",
-  "settings.dock.blurReservedSpace.description": "해당 디스플레이에 최대화된 창이 있으면 플로팅 Dock을 위해 확보된 영역의 바탕 화면을 살짝 흐리게 표시합니다."
+  "settings.dock.blurReservedSpace.description": "해당 디스플레이에 최대화된 창이 있으면 플로팅 Dock을 위해 확보된 영역의 바탕 화면을 살짝 흐리게 표시합니다.",
+  "settings.animation.widgetHoverExpand": "마우스를 올려 펼칠 때의 애니메이션",
+  "settings.animation.widgetHoverExpand.description": "마우스를 올리면 자동으로 펼쳐지는 위젯에 적용됩니다.",
+  "settings.animation.widgetHoverVisibility": "마우스를 올려 표시할 때의 애니메이션",
+  "settings.animation.widgetHoverVisibility.description": "마우스를 올렸을 때만 표시되는 위젯에 적용됩니다.",
+  "settings.animation.option.none": "없음",
+  "settings.animation.option.roll": "두루마리"
 }

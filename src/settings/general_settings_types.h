@@ -63,6 +63,8 @@ struct GeneralSettings
     bool widgetDeveloperToolsEnabled = false;
     int animationMode = snowdesktop::animation::DefaultMode;
     int popupAnimationEffect = 2;
+    int widgetHoverExpandEffect = snowdesktop::animation::NoEffect;
+    int widgetHoverVisibilityEffect = snowdesktop::animation::NoEffect;
     int animationSpeed = 1;
     int animationFrameLimit = 0;
     bool animationEnergySaver = true;

@@ -157,6 +157,8 @@
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
 
+- **同一限制的续证（2026-11-08）**：Task `dock-hover-expand-20261108` 在批次 `9bbedfb79f084b298f0640acdb43a87a` 修订 0 通过键级事务写入十种语言，每种六键。Run `35f8cc2a6425485698ba6aa471027412` 的 Release 和 `localization_contract` 通过。源码核对确认冻结后的提交仍只接受整路径归属。对照 HEAD 确认每份文件仅含本任务六键后，在批次 `f833b48c9f43470693e9167a45ea1e0e` 补认领并保存，复用已验证的产品输入。额外批次用于归属补录，键级提交仍待实现。
+
 - **通过验证后的归属补录（2026-11-06）**：Steam 组件联机 Task `task-e8cf97d08e2c41299365e068559911c4` 的十份语言键级事务通过产品 Run `1f09dda6e3014a109f4f87fc21b6f16f` 和 `localization_contract`，但 `Invoke-OwnedCommit` 仍仅检查 `ownedFiles`。本轮对照 HEAD 确认每份目录只有本任务新增的两个键，随后在 `0c2db860530548539070dc84d9a0f75b` 显式补认领并合并保存。已验证的产品输入未改动，本次仅补归属和记录，不重编、不重测。键级提交仍待实现。
 
 - **资源请求与认领脱节的新证据（2026-11-05）**：Task `lua-widget-stacks` 在批次 `d6e9ae2780214cebbcb0d47f9747e7fc` 通过十次 `resource prepare/apply` 更新三项提示键；标准 Release 与五项回归通过后，明确路径 `commit` 返回 `Unclaimed commit path: lang/de-DE.json`。源码确认提交只看 `ownedFiles`，`claim` 又只接受 editing 状态。先按原批次提交已认领源码为 `363bea07`，保留语言改动；随后用户新增预览需求，沿用新批次 `6a3e1f0c91e7417e95bb63bf30a4c03f` 审查并显式认领这十个语言文件（仅本任务三键改动），将共同保存。后续产品构建由真实预览源码变化触发，不为补认领重编；本记录不是协作接口已修复的证据。

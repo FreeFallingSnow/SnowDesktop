@@ -2623,6 +2623,11 @@ private:
     void DrainDesktopWidgetSurfaceResults();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
+    bool DesktopWidgetHoverFadeEnabled() const;
+    bool SyncDesktopWidgetPresentationVisibility(const DesktopWidget& widget,
+        const RECT& bounds, bool visible, bool animate);
+    void StartDesktopWidgetHoverFade(DesktopWidgetCompositionItem& item, bool visible);
+    bool AdvanceDesktopWidgetHoverFades(double nowMilliseconds);
     void SetDesktopWidgetCompositionVisible(
         const std::wstring& widgetId,
         bool visible,
@@ -3387,6 +3392,8 @@ private:
     bool desktopWidgetPointerBatchActive_ = false;
     ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
+    snowdesktop::UiScheduleToken desktopWidgetHoverFadeFrameToken_ = 0;
+    bool desktopWidgetHoverFadePending_ = false;
     bool hiddenWidgetSurfaceMaintenancePending_ = false;
     std::uint64_t widgetSurfaceReclaimCount_ = 0;
     std::uint64_t widgetSurfaceReclaimedBytes_ = 0;
