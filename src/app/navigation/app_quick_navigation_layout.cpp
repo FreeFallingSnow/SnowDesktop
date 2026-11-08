@@ -1273,6 +1273,29 @@ bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
         const RECT rect = targets[current].rect;
         const POINT point{ (rect.left + rect.right) / 2,
             (rect.top + rect.bottom) / 2 };
+        const auto kind = targets[current].kind;
+        if (kind == QuickNavigationKeyboardTargetKind::ExpandApps ||
+            kind == QuickNavigationKeyboardTargetKind::LoadMoreEverything)
+        {
+            const bool expandApps = kind == QuickNavigationKeyboardTargetKind::ExpandApps;
+            const size_t visibleCount = expandApps ? GetQuickNavigationVisibleAppResultCount()
+                : quickNavigation_->everythingResults.size();
+            const bool expanded = expandApps ? TryExpandQuickNavigationAppsAtPoint(point)
+                : TryLoadMoreQuickNavigationEverythingResultsAtPoint(point);
+            if (expanded)
+            {
+                // The action row disappears. Keep the last existing result
+                // selected so Down advances to the first newly exposed one.
+                quickNavigation_->keyboardTargetKind = expandApps ? QuickNavigationKeyboardTargetKind::App
+                    : QuickNavigationKeyboardTargetKind::Everything;
+                quickNavigation_->keyboardTargetIndex = visibleCount - 1;
+                targets = GetQuickNavigationKeyboardTargets();
+                current = findCurrent();
+                if (current < targets.size())
+                    EnsureQuickNavigationKeyboardTargetVisible(targets[current].rect);
+            }
+            return true;
+        }
         ResetQuickNavigationKeyboardTarget();
         return HandleQuickNavigationClick(point);
     }
