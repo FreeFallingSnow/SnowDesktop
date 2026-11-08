@@ -337,14 +337,20 @@ bool DesktopApp::FlushPendingCompositionCommit()
     const HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Composition.Commit", [&] {
         return dcompDevice_->Commit();
     });
-    TraceDesktopPresentation(L"composition-commit", hr);
+    const double contentCommitDuration =
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - commitStart;
     if (SUCCEEDED(hr))
+    {
         compositionCommitPending_ = false;
+        // Keep desktop glass adjacent to the content submission. In
+        // particular, a roll frame must not publish its new glass while
+        // the corresponding child surface is still queued on this device.
+        desktopBackdropCompositor_.CommitDeferredFrame();
+    }
+    TraceDesktopPresentation(L"composition-commit", hr);
     RecordShellHoverTrace(
         ShellHoverTraceEvent::CommitFlushed);
-    uiAnimationScheduler_.RecordCommitDuration(
-        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
-        commitStart);
+    uiAnimationScheduler_.RecordCommitDuration(contentCommitDuration);
     if (SUCCEEDED(hr))
         return true;
 

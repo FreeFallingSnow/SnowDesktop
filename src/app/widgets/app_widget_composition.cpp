@@ -300,7 +300,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             desktopBackdropCompositor_.BeginFrame(false);
             KeepDesktopWidgetBackdropPanels();
-            desktopBackdropCompositor_.EndFrame();
+            desktopBackdropCompositor_.EndFrame(false);
         }
         if (SyncDesktopWidgetCompositionZOrder())
             return true;
@@ -720,7 +720,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     if (ownsPaintScope)
     {
         KeepDesktopWidgetBackdropPanels();
-        desktopBackdropCompositor_.EndFrame();
+        desktopBackdropCompositor_.EndFrame(false);
         compositionPaintInProgress_ = false;
     }
     if (!structuralOk && hwnd_ && IsWindow(hwnd_))

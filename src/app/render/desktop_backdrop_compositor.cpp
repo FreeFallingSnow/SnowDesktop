@@ -543,6 +543,7 @@ struct DesktopBackdropCompositor::Impl
     std::wstring lastError;
     bool completeCollection = true;
     bool collectingFrame = false;
+    bool frameCommitPending = false;
     bool blurFactoriesDirty = false;
     bool available = false;
     bool transformedRegionDirty = false;
@@ -904,6 +905,7 @@ struct DesktopBackdropCompositor::Impl
             // the resized content and then save layout while glass is still
             // waiting for the UI dispatcher. Do not wait for GPU completion.
             compositorController.Commit();
+            frameCommitPending = false;
             return true;
         }
         catch (const winrt::hresult_error& error)
@@ -1046,6 +1048,7 @@ struct DesktopBackdropCompositor::Impl
         panelOwners.clear();
         blurFactories.clear();
         collectingFrame = false;
+        frameCommitPending = false;
         stagingFrame = false;
         stagedPanels.clear();
         stagedPanelOwners.clear();
@@ -2388,12 +2391,15 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
         existing->visual.Brush(nullptr);
         impl_->ErasePanel(existing);
         impl_->blurFactoriesDirty = true;
-        impl_->PruneUnusedBlurFactories();
-        if (impl_->genieRoot)
-            impl_->SetAnimationPathRegionExpanded(true);
-        else
-            impl_->SyncPanelWindowRegion();
-        impl_->RequestCommit();
+        if (!impl_->collectingFrame)
+        {
+            impl_->PruneUnusedBlurFactories();
+            if (impl_->genieRoot)
+                impl_->SetAnimationPathRegionExpanded(true);
+            else
+                impl_->SyncPanelWindowRegion();
+            impl_->RequestCommit();
+        }
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -2508,6 +2514,12 @@ void DesktopBackdropCompositor::CommitVisualChanges()
     }
 }
 
+void DesktopBackdropCompositor::CommitDeferredFrame()
+{
+    if (impl_ && impl_->frameCommitPending && !impl_->collectingFrame)
+        CommitVisualChanges();
+}
+
 bool DesktopBackdropCompositor::
 CommitVisualChangesAndNotify(
     HWND notifyWindow, UINT message, WPARAM token)
@@ -2554,6 +2566,7 @@ void DesktopBackdropCompositor::EndFrame(
             impl_->SetAnimationPathRegionExpanded(true);
         else
             impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        impl_->frameCommitPending = true;
         if (requestCommit)
             impl_->RequestCommit();
     }

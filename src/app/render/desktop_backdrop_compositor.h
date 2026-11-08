@@ -155,6 +155,8 @@ public:
     void SetVisualTranslation(float x, float y);
     /** @brief 立即提交同线程所有 backdrop 目标的共享视觉事务，不等待 GPU 完成。 */
     void CommitVisualChanges();
+    // Submit a completed EndFrame(false) after the matching content commit.
+    void CommitDeferredFrame();
     /**
      * @brief 提交共享视觉事务，并在该批次真正完成后投递窗口消息。
      *

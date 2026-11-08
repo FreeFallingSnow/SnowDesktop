@@ -169,7 +169,7 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     }
     constexpr float kDockReservedSpaceBlur = 5.0f;
     desktopBackdropCompositor_.SetBackgroundPanels(dockBackdropFrames, kDockReservedSpaceBlur);
-    desktopBackdropCompositor_.EndFrame();
+    desktopBackdropCompositor_.EndFrame(false);
     if (forceCompleteGlassCollection)
         desktopBackdropFullCollectionPending_ = false;
     if (!nativeGlassPanelReadyLogged_ &&
@@ -203,6 +203,10 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
             L"Queue Paint Commit", E_FAIL);
         return false;
     }
+    // The floating popup can commit the shared backdrop controller when its
+    // bounds change. Submit the completed desktop pair before touching it.
+    if (desktopBackdropCompositor_.IsAvailable() && !FlushPendingCompositionCommit())
+        return false;
     compositionRenderRecoveryPending_ = false;
     if (widgetAccessibilityProvider_)
         widgetAccessibilityProvider_->RefreshEvents();
