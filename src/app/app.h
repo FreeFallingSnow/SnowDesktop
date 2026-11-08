@@ -2876,6 +2876,7 @@ private:
     bool IsLuaStackIndicatorVisible() const;
     void UpdateLuaStackIndicator(POINT point);
     void HideLuaStackIndicator();
+    void InvalidateLuaStackHoverVisibility(const std::wstring& stackId);
     bool HandleLuaStackIndicatorPointer(POINT point, bool pressed);
     void DrawLuaStackIndicator(ID2D1DeviceContext* context);
     struct LuaStackIndicatorState
@@ -3189,6 +3190,7 @@ private:
      * @return 框架矩形
     */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetDesktopWidgetHoverFrameRect(const DesktopWidget& widget, const RECT& visibleFrame) const;
     RECT GetExpandedWidgetFrameRect(const DesktopWidget& widget) const;
     RECT GetCollapsedWidgetFrameRect(const DesktopWidget& widget, const RECT& fullFrame) const;
     bool IsWidgetCollapsed(const DesktopWidget& widget) const;

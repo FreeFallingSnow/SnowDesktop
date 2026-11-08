@@ -223,9 +223,21 @@ bool DesktopApp::IsLuaStackIndicatorVisible() const
         (!desktopIconsHidden_ || widgets_[index].keepWhenDesktopHidden) && !IsRectEmpty(&widgets_[index].bounds);
 }
 
+void DesktopApp::InvalidateLuaStackHoverVisibility(const std::wstring& stackId)
+{
+    if (!hwnd_ || stackId.empty()) return;
+    const size_t index = FindWidgetIndexById(stackId);
+    if (index >= widgets_.size() || !widgets_[index].showOnHoverOnly) return;
+    const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
+    if (!IsRectEmpty(&frame)) InvalidateRect(hwnd_, &frame, FALSE);
+}
+
 void DesktopApp::HideLuaStackIndicator()
 {
     const bool shown = !IsRectEmpty(&luaStackIndicator_.bounds);
+    // The leave timer can close the indicator after the final pointer sample.
+    // Its hover-only owner still needs a desktop paint to start fading out.
+    if (shown) InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
     luaStackIndicator_ = {};
     if (shown) UpdateFloatingPopupWindowBounds();
 }
@@ -243,31 +255,28 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     // The outside popup and its bridge own hover before components underneath.
     const bool indicatorHover = IsLuaStackIndicatorVisible() &&
         (PtInRect(&luaStackIndicator_.bounds, point) || PtInRect(&luaStackIndicator_.bridge, point));
-    size_t target = indicatorHover ? FindWidgetIndexById(luaStackIndicator_.stackId)
+    const size_t target = indicatorHover ? FindWidgetIndexById(luaStackIndicator_.stackId)
         : HitTestStandaloneWidgetIndex(point);
     if (target >= widgets_.size() || widgets_[target].type != DesktopWidgetType::LuaStack)
     {
-        if (IsLuaStackIndicatorVisible() &&
-            (PtInRect(&luaStackIndicator_.bounds, point) || PtInRect(&luaStackIndicator_.bridge, point)))
-            target = FindWidgetIndexById(luaStackIndicator_.stackId);
-        else
+        if (!luaStackIndicator_.stackId.empty())
         {
-            if (!luaStackIndicator_.stackId.empty())
-            {
-                const ULONGLONG now = GetTickCount64();
-                if (!luaStackIndicator_.hideAfter) luaStackIndicator_.hideAfter = now + 80;
-                else if (now >= luaStackIndicator_.hideAfter) HideLuaStackIndicator();
-            }
-            return;
+            const ULONGLONG now = GetTickCount64();
+            if (!luaStackIndicator_.hideAfter) luaStackIndicator_.hideAfter = now + 80;
+            else if (now >= luaStackIndicator_.hideAfter) HideLuaStackIndicator();
         }
+        return;
     }
-    if (target >= widgets_.size()) return;
     const auto& stack = widgets_[target];
     const auto& ids = stack.childWidgetIds;
     if (ids.size() < 2) { HideLuaStackIndicator(); return; }
     const bool newTarget = luaStackIndicator_.stackId != stack.id;
     const RECT oldBounds = luaStackIndicator_.bounds;
-    if (newTarget) luaStackIndicator_ = {};
+    if (newTarget)
+    {
+        InvalidateLuaStackHoverVisibility(luaStackIndicator_.stackId);
+        luaStackIndicator_ = {};
+    }
     luaStackIndicator_.stackId = stack.id;
     luaStackIndicator_.hideAfter = 0;
     const float scale = GetWidgetCellScale(stack);
@@ -295,6 +304,7 @@ void DesktopApp::UpdateLuaStackIndicator(POINT point)
     const auto active = std::find(ids.begin(), ids.end(), stack.activeCategoryId);
     const size_t activeIndex = active == ids.end() ? 0 : static_cast<size_t>(active - ids.begin());
     luaStackIndicator_.first = std::min(activeIndex > visible / 2 ? activeIndex - visible / 2 : 0, ids.size() - visible);
+    if (newTarget) InvalidateLuaStackHoverVisibility(stack.id);
     if (newTarget || !EqualRect(&oldBounds, &luaStackIndicator_.bounds)) UpdateFloatingPopupWindowBounds(true);
     else InvalidateFloatingPopupWindow(false);
 }

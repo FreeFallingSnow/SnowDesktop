@@ -144,6 +144,16 @@ RECT DesktopApp::GetCollapsedWidgetFrameRect(const DesktopWidget& widget, const 
         ScaleWidgetCu(GetCategorizedWidgetTabHeight(), scale), ScaleWidgetCu(2.0f, scale));
 }
 
+RECT DesktopApp::GetDesktopWidgetHoverFrameRect(const DesktopWidget& widget, const RECT& visibleFrame) const
+{
+    // A manually folded strip can appear from anywhere in the layout slot.
+    // The visible frame still defines the pixels and interactive controls.
+    if (widget.showOnHoverOnly && !widget.titleBarExpandOnHover &&
+        !IsRectEmpty(&widget.bounds) && CanFoldWidget(widget))
+        return GetExpandedWidgetFrameRect(widget);
+    return visibleFrame;
+}
+
 bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
 {
     return GetWidgetExpansionProgress(widget) <= 0.0f;

@@ -1981,8 +1981,8 @@ void DesktopApp::OnMouseMoveAt(
                 const auto& w = widgets_[widgetIndex];
                 if (!w.showOnHoverOnly)
                     continue;
-                const RECT frame =
-                    GetStandaloneWidgetFrameRect(w);
+                const RECT frame = GetDesktopWidgetHoverFrameRect(
+                    w, GetStandaloneWidgetFrameRect(w));
                 const bool pointerWasInside =
                     PtInRect(&frame, oldMouse) != FALSE;
                 const bool pointerIsInside =

@@ -414,8 +414,8 @@ std::uint64_t DesktopApp::HoverOnlyVisibleMask() const
                     keyboardNavInsideWidget_,
                     keyboardNavWidgetIndex_,
                     widgetIndex);
-        const RECT frame =
-            GetStandaloneWidgetFrameRect(widget);
+        const RECT frame = GetDesktopWidgetHoverFrameRect(
+            widget, GetStandaloneWidgetFrameRect(widget));
         if (snowdesktop::widget_visibility_rules::
                 ShouldRenderWidget(
                     true,

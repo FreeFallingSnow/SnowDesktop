@@ -115,6 +115,7 @@ void DesktopApp::DrawStaticBackground(
     const bool fadeOnHover = DesktopWidgetHoverFadeEnabled() &&
         !dragSession_.HasContext() && !dragDropController_.IsExternalDragActive() &&
         widgetAction_ == WidgetAction::None;
+    const bool stackIndicatorVisible = IsLuaStackIndicatorVisible();
     for (size_t widgetIndex = 0;
          widgetIndex < widgets_.size();
          ++widgetIndex)
@@ -137,7 +138,8 @@ void DesktopApp::DrawStaticBackground(
             widgetData.id == interactionPinnedWidgetId_;
         const bool rollAnimating = IsWidgetHoverExpansionAnimating(widgetData);
         const bool interactionRetained =
-            popupOpen || interactionPinned || luaStackIndicator_.stackId == widgetData.id ||
+            popupOpen || interactionPinned ||
+            (stackIndicatorVisible && luaStackIndicator_.stackId == widgetData.id) ||
             (rollAnimating && !fadeOnHover) ||
             snowdesktop::widget_visibility_rules::
                 ShouldRetainForKeyboardNavigation(
@@ -146,7 +148,8 @@ void DesktopApp::DrawStaticBackground(
                     keyboardNavWidgetIndex_,
                     widgetIndex);
         const RECT hoverFrame = rollAnimating && fadeOnHover
-            ? GetExpandedWidgetFrameRect(widgetData) : widgetFrame;
+            ? GetExpandedWidgetFrameRect(widgetData)
+            : GetDesktopWidgetHoverFrameRect(widgetData, widgetFrame);
         const bool interactionVisible =
             snowdesktop::widget_visibility_rules::ShouldRenderWidget(
                 widgetData.showOnHoverOnly,
