@@ -3027,6 +3027,8 @@ struct DockPagePresenter::Impl
         blurReservedSpaceRow.SetText(L("settings.dock.blurReservedSpace", L"Blur desktop behind Dock"),
             L("settings.dock.blurReservedSpace.description",
                 L"Softens the desktop in the space reserved for the floating Dock when that display has a maximized window."));
+        blurReservedSpaceToggle.OnContent(winrt::box_value(L("app.interact.on", L"On")));
+        blurReservedSpaceToggle.OffContent(winrt::box_value(L("app.interact.off", L"Off")));
         muxa::AutomationProperties::SetName(blurReservedSpaceToggle, blurReservedSpaceRow.label.Text());
         for (const auto& button : {startIconBeautify, searchIconBeautify})
         {
