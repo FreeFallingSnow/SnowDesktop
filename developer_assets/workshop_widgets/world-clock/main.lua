@@ -204,16 +204,12 @@ local function render(context, model)
     if w <= 0 or h <= 0 then return end
     local stacked = w / h < 1.35
     local scale = math.min(w / (stacked and 260 or 420), h / 224)
-    local left, right = 13, w / scale - 13
-    -- Anchor the first and last text rows close to the edges at any aspect ratio.
-    local verticalScale = (h - 34 * scale) / 190
-    local originY = 18 * (scale - verticalScale)
+    local inset = 17
+    local canvasWidth = w / scale
+    local right = canvasWidth - inset
+    local dividerY = h * (stacked and 0.36 or 0.47)
     local theme = widget.theme()
     local ink = theme and theme.contentTheme == 1 and darkInk or lightInk
-
-    local function yAt(y)
-        return originY + y * verticalScale
-    end
 
     local function textAt(value, x, y, size, maxWidth, color, bold, rightAligned)
         local fontSize = size * scale
@@ -225,21 +221,21 @@ local function render(context, model)
         end
         local start = x * scale
         if rightAligned then start = start - measured.width end
-        draw.text(start, yAt(y) - measured.height / 2,
+        draw.text(start, y - measured.height / 2,
             value, fontSize, color, budget * 1.02, bold, true)
         return start, measured.width
     end
 
     local function rule(x1, y1, x2, y2)
-        draw.line(x1 * scale, yAt(y1), x2 * scale, yAt(y2), 0.7 * scale, ink.muted, 0.5)
+        draw.line(x1 * scale, y1, x2 * scale, y2, 0.7 * scale, ink.muted, 0.5)
     end
 
     local function cityButton(city, index, startX, endX, top, bottom, arrowY)
         local key = "city." .. index
         local label = l10n.tr("lua_widget.world_clock.change_city", city.label)
-        local x, y = (startX + 2) * scale, yAt(top)
+        local x, y = (startX + 2) * scale, top + 2 * scale
         local width = (endX - startX - 4) * scale
-        local height = math.min(h - 3 * scale, yAt(bottom)) - y
+        local height = bottom - 2 * scale - y
         local radius = 5 * scale
         interaction.region({
             key = key, cursor = "hand", focusable = true, tooltip = label,
@@ -253,57 +249,61 @@ local function render(context, model)
         if interaction.isFocused(key) then
             draw.strokeRect(x, y, width, height, ink.main, radius, scale, 0.8)
         end
-        local arrowX, arrowCenter = (endX - 8) * scale, yAt(arrowY)
-        draw.line(arrowX - 4 * scale, arrowCenter - 2 * scale, arrowX, arrowCenter + 2 * scale,
+        local arrowX = (endX - 8) * scale
+        draw.line(arrowX - 4 * scale, arrowY - 2 * scale, arrowX, arrowY + 2 * scale,
             0.8 * scale, ink.muted, 0.66)
-        draw.line(arrowX, arrowCenter + 2 * scale, arrowX + 4 * scale, arrowCenter - 2 * scale,
+        draw.line(arrowX, arrowY + 2 * scale, arrowX + 4 * scale, arrowY - 2 * scale,
             0.8 * scale, ink.muted, 0.66)
     end
 
     local function cityName(city, x, y, width)
         local start, measured = textAt(city.label, x, y, 15, width - 18, ink.main, true)
-        drawDaylight(start + measured + 10 * scale, yAt(y),
+        drawDaylight(start + measured + 10 * scale, y,
             5.8 * scale, city.daylight, ink, 0.95 * scale)
     end
 
-    textAt(l10n.tr("lua_widget.world_clock.local"), left, 18, 16, 125, ink.main, true)
-    textAt(model.localTime, left, stacked and 53 or 63, stacked and 47 or 59, 218, ink.main, true)
-    local dateStart = textAt(model.localDate, right, 18, 15, 81, ink.main, false, true)
-    drawDaylight(dateStart - 14 * scale, yAt(18), 6.5 * scale, model.localDaylight, ink, scale)
+    local headerLabelY = 22 * scale
+    local localClockY = (headerLabelY + 7 * scale + dividerY) / 2
+    textAt(l10n.tr("lua_widget.world_clock.local"), inset, headerLabelY, 16, 125, ink.main, true)
+    textAt(model.localTime, inset, localClockY, stacked and 47 or 59, 218, ink.main, true)
+    local dateStart = textAt(model.localDate, right, headerLabelY, 15, 81, ink.main, false, true)
+    drawDaylight(dateStart - 14 * scale, headerLabelY, 6.5 * scale, model.localDaylight, ink, scale)
+    rule(0, dividerY, canvasWidth, dividerY)
 
     if stacked then
-        rule(left, 84, right, 84)
         local valueRight = right - 21
-        local nameWidth = valueRight - left - 77
-        local lineGap = 18 * scale / verticalScale
+        local nameWidth = valueRight - inset - 77
+        local rowHeight = (h - dividerY) / #model.cities
+        local halfLineGap = 8.5 * scale
         for i, city in ipairs(model.cities) do
-            local y = 122 + (i - 1) * 43
-            cityButton(city, i, left, right, y - 35, y + 9, y - lineGap / 2)
-            cityName(city, left, y - lineGap, nameWidth)
-            textAt(city.detail, left, y, 12, nameWidth, ink.muted, false)
-            textAt(city.clock, valueRight, y - lineGap / 2, 23, 69, ink.main, true, true)
-            if i < #model.cities then rule(left, y + 11, right, y + 11) end
+            local top = dividerY + (i - 1) * rowHeight
+            local bottom = top + rowHeight
+            local center = (top + bottom) / 2
+            cityButton(city, i, inset - 4, right + 4, top, bottom, center)
+            cityName(city, inset, center - halfLineGap, nameWidth)
+            textAt(city.detail, inset, center + halfLineGap, 12, nameWidth, ink.muted, false)
+            textAt(city.clock, valueRight, center, 23, 69, ink.main, true, true)
+            if i < #model.cities then rule(0, bottom, canvasWidth, bottom) end
         end
         return
     end
 
-    rule(left, 105, right, 105)
-    local columnWidth = (right - left) / #model.cities
+    local columnWidth = canvasWidth / #model.cities
+    local center = (dividerY + h) / 2
+    local headingY = center - 32 * scale
+    local width = columnWidth - 2 * inset
     for i, city in ipairs(model.cities) do
-        local columnLeft = left + (i - 1) * columnWidth
+        local columnLeft = (i - 1) * columnWidth
         local columnRight = columnLeft + columnWidth
-        local x = columnLeft
-        if i > 1 then
-            rule(columnLeft, 116, columnLeft, 216)
-            x = x + 12
-        end
-        cityButton(city, i, columnLeft, columnRight, 111, 221, 130)
-        local width = columnRight - x - 8
-        cityName(city, x, 130, width - 12)
-        textAt(city.clock, x, 170, 33, width, ink.main, true)
-        textAt(city.detail, x, 208, 13.5, width, ink.muted, false)
+        local x = columnLeft + inset
+        if i > 1 then rule(columnLeft, dividerY, columnLeft, h) end
+        cityButton(city, i, columnLeft + 4, columnRight - 9, dividerY, h, headingY)
+        cityName(city, x, headingY, width - 12)
+        textAt(city.clock, x, center - scale, 33, width, ink.main, true)
+        textAt(city.detail, x, center + 30 * scale, 13.5, width, ink.muted, false)
     end
 end
+
 return widget.define({
     useCustomStyle = true,
     followPersonalizationDefault = true,

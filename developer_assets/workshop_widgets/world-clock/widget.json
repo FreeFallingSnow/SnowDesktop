@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "World Clock",
   "nameKey": "lua_widget.world_clock.name",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Compare your local time with three cities at a glance.",
   "descriptionKey": "lua_widget.world_clock.description",
   "locales": {
