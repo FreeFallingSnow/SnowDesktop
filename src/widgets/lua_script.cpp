@@ -478,7 +478,13 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     }
     recordingPhase.reset();
     recordingPhase.emplace("widget.composition", "content.commands", data_->id);
-    context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const auto contentBounds = app_->ToD2DRect(frame);
+    auto* contentClip = panelRadius > 0.0f
+        ? GetCachedClipGeometry(app_->GetD2DFactory(), frame, panelRadius) : nullptr;
+    if (contentClip)
+        context->PushLayer(D2D1::LayerParameters1(contentBounds, contentClip), nullptr);
+    else
+        context->PushAxisAlignedClip(contentBounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
     {
         widgetOk = SafeRenderWidget(
@@ -648,7 +654,10 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 ? D2D1::ColorF(0.08f, 0.31f, 0.72f, 0.98f)
                 : D2D1::ColorF(0.63f, 0.79f, 1.0f, 0.98f));
     }
-    context->PopAxisAlignedClip();
+    if (contentClip)
+        context->PopLayer();
+    else
+        context->PopAxisAlignedClip();
 
     recordingPhase.reset();
     recordingPhase.emplace("widget.composition", "chrome.record", data_->id);

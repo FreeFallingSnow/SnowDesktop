@@ -101,13 +101,19 @@ local function event(context, model, change)
     if (change.kind == "schedule" and change.id == "minute")
         or change.kind == "environment" or (change.kind == "visibility" and change.visible) then
         update(model)
-    elseif change.kind == "panel" and change.action == "closed" then
-        model.pickerSlot = nil
-    elseif change.kind == "action" then
-        if change.id == "open.city" and model.cities[change.value] then
-            model.pickerSlot = change.value
+    elseif change.kind == "panel" then
+        if change.action == "opened" then
+            model.pickerSlot = model.pendingPickerSlot
+            model.pendingPickerSlot = nil
+        elseif change.action == "closed" then
+            model.pickerSlot = nil
             updateQuery(model, "")
             model.queryRevision = model.queryRevision + 1
+        end
+    elseif change.kind == "action" then
+        if change.id == "open.city" and model.cities[change.value] then
+            if model.pickerSlot == change.value then return end
+            model.pendingPickerSlot = change.value
             local row = ui.metrics().layoutRowHeight
             widget.openPanel({ title = l10n.tr("lua_widget.world_clock.choose_city"),
                 width = math.ceil(row * 11), height = math.ceil(row * 12) })
@@ -136,7 +142,7 @@ local function panel(context, model)
         events = { change = { id = "query.change" }, submit = { id = "query.submit" } },
     })
 
-    local current = model.cities[model.pickerSlot or 1].id
+    local current = model.cities[model.pickerSlot or model.pendingPickerSlot or 1].id
     local results = {}
     for _, city in ipairs(model.results) do
         local selected = city.storageId == current

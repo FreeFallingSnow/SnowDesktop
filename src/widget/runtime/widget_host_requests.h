@@ -56,6 +56,7 @@ struct LuaWidgetPanelRequest
     std::string surface = "panel";
     std::string placement = "auto";
     std::string anchorKey;
+    std::string desktopOpenerKey;
     RECT anchorRect{};
     bool hasAnchor = false;
     bool showHeader = true;

@@ -231,9 +231,11 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   声明式/即时渲染、滚动、输入和 action 管线，但由宿主居中显示、绘制遮罩并隔离桌面输入。
   `popover` 由可信桌面手势调用 `widget.openPopover`，并锚定上一棵成功桌面 scene 中的
   稳定 `anchorKey`；回调收到 `context.surface="popover"`。
-  从直接桌面手势重复打开当前辅助面板时，宿主复用现有场景，不重播动画、不重发 opened/closed，
-  并保留焦点与滚动状态。同一弹窗按组件实例、surface、title 和 popover 的 anchorKey 识别；
-  仅尺寸或位置变化不构成新弹窗。不同标题、锚点或 surface 仍会切换内容。普通非手势调用
+  直接桌面手势重复请求当前辅助面板时，宿主不重新打开。若此次点击按 `dismissOnOutside` 关闭弹窗，
+  只发送关闭事件；否则保留现有场景、焦点和滚动状态。同一弹窗按组件实例、surface 和 title 识别。
+  直接从有稳定 key 的桌面元素
+  打开的 panel 或 dialog 还按该元素区分，popover 则按 anchorKey 区分。
+  仅尺寸或位置变化不构成新弹窗。普通非手势调用
   保留既有刷新行为，更新内容仍使用 model 与 widget.invalidate()。点击非模态弹窗所属组件的桌面卡片时，
   宿主先处理该点击的操作。若操作打开另一个弹窗，宿主等旧弹窗关闭动画结束，再自动播放新弹窗的打开动画。
   没有打开新弹窗的外点及 Escape 分别按 `dismissOnOutside` 和 `dismissOnEscape` 关闭。

@@ -51,15 +51,15 @@ void DesktopApp::OpenLuaWidgetPanel(
                 (request.anchorRect.top + request.anchorRect.bottom) / 2};
         return anchor;
     };
-    // A repeated desktop opener is idempotent. Titles distinguish a widget's
-    // ordinary panels; stable anchor keys distinguish its titleless popovers.
-    // Leave the active scene, focus and animation generation untouched.
+    // Distinct desktop elements may open panels with the same title. A repeat
+    // of the current opener leaves dismissal to the outside-click policy.
     const bool sameWidget = luaWidgetPanelRequest_.widgetId == request.widgetId;
     const bool samePanel = sameWidget &&
         luaWidgetPanelRequest_.surface == request.surface &&
         luaWidgetPanelRequest_.title == request.title &&
-        luaWidgetPanelRequest_.anchorKey == request.anchorKey;
-    if (request.desktopGesture && samePanel && !pendingLuaWidgetPanelOpen_)
+        luaWidgetPanelRequest_.anchorKey == request.anchorKey &&
+        luaWidgetPanelRequest_.desktopOpenerKey == request.desktopOpenerKey;
+    if (request.desktopGesture && samePanel)
         return;
     if (widgetEngine_)
         widgetEngine_->SetPanelTheme(collectionPopupAppearance_);

@@ -647,6 +647,7 @@ struct D2DState
     std::string storagePrefix;
     std::wstring currentWidgetId;
     const char* surfaceKind = "desktop";
+    std::string_view desktopPopupOpenerKey;
     bool openingFocusAllowed = false;
     int gridColumns = 1;
     int gridRows = 1;
@@ -2160,13 +2161,15 @@ class WidgetSurfaceScope
 {
 public:
     WidgetSurfaceScope(D2DState* state, const char* surfaceKind,
-        bool allowOpeningFocus = false)
+        bool allowOpeningFocus = false, std::string_view desktopPopupOpenerKey = {})
         : state_(state)
     {
         if (!state_) return;
         previous_ = state_->surfaceKind;
+        previousPopupOpenerKey_ = state_->desktopPopupOpenerKey;
         previousOpeningFocus_ = state_->openingFocusAllowed;
         state_->surfaceKind = surfaceKind ? surfaceKind : "desktop";
+        state_->desktopPopupOpenerKey = desktopPopupOpenerKey;
         state_->openingFocusAllowed = allowOpeningFocus;
     }
 
@@ -2174,6 +2177,7 @@ public:
     {
         if (!state_) return;
         state_->surfaceKind = previous_;
+        state_->desktopPopupOpenerKey = previousPopupOpenerKey_;
         state_->openingFocusAllowed = previousOpeningFocus_;
     }
 
@@ -2183,6 +2187,7 @@ public:
 private:
     D2DState* state_ = nullptr;
     const char* previous_ = "desktop";
+    std::string_view previousPopupOpenerKey_;
     bool previousOpeningFocus_ = false;
 };
 
@@ -26441,7 +26446,6 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     const std::string eventSource = source && *source ? source : "pointer";
     const std::string eventSurface =
         NormalizeWidgetSurface(surface);
-    WidgetSurfaceScope surfaceScope(d2dState_, eventSurface.c_str());
     auto& interactionRegions =
         InteractionRegionsForSurface(widget, eventSurface);
     if (requestedSelectedKeys)
@@ -26506,6 +26510,9 @@ void WidgetEngine::DispatchInteractionAction(LuaWidget& widget,
     }
     snowdesktop::widget_runtime::WidgetTrustedGestureScope actionGesture(
         trustedGestureState_, trustedGesture);
+    const std::string popupOpener = trustedGesture && eventSurface == "desktop"
+        ? targetKey : std::string{};
+    WidgetSurfaceScope surfaceScope(d2dState_, eventSurface.c_str(), false, popupOpener);
     (void)InvokeLifecycleEvent(widget, "action",
         [&action, &targetKey, &resolvedEventName,
             previousChecked, checked, previousIndeterminate, indeterminate,
@@ -32277,6 +32284,8 @@ void WidgetEngine::RuntimeOpenWidgetPanel(
     request.widgetId = widgetId;
     request.desktopGesture = trustedGestureState_.Active() &&
         CurrentWidgetSurface(d2dState_) == "desktop";
+    if (request.desktopGesture && d2dState_)
+        request.desktopOpenerKey = d2dState_->desktopPopupOpenerKey;
     request.title = std::move(title);
     request.surface = "panel";
     request.width = std::clamp(width, 320, 900);
@@ -32310,6 +32319,8 @@ void WidgetEngine::RuntimeOpenWidgetDialog(
     request.widgetId = widgetId;
     request.desktopGesture = trustedGestureState_.Active() &&
         CurrentWidgetSurface(d2dState_) == "desktop";
+    if (request.desktopGesture && d2dState_)
+        request.desktopOpenerKey = d2dState_->desktopPopupOpenerKey;
     request.title = std::move(title);
     request.surface = "dialog";
     request.width = std::clamp(width, 320, 900);
