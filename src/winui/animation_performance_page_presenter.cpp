@@ -119,7 +119,7 @@ struct AnimationPerformancePagePresenter::Impl
             animation::NoEffect, {L10N_KEY("settings.animation.option.none"),
                 L10N_KEY("settings.animation.option.roll")});
         AddChoice(widgetHoverVisibility, generalCard, "widgetHoverVisibility", "animation.widgetHoverVisibility",
-            animation::NoEffect, {L10N_KEY("settings.animation.option.none"),
+            GeneralSettings::kDefaultWidgetHoverVisibilityEffect, {L10N_KEY("settings.animation.option.none"),
                 L10N_KEY("settings.animation.option.fade")});
         AddChoice(speed, generalCard, "speed", "animation.speed", 1,
                   {L10N_KEY("settings.animation.option.fast"), L10N_KEY("settings.animation.option.standard"),

@@ -64,7 +64,8 @@ struct GeneralSettings
     int animationMode = snowdesktop::animation::DefaultMode;
     int popupAnimationEffect = 2;
     int widgetHoverExpandEffect = snowdesktop::animation::NoEffect;
-    int widgetHoverVisibilityEffect = snowdesktop::animation::NoEffect;
+    static constexpr int kDefaultWidgetHoverVisibilityEffect = snowdesktop::animation::Fade;
+    int widgetHoverVisibilityEffect = kDefaultWidgetHoverVisibilityEffect;
     int animationSpeed = 1;
     int animationFrameLimit = 0;
     bool animationEnergySaver = true;
