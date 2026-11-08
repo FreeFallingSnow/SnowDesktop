@@ -60,9 +60,12 @@ local function refresh(model)
         if name ~= "" then
             local done = checked(model, model.today, slot)
             completed = completed + (done and 1 or 0)
-            local week = {}
-            for i, day in ipairs(model.week) do
-                week[i] = checked(model, day, slot)
+            local days = {}
+            for _, day in ipairs(model.week) do
+                days[day] = checked(model, day, slot)
+            end
+            for _, day in ipairs(model.recent) do
+                if days[day] == nil then days[day] = checked(model, day, slot) end
             end
             -- An unfinished day leaves yesterday's streak active until midnight.
             local date = done and model.today or calendar.addDays(model.today, -1)
@@ -71,7 +74,7 @@ local function refresh(model)
                 streak = streak + 1
                 date = calendar.addDays(date, -1)
             end
-            habits[#habits + 1] = { slot = slot, name = name, done = done, week = week, streak = streak }
+            habits[#habits + 1] = { slot = slot, name = name, done = done, days = days, streak = streak }
             if streak > bestStreak then bestName, bestStreak = name, streak end
         end
     end
@@ -87,6 +90,7 @@ local function updateDay(model)
     local index = (calendar.dateInfo(today).weekday + 5) % 7 + 1
     model.week = {}
     for i = 1, 7 do model.week[i] = calendar.addDays(today, i - index) end
+    model.recent = { calendar.addDays(today, -2), calendar.addDays(today, -1), today }
     return true
 end
 
@@ -333,38 +337,42 @@ local function spreadRows(row, available, count)
     return math.max(row, math.min(row * 1.85, available / count))
 end
 
-local function weekly(model, m, width, height)
-    local nameWidth = math.min(m.base * 6, width * 0.28)
+local function dayMatrix(model, dates, m, width, height)
+    local columns = #dates
+    local nameWidth = math.min(m.base * 6, width * (columns == 7 and 0.28 or 0.42))
     local colGap = m.base * 0.14
-    local lane = (width - nameWidth - colGap * 7) / 7
+    local lane = (width - nameWidth - colGap * columns) / columns
     local cellSize = math.min(lane * 0.76, m.row * 0.63)
     local dayHeight = m.row * 0.72
     local count = #model.habits
     local rowHeight = spreadRows(m.row, height - dayHeight - count, count)
-    local header = { view.spacer({ key = "week.names.spacer", width = nameWidth, flexShrink = 0 }) }
+    local header = { view.spacer({ key = "matrix.names.spacer", width = nameWidth, flexShrink = 0 }) }
+    local dayLabels = {}
     local todayIndex
-    for i, date in ipairs(model.week) do
+    for i, date in ipairs(dates) do
         local today = date == model.today
         if today then todayIndex = i end
-        local weekday = label("weekday." .. i, weekdays[i], dayHeight, m.caption, not today)
+        local weekdayIndex = (calendar.dateInfo(date).weekday + 5) % 7 + 1
+        dayLabels[i] = weekdays[weekdayIndex]
+        local weekday = label("weekday." .. i, dayLabels[i], dayHeight, m.caption, not today)
         weekday.width, weekday.textAlign, weekday.bold = lane, "center", today
         header[#header + 1] = weekday
     end
     local rows = {
-        view.row({ key = "week.days", width = "fill", height = dayHeight, flexShrink = 0,
+        view.row({ key = "matrix.days", width = "fill", height = dayHeight, flexShrink = 0,
             gap = colGap, children = header }),
-        divider("week.line.header"),
+        divider("matrix.line.header"),
     }
     for index, item in ipairs(model.habits) do
         local name = habitLabel(item, m, rowHeight)
         name.width = nameWidth
         local cells = { name }
-        for i, date in ipairs(model.week) do
+        for i, date in ipairs(dates) do
             local cell
             if i == todayIndex then
                 cell = toggle(item, cellSize, false, m.colors)
             else
-                local done = date < model.today and item.week[i]
+                local done = date < model.today and item.days[date]
                 local state = date > model.today and l10n.tr("lua_widget.habit_tracker.future")
                     or done and l10n.tr("lua_widget.habit_tracker.done")
                     or l10n.tr("lua_widget.habit_tracker.missed")
@@ -374,34 +382,34 @@ local function weekly(model, m, width, height)
                     textAlign = "center", bold = true, flexShrink = 0,
                     style = date <= model.today and markStyle(done, cellSize, false, m.colors) or nil,
                     accessibility = { label = l10n.tr("lua_widget.habit_tracker.day_state",
-                        item.name, weekdays[i], state) },
+                        item.name, dayLabels[i], state) },
                 })
             end
             cells[#cells + 1] = view.row({
-                key = "week.cell." .. item.slot .. "." .. i, width = lane, height = rowHeight,
+                key = "matrix.cell." .. item.slot .. "." .. i, width = lane, height = rowHeight,
                 flexShrink = 0, alignItems = "center", justifyContent = "center", children = { cell },
             })
         end
         rows[#rows + 1] = view.row({
-            key = "week.habit." .. item.slot, width = "fill", height = rowHeight, flexShrink = 0,
+            key = "matrix.habit." .. item.slot, width = "fill", height = rowHeight, flexShrink = 0,
             gap = colGap, children = cells,
         })
-        if index < #model.habits then rows[#rows + 1] = divider("week.line." .. item.slot) end
+        if index < #model.habits then rows[#rows + 1] = divider("matrix.line." .. item.slot) end
     end
     local matrixHeight = dayHeight + count * (rowHeight + 1)
     return view.stack({
-        key = "week", width = "fill", height = matrixHeight, flexShrink = 0,
+        key = "matrix", width = "fill", height = matrixHeight, flexShrink = 0,
         children = {
             view.row({
-                key = "week.highlight", width = "fill", height = "fill",
+                key = "matrix.highlight", width = "fill", height = "fill",
                 children = {
-                    view.spacer({ key = "week.before.today",
+                    view.spacer({ key = "matrix.before.today",
                         width = nameWidth + colGap + (todayIndex - 1) * (lane + colGap), flexShrink = 0 }),
-                    view.column({ key = "week.today", width = lane, height = "fill", flexShrink = 0,
+                    view.column({ key = "matrix.today", width = lane, height = "fill", flexShrink = 0,
                         style = { background = "textPrimary", opacity = 0.11, cornerRadius = m.row * 0.26 } }),
                 },
             }),
-            view.column({ key = "week.rows", width = "fill", height = "fill", children = rows }),
+            view.column({ key = "matrix.rows", width = "fill", height = "fill", children = rows }),
         },
     }), matrixHeight
 end
@@ -413,7 +421,15 @@ local function desktop(context, model)
     local padY = math.min(base * 0.56, h * 0.075)
     local width, height = w - 2 * padX, h - 2 * padY
     local count = #model.habits
-    local weekFits = count > 0 and width >= base * 11.9 and height >= base * (count + 1.9)
+    local dates
+    local summary = count > 0 and l10n.tr("lua_widget.habit_tracker.today", model.completed, count)
+    if count > 0 and height >= base * (count + 1.9) then
+        if width >= base * 11.9 then
+            dates, summary = model.week, l10n.tr("lua_widget.habit_tracker.week")
+        elseif width >= base * 7.5 then
+            dates, summary = model.recent, l10n.tr("lua_widget.habit_tracker.recent")
+        end
+    end
     local stripFits = count > 0 and height < base * (count + 1.45) and width >= count * base * 3.25
     local row = math.max(base, math.min(base * 1.52, (height - count) / (count + 1.94)))
     local highContrast = context.accessibility.highContrast
@@ -424,7 +440,6 @@ local function desktop(context, model)
             check = highContrast and "accentText" or (context.theme.mode == "light" and 0xFFFFFF or 0x102017),
         },
     }
-    local summary = count > 0 and l10n.tr("lua_widget.habit_tracker.today", model.completed, count)
     local children, usedHeight = {}, 0
     local footer = model.saveFailed and l10n.tr("lua_widget.habit_tracker.save_failed") or model.streak
     local footerHeight = row * 0.62
@@ -442,7 +457,7 @@ local function desktop(context, model)
         and width >= base * 2
         and (not stripFits or height >= row * 2 + m.smallGap)
     if headingFits then
-        append(heading(weekFits and l10n.tr("lua_widget.habit_tracker.week") or summary, m, width), row)
+        append(heading(summary, m, width), row)
         space("heading.gap", m.smallGap)
     end
     local spread = false
@@ -450,9 +465,9 @@ local function desktop(context, model)
         local hint = label("empty", l10n.tr("lua_widget.habit_tracker.empty"), row * 2, m.body, true)
         hint.textWrap, hint.maxLines = "wrap", 3
         append(hint, row * 2)
-    elseif weekFits then
+    elseif dates then
         spread = true
-        local matrix, matrixHeight = weekly(model, m, width, height - usedHeight
+        local matrix, matrixHeight = dayMatrix(model, dates, m, width, height - usedHeight
             - (model.saveFailed and footerSpace or 0))
         append(matrix, matrixHeight)
     elseif stripFits then
@@ -488,7 +503,7 @@ local function desktop(context, model)
             if index < count then append(divider("line." .. item.slot), 1) end
         end
     end
-    if footer and (model.saveFailed or (not weekFits and width >= row * 2.75
+    if footer and (model.saveFailed or (not dates and width >= row * 2.75
             and usedHeight + footerSpace <= height + 0.01)) then
         if footerRule > 0 then append(divider("footer.line"), footerRule) end
         space("footer.gap", m.smallGap)

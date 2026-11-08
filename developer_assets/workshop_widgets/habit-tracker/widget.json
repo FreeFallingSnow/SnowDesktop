@@ -10,7 +10,7 @@
   "license": "MIT",
   "name": "Habit Tracker",
   "nameKey": "lua_widget.habit_tracker.name",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Check off daily habits and see your week and streaks.",
   "descriptionKey": "lua_widget.habit_tracker.description",
   "preview": "workshop-preview.png",
@@ -61,7 +61,8 @@
       "lua_widget.habit_tracker.make_up": "Tag nachtragen",
       "lua_widget.habit_tracker.summary": "{0} diesen Monat · {1} insgesamt · {2} Tage in Folge",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "Zu heute"
+      "lua_widget.habit_tracker.jump_today": "Zu heute",
+      "lua_widget.habit_tracker.recent": "Letzte 3 Tage"
     },
     "en-US": {
       "lua_widget.habit_tracker.name": "Habit Tracker",
@@ -109,7 +110,8 @@
       "lua_widget.habit_tracker.make_up": "Log past day",
       "lua_widget.habit_tracker.summary": "{0} this month · {1} total · {2}-day streak",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "Go to today"
+      "lua_widget.habit_tracker.jump_today": "Go to today",
+      "lua_widget.habit_tracker.recent": "Last 3 days"
     },
     "es-419": {
       "lua_widget.habit_tracker.name": "Seguimiento de hábitos",
@@ -157,7 +159,8 @@
       "lua_widget.habit_tracker.make_up": "Registrar día anterior",
       "lua_widget.habit_tracker.summary": "{0} este mes · {1} en total · Racha de {2} días",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "Ir a hoy"
+      "lua_widget.habit_tracker.jump_today": "Ir a hoy",
+      "lua_widget.habit_tracker.recent": "Últimos 3 días"
     },
     "es-ES": {
       "lua_widget.habit_tracker.name": "Seguimiento de hábitos",
@@ -205,7 +208,8 @@
       "lua_widget.habit_tracker.make_up": "Registrar día pasado",
       "lua_widget.habit_tracker.summary": "{0} este mes · {1} en total · Racha de {2} días",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "Ir a hoy"
+      "lua_widget.habit_tracker.jump_today": "Ir a hoy",
+      "lua_widget.habit_tracker.recent": "Últimos 3 días"
     },
     "fr-FR": {
       "lua_widget.habit_tracker.name": "Suivi des habitudes",
@@ -253,7 +257,8 @@
       "lua_widget.habit_tracker.make_up": "Valider ce jour passé",
       "lua_widget.habit_tracker.summary": "{0} ce mois-ci · {1} au total · {2} j de suite",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "Revenir à aujourd’hui"
+      "lua_widget.habit_tracker.jump_today": "Revenir à aujourd’hui",
+      "lua_widget.habit_tracker.recent": "3 derniers jours"
     },
     "ja-JP": {
       "lua_widget.habit_tracker.name": "習慣トラッカー",
@@ -301,7 +306,8 @@
       "lua_widget.habit_tracker.make_up": "過去の日を記録",
       "lua_widget.habit_tracker.summary": "今月 {0} 回 · 合計 {1} 回 · {2} 日連続",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "今日に戻る"
+      "lua_widget.habit_tracker.jump_today": "今日に戻る",
+      "lua_widget.habit_tracker.recent": "直近3日"
     },
     "ko-KR": {
       "lua_widget.habit_tracker.name": "습관 체크",
@@ -349,7 +355,8 @@
       "lua_widget.habit_tracker.make_up": "지난 날짜 체크",
       "lua_widget.habit_tracker.summary": "이번 달 {0}회 · 누적 {1}회 · {2}일 연속",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "오늘로 이동"
+      "lua_widget.habit_tracker.jump_today": "오늘로 이동",
+      "lua_widget.habit_tracker.recent": "최근 3일"
     },
     "pt-BR": {
       "lua_widget.habit_tracker.name": "Controle de hábitos",
@@ -397,7 +404,8 @@
       "lua_widget.habit_tracker.make_up": "Registrar dia anterior",
       "lua_widget.habit_tracker.summary": "{0} neste mês · {1} no total · {2} dias seguidos",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "Ir para hoje"
+      "lua_widget.habit_tracker.jump_today": "Ir para hoje",
+      "lua_widget.habit_tracker.recent": "Últimos 3 dias"
     },
     "zh-CN": {
       "lua_widget.habit_tracker.name": "习惯打卡",
@@ -445,7 +453,8 @@
       "lua_widget.habit_tracker.make_up": "补打卡",
       "lua_widget.habit_tracker.summary": "本月 {0} 次 · 累计 {1} 次 · 连续 {2} 天",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "回到今天"
+      "lua_widget.habit_tracker.jump_today": "回到今天",
+      "lua_widget.habit_tracker.recent": "近三天"
     },
     "zh-TW": {
       "lua_widget.habit_tracker.name": "習慣打卡",
@@ -493,7 +502,8 @@
       "lua_widget.habit_tracker.make_up": "補打卡",
       "lua_widget.habit_tracker.summary": "本月 {0} 次 · 累計 {1} 次 · 連續 {2} 天",
       "lua_widget.habit_tracker.selected_date": "{0} · {1}",
-      "lua_widget.habit_tracker.jump_today": "回到今天"
+      "lua_widget.habit_tracker.jump_today": "回到今天",
+      "lua_widget.habit_tracker.recent": "近三天"
     }
   },
   "defaultSize": {
@@ -512,6 +522,15 @@
         "size": {
           "rows": 2,
           "aspectRatio": 1
+        }
+      },
+      {
+        "id": "recent",
+        "title": "Last 3 days",
+        "titleKey": "lua_widget.habit_tracker.recent",
+        "size": {
+          "rows": 2,
+          "aspectRatio": 1.35
         }
       },
       {
