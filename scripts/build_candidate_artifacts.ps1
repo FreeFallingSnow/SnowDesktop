@@ -36,16 +36,86 @@ function Remove-CandidateRetiredDirectory([string]$Base,[string]$Relative) {
     }
     Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
 }
+function Get-CandidatePlannedAcceptances($Context) {
+    $batch=Get-Field $Context 'batchId'
+    if(-not $batch){return}
+    $stateRoot=Resolve-CandidatePath $Context.runRoot '.build/collaboration'
+    $request=Read-EntryJson (Resolve-CandidatePath $stateRoot ('runs/'+$Context.runId+'.request.json'))
+    $planPath=Resolve-CandidatePath $stateRoot ($batch+'.plan.json')
+    if(-not $request -or $request.id -ne $Context.runId -or $request.nonce -ne $Context.nonce -or
+        $request.repositoryRoot -ne $Context.runRoot -or $request.action -ne 'batch' -or -not $request.candidateBatch -or
+        $request.batch -ne $batch -or (Get-FileDigest $planPath) -ne $request.planHash){throw 'Acceptance retention requires the matching frozen candidate plan.'}
+    $plan=Read-EntryJson $planPath
+    if($plan.schemaVersion -ne 1 -or $plan.batchId -ne $batch){throw 'Invalid candidate plan for acceptance retention.'}
+    foreach($member in $plan.tasks){
+        $hours=Get-Field $member.requirement 'acceptanceRetentionHours' 0
+        if(-not $hours){continue}
+        if($hours -lt 1 -or $hours -gt 168 -or [int]$hours -ne $hours -or $member.requirement.suites -contains 'none' -or
+            $member.participant -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$' -or $member.editRevision -lt 0 -or
+            $null -eq (Get-Field $member.requirement 'requirementsRevision') -or $member.requirement.requirementsRevision -lt 0){
+            throw 'Invalid planned acceptance retention.'
+        }
+        [pscustomobject]@{task=$member.participant;editRevision=$member.editRevision;requirementsRevision=$member.requirement.requirementsRevision;hours=[int]$hours}
+    }
+}
+function Get-SavedRuntimeAcceptanceDeadline($Record) {
+    # Existing running records already have a trusted start timestamp and
+    # artifact binding. The same finite window applies without rewriting them.
+    return (ConvertTo-UtcTimestamp $Record.startedUtc).AddHours(24)
+}
+function Get-CandidateAcceptanceDeadline([string]$StateRoot,[string]$ManifestPath,$Manifest,$Records,[DateTime]$Now) {
+    $planned=@(Get-Field $Manifest 'plannedAcceptances' @())
+    $bound=@($Records|Where-Object {
+        (Get-Field $_ 'artifactManifestDigest') -match '^[a-f0-9]{64}$' -and
+        (Get-Field $_ 'artifactRuntime') -eq $Manifest.runtime -and
+        (Get-Field $_ 'candidate') -eq $Manifest.candidate -and $_.sourceDigest -eq $Manifest.sourceDigest
+    })
+    if(-not $planned.Count -and -not $bound.Count){return}
+    $digest=Get-FileDigest $ManifestPath
+    if($digest -ne [IO.File]::ReadAllText($ManifestPath+'.sha256').Trim()){throw 'Cannot verify acceptance retention for a changed artifact manifest.'}
+    $bound=@($bound|Where-Object artifactManifestDigest -eq $digest)
+    $deadline=$null
+    foreach($record in $bound){
+        if($record.status -ne 'running' -or (ConvertTo-UtcTimestamp $record.startedUtc) -gt $Now){continue}
+        $expires=Get-SavedRuntimeAcceptanceDeadline $record
+        if($expires -gt $Now -and (-not $deadline -or $expires -gt $deadline)){$deadline=$expires}
+    }
+    if($planned.Count){
+        $run=Read-EntryJson (Resolve-CandidatePath $StateRoot ('runs/'+$Manifest.runId+'.json'))
+        $artifact=Get-Field $run 'artifact'
+        if($run -and $run.id -eq $Manifest.runId -and $run.status -eq 'passed' -and $run.exitCode -eq 0 -and $run.completedUtc -and
+            (Get-Field $artifact 'manifestDigest') -eq $digest -and (Get-Field $artifact 'manifest') -eq $ManifestPath){
+            $completed=ConvertTo-UtcTimestamp $run.completedUtc
+            if($completed -ge (ConvertTo-UtcTimestamp $Manifest.createdUtc) -and $completed -le $Now){
+                foreach($intent in $planned){
+                    if(@($bound|Where-Object {
+                        $_.task -eq $intent.task -and $_.requirementsRevision -eq $intent.requirementsRevision -and
+                        ($null -eq $_.editRevision -or $_.editRevision -eq $intent.editRevision)
+                    }).Count){continue}
+                    $expires=$completed.AddHours($intent.hours)
+                    if($expires -gt $Now -and (-not $deadline -or $expires -gt $deadline)){$deadline=$expires}
+                }
+            }
+        }
+    }
+    return $deadline
+}
 function Invoke-CandidateRuntimeRetention([string]$Root,[switch]$Preview) {
     $lease=Open-CandidateRuntimeLease $Root -Exclusive
     if(-not $lease){return [pscustomobject]@{status='busy';removed=@();deferred=@()}}
     $outputLease=$null
-    $removed=@();$deferred=@();$planned=@()
+    $removed=@();$deferred=@();$planned=@();$acceptanceRetained=@()
     try {
         $stateRoot=Resolve-CandidatePath $Root '.build/collaboration'
         try {$outputLease=[IO.File]::Open((Resolve-CandidatePath $stateRoot 'build.lock'),'OpenOrCreate','ReadWrite','None')}
         catch {if(Test-EntrySharingViolation $_.Exception){return [pscustomobject]@{status='busy';removed=@();deferred=@()}};throw}
         $current=Read-EntryJson (Join-Path $stateRoot 'activation-current.json')
+        # Starts and verified completions hold the shared runtime lease through
+        # atomic state publication. Read one snapshot while exclusively locked.
+        $state=Read-EntryJson (Join-Path $stateRoot 'state.json')
+        $acceptances=Get-Field (Get-Field $state 'taskLedger') 'acceptances' @() |
+            Where-Object {$_.runId -match '^[a-f0-9]{32}$'} | Group-Object runId -AsHashTable -AsString
+        $now=[DateTime]::UtcNow
         $protected=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         if($current -and $current.runId -match '^[a-f0-9]{32}$'){[void]$protected.Add($current.runId)}
         $artifacts=Resolve-CandidatePath $Root '.build/candidate-artifacts'
@@ -70,7 +140,7 @@ function Invoke-CandidateRuntimeRetention([string]$Root,[switch]$Preview) {
                         catch {if(Test-EntrySharingViolation $_.Exception){[void]$protected.Add($id)}else{throw}}
                         finally {if($owner){$owner.Dispose()}}
                     }
-                    $candidates+=@([pscustomobject]@{id=$id;manifest=$manifest;created=[DateTimeOffset]::Parse($manifest.createdUtc)})
+                    $candidates+=@([pscustomobject]@{id=$id;manifest=$manifest;manifestPath=$manifestPath;created=(ConvertTo-UtcTimestamp $manifest.createdUtc)})
                 } catch {$deferred+=@([pscustomobject]@{path=$directory;error=$_.Exception.Message})}
             }
         }
@@ -81,9 +151,17 @@ function Invoke-CandidateRuntimeRetention([string]$Root,[switch]$Preview) {
         foreach($item in $latest){[void]$protected.Add($item.id)}
         foreach($item in $candidates){
             if($protected.Contains($item.id)){continue}
-            $relative=$item.id+'/runtime';$path=Resolve-CandidatePath $artifacts $relative;$planned+=@($path)
-            if($Preview){continue}
+            $relative=$item.id+'/runtime';$path=Resolve-CandidatePath $artifacts $relative
             try {
+                $records=if($acceptances){$acceptances[$item.id]}else{$null}
+                $deadline=Get-CandidateAcceptanceDeadline $stateRoot $item.manifestPath $item.manifest $records $now
+                if($deadline){
+                    [void]$protected.Add($item.id)
+                    $acceptanceRetained+=@([pscustomobject]@{runId=$item.id;untilUtc=$deadline.ToString('o')})
+                    continue
+                }
+                $planned+=@($path)
+                if($Preview){continue}
                 Remove-CandidateRetiredDirectory $artifacts $relative
                 # Retain the immutable manifest, hashes and all Run evidence.
                 Write-CandidateJson ([pscustomobject]@{schemaVersion=1;runId=$item.id;runtimeRemoved=$true;removedUtc=[DateTime]::UtcNow.ToString('o');reason='superseded-runtime'}) (Resolve-CandidatePath $artifacts ($item.id+'/retention.json'))
@@ -115,7 +193,7 @@ function Invoke-CandidateRuntimeRetention([string]$Root,[switch]$Preview) {
             }
         }
         $receipt=[pscustomobject]@{schemaVersion=1;status=$(if($Preview){'preview'}elseif($deferred.Count){'deferred'}else{'completed'});
-            completedUtc=[DateTime]::UtcNow.ToString('o');retainedArtifacts=@($protected);planned=$planned;removed=$removed;deferred=$deferred}
+            completedUtc=[DateTime]::UtcNow.ToString('o');retainedArtifacts=@($protected);acceptanceRetained=$acceptanceRetained;planned=$planned;removed=$removed;deferred=$deferred}
         if(-not $Preview){Write-CandidateJson $receipt (Join-Path $stateRoot 'runtime-retention.json')}
         return $receipt
     } finally {if($outputLease){$outputLease.Dispose()};$lease.Dispose()}
@@ -194,6 +272,7 @@ function Publish-CandidateRuntime($Context,[string]$Action,[scriptblock]$CheckCa
     Assert-EntryExecutionOwner $Context.source
     $selection=Get-CandidateRuntimeFiles $Context $Action
     if(-not $selection){return $null}
+    $plannedAcceptances=@(Get-CandidatePlannedAcceptances $Context)
     $snapshot=Read-CandidateManifest $Context.runRoot $Context.snapshot
     if($snapshot.digest -ne $Context.manifestDigest){throw 'Artifact source identity changed.'}
     $directory=Get-CandidateArtifactDirectory $Context.runRoot $Context.runId
@@ -235,6 +314,7 @@ function Publish-CandidateRuntime($Context,[string]$Action,[scriptblock]$CheckCa
             runtime=$payload;files=$records;bytes=$bytes;createdUtc=[DateTime]::UtcNow.ToString('o');publicationComplete=$true;
             productRuntime=($selection.profile -eq 'product-runtime');externalDependenciesClosed=$false;reuseAllowed=$false;
             scope=$(if($selection.profile -eq 'product-runtime'){'Arranged product runtime; user data excluded.'}else{'Explicit test output files only; source arguments and external runtime dependencies remain in original evidence.'})}
+        if($plannedAcceptances.Count){Set-Field $manifest 'plannedAcceptances' $plannedAcceptances}
         $jsonPath=Resolve-CandidatePath $directory 'artifact.json'
         # The expected digest is persisted in the producing Run as well.
         $temporary=Resolve-CandidatePath $directory 'artifact.pending.json'
@@ -255,7 +335,13 @@ function Read-CandidateArtifact([string]$Root,[string]$Id,[string]$ExpectedDiges
     if($digest -notmatch '^[a-f0-9]{64}$' -or ($ExpectedDigest -and $digest -ne $ExpectedDigest) -or (Get-FileDigest $path) -ne $digest){throw 'Candidate artifact manifest integrity check failed.'}
     $manifest=Read-CandidateJson $path
     $runtime=Resolve-CandidatePath $directory 'runtime'
-    if(-not [IO.Directory]::Exists($runtime)){throw 'Saved runtime was retired by the retention policy; its manifest and validation evidence are preserved. Select a retained build or build again.'}
+    if(-not [IO.Directory]::Exists($runtime)){
+        $retirement=Read-EntryJson (Resolve-CandidatePath $directory 'retention.json')
+        if((Get-Field $retirement 'runId') -eq $Id -and (Get-Field $retirement 'runtimeRemoved') -eq $true){
+            throw 'Saved runtime was retired by the retention policy; its manifest and validation evidence are preserved. Select a retained build or build again.'
+        }
+        throw 'Saved runtime directory is missing without a matching retirement receipt; its integrity could not be verified.'
+    }
     if($manifest.schemaVersion -ne 1 -or $manifest.id -ne $Id -or $manifest.runId -ne $Id -or -not $manifest.publicationComplete -or
         $manifest.profile -notin 'product-runtime','test-files' -or $manifest.runtime -ne $runtime -or @($manifest.files).Count -lt 1 -or @($manifest.files).Count -gt 32768){throw 'Invalid candidate artifact identity.'}
     $snapshot=Read-CandidateManifest $Root $manifest.candidate

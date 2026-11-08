@@ -208,6 +208,13 @@ function Get-EffectiveTaskPlan($Entry) {
     $plan.scope=if(@($requirements|Where-Object {$_.scope -notin 'docs','component','tool','test'}).Count){'module'}elseif(@($requirements|Where-Object scope -eq 'tool').Count){'tool'}elseif(@($requirements|Where-Object scope -eq 'test').Count){'test'}else{'component'}
     $plan.source='repair-carried';$plan.requiredFull=$plan.suites -contains 'full'
     Set-Field $plan 'mergedRepairRequirements' $extra
+    $requirementsRevision=Get-Field $plan 'requirementsRevision'
+    if($null -ne $requirementsRevision){
+        $retention=$requirements | Where-Object {
+            (Get-Field $_ 'requirementsRevision') -eq $requirementsRevision
+        } | ForEach-Object { Get-Field $_ 'acceptanceRetentionHours' 0 } | Measure-Object -Maximum
+        if($retention.Maximum){Set-Field $plan 'acceptanceRetentionHours' ([int]$retention.Maximum)}
+    }
     $resources=@($requirements|Where-Object {$_.suites -notcontains 'none'}|ForEach-Object {Get-Field $_ 'projectResources'}|Where-Object {$_})
     $selected=@($requirements|Where-Object {$_.suites -notcontains 'none'})
     if($resources.Count -ne $selected.Count){$plan.PSObject.Properties.Remove('projectResources')}

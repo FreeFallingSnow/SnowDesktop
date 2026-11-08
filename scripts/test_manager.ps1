@@ -18,9 +18,123 @@ if ($Mode -eq "tools") {
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Set-Location -LiteralPath $repositoryRoot
 
+function Write-TestInventory($Tests) {
+    foreach ($test in $Tests) {
+        $labelProperty = @($test.properties | Where-Object name -eq "LABELS")
+        $labels = if ($labelProperty.Count -gt 0) { @($labelProperty[0].value) -join "," } else { "-" }
+        "{0,-42} {1}" -f $test.name, $labels
+    }
+    Write-Host ""
+    Write-Host "$($Tests.Count) test(s) configured."
+}
+
+function Get-TestInventoryFreshness([string]$BuildRoot) {
+    $stamp = Join-Path $BuildRoot 'CMakeFiles/generate.stamp'
+    $dependencies = Join-Path $BuildRoot 'CMakeFiles/generate.stamp.depend'
+    if (-not [IO.File]::Exists($stamp) -or -not [IO.File]::Exists($dependencies)) {
+        return 'unknown (generation timestamp or dependency list unavailable)'
+    }
+    $generatedUtc = [IO.File]::GetLastWriteTimeUtc($stamp)
+    $inputs = @((Join-Path $repositoryRoot 'CMakePresets.json'))
+    $localPreset = Join-Path $repositoryRoot 'CMakeUserPresets.json'
+    if ([IO.File]::Exists($localPreset)) { $inputs += $localPreset }
+    $inputs += @([IO.File]::ReadAllLines($dependencies) | Where-Object { $_ -and -not $_.StartsWith('#') })
+    foreach ($path in $inputs) {
+        if (-not [IO.Path]::IsPathRooted($path)) { return 'unknown (generation dependency is not absolute)' }
+        if (-not [IO.File]::Exists($path) -or [IO.File]::GetLastWriteTimeUtc($path) -gt $generatedUtc) {
+            return "stale (configured input changed or disappeared: $path)"
+        }
+    }
+    return 'no newer recorded configuration inputs (timestamp check)'
+}
+
+function Show-ConfiguredTestInventory {
+    $buildRoot = Join-Path $repositoryRoot '.build'
+    $cache = Join-Path $buildRoot 'CMakeCache.txt'
+    if (-not [IO.File]::Exists($cache)) { throw 'The checkout has no CMake cache.' }
+    $cacheText = [IO.File]::ReadAllText($cache)
+    $cacheSourceMatch = [regex]::Match($cacheText, '(?m)^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)\r?$')
+    if (-not $cacheSourceMatch.Success -or [IO.Path]::GetFullPath($cacheSourceMatch.Groups[1].Value.Trim()) -ine $repositoryRoot) {
+        throw 'The CMake cache does not belong to this checkout.'
+    }
+    if ($cacheText -notmatch '(?m)^BUILD_TESTING:[^=\r\n]+=(ON|TRUE|YES|Y|1)\r?$' -or
+        -not [IO.File]::Exists((Join-Path $buildRoot 'CTestTestfile.cmake'))) {
+        throw 'The checkout has no generated test inventory with BUILD_TESTING enabled.'
+    }
+
+    # CTest's show-only mode still writes Testing/Temporary logs. Use the
+    # generated test definitions in a private scratch directory so discovery
+    # neither modifies shared output nor needs its execution lease.
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('snowdesktop-test-list-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($scratch)
+    $coverageDirectory = [Environment]::GetEnvironmentVariable('CMAKE_LISTFILE_COVERAGE_DIR', 'Process')
+    try {
+        $pending = New-Object 'Collections.Generic.Queue[string]'
+        $pending.Enqueue('CTestTestfile.cmake')
+        $observed = @{}
+        while ($pending.Count -gt 0) {
+            $relative = $pending.Dequeue()
+            $source = Join-Path $buildRoot $relative
+            if ($observed.ContainsKey($source)) { continue }
+            $observed[$source] = $null
+            if (-not [IO.File]::Exists($source)) { continue }
+            $entry = $source
+            while ($entry -ine $repositoryRoot) {
+                if ([IO.File]::GetAttributes($entry) -band [IO.FileAttributes]::ReparsePoint) {
+                    throw 'Generated test inventory traverses a linked file or directory.'
+                }
+                $entry = [IO.Path]::GetDirectoryName($entry)
+            }
+            $copy = Join-Path $scratch $relative
+            [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($copy))
+            [IO.File]::Copy($source, $copy)
+            $observed[$source] = (Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash
+            foreach ($line in [IO.File]::ReadAllLines($copy)) {
+                if ($line -match '^\s*(#|$|(?:if|elseif|else|endif|add_test|set_tests_properties)\s*\()') { continue }
+                if ($line -notmatch '^\s*subdirs\("([a-zA-Z0-9_./ -]+)"\)\s*$') {
+                    throw 'Generated test inventory uses a command or subdirectory outside the supported snapshot format.'
+                }
+                $child = $Matches[1]
+                if (@($child.Split('/') | Where-Object { $_ -in '', '.', '..' }).Count -gt 0) {
+                    throw 'Generated test subdirectory is not relative to its manifest.'
+                }
+                $parent = [IO.Path]::GetDirectoryName($relative)
+                $pending.Enqueue([IO.Path]::Combine($parent, $child, 'CTestTestfile.cmake'))
+            }
+        }
+        if (-not $observed[(Join-Path $buildRoot 'CTestTestfile.cmake')]) { throw 'The generated test inventory disappeared while reading.' }
+
+        [Environment]::SetEnvironmentVariable('CMAKE_LISTFILE_COVERAGE_DIR', [NullString]::Value, 'Process')
+        $output = & ctest --test-dir $scratch -C Release --show-only=json-v1
+        if ($LASTEXITCODE -ne 0) { throw "CTest could not read the generated inventory (exit $LASTEXITCODE)." }
+        $manifest = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($manifest.kind -ne 'ctestInfo' -or $manifest.version.major -ne 1) { throw 'CTest returned an unsupported inventory format.' }
+        $freshness = Get-TestInventoryFreshness $buildRoot
+        if ([IO.File]::ReadAllText($cache) -cne $cacheText) { throw 'The CMake cache changed during the inventory query. Retry after configuration.' }
+        foreach ($source in $observed.Keys) {
+            $current = if ([IO.File]::Exists($source)) { (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash } else { $null }
+            if ($current -cne $observed[$source]) { throw 'The generated test inventory changed during the query. Retry after configuration.' }
+        }
+        Write-TestInventory @($manifest.tests)
+        Write-Host "Inventory source: $buildRoot (Release). Freshness: $freshness."
+    } finally {
+        if ($null -eq $coverageDirectory) { [Environment]::SetEnvironmentVariable('CMAKE_LISTFILE_COVERAGE_DIR', [NullString]::Value, 'Process') }
+        else { [Environment]::SetEnvironmentVariable('CMAKE_LISTFILE_COVERAGE_DIR', $coverageDirectory, 'Process') }
+        [IO.Directory]::Delete($scratch, $true)
+    }
+}
+
 # Direct PowerShell, batch, IDE and CI callers all enter the same private Job.
 # A coordinator child already has live delegated authority and does not recurse.
 if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')) {
+    if ($Mode -eq 'list') {
+        try { Show-ConfiguredTestInventory; exit 0 }
+        catch {
+            [Console]::Error.WriteLine('Test inventory unavailable: ' + $_.Exception.Message)
+            [Console]::Error.WriteLine('Inspect cmake/testing/Tests.cmake for source declarations, or configure through a leased tests Run when needed.')
+            exit 2
+        }
+    }
     $entryOptions=@{Action='tests';Mode=$Mode;Filter=$Filter}
     if($PlanBatch){$entryOptions.PlanBatch=$PlanBatch}
     & (Join-Path $PSScriptRoot 'build_entry.ps1') @entryOptions
@@ -583,20 +697,8 @@ if ($Mode -eq "plan") {
     }
 }
 elseif ($Mode -eq "list") {
-        $selection = Get-TestSelection -TestPreset "all-tests"
-        foreach ($test in $selection.Tests) {
-            $labelProperty = @($test.properties |
-                Where-Object name -eq "LABELS")
-            $labels = if ($labelProperty.Count -gt 0) {
-                @($labelProperty[0].value) -join ","
-            }
-            else {
-                "-"
-            }
-            "{0,-42} {1}" -f $test.name, $labels
-        }
-        Write-Host ""
-        Write-Host "$($selection.Tests.Count) test(s) configured."
+    $selection = Get-TestSelection -TestPreset "all-tests"
+    Write-TestInventory $selection.Tests
 }
 else {
     $options = Get-TestRunOptions -Mode $Mode -Filter $Filter

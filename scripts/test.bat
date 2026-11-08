@@ -46,7 +46,7 @@ echo   scripts\test.bat fast                    Exclude integration tests
 echo   scripts\test.bat core                    Core tests only
 echo   scripts\test.bat label ^<regex^>           Tests matching a CTest label
 echo   scripts\test.bat name ^<regex^>            Tests matching a CTest name
-echo   scripts\test.bat list                    List tests and labels
+echo   scripts\test.bat list                    Read configured tests and labels without rebuilding or configuring
 echo.
 echo Examples:
 echo   scripts\test.bat label rules

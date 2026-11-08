@@ -141,6 +141,7 @@ function New-SavedRuntimeAcceptance([string]$Root,$State,$Task,$Artifact,[string
         candidate=$artifact.manifest.candidate;artifactManifestDigest=$artifact.digest;artifactRuntime=$artifact.runtime;
         artifacts=$selected;status='running';startedUtc=$clock.utc;completedUtc=$null;clock=$clock;
         elapsedSeconds=$null;durationStatus='running';reporter=$null;reference=$null;notes=$null}
+    Set-Field $entry 'runtimeRetainUntilUtc' (Get-SavedRuntimeAcceptanceDeadline $entry).ToString('o')
     Set-Field $ledger 'acceptances' (@($records)+@($entry));return $entry
 }
 function Complete-TaskAcceptance([string]$Root,$State,$Task,[string]$Id,[string]$Outcome,[string]$Reporter,[string]$Reference,[string]$Notes) {

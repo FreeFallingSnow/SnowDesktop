@@ -463,6 +463,13 @@ CTest 命令/属性摘要和执行环境摘要。采集在目标生成后、测�
 人工验收独立于构建与测试。先用 `task-list` 读取当前任务修订，然后登记：
 两个写命令均须使用最新 `TaskRevision`；未结束的验收须先完成或取消，再关闭 Task。
 
+第4版批次已知需要等待人工验收时，可在原有 `plan` 命令附加 `-AcceptanceRetentionHours 1..168`，
+例如 `-AcceptanceRetentionHours 48`。窗口从对应 Run 通过并完成时起算，只保护该计划绑定的保存产物。
+保存产物的验收开始后，本任务的计划保留转为进行中记录的 24 小时期限。完成或取消即释放该记录的保留，
+其他参与者的保留分别计算。到期的产物由后续正常清理处理。候选、需求修订和所选文件的校验仍按原流程执行。
+`-Suites none` 不接受保留参数；只引用既有证据、没有导出运行文件的 Run 没有新增产物可保留。
+升级前已冻结的运行器副本继续执行原清理策略，新保留机制以运行器采用本版脚本为准。
+
 ```bat
 scripts\build.bat acceptance-start ID -Batch B -Revision R -TaskRevision T -AcceptanceCriterion "原始样本出现预期结果" -Files .build/Release/SnowDesktop.exe
 scripts\build.bat acceptance-start ID -CandidateRun RUN -TaskRevision T -AcceptanceCriterion "原始样本出现预期结果" -Files SnowDesktop.exe
@@ -542,6 +549,9 @@ rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan
 测试计划接受 `full/core/fast/tools/selected/none` 与字面 CTest 名称，拒绝 shell/regex。所有 scope 均可按实际依赖选择相关项目，`unknown/public/infrastructure` 不自动升级全量；文件夹名称本身不是依赖分析。每份计划必须有 `Inputs` 和 `Reason`，说明依赖映射或豁免依据；全量须显式声明 `-Suites full` 并在理由中说明符合 AGENTS 的整体覆盖需求。未声明计划的 ready/finish 会保留 editing 并报错，遗漏 Suites 默认 selected 且必须提供 Tests，不启动全量。`full/core/fast` 排除 tools、manual 和 temporary；现有工具测试已移除，新计划拒绝 `-Suites tools`，旧计划字段与历史记录保留兼容读取。显式声明的现有 manual 仍执行。文档、独立组件或工具可按现有规则 `-Suites none`；这会报告 `skipped/not-required`，不声称宿主通过。空集合、未知名称、失败、跳过或未运行不算通过。源码依赖关系与全量必要性仍需要人/Agent 审阅，脚本不自动推导 C++ 依赖或判断自然语言理由。
 
 冻结时合并、去重并持久化 `<batch>.plan.json`，之后不可改写；`coverage.json` 记录每个任务请求、实际覆盖、失败和执行前测试二进制 SHA-256。覆盖关联不是缺陷责任认定。源码摘要 v2 按文件内容计算，HEAD 作为元数据，不因只改变提交身份而失效。结果另记实际构建阶段及可观测输出二进制身份。端点身份检查不能排除构建途中改动后恢复、外部 SDK 或未登记写入者。
+
+第4版批次的所有要求均明确豁免宿主构建和测试时，在检查、需求修订及输入核对通过后直接归档 `skipped/not-required`。
+这种空计划只使用协调状态事务和原有 Git 协作检查，无需取得构建租约、复制候选或启动执行器。
 
 第4版批次全部就绪后捕获冻结输入，在独立编译槽中执行；原检出应用或 Hook 的占用不阻断候选，
 不得因此提示用户先关闭软件或默认追加 `ReloadShell` / `CloseApplication`。构建成功后的本检出更新
@@ -692,9 +702,17 @@ scripts\build.bat resource prepare task-A --batch BATCH --revision REVISION --fi
 rem 编辑返回的 patchFile，仅填写这些键的新字符串；预期旧值保存在独立登记中。
 scripts\build.bat resource apply task-A --batch BATCH --revision REVISION --request REQUEST_ID
 scripts\build.bat resource status --request REQUEST_ID
+scripts\build.bat commit task-A -Batch BATCH -Revision REVISION -ResourceRequests REQUEST_ID,OTHER_REQUEST_ID -MessageFile C:\Temp\task-a-locales.txt
 ```
 
 prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有短时 state/Git 事务锁，重读最新文件，仅比较已声明键的旧值；不同键合并保留，相同键旧值改变拒绝，忙时重复同一 apply 请求排队。保留原键顺序、无关内容、BOM 和换行，支持新增字符串键；每个受支持语言仍需真实翻译。成功请求可重复读取同一结果；中途崩溃留写入意图，不重放不确定写入。token 过期、旧轮次、finished 编辑者和冻结批次均拒绝。准备/写入不授予任意代码文件豁免，也不撤销活跃代码声明。
+
+`-ResourceRequests` 与 `-Files` 分开调用，使用当前登记或冻结检查点提交所列回执仍归本任务的语言键。
+提交核对 HEAD、工作区和暂存区中的选定键，保留同文件的其他键和其他已暂存路径。选定键冲突时先处理冲突。
+此入口沿用 Git 的 `commit.gpgSign` 设置。存在活动提交钩子时会拒绝按键提交，以免跳过仓库的提交检查。
+任务重开后，仍待提交的键随任务保留。关闭任务前先提交这些键，取消任务也需要先处理待提交键。
+旧版回执缺少键归属凭据时，按整文件流程审查并明确认领。
+如提示已有语言提交待恢复，保留原回执和锁，重试原提交命令。协调器核对原 HEAD、索引和请求身份后恢复。
 
 共享文件禁止从陈旧副本整文件写回；所有协作写入须走上述事务。整文件重排、格式转换或结构调整用 `claim -Files lang` 串行编辑，并先等待其他活动语言编辑结束。脚本不能拦截绕过规则的普通编辑器，未经协作接口的同时保存仍须人工解决。
 
@@ -789,6 +807,11 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 `scripts/test.bat` 的 full、core、fast 和 name/label 使用共同 CTest 预设，并行度统一配置在 `CMakePresets.json` 的 `all-tests.execution.jobs` 中。
 full/core/fast 排除 tools、manual 和 temporary；name/label 可显式选择现有按需条目。
 各测试使用独立临时目录、日志和端口；共享桌面、Explorer 或宿主运行资源的条目通过 `RESOURCE_LOCK snowdesktop_desktop` 互斥。
+
+`scripts/test.bat list` 读取本检出 `.build` 的已配置 Release 清单，在临时目录枚举名称和标签。
+编辑中也可查询，无需申请执行租约。回执按 CMake 已记录的配置输入时间戳区分疑似过期、无法判断及未发现更新。
+清单缺失（例如只配置过私有候选槽）时，核对 `cmake/testing/Tests.cmake`，或在可取得执行权时用
+`scripts/build.bat run start -Task ID -Action tests -Mode list` 显式配置并列出测试。
 
 逐测试运行时文件输入由 `scripts/test_runtime_contracts.json` 显式声明，读取者源码的 SHA-256 必须与审阅记录一致。
 文件内容、目录是否存在、直属目录条目和递归目录内容使用不同类型；不存在的可选路径也参与指纹，目录成员新增不会遗漏。
