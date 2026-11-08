@@ -1,4 +1,5 @@
 local history = module.require("modules/history.lua")
+local detailView = module.require("modules/detail.lua")
 local dayCheck = "habit.day"
 local check = utf8.char(0x2713)
 local blank = utf8.char(0x00A0)
@@ -54,7 +55,7 @@ local function refresh(model)
     local habits = {}
     local completed = 0
     local bestName, bestStreak = nil, 0
-    for slot in ipairs(fields) do
+    for _, slot in ipairs(model.order) do
         local name = habitName(slot)
         if name ~= "" then
             local done = checked(model, model.today, slot)
@@ -63,8 +64,6 @@ local function refresh(model)
             for i, day in ipairs(model.week) do
                 week[i] = checked(model, day, slot)
             end
-            habits[#habits + 1] = { slot = slot, name = name, done = done, week = week }
-
             -- An unfinished day leaves yesterday's streak active until midnight.
             local date = done and model.today or calendar.addDays(model.today, -1)
             local streak = 0
@@ -72,6 +71,7 @@ local function refresh(model)
                 streak = streak + 1
                 date = calendar.addDays(date, -1)
             end
+            habits[#habits + 1] = { slot = slot, name = name, done = done, week = week, streak = streak }
             if streak > bestStreak then bestName, bestStreak = name, streak end
         end
     end
@@ -91,7 +91,10 @@ local function updateDay(model)
 end
 
 local function setup(context)
-    local model = { demo = context.preview and storage.get("demo") == "1", records = {} }
+    local model = {
+        demo = context.preview and storage.get("demo") == "1", records = {},
+        order = history.readOrder(storage.get("habitOrder"), #fields),
+    }
     updateDay(model)
     if model.demo then
         local record = ""
@@ -108,19 +111,123 @@ local function setup(context)
     return model
 end
 
-local function event(_, model, value)
-    if value.kind == "action" and value.id == "habit.toggle" then
-        local slot = value.value
-        local changedDay = updateDay(model)
-        if not fields[slot] or habitName(slot) == "" then
-            if changedDay then refresh(model); widget.invalidate() end
-            return
+local function refreshDetail(model)
+    local detail = model.detail
+    if not detail or detail.sorting then return end
+    local item
+    for _, habit in ipairs(model.habits) do
+        if habit.slot == detail.slot then
+            item = habit
+            break
         end
-        local year = model.today:sub(1, 4)
-        local record = history.toggle(recordFor(model, model.today), model.today, slot)
-        local ok = model.demo or pcall(storage.set, "history." .. year, record)
-        if ok then model.records[year] = record end
-        model.saveFailed = not ok
+    end
+    item = item or model.habits[1]
+    detail.item = item
+    if not item then return end
+
+    if detail.date:sub(1, 7) > model.today:sub(1, 7) then detail.date = model.today end
+    detail.slot = item.slot
+    detail.month = calendar.dateInfo(detail.date)
+    local prefix = detail.date:sub(1, 8)
+    local record = recordFor(model, detail.date)
+    local completed = {}
+    for day = 1, detail.month.daysInMonth do
+        local date = string.format("%s%02d", prefix, day)
+        if date <= model.today and history.has(record, date, item.slot) then
+            completed[#completed + 1] = date
+        end
+    end
+    detail.completed = completed
+    detail.checked = detail.date <= model.today and history.has(record, detail.date, item.slot)
+    if detail.totalSlot ~= item.slot or detail.totalThrough ~= model.today
+        or detail.totalRevision ~= model.historyRevision then
+        detail.total = history.total(model.records, model.today, item.slot)
+        detail.totalSlot, detail.totalThrough, detail.totalRevision = item.slot, model.today, model.historyRevision
+    end
+end
+
+local function toggleDate(model, slot, date)
+    if not fields[slot] or habitName(slot) == "" or date > model.today then return false end
+    local year = date:sub(1, 4)
+    local record = history.toggle(recordFor(model, date), date, slot)
+    local ok = model.demo or pcall(storage.set, "history." .. year, record)
+    if ok then
+        model.records[year] = record
+        model.historyRevision = (model.historyRevision or 0) + 1
+    end
+    model.saveFailed = not ok
+    return true
+end
+
+local function moveHabit(model, slot, offset)
+    for index, item in ipairs(model.habits) do
+        if item.slot == slot then
+            local neighbor = model.habits[index + offset]
+            if not neighbor then return false end
+            local order = history.swap(model.order, slot, neighbor.slot)
+            local ok = model.demo or pcall(storage.set, "habitOrder", table.concat(order))
+            if ok then model.order = order end
+            model.detail.orderFailed = not ok
+            return true
+        end
+    end
+    return false
+end
+
+local function handleAction(model, value)
+    local id = value.id
+    if id == "habit.toggle" then return toggleDate(model, value.value, model.today) end
+    if id == "habit.open" and fields[value.value] and habitName(value.value) ~= "" then
+        for _, key in ipairs(storage.keys()) do
+            local year = key:match("^history%.(%d%d%d%d)$")
+            if year then recordFor(model, year) end
+        end
+        model.detail = { slot = value.value, date = model.today }
+        widget.openPanel({
+            title = l10n.tr("lua_widget.habit_tracker.history"),
+            width = 488, height = 484,
+        })
+        return true
+    end
+
+    local detail = model.detail
+    if not detail or value.surface ~= "panel" then return false end
+    if id == "habit.order" then
+        detail.sorting = true
+    elseif id == "habit.history" then
+        detail.sorting = false
+    elseif detail.sorting then
+        if id == "habit.up" then return moveHabit(model, value.value, -1) end
+        if id == "habit.down" then return moveHabit(model, value.value, 1) end
+        return false
+    elseif id == "habit.select" then
+        local date = value.selection
+        if type(date) ~= "string" or not date:match("^%d%d%d%d%-%d%d%-%d%d$")
+            or date:sub(1, 7) ~= detail.date:sub(1, 7) or not calendar.dateInfo(date) then
+            return false
+        end
+        detail.date = date
+        model.saveFailed = false
+    elseif id == "habit.month" then
+        local date = history.shiftMonth(detail.date, value.value, model.today)
+        if not date then return false end
+        detail.date = date
+        model.saveFailed = false
+    elseif id == "habit.jumpToday" then
+        detail.date = model.today
+        model.saveFailed = false
+    elseif id == "habit.editDate" then
+        return toggleDate(model, detail.slot, detail.date)
+    else
+        return false
+    end
+    return true
+end
+
+local function event(_, model, value)
+    if value.kind == "action" then
+        local changedDay = updateDay(model)
+        if not handleAction(model, value) and not changedDay then return end
     elseif value.kind == "settings.changed" then
         -- Read current settings, including the host's live-preview overlay.
     elseif (value.kind == "schedule" and value.id == dayCheck)
@@ -130,6 +237,7 @@ local function event(_, model, value)
         return
     end
     refresh(model)
+    refreshDetail(model)
     widget.invalidate()
 end
 
@@ -172,9 +280,19 @@ local function divider(key)
     })
 end
 
-local function habitRow(item, m, width, stacked)
+local function habitLabel(item, m, height)
+    local name = label("name." .. item.slot, item.name, height, m.body)
+    name.focusable = true
+    name.cursor = "hand"
+    name.accessibility = { role = "button", label = l10n.tr("lua_widget.habit_tracker.open_history", item.name) }
+    name.hoverStyle = { foreground = "systemAccent" }
+    name.events = { click = { id = "habit.open", value = item.slot } }
+    return name
+end
+
+local function habitRow(item, m, width, stacked, rowHeight)
     local key = "habit." .. item.slot
-    local name = label("name." .. item.slot, item.name, m.row, m.body)
+    local name = habitLabel(item, m, rowHeight)
     name.flexShrink = 1
     local mark = toggle(item, math.min(m.row * 0.72, width), true, m.colors)
     if stacked then
@@ -189,9 +307,9 @@ local function habitRow(item, m, width, stacked)
         }), height
     end
     return view.row({
-        key = key, width = "fill", height = m.row, flexShrink = 0,
+        key = key, width = "fill", height = rowHeight, flexShrink = 0,
         alignItems = "center", gap = m.smallGap, children = { name, mark },
-    }), m.row
+    }), rowHeight
 end
 
 local function heading(text, m, width)
@@ -210,12 +328,19 @@ local function heading(text, m, width)
     })
 end
 
-local function weekly(model, m, width)
+local function spreadRows(row, available, count)
+    -- Use spare height for rows while keeping font and control sizes tied to the base row.
+    return math.max(row, math.min(row * 1.85, available / count))
+end
+
+local function weekly(model, m, width, height)
     local nameWidth = math.min(m.base * 6, width * 0.28)
     local colGap = m.base * 0.14
     local lane = (width - nameWidth - colGap * 7) / 7
     local cellSize = math.min(lane * 0.76, m.row * 0.63)
     local dayHeight = m.row * 0.72
+    local count = #model.habits
+    local rowHeight = spreadRows(m.row, height - dayHeight - count, count)
     local header = { view.spacer({ key = "week.names.spacer", width = nameWidth, flexShrink = 0 }) }
     local todayIndex
     for i, date in ipairs(model.week) do
@@ -231,7 +356,7 @@ local function weekly(model, m, width)
         divider("week.line.header"),
     }
     for index, item in ipairs(model.habits) do
-        local name = label("name." .. item.slot, item.name, m.row, m.body)
+        local name = habitLabel(item, m, rowHeight)
         name.width = nameWidth
         local cells = { name }
         for i, date in ipairs(model.week) do
@@ -253,17 +378,17 @@ local function weekly(model, m, width)
                 })
             end
             cells[#cells + 1] = view.row({
-                key = "week.cell." .. item.slot .. "." .. i, width = lane, height = m.row,
+                key = "week.cell." .. item.slot .. "." .. i, width = lane, height = rowHeight,
                 flexShrink = 0, alignItems = "center", justifyContent = "center", children = { cell },
             })
         end
         rows[#rows + 1] = view.row({
-            key = "week.habit." .. item.slot, width = "fill", height = m.row, flexShrink = 0,
+            key = "week.habit." .. item.slot, width = "fill", height = rowHeight, flexShrink = 0,
             gap = colGap, children = cells,
         })
         if index < #model.habits then rows[#rows + 1] = divider("week.line." .. item.slot) end
     end
-    local matrixHeight = dayHeight + #model.habits * (m.row + 1)
+    local matrixHeight = dayHeight + count * (rowHeight + 1)
     return view.stack({
         key = "week", width = "fill", height = matrixHeight, flexShrink = 0,
         children = {
@@ -285,7 +410,7 @@ local function desktop(context, model)
     local w, h = layout.contentWidth(), layout.contentHeight()
     local base = math.min(ui.metrics().layoutRowHeight, math.max(h * 0.75, 1))
     local padX = math.min(math.max(base * 0.56, (w - base * 25) / 2), w * 0.085)
-    local padY = math.min(base * 0.64, h * 0.075)
+    local padY = math.min(base * 0.56, h * 0.075)
     local width, height = w - 2 * padX, h - 2 * padY
     local count = #model.habits
     local weekFits = count > 0 and width >= base * 11.9 and height >= base * (count + 1.9)
@@ -301,6 +426,10 @@ local function desktop(context, model)
     }
     local summary = count > 0 and l10n.tr("lua_widget.habit_tracker.today", model.completed, count)
     local children, usedHeight = {}, 0
+    local footer = model.saveFailed and l10n.tr("lua_widget.habit_tracker.save_failed") or model.streak
+    local footerHeight = row * 0.62
+    local footerRule = not stripFits and 1 or 0
+    local footerSpace = footerRule + m.smallGap + footerHeight
     local function append(node, nodeHeight)
         usedHeight = usedHeight + nodeHeight
         children[#children + 1] = node
@@ -316,19 +445,22 @@ local function desktop(context, model)
         append(heading(weekFits and l10n.tr("lua_widget.habit_tracker.week") or summary, m, width), row)
         space("heading.gap", m.smallGap)
     end
+    local spread = false
     if count == 0 then
         local hint = label("empty", l10n.tr("lua_widget.habit_tracker.empty"), row * 2, m.body, true)
         hint.textWrap, hint.maxLines = "wrap", 3
         append(hint, row * 2)
     elseif weekFits then
-        local matrix, matrixHeight = weekly(model, m, width)
+        spread = true
+        local matrix, matrixHeight = weekly(model, m, width, height - usedHeight
+            - (model.saveFailed and footerSpace or 0))
         append(matrix, matrixHeight)
     elseif stripFits then
         local gap = base * 0.48
         local items, itemWidth = {}, (width - gap * (count - 1)) / count
         for i, item in ipairs(model.habits) do
             local inset = base * 0.23
-            local itemRow = habitRow(item, m, itemWidth - inset * 2, false)
+            local itemRow = habitRow(item, m, itemWidth - inset * 2, false, row)
             itemRow.padding = { horizontal = inset }
             items[i] = view.stack({
                 key = "strip.item." .. item.slot, width = itemWidth, height = row, flexShrink = 0,
@@ -344,17 +476,20 @@ local function desktop(context, model)
         }), row)
     else
         local stacked = width < row * 2.45
+        spread = not stacked
+        local listHeight = height - usedHeight - (count - 1)
+        local reserveFooter = model.saveFailed or (footer and width >= row * 2.75
+            and listHeight >= count * row + footerSpace)
+        local rowHeight = stacked and row
+            or spreadRows(row, listHeight - (reserveFooter and footerSpace or 0), count)
         for index, item in ipairs(model.habits) do
-            local node, rowHeight = habitRow(item, m, width, stacked)
-            append(node, rowHeight)
+            local node, itemHeight = habitRow(item, m, width, stacked, rowHeight)
+            append(node, itemHeight)
             if index < count then append(divider("line." .. item.slot), 1) end
         end
     end
-    local footer = model.saveFailed and l10n.tr("lua_widget.habit_tracker.save_failed") or model.streak
-    local footerHeight = row * 0.62
-    local footerRule = not stripFits and 1 or 0
     if footer and (model.saveFailed or (not weekFits and width >= row * 2.75
-            and usedHeight + footerRule + m.smallGap + footerHeight <= height + 0.01)) then
+            and usedHeight + footerSpace <= height + 0.01)) then
         if footerRule > 0 then append(divider("footer.line"), footerRule) end
         space("footer.gap", m.smallGap)
         local note = label("footer", footer, footerHeight, m.caption, true)
@@ -369,7 +504,8 @@ local function desktop(context, model)
         return view.scroll({ key = "viewport", width = "fill", height = "fill", children = { content } })
     end
     return view.column({
-        key = "card", width = "fill", height = "fill", justifyContent = "center", children = { content },
+        key = "card", width = "fill", height = "fill",
+        justifyContent = spread and "start" or "center", children = { content },
     })
 end
 return widget.define({
@@ -381,5 +517,6 @@ return widget.define({
     settings = { fields = fields },
     setup = setup,
     view = desktop,
+    panel = function(context, model) return detailView(context, model, weekdays) end,
     event = event,
 })
