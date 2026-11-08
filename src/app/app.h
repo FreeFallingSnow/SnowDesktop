@@ -2563,6 +2563,8 @@ private:
         ID2D1DeviceContext* ctx,
         bool applyAnimation = true);
     RECT GetLuaWidgetPanelRect() const;
+    static constexpr float kLuaWidgetPanelCornerRadius = 18.0f;
+    POINT GetLuaWidgetPanelAnimationAnchor(const RECT& panel) const;
     RECT GetLuaWidgetPanelContentRect() const;
     RECT GetLuaWidgetPanelCloseRect() const;
     void DrawLuaWidgetPanel(
@@ -4456,6 +4458,7 @@ private:
     RECT luaWidgetPanelRect_{};
     POINT luaWidgetPanelAnchorPoint_{};
     bool luaWidgetPanelMouseDown_ = false;
+    std::uint32_t luaPanelOutsidePressGeneration_ = 0;
     HWND luaWidgetPanelCaptureHwnd_ = nullptr;
     bool luaWidgetPanelFinalizing_ = false;
     std::optional<LuaWidgetPanelRequest>

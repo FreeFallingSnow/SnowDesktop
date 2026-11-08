@@ -54,11 +54,12 @@ void DesktopApp::OpenLuaWidgetPanel(
     // A repeated desktop opener is idempotent. Titles distinguish a widget's
     // ordinary panels; stable anchor keys distinguish its titleless popovers.
     // Leave the active scene, focus and animation generation untouched.
-    if (request.desktopGesture &&
-        luaWidgetPanelRequest_.widgetId == request.widgetId &&
+    const bool sameWidget = luaWidgetPanelRequest_.widgetId == request.widgetId;
+    const bool samePanel = sameWidget &&
         luaWidgetPanelRequest_.surface == request.surface &&
         luaWidgetPanelRequest_.title == request.title &&
-        luaWidgetPanelRequest_.anchorKey == request.anchorKey)
+        luaWidgetPanelRequest_.anchorKey == request.anchorKey;
+    if (request.desktopGesture && samePanel && !pendingLuaWidgetPanelOpen_)
         return;
     if (widgetEngine_)
         widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
@@ -81,42 +82,22 @@ void DesktopApp::OpenLuaWidgetPanel(
     }
     if (!luaWidgetPanelRequest_.widgetId.empty())
     {
-        if (luaWidgetPanelRequest_.widgetId ==
-                request.widgetId &&
-            luaWidgetPanelRequest_.surface ==
-                request.surface &&
-            luaWidgetPanelAnimation_.IsClosing())
-        {
-            if (widgetEngine_)
-                widgetEngine_->PrepareWidgetPanelFocus(request.widgetId);
-            AdvanceFloatingPopupContentGeneration();
-            luaWidgetPanelRequest_ = request;
-            luaWidgetPanelAnchorPoint_ = resolveAnchor();
-            if ((snowdesktop::animation::RuntimePopupEffect() != 0))
-            {
-                UpdateFloatingPopupWindowBounds(false);
-                PrepareLuaWidgetPanelAnimationCache();
-                luaWidgetPanelAnimation_.Open(
-                    static_cast<std::uint64_t>(
-                        snowdesktop::UiAnimationScheduler::
-                            MonotonicMilliseconds()));
-                if (!StartLuaWidgetPanelCompositionAnimation())
-                {
-                    UpdateLuaWidgetPanelCompositionAnimation();
-                    EnsureUiAnimationFrame();
-                }
-            }
-            else
-            {
-                luaWidgetPanelAnimation_.ShowImmediately();
-                ResetLuaWidgetPanelAnimationCache();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            }
-            UpdateFloatingPopupWindowBounds(true);
-            return;
-        }
         pendingLuaWidgetPanelOpen_ = request;
-        FinalizeCloseLuaWidgetPanel();
+        if ((sameWidget && !samePanel) || luaWidgetPanelAnimation_.IsClosing())
+        {
+            // A later pointer move must not relocate the queued popup.
+            if (!request.hasAnchor)
+            {
+                const POINT anchor = resolveAnchor();
+                pendingLuaWidgetPanelOpen_->hasAnchor = true;
+                pendingLuaWidgetPanelOpen_->anchorRect = {anchor.x, anchor.y, anchor.x, anchor.y};
+            }
+            // The close completion opens the latest queued request. An
+            // existing close keeps running when another opener is pressed.
+            CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "switch");
+        }
+        else
+            FinalizeCloseLuaWidgetPanel();
         return;
     }
     if (widgetEngine_)
@@ -127,8 +108,7 @@ void DesktopApp::OpenLuaWidgetPanel(
     luaWidgetPanelRect_ = GetLuaWidgetPanelRect();
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelAnimation_.ResetHidden();
-    const bool animate =
-        (snowdesktop::animation::RuntimePopupEffect() != 0);
+    const bool animate = snowdesktop::animation::RuntimePopupEffect() != 0;
     if (animate)
     {
         luaWidgetPanelAnimation_.Open(
@@ -187,6 +167,12 @@ void DesktopApp::FinalizeCloseLuaWidgetPanel(
     luaWidgetPanelRequest_ = {};
     luaWidgetPanelRect_ = {};
     luaWidgetPanelAnchorPoint_ = {};
+    if (luaWidgetPanelMouseDown_ || luaWidgetPanelCaptureHwnd_)
+    {
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    }
     luaWidgetPanelMouseDown_ = false;
     ReleaseLuaWidgetPanelCaptureIfOwned();
     UpdateHostInputImePosition();
@@ -240,6 +226,14 @@ void DesktopApp::CloseLuaWidgetPanel(
         return;
     if (luaWidgetPanelAnimation_.IsClosing())
         return;
+    // Mark the close before pointer and focus cleanup can call back into Lua.
+    luaWidgetPanelAnimation_.Close(static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+    if (luaWidgetPanelAnimation_.IsHidden())
+    {
+        FinalizeCloseLuaWidgetPanel();
+        return;
+    }
     {
         wchar_t message[320]{};
         swprintf_s(
@@ -285,15 +279,6 @@ void DesktopApp::CloseLuaWidgetPanel(
     {
         ClearDesktopBehindCompositionAnimation(
             luaWidgetPanelAnimationCacheRect_);
-    }
-    luaWidgetPanelAnimation_.Close(
-        static_cast<std::uint64_t>(
-            snowdesktop::UiAnimationScheduler::
-                MonotonicMilliseconds()));
-    if (luaWidgetPanelAnimation_.IsHidden())
-    {
-        FinalizeCloseLuaWidgetPanel();
-        return;
     }
     if (!StartLuaWidgetPanelCompositionAnimation())
     {

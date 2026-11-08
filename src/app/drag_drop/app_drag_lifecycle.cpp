@@ -864,6 +864,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    luaPanelOutsidePressGeneration_ = 0;
     rightButtonItemDrag_ = false;
     if (auto* view = GetCategorizedPopupView())
     {

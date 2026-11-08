@@ -914,10 +914,33 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
     if (!collectionPopupBackdropCompositor_.IsAvailable())
         return;
 
-    if (IsLuaStackIndicatorVisible())
+    const auto* collection = GetOpenPopupWidget();
+    const bool collectionGlass = collection && !UsesCollectionPopupFan(*collection);
+    const bool luaGlass = IsLuaPanelHostedByFloatingWindow();
+    const bool hostVisible = floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_);
+    if (IsLuaStackIndicatorVisible() || (collectionGlass && luaGlass))
     {
+        // The two popups have independent poses. A shared root transform
+        // would move one backdrop around the other popup's anchor.
         collectionPopupBackdropCompositor_.SetVisualTransform(1.0f, 1.0f, 0.0f, 0.0f);
-        collectionPopupBackdropCompositor_.SetVisible(floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_));
+        collectionPopupBackdropCompositor_.SetVisible(hostVisible);
+        collectionPopupBackdropCompositor_.CommitVisualChanges();
+        return;
+    }
+    if (luaGlass)
+    {
+        const auto visual = luaWidgetPanelAnimation_.GetVisual();
+        const bool animatingNatively = luaWidgetPanelAnimationCompositorDriven_ &&
+            luaWidgetPanelAnimation_.IsAnimating();
+        if (!animatingNatively)
+        {
+            const POINT anchor = GetLuaWidgetPanelAnimationAnchor(GetLuaWidgetPanelRect());
+            collectionPopupBackdropCompositor_.SetVisualTransform(
+                visual.scale, visual.visible ? visual.opacity : 0.0f,
+                static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
+                static_cast<float>(anchor.y - floatingPopupWindowBounds_.top));
+        }
+        collectionPopupBackdropCompositor_.SetVisible(hostVisible && (animatingNatively || visual.visible));
         collectionPopupBackdropCompositor_.CommitVisualChanges();
         return;
     }
@@ -963,7 +986,10 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
 {
     snowdesktop::performance::Scope scope("popup", "backdrop.update");
     const DesktopWidget* popup = GetOpenPopupWidget();
-    if (!collectionPopupGlassTheme_ || (popup && UsesCollectionPopupFan(*popup)))
+    const bool collectionGlass = popup && !UsesCollectionPopupFan(*popup);
+    const bool luaGlass = IsLuaPanelHostedByFloatingWindow();
+    const bool stackGlass = IsLuaStackIndicatorVisible();
+    if (!collectionPopupGlassTheme_ || (popup && !collectionGlass && !luaGlass))
     {
         collectionPopupBackdropCompositor_.Reset();
         return;
@@ -973,7 +999,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         collectionPopupBackdropCompositor_.Reset();
         return;
     }
-    if ((!popup && !IsLuaStackIndicatorVisible()) || IsRectEmpty(&floatingPopupWindowBounds_))
+    if ((!collectionGlass && !luaGlass && !stackGlass) || IsRectEmpty(&floatingPopupWindowBounds_))
     {
         collectionPopupBackdropCompositor_.SetVisible(false);
         return;
@@ -991,7 +1017,8 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     {
         const bool initiallyVisible =
             IsWindowVisible(floatingPopupHwnd_) != FALSE &&
-            popupAnimation_.GetVisual().visible;
+            (stackGlass || (collectionGlass && popupAnimation_.GetVisual().visible) ||
+                (luaGlass && luaWidgetPanelAnimation_.GetVisual().visible));
         if (!collectionPopupBackdropCompositor_.InitializePopup(
                 floatingPopupHwnd_, topmost, initiallyVisible))
         {
@@ -1014,17 +1041,22 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
         zOrderStage, menuZOrderBefore,
         CaptureMenuHostZOrder(floatingPopupHwnd_));
 
-    RECT panel = popup ? GetCollectionPopupRect(*popup) : luaStackIndicator_.bounds;
-    OffsetRect(
-        &panel,
-        -floatingPopupWindowBounds_.left,
-        -floatingPopupWindowBounds_.top);
-    const float cornerRadius = popup ? 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale
-        : static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(widgets_[FindWidgetIndexById(luaStackIndicator_.stackId)])));
     collectionPopupBackdropCompositor_.BeginFrame(true);
-    collectionPopupBackdropCompositor_.AddPanel(
-        panel, cornerRadius, collectionPopupBlurRadius_,
-        reinterpret_cast<std::uintptr_t>(this));
+    const auto addPanel = [&](RECT panel, float radius, const void* owner) {
+        OffsetRect(&panel, -floatingPopupWindowBounds_.left, -floatingPopupWindowBounds_.top);
+        collectionPopupBackdropCompositor_.AddPanel(
+            panel, radius, collectionPopupBlurRadius_, reinterpret_cast<std::uintptr_t>(owner));
+    };
+    if (collectionGlass)
+        addPanel(GetCollectionPopupRect(*popup), 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale, this);
+    if (luaGlass)
+        addPanel(GetLuaWidgetPanelRect(), kLuaWidgetPanelCornerRadius, &luaWidgetPanelRequest_);
+    if (stackGlass)
+    {
+        const auto& stack = widgets_[FindWidgetIndexById(luaStackIndicator_.stackId)];
+        addPanel(luaStackIndicator_.bounds,
+            static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(stack))), this);
+    }
     // Include geometry and the current pose in one backdrop transaction.
     collectionPopupBackdropCompositor_.EndFrame(false);
     ApplyCollectionPopupBackdropAnimationFrame();
@@ -1165,8 +1197,8 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     }
 
     const DesktopWidget* collection = GetOpenPopupWidget();
-    const bool backdropRecovery = collectionPopupGlassTheme_ && collection &&
-        !UsesCollectionPopupFan(*collection) &&
+    const bool backdropRecovery = collectionPopupGlassTheme_ &&
+        ((collection && !UsesCollectionPopupFan(*collection)) || IsLuaPanelHostedByFloatingWindow()) &&
         !collectionPopupBackdropCompositor_.IsAvailable();
     const bool refreshContent = refreshStableContent || !wasVisible ||
         boundsChanged || regionChanged || backdropRecovery ||
@@ -1203,7 +1235,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             18.f * GetCollectionPopupLayoutMetrics(*popup).scale : 18.f);
         appendRegion(
             floatingPopupLuaPanelRegion_,
-            floatingPopupModalRegion_ ? 0.f : 18.f);
+            floatingPopupModalRegion_ ? 0.f : kLuaWidgetPanelCornerRadius);
         if (!regionReady || !SetWindowRgn(floatingPopupHwnd_, windowRegion, FALSE))
         {
             if (windowRegion) DeleteObject(windowRegion);

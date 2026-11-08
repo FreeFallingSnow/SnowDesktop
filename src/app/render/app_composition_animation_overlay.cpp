@@ -738,19 +738,11 @@ bool DesktopApp::UpdateCollectionPopupCompositionAnimation(
 bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
     bool commit)
 {
+    ApplyCollectionPopupBackdropAnimationFrame();
     if (!luaWidgetPanelAnimationOverlay_.active)
         return false;
     const auto visual = luaWidgetPanelAnimation_.GetVisual();
-    const RECT panel = GetLuaWidgetPanelRect();
-    POINT anchor = luaWidgetPanelRequest_.surface == "dialog"
-        ? POINT{ (panel.left + panel.right) / 2,
-            (panel.top + panel.bottom) / 2 }
-        : POINT{
-            std::clamp(luaWidgetPanelAnchorPoint_.x,
-                panel.left, panel.right),
-            std::clamp(luaWidgetPanelAnchorPoint_.y,
-                panel.top, panel.bottom),
-        };
+    const POINT anchor = GetLuaWidgetPanelAnimationAnchor(GetLuaWidgetPanelRect());
     return UpdateCompositionAnimationOverlay(
         luaWidgetPanelAnimationOverlay_, visual.scale,
         anchor, visual.visible ? visual.opacity : 0.0f,
@@ -805,7 +797,8 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         UpdateCollectionPopupCompositionAnimation();
         return false;
     }
-    if (collectionPopupGlassTheme_ && collectionPopupBackdropCompositor_.IsAvailable() &&
+    if (collectionPopupGlassTheme_ && !IsLuaPanelHostedByFloatingWindow() &&
+        collectionPopupBackdropCompositor_.IsAvailable() &&
         !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
             visual.scale, opening ? 1.0f : popupAnimation_.HiddenScale(),
             visual.opacity, popupAnimation_.EndpointOpacity(opening),
@@ -916,22 +909,26 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
     const UINT duration = luaWidgetPanelAnimation_.UsesSpring() ? std::max<UINT>(1, static_cast<UINT>(springTimeline.durationMilliseconds)) : std::max<UINT>(
         1, static_cast<UINT>(std::lround(
             remaining * static_cast<float>(luaWidgetPanelAnimation_.DurationMilliseconds(opening)))));
-    const RECT panel = GetLuaWidgetPanelRect();
-    const POINT anchor = luaWidgetPanelRequest_.surface == "dialog"
-        ? POINT{ (panel.left + panel.right) / 2,
-            (panel.top + panel.bottom) / 2 }
-        : POINT{
-            std::clamp(luaWidgetPanelAnchorPoint_.x,
-                panel.left, panel.right),
-            std::clamp(luaWidgetPanelAnchorPoint_.y,
-                panel.top, panel.bottom),
-        };
+    const POINT anchor = GetLuaWidgetPanelAnimationAnchor(GetLuaWidgetPanelRect());
     if (!AnimateCompositionAnimationOverlay(
             luaWidgetPanelAnimationOverlay_,
             visual.scale,
             opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
             anchor, visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening), duration,
             normalizedScaleStartSlope, luaWidgetPanelAnimation_.UsesSpring() ? &springTimeline : nullptr))
+    {
+        UpdateLuaWidgetPanelCompositionAnimation();
+        return false;
+    }
+    const auto* collection = GetOpenPopupWidget();
+    if (collectionPopupGlassTheme_ && (!collection || UsesCollectionPopupFan(*collection)) &&
+        collectionPopupBackdropCompositor_.IsAvailable() &&
+        !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
+            visual.scale, opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
+            visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening),
+            static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
+            static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
+            duration, normalizedScaleStartSlope, luaWidgetPanelAnimation_.UsesSpring() ? &springTimeline : nullptr))
     {
         UpdateLuaWidgetPanelCompositionAnimation();
         return false;
@@ -967,6 +964,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
                     FinalizeCloseLuaWidgetPanel();
                     return;
                 }
+                ApplyCollectionPopupBackdropAnimationFrame();
                 const RECT dirty =
                     luaWidgetPanelAnimationCacheRect_;
                 PrepareCompositionAnimationOverlayRetirement(

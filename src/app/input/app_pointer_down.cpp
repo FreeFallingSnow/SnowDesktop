@@ -21,6 +21,7 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    luaPanelOutsidePressGeneration_ = 0;
     if (nativeMenuSession_)
         DismissActiveContextMenuForPopupTransition();
     typeToSelectSession_.Reset();
@@ -77,11 +78,22 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         const RECT panel = GetLuaWidgetPanelRect();
         if (!PtInRect(&panel, pt))
         {
+            const bool modal = luaWidgetPanelRequest_.modal;
             if (luaWidgetPanelRequest_.dismissOnOutside)
-                CloseLuaWidgetPanel(
-                    luaWidgetPanelRequest_.widgetId,
-                    "outside");
-            if (luaWidgetPanelRequest_.modal)
+            {
+                const auto index = !modal && !IsPointOccludedByOpenPopup(pt)
+                    ? HitTestStandaloneWidgetIndex(pt) : static_cast<size_t>(-1);
+                const auto* owner = index < widgets_.size() &&
+                    HitTestStandaloneWidget(index, pt) == WidgetHit::Content
+                    ? ResolveLuaWidgetContent(&widgets_[index]) : nullptr;
+                // The owner can replace the panel from its click action. Give
+                // that action a chance before treating the click as dismissal.
+                if (owner && owner->id == luaWidgetPanelRequest_.widgetId)
+                    luaPanelOutsidePressGeneration_ = floatingPopupMouseHookGeneration_;
+                else
+                    CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "outside");
+            }
+            if (modal)
                 return;
         }
         else

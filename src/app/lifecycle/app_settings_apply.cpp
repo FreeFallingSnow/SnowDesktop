@@ -2269,6 +2269,8 @@ void DesktopApp::ApplyCollectionPopupAppearance()
     if (widgetEngine_)
         widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
     ResetLuaWidgetPanelAnimationCache();
+    if (luaWidgetPanelAnimation_.IsAnimating())
+        EnsureUiAnimationFrame();
     UpdateCollectionPopupBackdrop();
     if (GetOpenPopupWidget() || !luaWidgetPanelRequest_.widgetId.empty())
         InvalidateFloatingPopupWindow(true);
