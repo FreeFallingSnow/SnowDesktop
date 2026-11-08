@@ -132,11 +132,16 @@ RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
     const RECT fullFrame = GetExpandedWidgetFrameRect(widget);
     const float progress = GetWidgetExpansionProgress(widget);
     if (progress >= 1.0f) return fullFrame;
-    const float scale = GetWidgetCellScale(widget);
-    RECT frame = snowdesktop::storage_title_bar::VisibleFrame(fullFrame, true,
-        ScaleWidgetCu(GetCategorizedWidgetTabHeight(), scale), ScaleWidgetCu(2.0f, scale));
+    RECT frame = GetCollapsedWidgetFrameRect(widget, fullFrame);
     frame.bottom += std::lround(static_cast<double>(fullFrame.bottom - frame.bottom) * progress);
     return frame;
+}
+
+RECT DesktopApp::GetCollapsedWidgetFrameRect(const DesktopWidget& widget, const RECT& fullFrame) const
+{
+    const float scale = GetWidgetCellScale(widget);
+    return snowdesktop::storage_title_bar::VisibleFrame(fullFrame, true,
+        ScaleWidgetCu(GetCategorizedWidgetTabHeight(), scale), ScaleWidgetCu(2.0f, scale));
 }
 
 bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
@@ -291,11 +296,18 @@ bool DesktopApp::AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish
         else expansion.ResetHidden();
         active |= expansion.IsAnimating();
 
-        // Intermediate heights only change the widget child and its glass.
-        // Keep desktop paint for first/final visibility and recovery.
+        // The compositor advances both clips. The scheduler still tracks the
+        // visible hit area and repaints the resting frame at the endpoint.
+        const auto child = desktopWidgetCompositionItems_.find(id);
+        if (expansion.IsAnimating() && child != desktopWidgetCompositionItems_.end() &&
+            child->second.visible && child->second.backdropRegistered &&
+            child->second.hoverRollOpening == expansion.IsInteractive())
+        {
+            const RECT fullFrame = GetExpandedWidgetFrameRect(widget);
+            if (EqualRect(&child->second.bounds, &fullFrame)) continue;
+        }
         if (canPresentChild && expansion.IsAnimating())
         {
-            const auto child = desktopWidgetCompositionItems_.find(id);
             if (child != desktopWidgetCompositionItems_.end() &&
                 child->second.visible && child->second.surface)
             {

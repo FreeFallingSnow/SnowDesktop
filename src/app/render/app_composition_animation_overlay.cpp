@@ -7,12 +7,13 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
 #include "app/menus/native_menu_presentation_rules.h"
+#include "widget/view/widget_composition_layer_rules.h"
 
 namespace
 {
 HRESULT CreatePopupSpringAnimation(IDCompositionDesktopDevice* device,
     const snowdesktop::popup_motion_curve::Timeline& timeline,
-    IDCompositionAnimation** animation)
+    IDCompositionAnimation** animation, float origin = 0.0f, float extent = 1.0f)
 {
     if (!device || !animation || timeline.segments.empty()) return E_INVALIDARG;
     *animation = nullptr;
@@ -22,11 +23,13 @@ HRESULT CreatePopupSpringAnimation(IDCompositionDesktopDevice* device,
     {
         if (FAILED(hr)) break;
         hr = result->AddCubic(segment.startSeconds,
-            static_cast<float>(segment.constant), static_cast<float>(segment.linear),
-            static_cast<float>(segment.quadratic), static_cast<float>(segment.cubic));
+            static_cast<float>(origin + extent * segment.constant),
+            static_cast<float>(extent * segment.linear),
+            static_cast<float>(extent * segment.quadratic),
+            static_cast<float>(extent * segment.cubic));
     }
     if (SUCCEEDED(hr)) hr = result->End(timeline.durationMilliseconds / 1000.0,
-        static_cast<float>(timeline.target));
+        static_cast<float>(origin + extent * timeline.target));
     if (SUCCEEDED(hr)) *animation = result.Detach();
     return hr;
 }
@@ -71,6 +74,40 @@ HRESULT CreateSmoothStepAnimation(
         *animation = result.Detach();
     return hr;
 }
+}
+
+bool DesktopApp::StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
+    const RECT& frame, LONG collapsedHeight, float radius,
+    const snowdesktop::popup_motion_curve::Timeline& timeline)
+{
+    constexpr float inset =
+        snowdesktop::widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw;
+    const auto width = static_cast<float>(frame.right - frame.left);
+    const auto closed = static_cast<float>(collapsedHeight);
+    const auto travel = static_cast<float>(frame.bottom - frame.top) - closed;
+    if (travel <= 0.0f || !item.backdropRegistered) return false;
+    radius = std::min({radius, width * 0.5f, closed * 0.5f});
+
+    ComPtr<IDCompositionAnimation> bottom;
+    HRESULT hr = CreatePopupSpringAnimation(dcompDevice_.Get(), timeline,
+        &bottom, inset + closed, travel);
+    ComPtr<IDCompositionRectangleClip> clip;
+    if (SUCCEEDED(hr)) hr = dcompDevice_->CreateRectangleClip(&clip);
+    if (SUCCEEDED(hr)) hr = clip->SetLeft(inset);
+    if (SUCCEEDED(hr)) hr = clip->SetTop(inset);
+    if (SUCCEEDED(hr)) hr = clip->SetRight(inset + width);
+    if (SUCCEEDED(hr)) hr = clip->SetTopLeftRadiusX(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetTopLeftRadiusY(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetTopRightRadiusX(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetTopRightRadiusY(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetBottomLeftRadiusX(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetBottomLeftRadiusY(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetBottomRightRadiusX(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetBottomRightRadiusY(radius);
+    if (SUCCEEDED(hr)) hr = clip->SetBottom(bottom.Get());
+    if (SUCCEEDED(hr)) hr = item.visual->SetClip(clip.Get());
+    return SUCCEEDED(hr) && desktopBackdropCompositor_.StartPanelHeightAnimation(
+        item.BackdropOwnerKey(), closed, radius, timeline);
 }
 
 // Independent DComp layers for popup snapshots. Content arrivals update only

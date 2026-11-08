@@ -404,15 +404,23 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         snowdesktop::performance::Scope widgetPerformanceScope(
             "widget.composition", "draw", contentId);
 
-        const RECT bounds = GetStandaloneWidgetFrameRect(*widgetData);
+        auto& item = composition->second;
+        const auto expansion = widgetHoverExpansion_.find(widgetId);
+        const bool animating = widgetContainer && !widgetContainer->IsHosted() &&
+            expansion != widgetHoverExpansion_.end() && IsWidgetHoverExpansionAnimating(*widgetData);
+        if (!animating) item.hoverRollUnavailable = false;
+        const RECT visibleBounds = GetStandaloneWidgetFrameRect(*widgetData);
+        const RECT expandedBounds = animating ? GetExpandedWidgetFrameRect(*widgetData) : visibleBounds;
+        const RECT collapsedBounds = animating
+            ? GetCollapsedWidgetFrameRect(*widgetData, expandedBounds) : visibleBounds;
+        const bool drawRollSnapshot = animating && item.backdropRequested &&
+            desktopBackdropCompositor_.IsAvailable() && !item.hoverRollUnavailable &&
+            collapsedBounds.bottom < expandedBounds.bottom;
+        const RECT bounds = drawRollSnapshot ? expandedBounds : visibleBounds;
         const LONG rawWidth = bounds.right - bounds.left;
         const LONG rawHeight = bounds.bottom - bounds.top;
-        // Keep one surface allocation throughout a height transition. The
-        // paint and clip still follow the visible frame on every tick.
-        const LONG surfaceHeight = widgetContainer &&
-                IsWidgetHoverExpansionAnimating(*widgetData)
-            ? GetExpandedWidgetFrameRect(*widgetData).bottom - bounds.top
-            : rawHeight;
+        // The fallback also keeps one allocation throughout the transition.
+        const LONG surfaceHeight = expandedBounds.bottom - bounds.top;
         constexpr LONG surfaceOverdraw = static_cast<LONG>(
             snowdesktop::widget_composition_layer_rules::
                 kWidgetSurfaceBorderOverdraw);
@@ -439,9 +447,6 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         const UINT height = static_cast<UINT>(
             snowdesktop::widget_composition_layer_rules::
                 WidgetSurfaceExtent(surfaceHeight));
-        const float clipHeight = static_cast<float>(
-            snowdesktop::widget_composition_layer_rules::WidgetSurfaceExtent(rawHeight));
-        auto& item = composition->second;
         const RECT oldBounds = item.bounds;
         const bool boundsChanged = !SameRect(oldBounds, bounds);
         const bool asynchronous = luaWidget && widgetSurfaceRenderer_ && !item.renderFailed;
@@ -546,7 +551,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         {
             lastMousePoint_ = { LONG_MIN, LONG_MIN };
         }
-        if (widgetContainer)
+        if (drawRollSnapshot)
+        {
+            widgetContainer->DrawHoverRollSnapshot(context.Get(), lastMousePoint_);
+        }
+        else if (widgetContainer)
         {
             widgetContainer->DrawChrome(context.Get(), lastMousePoint_);
         }
@@ -618,13 +627,14 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             continue;
         }
 
+        const bool hadRoll = item.hoverRollOpening.has_value();
+        const bool backdropChanged = !item.backdropRegistered || boundsChanged ||
+            item.backdropCornerRadius != backdropCornerRadius ||
+            item.backdropBlurRadius != backdropBlurRadius ||
+            (hadRoll && !drawRollSnapshot);
         item.backdropRequested = backdropRequested;
         if (backdropRequested)
         {
-            const bool backdropChanged =
-                !item.backdropRegistered || boundsChanged ||
-                item.backdropCornerRadius != backdropCornerRadius ||
-                item.backdropBlurRadius != backdropBlurRadius;
             if (backdropChanged)
             {
                 item.backdropRegistered =
@@ -642,12 +652,53 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             item.backdropRegistered = false;
         }
 
-        item.bounds = bounds;
         hr = asynchronous ? S_OK : item.visual->SetContent(item.surface.Get());
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetX(static_cast<float>(surfaceLeft));
         if (SUCCEEDED(hr))
             hr = item.visual->SetOffsetY(static_cast<float>(surfaceTop));
+
+        bool rollInstalled = false;
+        if (SUCCEEDED(hr) && drawRollSnapshot && item.backdropRegistered)
+        {
+            const bool opening = expansion->second.IsInteractive();
+            rollInstalled = !backdropChanged && item.hoverRollOpening == opening;
+            if (!rollInstalled)
+            {
+                rollInstalled = StartDesktopWidgetHoverRoll(item, bounds,
+                    collapsedBounds.bottom - collapsedBounds.top,
+                    static_cast<float>(backdropCornerRadius), expansion->second.RemainingTimeline());
+                if (rollInstalled)
+                    expansion->second.RebaseAnimationClock(static_cast<std::uint64_t>(
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+            }
+            if (rollInstalled) item.hoverRollOpening = opening;
+        }
+        item.bounds = rollInstalled ? bounds : visibleBounds;
+        if (!rollInstalled)
+        {
+            item.hoverRollOpening.reset();
+            if (drawRollSnapshot)
+            {
+                // Keep both visuals at the current sampled height if either
+                // compositor cannot install the paired animation.
+                item.hoverRollUnavailable = true;
+                if (item.backdropRegistered)
+                {
+                    item.backdropRegistered = desktopBackdropCompositor_.AddPanel(
+                        visibleBounds, static_cast<float>(backdropCornerRadius),
+                        static_cast<float>(backdropBlurRadius), item.BackdropOwnerKey(), true);
+                    if (!item.backdropRegistered)
+                        (void)desktopBackdropCompositor_.RemovePanel(bounds, item.BackdropOwnerKey());
+                }
+            }
+            if (SUCCEEDED(hr) && (hadRoll || drawRollSnapshot))
+                hr = item.visual->SetClip(item.clip.Get());
+        }
+
+        const float clipHeight = static_cast<float>(
+            snowdesktop::widget_composition_layer_rules::WidgetSurfaceExtent(
+                item.bounds.bottom - item.bounds.top));
         const bool showContent = item.visible &&
             (item.surface || item.renderedVisualAttached);
         if (SUCCEEDED(hr))
@@ -946,6 +997,12 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     }
     if (!visible && item.clip)
     {
+        if (item.hoverRollOpening.has_value())
+        {
+            (void)item.visual->SetClip(item.clip.Get());
+            item.hoverRollOpening.reset();
+        }
+        item.hoverRollUnavailable = false;
         (void)item.clip->SetRight(0.0f);
         (void)item.clip->SetBottom(0.0f);
     }
@@ -982,8 +1039,23 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
             desktopWidgetCompositionFailurePending_ = true;
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         }
-        item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
-            KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
+        if (item.hoverRollOpening.has_value())
+        {
+            item.backdropRegistered = desktopBackdropCompositor_.KeepPanel(
+                item.bounds, item.BackdropOwnerKey());
+            // Recreate a lost animated panel with its clip in the next child
+            // draw. Restoring only its full static geometry would flash.
+            if (!item.backdropRegistered && item.visible)
+            {
+                pendingDesktopWidgetCompositions_.insert(id);
+                if (hwnd_) InvalidateRect(hwnd_, &item.bounds, FALSE);
+            }
+        }
+        else
+        {
+            item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
+                KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
+        }
         if (item.backdropRegistered)
         {
             RECT animationFence{};

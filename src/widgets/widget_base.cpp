@@ -523,6 +523,7 @@ RECT WidgetContainer::GetFrameRect() const
     if (IsSingleCellIconMode()) return data_->bounds;
     if (app_ && app_->IsGroupedWidget(*data_))
         return {};
+    if (drawingHoverRollSnapshot_) return GetLayoutFrameRect();
     return app_
         ? app_->GetStandaloneWidgetFrameRect(*data_)
         : data_->bounds;
@@ -540,7 +541,8 @@ bool WidgetContainer::IsCollapsed() const
 {
     // A source hosted inside a file group follows its host's layout, not its
     // own saved standalone collapse preference. Previews also stay expanded.
-    return !hostedFrameActive_ && data_ && app_ && app_->IsWidgetCollapsed(*data_);
+    return !drawingHoverRollSnapshot_ && !hostedFrameActive_ &&
+        data_ && app_ && app_->IsWidgetCollapsed(*data_);
 }
 
 bool WidgetContainer::IsSingleCellPresentation() const
@@ -3042,6 +3044,17 @@ ID2D1Geometry* WidgetContainer::GetCachedClipGeometry(
  * @param context D2D 设备上下文
  * @param mousePt 当前鼠标位置
  */
+void WidgetContainer::DrawHoverRollSnapshot(ID2D1DeviceContext* context, POINT mousePt)
+{
+    struct SnapshotScope
+    {
+        bool& drawing;
+        ~SnapshotScope() { drawing = false; }
+    } snapshot{drawingHoverRollSnapshot_};
+    drawingHoverRollSnapshot_ = true;
+    DrawChrome(context, mousePt);
+}
+
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
     if (!data_ || !context || !app_) return;

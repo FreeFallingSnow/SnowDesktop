@@ -2344,6 +2344,52 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
     }
 }
 
+bool DesktopBackdropCompositor::StartPanelHeightAnimation(
+    std::uintptr_t ownerKey, float collapsedHeight, float radius,
+    const snowdesktop::popup_motion_curve::Timeline& timeline)
+{
+    if (!impl_->available || !impl_->collectingFrame || !ownerKey ||
+        timeline.segments.empty() || timeline.durationMilliseconds <= 0.0)
+        return false;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end()) return false;
+    const auto width = static_cast<float>(panel->frame.right - panel->frame.left);
+    const auto travel = static_cast<float>(panel->frame.bottom - panel->frame.top) - collapsedHeight;
+
+    try
+    {
+        auto animation = impl_->compositor.CreateVector2KeyFrameAnimation();
+        animation.Duration(wf::TimeSpan{std::llround(timeline.durationMilliseconds * 10'000.0)});
+        const auto size = [width, collapsedHeight, travel](double progress) {
+            return wfn::float2{width, static_cast<float>(collapsedHeight + travel * progress)};
+        };
+        animation.InsertKeyFrame(0.0f, size(timeline.segments.front().constant));
+        for (const auto& segment : timeline.segments)
+        {
+            const auto easing = impl_->compositor.CreateCubicBezierEasingFunction(
+                wfn::float2{1.0f / 3.0f, static_cast<float>(segment.StartControl())},
+                wfn::float2{2.0f / 3.0f, static_cast<float>(segment.EndControl())});
+            const float time = std::clamp(static_cast<float>(
+                (segment.startSeconds + segment.durationSeconds) * 1000.0 /
+                timeline.durationMilliseconds), 0.0f, 1.0f);
+            animation.InsertKeyFrame(time,
+                size(segment.EvaluateLocal(segment.durationSeconds).position), easing);
+        }
+
+        auto geometry = impl_->compositor.CreateRoundedRectangleGeometry();
+        geometry.CornerRadius(wfn::float2{radius, radius});
+        geometry.Size(size(timeline.target));
+        geometry.StartAnimation(L"Size", animation);
+        panel->SetClip(geometry);
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(L"backdrop.animate_height", error.code());
+        return false;
+    }
+}
+
 void DesktopBackdropCompositor::SetPanelAnimationFence(
     std::uintptr_t ownerKey, const RECT& frame)
 {

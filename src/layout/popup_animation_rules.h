@@ -131,6 +131,7 @@ public:
     {
         return popup_motion_curve::Remainder(springTimeline_, springElapsed_);
     }
+    void RebaseAnimationClock(std::uint64_t now) { lastTick_ = now; }
     void Open(std::uint64_t now)
     {
         Advance(now);

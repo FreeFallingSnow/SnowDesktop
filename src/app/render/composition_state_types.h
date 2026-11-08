@@ -97,6 +97,9 @@ struct DesktopWidgetCompositionItem
         bool waitingForPixels = false;
     };
     std::optional<HoverFade> hoverFade;
+    // Present only while the content and backdrop own matching native clips.
+    std::optional<bool> hoverRollOpening;
+    bool hoverRollUnavailable = false;
     float submittedOpacity = 1.0f;
     float HoverOpacity() const
     {

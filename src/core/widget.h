@@ -247,6 +247,7 @@ public:
 
     // ── Rendering ────────────────────────────────────────
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
+    void DrawHoverRollSnapshot(ID2D1DeviceContext* context, POINT mousePt);
     void DrawPreview(ID2D1DeviceContext* context, RECT frame,
         const snowdesktop::WidgetRenderOptions& options) override;
 
@@ -308,6 +309,7 @@ protected:
     float cachedClipRadius_ = 0.0f;
     RECT hostedFrame_{};
     bool hostedFrameActive_ = false;
+    bool drawingHoverRollSnapshot_ = false;
     bool popupFrameActive_ = false;
     float popupFrameScale_ = 1.0f;
 

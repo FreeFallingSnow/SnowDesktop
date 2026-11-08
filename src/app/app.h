@@ -2620,6 +2620,9 @@ private:
     void PauseWidgetMarqueeComposition(const std::wstring& widgetId);
     bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false);
     bool FlushPendingDesktopWidgetComposition();
+    bool StartDesktopWidgetHoverRoll(DesktopWidgetCompositionItem& item,
+        const RECT& frame, LONG collapsedHeight, float radius,
+        const snowdesktop::popup_motion_curve::Timeline& timeline);
     void DrainDesktopWidgetSurfaceResults();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
@@ -3187,6 +3190,7 @@ private:
     */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
     RECT GetExpandedWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetCollapsedWidgetFrameRect(const DesktopWidget& widget, const RECT& fullFrame) const;
     bool IsWidgetCollapsed(const DesktopWidget& widget) const;
     bool CanFoldWidget(const DesktopWidget& widget) const;
     float GetWidgetExpansionProgress(const DesktopWidget& widget) const;
