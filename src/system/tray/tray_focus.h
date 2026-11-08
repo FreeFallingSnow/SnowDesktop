@@ -57,6 +57,8 @@ struct MenuRetentionSession
     HWND target=nullptr,menuOwner=nullptr,origin=nullptr,bar=nullptr;
     MenuRetentionTracker tracker;
     MenuPopupBindings popups{};
+    MenuPopupBinding handoff{};
+    bool handoffConfirmed=false;
     void Reset(){*this={};}
     bool BelongsToTarget(HWND w)const
     {DWORD pid=0;return w&&GetWindowThreadProcessId(w,&pid)&&pid==process;}
@@ -80,14 +82,8 @@ struct MenuRetentionSession
     }
     bool LivePopup(const MenuPopupBinding& binding)const
     {
-        const auto w=reinterpret_cast<HWND>(binding.window);DWORD pid=0;
-        if(!w||binding.process!=process||GetWindowThreadProcessId(w,&pid)!=binding.thread||pid!=process||
-            !IsWindowVisible(w)||GetWindow(w,GW_OWNER)!=reinterpret_cast<HWND>(binding.owner)||
-            !SameMenuPopupStyles(binding.standardMenu,binding.style,binding.extendedStyle,
-                GetWindowLongPtrW(w,GWL_STYLE),GetWindowLongPtrW(w,GWL_EXSTYLE)))return false;
-        if(binding.owner&&!BelongsToTarget(reinterpret_cast<HWND>(binding.owner)))return false;
-        wchar_t name[64]{};GetClassNameW(w,name,static_cast<int>(std::size(name)));
-        return binding.standardMenu==(wcscmp(name,L"#32768")==0);
+        return binding.process==process&&LiveMenuPopup(binding)&&
+            (!binding.owner||BelongsToTarget(reinterpret_cast<HWND>(binding.owner)));
     }
     bool NativeMenu(DWORD thread,bool observedMenuThread=false,HWND expectedOwner=nullptr)
     {
@@ -136,6 +132,13 @@ struct MenuRetentionSession
     MenuLayerPlacement LayerPlacement(const RECT& panelBounds)const
     {
         if(!tracker.Armed())return {};
+        if(handoffConfirmed&&LiveMenuPopup(handoff))
+        {
+            const auto window=reinterpret_cast<HWND>(handoff.window);
+            RECT bounds{},overlap{};
+            if(GetWindowRect(window,&bounds))
+                return IntersectRect(&overlap,&bounds,&panelBounds)?MenuLayerPlacement{window,1,false}:MenuLayerPlacement{};
+        }
         for(const auto& binding:popups)if(LivePopup(binding))
             return {reinterpret_cast<HWND>(binding.window),1,false};
         if(const auto native=NativeMenuOverlapping(panelBounds))return {native,2,false};
@@ -150,6 +153,7 @@ struct MenuRetentionSession
             GetWindowThreadProcessId(target,nullptr)!=targetThread)return false;
         const auto contains=[&](HWND window){RECT bounds{};return window&&IsWindowVisible(window)&&
             GetWindowRect(window,&bounds)&&PtInRect(&bounds,screen);};
+        if(handoffConfirmed&&LiveMenuPopup(handoff)&&contains(reinterpret_cast<HWND>(handoff.window)))return true;
         for(const auto& popup:popups)
             if(LivePopup(popup)&&contains(reinterpret_cast<HWND>(popup.window)))return true;
         // Placement discovery is deliberately short-lived. A submenu opened
@@ -168,16 +172,38 @@ struct MenuRetentionSession
             info.hwndMenuOwner==menuOwner&&BelongsToTarget(menuOwner)&&
             GetWindowThreadProcessId(menuOwner,nullptr)==menuThread;
     }
-    bool Active(HWND foreground,const MenuPopupBindings& observed)
+    bool Active(HWND foreground,const MenuPopupEvidence& observed)
     {
         if(!tracker.Armed())return false;
         const bool targetAlive=BelongsToTarget(target)&&GetWindowThreadProcessId(target,nullptr)==targetThread;
+        if(!targetAlive){Reset();return false;}
         const auto kind=!foreground?MenuForeground::Transition:
             foreground==origin||foreground==bar?MenuForeground::Origin:
             BelongsToTarget(foreground)?MenuForeground::TargetProcess:MenuForeground::Unrelated;
-        if(!targetAlive||kind==MenuForeground::Unrelated){Reset();return false;}
+        if(handoffConfirmed&&!LiveMenuPopup(handoff))
+        {
+            if(foreground==reinterpret_cast<HWND>(handoff.window)){Reset();return false;}
+            handoff={};handoffConfirmed=false;
+        }
+        if(kind==MenuForeground::Unrelated)
+        {
+            if(foreground!=reinterpret_cast<HWND>(handoff.window))
+            {
+                handoff=observed.discoveringHandoff?ProbeMenuHandoff(target,foreground):MenuPopupBinding{};
+                handoffConfirmed=false;
+            }
+            if(!handoff.window||(!handoffConfirmed&&!observed.discoveringHandoff)){Reset();return false;}
+            if(!handoffConfirmed)
+            {
+                // The WinEvent worker may receive SHOW after WM_ACTIVATE.
+                const auto active=ActiveMenuHandoff(handoff,observed.shownHandoffs);
+                if(!active.window)return true;
+                handoff=active;handoffConfirmed=true;
+            }
+            return tracker.Retain(GetTickCount(),targetAlive,MenuForeground::TargetProcess,true);
+        }
         for(auto& binding:popups)if(binding.window&&!LivePopup(binding))binding={};
-        for(const auto& binding:observed)
+        for(const auto& binding:observed.placement)
         {
             if(!LivePopup(binding)||std::any_of(popups.begin(),popups.end(),[&](const auto& p){return p.window==binding.window;}))continue;
             const auto slot=std::find_if(popups.begin(),popups.end(),[](const auto& p){return !p.window;});
@@ -188,7 +214,8 @@ struct MenuRetentionSession
         if(!liveMenu&&kind==MenuForeground::TargetProcess)liveMenu=NativeMenu(GetWindowThreadProcessId(foreground,nullptr));
         for(const auto& binding:popups)if(binding.window)
         {liveMenu=true;if(binding.standardMenu)NativeMenu(binding.thread,true);}
-        const bool retain=tracker.Retain(GetTickCount(),targetAlive,kind,liveMenu);
+        const bool retain=tracker.Retain(GetTickCount(),targetAlive,kind,
+            liveMenu||(handoffConfirmed&&kind!=MenuForeground::TargetProcess));
         if(!tracker.Armed())Reset();
         return retain;
     }

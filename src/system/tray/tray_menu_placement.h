@@ -38,6 +38,19 @@ struct MenuPopupBinding
 };
 using MenuPopupBindings = std::array<MenuPopupBinding, 4>;
 
+struct MenuPopupEvidence
+{
+    MenuPopupBindings placement;
+    MenuPopupBindings shownHandoffs;
+    bool discoveringHandoff = false;
+};
+
+// These bindings can keep the panel open and anchor its layer. They never
+// authorize repositioning the external window.
+MenuPopupBinding ProbeMenuHandoff(HWND target, HWND window);
+bool LiveMenuPopup(const MenuPopupBinding& binding);
+MenuPopupBinding ActiveMenuHandoff(const MenuPopupBinding& binding, const MenuPopupBindings& shown);
+
 inline bool SameMenuPopupStyles(bool standardMenu, LONG_PTR recordedStyle, LONG_PTR recordedExtendedStyle,
     LONG_PTR currentStyle, LONG_PTR currentExtendedStyle)
 {
@@ -79,8 +92,8 @@ private:
     std::array<Candidate, 4> windows_{};
 };
 
-// The worker blocks when idle. A process-scoped WinEvent hook exists only for
-// the short placement session; no global window enumeration or polling.
+// The worker blocks when idle. Placement observes the notification process.
+// Context gestures also listen briefly for top-level popup SHOW/HIDE events.
 class MenuPlacementGuard
 {
 public:
@@ -90,9 +103,10 @@ public:
     MenuPlacementGuard& operator=(const MenuPlacementGuard&) = delete;
     void Arm(HWND target, POINT anchor, RECT iconBounds, bool continuation, RECT barBounds = {}, bool contextGesture = false);
     void Cancel();
+    void CancelPlacement();
     // Read-only evidence from this gesture's short hook. Callers must recheck
     // HWND identity and visibility; the hook is not kept alive by retention.
-    MenuPopupBindings Popups(HWND target) const;
+    MenuPopupEvidence Popups(HWND target) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

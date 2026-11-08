@@ -671,7 +671,7 @@ void Service::ObserveForeground(HWND window, DWORD eventTime)
     const bool nativeReturn = impl_->connection && impl_->focus.Current() && window == impl_->connection->window &&
         static_cast<std::uint64_t>(Read(impl_->connection->shared->focusClaimed)) == impl_->focus.Current()->ticket.serial;
     if (impl_->focus.ObserveForeground(reinterpret_cast<std::uint64_t>(window), process, eventTime, nativeReturn))
-    { impl_->PublishFocus(); impl_->menuPlacement.Cancel(); }
+    { impl_->PublishFocus(); impl_->menuPlacement.CancelPlacement(); }
 }
 std::optional<FocusDelivery> Service::TakeFocusReturn(HWND origin, std::uint64_t serial)
 {
@@ -689,7 +689,7 @@ std::optional<FocusDelivery> Service::TakeFocusReturn(HWND origin, std::uint64_t
     impl_->menuPlacement.Cancel();
     return result;
 }
-MenuPopupBindings Service::MenuPopups(HWND target) const
+MenuPopupEvidence Service::MenuPopups(HWND target) const
 { return impl_->menuPlacement.Popups(target); }
 void Service::OpenNativeTray()
 {
