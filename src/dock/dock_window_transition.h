@@ -74,8 +74,6 @@ BYTE ResolveDockWindowTransitionOpacity(
 int ResolveDockWindowTransitionCornerRadius(
     const RECT& frame,
     const RECT& dockRect) noexcept;
-RECT InterpolateDockWindowTransitionRect(
-    const RECT& from, const RECT& to, double progress) noexcept;
 RECT ResolveDockWindowImageHostRect(
     const RECT& from, const RECT& to) noexcept;
 // Keep temporary animation HWNDs from covering any complete monitor. At most

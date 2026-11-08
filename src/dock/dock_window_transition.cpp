@@ -5,6 +5,7 @@
 #include "dock_minimize_protocol.h"
 #include "dock_window_rules.h"
 #include "dock_window_source_cloak.h"
+#include "layout/popup_motion_curve.h"
 #include "platform/shell_overlay_window.h"
 #include "settings/animation_settings.h"
 #include "platform/window_support/window_support_runtime.h"
@@ -18,6 +19,17 @@
 
 namespace
 {
+namespace motion = snowdesktop::popup_motion_curve;
+
+const motion::Timeline& WindowScaleTimeline(DockWindowTransitionDirection direction)
+{
+    // Both tracks express progress from the current rectangle to its target.
+    // A one-second track can be sampled at normalized progress on either path.
+    constexpr double durationMs = 1000.0;
+    static const auto minimize = motion::Build({}, 1.0, motion::ScaleFrequency(false, durationMs), durationMs);
+    static const auto restore = motion::Build({}, 1.0, motion::ScaleFrequency(true, durationMs), durationMs);
+    return direction == DockWindowTransitionDirection::Minimize ? minimize : restore;
+}
 
 constexpr wchar_t kDockWindowTransitionClassName[] =
     L"SnowDesktopDockWindowTransition";
@@ -494,10 +506,9 @@ int ResolveDockWindowTransitionCornerRadius(
         frameShortSide / 2);
 }
 
-RECT InterpolateDockWindowTransitionRect(
-    const RECT& from, const RECT& to, double progress) noexcept
+static RECT InterpolateDockWindowTransitionRect(
+    const RECT& from, const RECT& to, double eased) noexcept
 {
-    const double eased = EaseDockWindowTransition(progress);
     const auto interpolate = [eased](LONG start, LONG end) {
         return static_cast<LONG>(std::lround(
             start + (end - start) * eased));
@@ -1354,6 +1365,32 @@ HRESULT CreateSmoothStepAnimation(
     return hr;
 }
 
+static HRESULT CreateWindowScaleAnimation(IDCompositionDesktopDevice* device,
+    const motion::Timeline& timeline, float from, float to,
+    double durationMilliseconds, IDCompositionAnimation** animation)
+{
+    Microsoft::WRL::ComPtr<IDCompositionAnimation> result;
+    HRESULT hr = device->CreateAnimation(&result);
+    const double duration = durationMilliseconds / 1000.0;
+    const double delta = static_cast<double>(to) - from;
+    // Convert normalized progress to property units and normalized time to seconds.
+    const double velocityScale = delta / duration;
+    const double quadraticScale = velocityScale / duration;
+    const double cubicScale = quadraticScale / duration;
+    for (const auto& segment : timeline.segments)
+    {
+        if (FAILED(hr)) break;
+        hr = result->AddCubic(segment.startSeconds * duration,
+            static_cast<float>(from + segment.constant * delta),
+            static_cast<float>(segment.linear * velocityScale),
+            static_cast<float>(segment.quadratic * quadraticScale),
+            static_cast<float>(segment.cubic * cubicScale));
+    }
+    if (SUCCEEDED(hr)) hr = result->End(duration, to);
+    if (SUCCEEDED(hr)) *animation = result.Detach();
+    return hr;
+}
+
 bool DockWindowTransition::Reverse(
     DockWindowTransitionDirection direction,
     RestoreCallback restoreCallback)
@@ -2095,8 +2132,12 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacity;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> radiusX;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> radiusY;
+    const auto* scaleTimeline = effect_ == 1 ? &WindowScaleTimeline(direction_) : nullptr;
     auto create = [&](float from, float to,
                       IDCompositionAnimation** animation) {
+        if (scaleTimeline)
+            return CreateWindowScaleAnimation(compositionDevice_.Get(),
+                *scaleTimeline, from, to, animationDurationMs_, animation);
         return CreateSmoothStepAnimation(
             compositionDevice_.Get(), from, to,
             animationDurationMs_, animation);
@@ -2115,10 +2156,10 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
     if (SUCCEEDED(hr))
         hr = create(fromScaleY, toScaleY, &scaleY);
     if (SUCCEEDED(hr))
-        hr = create(
+        hr = CreateSmoothStepAnimation(compositionDevice_.Get(),
             static_cast<float>(animationFromOpacity_) / 255.0f,
             static_cast<float>(animationToOpacity_) / 255.0f,
-            &opacity);
+            animationDurationMs_, &opacity);
     if (SUCCEEDED(hr))
         hr = create(fromRadiusX, toRadiusX, &radiusX);
     if (SUCCEEDED(hr))
@@ -2207,16 +2248,18 @@ bool DockWindowTransition::ApplyFrame(double progress)
     if (!hwnd_ || !compositionSharedWindowActive_)
         return false;
 
+    const double eased = EaseDockWindowTransition(progress);
+    const double geometryProgress = effect_ == 1
+        ? motion::Evaluate(WindowScaleTimeline(direction_), std::clamp(progress, 0.0, 1.0)).position
+        : eased;
     RECT frame = InterpolateDockWindowTransitionRect(
-        fromRect_, toRect_, progress);
+        fromRect_, toRect_, geometryProgress);
     const int width = std::max(1L, frame.right - frame.left);
     const int height =
         std::max(1L, frame.bottom - frame.top);
     if (UsesCompositionImage() &&
         !ApplyOcclusion(imageHostRect_, 0))
         return false;
-    const double eased =
-        EaseDockWindowTransition(progress);
     BYTE frameOpacity =
         static_cast<BYTE>(std::clamp(
             static_cast<int>(std::lround(
