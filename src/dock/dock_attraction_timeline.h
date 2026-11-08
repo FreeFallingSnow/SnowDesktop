@@ -6,8 +6,10 @@
 namespace snowdesktop::dock_attraction
 {
 inline constexpr std::size_t TimelineSteps = 8;
-// Affine clip-parent matrix (six coefficients), then whole-mesh opacity.
-using Values = std::array<double, 7>;
+// The upper and lower horizontal edges, the shared diagonal, and its origin.
+using CellValues = std::array<double, 8>;
+inline constexpr std::array<std::array<std::size_t, 6>, 2> CellMatrixValueIndices{{
+    {0, 1, 4, 5, 6, 7}, {2, 3, 4, 5, 6, 7}}};
 template <std::size_t Grid>
 struct Mesh
 {
@@ -48,14 +50,16 @@ inline Mesh<Grid> TimelineFrame(Rect window, Rect dock, double from, double to, 
     return MeshFrame<Grid>(window, dock, dock_genie::Mix(from, to, dock_genie::Smooth(progress)));
 }
 template <std::size_t Grid>
-inline Values TriangleValues(const Mesh<Grid> &frame, std::size_t triangle, double hostX, double hostY) noexcept
+inline CellValues TimelineCellValues(const Mesh<Grid> &frame, std::size_t cell, double hostX, double hostY) noexcept
 {
-    const auto indices = TriangleVertices<Grid>(triangle);
-    const auto a = frame.vertices[indices[0]], b = frame.vertices[indices[1]], c = frame.vertices[indices[2]];
-    const Point horizontal = b - a, diagonal = c - b;
-    // The image maps its triangle corners to (0,0), (1,0), (1,1).
-    // A single s<=1 clip selects the triangle, including mirrored cells.
-    return {horizontal.x, horizontal.y, diagonal.x, diagonal.y, a.x - hostX, a.y - hostY, frame.opacity};
+    const auto [tl, tr, bl] = TriangleVertices<Grid>(cell * 2);
+    const auto br = bl + 1;
+    const Point top = frame.vertices[tr] - frame.vertices[tl];
+    const Point bottom = frame.vertices[br] - frame.vertices[bl];
+    const Point diagonal = frame.vertices[bl] - frame.vertices[tr];
+    const Point origin = frame.vertices[tr] - Point{hostX, hostY};
+    // In (s,t) = (u+v-1,v), both halves share TR=(0,0) and BL=(0,1).
+    return {top.x, top.y, bottom.x, bottom.y, diagonal.x, diagonal.y, origin.x, origin.y};
 }
 inline double MonotoneTangent(double previous, double current, double next) noexcept
 {
@@ -83,14 +87,12 @@ MeshTangents(const std::array<Mesh<Grid>, TimelineSteps + 1> &frames) noexcept
     }
     return tangents;
 }
-inline dock_genie::TimelineCubic TimelineSegment(const Values &first, const Values &last, const Values &firstTangent,
-                                                 const Values &lastTangent, std::size_t element,
-                                                 double duration) noexcept
+inline dock_genie::TimelineCubic TimelineSegment(double first, double last, double firstTangent,
+                                                 double lastTangent, double duration) noexcept
 {
-    const double dt = duration / TimelineSteps, delta = last[element] - first[element];
-    const double a = firstTangent[element], b = lastTangent[element];
-    return {static_cast<float>(first[element]), static_cast<float>(a / dt),
-            static_cast<float>((3 * delta - 2 * a - b) / (dt * dt)),
-            static_cast<float>((-2 * delta + a + b) / (dt * dt * dt))};
+    const double dt = duration / TimelineSteps, delta = last - first;
+    return {static_cast<float>(first), static_cast<float>(firstTangent / dt),
+            static_cast<float>((3 * delta - 2 * firstTangent - lastTangent) / (dt * dt)),
+            static_cast<float>((-2 * delta + firstTangent + lastTangent) / (dt * dt * dt))};
 }
 } // namespace snowdesktop::dock_attraction

@@ -402,9 +402,7 @@ void DockWindowTransition::RefreshOcclusion()
 {
     if (!presenting_ || !hwnd_)
         return;
-    const RECT bounds = UsesCompositionImage()
-        ? imageHostRect_ : lastFrameRect_;
-    if (!ApplyOcclusion(bounds))
+    if (!ApplyOcclusion(imageHostRect_))
         CompleteImmediately();
 }
 
@@ -921,10 +919,10 @@ bool DockWindowTransition::Start(
     if (startAction ==
         DockWindowTransitionStartAction::ReverseActive)
     {
-        if (restoreCloak_)
+        if (restoreCloak_ || !UsesCompositionImage())
         {
-            // The source may still be handling the old restore. Cancel its
-            // lease before the caller posts the newer native minimize.
+            // A pending restore can still own the source cloak or have only
+            // an empty presentation. Retire it before the newer minimize.
             Finish();
             return false;
         }
@@ -1031,13 +1029,23 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    if (!CreateSharedWindowImage())
+    // The fresh attraction restore is fully transparent until the real
+    // window has restored underneath it. Bind only at that geometry.
+    const bool deferImage = effect_ == 4 && direction_ == DockWindowTransitionDirection::Restore;
+    const auto& imageApi = snowdesktop::dock_thumbnail::WindowImageApi();
+    if (deferImage && (!imageApi.create || !imageApi.querySize))
+        imageResult_ = E_NOTIMPL;
+    const bool sceneReady = deferImage
+        ? SUCCEEDED(imageResult_) && EnsureCompositionVisuals()
+        : CreateSharedWindowImage();
+    if (!sceneReady)
     {
         LogPresentation(requestedEffect, L"native-system-animation");
         Cancel();
         nativeFallbackRequested_ = true;
         return false;
     }
+    if (deferImage) imageSource_ = L"deferred-restore";
 
     if (!EnumDisplayMonitors(nullptr, nullptr, CollectAnimationMonitor,
             reinterpret_cast<LPARAM>(&animationMonitorRects_)))
@@ -1048,8 +1056,7 @@ bool DockWindowTransition::Start(
     }
     // A fresh restore starts with a transparent point at the Dock. Its full
     // envelope must use actual restored geometry, after native preparation.
-    imageHostRect_ =
-        effect_ == 4 && direction_ == DockWindowTransitionDirection::Restore ? dockRect_ : ResolveImageHostRect();
+    imageHostRect_ = deferImage ? dockRect_ : ResolveImageHostRect();
     const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
         imageHostRect_, animationMonitorRects_);
     if (!safeHost)
@@ -1077,7 +1084,10 @@ bool DockWindowTransition::Start(
         hostWidth, hostHeight,
         SWP_NOACTIVATE);
 
-    if (!ApplyFrame(0.0))
+    const bool firstFrameReady = deferImage
+        ? ApplyOcclusion(imageHostRect_) && SUCCEEDED(compositionDevice_->Commit())
+        : ApplyFrame(0.0);
+    if (!firstFrameReady)
     {
         LogAbort(L"first-frame");
         Cancel();
@@ -1739,17 +1749,10 @@ bool DockWindowTransition::CreateAttractionMesh()
         const float height = static_cast<float>((cell.bottom - cell.top) * compositionImageSize_.cy);
         const float left = static_cast<float>(cell.left * compositionImageSize_.cx - crop.left);
         const float top = static_cast<float>(cell.top * compositionImageSize_.cy - crop.top);
-        const float sign = triangle % 2 == 0 ? 1.0f : -1.0f;
-        const float offsetS = triangle % 2 == 0 ? 0.0f : 2.0f;
-        const float offsetT = triangle % 2 == 0 ? 0.0f : 1.0f;
-        const D2D1_MATRIX_3X2_F toTriangle{sign / width,
-                                           0,
-                                           sign / height,
-                                           sign / height,
-                                           offsetS - sign * (left / width + top / height),
-                                           offsetT - sign * top / height};
+        const D2D1_MATRIX_3X2_F toCell{1.0f / width, 0, 1.0f / height, 1.0f / height,
+                                      -1.0f - (left / width + top / height), -top / height};
         if (SUCCEEDED(hr))
-            hr = static_cast<IDCompositionVisual *>(image.visual.Get())->SetTransform(toTriangle);
+            hr = static_cast<IDCompositionVisual *>(image.visual.Get())->SetTransform(toCell);
         const float cropLeft = static_cast<float>(crop.left), cropTop = static_cast<float>(crop.top);
         if (SUCCEEDED(hr))
             hr = image.visual->SetClip(D2D1::RectF(band.clip.left - cropLeft, band.clip.top - cropTop,
@@ -1758,13 +1761,14 @@ bool DockWindowTransition::CreateAttractionMesh()
             hr = image.visual->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
         if (SUCCEEDED(hr))
             hr = image.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-        // The source rectangle becomes a parallelogram in (s,t). Clipping
-        // s<=1 selects an affine triangle without any perspective division.
+        // Both halves use (s,t) = (u+v-1,v), with the diagonal at s=0.
         // Tiny overlap covers float roundoff; internal clips must not add AA
         // transparency independently on either side of a shared edge.
         const float diagonalGuard = std::min(0.02f, 0.25f / std::max(width, height));
         if (SUCCEEDED(hr))
-            hr = clipper->SetClip(D2D1::RectF(-16, -16, 1 + diagonalGuard, 16));
+            hr = clipper->SetClip(triangle % 2 == 0
+                ? D2D1::RectF(-17, -16, diagonalGuard, 16)
+                : D2D1::RectF(-diagonalGuard, -15, 17, 17));
         if (SUCCEEDED(hr))
             hr = clipper->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
         if (SUCCEEDED(hr))
@@ -1939,13 +1943,17 @@ bool DockWindowTransition::ApplyAttractionFrame(double collapsed, BYTE opacity)
     {
         const auto frame = attraction::MeshFrame<kAttractionGrid>(
             DeformationRect(windowRect_), DeformationRect(dockRect_), collapsed);
-        for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
+        for (std::size_t cell = 0; cell < attractionTriangles_.size() / 2 && SUCCEEDED(hr); ++cell)
         {
-            const auto value = attraction::TriangleValues(frame, triangle, imageHostRect_.left, imageHostRect_.top);
-            const D2D1_MATRIX_3X2_F matrix{static_cast<float>(value[0]), static_cast<float>(value[1]),
-                                           static_cast<float>(value[2]), static_cast<float>(value[3]),
-                                           static_cast<float>(value[4]), static_cast<float>(value[5])};
-            hr = attractionTriangles_[triangle]->SetTransform(matrix);
+            const auto value = attraction::TimelineCellValues(frame, cell, imageHostRect_.left, imageHostRect_.top);
+            for (std::size_t half = 0; half < 2 && SUCCEEDED(hr); ++half)
+            {
+                const auto [xx, xy, yx, yy, dx, dy] = attraction::CellMatrixValueIndices[half];
+                const D2D1_MATRIX_3X2_F matrix{static_cast<float>(value[xx]), static_cast<float>(value[xy]),
+                                               static_cast<float>(value[yx]), static_cast<float>(value[yy]),
+                                               static_cast<float>(value[dx]), static_cast<float>(value[dy])};
+                hr = attractionTriangles_[cell * 2 + half]->SetTransform(matrix);
+            }
         }
     }
     if (SUCCEEDED(hr))
@@ -1970,50 +1978,60 @@ bool DockWindowTransition::StartAttractionTimeline()
                                                  static_cast<double>(step) / attraction::TimelineSteps);
     const auto tangents = attraction::MeshTangents(frames);
     constexpr std::array<std::array<int, 2>, 6> elements{{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}};
+    constexpr auto cellCurveCount = attraction::CellValues{}.size();
+    const auto cellCount = attractionTriangles_.size() / 2;
     std::vector<Microsoft::WRL::ComPtr<IDCompositionAnimation>> owned;
     std::vector<IDCompositionAnimation *> animations;
-    owned.reserve(attractionTriangles_.size() * 6 + 1);
+    owned.reserve(cellCount * cellCurveCount + 1);
     animations.reserve(owned.capacity());
     const double duration = animationDurationMs_ / 1000.0, stepSeconds = duration / attraction::TimelineSteps;
-    HRESULT hr = S_OK;
-    for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
+    const auto createCurve = [&](const auto &valueAt, const auto &tangentAt, IDCompositionAnimation *&result) {
+        Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+        HRESULT hr = compositionDevice_->CreateAnimation(&animation);
+        for (std::size_t step = 0; step < attraction::TimelineSteps && SUCCEEDED(hr); ++step)
+        {
+            const auto curve = attraction::TimelineSegment(
+                valueAt(step), valueAt(step + 1), tangentAt(step), tangentAt(step + 1), duration);
+            hr = animation->AddCubic(step * stepSeconds, curve.constant, curve.linear, curve.quadratic, curve.cubic);
+        }
+        if (SUCCEEDED(hr)) hr = animation->End(duration, static_cast<float>(valueAt(attraction::TimelineSteps)));
+        if (SUCCEEDED(hr))
+        {
+            result = animation.Get();
+            animations.push_back(result);
+            owned.push_back(std::move(animation));
+        }
+        return hr;
+    };
+
+    IDCompositionAnimation *opacity = nullptr;
+    HRESULT hr = createCurve([&](std::size_t step) { return frames[step].opacity; },
+                             [&](std::size_t step) { return tangents[step].opacity; }, opacity);
+    if (SUCCEEDED(hr)) hr = compositionEffect_->SetOpacity(opacity);
+    for (std::size_t cell = 0; cell < cellCount && SUCCEEDED(hr); ++cell)
     {
-        Microsoft::WRL::ComPtr<IDCompositionMatrixTransform> transform;
-        hr = compositionDevice_->CreateMatrixTransform(&transform);
-        std::array<attraction::Values, attraction::TimelineSteps + 1> values{}, slopes{};
+        std::array<attraction::CellValues, attraction::TimelineSteps + 1> values{}, slopes{};
         for (std::size_t step = 0; step < frames.size(); ++step)
         {
-            values[step] = attraction::TriangleValues(frames[step], triangle, imageHostRect_.left, imageHostRect_.top);
-            slopes[step] = attraction::TriangleValues(tangents[step], triangle, 0, 0);
+            values[step] = attraction::TimelineCellValues(frames[step], cell, imageHostRect_.left, imageHostRect_.top);
+            slopes[step] = attraction::TimelineCellValues(tangents[step], cell, 0, 0);
         }
-        for (std::size_t element = 0; element < (triangle == 0 ? 7u : 6u) && SUCCEEDED(hr); ++element)
+        std::array<IDCompositionAnimation *, cellCurveCount> cellCurves{};
+        for (std::size_t element = 0; element < cellCurves.size() && SUCCEEDED(hr); ++element)
         {
-            Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
-            hr = compositionDevice_->CreateAnimation(&animation);
-            for (std::size_t step = 0; step < attraction::TimelineSteps && SUCCEEDED(hr); ++step)
-            {
-                const auto curve = attraction::TimelineSegment(values[step], values[step + 1], slopes[step],
-                                                               slopes[step + 1], element, duration);
-                hr =
-                    animation->AddCubic(step * stepSeconds, curve.constant, curve.linear, curve.quadratic, curve.cubic);
-            }
-            if (SUCCEEDED(hr))
-                hr = animation->End(duration, static_cast<float>(values.back()[element]));
-            if (SUCCEEDED(hr))
-            {
-                if (element == 6)
-                    hr = compositionEffect_->SetOpacity(animation.Get());
-                else
-                    hr = transform->SetMatrixElement(elements[element][0], elements[element][1], animation.Get());
-            }
-            if (SUCCEEDED(hr))
-            {
-                animations.push_back(animation.Get());
-                owned.push_back(std::move(animation));
-            }
+            hr = createCurve([&](std::size_t step) { return values[step][element]; },
+                             [&](std::size_t step) { return slopes[step][element]; }, cellCurves[element]);
         }
-        if (SUCCEEDED(hr))
-            hr = attractionTriangles_[triangle]->SetTransform(transform.Get());
+        for (std::size_t half = 0; half < 2 && SUCCEEDED(hr); ++half)
+        {
+            Microsoft::WRL::ComPtr<IDCompositionMatrixTransform> transform;
+            hr = compositionDevice_->CreateMatrixTransform(&transform);
+            for (std::size_t element = 0; element < elements.size() && SUCCEEDED(hr); ++element)
+                hr = transform->SetMatrixElement(elements[element][0], elements[element][1],
+                    cellCurves[attraction::CellMatrixValueIndices[half][element]]);
+            if (SUCCEEDED(hr))
+                hr = attractionTriangles_[cell * 2 + half]->SetTransform(transform.Get());
+        }
     }
     // A timeline replaces the submitted static transforms, even if it is
     // interrupted at the same collapse value as the previous static frame.
@@ -2603,7 +2621,7 @@ bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
     if (!sourceWindow_ || IsIconic(sourceWindow_) || !IsWindowVisible(sourceWindow_) ||
         !ResolveVisibleWindowRect(sourceWindow_, frame))
         return false;
-    if (!UsesCompositionImage()) return false;
+    if (!compositionTarget_) return false;
     RECT actualWindow{};
     if (!GetWindowRect(sourceWindow_, &actualWindow) || !IsUsableRect(actualWindow))
         return false;
@@ -2683,19 +2701,19 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
                 rebindResult = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
             }
         }
-        if (prepared && compositionSharedWindowActive_)
+        if (prepared && UsesCompositionImage())
         {
             rebindStage = L"image-detach";
             ClearGenieStrips();
             compositionWindowImage_.Reset();
             rebindResult = compositionVisual_->RemoveAllVisuals();
             prepared = SUCCEEDED(rebindResult);
-            if (prepared)
-            {
-                rebindStage = L"shared-image";
-                prepared = CreateSharedWindowImage();
-                rebindResult = imageResult_;
-            }
+        }
+        if (prepared)
+        {
+            rebindStage = L"shared-image";
+            prepared = CreateSharedWindowImage();
+            rebindResult = imageResult_;
         }
         hasLastFrame_ = false;
         compositionTimelineActive_ = false;
@@ -2818,7 +2836,7 @@ void DockWindowTransition::Finish()
     // The preallocated owner retains all old visuals and shared thumbnails.
     if (compositionEffect_) compositionEffect_->SetOpacity(0.0f);
     if (compositionTarget_) compositionTarget_->SetRoot(nullptr);
-    if (compositionImageActive_ && compositionDevice_) compositionDevice_->Commit();
+    if (compositionTarget_ && compositionDevice_) compositionDevice_->Commit();
     if (presenting_ && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)
@@ -2979,7 +2997,7 @@ bool DockWindowTransition::IsActive() const
         const auto snapshot = snowdesktop::window_support::WindowSupport().HelperSnapshot();
         if (snapshot.animationActive && snowdesktop::window_support::protocol::Current(snapshot.animationTarget)) return true;
     }
-    return sourceWindow_ != nullptr && compositionSharedWindowActive_;
+    return sourceWindow_ != nullptr && compositionTarget_;
 }
 
 bool DockWindowTransition::IsActiveFor(
