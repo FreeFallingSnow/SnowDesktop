@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "common/utils.h"
 #include "settings/animation_settings.h"
+#include "widget/view/widget_composition_layer_rules.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 #include "widgets/single_cell_widget_rules.h"
@@ -257,8 +258,14 @@ void DesktopApp::UpdateWidgetHoverExpansion(POINT point)
 
 bool DesktopApp::AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish)
 {
+    namespace layers = snowdesktop::widget_composition_layer_rules;
     const bool animate = !finish && snowdesktop::animation::RuntimeAnimationsEnabled();
     const auto tick = static_cast<std::uint64_t>(nowMilliseconds);
+    const bool canPresentChild = animate && !desktopBackdropFullCollectionPending_ &&
+        !widgetGroupTransition_.ShouldDeferPaint() &&
+        !layers::ShouldDeferWidgetSurfaceDraw(compositionPaintInProgress_,
+            IsAnyPersistentDockHostPainting(), floatingPopupCompositionPaintInProgress_,
+            desktopWidgetPointerBatchActive_);
     bool active = false;
     bool redraw = false;
     for (auto& [id, expansion] : widgetHoverExpansion_)
@@ -277,9 +284,26 @@ bool DesktopApp::AdvanceWidgetHoverExpansion(double nowMilliseconds, bool finish
         else expansion.ResetHidden();
         active |= expansion.IsAnimating();
 
+        // Intermediate heights only change the widget child and its glass.
+        // Keep desktop paint for first/final visibility and recovery.
+        if (canPresentChild && expansion.IsAnimating())
+        {
+            const auto child = desktopWidgetCompositionItems_.find(id);
+            if (child != desktopWidgetCompositionItems_.end() &&
+                child->second.visible && child->second.surface)
+            {
+                const RECT bounds = GetStandaloneWidgetFrameRect(widget);
+                if (EqualRect(&child->second.bounds, &bounds) ||
+                    SyncDesktopWidgetOcclusion(widget, bounds) ||
+                    QueueDesktopWidgetComposition(id))
+                    continue;
+            }
+        }
+
         RECT dirty = GetExpandedWidgetFrameRect(widget);
         if (IsRectEmpty(&dirty)) continue;
-        InflateRect(&dirty, 3, 3);
+        InflateRect(&dirty, layers::kWidgetSurfaceBorderOverdraw,
+            layers::kWidgetSurfaceBorderOverdraw);
         InvalidateRect(hwnd_, &dirty, FALSE);
         redraw = true;
     }
