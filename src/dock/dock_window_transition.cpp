@@ -133,22 +133,6 @@ double MonotonicTimeMilliseconds() noexcept
         counter.QuadPart) / ticksPerMillisecond;
 }
 
-HRGN CreateDockWindowTransitionRegion(
-    const RECT& bounds, int cornerRadius)
-{
-    if (cornerRadius <= 0)
-    {
-        return CreateRectRgn(
-            bounds.left, bounds.top,
-            bounds.right, bounds.bottom);
-    }
-    const int diameter = cornerRadius * 2;
-    return CreateRoundRectRgn(
-        bounds.left, bounds.top,
-        bounds.right, bounds.bottom,
-        diameter, diameter);
-}
-
 } // namespace
 
 struct DockWindowTransition::PresentationBarrier
@@ -356,14 +340,15 @@ std::optional<HRESULT> DockWindowTransition::PresentationBarrierResult(double no
     return std::nullopt;
 }
 
-HRGN CreateDockWindowTransitionOcclusionRegion(
-    const RECT& hostBounds, int cornerRadius,
+// Host and occluder bounds are physical screen pixels. The caller owns the
+// resulting region, which uses host-local coordinates.
+static HRGN CreateDockWindowTransitionOcclusionRegion(
+    const RECT& hostBounds,
     const std::vector<RECT>& occluders)
 {
-    const RECT localBounds{0, 0,
+    HRGN region = CreateRectRgn(0, 0,
         hostBounds.right - hostBounds.left,
-        hostBounds.bottom - hostBounds.top};
-    HRGN region = CreateDockWindowTransitionRegion(localBounds, cornerRadius);
+        hostBounds.bottom - hostBounds.top);
     if (!region)
         return nullptr;
     for (const RECT& occluder : occluders)
@@ -386,20 +371,18 @@ HRGN CreateDockWindowTransitionOcclusionRegion(
     return region;
 }
 
-bool DockWindowTransition::ApplyOcclusion(
-    const RECT& hostBounds, int cornerRadius)
+bool DockWindowTransition::ApplyOcclusion(const RECT& hostBounds)
 {
     const auto occluders = occlusionRectsProvider_
         ? occlusionRectsProvider_() : std::vector<RECT>{};
-    if (hasOcclusionRegion_ && cornerRadius == occlusionCornerRadius_ &&
+    if (hasOcclusionRegion_ &&
         EqualRect(&hostBounds, &occlusionHostBounds_) &&
         occluders.size() == occlusionRects_.size() &&
         std::equal(occluders.begin(), occluders.end(), occlusionRects_.begin(),
             [](const RECT& a, const RECT& b) { return EqualRect(&a, &b) != FALSE; }))
         return true;
 
-    HRGN region = CreateDockWindowTransitionOcclusionRegion(
-        hostBounds, cornerRadius, occluders);
+    HRGN region = CreateDockWindowTransitionOcclusionRegion(hostBounds, occluders);
     if (!region)
         return false;
     if (!SetWindowRgn(hwnd_, region, FALSE))
@@ -408,7 +391,6 @@ bool DockWindowTransition::ApplyOcclusion(
         return false;
     }
     occlusionHostBounds_ = hostBounds;
-    occlusionCornerRadius_ = cornerRadius;
     occlusionRects_ = occluders;
     hasOcclusionRegion_ = true;
     return true;
@@ -420,9 +402,7 @@ void DockWindowTransition::RefreshOcclusion()
         return;
     const RECT bounds = UsesCompositionImage()
         ? imageHostRect_ : lastFrameRect_;
-    const int radius = UsesCompositionImage()
-        ? 0 : ResolveDockWindowTransitionCornerRadius(bounds, dockRect_);
-    if (!ApplyOcclusion(bounds, radius))
+    if (!ApplyOcclusion(bounds))
         CompleteImmediately();
 }
 
@@ -478,32 +458,6 @@ BYTE ResolveDockWindowTransitionOpacity(
     return static_cast<BYTE>(std::clamp(
         static_cast<int>(std::lround(opacity)),
         0, 255));
-}
-
-int ResolveDockWindowTransitionCornerRadius(
-    const RECT& frame,
-    const RECT& dockRect) noexcept
-{
-    const int frameShortSide = std::min(
-        std::max(0L, frame.right - frame.left),
-        std::max(0L, frame.bottom - frame.top));
-    const int dockShortSide = std::min(
-        std::max(0L, dockRect.right - dockRect.left),
-        std::max(0L, dockRect.bottom - dockRect.top));
-    if (frameShortSide <= 1 ||
-        dockShortSide <= 1)
-        return 0;
-
-    // Deriving the radius from the Dock target makes the mask naturally follow
-    // the monitor DPI because Dock geometry is already expressed in physical
-    // pixels. Keep tiny targets useful and guard against malformed giant ones.
-    const int desiredRadius = std::clamp(
-        static_cast<int>(std::lround(
-            dockShortSide * 0.18)),
-        4, 48);
-    return std::min(
-        desiredRadius,
-        frameShortSide / 2);
 }
 
 static RECT InterpolateDockWindowTransitionRect(
@@ -2112,26 +2066,11 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
         static_cast<float>(compositionImageSize_.cx);
     const float toScaleY = static_cast<float>(height(toRect_)) /
         static_cast<float>(compositionImageSize_.cy);
-    const float fromRadiusX = static_cast<float>(
-        ResolveDockWindowTransitionCornerRadius(
-            fromRect_, dockRect_)) / fromScaleX;
-    const float fromRadiusY = static_cast<float>(
-        ResolveDockWindowTransitionCornerRadius(
-            fromRect_, dockRect_)) / fromScaleY;
-    const float toRadiusX = static_cast<float>(
-        ResolveDockWindowTransitionCornerRadius(
-            toRect_, dockRect_)) / toScaleX;
-    const float toRadiusY = static_cast<float>(
-        ResolveDockWindowTransitionCornerRadius(
-            toRect_, dockRect_)) / toScaleY;
-
     Microsoft::WRL::ComPtr<IDCompositionAnimation> offsetX;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> offsetY;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleX;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleY;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacity;
-    Microsoft::WRL::ComPtr<IDCompositionAnimation> radiusX;
-    Microsoft::WRL::ComPtr<IDCompositionAnimation> radiusY;
     const auto* scaleTimeline = effect_ == 1 ? &WindowScaleTimeline(direction_) : nullptr;
     auto create = [&](float from, float to,
                       IDCompositionAnimation** animation) {
@@ -2161,10 +2100,6 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
             static_cast<float>(animationToOpacity_) / 255.0f,
             animationDurationMs_, &opacity);
     if (SUCCEEDED(hr))
-        hr = create(fromRadiusX, toRadiusX, &radiusX);
-    if (SUCCEEDED(hr))
-        hr = create(fromRadiusY, toRadiusY, &radiusY);
-    if (SUCCEEDED(hr))
         hr = compositionVisual_->SetOffsetX(offsetX.Get());
     if (SUCCEEDED(hr))
         hr = compositionVisual_->SetOffsetY(offsetY.Get());
@@ -2174,25 +2109,9 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
         hr = compositionScaleTransform_->SetScaleY(scaleY.Get());
     if (SUCCEEDED(hr))
         hr = compositionEffect_->SetOpacity(opacity.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetTopLeftRadiusX(radiusX.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetTopLeftRadiusY(radiusY.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetTopRightRadiusX(radiusX.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetTopRightRadiusY(radiusY.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetBottomLeftRadiusX(radiusX.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetBottomLeftRadiusY(radiusY.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetBottomRightRadiusX(radiusX.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionClip_->SetBottomRightRadiusY(radiusY.Get());
-    const std::array<IDCompositionAnimation*, 7> animations{
+    const std::array<IDCompositionAnimation*, 5> animations{
         offsetX.Get(), offsetY.Get(), scaleX.Get(), scaleY.Get(),
-        opacity.Get(), radiusX.Get(), radiusY.Get()};
+        opacity.Get()};
     return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
 }
 
@@ -2258,7 +2177,7 @@ bool DockWindowTransition::ApplyFrame(double progress)
     const int height =
         std::max(1L, frame.bottom - frame.top);
     if (UsesCompositionImage() &&
-        !ApplyOcclusion(imageHostRect_, 0))
+        !ApplyOcclusion(imageHostRect_))
         return false;
     BYTE frameOpacity =
         static_cast<BYTE>(std::clamp(
@@ -2289,9 +2208,6 @@ bool DockWindowTransition::ApplyFrame(double progress)
         hasLastFrame_ = true;
         return true;
     }
-    const int cornerRadius =
-        ResolveDockWindowTransitionCornerRadius(
-            frame, dockRect_);
     const bool geometryChanged =
         !hasLastFrame_ ||
         EqualRect(&frame, &lastFrameRect_) == FALSE;
@@ -2333,28 +2249,6 @@ bool DockWindowTransition::ApplyFrame(double progress)
                 hr = compositionScaleTransform_->SetScaleX(scaleX);
             if (SUCCEEDED(hr))
                 hr = compositionScaleTransform_->SetScaleY(scaleY);
-            const float radiusX = scaleX > 0.0f
-                ? static_cast<float>(cornerRadius) / scaleX
-                : 0.0f;
-            const float radiusY = scaleY > 0.0f
-                ? static_cast<float>(cornerRadius) / scaleY
-                : 0.0f;
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetTopLeftRadiusX(radiusX);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetTopLeftRadiusY(radiusY);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetTopRightRadiusX(radiusX);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetTopRightRadiusY(radiusY);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetBottomLeftRadiusX(radiusX);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetBottomLeftRadiusY(radiusY);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetBottomRightRadiusX(radiusX);
-            if (SUCCEEDED(hr))
-                hr = compositionClip_->SetBottomRightRadiusY(radiusY);
         }
         if (SUCCEEDED(hr) && opacityChanged)
             hr = compositionEffect_->SetOpacity(
