@@ -2846,5 +2846,7 @@
   "settings.general.steamRoom.hideCard": "Ocultar",
   "settings.general.steamRoom.description": "Jogue com seus amigos do Steam em widgets de área de trabalho com suporte a multijogador.",
   "settings.general.steamRoom.usage": "Com o status de execução desativado, selecione «Entrar» no Steam. Com o status ativado e o cartão visível, você entra automaticamente ao receber um convite.",
-  "app.steam.invite_instance_busy": "A instância em execução do SnowDesktop já está em uma sala ou processando uma ação multijogador. Tente entrar novamente pelo Steam quando ela estiver disponível."
+  "app.steam.invite_instance_busy": "A instância em execução do SnowDesktop já está em uma sala ou processando uma ação multijogador. Tente entrar novamente pelo Steam quando ela estiver disponível.",
+  "settings.dock.blurReservedSpace": "Desfocar a área de trabalho atrás do Dock",
+  "settings.dock.blurReservedSpace.description": "Desfoca levemente a área de trabalho no espaço reservado ao Dock flutuante quando há uma janela maximizada nessa tela."
 }

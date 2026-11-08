@@ -3129,7 +3129,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.startIcon", "dock.searchIcon",
                 "dock.showWindowsButton", "dock.startMenuKeepTaskbarHidden", "dock.showQuickSearchButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
-                "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
+                "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace", "dock.blurReservedSpace",
                 "dock.showOnlyWhenSummoned"});
             generalPage_->Activate();
             dockPage_->Activate();

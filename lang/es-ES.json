@@ -2846,5 +2846,7 @@
   "settings.general.steamRoom.hideCard": "Ocultar",
   "settings.general.steamRoom.description": "Juega con tus amigos de Steam en los componentes de escritorio compatibles con el modo multijugador.",
   "settings.general.steamRoom.usage": "Con el estado de ejecución desactivado, pulsa «Unirse» en Steam. Si lo activas y la tarjeta está visible, te unirás automáticamente al recibir una invitación.",
-  "app.steam.invite_instance_busy": "La instancia de SnowDesktop que está en ejecución ya está en una sala o está procesando una acción multijugador. Intenta unirte de nuevo desde Steam cuando esté disponible."
+  "app.steam.invite_instance_busy": "La instancia de SnowDesktop que está en ejecución ya está en una sala o está procesando una acción multijugador. Intenta unirte de nuevo desde Steam cuando esté disponible.",
+  "settings.dock.blurReservedSpace": "Difuminar el escritorio detrás del Dock",
+  "settings.dock.blurReservedSpace.description": "Aplica un desenfoque suave al área del escritorio reservada para el Dock flotante si hay una ventana maximizada en esa pantalla."
 }

@@ -2846,5 +2846,7 @@
   "settings.general.steamRoom.hideCard": "非表示",
   "settings.general.steamRoom.description": "オンライン対戦に対応したデスクトップウィジェットで Steam のフレンドと遊べます。",
   "settings.general.steamRoom.usage": "実行中の状態表示がオフの場合は、Steam の招待で「参加」を選んでください。オンでカードを表示している場合は、フレンドからの招待に自動で参加します。",
-  "app.steam.invite_instance_busy": "実行中の SnowDesktop はすでにルームに参加しているか、マルチプレイの操作を処理中です。ルームから退出するか、処理が終わってから Steam で再度参加してください。"
+  "app.steam.invite_instance_busy": "実行中の SnowDesktop はすでにルームに参加しているか、マルチプレイの操作を処理中です。ルームから退出するか、処理が終わってから Steam で再度参加してください。",
+  "settings.dock.blurReservedSpace": "Dock の背後のデスクトップをぼかす",
+  "settings.dock.blurReservedSpace.description": "そのディスプレイに最大化されたウィンドウがある場合、フローティング Dock のために確保した領域のデスクトップを軽くぼかします。"
 }

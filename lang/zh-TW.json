@@ -2846,5 +2846,7 @@
   "settings.general.steamRoom.hideCard": "隱藏",
   "settings.general.steamRoom.description": "和 Steam 好友一起玩支援連線的桌面元件。",
   "settings.general.steamRoom.usage": "關閉 Steam 執行狀態時，在 Steam 邀請中按一下「加入」。開啟執行狀態並顯示卡片時，收到好友邀請會自動加入。",
-  "app.steam.invite_instance_busy": "目前執行中的 SnowDesktop 已在房間中，或正在處理連線操作。離開房間或等操作結束後，請在 Steam 中重新加入。"
+  "app.steam.invite_instance_busy": "目前執行中的 SnowDesktop 已在房間中，或正在處理連線操作。離開房間或等操作結束後，請在 Steam 中重新加入。",
+  "settings.dock.blurReservedSpace": "模糊 Dock 後方桌面",
+  "settings.dock.blurReservedSpace.description": "該螢幕有最大化視窗時，輕微模糊為島式 Dock 預留區域內的桌面。"
 }

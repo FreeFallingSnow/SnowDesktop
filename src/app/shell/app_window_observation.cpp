@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock/dock_appbar.h"
 #include "platform/window_observation.h"
 
 void DesktopApp::RefreshWindowObservations()
@@ -33,6 +34,26 @@ void DesktopApp::RefreshWindowObservations()
             return observedMonitorWindows_.at(entry.first).fullscreenSource != entry.second.fullscreenSource;
         });
     if (sceneChanged) ++monitorSceneRevision_;
+    if (sceneChanged && desktop && generalSettings_.dockEnabled &&
+        dockSettings_.UsesReservedSpaceBackdrop() && dockAppBars_)
+    {
+        const auto maximized = [](const auto& monitors, HMONITOR monitor) {
+            const auto found = monitors.find(monitor);
+            return found != monitors.end() && found->second.maximized;
+        };
+        for (const auto& page : pages)
+        {
+            const auto monitor = MonitorFromRect(&page, MONITOR_DEFAULTTONULL);
+            if (!monitor || maximized(observedMonitorWindows_, monitor) ==
+                maximized(snapshot.monitors, monitor))
+                continue;
+            if (auto area = dockAppBars_->ApprovedArea(monitor))
+            {
+                OffsetRect(&*area, -left, -top);
+                InvalidateRect(desktop, &*area, FALSE);
+            }
+        }
+    }
     observedMonitorWindows_ = std::move(snapshot.monitors);
     {
         std::scoped_lock lock(windowPlacementMutex_);

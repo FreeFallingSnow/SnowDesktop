@@ -105,6 +105,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.lastMonitorUseHomeSize", "settings.bars.homeSize", "settings.bars.homeSize.description"},
     {SettingsPage::StatusBar, "statusBar.mergedBarHeight", "settings.bars.height", "settings.bars.height.description"},
     {SettingsPage::Dock, "dock.reserveScreenSpace", "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description"},
+    {SettingsPage::Dock, "dock.blurReservedSpace", "settings.dock.blurReservedSpace", "settings.dock.blurReservedSpace.description"},
     {SettingsPage::Taskbar, "taskbar.suppressSystemTaskbar", "settings.dock.suppressTaskbar", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::AnimationPerformance, "animation.mode",
         "settings.animation.mode", "settings.animation.mode.description"},

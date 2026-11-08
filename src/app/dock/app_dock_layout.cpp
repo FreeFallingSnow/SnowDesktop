@@ -156,7 +156,11 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     }
     const bool reserveSystemWorkArea = dockSettings_.reserveScreenSpace && !dockSettings_.showOnlyWhenSummoned;
     if (reserveSystemWorkArea && !dockAppBars_)
-        dockAppBars_ = std::make_unique<snowdesktop::DockAppBars>([this] { ScheduleDisplayTopologyRefresh(); });
+        dockAppBars_ = std::make_unique<snowdesktop::DockAppBars>([this] {
+            ScheduleDisplayTopologyRefresh();
+            if (hwnd_ && dockSettings_.UsesReservedSpaceBackdrop())
+                InvalidateRect(hwnd_, nullptr, FALSE);
+        });
     std::vector<snowdesktop::DockAppBarReservation> registrations;
     const UINT edge = dockSettings_.position == DockPosition::Left ? ABE_LEFT :
         dockSettings_.position == DockPosition::Right ? ABE_RIGHT :

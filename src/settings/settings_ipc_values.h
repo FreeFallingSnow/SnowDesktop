@@ -49,7 +49,8 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications,
-    v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset);
+    v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset,
+    v.blurReservedSpace);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
     v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled, v.favoritesEnabled, v.favorites);

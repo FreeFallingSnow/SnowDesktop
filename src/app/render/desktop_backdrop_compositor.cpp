@@ -381,6 +381,7 @@ struct DesktopBackdropCompositor::Impl
         wuc::CompositionGeometricClip clip{nullptr};
         wuc::CompositionGeometry customGeometry{nullptr};
         bool seen = false;
+        bool background = false;
         int iconShape = -1;
         SIZE iconSize{};
         RECT iconFrame{};
@@ -493,7 +494,7 @@ struct DesktopBackdropCompositor::Impl
     std::vector<PanelVisual> panels;
     std::unordered_map<std::uintptr_t, std::size_t> panelOwners;
 
-    auto FindPanel(const RECT& frame, std::uintptr_t ownerKey)
+    auto FindPanel(const RECT& frame, std::uintptr_t ownerKey, bool background = false)
     {
         if (ownerKey)
         {
@@ -502,8 +503,9 @@ struct DesktopBackdropCompositor::Impl
                 panels.begin() + static_cast<std::ptrdiff_t>(owner->second);
         }
         return std::find_if(panels.begin(), panels.end(), [&](const auto& panel) {
-            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
-                panel.ownerKey, panel.frame, ownerKey, frame);
+            return panel.background == background &&
+                snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                    panel.ownerKey, panel.frame, ownerKey, frame);
         });
     }
 
@@ -1968,9 +1970,37 @@ bool DesktopBackdropCompositor::AddPanel(
     return UpdatePanel(frame, cornerRadius, blurRadius, ownerKey, smoothCorners, false);
 }
 
+void DesktopBackdropCompositor::SetBackgroundPanels(
+    std::span<const RECT> frames, float blurRadius)
+{
+    if (!impl_->available || !impl_->collectingFrame) return;
+    try
+    {
+        for (auto panel = impl_->panels.begin(); panel != impl_->panels.end();)
+        {
+            if (!panel->background || std::any_of(frames.begin(), frames.end(),
+                [&](const RECT& frame) { return EqualRect(&panel->frame, &frame) != FALSE; }))
+            {
+                ++panel;
+                continue;
+            }
+            impl_->root.Children().Remove(panel->visual);
+            panel->visual.Brush(nullptr);
+            panel = impl_->ErasePanel(panel);
+            impl_->blurFactoriesDirty = true;
+        }
+        for (const RECT& frame : frames)
+            UpdatePanel(frame, 0.0f, blurRadius, 0, false, false, true);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 bool DesktopBackdropCompositor::UpdatePanel(
     const RECT& frame, float cornerRadius,
-    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners, bool customClip)
+    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners, bool customClip, bool background)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -1997,12 +2027,13 @@ bool DesktopBackdropCompositor::UpdatePanel(
 
     try
     {
-        auto existing = impl_->FindPanel(frame, ownerKey);
+        auto existing = impl_->FindPanel(frame, ownerKey, background);
         if (existing == impl_->panels.end())
         {
             Impl::PanelVisual panel{};
             panel.frame = frame;
             panel.ownerKey = ownerKey;
+            panel.background = background;
             panel.cornerRadius = resolvedRadius;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
@@ -2010,7 +2041,10 @@ bool DesktopBackdropCompositor::UpdatePanel(
             panel.clip = impl_->compositor.CreateGeometricClip(panel.geometry);
             panel.submittedClip = panel.geometry;
             panel.visual.Clip(panel.clip);
-            impl_->root.Children().InsertAtTop(panel.visual);
+            if (background)
+                impl_->root.Children().InsertAtBottom(panel.visual);
+            else
+                impl_->root.Children().InsertAtTop(panel.visual);
             impl_->panels.push_back(std::move(panel));
             existing = std::prev(impl_->panels.end());
             if (ownerKey) impl_->panelOwners.emplace(ownerKey, impl_->panels.size() - 1);
@@ -2102,7 +2136,7 @@ bool DesktopBackdropCompositor::HasPanelContaining(const RECT& frame) const
                 frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
         });
     return std::any_of(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
-        return panel.iconShape < 0 && panel.largeIconShape < 0 && panel.seen &&
+        return !panel.background && panel.iconShape < 0 && panel.largeIconShape < 0 && panel.seen &&
             frame.left >= panel.frame.left && frame.top >= panel.frame.top &&
             frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
     });
@@ -2311,7 +2345,9 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ow
     if (!impl_->available || !impl_->root)
         return false;
     auto existing = ownerKey ? impl_->FindPanel(frame, ownerKey) :
-        std::find_if(impl_->panels.begin(), impl_->panels.end(), matches);
+        std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
+            return !panel.background && matches(panel);
+        });
     if (existing == impl_->panels.end())
         return false;
 
@@ -2348,7 +2384,7 @@ bool DesktopBackdropCompositor::KeepPanel(
     const auto existing = std::find_if(
         impl_->panels.begin(), impl_->panels.end(),
         [&frame, ownerKey](const Impl::PanelVisual& panel) {
-            return (ownerKey == 0 || panel.ownerKey == ownerKey) &&
+            return !panel.background && (ownerKey == 0 || panel.ownerKey == ownerKey) &&
                 EqualRect(&panel.frame, &frame) != FALSE;
         });
     if (existing == impl_->panels.end())
@@ -2373,7 +2409,7 @@ bool DesktopBackdropCompositor::SetPanelOpacity(
     const auto existing = std::find_if(
         impl_->panels.begin(), impl_->panels.end(),
         [&frame](const Impl::PanelVisual& panel) {
-            return EqualRect(&panel.frame, &frame) != FALSE;
+            return !panel.background && EqualRect(&panel.frame, &frame) != FALSE;
         });
     if (existing == impl_->panels.end())
         return false;

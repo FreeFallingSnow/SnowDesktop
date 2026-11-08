@@ -30,6 +30,7 @@ public:
     void Configure(const std::vector<DockAppBarReservation>& reservations);
     RECT RestoreWorkArea(HMONITOR monitor, RECT work) const;
     std::optional<RECT> Approved(const DockAppBarReservation& request) const;
+    std::optional<RECT> ApprovedArea(HMONITOR monitor) const;
 private:
     struct Window;
     std::function<void()> changed_;

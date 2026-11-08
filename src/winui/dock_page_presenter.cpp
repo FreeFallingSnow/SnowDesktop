@@ -458,6 +458,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
     muxc::ToggleSwitch reserveScreenSpaceToggle{nullptr};
+    muxc::ToggleSwitch blurReservedSpaceToggle{nullptr};
     muxc::InfoBar suppressionStatus{nullptr};
     muxc::ToggleSwitch showFrequentItemsToggle{nullptr};
     muxc::ToggleSwitch keepWhenDesktopHiddenToggle{nullptr};
@@ -503,6 +504,7 @@ struct DockPagePresenter::Impl
     SettingRow suppressTaskbarRow;
     SettingRow taskbarSuppressRow;
     SettingRow reserveScreenSpaceRow;
+    SettingRow blurReservedSpaceRow;
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
     SettingRow showOnlyWhenSummonedRow;
@@ -567,6 +569,7 @@ struct DockPagePresenter::Impl
     winrt::event_token suppressTaskbarToken{};
     winrt::event_token taskbarSuppressToken{};
     winrt::event_token reserveScreenSpaceToken{};
+    winrt::event_token blurReservedSpaceToken{};
     winrt::event_token showFrequentItemsToken{};
     winrt::event_token keepWhenDesktopHiddenToken{};
     winrt::event_token allowDesktopContentOverlapToken{};
@@ -701,6 +704,7 @@ struct DockPagePresenter::Impl
         suppressTaskbarToggle = muxc::ToggleSwitch{};
         taskbarSuppressToggle = muxc::ToggleSwitch{};
         reserveScreenSpaceToggle = muxc::ToggleSwitch{};
+        blurReservedSpaceToggle = muxc::ToggleSwitch{};
         showFrequentItemsToggle = muxc::ToggleSwitch{};
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
         allowDesktopContentOverlapToggle = muxc::ToggleSwitch{};
@@ -843,6 +847,9 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         behaviorCard.content.Children().Append(allowDesktopContentOverlapRow.root);
         behaviorCard.content.Children().Append(reserveScreenSpaceRow.root);
+        blurReservedSpaceRow.Initialize(blurReservedSpaceToggle);
+        blurReservedSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        behaviorCard.content.Children().Append(blurReservedSpaceRow.root);
 
         suppressionStatus = muxc::InfoBar{};
         suppressionStatus.IsClosable(false);
@@ -1490,6 +1497,12 @@ struct DockPagePresenter::Impl
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) { settings.reserveScreenSpace = value; });
             });
+        blurReservedSpaceToken = blurReservedSpaceToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = blurReservedSpaceToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.blurReservedSpace = value; });
+            });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -2126,6 +2139,7 @@ struct DockPagePresenter::Impl
         taskbarMode.SelectedIndex(TaskbarDisplayMode(settings));
         homeSize.IsOn(settings.lastMonitorUseHomeSize);
         reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
+        blurReservedSpaceToggle.IsOn(settings.blurReservedSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
         startMenuKeepTaskbarHiddenToggle.IsOn(settings.startMenuKeepTaskbarHidden);
         showQuickSearchButtonToggle.IsOn(settings.showQuickSearchButton);
@@ -2209,6 +2223,9 @@ struct DockPagePresenter::Impl
         }
         homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
+            !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
+        blurReservedSpaceRow.SetEnabled(dockEnabled &&
+            layoutCombo.SelectedIndex() == 0 && reserveScreenSpaceToggle.IsOn() &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled);
         startMenuKeepTaskbarHiddenRow.SetEnabled(startMenuAllowed && dockEnabled && showWindowsButtonToggle.IsOn() &&
@@ -3007,6 +3024,10 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
             L("settings.dock.reserveScreenSpace.description", L"Keep maximized windows clear of the standalone Dock. A summon-only Dock reserves no space."));
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
+        blurReservedSpaceRow.SetText(L("settings.dock.blurReservedSpace", L"Blur desktop behind Dock"),
+            L("settings.dock.blurReservedSpace.description",
+                L"Softens the desktop in the space reserved for the floating Dock when that display has a maximized window."));
+        muxa::AutomationProperties::SetName(blurReservedSpaceToggle, blurReservedSpaceRow.label.Text());
         for (const auto& button : {startIconBeautify, searchIconBeautify})
         {
             muxc::FontIcon icon;
@@ -3338,12 +3359,21 @@ struct DockPagePresenter::Impl
             id == "dock.floatingEdgeSwipeEnabled")
             return edgeRevealTarget();
         if (id == "dock.suppressSystemTaskbar") return taskbarMode;
-        if (id == "dock.reserveScreenSpace" || id == "dock.allowDesktopContentOverlap")
+        if (id == "dock.reserveScreenSpace" || id == "dock.allowDesktopContentOverlap" ||
+            id == "dock.blurReservedSpace")
         {
             if (showOnlyWhenSummonedToggle.IsOn())
                 return dockTarget(prerequisiteTarget(showOnlyWhenSummonedToggle, "disable", showOnlyWhenSummonedRow.label.Text().c_str()));
             if (spaceReservedByStatusBar)
                 return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
+            if (id == "dock.blurReservedSpace")
+            {
+                if (layoutCombo.SelectedIndex() != 0)
+                    return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
+                if (!reserveScreenSpaceToggle.IsOn())
+                    return dockTarget(prerequisiteTarget(reserveScreenSpaceToggle, "dependency", reserveScreenSpaceRow.label.Text().c_str()));
+                return dockTarget(blurReservedSpaceToggle);
+            }
             return dockTarget(id == "dock.reserveScreenSpace" ? reserveScreenSpaceToggle : allowDesktopContentOverlapToggle);
         }
         if (id == "dock.startIcon") return dockTarget(startIconChoose);
@@ -3546,6 +3576,7 @@ struct DockPagePresenter::Impl
             suppressTaskbarToggle.Toggled(suppressTaskbarToken);
             taskbarSuppressToggle.Toggled(taskbarSuppressToken);
             reserveScreenSpaceToggle.Toggled(reserveScreenSpaceToken);
+            blurReservedSpaceToggle.Toggled(blurReservedSpaceToken);
             showFrequentItemsToggle.Toggled(showFrequentItemsToken);
             keepWhenDesktopHiddenToggle.Toggled(keepWhenDesktopHiddenToken);
             allowDesktopContentOverlapToggle.Toggled(

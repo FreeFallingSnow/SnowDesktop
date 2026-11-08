@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <span>
 #include <string>
 
 struct ID2D1Device;
@@ -122,6 +123,9 @@ public:
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
         std::uintptr_t ownerKey = 0, bool smoothCorners = true);
+    // Replace the desktop's rectangular background blur regions in the
+    // current frame, below the ordinary material panels.
+    void SetBackgroundPanels(std::span<const RECT> frames, float blurRadius);
     // Host-private icon regions share the same native blur backend.
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey,
@@ -176,7 +180,7 @@ public:
 
 private:
     bool UpdatePanel(const RECT& frame, float cornerRadius, float blurRadius,
-        std::uintptr_t ownerKey, bool smoothCorners, bool customClip);
+        std::uintptr_t ownerKey, bool smoothCorners, bool customClip, bool background = false);
     bool SetDeformationTransform(const RECT& panelFrame, const RECT& dockFrame,
         int edge, float collapsed, float opacity, bool attraction);
     bool InitializeInternal(
