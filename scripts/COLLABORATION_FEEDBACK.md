@@ -121,6 +121,8 @@
 
 ### CF-011 独立检查等待共享编辑屏障
 
+- **搜索验证计划（2026-11-08）**：Task `quick-search-grid-navigation` 在批次 `90e4819966cb40f28536032064ec8748` 修订 0 查询 `scripts/test.bat list`，返回码 1，原文为 `Shared output busy: batch 90e4819966cb40f28536032064ec8748 / editing / quick-search-grid-navigation:editing.`。通过 CMake 声明和现有 CTest 清单确认 `behavior_search` 后继续原批次。目录查询仍受自身编辑屏障限制，后续待分离查询与配置执行权。
+
 - **本轮目录查询（2026-11-08）**：Task `dock-hover-expand-20261108` 在批次 `d7c34e793bd344e19c56e369c1e793a7` 修订 0 执行 `scripts/test.bat list`，返回码 1，原始回执为 `Shared output busy: batch d7c34e793bd344e19c56e369c1e793a7 / editing / dock-hover-expand-20261108:editing, minimize-scale-easing:finished.`。改查当前 CMake 登记与现有 CTest 清单，再提交原共享批次。只读目录查询仍受编辑屏障限制，未另启构建。后续仍需将已有清单查询与配置、编译执行权分开。
 
 - **空文档批次受构建租约阻塞（2026-11-07）**：Task `geometric-icon-title-drop` 的批次 `17540adb42054997915cb0b3dae40bdc` 修订 0 声明 `docs/none`，轻量检查通过，`ready-and-wait` 随后返回码 1，原文为 `Unexpected occupied build lease; inspect status without clearing registrations.`。当时只读状态显示并行批次 `96150660c82445c883d13f4bb56edd84` 的 Run `01e1c6c6523e4aa5865f2bd47aa41f3e` 正在执行，状态回执未识别锁持有人。源码确认 `build_manager.ps1` 在判定可直接发布空计划前尝试取得 `build.lock`。并行 Run 归档后重开同一文档批次补记证据，产品构建无需重跑。下一步分离空计划发布所需的状态事务与执行租约，或在租约占用时保留前台等待。

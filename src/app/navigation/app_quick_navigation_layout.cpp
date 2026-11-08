@@ -6,6 +6,10 @@
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 
+#include <cstdlib>
+#include <limits>
+#include <utility>
+
 // Quick-navigation geometry, tabs and content hit testing.
 
 RECT DesktopApp::GetQuickNavigationRect() const
@@ -1137,19 +1141,18 @@ DesktopApp::GetQuickNavigationKeyboardTargets() const
 
     const RECT overlay = quickNavigation_->rect;
     const RECT content = GetQuickNavigationContentRect(overlay);
-    const std::vector<QuickNavigationEntry> entries = GetQuickNavigationEntries();
-    targets.reserve(entries.size() + GetQuickNavigationVisibleAppResultCount() +
+    const QuickNavigationContentModel model = BuildQuickNavigationContentModel();
+    const std::vector<RECT> itemRects = GetQuickNavigationItemRects(overlay, model);
+    targets.reserve(itemRects.size() + GetQuickNavigationVisibleAppResultCount() +
         quickNavigation_->everythingResults.size() + 2);
-    for (size_t i = 0; i < entries.size(); ++i)
-        targets.push_back({ QuickNavigationKeyboardTargetKind::Item,
-            i, GetQuickNavigationItemRect(overlay, i) });
+    for (size_t i = 0; i < itemRects.size(); ++i)
+        targets.push_back({ QuickNavigationKeyboardTargetKind::Item, i, itemRects[i] });
 
     if (GetQuickNavigationEffectiveSearchText().empty())
         return targets;
 
     const int columns = std::max(1, GetQuickNavigationColumnCount(overlay));
-    const int desktopRows = entries.empty() ? 0 :
-        (static_cast<int>(entries.size()) + columns - 1) / columns;
+    const int desktopRows = (static_cast<int>(itemRects.size()) + columns - 1) / columns;
     const int headerHeight = QuickNavScale(28);
     const int gap = QuickNavScale(8);
     const int rowHeight = QuickNavScale(navigationSettings_.layout.resultRowHeight);
@@ -1238,7 +1241,8 @@ bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
                 key);
     const bool directionKey = key == VK_LEFT || key == VK_RIGHT ||
         key == VK_UP || key == VK_DOWN;
-    if (!quickNavigation_->open || (!directionKey && key != VK_RETURN))
+    if (!quickNavigation_->open || (!directionKey && key != VK_RETURN) ||
+        quickNavigation_->menu != QuickNavigationMenu::None || UseQuickNavigationList())
         return false;
 
     std::vector<QuickNavigationKeyboardTarget> targets =
@@ -1280,48 +1284,35 @@ bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
     }
     else
     {
+        const bool horizontal = key == VK_LEFT || key == VK_RIGHT;
+        const bool forward = key == VK_RIGHT || key == VK_DOWN;
         const RECT currentRect = targets[current].rect;
         const long long currentX =
             (static_cast<long long>(currentRect.left) + currentRect.right) / 2;
         const long long currentY =
             (static_cast<long long>(currentRect.top) + currentRect.bottom) / 2;
-        long long bestScore = std::numeric_limits<long long>::max();
-        size_t best = static_cast<size_t>(-1);
+        const long long farthest = std::numeric_limits<long long>::max();
+        std::pair<long long, long long> bestDistance{ farthest, farthest };
         for (size_t i = 0; i < targets.size(); ++i)
         {
-            if (i == current) continue;
             const RECT candidateRect = targets[i].rect;
-            const long long candidateX =
-                (static_cast<long long>(candidateRect.left) + candidateRect.right) / 2;
-            const long long candidateY =
-                (static_cast<long long>(candidateRect.top) + candidateRect.bottom) / 2;
-            const long long dx = candidateX - currentX;
-            const long long dy = candidateY - currentY;
-            const bool inDirection =
-                (key == VK_LEFT && dx < 0) ||
-                (key == VK_RIGHT && dx > 0) ||
-                (key == VK_UP && dy < 0) ||
-                (key == VK_DOWN && dy > 0);
-            if (!inDirection) continue;
+            const long long dx =
+                (static_cast<long long>(candidateRect.left) + candidateRect.right) / 2 - currentX;
+            const long long dy =
+                (static_cast<long long>(candidateRect.top) + candidateRect.bottom) / 2 - currentY;
+            const long long delta = horizontal ? dx : dy;
+            const long long distance = forward ? delta : -delta;
+            if (distance <= 0 || (horizontal && dy != 0))
+                continue;
 
-            const long long primary = (key == VK_LEFT || key == VK_RIGHT)
-                ? std::abs(dx) : std::abs(dy);
-            const long long secondary = (key == VK_LEFT || key == VK_RIGHT)
-                ? std::abs(dy) : std::abs(dx);
-            if (primary * 2 < secondary) continue;
-            const long long score = primary * 4 + secondary;
-            if (score < bestScore)
+            // For vertical moves, choose the adjacent row before comparing columns.
+            const std::pair<long long, long long> candidateDistance{ distance, std::abs(dx) };
+            if (candidateDistance < bestDistance)
             {
-                bestScore = score;
-                best = i;
+                bestDistance = candidateDistance;
+                next = i;
             }
         }
-        if (best < targets.size())
-            next = best;
-        else if ((key == VK_LEFT || key == VK_UP) && current > 0)
-            next = current - 1;
-        else if ((key == VK_RIGHT || key == VK_DOWN) && current + 1 < targets.size())
-            next = current + 1;
     }
 
     quickNavigation_->keyboardTargetKind = targets[next].kind;
