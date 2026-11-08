@@ -34,7 +34,6 @@ struct Point
 };
 using Patch = std::array<Point, 12>;
 inline constexpr std::size_t GridSize = 16;
-inline constexpr std::size_t CellCount = GridSize * GridSize;
 
 inline Point Bezier(Point a, Point b, Point c, Point d, double t) noexcept
 {
@@ -159,11 +158,12 @@ struct Cell
 {
     double left, top, right, bottom;
 };
+template <std::size_t Grid = GridSize>
 inline Cell SourceCell(std::size_t index) noexcept
 {
-    const auto x = index % GridSize, y = index / GridSize;
-    return {static_cast<double>(x) / GridSize, static_cast<double>(y) / GridSize, static_cast<double>(x + 1) / GridSize,
-            static_cast<double>(y + 1) / GridSize};
+    const auto x = index % Grid, y = index / Grid;
+    return {static_cast<double>(x) / Grid, static_cast<double>(y) / Grid, static_cast<double>(x + 1) / Grid,
+            static_cast<double>(y + 1) / Grid};
 }
 inline double Opacity(double collapsed) noexcept
 {

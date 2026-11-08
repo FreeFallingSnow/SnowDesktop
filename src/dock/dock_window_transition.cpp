@@ -37,6 +37,10 @@ std::atomic<unsigned> presentationWaitJobs{0};
 std::atomic<unsigned> restoreCloakJobs{0};
 std::atomic<unsigned> sceneRetirementJobs{0};
 constexpr UINT kRetireSceneWindow = WM_APP + 51;
+// Every Dock triangle owns a live DWM thumbnail and six compositor curves.
+// Use a lighter mesh here than in Quick Navigation's bitmap renderer.
+constexpr std::size_t kAttractionGrid = 12;
+using AttractionMesh = snowdesktop::dock_attraction::Mesh<kAttractionGrid>;
 
 BOOL CALLBACK CollectAnimationMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
 {
@@ -65,23 +69,10 @@ struct GenieSourceBand
     RECT crop;
 };
 
-GenieSourceBand ResolveGenieSourceBand(SIZE size, snowdesktop::dock_genie::Edge edge, std::size_t index,
-                                       bool attraction = false) noexcept
+GenieSourceBand ResolveSourceBand(SIZE size, D2D1_RECT_F clip) noexcept
 {
-    const float width = static_cast<float>(size.cx), height = static_cast<float>(size.cy);
-    const float begin = static_cast<float>(index) / snowdesktop::dock_genie::StripCount;
-    const float end = static_cast<float>(index + 1) / snowdesktop::dock_genie::StripCount;
     // Preserve the fractional overlap, with integer crops providing its
     // bilinear sampling neighbours and no change to the image's pixel scale.
-    const auto cell = snowdesktop::dock_attraction::SourceCell(index);
-    const D2D1_RECT_F clip =
-        attraction ? D2D1::RectF(std::max(0.0f, static_cast<float>(cell.left) * width - 0.5f),
-                                 std::max(0.0f, static_cast<float>(cell.top) * height - 0.5f),
-                                 std::min(width, static_cast<float>(cell.right) * width + 0.5f),
-                                 std::min(height, static_cast<float>(cell.bottom) * height + 0.5f))
-        : snowdesktop::dock_genie::Vertical(edge)
-            ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.75f), width, std::min(height, end * height + 0.75f))
-            : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0, std::min(width, end * width + 0.75f), height);
     RECT crop{static_cast<LONG>(std::floor(clip.left)), static_cast<LONG>(std::floor(clip.top)),
         static_cast<LONG>(std::ceil(clip.right)), static_cast<LONG>(std::ceil(clip.bottom))};
     // The shared-image API requires dimensions above one pixel, even when
@@ -91,6 +82,17 @@ GenieSourceBand ResolveGenieSourceBand(SIZE size, snowdesktop::dock_genie::Edge 
     crop.left = std::min(crop.left, crop.right - 2);
     crop.top = std::min(crop.top, crop.bottom - 2);
     return {clip, crop};
+}
+
+GenieSourceBand ResolveGenieSourceBand(SIZE size, snowdesktop::dock_genie::Edge edge, std::size_t index) noexcept
+{
+    const float width = static_cast<float>(size.cx), height = static_cast<float>(size.cy);
+    const float begin = static_cast<float>(index) / snowdesktop::dock_genie::StripCount;
+    const float end = static_cast<float>(index + 1) / snowdesktop::dock_genie::StripCount;
+    const auto clip = snowdesktop::dock_genie::Vertical(edge)
+        ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.75f), width, std::min(height, end * height + 0.75f))
+        : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0, std::min(width, end * width + 0.75f), height);
+    return ResolveSourceBand(size, clip);
 }
 
 bool SystemWindowAnimationsEnabled()
@@ -1651,7 +1653,7 @@ bool DockWindowTransition::CreateGenieStrips()
     genieStrips_.reserve(count);
     for (std::size_t i = 0; i < count; ++i)
     {
-        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i, effect_ == 4);
+        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i);
         const D2D1_RECT_F clip = band.clip;
         // Each DWM relationship supplies only this source band, rather than
         // another full-size window image. Keep integer pixel crops unscaled
@@ -1703,18 +1705,25 @@ bool DockWindowTransition::CreateGenieStrips()
 
 bool DockWindowTransition::CreateAttractionMesh()
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "attraction.mesh.create");
     namespace attraction = snowdesktop::dock_attraction;
     if (!compositionVisual_ || !compositionSharedWindowActive_ || !compositionDevice_)
     {
         imageResult_ = E_UNEXPECTED;
         return false;
     }
-    attractionTriangles_.reserve(attraction::TriangleCount);
-    genieWindowImages_.reserve(attraction::TriangleCount);
-    for (std::size_t triangle = 0; triangle < attraction::TriangleCount; ++triangle)
+    attractionTriangles_.reserve(AttractionMesh::Triangles);
+    genieWindowImages_.reserve(AttractionMesh::Triangles);
+    const float imageWidth = static_cast<float>(compositionImageSize_.cx);
+    const float imageHeight = static_cast<float>(compositionImageSize_.cy);
+    for (std::size_t triangle = 0; triangle < AttractionMesh::Triangles; ++triangle)
     {
-        const auto cell = attraction::SourceCell(triangle / 2);
-        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, triangle / 2, true);
+        const auto cell = attraction::SourceCell<kAttractionGrid>(triangle / 2);
+        const auto band = ResolveSourceBand(compositionImageSize_, D2D1::RectF(
+            std::max(0.0f, static_cast<float>(cell.left) * imageWidth - 0.5f),
+            std::max(0.0f, static_cast<float>(cell.top) * imageHeight - 0.5f),
+            std::min(imageWidth, static_cast<float>(cell.right) * imageWidth + 0.5f),
+            std::min(imageHeight, static_cast<float>(cell.bottom) * imageHeight + 0.5f)));
         const RECT crop = band.crop;
         const SIZE size{crop.right - crop.left, crop.bottom - crop.top};
         const RECT source{compositionSourceRegion_.left + crop.left, compositionSourceRegion_.top + crop.top,
@@ -1919,34 +1928,45 @@ RECT DockWindowTransition::ResolveImageHostRect() const
 bool DockWindowTransition::ApplyAttractionFrame(double collapsed, BYTE opacity)
 {
     namespace attraction = snowdesktop::dock_attraction;
-    if (attractionTriangles_.size() != attraction::TriangleCount)
+    if (attractionTriangles_.size() != AttractionMesh::Triangles)
         return false;
-    const auto frame = attraction::MeshFrame(DeformationRect(windowRect_), DeformationRect(dockRect_), collapsed);
+    const bool geometryChanged = !hasLastFrame_ || lastGenieCollapse_ != collapsed;
+    if (!geometryChanged && lastFrameOpacity_ == opacity)
+        return true;
+    snowdesktop::performance::Scope performanceScope("dock.transition", "attraction.submit");
     HRESULT hr = S_OK;
-    for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
+    if (geometryChanged)
     {
-        const auto value = attraction::TriangleValues(frame, triangle, imageHostRect_.left, imageHostRect_.top);
-        const D2D1_MATRIX_3X2_F matrix{static_cast<float>(value[0]), static_cast<float>(value[1]),
-                                       static_cast<float>(value[2]), static_cast<float>(value[3]),
-                                       static_cast<float>(value[4]), static_cast<float>(value[5])};
-        hr = attractionTriangles_[triangle]->SetTransform(matrix);
+        const auto frame = attraction::MeshFrame<kAttractionGrid>(
+            DeformationRect(windowRect_), DeformationRect(dockRect_), collapsed);
+        for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
+        {
+            const auto value = attraction::TriangleValues(frame, triangle, imageHostRect_.left, imageHostRect_.top);
+            const D2D1_MATRIX_3X2_F matrix{static_cast<float>(value[0]), static_cast<float>(value[1]),
+                                           static_cast<float>(value[2]), static_cast<float>(value[3]),
+                                           static_cast<float>(value[4]), static_cast<float>(value[5])};
+            hr = attractionTriangles_[triangle]->SetTransform(matrix);
+        }
     }
     if (SUCCEEDED(hr))
         hr = compositionEffect_->SetOpacity(static_cast<float>(opacity) / 255.0f);
     if (SUCCEEDED(hr))
         hr = compositionDevice_->Commit();
+    if (SUCCEEDED(hr))
+        lastGenieCollapse_ = collapsed;
     return SUCCEEDED(hr);
 }
 
 bool DockWindowTransition::StartAttractionTimeline()
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "attraction.timeline.prepare");
     namespace attraction = snowdesktop::dock_attraction;
-    if (attractionTriangles_.size() != attraction::TriangleCount)
+    if (attractionTriangles_.size() != AttractionMesh::Triangles)
         return false;
     const auto window = DeformationRect(windowRect_), dock = DeformationRect(dockRect_);
-    std::array<attraction::Frame, attraction::TimelineSteps + 1> frames{};
+    std::array<AttractionMesh, attraction::TimelineSteps + 1> frames{};
     for (std::size_t step = 0; step < frames.size(); ++step)
-        frames[step] = attraction::TimelineFrame(window, dock, collapseFrom_, collapseTo_,
+        frames[step] = attraction::TimelineFrame<kAttractionGrid>(window, dock, collapseFrom_, collapseTo_,
                                                  static_cast<double>(step) / attraction::TimelineSteps);
     const auto tangents = attraction::MeshTangents(frames);
     constexpr std::array<std::array<int, 2>, 6> elements{{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}};
@@ -1995,6 +2015,9 @@ bool DockWindowTransition::StartAttractionTimeline()
         if (SUCCEEDED(hr))
             hr = attractionTriangles_[triangle]->SetTransform(transform.Get());
     }
+    // A timeline replaces the submitted static transforms, even if it is
+    // interrupted at the same collapse value as the previous static frame.
+    lastGenieCollapse_ = -1.0;
     return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
 }
 

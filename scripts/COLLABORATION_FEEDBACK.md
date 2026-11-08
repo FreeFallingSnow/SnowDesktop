@@ -142,6 +142,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **编辑等待的重复提示（2026-11-08）**：Task `minimize-genie-perf` 在前台 `begin` session `99245` 两次收到 `Waiting for batch d7c34e793bd344e19c56e369c1e793a7: editing phase; editing peers dock-hover-expand-20261108.`，两次之间夹有 `Waiting for the collaboration state transaction.`。同一观察随后还短暂收到 Run `7e1ab48b28994011aa1e3496cbd63a7d` 的 `resource reason not recorded`。共享过渡文件确有其他任务改动，等待本身符合协议。继续原进程取得编辑批次，未重复登记或构建。下一步是按业务状态独立去重短时事务提示，并核对 Run 原因字段的发布时序。
+
 - **执行阶段的重复提示（2026-11-07）**：Task `geometric-icon-title-drop`，批次 `dade9af1c5cb479b84e47add78d40877` 修订 0，Run `8e306b73b26f4c0290a13cd8d92247e5`。同一 `ready-and-wait` session `22245` 在执行期间两次输出 `Waiting for the collaboration state transaction.`，并在两段回执中重复显示 `latest stage start compile`。同一 Run 最终通过 Release 构建和三项测试。记录的是观察输出重复，未发现重复提交或重复执行。后续按业务阶段标识与短时事务分别去重，保留实际阶段变化和最终结果。
 
 - **候选槽排队的重复提示（2026-11-07）**：Task `win10-opaque-context-menu`，批次 `22546c8e67de4f5f959a99765be2c60f` 修订 0，Run `d0c0f816ff0042acaca91b6579ef4621`。`ready-and-wait` 在原观察 session `35079` 多次交替输出 `Waiting for the collaboration state transaction.` 和 `Candidate slot is busy; existing materialization/executor retains its files.`，进入执行前还短暂输出 `resource reason not recorded`。排队时本机仍有 MSBuild 和 cl 运行，原 Run 随后完成构建和两项定向测试。重复提示同样出现在候选槽排队，阅读等待输出时需过滤。保留候选槽实际占用及业务阶段变化，去重事务提示，并核对排队状态切换时原因字段的发布顺序。
