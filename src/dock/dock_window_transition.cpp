@@ -39,7 +39,7 @@ std::atomic<unsigned> sceneRetirementJobs{0};
 constexpr UINT kRetireSceneWindow = WM_APP + 51;
 // Every Dock triangle owns a live DWM thumbnail and six compositor curves.
 // Use a lighter mesh here than in Quick Navigation's bitmap renderer.
-constexpr std::size_t kAttractionGrid = 12;
+constexpr std::size_t kAttractionGrid = 10;
 using AttractionMesh = snowdesktop::dock_attraction::Mesh<kAttractionGrid>;
 
 BOOL CALLBACK CollectAnimationMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
