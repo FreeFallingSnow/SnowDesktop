@@ -1,64 +1,5 @@
-local zones = {
-    { id = "China Standard Time", label = l10n.tr("lua_widget.world_clock.shanghai") },
-    { id = "Tokyo Standard Time", label = l10n.tr("lua_widget.world_clock.tokyo") },
-    { id = "Korea Standard Time", label = l10n.tr("lua_widget.world_clock.seoul") },
-    { id = "Singapore Standard Time", label = l10n.tr("lua_widget.world_clock.singapore") },
-    { id = "India Standard Time", label = l10n.tr("lua_widget.world_clock.new_delhi") },
-    { id = "Arabian Standard Time", label = l10n.tr("lua_widget.world_clock.dubai") },
-    { id = "Romance Standard Time", label = l10n.tr("lua_widget.world_clock.paris") },
-    { id = "GMT Standard Time", label = l10n.tr("lua_widget.world_clock.london") },
-    { id = "Eastern Standard Time", label = l10n.tr("lua_widget.world_clock.new_york") },
-    { id = "Pacific Standard Time", label = l10n.tr("lua_widget.world_clock.los_angeles") },
-    { id = "AUS Eastern Standard Time", label = l10n.tr("lua_widget.world_clock.sydney") },
-    { id = "New Zealand Standard Time", label = l10n.tr("lua_widget.world_clock.auckland") },
-}
-
-local zoneIds, zoneLabels, zonesById = {}, {}, {}
-for i, zone in ipairs(zones) do
-    zoneIds[i], zoneLabels[i] = zone.id, zone.label
-    zonesById[zone.id] = zone
-end
-
-local fields = {}
-for i, defaultZone in ipairs({ "Tokyo Standard Time", "GMT Standard Time", "Eastern Standard Time" }) do
-    fields[i] = {
-        key = "city" .. i,
-        type = "select",
-        label = l10n.tr("lua_widget.world_clock.city_slot", tostring(i)),
-        default = defaultZone,
-        options = zoneIds,
-        optionLabels = zoneLabels,
-    }
-end
-
-local glassStyle = {
-    bg = 0x192742,
-    border = 0xCCD6E8,
-    alpha = 0.82,
-    borderAlpha = 0.38,
-    gradientEndA = 0.69,
-    glassEnabled = true,
-}
-local settings = {
-    fields = fields,
-    presets = {
-        {
-            id = "navy-glass",
-            label = l10n.tr("lua_widget.world_clock.navy_glass"),
-            default = true,
-            values = {
-                bg = glassStyle.bg,
-                border = glassStyle.border,
-                alpha = glassStyle.alpha,
-                borderAlpha = glassStyle.borderAlpha,
-                gradientEndA = glassStyle.gradientEndA,
-                glassEnabled = glassStyle.glassEnabled,
-                followPersonalization = false,
-                __contentTheme = 0,
-            },
-        },
-    },
-}
+local catalog = module.require("modules/cities.lua")
+local defaultCities = { "Tokyo Standard Time", "GMT Standard Time", "Eastern Standard Time" }
 
 local function dateKey(parts)
     return parts.year * 10000 + parts.month * 100 + parts.day
@@ -112,13 +53,14 @@ local function refresh(model, now)
     model.localDate = formatDate(localParts)
     model.localDaylight = isDay(localParts)
 
-    for i, field in ipairs(fields) do
-        local zone = zonesById[storage.get(field.key)] or zonesById[field.default]
-        local parts = time.parts(now, zone.id)
+    for i, defaultCity in ipairs(defaultCities) do
+        local city = catalog.byId[storage.get("city" .. i)] or catalog.byId[defaultCity]
+        local parts = time.parts(now, city.zone)
         local dayDifference = dayFromUtc(parts, utc) - localDay
         local offset = dayDifference * 1440 + minuteOfDay(parts) - localMinute
         model.cities[i] = {
-            label = zone.label,
+            id = city.storageId,
+            label = city.label,
             clock = formatClock(parts),
             detail = formatDay(dayDifference, parts) .. "  " .. formatOffset(offset),
             daylight = isDay(parts),
@@ -133,32 +75,114 @@ local function update(model)
 end
 
 local function setup()
-    local model = { cities = {} }
+    local model = { cities = {}, query = "", results = catalog.search(""), queryRevision = 0 }
     update(model)
     return model
+end
+
+local function updateQuery(model, query)
+    if query == model.query then return end
+    model.query = query
+    model.results = catalog.search(query)
+    model.queryRevision = model.queryRevision + 1
+end
+
+local function selectCity(model, city)
+    local slot = model.pickerSlot
+    if not slot or not city then return end
+    if model.cities[slot].id ~= city.storageId then
+        storage.set("city" .. slot, city.storageId)
+        refresh(model, time.now())
+    end
+    widget.closePanel()
 end
 
 local function event(context, model, change)
     if (change.kind == "schedule" and change.id == "minute")
         or change.kind == "environment" or (change.kind == "visibility" and change.visible) then
         update(model)
-    elseif change.kind == "settings.changed" then
-        refresh(model, time.now())
-    else
-        return
+    elseif change.kind == "panel" and change.action == "closed" then
+        model.pickerSlot = nil
+    elseif change.kind == "action" then
+        if change.id == "open.city" and model.cities[change.value] then
+            model.pickerSlot = change.value
+            updateQuery(model, "")
+            model.queryRevision = model.queryRevision + 1
+            local row = ui.metrics().layoutRowHeight
+            widget.openPanel({ title = l10n.tr("lua_widget.world_clock.choose_city"),
+                width = math.ceil(row * 11), height = math.ceil(row * 12) })
+        elseif change.id == "query.change" then
+            updateQuery(model, change.text or "")
+        elseif change.id == "query.submit" and #model.results == 1 then
+            selectCity(model, model.results[1])
+        elseif change.id == "choose.city" then
+            selectCity(model, catalog.byId[change.value])
+        end
     end
-    widget.invalidate()
+end
+
+local function panel(context, model)
+    local row = ui.metrics().layoutRowHeight
+    local inset = math.min(row * 6 / 28, context.layoutSize.width / 4)
+    local gap = row * 4 / 28
+    local label = l10n.tr("lua_widget.world_clock.search_city")
+    local searchBox = view.searchBox({
+        key = "city.query", width = "fill", height = row, flexShrink = 0,
+        value = model.query, placeholder = label, maxBytes = 256, fontSize = row * 12 / 28,
+        padding = { horizontal = row * 9 / 28, vertical = 0 },
+        style = { foreground = "textPrimary", borderColor = "border",
+            borderWidth = row / 28, cornerRadius = row * 6 / 28 },
+        accessibility = { label = label },
+        events = { change = { id = "query.change" }, submit = { id = "query.submit" } },
+    })
+
+    local current = model.cities[model.pickerSlot or 1].id
+    local results = {}
+    for _, city in ipairs(model.results) do
+        local selected = city.storageId == current
+        results[#results + 1] = view.button({
+            key = "city.result." .. city.id, label = city.label,
+            width = "fill", height = row, flexShrink = 0,
+            fontSize = row * 12 / 28, textAlign = "start",
+            padding = { horizontal = row * 9 / 28, vertical = 0 },
+            style = { foreground = "textPrimary",
+                background = selected and "surfaceVariant" or nil,
+                borderColor = "systemAccent", borderWidth = selected and row / 28 or 0,
+                cornerRadius = row * 6 / 28 },
+            events = { click = { id = "choose.city", value = city.storageId } },
+        })
+    end
+    if #results == 0 then
+        results[1] = view.text({
+            key = "city.empty", text = l10n.tr("lua_widget.world_clock.no_matches"),
+            width = "fill", height = row, fontSize = row * 12 / 28,
+            padding = { horizontal = row * 9 / 28, vertical = 0 },
+            style = { foreground = "textSecondary" },
+        })
+    end
+
+    local scrollKey = "city.scroll." .. model.queryRevision
+    if context.layoutSize.height < 2 * row + 2 * inset + gap then
+        table.insert(results, 1, searchBox)
+        return view.scroll({ key = scrollKey, width = "fill", height = "fill", children = {
+            view.column({ key = "city.all", width = "fill", height = "auto",
+                padding = inset, gap = gap, children = results }),
+        } })
+    end
+    return view.column({ key = "city.panel", width = "fill", height = "fill", gap = gap, children = {
+        view.column({ key = "city.header", width = "fill", height = row + inset, flexShrink = 0,
+            padding = { left = inset, right = inset, top = inset, bottom = 0 },
+            children = { searchBox } }),
+        view.scroll({ key = scrollKey, width = "fill", height = "fill", children = {
+            view.column({ key = "city.results", width = "fill", height = "auto",
+                padding = { left = inset, right = inset, top = 0, bottom = inset },
+                gap = gap, children = results }),
+        } }),
+    } })
 end
 
 local lightInk = { main = 0xF8FAFF, muted = 0xD8E0EF, day = 0xFFC66D, night = 0xD7BCFF }
 local darkInk = { main = 0x152237, muted = 0x47566C, day = 0x875018, night = 0x63419B }
-
-local function drawGlobe(x, y, radius, ink, line)
-    draw.arc(x, y, radius, 0, 360, line, ink)
-    draw.arc(x - radius * 0.63, y, radius * 1.18, -58, 116, line, ink)
-    draw.arc(x + radius * 0.63, y, radius * 1.18, 122, 116, line, ink)
-    draw.line(x - radius, y, x + radius, y, line, ink)
-end
 
 local function drawDaylight(x, y, radius, daylight, palette, line)
     local color = daylight and palette.day or palette.night
@@ -177,11 +201,19 @@ end
 
 local function render(context, model)
     local w, h = layout.contentWidth(), layout.contentHeight()
-    local scale = math.min(w / 420, h / 224)
-    local verticalScale = math.min(h / 224, scale * 1.28)
-    local left, top = (w - 420 * scale) / 2, (h - 224 * verticalScale) / 2
+    if w <= 0 or h <= 0 then return end
+    local stacked = w / h < 1.35
+    local scale = math.min(w / (stacked and 260 or 420), h / 224)
+    local left, right = 13, w / scale - 13
+    -- Anchor the first and last text rows close to the edges at any aspect ratio.
+    local verticalScale = (h - 34 * scale) / 190
+    local originY = 18 * (scale - verticalScale)
     local theme = widget.theme()
     local ink = theme and theme.contentTheme == 1 and darkInk or lightInk
+
+    local function yAt(y)
+        return originY + y * verticalScale
+    end
 
     local function textAt(value, x, y, size, maxWidth, color, bold, rightAligned)
         local fontSize = size * scale
@@ -191,56 +223,93 @@ local function render(context, model)
             fontSize = fontSize * budget / measured.width
             measured = draw.measureText(value, fontSize, 0, bold)
         end
-        local start = left + x * scale
+        local start = x * scale
         if rightAligned then start = start - measured.width end
-        draw.text(start, top + y * verticalScale - measured.height / 2,
+        draw.text(start, yAt(y) - measured.height / 2,
             value, fontSize, color, budget * 1.02, bold, true)
         return start, measured.width
     end
 
     local function rule(x1, y1, x2, y2)
-        draw.line(left + x1 * scale, top + y1 * verticalScale,
-            left + x2 * scale, top + y2 * verticalScale, 0.7 * scale, ink.muted, 0.42)
+        draw.line(x1 * scale, yAt(y1), x2 * scale, yAt(y2), 0.7 * scale, ink.muted, 0.5)
     end
 
-    drawGlobe(left + 27 * scale, top + 22 * verticalScale, 7 * scale, ink.muted, 0.9 * scale)
-    textAt(l10n.tr("lua_widget.world_clock.name"), 43, 22, 14, 350, ink.muted, false)
-    textAt(l10n.tr("lua_widget.world_clock.local"), 20, 53, 16, 225, ink.main, true)
-    textAt(model.localTime, 20, 87, 55, 265, ink.main, true)
-    local dateStart = textAt(model.localDate, 400, 53, 15, 113, ink.main, false, true)
-    drawDaylight(dateStart - 14 * scale, top + 53 * verticalScale, 6.5 * scale,
-        model.localDaylight, ink, 1 * scale)
-    rule(20, 123, 400, 123)
+    local function cityButton(city, index, startX, endX, top, bottom, arrowY)
+        local key = "city." .. index
+        local label = l10n.tr("lua_widget.world_clock.change_city", city.label)
+        local x, y = (startX + 2) * scale, yAt(top)
+        local width = (endX - startX - 4) * scale
+        local height = math.min(h - 3 * scale, yAt(bottom)) - y
+        local radius = 5 * scale
+        interaction.region({
+            key = key, cursor = "hand", focusable = true, tooltip = label,
+            shape = { type = "roundedRect", x = x, y = y, width = width, height = height, radius = radius },
+            accessibility = { role = "button", label = label },
+            events = { click = { id = "open.city", value = index } },
+        })
+        if interaction.isHovered(key) then
+            draw.rect(x, y, width, height, ink.main, radius, 0.08)
+        end
+        if interaction.isFocused(key) then
+            draw.strokeRect(x, y, width, height, ink.main, radius, scale, 0.8)
+        end
+        local arrowX, arrowCenter = (endX - 8) * scale, yAt(arrowY)
+        draw.line(arrowX - 4 * scale, arrowCenter - 2 * scale, arrowX, arrowCenter + 2 * scale,
+            0.8 * scale, ink.muted, 0.66)
+        draw.line(arrowX, arrowCenter + 2 * scale, arrowX + 4 * scale, arrowCenter - 2 * scale,
+            0.8 * scale, ink.muted, 0.66)
+    end
 
-    local columnWidth = 380 / #model.cities
+    local function cityName(city, x, y, width)
+        local start, measured = textAt(city.label, x, y, 15, width - 18, ink.main, true)
+        drawDaylight(start + measured + 10 * scale, yAt(y),
+            5.8 * scale, city.daylight, ink, 0.95 * scale)
+    end
+
+    textAt(l10n.tr("lua_widget.world_clock.local"), left, 18, 16, 125, ink.main, true)
+    textAt(model.localTime, left, stacked and 53 or 63, stacked and 47 or 59, 218, ink.main, true)
+    local dateStart = textAt(model.localDate, right, 18, 15, 81, ink.main, false, true)
+    drawDaylight(dateStart - 14 * scale, yAt(18), 6.5 * scale, model.localDaylight, ink, scale)
+
+    if stacked then
+        rule(left, 84, right, 84)
+        local valueRight = right - 21
+        local nameWidth = valueRight - left - 77
+        local lineGap = 18 * scale / verticalScale
+        for i, city in ipairs(model.cities) do
+            local y = 122 + (i - 1) * 43
+            cityButton(city, i, left, right, y - 35, y + 9, y - lineGap / 2)
+            cityName(city, left, y - lineGap, nameWidth)
+            textAt(city.detail, left, y, 12, nameWidth, ink.muted, false)
+            textAt(city.clock, valueRight, y - lineGap / 2, 23, 69, ink.main, true, true)
+            if i < #model.cities then rule(left, y + 11, right, y + 11) end
+        end
+        return
+    end
+
+    rule(left, 105, right, 105)
+    local columnWidth = (right - left) / #model.cities
     for i, city in ipairs(model.cities) do
-        local columnLeft = 20 + (i - 1) * columnWidth
+        local columnLeft = left + (i - 1) * columnWidth
+        local columnRight = columnLeft + columnWidth
         local x = columnLeft
         if i > 1 then
-            rule(columnLeft, 135, columnLeft, 207)
-            x = x + 14
+            rule(columnLeft, 116, columnLeft, 216)
+            x = x + 12
         end
-        local width = columnLeft + columnWidth - x - 8
-        local labelStart, labelWidth = textAt(city.label, x, 145, 15, width - 18, ink.main, true)
-        drawDaylight(labelStart + labelWidth + 10 * scale, top + 145 * verticalScale,
-            5.8 * scale, city.daylight, ink, 0.95 * scale)
-        textAt(city.clock, x, 172, 30, width, ink.main, true)
-        textAt(city.detail, x, 199, 13.5, width, ink.muted, false)
+        cityButton(city, i, columnLeft, columnRight, 111, 221, 130)
+        local width = columnRight - x - 8
+        cityName(city, x, 130, width - 12)
+        textAt(city.clock, x, 170, 33, width, ink.main, true)
+        textAt(city.detail, x, 208, 13.5, width, ink.muted, false)
     end
 end
-
 return widget.define({
     useCustomStyle = true,
-    followPersonalizationDefault = false,
+    followPersonalizationDefault = true,
     showTitle = false,
-    bg = glassStyle.bg,
-    border = glassStyle.border,
-    alpha = glassStyle.alpha,
-    borderAlpha = glassStyle.borderAlpha,
-    gradientEndA = glassStyle.gradientEndA,
-    glassEnabled = glassStyle.glassEnabled,
-    settings = settings,
     setup = setup,
     event = event,
     render = render,
+    panel = panel,
 })
