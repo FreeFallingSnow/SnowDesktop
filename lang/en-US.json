@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "Widget hover visibility animation",
   "settings.animation.widgetHoverVisibility.description": "For widgets that appear only on hover.",
   "settings.animation.option.none": "None",
-  "settings.animation.option.roll": "Roll"
+  "settings.animation.option.roll": "Roll",
+  "statusBar.foregroundAppName": "Show active app name",
+  "statusBar.foregroundAppNamePosition": "App name position",
+  "statusBar.foregroundAppNameHead": "Start",
+  "statusBar.foregroundAppNamePositionHint": "Merged bars show the name at the start. Centering the name on a standalone bar moves the clock and notifications to the right."
 }

@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "Animation beim Einblenden",
   "settings.animation.widgetHoverVisibility.description": "Für Widgets, die nur beim Darüberfahren sichtbar sind.",
   "settings.animation.option.none": "Keine",
-  "settings.animation.option.roll": "Aus- und Einrollen"
+  "settings.animation.option.roll": "Aus- und Einrollen",
+  "statusBar.foregroundAppName": "Namen der aktiven App anzeigen",
+  "statusBar.foregroundAppNamePosition": "Position des App-Namens",
+  "statusBar.foregroundAppNameHead": "Anfang",
+  "statusBar.foregroundAppNamePositionHint": "In kombinierten Leisten steht der Name am Anfang. In einer separaten Statusleiste verschiebt die Zentrierung des Namens die Uhr und die Benachrichtigungen nach rechts."
 }

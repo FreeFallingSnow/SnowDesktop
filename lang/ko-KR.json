@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "마우스를 올려 표시할 때의 애니메이션",
   "settings.animation.widgetHoverVisibility.description": "마우스를 올렸을 때만 표시되는 위젯에 적용됩니다.",
   "settings.animation.option.none": "없음",
-  "settings.animation.option.roll": "두루마리"
+  "settings.animation.option.roll": "두루마리",
+  "statusBar.foregroundAppName": "활성 앱 이름 표시",
+  "statusBar.foregroundAppNamePosition": "앱 이름 위치",
+  "statusBar.foregroundAppNameHead": "맨 앞",
+  "statusBar.foregroundAppNamePositionHint": "통합된 표시줄에서는 이름을 맨 앞에 표시합니다. 독립 표시줄에서 이름을 가운데에 배치하면 시계와 알림이 오른쪽으로 이동합니다."
 }

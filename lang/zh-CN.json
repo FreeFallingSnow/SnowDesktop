@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "组件悬停显示动画",
   "settings.animation.widgetHoverVisibility.description": "用于启用「仅在悬停时显示」的组件。",
   "settings.animation.option.none": "无",
-  "settings.animation.option.roll": "卷轴"
+  "settings.animation.option.roll": "卷轴",
+  "statusBar.foregroundAppName": "显示前台应用名称",
+  "statusBar.foregroundAppNamePosition": "应用名称位置",
+  "statusBar.foregroundAppNameHead": "头部",
+  "statusBar.foregroundAppNamePositionHint": "融合栏使用头部。非融合栏居中显示应用名称时，时钟和通知移至右侧。"
 }

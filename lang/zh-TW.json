@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "元件游標停留顯示動畫",
   "settings.animation.widgetHoverVisibility.description": "適用於僅在游標停留時顯示的元件。",
   "settings.animation.option.none": "無",
-  "settings.animation.option.roll": "捲軸"
+  "settings.animation.option.roll": "捲軸",
+  "statusBar.foregroundAppName": "顯示前景應用程式名稱",
+  "statusBar.foregroundAppNamePosition": "應用程式名稱位置",
+  "statusBar.foregroundAppNameHead": "開頭",
+  "statusBar.foregroundAppNamePositionHint": "融合列會將名稱顯示在開頭。獨立狀態列將名稱置中時，時鐘與通知會移至右側。"
 }

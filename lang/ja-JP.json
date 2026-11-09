@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "ホバーで表示するときのアニメーション",
   "settings.animation.widgetHoverVisibility.description": "ホバー時のみ表示するウィジェットに適用されます。",
   "settings.animation.option.none": "なし",
-  "settings.animation.option.roll": "巻物"
+  "settings.animation.option.roll": "巻物",
+  "statusBar.foregroundAppName": "アクティブなアプリ名を表示",
+  "statusBar.foregroundAppNamePosition": "アプリ名の表示位置",
+  "statusBar.foregroundAppNameHead": "先頭",
+  "statusBar.foregroundAppNamePositionHint": "統合バーでは名前を先頭に表示します。独立したバーで名前を中央に表示すると、時計と通知は右側に移動します。"
 }

@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "Animação ao exibir o widget",
   "settings.animation.widgetHoverVisibility.description": "Para widgets exibidos apenas ao passar o ponteiro.",
   "settings.animation.option.none": "Nenhuma",
-  "settings.animation.option.roll": "Desenrolar"
+  "settings.animation.option.roll": "Desenrolar",
+  "statusBar.foregroundAppName": "Mostrar o nome do aplicativo ativo",
+  "statusBar.foregroundAppNamePosition": "Posição do nome do aplicativo",
+  "statusBar.foregroundAppNameHead": "Início",
+  "statusBar.foregroundAppNamePositionHint": "As barras combinadas exibem o nome no início. Centralizar o nome em uma barra independente move o relógio e as notificações para a direita."
 }

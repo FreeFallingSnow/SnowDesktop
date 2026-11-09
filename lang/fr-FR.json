@@ -2854,5 +2854,9 @@
   "settings.animation.widgetHoverVisibility": "Animation d’affichage au survol",
   "settings.animation.widgetHoverVisibility.description": "Pour les widgets qui s’affichent uniquement au survol.",
   "settings.animation.option.none": "Aucune",
-  "settings.animation.option.roll": "Déroulement"
+  "settings.animation.option.roll": "Déroulement",
+  "statusBar.foregroundAppName": "Afficher le nom de l’application active",
+  "statusBar.foregroundAppNamePosition": "Position du nom de l’application",
+  "statusBar.foregroundAppNameHead": "Début",
+  "statusBar.foregroundAppNamePositionHint": "Les barres fusionnées affichent le nom au début. Dans une barre indépendante, centrer le nom déplace l’horloge et les notifications vers la droite."
 }
