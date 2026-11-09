@@ -350,7 +350,7 @@ struct WidgetsPagePresenter::Impl
     SettingsCard developerToolsCard;
     SettingsCard debugRuntimeCard;
 
-    muxc::AutoSuggestBox searchBox{nullptr};
+    muxc::TextBox searchBox{nullptr};
     muxc::StackPanel filterActions{nullptr};
     muxc::RadioButton allFilterButton{nullptr};
     muxc::RadioButton installedFilterButton{nullptr};
@@ -435,6 +435,7 @@ struct WidgetsPagePresenter::Impl
     std::uint64_t requestedSearchRevision = 0;
     bool hasRevision = false;
     bool updatingControls = false;
+    bool composingSearch = false;
     bool active = false;
     bool closed = false;
 
@@ -443,6 +444,8 @@ struct WidgetsPagePresenter::Impl
     std::vector<std::function<void()>> debugRevokers;
 
     winrt::event_token searchChangedToken{};
+    winrt::event_token searchCompositionStartedToken{};
+    winrt::event_token searchCompositionEndedToken{};
     winrt::event_token allFilterToken{};
     winrt::event_token installedFilterToken{};
     winrt::event_token includedFilterToken{};
@@ -749,12 +752,11 @@ struct WidgetsPagePresenter::Impl
         searchStatusPanel.Children().Append(searchStatusText);
         filterCard.heading.Children().Append(searchStatusPanel);
 
-        searchBox = muxc::AutoSuggestBox{};
+        searchBox = muxc::TextBox{};
         searchBox.HorizontalAlignment(mux::HorizontalAlignment::Left);
         searchBox.Width(240.0);
         searchBox.MinWidth(200.0);
         searchBox.VerticalAlignment(mux::VerticalAlignment::Center);
-        searchBox.IsSuggestionListOpen(false);
         searchBox.UseSystemFocusVisuals(true);
         managementToolbar = muxc::Grid{};
         managementToolbar.ColumnSpacing(8.0);
@@ -1026,25 +1028,34 @@ struct WidgetsPagePresenter::Impl
         debugRuntimeCard.content.Children().Append(debugDiagnosticRows);
     }
 
+    void SearchFromInput()
+    {
+        if (updatingControls || closed || !active || composingSearch)
+            return;
+        const auto text = searchBox.Text();
+        if (query == text.c_str())
+            return;
+
+        permissionPackage.clear();
+        query = text.c_str();
+        RenderInstalledRows();
+        WidgetsPageRequest request;
+        request.command = WidgetsPageCommand::SearchSources;
+        request.query = query;
+        request.searchRevision = ++requestedSearchRevision;
+        Emit(std::move(request));
+    }
+
     void HookStaticEvents()
     {
         searchChangedToken = searchBox.TextChanged(
-            [this](const muxc::AutoSuggestBox& sender,
-                const muxc::AutoSuggestBoxTextChangedEventArgs& args) {
-                if (updatingControls || closed || !active ||
-                    args.Reason() !=
-                        muxc::AutoSuggestionBoxTextChangeReason::UserInput)
-                {
-                    return;
-                }
-                permissionPackage.clear();
-                query = sender.Text().c_str();
-                RenderInstalledRows();
-                WidgetsPageRequest request;
-                request.command = WidgetsPageCommand::SearchSources;
-                request.query = query;
-                request.searchRevision = ++requestedSearchRevision;
-                Emit(std::move(request));
+            [this](const auto&, const auto&) { SearchFromInput(); });
+        searchCompositionStartedToken = searchBox.TextCompositionStarted(
+            [this](const auto&, const auto&) { composingSearch = true; });
+        searchCompositionEndedToken = searchBox.TextCompositionEnded(
+            [this](const auto&, const auto&) {
+                composingSearch = false;
+                SearchFromInput();
             });
 
         const auto selectFilter = [this](PackageFilter selected) {
@@ -3373,8 +3384,12 @@ struct WidgetsPagePresenter::Impl
             requestedSearchRevision = std::max(
                 requestedSearchRevision, snapshot.searchRevision);
             sources = snapshot.sources;
-            query = snapshot.searchQuery;
-            searchBox.Text(query);
+            // Writing Text during composition can dismiss the IME candidates.
+            if (!composingSearch && query != snapshot.searchQuery)
+            {
+                query = snapshot.searchQuery;
+                searchBox.Text(query);
+            }
         }
         const bool installedQueryChanged = previousQuery != query;
         if (installedPresentationChanged || installedQueryChanged)
@@ -3680,6 +3695,7 @@ struct WidgetsPagePresenter::Impl
     void Deactivate() noexcept
     {
         active = false;
+        composingSearch = false;
         callbackGate->active.store(false, std::memory_order_release);
         callbackGate->activation.fetch_add(1, std::memory_order_acq_rel);
         diagnostics.clear();
@@ -3711,6 +3727,8 @@ struct WidgetsPagePresenter::Impl
         {
             managementToolbar.SizeChanged(managementToolbarSizeToken);
             searchBox.TextChanged(searchChangedToken);
+            searchBox.TextCompositionStarted(searchCompositionStartedToken);
+            searchBox.TextCompositionEnded(searchCompositionEndedToken);
             allFilterButton.Checked(allFilterToken);
             installedFilterButton.Checked(installedFilterToken);
             includedFilterButton.Checked(includedFilterToken);
