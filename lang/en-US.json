@@ -2858,5 +2858,6 @@
   "statusBar.foregroundAppName": "Show active app name",
   "statusBar.foregroundAppNamePosition": "App name position",
   "statusBar.foregroundAppNameHead": "Start",
-  "statusBar.foregroundAppNamePositionHint": "Merged bars show the name at the start. Centering the name on a standalone bar moves the clock and notifications to the right."
+  "statusBar.foregroundAppNamePositionHint": "Merged bars show the name at the start. Centering the name on a standalone bar moves the clock and notifications to the right.",
+  "settings.widgets.workshop.minimumHostVersion": "This component requires SnowDesktop {0} or later."
 }

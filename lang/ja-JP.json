@@ -2858,5 +2858,6 @@
   "statusBar.foregroundAppName": "アクティブなアプリ名を表示",
   "statusBar.foregroundAppNamePosition": "アプリ名の表示位置",
   "statusBar.foregroundAppNameHead": "先頭",
-  "statusBar.foregroundAppNamePositionHint": "統合バーでは名前を先頭に表示します。独立したバーで名前を中央に表示すると、時計と通知は右側に移動します。"
+  "statusBar.foregroundAppNamePositionHint": "統合バーでは名前を先頭に表示します。独立したバーで名前を中央に表示すると、時計と通知は右側に移動します。",
+  "settings.widgets.workshop.minimumHostVersion": "このウィジェットには SnowDesktop {0} 以降が必要です。"
 }
