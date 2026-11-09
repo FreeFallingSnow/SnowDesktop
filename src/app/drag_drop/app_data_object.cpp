@@ -14,6 +14,29 @@
 
 namespace
 {
+std::wstring EncodeWidgetTextDrag(std::wstring text)
+{
+    if (text.find_first_of(L"\r\n") == std::wstring::npos)
+        return text;
+    std::wstring encoded;
+    encoded.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        const wchar_t character = text[i];
+        if (character == L'\r' || character == L'\n')
+        {
+            // CF_UNICODETEXT requires CRLF. Treat an existing pair as one
+            // break and leave the source editor's contents unchanged.
+            encoded.append(L"\r\n");
+            if (character == L'\r' && i + 1 < text.size() && text[i + 1] == L'\n')
+                ++i;
+        }
+        else
+            encoded.push_back(character);
+    }
+    return encoded;
+}
+
 // Text dragged from an editor is a plain data object. A Shell item data
 // object can advertise file formats even when given an empty item list.
 class WidgetTextDataObject final : public Microsoft::WRL::RuntimeClass<
@@ -86,7 +109,9 @@ private:
 
 void DesktopApp::RunWidgetTextDrag(std::wstring text)
 {
-    auto data = Microsoft::WRL::Make<WidgetTextDataObject>(std::move(text));
+    if (text.empty() || text.find(L'\0') != std::wstring::npos) return;
+    auto data = Microsoft::WRL::Make<WidgetTextDataObject>(
+        EncodeWidgetTextDrag(std::move(text)));
     auto* adapter = EnsureOleDragDropAdapter();
     if (!data || !adapter) return;
     ComPtr<IDropSource> source(static_cast<IDropSource*>(adapter));
