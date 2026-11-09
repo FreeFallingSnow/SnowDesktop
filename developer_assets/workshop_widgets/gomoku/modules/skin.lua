@@ -292,31 +292,31 @@ local function overlay(model, x, y, side, u, c)
     end
 end
 
-local function reactionCard(reaction, x, y, w, u, c)
+local function reactionCard(reaction, width, height, u, c)
     local age = time.monotonic() - reaction.startedAt
-    if age >= skin.reactionDuration then return false end
+    if age >= skin.reactionDuration then return end
     local progress = reaction.animated and math.min(1, math.max(0, age / skin.reactionEnter)) or 1
     local remaining = 1 - progress
-    local slide = remaining ^ 3
-    local pop = math.sin(math.pi * progress) * remaining
+    local scale = 1 + remaining ^ 2 * (0.8 - 1.18 * remaining)
+    local w = math.min(220 * u, width * 0.84) * scale
+    u = u * scale
+    local h, radius = 48 * u, 11 * u
+    local x, y = (width - w) / 2, (height - h) / 2
     local fade = 1
     if reaction.animated and reaction.fade and age >= skin.reactionFadeAt then
         fade = (skin.reactionDuration - age) / (skin.reactionDuration - skin.reactionFadeAt)
     end
     local alpha = math.min(1, 0.25 + progress * 2) * fade
     local accent = reaction.peer and c.gold or c.accent
-    x = x + (reaction.peer and 24 or -12) * u * slide
-    y = y + (4 * slide - 4 * pop - 4 * (1 - fade)) * u
-    local h, radius = 37 * u, 9 * u
-    draw.rect(x, y + 2 * u, w, h, 0x081614, radius, 0.42 * alpha)
+    draw.rect(x, y + 3 * u, w, h, 0x081614, radius, 0.42 * alpha)
     draw.gradientRect(x, y, w, h, c.raised, c.panel, "horizontal", radius, alpha)
     draw.strokeRect(x, y, w, h, accent, radius, 1.15 * u, 0.88 * alpha)
-    draw.rect(x + 4 * u, y + 8 * u, 2.2 * u, h - 16 * u, accent, u, alpha)
+    draw.rect(x + 5 * u, y + 10 * u, 2.2 * u, h - 20 * u, accent, u, alpha)
 
     local item = skin.reactions[reaction.id]
-    local iconX, iconY = x + 26 * u, y + h / 2 - 4 * u * pop
+    local iconX, iconY = x + 30 * u, y + h / 2
     if item.stamp then
-        stamp(item.stamp, iconX, iconY, (12.5 + 7 * pop) * u, alpha)
+        stamp(item.stamp, iconX, iconY, 17 * u, alpha)
     else
         draw.rect(iconX - 10 * u, iconY - 8 * u, 20 * u, 15 * u, accent, 5 * u, alpha)
         draw.line(iconX - 4 * u, iconY + 4 * u, iconX - 7 * u, iconY + 9 * u, 2.5 * u, accent, alpha)
@@ -325,18 +325,17 @@ local function reactionCard(reaction, x, y, w, u, c)
         end
     end
     if reaction.peer and progress < 1 then
-        star(iconX - (10 + progress * 11) * u, iconY - (9 + progress * 10) * u, 3.3 * u, accent, remaining * alpha)
-        star(iconX + (10 + progress * 9) * u, iconY - (7 + progress * 11) * u, 2.6 * u, accent, remaining * alpha)
+        star(iconX - (15 + progress * 11) * u, iconY - (11 + progress * 10) * u, 3.3 * u, accent, remaining * alpha)
+        star(iconX + (15 + progress * 9) * u, iconY - (9 + progress * 11) * u, 2.6 * u, accent, remaining * alpha)
     end
 
     local speaker = reaction.peer and l10n.tr("lua_widget.gomoku.opponent") or l10n.tr("lua_widget.gomoku.me")
-    local labelX, labelWidth = x + 47 * u, w - 56 * u
-    text(speaker, labelX, y + 4 * u, labelWidth, 10 * u, accent, true, false, 12 * u, alpha)
-    text(l10n.tr(item.label), labelX, y + 16 * u, labelWidth, 15 * u, c.ink, true, false, 17 * u, alpha)
-    return true
+    local labelX, labelWidth = x + 56 * u, w - 68 * u
+    text(speaker, labelX, y + 7 * u, labelWidth, 11 * u, accent, true, false, 14 * u, alpha)
+    text(l10n.tr(item.label), labelX, y + 21 * u, labelWidth, 18 * u, c.ink, true, false, 21 * u, alpha)
 end
 
-function skin.render(model, game, status, canMove)
+function skin.render(model, game, status, canMove, canGiveFirst)
     local w, h, c = layout.contentWidth(), layout.contentHeight(), palette()
     local u = math.max(0.45, math.min(w, h) / 440)
     local margin, headerH, buttonH = 18 * u, 89 * u, 32 * u
@@ -354,10 +353,7 @@ function skin.render(model, game, status, canMove)
     local badgeX = w - margin - badgeWidth
     local titleY, modeY, badgeHeight = 12 * u, 47 * u, 30 * u
     text(title, margin, titleY, badgeX - margin - 8 * u, 27 * u, c.ink, true)
-    local cardWidth = math.min(214 * u, badgeX - margin - 12 * u)
-    if not model.reaction or not reactionCard(model.reaction, margin, 46 * u, cardWidth, u, c) then
-        text(mode, margin + u, modeY, badgeX - margin - 9 * u, 13 * u, c.muted, false)
-    end
+    text(mode, margin + u, modeY, badgeX - margin - 9 * u, 13 * u, c.muted, false)
     local headerCenter = (titleY + modeY + 18 * u) / 2
     chip(l10n.tr(skin.rules[game.rule]), badgeX, headerCenter - badgeHeight / 2, badgeWidth, badgeHeight, c, canChoose)
     boardArt(game, model.pendingIndex, canMove, x, y, side)
@@ -381,9 +377,12 @@ function skin.render(model, game, status, canMove)
         {id = sync and "sync" or "new",
             label = sync and l10n.tr("lua_widget.gomoku.sync") or
                 (game.winner and l10n.tr("lua_widget.gomoku.play_again") or l10n.tr("lua_widget.gomoku.new"))},
-        {id = model.connected and "chat" or "mode",
-            label = model.connected and l10n.tr("lua_widget.gomoku.chat") or l10n.tr("lua_widget.gomoku.mode")},
     }
+    if canGiveFirst then
+        actions[#actions + 1] = {id = "give-first", label = l10n.tr("lua_widget.gomoku.give_first")}
+    end
+    actions[#actions + 1] = {id = model.connected and "chat" or "mode",
+        label = model.connected and l10n.tr("lua_widget.gomoku.chat") or l10n.tr("lua_widget.gomoku.mode")}
     if model.showSteam and model.state ~= "busy" then
         local label = l10n.tr("lua_widget.gomoku.steam_room")
         if model.connected or model.state == "waitingPeer" then label = l10n.tr("lua_widget.gomoku.local_game")
@@ -396,6 +395,7 @@ function skin.render(model, game, status, canMove)
         button(item.id, item.label, margin + (i - 1) * (buttonWidth + gap), footer, buttonWidth, buttonH, c,
             i == 1 and game.winner and not sync)
     end
+    if model.reaction then reactionCard(model.reaction, w, h, u, c) end
 end
 
 return skin
