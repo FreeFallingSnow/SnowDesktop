@@ -3,6 +3,8 @@
 
 #include "data/data_paths.h"
 #include "common/json_value.h"
+#include "common/l10n.h"
+#include "common/utils.h"
 #include "steam_app_identity.h"
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
@@ -29,6 +31,25 @@ namespace
 constexpr std::size_t kMaximumBridgeOutputBytes = 16u * 1024u * 1024u;
 constexpr UINT kBridgeFailureExitCode = 5;
 constexpr UINT kBridgeTimeoutExitCode = 6;
+
+bool RequiresNewerHost(const PackageManifest& manifest)
+{
+    return !MeetsWidgetMinimumHostVersion(
+        SNOWDESKTOP_VERSION, manifest.minHostVersion);
+}
+
+std::string MinimumHostVersionMessage(const PackageManifest& manifest,
+    const std::string& locale)
+{
+    auto message = Locale::Instance().TrWForLanguage(
+        L10N_KEY("settings.widgets.workshop.minimumHostVersion"), locale);
+    const auto version = std::filesystem::u8path(manifest.minHostVersion).wstring();
+    const auto placeholder = message.find(L"{0}");
+    if (placeholder == std::wstring::npos)
+        return "This component requires SnowDesktop " + manifest.minHostVersion + " or later.";
+    message.replace(placeholder, 3, version);
+    return ::WideToUtf8(message);
+}
 
 struct UniqueHandle
 {
@@ -496,6 +517,7 @@ SteamWorkshopSource::ResolveInstalledFolder(
     const std::string& publishedFileId, const std::string& ownerSteamId,
     const std::filesystem::path& folder, std::string& error,
     PackageManifest* detectedManifest, const PackagePaths& validationPaths,
+    const std::string& locale,
     bool reuseValidatedArchive)
 {
     std::error_code filesystemError;
@@ -556,7 +578,14 @@ SteamWorkshopSource::ResolveInstalledFolder(
     WidgetPackageManager validationManager(validationPaths);
     const auto validate = [&] {
         SteamWorkshopValidationCache::Result result;
-        result.report = validationManager.ValidateArchive(artifact, &result.manifest);
+        result.report = validationManager.ValidateArchive(
+            artifact, &result.manifest, &result.malformedArchive);
+        if (RequiresNewerHost(result.manifest))
+        {
+            result.report.issues.clear();
+            result.report.Add(ValidationSeverity::Error, "manifest.minHostVersion",
+                artifact, result.manifest.minHostVersion);
+        }
         return result;
     };
     auto validation = reuseValidatedArchive
@@ -568,8 +597,9 @@ SteamWorkshopSource::ResolveInstalledFolder(
     if (detectedManifest) *detectedManifest = validation.manifest;
     if (!validation.report.Ok())
     {
-        error = "Workshop component package failed validation: " +
-            validation.report.ToJson();
+        error = RequiresNewerHost(validation.manifest)
+            ? MinimumHostVersionMessage(validation.manifest, locale)
+            : "Workshop component package failed validation: " + validation.report.ToJson();
         return std::nullopt;
     }
     PackageDetails details;
@@ -577,7 +607,7 @@ SteamWorkshopSource::ResolveInstalledFolder(
     details.source = { "steam-workshop",
         BoundExternalItemId(publishedFileId, ownerSteamId) };
     details.versions.push_back(details.manifest.version);
-    return ResolvedItem{ std::move(details), artifact };
+    return ResolvedItem{ std::move(details), artifact, std::move(validation.digest) };
 }
 
 std::optional<SteamWorkshopSource::ResolvedItem>
@@ -674,7 +704,8 @@ SteamWorkshopSource::ResolveCurrent(const std::string& externalItemId,
             return std::nullopt;
         }
         auto resolved = ResolveInstalledFolder(
-            publishedFileId, ownerSteamId, *wideFolder, error, nullptr, validationPaths_);
+            publishedFileId, ownerSteamId, *wideFolder, error, nullptr, validationPaths_,
+            Locale::Instance().GetEffectiveLanguage());
         if (resolved)
         {
             resolvedCache_ = *resolved;
@@ -754,7 +785,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     // still forces the next request to validate afresh.
     trace("phase=validation.wait.begin");
     const auto job = packageQueries.Request(std::move(validationKey),
-        [paths = validationPaths_, items = cache.readyItems, trace] {
+        [paths = validationPaths_, items = cache.readyItems, locale = query.locale, trace] {
             SteamWorkshopSubscriptionSnapshot validated;
             for (const auto& item : items)
             {
@@ -768,7 +799,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
                 const auto started = std::chrono::steady_clock::now();
                 auto resolved = ResolveInstalledFolder(
                     item.publishedFileId, {}, item.contentDirectory, itemError,
-                    &detectedManifest, paths, true);
+                    &detectedManifest, paths, locale, true);
                 const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - started).count();
                 trace("phase=package.validate.end item=" + item.publishedFileId +
@@ -787,6 +818,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
                     continue;
                 }
                 validated.localArtifacts[item.publishedFileId] = resolved->artifact;
+                validated.archiveDigests[item.publishedFileId] = std::move(resolved->digest);
                 validated.installable.push_back(std::move(resolved->details));
             }
             return validated;
@@ -804,6 +836,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         return snapshot;
     }
     snapshot.localArtifacts = std::move(validated->localArtifacts);
+    snapshot.archiveDigests = std::move(validated->archiveDigests);
     trace("phase=validation.wait.end result=ready");
     snapshot.discoveryFailures = std::move(validated->discoveryFailures);
     std::size_t matched = 0;
@@ -889,7 +922,7 @@ SteamWorkshopSource::QuerySubscriptionsOnline(
         PackageManifest detectedManifest;
         auto resolved = ResolveInstalledFolder(
             publishedFileId, ownerSteamId, *wideFolder, itemError,
-            &detectedManifest, validationPaths_);
+            &detectedManifest, validationPaths_, query.locale);
         if (!resolved)
         {
             const std::string packageId = detectedManifest.id.empty()
@@ -970,6 +1003,12 @@ std::optional<PackageArtifact> SteamWorkshopSource::Materialize(
     PackageManifest copiedManifest;
     const ValidationReport copiedValidation =
         validationManager.ValidateArchive(destination, &copiedManifest);
+    if (RequiresNewerHost(copiedManifest))
+    {
+        std::filesystem::remove(destination, filesystemError);
+        error = MinimumHostVersionMessage(copiedManifest, Locale::Instance().GetEffectiveLanguage());
+        return std::nullopt;
+    }
     if (!copiedValidation.Ok() ||
         copiedManifest.id != resolved->details.manifest.id ||
         copiedManifest.version != version)

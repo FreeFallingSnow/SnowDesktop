@@ -50,6 +50,7 @@ private:
     {
         PackageDetails details;
         std::filesystem::path artifact;
+        std::string digest;
     };
 
     bool RunBridge(const std::vector<std::wstring>& arguments,
@@ -61,6 +62,7 @@ private:
         const std::string& publishedFileId, const std::string& ownerSteamId,
         const std::filesystem::path& folder, std::string& error,
         PackageManifest* detectedManifest, const PackagePaths& validationPaths,
+        const std::string& locale,
         bool reuseValidatedArchive = false);
 
     std::filesystem::path bridgeExecutable_;

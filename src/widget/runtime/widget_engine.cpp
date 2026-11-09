@@ -339,10 +339,16 @@ GetWidgetPackageSources()
 
 struct SteamWorkshopPackageAssociationCache
 {
+    struct RejectedArchive
+    {
+        std::string digest;
+        std::string error;
+    };
     std::mutex mutex;
     std::unordered_map<std::string, std::string> associations;
     std::vector<snowdesktop::widget::SteamWorkshopInstallFailure>
         installFailures;
+    std::unordered_map<std::string, RejectedArchive> rejectedArchives;
 };
 
 static SteamWorkshopPackageAssociationCache&
@@ -350,6 +356,39 @@ GetSteamWorkshopPackageAssociationCache()
 {
     static SteamWorkshopPackageAssociationCache cache;
     return cache;
+}
+
+static std::optional<std::string> RejectedSteamWorkshopArchive(
+    const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+    const std::string& item)
+{
+    const auto digest = snapshot.archiveDigests.find(item);
+    if (digest == snapshot.archiveDigests.end() || digest->second.empty())
+        return std::nullopt;
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    const auto rejected = cache.rejectedArchives.find(item);
+    if (rejected == cache.rejectedArchives.end() || rejected->second.digest != digest->second)
+        return std::nullopt;
+    return rejected->second.error;
+}
+
+static void RememberRejectedSteamWorkshopArchive(const std::string& item,
+    std::string digest, std::string error)
+{
+    if (digest.empty()) return;
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    if (cache.rejectedArchives.size() >= 256 && !cache.rejectedArchives.contains(item))
+        cache.rejectedArchives.erase(cache.rejectedArchives.begin());
+    cache.rejectedArchives[item] = {std::move(digest), std::move(error)};
+}
+
+static void ForgetRejectedSteamWorkshopArchive(const std::string& item)
+{
+    auto& cache = GetSteamWorkshopPackageAssociationCache();
+    std::lock_guard lock(cache.mutex);
+    cache.rejectedArchives.erase(item);
 }
 
 static void CacheSteamWorkshopInstallFailure(
@@ -389,7 +428,8 @@ static std::wstring ResolveWidgetPath(const std::wstring& packageId)
 }
 
 static bool RecoverWidgetPackage(const std::string& packageId,
-    const std::optional<std::string>& preferredVersion = std::nullopt)
+    const std::optional<std::string>& preferredVersion = std::nullopt,
+    std::string_view rejectedVersion = {})
 {
     auto& manager = GetWidgetPackageManager();
     const auto packages = manager.ListPackages();
@@ -397,7 +437,7 @@ static bool RecoverWidgetPackage(const std::string& packageId,
         std::string error;
         return manager.Rollback(packageId, version, error);
     };
-    if (preferredVersion && tryVersion(*preferredVersion))
+    if (preferredVersion && *preferredVersion != rejectedVersion && tryVersion(*preferredVersion))
         return true;
     std::vector<std::string> candidates;
     bool activeUserPackage = false;
@@ -407,7 +447,8 @@ static bool RecoverWidgetPackage(const std::string& packageId,
             package.builtin || package.development)
             continue;
         if (package.active) activeUserPackage = true;
-        else candidates.push_back(package.manifest.version);
+        else if (package.manifest.version != rejectedVersion)
+            candidates.push_back(package.manifest.version);
     }
     std::sort(candidates.begin(), candidates.end(),
         [](const std::string& left, const std::string& right)
@@ -3021,20 +3062,6 @@ static void PrewarmWidgetPackageResources(D2DState* state)
     {
         // Speculation must never replace the synchronous load/error path.
     }
-}
-
-static int CompareVersions(const std::string& left, const std::string& right)
-{
-    std::istringstream a(left), b(right);
-    std::string ap, bp;
-    for (int i = 0; i < 4; ++i)
-    {
-        int av = 0, bv = 0;
-        if (std::getline(a, ap, '.')) av = std::atoi(ap.c_str());
-        if (std::getline(b, bp, '.')) bv = std::atoi(bp.c_str());
-        if (av != bv) return av < bv ? -1 : 1;
-    }
-    return 0;
 }
 
 static bool JsonReadDouble(const std::string& text, const char* field, double& out)
@@ -16701,8 +16728,12 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     const std::unordered_map<std::string, std::string>*
         previewStorageOverrides,
     const std::filesystem::path* packageRootOverride,
-    const LuaWidgetAuthorPreviewConfiguration* previewConfiguration)
+    const LuaWidgetAuthorPreviewConfiguration* previewConfiguration,
+    bool* deterministicFailure)
 {
+    const auto markDeterministicFailure = [deterministicFailure] {
+        if (deterministicFailure) *deterministicFailure = true;
+    };
     LuaWidget pending;
     pending.widgetId = widgetId;
     pending.filePath = path;
@@ -16765,9 +16796,10 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         RuntimeRecordError(widgetId, "Widget signature validation failed");
         return false;
     }
-    if (!pending.manifest.minHostVersion.empty() &&
-        CompareVersions(SNOWDESKTOP_VERSION, pending.manifest.minHostVersion) < 0)
+    if (!snowdesktop::widget::MeetsWidgetMinimumHostVersion(
+            SNOWDESKTOP_VERSION, pending.manifest.minHostVersion))
     {
+        markDeterministicFailure();
         RuntimeRecordError(widgetId, "Widget requires SnowDesktop " +
             pending.manifest.minHostVersion + " or newer");
         return false;
@@ -16841,6 +16873,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         pending.manifest.requiredFeatures);
     if (!missing.empty())
     {
+        markDeterministicFailure();
         std::string message = "Widget requires unsupported host feature";
         if (missing.size() > 1) message += "s";
         message += ": ";
@@ -16928,8 +16961,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     lua_setfield(state, LUA_REGISTRYINDEX, "__widget_environment");
 
     // Load the chunk
-    if (luaL_loadstring(state, source.c_str()) != LUA_OK)
+    if (const int status = luaL_loadstring(state, source.c_str()); status != LUA_OK)
     {
+        if (status == LUA_ERRSYNTAX) markDeterministicFailure();
         const char* err = lua_tostring(state, -1);
         RuntimeRecordError(widgetId, err ? err : "(load error)");
         RecordWidgetHostFailure(widgetId, err ? err : "(load error)",
@@ -16948,8 +16982,9 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         lua_pop(state, 2);  // pop sandbox copy and chunk, keep sandbox
         // Wrap the source to use the sandbox explicitly
         std::string wrapped = "local _ENV = ...;\n" + source;
-        if (luaL_loadstring(state, wrapped.c_str()) != LUA_OK)
+        if (const int status = luaL_loadstring(state, wrapped.c_str()); status != LUA_OK)
         {
+            if (status == LUA_ERRSYNTAX) markDeterministicFailure();
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(load error)");
             RecordWidgetHostFailure(widgetId,
@@ -16959,10 +16994,13 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
             return false;
         }
         lua_pushvalue(state, -2);  // push sandbox as argument
-        if (snowdesktop::lua_runtime::ProtectedCall(
+        if (const int status = snowdesktop::lua_runtime::ProtectedCall(
                 state, 1, 1, 1000000,
-                std::chrono::milliseconds(100)) != LUA_OK)
+                std::chrono::milliseconds(100)); status != LUA_OK)
         {
+            if (status == LUA_ERRRUN && snowdesktop::widget_runtime::IsDryLoad() &&
+                !quota->memoryExceeded && !quota->executionExceeded)
+                markDeterministicFailure();
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
             RecordWidgetHostFailure(widgetId,
@@ -16975,10 +17013,13 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     else
     {
         // Execute the chunk
-        if (snowdesktop::lua_runtime::ProtectedCall(
+        if (const int status = snowdesktop::lua_runtime::ProtectedCall(
                 state, 0, 1, 1000000,
-                std::chrono::milliseconds(100)) != LUA_OK)
+                std::chrono::milliseconds(100)); status != LUA_OK)
         {
+            if (status == LUA_ERRRUN && snowdesktop::widget_runtime::IsDryLoad() &&
+                !quota->memoryExceeded && !quota->executionExceeded)
+                markDeterministicFailure();
             const char* err = lua_tostring(state, -1);
             RuntimeRecordError(widgetId, err ? err : "(pcall error)");
             RecordWidgetHostFailure(widgetId,
@@ -16995,6 +17036,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     int ref = LUA_NOREF;
     if (!snowdesktop::widget_api::IsDefinedWidget(state, -1))
     {
+        markDeterministicFailure();
         RuntimeRecordError(widgetId,
             "API v2 entry must return widget.define({...})");
         lua_pop(state, 2);
@@ -23853,7 +23895,8 @@ void WidgetEngine::ClearWidgetErrors()
     SaveStorageFile();
 }
 
-bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
+bool WidgetEngine::ReloadWidget(const std::wstring& widgetId,
+    bool* deterministicFailure)
 {
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
@@ -23904,7 +23947,7 @@ bool WidgetEngine::ReloadWidget(const std::wstring& widgetId)
     if (path.empty())
         path = widgets_[idx].filePath;
     const size_t oldIndex = static_cast<size_t>(idx);
-    if (!LoadWidget(path, widgetId))
+    if (!LoadWidget(path, widgetId, false, nullptr, nullptr, nullptr, deterministicFailure))
     {
         RecoverWidgetPackage(packageId,
             widgets_[idx].manifest.version);
@@ -32571,8 +32614,8 @@ std::vector<snowdesktop::widget_menu::Entry> WidgetEngine::ListAvailableMenuEntr
                 Utf8ToWideLocal(manifest.name),
                 Utf8ToWideLocal(manifest.description),
                 Utf8ToWideLocal(manifest.publisher),
-                manifest.minHostVersion.empty() ||
-                    CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) >= 0,
+                snowdesktop::widget::MeetsWidgetMinimumHostVersion(
+                    SNOWDESKTOP_VERSION, manifest.minHostVersion),
                 manifest.hasManifest};
         });
 }
@@ -33431,7 +33474,9 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath,
 
 bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
     const std::optional<std::string>& previousVersion, std::wstring& error,
-    std::uint64_t diagnosticQueryId)
+    std::uint64_t diagnosticQueryId,
+    const snowdesktop::widget::InstalledPackage* workshopCandidate,
+    bool* deterministicFailure)
 {
     const auto trace = [&](std::string_view message) {
         snowdesktop::widget::WriteSteamWorkshopDiagnostic(diagnosticQueryId,
@@ -33452,6 +33497,9 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
         trace("phase=verify.end result=failed reason=selection_unavailable");
         return false;
     }
+    const bool verifyingWorkshopCandidate = workshopCandidate &&
+        selected->root == workshopCandidate->root;
+    if (!verifyingWorkshopCandidate) deterministicFailure = nullptr;
     std::vector<std::wstring> liveInstances;
     for (const auto& widget : widgets_)
         if (selected->enabled && widget.packageId == packageId)
@@ -33474,13 +33522,12 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
                 trace("phase=dry_load.begin version=" + selected->manifest.version);
                 const std::wstring path =
                     ResolveWidgetPath(Utf8ToWideLocal(packageId));
-                ok = !path.empty() && LoadWidget(path, dryId);
+                ok = !path.empty() &&
+                    LoadWidget(path, dryId, false, nullptr, nullptr, nullptr, deterministicFailure);
                 if (!ok)
                 {
-                    const auto& storage = ActiveStorage();
-                    const auto stored = storage.find(
-                        WidgetWideToUtf8(dryId) + ".lastError");
-                    if (stored != storage.end()) failure = stored->second;
+                    if (const auto runtimeFailure = GetWidgetRuntimeFailure(dryId))
+                        failure = runtimeFailure->detail;
                 }
                 trace("phase=dry_load.end result=" + std::string(ok ? "ok" : "failed") +
                     " pathResolved=" + std::to_string(!path.empty()) + " error=" + failure);
@@ -33496,12 +33543,11 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
         {
             for (const auto& widgetId : liveInstances)
             {
-                if (!ReloadWidget(widgetId))
+                if (!ReloadWidget(widgetId, deterministicFailure))
                 {
                     ok = false;
-                    const auto stored = g_storage.find(
-                        WidgetWideToUtf8(widgetId) + ".lastError");
-                    if (stored != g_storage.end()) failure = stored->second;
+                    if (const auto runtimeFailure = GetWidgetRuntimeFailure(widgetId))
+                        failure = runtimeFailure->detail;
                     break;
                 }
                 updatedInstances.push_back(widgetId);
@@ -33517,14 +33563,23 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
         return true;
     }
 
-    const bool recovered = RecoverWidgetPackage(packageId, previousVersion);
+    const bool recovered = RecoverWidgetPackage(packageId, previousVersion,
+        verifyingWorkshopCandidate ? std::string_view(workshopCandidate->manifest.version) :
+            std::string_view{});
     trace("phase=verify.recovery recovered=" + std::to_string(recovered) +
         " retained=" + std::to_string(GetWidgetPackageManager().ContainsPackage(packageId)));
     for (const auto& widgetId : updatedInstances)
         (void)ReloadWidget(widgetId);
-    error = Utf8ToWideLocal(failure.empty()
-        ? "component dry-load or storage migration failed; restored last-known-good"
-        : failure + "\nRestored last-known-good component version.");
+    if (verifyingWorkshopCandidate && recovered)
+    {
+        // A retained failed version otherwise satisfies the next sync plan.
+        std::string quarantineError;
+        if (!GetWidgetPackageManager().QuarantineInactiveVersion(*workshopCandidate, quarantineError))
+            trace("phase=verify.quarantine result=failed error=" + quarantineError);
+    }
+    if (failure.empty()) failure = "Component load or storage migration failed.";
+    if (recovered) failure += "\nRestored last-known-good component version.";
+    error = Utf8ToWideLocal(failure);
     trace("phase=verify.end result=failed error=" + WidgetWideToUtf8(error));
     return false;
 }
@@ -33785,6 +33840,8 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
             continue;
         const std::string publishedFileId = snowdesktop::widget::
             SteamPublishedFileId(action.externalItemId);
+        if (RejectedSteamWorkshopArchive(snapshot, publishedFileId))
+            continue;
         const auto artifact =
             snapshot.localArtifacts.find(publishedFileId);
         if (artifact == snapshot.localArtifacts.end())
@@ -33809,6 +33866,15 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
                 filesystemError.message());
             trace("phase=stage.end item=" + action.externalItemId +
                 " result=failed error=" + filesystemError.message());
+            continue;
+        }
+        const auto digest = snapshot.archiveDigests.find(publishedFileId);
+        if (digest != snapshot.archiveDigests.end() && !digest->second.empty() &&
+            snowdesktop::widget::WidgetPackageManager::Sha256File(destination) != digest->second)
+        {
+            std::filesystem::remove(destination, filesystemError);
+            snapshot.preparationErrors.push_back(action.packageId +
+                ": Workshop archive changed while staging");
             continue;
         }
         snapshot.preparedArtifacts[publishedFileId] = destination;
@@ -33902,6 +33968,12 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
 
         const std::string publishedFileId = snowdesktop::widget::
             SteamPublishedFileId(action.externalItemId);
+        if (const auto rejected = RejectedSteamWorkshopArchive(snapshot, publishedFileId))
+        {
+            result.errors.push_back(action.packageId + ": " + *rejected);
+            recordInstallFailure(*rejected);
+            continue;
+        }
         const auto prepared =
             snapshot.preparedArtifacts.find(publishedFileId);
         if (prepared == snapshot.preparedArtifacts.end())
@@ -33931,10 +34003,13 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         std::error_code cleanupError;
         std::filesystem::remove(prepared->second, cleanupError);
         std::wstring error;
+        bool deterministicFailure = false;
         const bool verified = installedOk && VerifyInstalledWidgetPackage(
-            installed.manifest.id, previousVersion, error, snapshot.diagnosticQueryId);
+            installed.manifest.id, previousVersion, error, snapshot.diagnosticQueryId,
+            &installed, &deterministicFailure);
         if (installedOk && verified)
         {
+            ForgetRejectedSteamWorkshopArchive(publishedFileId);
             if (action.kind ==
                 snowdesktop::widget::SteamWorkshopSyncActionKind::Install)
                 ++result.installed;
@@ -33961,6 +34036,13 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
             }
             const std::string fullError = WidgetWideToUtf8(error);
             if (displayError.empty()) displayError = fullError;
+            if (deterministicFailure)
+            {
+                const auto digest = snapshot.archiveDigests.find(publishedFileId);
+                if (digest != snapshot.archiveDigests.end())
+                    RememberRejectedSteamWorkshopArchive(
+                        publishedFileId, digest->second, displayError);
+            }
             result.errors.push_back(action.packageId + ": " + fullError);
             recordInstallFailure(std::move(displayError));
         }
@@ -34076,7 +34158,7 @@ WidgetEngine::QueryStaticWidgetCatalog(
 bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
     const std::string& providerId, const std::string& externalItemId,
     const std::string& version, std::wstring& error,
-    bool allowSourceChange, bool allowPermissionExpansion)
+    bool allowSourceChange, bool allowPermissionExpansion, bool retryWorkshop)
 {
     const auto source = GetWidgetPackageSources().find(providerId);
     if (source == GetWidgetPackageSources().end())
@@ -34085,10 +34167,21 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
             "component source is not registered: " + providerId);
         return false;
     }
+    const bool workshop = providerId == "steam-workshop";
+    const std::string workshopItem = workshop
+        ? snowdesktop::widget::SteamPublishedFileId(externalItemId) : std::string{};
+    std::optional<snowdesktop::widget::SteamWorkshopSource> freshWorkshopSource;
+    auto* provider = source->second.get();
+    if (workshop && retryWorkshop)
+    {
+        ForgetRejectedSteamWorkshopArchive(workshopItem);
+        // Re-read the subscribed package even if the existing source resolved it recently.
+        provider = &freshWorkshopSource.emplace();
+    }
     std::string sourceError;
     const auto details = version.empty()
-        ? source->second->GetDetails(externalItemId, sourceError)
-        : source->second->GetVersionDetails(
+        ? provider->GetDetails(externalItemId, sourceError)
+        : provider->GetVersionDetails(
             externalItemId, version, sourceError);
     if (!details)
     {
@@ -34102,16 +34195,35 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
     if (const auto previous = manager.ResolveSelected(details->manifest.id))
         if (!previous->builtin && !previous->development)
             previousVersion = previous->manifest.version;
+    if (workshop && retryWorkshop)
+    {
+        // Old hosts kept rejected versions alongside the active fallback.
+        for (const auto& package : manager.ListPackages())
+        {
+            if (package.active || package.builtin || package.development ||
+                package.manifest.id != details->manifest.id ||
+                package.manifest.version != requestedVersion ||
+                package.source.providerId != providerId ||
+                snowdesktop::widget::SteamPublishedFileId(package.source.externalItemId) != workshopItem)
+                continue;
+            if (!manager.QuarantineInactiveVersion(package, sourceError))
+            {
+                error = Utf8ToWideLocal(sourceError);
+                return false;
+            }
+            break;
+        }
+    }
     snowdesktop::widget::InstalledPackage installed;
     snowdesktop::widget::ValidationReport report;
-    if (!manager.InstallFromSource(*source->second, externalItemId,
+    if (!manager.InstallFromSource(*provider, externalItemId,
         requestedVersion,
         allowSourceChange, installed, report, sourceError,
         allowPermissionExpansion))
     {
         error = Utf8ToWideLocal(sourceError);
         if (!report.Ok()) error += L"\n" + Utf8ToWideLocal(report.ToJson());
-        if (providerId == "steam-workshop")
+        if (workshop)
         {
             std::string displayError = sourceError;
             const auto issue = std::find_if(report.issues.begin(),
@@ -34129,11 +34241,12 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
         return false;
     }
     const bool verified = VerifyInstalledWidgetPackage(
-        installed.manifest.id, previousVersion, error);
-    if (providerId == "steam-workshop")
+        installed.manifest.id, previousVersion, error, 0, workshop ? &installed : nullptr);
+    if (workshop)
     {
         if (verified)
         {
+            ForgetRejectedSteamWorkshopArchive(workshopItem);
             ClearSteamWorkshopInstallFailure(installed.manifest.id);
         }
         else

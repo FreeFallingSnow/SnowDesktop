@@ -897,7 +897,8 @@ public:
      * @param widgetId 要重新加载的小部件 ID
      * @return 重载成功返回 true，否则返回 false
      */
-    bool ReloadWidget(const std::wstring& widgetId);
+    bool ReloadWidget(const std::wstring& widgetId,
+        bool* deterministicFailure = nullptr);
     bool RetryWidget(const std::wstring& widgetId,
         const std::wstring& packageId);
     snowdesktop::widget_runtime::WidgetHostState GetWidgetHostState(
@@ -1156,7 +1157,8 @@ public:
         const std::string& providerId, const std::string& externalItemId,
         const std::string& version, std::wstring& error,
         bool allowSourceChange = false,
-        bool allowPermissionExpansion = false);
+        bool allowPermissionExpansion = false,
+        bool retryWorkshop = false);
     int ApplySafeWidgetPackageUpdates(const std::string& providerId,
         std::string& report);
     static std::vector<snowdesktop::widget::PackageDetails>
@@ -1725,7 +1727,9 @@ private:
         std::string_view focusedKey, bool drawLogicalSlotDrag);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
-        std::wstring& error, std::uint64_t diagnosticQueryId = 0);
+        std::wstring& error, std::uint64_t diagnosticQueryId = 0,
+        const snowdesktop::widget::InstalledPackage* workshopCandidate = nullptr,
+        bool* deterministicFailure = nullptr);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
     struct HostInputDropCaret
@@ -1766,7 +1770,8 @@ private:
             previewStorageOverrides = nullptr,
         const std::filesystem::path* packageRootOverride = nullptr,
         const LuaWidgetAuthorPreviewConfiguration*
-            previewConfiguration = nullptr);
+            previewConfiguration = nullptr,
+        bool* deterministicFailure = nullptr);
     bool IsPreviewWidget(const std::wstring& widgetId) const;
 
     /**

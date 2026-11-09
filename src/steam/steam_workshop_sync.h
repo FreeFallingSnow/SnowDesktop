@@ -41,6 +41,7 @@ struct SteamWorkshopSubscriptionSnapshot
     // package staging area so the UI thread never touches a slow/offline Steam
     // library or starts SteamAPI merely to install an already-detected item.
     std::unordered_map<std::string, std::filesystem::path> localArtifacts;
+    std::unordered_map<std::string, std::string> archiveDigests;
     std::unordered_map<std::string, std::filesystem::path> preparedArtifacts;
     std::vector<std::string> preparationErrors;
     std::vector<SteamWorkshopInstallFailure> discoveryFailures;

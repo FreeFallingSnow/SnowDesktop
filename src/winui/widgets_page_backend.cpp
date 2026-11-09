@@ -2524,7 +2524,7 @@ struct WidgetsPageBackend::Impl final
         const bool installed = engine.InstallAndVerifyWidgetPackageFromSource(
             WideToUtf8(failure->sourceId),
             WideToUtf8(failure->externalItemId),
-            WideToUtf8(failure->version), error, false, false);
+            {}, error, false, false, true);
         FinishTask(installed
                 ? WidgetsPageHostOperationResult::Success()
                 : WidgetsPageHostOperationResult::Failure(std::move(error)),

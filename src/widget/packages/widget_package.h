@@ -160,6 +160,7 @@ PackageManifest LocalizePackageManifest(PackageManifest manifest,
 bool IsExecutablePackageContract(int schemaVersion,
     int apiVersion) noexcept;
 bool IsExecutablePackageContract(const PackageManifest& manifest) noexcept;
+bool MeetsWidgetMinimumHostVersion(std::string_view host, std::string_view minimum);
 std::vector<std::string> DeclaredPermissions(
     const PackageManifest& manifest);
 
@@ -395,7 +396,7 @@ public:
     ValidationReport ValidateDirectory(const std::filesystem::path& root,
         PackageManifest* manifest = nullptr) const;
     ValidationReport ValidateArchive(const std::filesystem::path& archive,
-        PackageManifest* manifest = nullptr) const;
+        PackageManifest* manifest = nullptr, bool* malformedArchive = nullptr) const;
     bool InstallDirectory(const std::filesystem::path& source,
         const PackageSourceRef& sourceRef, bool allowSourceChange,
         InstalledPackage& installed, ValidationReport& report,
@@ -430,6 +431,8 @@ public:
     bool SetDevelopmentOverride(const std::string& packageId, bool active,
         std::string& error);
     bool Rollback(const std::string& packageId, const std::string& version,
+        std::string& error);
+    bool QuarantineInactiveVersion(const InstalledPackage& package,
         std::string& error);
     bool Uninstall(const std::string& packageId, std::string& error);
 
@@ -467,7 +470,8 @@ private:
     bool SaveRegistry(std::string& error) const;
     bool ExtractArchive(const std::filesystem::path& archive,
         const std::filesystem::path& destination,
-        ValidationReport& report, std::string& error) const;
+        ValidationReport& report, std::string& error,
+        bool* malformedArchive = nullptr) const;
     bool CopyPackageTree(const std::filesystem::path& source,
         const std::filesystem::path& destination, std::string& error) const;
     bool CommitStagedPackage(const std::filesystem::path& stagedRoot,

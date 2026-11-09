@@ -47,7 +47,8 @@ inline void TestWorkshopValidationCache()
     const auto validate = [&] {
         ++validations;
         SteamWorkshopValidationCache::Result result;
-        result.report = manager.ValidateArchive(archive, &result.manifest);
+        result.report = manager.ValidateArchive(
+            archive, &result.manifest, &result.malformedArchive);
         return result;
     };
     SteamWorkshopValidationCache cache(2);
@@ -88,8 +89,11 @@ inline void TestWorkshopValidationCache()
     require(!result.report.Ok() && !result.reused && validations == 4,
         "changed invalid content never inherits a cached success");
     result = cache.Validate(archive, paths.staging, validate);
+    require(!result.report.Ok() && result.reused && validations == 4,
+        "an unchanged malformed archive reuses its error without extraction");
+    result = validate();
     require(!result.report.Ok() && !result.reused && validations == 5,
-        "validation failures are retried rather than cached as successful content");
+        "explicit retry still reaches the validator for the same malformed bytes");
     std::filesystem::copy_file(replacement, archive,
         std::filesystem::copy_options::overwrite_existing);
 
