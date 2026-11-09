@@ -46,7 +46,7 @@ function skin.background()
     local w, h, c = layout.contentWidth(), layout.contentHeight(), palette()
     draw.gradientRect(0, 0, w, h, c.top, c.base, "vertical", 0, 1)
     local unit = math.max(9, math.min(w, h) * 0.044)
-    for row = 0, 4 do
+    for row = 0, 3 do
         for col = 0, 9 do
             local x, y = w - (col + row * 0.5) * unit * 1.55, row * unit * 0.83
             diamond(x, y, unit * 0.76, unit * 0.42, c.trim, 0.22)
@@ -72,6 +72,7 @@ local function text(value, x, y, width, size, color, bold, centered, lineHeight,
         y = y + (lineHeight - height) / 2 - top
     end
     draw.text(x + offset, y, value, size, color, width - offset, bold, true, nil, alpha)
+    return math.min(width, measured.width)
 end
 
 local function region(id, label, x, y, w, h, radius)
@@ -338,7 +339,7 @@ end
 function skin.render(model, game, status, canMove, canGiveFirst)
     local w, h, c = layout.contentWidth(), layout.contentHeight(), palette()
     local u = math.max(0.45, math.min(w, h) / 440)
-    local margin, headerH, buttonH = 18 * u, 89 * u, 32 * u
+    local margin, headerH, buttonH = 18 * u, 56 * u, 32 * u
     local controlsWidth = w - 2 * margin
     local footer = h - margin - buttonH
     local statusH = 27 * u
@@ -351,11 +352,11 @@ function skin.render(model, game, status, canMove, canGiveFirst)
     local canChoose = (not model.connected or model.host) and game.played == 0
     local badgeWidth = math.min(130 * u, w * 0.42)
     local badgeX = w - margin - badgeWidth
-    local titleY, modeY, badgeHeight = 12 * u, 47 * u, 30 * u
-    text(title, margin, titleY, badgeX - margin - 8 * u, 27 * u, c.ink, true)
-    text(mode, margin + u, modeY, badgeX - margin - 9 * u, 13 * u, c.muted, false)
-    local headerCenter = (titleY + modeY + 18 * u) / 2
-    chip(l10n.tr(skin.rules[game.rule]), badgeX, headerCenter - badgeHeight / 2, badgeWidth, badgeHeight, c, canChoose)
+    local headerY, headerRowHeight = 13 * u, 28 * u
+    local titleWidth = text(title, margin, headerY, (badgeX - margin) * 0.56, 21 * u, c.ink, true, false, headerRowHeight)
+    local modeX = margin + titleWidth + 10 * u
+    text(mode, modeX, headerY, badgeX - modeX - 10 * u, 13 * u, c.muted, false, false, headerRowHeight)
+    chip(l10n.tr(skin.rules[game.rule]), badgeX, headerY, badgeWidth, headerRowHeight, c, canChoose)
     boardArt(game, model.pendingIndex, canMove, x, y, side)
     if model.menu then overlay(model, x, y, side, u, c) end
 
