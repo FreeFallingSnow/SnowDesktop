@@ -148,6 +148,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **工坊候选的观察提示（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86`、批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0、Run `71efd003773f460887cd15d19494ee1a`。原 `ready-and-wait` session `43835` 多次交替输出 `Waiting for the collaboration state transaction.` 和同一编译阶段，入队时短暂输出 `resource reason not recorded`。原 Run 通过 Release 和七项测试，全程未重交。下一步仍是按业务状态去重并核对入队原因发布时序。
+
 - **编辑等待的重复提示（2026-11-08）**：Task `minimize-genie-perf` 在前台 `begin` session `99245` 两次收到 `Waiting for batch d7c34e793bd344e19c56e369c1e793a7: editing phase; editing peers dock-hover-expand-20261108.`，两次之间夹有 `Waiting for the collaboration state transaction.`。同一观察随后还短暂收到 Run `7e1ab48b28994011aa1e3496cbd63a7d` 的 `resource reason not recorded`。共享过渡文件确有其他任务改动，等待本身符合协议。继续原进程取得编辑批次，未重复登记或构建。下一步是按业务状态独立去重短时事务提示，并核对 Run 原因字段的发布时序。
 
 - **执行阶段的重复提示（2026-11-07）**：Task `geometric-icon-title-drop`，批次 `dade9af1c5cb479b84e47add78d40877` 修订 0，Run `8e306b73b26f4c0290a13cd8d92247e5`。同一 `ready-and-wait` session `22245` 在执行期间两次输出 `Waiting for the collaboration state transaction.`，并在两段回执中重复显示 `latest stage start compile`。同一 Run 最终通过 Release 构建和三项测试。记录的是观察输出重复，未发现重复提交或重复执行。后续按业务阶段标识与短时事务分别去重，保留实际阶段变化和最终结果。
@@ -162,6 +164,8 @@
 - **证据与边界**：已核对本机DSH的 `dsh-tool-call-timeout-policy`：未声明工具 `timeoutMs` 时不设置该层截止。进程内持续观察不调用模型；传输yield续接同一session。测试内部故障兜底仍有界。默认/0、事件到达、显式超时、取消与编辑权不变已通过既有通用/适配器驱动，实际SDK也验证工具注册后没有外层截止。真实用户Host的长期连接及重载仍需安装环境回验。
 
 ### CF-013 共享资源的键级编辑与提交粒度不闭合
+
+- **工坊语言键实际提交（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86` 的批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0 通过验证后，首次 `commit -ResourceRequests` 返回 `[Errno 32] Wait worker lease is occupied`，同请求重试成功为 `ae59bdd0`，十个归属键保存且工作区原件保留。相邻任务先提交后，HEAD 与工作区中新增键顺序不同，产生了无语义差异的剩余 Git diff。下一步核对观察 worker 租约释放时序，并评估如何在保留其他键的前提下消除残留顺序差异。此次只追加实测记录。
 
 - **定向修复与验证（2026-11-08）**：Task `collab-priority-fixes-20261108` 的 `commit -ResourceRequests` 可按已应用回执保存归属键。隔离 Git 仓库中两项任务修改同一语言文件，分别提交时保留其他暂存键、暂存文件和工作区内容。验证覆盖冲突、重开、冻结检查点及两处提交中断，其中回执落盘后的恢复保留随后新增的暂存项。旧回执继续使用审阅后的整文件流程。
 
