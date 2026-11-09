@@ -155,6 +155,13 @@ bool DesktopApp::ClearWidgetTextDropPreview()
     return true;
 }
 
+bool DesktopApp::IsWidgetTextFileDropOccluded(POINT point) const
+{
+    if (luaWidgetPanelAnimation_.IsHidden()) return false;
+    const RECT panel = GetLuaWidgetPanelRect();
+    return luaWidgetPanelRequest_.modal || PtInRect(&panel, point);
+}
+
 bool DesktopApp::HandleWidgetTextDragHover(
     POINT point, DWORD keyState, DWORD& effect)
 {
@@ -218,7 +225,12 @@ bool DesktopApp::HandleWidgetTextDragHover(
         else if (widgetEngine_)
             widgetEngine_->ClearHostInputTextDropPreview();
     }
-    if (!accepted) return false;
+    if (!accepted)
+    {
+        if (!widgetTextDragSource_ || !IsWidgetTextFileDropOccluded(point))
+            return false;
+        accepted = false;
+    }
 
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();

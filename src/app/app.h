@@ -4176,6 +4176,7 @@ private:
         std::wstring_view widgetId, std::string_view controlId, std::string_view surface) const;
     void InvalidateNativeSearchTextDrop(const std::wstring& widgetId, bool popup);
     bool ClearWidgetTextDropPreview();
+    bool IsWidgetTextFileDropOccluded(POINT point) const;
     bool HandleWidgetTextDragHover(POINT point, DWORD keyState, DWORD& effect);
     std::optional<bool> DeliverWidgetTextDrop(POINT point, IDataObject* source,
         bool copyAllowed);
@@ -4361,10 +4362,9 @@ private:
     {
         snowdesktop::drop_text_rules::ResourceCandidates candidates;
         snowdesktop::drop_text_rules::Classification reference;
-        std::wstring unicodeText;
     };
     static DropReferenceSnapshot ReadDropReferenceSnapshot(
-        IDataObject* dataObject);
+        IDataObject* dataObject, bool literalText = false);
     static std::wstring ReadDroppedUnicodeText(IDataObject* dataObject);
     static std::vector<std::wstring> TryGetNonFileDropPaths(
         IDataObject* dataObject,

@@ -123,7 +123,10 @@ void DesktopApp::RunWidgetTextDrag(WidgetTextDragSource dragSource)
     DoDragDrop(data.Get(), source.Get(), DROPEFFECT_COPY, &effect);
     widgetTextDragSource_.reset();
     externalWidgetTextAvailable_ = false;
-    if (ClearWidgetTextDropPreview()) PresentOleDragInteractionFrame();
+    if (dragDropController_.IsExternalDragActive())
+        HandleExternalOleDragLeave(false);
+    else if (ClearWidgetTextDropPreview())
+        PresentOleDragInteractionFrame();
 }
 
 POINT DesktopApp::GetDragTargetPoint(POINT current) const

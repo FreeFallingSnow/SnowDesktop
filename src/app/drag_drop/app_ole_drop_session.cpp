@@ -359,15 +359,6 @@ HRESULT DesktopApp::HandleOleDragEnter(
     ClearWidgetTextDropPreview();
     externalFileDropPaths_.clear();
 
-    if (widgetTextDragSource_)
-    {
-        externalWidgetTextAvailable_ = OffersWidgetInputText(dataObject);
-        if (!HandleWidgetTextDragHover(ScreenPointToClient(point), keyState, *effect))
-            *effect = DROPEFFECT_NONE;
-        PresentOleDragInteractionFrame();
-        return S_OK;
-    }
-
     if (dragDropController_.IsSelfDragActive())
     {
         dragDropController_.MarkSelfDragReturned();
@@ -469,6 +460,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return rejectUnsupportedSource();
     externalWidgetTextAvailable_ = externalOwnedContent_ &&
         OffersWidgetInputText(dataObject);
+    if (widgetTextDragSource_ && externalWidgetTextAvailable_)
+        externalSummary.fileCount = 1;
     dragDropController_.BeginExternalDrag(
         externalSummary);
     POINT client = ScreenPointToClient(point);
@@ -579,14 +572,6 @@ HRESULT DesktopApp::HandleOleDragOver(
 {
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
-
-    if (widgetTextDragSource_)
-    {
-        if (!HandleWidgetTextDragHover(ScreenPointToClient(point), keyState, *effect))
-            *effect = DROPEFFECT_NONE;
-        PresentOleDragInteractionFrame();
-        return S_OK;
-    }
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -730,12 +715,6 @@ HRESULT DesktopApp::HandleOleDragLeave()
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
-    if (widgetTextDragSource_)
-    {
-        externalWidgetTextAvailable_ = false;
-        if (ClearWidgetTextDropPreview()) PresentOleDragInteractionFrame();
-        return S_OK;
-    }
     if (dragDropController_.IsSelfDragActive())
     {
         POINT hoverPoint{};
@@ -835,9 +814,13 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             return S_OK;
         }
     }
-    if (widgetTextDragSource_)
+    const bool widgetText = widgetTextDragSource_.has_value();
+    if (widgetText && IsWidgetTextFileDropOccluded(clientPoint))
     {
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
         *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
         return S_OK;
     }
     const bool externalContent = !dragDropController_.IsSelfDragActive() && OffersOwnedDropContent(dataObject);
@@ -1301,7 +1284,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         };
     const DropReferenceSnapshot dropReferenceSnapshot =
         dataObject && dropPaths.empty() && !sourceUsesAsyncMode
-            ? ReadDropReferenceSnapshot(dataObject)
+            ? ReadDropReferenceSnapshot(dataObject, widgetText)
             : DropReferenceSnapshot{};
     const bool fileUrlReference = std::any_of(
         dropReferenceSnapshot.candidates.begin(),
