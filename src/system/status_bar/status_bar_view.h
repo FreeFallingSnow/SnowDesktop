@@ -55,6 +55,7 @@ struct StatusBarSnapshot
     std::vector<tray::Icon> tray;
     bool trayExpanded = false;
     status_bar_input_method::Snapshot inputMethod;
+    std::wstring foregroundAppName;
 };
 struct StatusBarPalette
 {

@@ -167,14 +167,15 @@ struct MergedStatusBarLayout
     std::vector<RECT> right;
 };
 // The clock and notification target form the last group on the complete bar.
-// Merged bars also keep the Dock's symmetric central reservation.
+// A merged bar reserves the Dock's center. A standalone bar may reserve its label there.
 inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float scale,
     LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
-    std::optional<std::size_t> controlIndex, bool merged = false, LONG trailingInset = 0)
+    std::optional<std::size_t> controlIndex, bool merged = false, LONG trailingInset = 0,
+    LONG standaloneCenterWidth = 0)
 {
     MergedStatusBarLayout result;
     if (merged) result.center = MergedStatusBarCenter(width, height, scale);
-    const LONG centerWidth = result.center.right - result.center.left;
+    const LONG centerWidth = merged ? result.center.right - result.center.left : standaloneCenterWidth;
     clockWidth = std::max(0L, clockWidth);
     notificationWidth = std::max(0L, notificationWidth);
     if (controlIndex && *controlIndex >= rightWidths.size()) controlIndex.reset();

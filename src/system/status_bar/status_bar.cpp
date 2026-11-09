@@ -27,11 +27,16 @@
 #include "system/controls/system_controls.h"
 #include "common/utils.h"
 
+#include <appmodel.h>
 #include <dcomp.h>
 #include <dwrite.h>
 #include <dwmapi.h>
+#include <propkey.h>
+#include <propsys.h>
 #include <shellapi.h>
 #include <shellscalingapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #include <windowsx.h>
 #include <wrl/client.h>
 #include <array>
@@ -39,6 +44,7 @@
 #include <cstdint>
 #include <map>
 #include <sstream>
+#include <string_view>
 #include <utility>
 
 namespace snowdesktop
@@ -101,6 +107,81 @@ UINT Edge(DockPosition position)
     case DockPosition::Right: return ABE_RIGHT;
     default: return ABE_TOP;
     }
+}
+
+std::wstring RegisteredAppName(const wchar_t* appId)
+{
+    if (!appId || !*appId) return {};
+    ComPtr<IShellItem> app;
+    if (FAILED(SHCreateItemInKnownFolder(FOLDERID_AppsFolder, KF_FLAG_DONT_VERIFY,
+            appId, IID_PPV_ARGS(&app)))) return {};
+    PWSTR displayName = nullptr;
+    std::wstring name;
+    if (SUCCEEDED(app->GetDisplayName(SIGDN_NORMALDISPLAY, &displayName)) && displayName)
+        name = displayName;
+    CoTaskMemFree(displayName);
+    return name;
+}
+
+std::wstring ForegroundAppName(HWND window, DWORD processId)
+{
+    if (!processId || processId == GetCurrentProcessId()) return {};
+    wchar_t windowClass[128]{};
+    GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
+    const std::wstring_view kind(windowClass);
+    if (window == GetShellWindow() || kind == L"Progman" || kind == L"WorkerW" ||
+        kind == L"Shell_TrayWnd" || kind == L"Shell_SecondaryTrayWnd") return {};
+
+    ComPtr<IPropertyStore> properties;
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&properties))))
+    {
+        PROPVARIANT id{};
+        std::wstring name;
+        if (SUCCEEDED(properties->GetValue(PKEY_AppUserModel_ID, &id)) && id.vt == VT_LPWSTR)
+            name = RegisteredAppName(id.pwszVal);
+        PropVariantClear(&id);
+        if (!name.empty()) return name;
+    }
+
+    // A hosted Windows app can own a child of the shell's foreground frame.
+    if (kind == L"ApplicationFrameWindow")
+    {
+        const auto child = FindWindowExW(window, nullptr, L"Windows.UI.Core.CoreWindow", nullptr);
+        if (!child || !GetWindowThreadProcessId(child, &processId)) return {};
+    }
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) return {};
+    UINT32 appIdLength = 0;
+    std::wstring appId;
+    if (GetApplicationUserModelId(process, &appIdLength, nullptr) == ERROR_INSUFFICIENT_BUFFER)
+    {
+        appId.resize(appIdLength);
+        if (GetApplicationUserModelId(process, &appIdLength, appId.data()) != ERROR_SUCCESS) appId.clear();
+    }
+    wchar_t path[32768]{};
+    DWORD pathLength = static_cast<DWORD>(std::size(path));
+    const bool hasPath = QueryFullProcessImageNameW(process, 0, path, &pathLength) != FALSE;
+    CloseHandle(process);
+    if (!appId.empty())
+        if (auto name = RegisteredAppName(appId.c_str()); !name.empty()) return name;
+    if (!hasPath) return {};
+
+    ComPtr<IShellItem2> executable;
+    if (SUCCEEDED(SHCreateItemFromParsingName(path, nullptr, IID_PPV_ARGS(&executable))))
+    {
+        PWSTR description = nullptr;
+        std::wstring name;
+        if (SUCCEEDED(executable->GetString(PKEY_FileDescription, &description)) && description)
+            name = description;
+        CoTaskMemFree(description);
+        if (!name.empty()) return name;
+    }
+    const auto filename = std::wstring_view(path, pathLength);
+    const auto separator = filename.find_last_of(L"\\/");
+    auto name = separator == std::wstring_view::npos ? filename : filename.substr(separator + 1);
+    if (name.size() > 4 && _wcsicmp(name.data() + name.size() - 4, L".exe") == 0)
+        name.remove_suffix(4);
+    return std::wstring(name);
 }
 
 }
@@ -750,6 +831,7 @@ struct StatusBar::Impl
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
             snapshot.trayExpanded = trayExpanded;
             if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
+            snapshot.foregroundAppName = owner.foregroundAppName;
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
@@ -1427,7 +1509,9 @@ struct StatusBar::Impl
             case kPlace: self->Place(); return 0;
             case kForeground:
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+                self->owner.RefreshForegroundApp();
                 if (self->UpdateAppearance()) self->QueuePlace();
+                else if (self->dataSnapshot.foregroundAppName != self->owner.foregroundAppName) self->Paint();
                 self->PollTrayMenu();
                 return 0;
             case kFullscreen:
@@ -1451,6 +1535,7 @@ struct StatusBar::Impl
                         self->TraceValue("volume.completions");
                         self->owner.volumeWheel.Complete(completion.id);
                     }
+                    self->owner.RefreshForegroundApp();
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else self->Paint();
                     self->PollTrayMenu();
@@ -1775,6 +1860,26 @@ struct StatusBar::Impl
     std::function<std::optional<HWND>(HMONITOR)> fullscreenSourceProvider;
     std::function<void(HRESULT)> graphicsFailure;
     StatusBarSettings settings;
+    HWND foregroundAppWindow = nullptr;
+    DWORD foregroundAppProcess = 0;
+    std::wstring foregroundAppName;
+    void RefreshForegroundApp()
+    {
+        if (!settings.foregroundAppName)
+        {
+            foregroundAppWindow = nullptr;
+            foregroundAppProcess = 0;
+            foregroundAppName.clear();
+            return;
+        }
+        const auto window = GetForegroundWindow();
+        DWORD process = 0;
+        if (window) GetWindowThreadProcessId(window, &process);
+        if (window == foregroundAppWindow && process == foregroundAppProcess) return;
+        foregroundAppWindow = window;
+        foregroundAppProcess = process;
+        foregroundAppName = ForegroundAppName(window, process);
+    }
     PersonalizationSettings globalAppearance;
     PersonalizationSettings tooltipAppearance;
     StatusBarVolumeWheel volumeWheel;
@@ -1880,6 +1985,9 @@ struct StatusBar::Impl
         removingWindows=false;
         tray.reset();
         inputMethod.reset();
+        foregroundAppWindow = nullptr;
+        foregroundAppProcess = 0;
+        foregroundAppName.clear();
         volumeWheel.Reset();
         if (data) { data->RemoveConsumer("statusBar"); data->Controls()->RemoveConsumer("statusBarVolume"); }
     }
@@ -2281,6 +2389,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         ReleaseGraphicsResources();
     self.composition = composition; self.text = text;
     if (!self.settings.enabled || monitors.empty()) { self.Close(); return; }
+    self.RefreshForegroundApp();
     const auto previousTray = self.tray;
     if (self.settings.tray)
     {

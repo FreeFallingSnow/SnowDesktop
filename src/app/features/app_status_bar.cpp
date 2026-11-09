@@ -789,6 +789,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             return child;
         };
         const auto addTimePositionChoices = [&](HMENU target) {
+            if (currentSettings.foregroundAppName && currentSettings.foregroundAppNameCentered) return;
             if (const auto position = submenu(target, "statusBar.timeNotificationPosition"))
             {
                 addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned);

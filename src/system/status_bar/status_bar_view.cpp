@@ -80,12 +80,19 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
 
 void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
     std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool fixedInformationBaseline = false,
-    bool rightAligned = false, bool* frameReusable = nullptr)
+    bool rightAligned = false, bool* frameReusable = nullptr, bool trim = false)
 {
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
             bounds.right - bounds.left, bounds.bottom - bounds.top, &layout)))
     { if (frameReusable) *frameReusable = false; return; }
+    if (trim)
+    {
+        ComPtr<IDWriteInlineObject> ellipsis;
+        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        if (SUCCEEDED(factory->CreateEllipsisTrimmingSign(format, &ellipsis)))
+            layout->SetTrimming(&trimming, ellipsis.Get());
+    }
     if (rightAligned) layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
     auto origin = D2D1::Point2F(bounds.left, bounds.top);
     if (fixedInformationBaseline)
@@ -226,6 +233,9 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         if (!item.text.empty()) item.tip += L"  " + item.text;
         items.push_back(std::move(item));
     };
+    if (s.foregroundAppName)
+        add("foregroundAppName", snapshot.foregroundAppName.empty() ? L"SnowDesktop" : snapshot.foregroundAppName,
+            StatusBarAction::None, L"", !s.foregroundAppNameCentered);
     if (s.menu) add("menu", L"", StatusBarAction::SystemMenu, kMenu, true);
     if (s.quickSearch) add("quickSearch", L"", StatusBarAction::QuickSearch, kSearch, true);
     if (s.taskView) add("taskView", L"", StatusBarAction::TaskView, kTaskView, true);
@@ -646,10 +656,10 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
         const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
         return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
     };
-    std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex, showDesktopIndex;
+    std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex, showDesktopIndex, appNameIndex;
     std::vector<std::size_t> leftIndices, rightIndices, trayIndices;
     std::vector<LONG> widths(items.size()), rightWidths;
-    LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0;
+    LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0, leftWidth = 0;
     for (std::size_t i = 0; i < items.size(); ++i)
     {
         auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
@@ -658,9 +668,10 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
         // merged entry, including its spacing, pointer and keyboard target.
         if (mergedDock && dockQuickSearch && item.key == "quickSearch") continue;
         widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
-        if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
+        if (item.key == "foregroundAppName") { appNameIndex = i; }
+        else if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
         else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
-        else if (item.left) leftIndices.push_back(i);
+        else if (item.left) { leftIndices.push_back(i); leftWidth += widths[i]; }
         else if (item.icon) { trayIndices.push_back(i); trayWidth += widths[i]; }
         else
         {
@@ -673,6 +684,17 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
     const RECT showDesktopBounds = showDesktopIndex ? StatusBarShowDesktopTarget(viewportWidth, viewportHeight, scale) : RECT{};
     const LONG trailingInset = showDesktopBounds.right - showDesktopBounds.left;
     const LONG edgePadding = static_cast<LONG>(padding);
+    const LONG minAppNameWidth = static_cast<LONG>(std::ceil(28.f * scale));
+    const bool centeredAppName = appNameIndex && !mergedDock && !items[*appNameIndex].left;
+    timeNotificationRightAligned |= centeredAppName;
+    LONG appNameCenterWidth = 0;
+    if (centeredAppName)
+    {
+        const LONG rightWidth = clockWidth + notificationWidth + controlWidth + std::max(edgePadding, trailingInset);
+        const LONG sideWidth = std::max(leftWidth + edgePadding, rightWidth) + edgePadding;
+        const LONG available = viewportWidth - 2 * sideWidth;
+        if (available >= minAppNameWidth) appNameCenterWidth = std::min(widths[*appNameIndex], available);
+    }
     // Keep the date itself centered. The symmetric reservation protects
     // its trailing notification button without shifting the date left.
     if (!mergedDock && !timeNotificationRightAligned &&
@@ -682,7 +704,8 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
     if (mergedDock || timeNotificationRightAligned)
     {
         const auto layout = LayoutRightStatusBar(viewportWidth, viewportHeight, scale,
-            edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock, trailingInset);
+            edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock, trailingInset,
+            appNameCenterWidth);
         if (clockIndex) items[*clockIndex].bounds = layout.clock;
         if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
         for (std::size_t i = 0; i < rightIndices.size(); ++i)
@@ -696,6 +719,12 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
             };
             reserve(layout.clock); reserve(layout.notifications);
             for (const auto& bounds : layout.right) reserve(bounds);
+            if (centeredAppName && !IsRectEmpty(&layout.center))
+            {
+                items[*appNameIndex].bounds = layout.center;
+                reserve(layout.center);
+                trayMinimum = layout.center.right + edgePadding;
+            }
         }
         if (mergedDock) trayMinimum = layout.center.right + edgePadding;
     }
@@ -724,16 +753,25 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
             if (!IsRectEmpty(&bounds[i + 1])) leftLimit = std::min(leftLimit, bounds[i + 1].left - edgePadding);
         }
     }
-    if (!mergedDock && timeNotificationRightAligned && trayWidth > 0)
+    if (!mergedDock && timeNotificationRightAligned && !appNameCenterWidth && trayWidth > 0)
         leftLimit -= std::min(trayWidth, static_cast<LONG>(std::ceil(56 * scale))) + edgePadding;
     LONG leftCursor = edgePadding;
+    if (appNameIndex && !centeredAppName)
+    {
+        const LONG extent = std::min(widths[*appNameIndex], leftLimit - leftWidth - edgePadding);
+        if (extent >= minAppNameWidth)
+        {
+            items[*appNameIndex].bounds = {leftCursor, 0, leftCursor + extent, viewportHeight};
+            leftCursor += extent;
+        }
+    }
     for (const auto i : leftIndices)
         if (leftCursor + widths[i] <= leftLimit)
         { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
     // Without a central clock/notification group the pinned tray can use
     // the center too, but must still leave the left controls their space.
     if (!mergedDock && (timeNotificationRightAligned || (!clockWidth && !notificationWidth)))
-        trayMinimum = leftCursor + edgePadding;
+        trayMinimum = std::max(trayMinimum, leftCursor + edgePadding);
     LONG trayEnd = viewportWidth - edgePadding;
     for (const auto i : rightIndices)
         if (!IsRectEmpty(&items[i].bounds)) trayEnd = std::min(trayEnd, items[i].bounds.left);
@@ -882,8 +920,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
             const auto inset = D2D1::RoundedRect(D2D1::RectF(rect.left + 2 * scale, rect.top + 3 * scale,
                 rect.right - 2 * scale, rect.bottom - 3 * scale), 4 * scale, 4 * scale);
-            const bool hover = hovered && *hovered == static_cast<std::size_t>(&item - items.data());
-            if (hover && item.action != StatusBarAction::None && hoverBrush) context->FillRoundedRectangle(inset, hoverBrush.Get());
+            const bool hover = item.action != StatusBarAction::None && hovered &&
+                *hovered == static_cast<std::size_t>(&item - items.data());
+            if (hover && hoverBrush) context->FillRoundedRectangle(inset, hoverBrush.Get());
             brush->SetColor(hc && hover ? palette.highlightText : hc ? palette.foreground :
                 D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4));
             if (item.icon || item.inputIcon)
@@ -1013,7 +1052,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 if (!item.text.empty())
                 {
                     const bool mergedClock = mergedDock && item.key == "clock";
-                    if (mergedClock)
+                    const bool appName = item.key == "foregroundAppName";
+                    if (mergedClock || appName)
                     {
                         textRect.left += 4.f * scale;
                         textRect.right -= 4.f * scale;
@@ -1021,7 +1061,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
                         item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
-                        item.key == "gpu" || item.key == "traffic", mergedClock, frameReusable);
+                        item.key == "gpu" || item.key == "traffic", mergedClock, frameReusable, appName);
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
