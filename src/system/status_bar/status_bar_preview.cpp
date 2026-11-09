@@ -279,6 +279,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             "percentage", "percentage-zero", "percentage-full", "percentage-charging", "percentage-unknown", "percentage-unavailable", "percentage-narrow", "percentage-scaled", "percentage-merged"})
         {
             auto data = source; StatusBarSettings settings;
+            settings.foregroundAppName = preset == "information" || preset == "updated";
             settings.batteryPercentage = preset.starts_with("percentage");
             const bool merged = preset == "merged" || preset == "percentage-merged";
             const bool narrow = preset == "narrow" || preset == "percentage-narrow";
@@ -813,7 +814,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     if (item.icon || item.key == "controlCenter" || item.action == StatusBarAction::ShowDesktop) continue;
                     centeredInk(item.bounds, item.key,
                         item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown,
-                        item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.key == "foregroundAppName" || item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
                         item.key == "gpu" || item.key == "traffic");
                 }
                 const auto& controls = Item(items, "controlCenter");
