@@ -518,10 +518,14 @@ struct StatusBarPagePresenter::Impl
     {
         Flush();
         syncing = true;
+        const auto on = winrt::box_value(L("app.interact.on"));
+        const auto off = winrt::box_value(L("app.interact.off"));
         for (auto& toggle : toggles)
         {
             toggle->row.SetText(L(toggle->key), toggle->member == &StatusBarSettings::showOnlyWhenSummoned
                 ? L("statusBar.showOnlyWhenSummoned.description") : L"");
+            toggle->control.OnContent(on);
+            toggle->control.OffContent(off);
             mux::Automation::AutomationProperties::SetName(toggle->control, toggle->row.label.Text());
             mux::Automation::AutomationProperties::SetHelpText(toggle->control, toggle->row.help.Text());
         }
