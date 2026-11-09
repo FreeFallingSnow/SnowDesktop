@@ -149,6 +149,12 @@ struct LaunchPolicy
 
 LaunchPolicy InspectLaunchPolicy(const std::wstring& path, bool checkAdministrator);
 
+bool AcknowledgeOpen(bool accepted, HANDLE acceptedEvent)
+{
+    if (accepted && acceptedEvent) SetEvent(acceptedEvent);
+    return accepted;
+}
+
 bool SafeInvokeContextMenu(
     IContextMenu* contextMenu,
     LPCMINVOKECOMMANDINFO invoke)
@@ -169,7 +175,8 @@ bool SafeInvokeContextMenu(
 std::optional<bool> InvokeShellItemOpen(
     HWND owner,
     PCIDLIST_ABSOLUTE absolutePidl,
-    int showCommand)
+    int showCommand,
+    HANDLE acceptedEvent)
 {
     if (!absolutePidl)
         return std::nullopt;
@@ -202,7 +209,8 @@ std::optional<bool> InvokeShellItemOpen(
 
     // A supported handler owns the attempt, including failure. Falling back
     // after a rejected invocation could load a full menu or execute twice.
-    const bool opened = shell_open_command::Invoke(contextMenu.Get(), validOwner, showCommand);
+    const bool opened = shell_open_command::Invoke(
+        contextMenu.Get(), validOwner, showCommand, acceptedEvent);
     const DWORD error = GetLastError();
     contextMenu.Reset();
     parentFolder.Reset();
@@ -217,6 +225,7 @@ bool ExecuteOpenVerb(
     int showCommand,
     ULONG launchMask,
     decltype(&ShellExecuteExW) execute,
+    HANDLE acceptedEvent,
     const wchar_t* directory = nullptr)
 {
     SHELLEXECUTEINFOW executeInfo{};
@@ -232,7 +241,7 @@ bool ExecuteOpenVerb(
         executeInfo.lpIDList = const_cast<PIDLIST_ABSOLUTE>(absolutePidl);
     }
     executeInfo.nShow = showCommand;
-    return execute(&executeInfo) != FALSE;
+    return AcknowledgeOpen(execute(&executeInfo) != FALSE, acceptedEvent);
 }
 
 bool ExecuteShellOpen(
@@ -240,7 +249,8 @@ bool ExecuteShellOpen(
     const std::wstring& path,
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand,
-    ULONG launchMask)
+    ULONG launchMask,
+    HANDLE acceptedEvent)
 {
     if (path.empty() && !absolutePidl)
         return false;
@@ -255,7 +265,7 @@ bool ExecuteShellOpen(
         SHParseDisplayName(path.c_str(), nullptr, &parsedPidl, 0, nullptr);
         absolutePidl = parsedPidl;
     }
-    const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand);
+    const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand, acceptedEvent);
     if (opened.has_value())
     {
         const DWORD error = GetLastError();
@@ -267,7 +277,7 @@ bool ExecuteShellOpen(
     // Protocols or Shell objects without IContextMenu still use their
     // registered Open handler. No fallback follows a supported failed command.
     const bool executed = ExecuteOpenVerb(
-        owner, path, absolutePidl, showCommand, launchMask, &ShellExecuteExW);
+        owner, path, absolutePidl, showCommand, launchMask, &ShellExecuteExW, acceptedEvent);
     const DWORD error = GetLastError();
     CoTaskMemFree(parsedPidl);
     SetLastError(error);
@@ -276,7 +286,8 @@ bool ExecuteShellOpen(
 
 } // namespace
 
-bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showCommand)
+bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showCommand,
+    HANDLE acceptedEvent)
 {
     if (!contextMenu)
         return false;
@@ -361,6 +372,7 @@ bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showC
         contextMenu,
         reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
     const DWORD error = GetLastError();
+    AcknowledgeOpen(opened, acceptedEvent);
     DestroyMenu(menu);
     SetLastError(error);
     return opened;
@@ -548,13 +560,13 @@ bool ShellLaunchWorker::ExecuteRunAsAdministrator(
         shell_launch_process::Action::RunAs);
 }
 
-bool shell_launch_process::ExecuteRequest(const Request& request)
+bool shell_launch_process::ExecuteRequest(const Request& request, HANDLE acceptedEvent)
 {
-    return ExecuteRequestWithApi(request, ExecutionApi{});
+    return ExecuteRequestWithApi(request, ExecutionApi{}, acceptedEvent);
 }
 
 bool shell_launch_process::ExecuteRequestWithApi(
-    const Request& request, const ExecutionApi& api)
+    const Request& request, const ExecutionApi& api, HANDLE acceptedEvent)
 {
     const auto& path = request.path;
     if (path.empty() && request.absolutePidl.empty())
@@ -573,7 +585,7 @@ bool shell_launch_process::ExecuteRequestWithApi(
         info.lpParameters = command->parameters.empty() ? nullptr : command->parameters.c_str();
         info.nShow = request.showCommand;
         api.allow(ASFW_ANY);
-        return api.execute(&info) != FALSE;
+        return AcknowledgeOpen(api.execute(&info) != FALSE, acceptedEvent);
     }
     const auto policy = request.action == Action::RunAs
         ? LaunchPolicy{true, false}
@@ -589,14 +601,16 @@ bool shell_launch_process::ExecuteRequestWithApi(
             const auto directory = DesktopShellInvocationDirectory();
             api.allow(ASFW_ANY);
             return ExecuteOpenVerb(validOwner, path, nullptr, request.showCommand,
-                openMask, api.execute, directory.empty() ? nullptr : directory.c_str());
+                openMask, api.execute, acceptedEvent, directory.empty() ? nullptr : directory.c_str());
         }
 
         const auto pidl = request.absolutePidl.empty() ? nullptr :
             reinterpret_cast<PCIDLIST_ABSOLUTE>(request.absolutePidl.data());
         api.allow(ASFW_ANY);
-        const auto open = api.open ? api.open : &ExecuteShellOpen;
-        return open(validOwner, path, pidl, request.showCommand, openMask);
+        if (api.open)
+            return AcknowledgeOpen(
+                api.open(validOwner, path, pidl, request.showCommand, openMask), acceptedEvent);
+        return ExecuteShellOpen(validOwner, path, pidl, request.showCommand, openMask, acceptedEvent);
     }
     std::wstring executable = path;
     std::wstring parameters;
@@ -641,7 +655,7 @@ bool shell_launch_process::ExecuteRequestWithApi(
         L"SnowDesktop: elevation owner=%p foreground=%p activated=%d granted=%d.\n",
         validOwner, foreground, activated, granted);
     OutputDebugStringW(diagnostic);
-    return api.execute(&executeInfo) != FALSE;
+    return AcknowledgeOpen(api.execute(&executeInfo) != FALSE, acceptedEvent);
 }
 
 namespace

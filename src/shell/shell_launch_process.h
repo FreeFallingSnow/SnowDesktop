@@ -39,8 +39,9 @@ struct StartedProcess
 StartedProcess Start(const Request& request, DWORD timeoutMs = 120000,
     bool reportDispatchFailure = true);
 
-using Executor = bool (*)(const Request&);
-bool ExecuteRequest(const Request& request);
+// Signal the helper-only event as soon as the Shell accepts the open.
+using Executor = bool (*)(const Request&, HANDLE acceptedEvent);
+bool ExecuteRequest(const Request& request, HANDLE acceptedEvent);
 
 // Must run before single-instance, desktop state, Steam and crash-watchdog setup.
 // nullopt means this is not a helper command; malformed helper commands fail.
