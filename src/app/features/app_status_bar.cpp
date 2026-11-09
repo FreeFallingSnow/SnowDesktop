@@ -215,6 +215,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         const auto state = lifetime.lock();
         return state && *state == generation && !exitRequested_ &&
             generalSettings_.statusBar.enabled && (action != Action::ShowDesktop || generalSettings_.statusBar.showDesktop) &&
+            (action != Action::MenuForegroundAppName || generalSettings_.statusBar.foregroundAppName) &&
             statusBar_ && IsWindow(owner) &&
             IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
             statusBar_->IsInteractionAvailable(monitor);
@@ -724,6 +725,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.menu", &Settings::menu, Action::MenuSystem, L"\uF133"}, // apps
             {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch, L"\uF68F"}, // search
             {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView, L"\uE05D"}, // app_recent
+            {"statusBar.foregroundAppName", &Settings::foregroundAppName, Action::MenuForegroundAppName, L"\uF133"}, // apps
             {"statusBar.cpu", &Settings::cpu, Action::MenuCpu, L"\uE4AC"}, // developer_board
             {"statusBar.memory", &Settings::memory, Action::MenuMemory, L"\uE9F3"}, // ram
             {"statusBar.gpu", &Settings::gpu, Action::MenuGpu, L"\uF359"}, // desktop
@@ -741,7 +743,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter, L"\uF60E"}}; // power
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
         constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230,
-            controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260;
+            controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260, appNamePositionBase = 42270;
+        constexpr std::size_t controlFlagsBegin = 13;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
@@ -756,7 +759,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (command == summonOnlyCommand || command == revealGestureBase + 1) glyph = L"\uE5F2"; // eye_20
             else if (command == revealGestureBase) glyph = L"\uF8E5"; // arrow_move_20
             else if (command == clockBase || command == clockBase + 1) glyph = L"\uE24E"; // calendar_ltr_20
-            else if (command == timePositionBase) glyph = L"\uE025"; // align_center_horizontal_20
+            else if (command == appNamePositionBase) glyph = L"\uF8E5"; // arrow_move_20
+            else if (command == timePositionBase || command == appNamePositionBase + 1) glyph = L"\uE025"; // align_center_horizontal_20
             else if (command == timePositionBase + 1) glyph = L"\uE039"; // align_right_20
             SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
         };
@@ -775,7 +779,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
             const std::string_view key(label);
             const wchar_t* glyph = L"\uF587"; // options_20
-            if (key == "statusBar.position" || key == "statusBar.timeNotificationPosition")
+            if (key == "statusBar.position" || key == "statusBar.timeNotificationPosition" || key == "statusBar.foregroundAppNamePosition")
                 glyph = L"\uF8E5"; // arrow_move_20
             else if (key == "statusBar.leftItems") glyph = L"\uF133"; // apps_20
             else if (key == "statusBar.information") glyph = L"\uE45F"; // data_usage_20
@@ -794,6 +798,14 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {
                 addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned);
                 addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned);
+            }
+        };
+        const auto addAppNamePositionChoices = [&](HMENU target) {
+            if (merged || !currentSettings.foregroundAppName) return;
+            if (const auto position = submenu(target, "statusBar.foregroundAppNamePosition"))
+            {
+                addChoice(position, appNamePositionBase, _LW("statusBar.foregroundAppNameHead"), !currentSettings.foregroundAppNameCentered);
+                addChoice(position, appNamePositionBase + 1, _LW("app.settings.taskbar_center"), currentSettings.foregroundAppNameCentered);
             }
         };
         const auto addTimeChoices = [&](HMENU target, HMENU independentTarget = nullptr) {
@@ -833,14 +845,15 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             // Keep quick settings scoped to the clicked control. The general
             // bar settings remain available through the settings submenu below.
             if (action == Action::MenuControlCenter) addControlChoices(menu);
-            for (std::size_t index = 0; index < std::size(flags); ++index)
-                if (flags[index].context == action && index < 12) addFlag(menu, index);
+            for (std::size_t index = 0; index < controlFlagsBegin; ++index)
+                if (flags[index].context == action) addFlag(menu, index);
+            if (action == Action::MenuForegroundAppName) addAppNamePositionChoices(menu);
             if (action == Action::MenuTime) addTimeChoices(menu);
             if (action == Action::MenuNotifications && !merged) addTimePositionChoices(menu);
             if (action == Action::MenuInputMethod) addInputChoices(menu);
             if (action == Action::MenuControlCenter)
                 if (const auto contents = submenu(menu, "statusBar.controlCenterContent"))
-                    for (std::size_t index = 12; index < std::size(flags); ++index) addFlag(contents, index);
+                    for (std::size_t index = controlFlagsBegin; index < std::size(flags); ++index) addFlag(contents, index);
         }
         HMENU settingsMenu = nullptr;
         HMENU independentDock = nullptr;
@@ -899,7 +912,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 }
             if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.barItems", "statusBar.controlCenterContent"};
-            const std::size_t boundaries[]{0, 12, std::size(flags)};
+            const std::size_t boundaries[]{0, controlFlagsBegin, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
                 if (const auto section = submenu(settingsMenu, labels[group]))
                 {
@@ -909,6 +922,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     }
                     if (group == 0)
                     {
+                        addAppNamePositionChoices(section);
                         addTimeChoices(section, merged ? independentStatus : nullptr);
                         addInputChoices(section);
                         addControlChoices(section);
@@ -981,6 +995,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else if (command == inputPanelBase || command == inputPanelBase + 1) bar.inputMethodSystemPanel = command == inputPanelBase + 1;
             else if (command == timePositionBase || command == timePositionBase + 1)
                 bar.timeNotificationRightAligned = command == timePositionBase + 1;
+            else if (!merged && bar.foregroundAppName && (command == appNamePositionBase || command == appNamePositionBase + 1))
+                bar.foregroundAppNameCentered = command == appNamePositionBase + 1;
             else if ((command == controlBase || command == controlBase + 1) && snowdesktop::StatusBarSupportsSystemQuickSettings())
                 bar.controlCenterSystemPanel = command == controlBase + 1;
             else if (command >= controlDisplayBase && command < controlDisplayBase + 3)

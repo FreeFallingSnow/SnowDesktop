@@ -238,7 +238,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     if (s.taskView) add("taskView", L"", StatusBarAction::TaskView, kTaskView, true);
     if (s.foregroundAppName)
         items.push_back({snapshot.foregroundAppName.empty() ? L"SnowDesktop" : snapshot.foregroundAppName,
-            StatusBarAction::None, {}, {}, "foregroundAppName", {}, {}, !s.foregroundAppNameCentered});
+            StatusBarAction::MenuForegroundAppName, {}, {}, "foregroundAppName", {}, {}, !s.foregroundAppNameCentered});
     if (s.clock)
     {
         add("clock", snapshot.clock, StatusBarAction::Calendar);
@@ -1055,8 +1055,10 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     const bool appName = item.key == "foregroundAppName";
                     if (mergedClock || appName)
                     {
-                        textRect.left += 4.f * scale;
-                        textRect.right -= 4.f * scale;
+                        // The shortcut glyphs leave less trailing space than the readouts leave leading space.
+                        const float opticalOffset = appName && (mergedDock || item.left) ? scale : 0.f;
+                        textRect.left += 4.f * scale + opticalOffset;
+                        textRect.right -= 4.f * scale - opticalOffset;
                     }
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),

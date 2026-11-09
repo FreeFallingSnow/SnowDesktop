@@ -26,11 +26,11 @@ struct TrayDragFeedback
 };
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
     MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel, ShowDesktop,
-    MenuInputMethod, MenuNotifications };
+    MenuInputMethod, MenuNotifications, MenuForegroundAppName };
 inline bool IsStatusBarContextMenuAction(StatusBarAction action)
 {
     return action == StatusBarAction::Menu || action == StatusBarAction::MenuInputMethod ||
-        action == StatusBarAction::MenuNotifications ||
+        action == StatusBarAction::MenuNotifications || action == StatusBarAction::MenuForegroundAppName ||
         (action >= StatusBarAction::MenuTime && action <= StatusBarAction::MenuTraffic);
 }
 struct StatusBarMonitor
