@@ -493,13 +493,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     "unavailable sampling must not retain a stale full charging icon");
                 auto gpuSettings = settings; gpuSettings.gpu = true;
                 auto gpuData = data; gpuData.gpu->available = false;
-                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"8%") != std::wstring::npos,
+                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text == L"GPU 8%",
                     "a missing memory channel must not hide valid GPU utilization");
                 gpuData.gpu->adapters.front().usageAvailable = false;
                 Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"—") != std::wstring::npos,
                     "missing GPU utilization must not manufacture zero percent");
                 gpuData.gpu->adapters.front().usageAvailable = true; gpuData.gpu->adapters.front().usagePercent = 0;
-                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"0%") != std::wstring::npos,
+                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text == L"GPU 0%",
                     "a measured idle GPU must remain distinguishable from a missing sample");
                 gpuData.gpu->adapters.front().usagePercent = std::numeric_limits<double>::quiet_NaN();
                 Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"—") != std::wstring::npos,
@@ -738,8 +738,16 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             {
                 Require(infoItems.size() == items.size(), "sample changed status bar item count");
                 for (std::size_t i = 0; i < items.size(); ++i)
-                    if (!items[i].left)
-                        Require(EqualRect(&infoItems[i].bounds, &items[i].bounds) != FALSE, "left readout changes shifted a center or right item");
+                {
+                    const auto& item = items[i];
+                    const auto& before = infoItems[i].bounds;
+                    if (!item.left)
+                        Require(EqualRect(&before, &item.bounds) != FALSE, "left readout changes shifted a center or right item");
+                    else if ((item.key == "cpu" || item.key == "memory" || item.key == "gpu") &&
+                        !IsRectEmpty(&before) && !IsRectEmpty(&item.bounds))
+                        Require(before.right - before.left == item.bounds.right - item.bounds.left,
+                            "resource readout width changed with its percentage");
+                }
             }
             ComPtr<ID2D1Bitmap1> readback;
             const auto readProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);

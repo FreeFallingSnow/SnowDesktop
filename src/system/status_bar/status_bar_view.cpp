@@ -380,6 +380,9 @@ bool SameStatusBarItemPixels(const StatusBarItem& a, const StatusBarItem& b)
 }
 std::wstring StatusBarReservedText(const StatusBarItem& item, bool mergedDock)
 {
+    if (item.key == "cpu") return L"CPU 100%";
+    if (item.key == "memory") return L"RAM 100%";
+    if (item.key == "gpu") return L"GPU 100%";
     auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, StatusBarUsesTwoLineClock(mergedDock)) : item.text;
     if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
     return reserved;
