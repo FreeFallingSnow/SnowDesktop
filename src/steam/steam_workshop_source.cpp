@@ -43,7 +43,7 @@ std::string MinimumHostVersionMessage(const PackageManifest& manifest,
 {
     auto message = Locale::Instance().TrWForLanguage(
         L10N_KEY("settings.widgets.workshop.minimumHostVersion"), locale);
-    const auto version = std::filesystem::u8path(manifest.minHostVersion).wstring();
+    const auto version = ::Utf8ToWide(manifest.minHostVersion);
     const auto placeholder = message.find(L"{0}");
     if (placeholder == std::wstring::npos)
         return "This component requires SnowDesktop " + manifest.minHostVersion + " or later.";

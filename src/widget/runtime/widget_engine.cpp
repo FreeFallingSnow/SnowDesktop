@@ -34174,8 +34174,8 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
     auto* provider = source->second.get();
     if (workshop && retryWorkshop)
     {
-        ForgetRejectedSteamWorkshopArchive(workshopItem);
-        // Re-read the subscribed package even if the existing source resolved it recently.
+        // Manual installation bypasses background suppression. Keep the
+        // previous entry until success so a staged poll cannot lose its reason.
         provider = &freshWorkshopSource.emplace();
     }
     std::string sourceError;
