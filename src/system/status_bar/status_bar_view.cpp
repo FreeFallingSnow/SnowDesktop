@@ -16,7 +16,6 @@
 #include <wrl/client.h>
 #include <cmath>
 #include <cstddef>
-#include <string_view>
 #include <utility>
 
 namespace snowdesktop
@@ -81,9 +80,9 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
     return true;
 }
 
-void DrawBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
+void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
     std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool fixedInformationBaseline = false,
-    DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_CENTER, bool* frameReusable = nullptr, bool trim = false)
+    bool rightAligned = false, bool* frameReusable = nullptr, bool trim = false)
 {
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
@@ -96,7 +95,7 @@ void DrawBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTex
         if (SUCCEEDED(factory->CreateEllipsisTrimmingSign(format, &ellipsis)))
             layout->SetTrimming(&trimming, ellipsis.Get());
     }
-    if (alignment != DWRITE_TEXT_ALIGNMENT_CENTER) layout->SetTextAlignment(alignment);
+    if (rightAligned) layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
     auto origin = D2D1::Point2F(bounds.left, bounds.top);
     if (fixedInformationBaseline)
     {
@@ -861,8 +860,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         std::wstring_view reference = {}) {
         if (!DrawCenteredBarGlyph(context, iconFace.Get(), glyph, glyphFormat->GetFontSize(), bounds, brush.Get(), reference, frameReusable))
         {
-            DrawBarText(context, text, glyphFormat, glyph, bounds, brush.Get(),
-                false, DWRITE_TEXT_ALIGNMENT_CENTER, frameReusable);
+            DrawCenteredBarText(context, text, glyphFormat, glyph, bounds, brush.Get(), false, false, frameReusable);
         }
     };
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -1025,9 +1023,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         brush->SetColor(color);
                     }
                     if (!item.batteryPercentageText.empty())
-                        DrawBarText(context, text, format.Get(), item.batteryPercentageText,
+                        DrawCenteredBarText(context, text, format.Get(), item.batteryPercentageText,
                             D2D1::RectF(rect.left + 84.f * scale, rect.top, rect.right - 4.f * scale, rect.bottom),
-                            brush.Get(), true, DWRITE_TEXT_ALIGNMENT_CENTER, frameReusable);
+                            brush.Get(), true, false, frameReusable);
                 }
                 else if (!item.glyph.empty() && iconFormat)
                 {
@@ -1071,21 +1069,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         textRect.right -= kTextInset * scale;
                     }
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-                    const bool resourceReadout = item.action == StatusBarAction::Cpu ||
-                        item.action == StatusBarAction::Memory || item.action == StatusBarAction::Gpu;
-                    const auto separator = resourceReadout ? displayed.find(L' ') : std::wstring::npos;
-                    if (separator != std::wstring::npos)
-                    {
-                        const std::wstring_view readout(displayed);
-                        DrawBarText(context, text, format.Get(), readout.substr(0, separator), textRect, brush.Get(),
-                            true, DWRITE_TEXT_ALIGNMENT_LEADING, frameReusable);
-                        DrawBarText(context, text, format.Get(), readout.substr(separator + 1), textRect, brush.Get(),
-                            true, DWRITE_TEXT_ALIGNMENT_TRAILING, frameReusable);
-                    }
-                    else
-                        DrawBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
-                            appName || item.key == "clock" || resourceReadout || item.key == "traffic",
-                            mergedClock ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_CENTER, frameReusable, appName);
+                    DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
+                        appName || item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.key == "gpu" || item.key == "traffic", mergedClock, frameReusable, appName);
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
