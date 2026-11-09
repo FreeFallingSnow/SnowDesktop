@@ -23,6 +23,8 @@ namespace snowdesktop
 using Microsoft::WRL::ComPtr;
 namespace
 {
+constexpr float kTextInset = 4.f;
+
 // Microsoft Fluent System Icons: Alert 24 Filled, MIT.
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Unmodified contours from microsoft/fluentui-system-icons@
@@ -378,9 +380,6 @@ bool SameStatusBarItemPixels(const StatusBarItem& a, const StatusBarItem& b)
 }
 std::wstring StatusBarReservedText(const StatusBarItem& item, bool mergedDock)
 {
-    if (item.key == "memory") return L"RAM 100%";
-    if (item.key == "cpu") return L"CPU 100%";
-    if (item.key == "gpu") return L"GPU 100%";
     auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, StatusBarUsesTwoLineClock(mergedDock)) : item.text;
     if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
     return reserved;
@@ -653,13 +652,16 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
             if (FAILED(measured) && frameReusable) *frameReusable = false;
         }
         else if (frameReusable) *frameReusable = false;
-        const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
-        return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
+        const float paddingDip = item.key == "clock" && !mergedDock ? 0.f : item.glyph.empty() ? 2.f * kTextInset : 28.f;
+        const bool leadingText = item.left || (mergedDock && item.key == "foregroundAppName");
+        const float minimum = leadingText ? paddingDip : 28.f;
+        return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, minimum * scale, 260.f * scale);
     };
     std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex, showDesktopIndex, appNameIndex;
     std::vector<std::size_t> leftIndices, rightIndices, trayIndices;
     std::vector<LONG> widths(items.size()), rightWidths;
-    LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0, leftWidth = 0;
+    LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0;
+    LONG leftWidth = 0, shortcutWidth = 0;
     for (std::size_t i = 0; i < items.size(); ++i)
     {
         auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
@@ -671,6 +673,7 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
         if (item.key == "foregroundAppName")
         {
             appNameIndex = i;
+            shortcutWidth = leftWidth;
             if (mergedDock || item.left) leftIndices.push_back(i);
         }
         else if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
@@ -761,8 +764,12 @@ HRESULT ArrangeStatusBarContent(IDWriteFactory* text, IDWriteTextFormat* format,
         leftLimit -= std::min(trayWidth, static_cast<LONG>(std::ceil(56 * scale))) + edgePadding;
     if (appNameIndex && !centeredAppName)
     {
-        const LONG available = leftLimit - leftWidth - edgePadding;
-        widths[*appNameIndex] = available >= minAppNameWidth ? std::min(widths[*appNameIndex], available) : 0;
+        auto& nameWidth = widths[*appNameIndex];
+        const LONG minimum = std::min(nameWidth, minAppNameWidth);
+        LONG available = leftLimit - leftWidth - edgePadding;
+        // Keep the shortcuts and name visible when the readouts need to overflow.
+        if (available < minimum) available = leftLimit - shortcutWidth - edgePadding;
+        nameWidth = available >= minimum ? std::min(nameWidth, available) : 0;
     }
     LONG leftCursor = edgePadding;
     for (const auto i : leftIndices)
@@ -1053,12 +1060,10 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 {
                     const bool mergedClock = mergedDock && item.key == "clock";
                     const bool appName = item.key == "foregroundAppName";
-                    if (mergedClock || appName)
+                    if (mergedClock || appName || (item.left && item.glyph.empty()))
                     {
-                        // The shortcut glyphs leave less trailing space than the readouts leave leading space.
-                        const float opticalOffset = appName && (mergedDock || item.left) ? scale : 0.f;
-                        textRect.left += 4.f * scale + opticalOffset;
-                        textRect.right -= 4.f * scale - opticalOffset;
+                        textRect.left += kTextInset * scale;
+                        textRect.right -= kTextInset * scale;
                     }
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),

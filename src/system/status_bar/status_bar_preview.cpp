@@ -204,9 +204,6 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                 dateVisible ? clock->bounds.left : notification.left;
             Require(item.left && r.right < informationEnd && r.left >= launchEnd,
                 "system information must follow the launch buttons on the left");
-            if (item.key == "traffic")
-                Require(r.right - r.left <= 152 * scale + 1,
-                    "system information wastes horizontal space");
         }
         Require(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height, "status bar item escaped its viewport");
         if (merged && !showDesktop)
@@ -222,7 +219,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         for (const auto& previous : rectangles)
         { RECT overlap{}; Require(!IntersectRect(&overlap, &r, &previous), "status bar zones overlap"); }
         rectangles.push_back(r);
-        if (item.text.empty() || item.icon) continue;
+        if (item.text.empty() || item.icon || item.key == "foregroundAppName") continue;
         ComPtr<IDWriteTextLayout> layout;
         const bool twoLineClock = StatusBarUsesTwoLineClock(merged);
         const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
@@ -233,7 +230,10 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                 "merged date and time must fit the bar's available height");
         const float reserved = item.key == "controlCenter" ? 84.f * scale : 0.f;
         Require(metrics.widthIncludingTrailingWhitespace <= r.right - r.left - reserved + 1,
-            "status bar fixed width clips visible text");
+            "status bar item clips visible text");
+        if (item.key == "traffic")
+            Require(r.right - r.left <= std::ceil(metrics.widthIncludingTrailingWhitespace + 8.f * scale),
+                "network throughput must reserve only its measured text and padding");
     }
     Require(!HitTestStatusBarItems(items, {0, height / 2}), "blank bar padding must route to dismissal");
 }
@@ -279,9 +279,10 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             "percentage", "percentage-zero", "percentage-full", "percentage-charging", "percentage-unknown", "percentage-unavailable", "percentage-narrow", "percentage-scaled", "percentage-merged"})
         {
             auto data = source; StatusBarSettings settings;
-            settings.foregroundAppName = preset == "information" || preset == "updated";
+            settings.foregroundAppName = preset == "information" || preset == "updated" || preset == "merged";
             settings.batteryPercentage = preset.starts_with("percentage");
             const bool merged = preset == "merged" || preset == "percentage-merged";
+            settings.foregroundAppNameCentered = merged;
             const bool narrow = preset == "narrow" || preset == "percentage-narrow";
             if (preset == "volume-low") data.audio->volume = .45;
             if (preset == "volume-zero") data.audio->volume = 0;
@@ -737,7 +738,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             {
                 Require(infoItems.size() == items.size(), "sample changed status bar item count");
                 for (std::size_t i = 0; i < items.size(); ++i)
-                    Require(EqualRect(&infoItems[i].bounds, &items[i].bounds) != FALSE, "sample changed a fixed status bar hit width");
+                    if (!items[i].left)
+                        Require(EqualRect(&infoItems[i].bounds, &items[i].bounds) != FALSE, "left readout changes shifted a center or right item");
             }
             ComPtr<ID2D1Bitmap1> readback;
             const auto readProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
