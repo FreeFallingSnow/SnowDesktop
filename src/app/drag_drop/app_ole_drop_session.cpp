@@ -26,6 +26,14 @@ bool OffersNativeFilePaths(IDataObject* source)
     return source && source->QueryGetData(&format) == S_OK;
 }
 
+bool OffersWidgetInputText(IDataObject* source)
+{
+    FORMATETC format{CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    return source && source->QueryGetData(&format) == S_OK &&
+        snowdesktop::external_drop_content::ProbeClipboardFileSource(source) ==
+            snowdesktop::external_drop_content::ClipboardFileSource::None;
+}
+
 bool OffersOwnedDropContent(IDataObject* source)
 {
     if (!source) return false;
@@ -347,6 +355,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
     CancelPendingExternalOleDragLeave();
     externalLuaFileDropAvailable_ = false;
     externalOwnedContent_ = false;
+    externalWidgetTextAvailable_ = false;
+    if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
     externalFileDropPaths_.clear();
 
     if (dragDropController_.IsSelfDragActive())
@@ -448,6 +458,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
     }
     if (!externalLuaFileDropAvailable_ && !externalOwnedContent_)
         return rejectUnsupportedSource();
+    externalWidgetTextAvailable_ = externalOwnedContent_ &&
+        OffersWidgetInputText(dataObject);
     dragDropController_.BeginExternalDrag(
         externalSummary);
     POINT client = ScreenPointToClient(point);
@@ -462,6 +474,11 @@ HRESULT DesktopApp::HandleOleDragEnter(
     {
         *effect = DROPEFFECT_NONE;
         HideDragHintWindow();
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
+    if (HandleLuaTextDragHover(client, keyState, *effect))
+    {
         PresentOleDragInteractionFrame();
         return S_OK;
     }
@@ -596,8 +613,14 @@ HRESULT DesktopApp::HandleOleDragOver(
         dragSession_.UpdatePoint(client);
     if (!UpdateDragPageNavigation(client))
     {
+        if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
         *effect = DROPEFFECT_NONE;
         HideDragHintWindow();
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
+    if (HandleLuaTextDragHover(client, keyState, *effect))
+    {
         PresentOleDragInteractionFrame();
         return S_OK;
     }
@@ -717,6 +740,8 @@ HRESULT DesktopApp::HandleOleDragLeave()
 
 HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
 {
+    if (widgetEngine_ && widgetEngine_->ClearHostInputTextDropPreview())
+        PresentOleDragInteractionFrame();
     if (dragDropController_.IsExternalDragActive() &&
         pointerOnDesktopSurface &&
         hwnd_ && IsWindow(hwnd_))
@@ -758,6 +783,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 {
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
+    if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
@@ -773,6 +799,19 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     }
 
     POINT clientPoint = ScreenPointToClient(point);
+    if (!dragDropController_.IsSelfDragActive() && !(keyState & MK_RBUTTON) &&
+        OffersWidgetInputText(dataObject))
+    {
+        if (const auto inserted = DeliverLuaTextDrop(
+                clientPoint, dataObject, (*effect & DROPEFFECT_COPY) != 0))
+        {
+            dragDropController_.EndExternalDrag();
+            EndDragSession();
+            *effect = *inserted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+            PresentOleDragInteractionFrame();
+            return S_OK;
+        }
+    }
     const bool externalContent = !dragDropController_.IsSelfDragActive() && OffersOwnedDropContent(dataObject);
     // Drop can arrive directly or with a different IDataObject than Enter.
     // Recheck the actual source before offering a menu or reading a fallback.

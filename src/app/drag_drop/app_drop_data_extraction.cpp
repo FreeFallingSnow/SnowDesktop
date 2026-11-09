@@ -344,14 +344,18 @@ DesktopApp::ReadDropReferenceSnapshot(IDataObject* dataObject)
     const std::wstring advertisedAnsi = ReadAnsiHGlobalFormat(
         dataObject, static_cast<CLIPFORMAT>(
             RegisterClipboardFormatW(CFSTR_INETURLA)));
-    snapshot.unicodeText = ReadWideHGlobalFormat(
-        dataObject, CF_UNICODETEXT);
+    snapshot.unicodeText = ReadDroppedUnicodeText(dataObject);
     snapshot.candidates = snowdesktop::drop_text_rules::
         ClassifyResourceCandidates(advertisedWide, advertisedAnsi,
             snapshot.unicodeText);
     snapshot.reference = snowdesktop::drop_text_rules::
         SelectResourceReference(snapshot.candidates);
     return snapshot;
+}
+
+std::wstring DesktopApp::ReadDroppedUnicodeText(IDataObject* dataObject)
+{
+    return ReadWideHGlobalFormat(dataObject, CF_UNICODETEXT);
 }
 
 std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)

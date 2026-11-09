@@ -28285,14 +28285,19 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
     int index = FindWidget(widgetId);
     if (index < 0 || id.empty()) return false;
     const std::string surface(CurrentWidgetSurface(d2dState_));
-    auto& controls = widgets_[index].hostControls;
-    auto found = std::find_if(controls.rbegin(), controls.rend(), [&](const auto& control) {
-        return control.type == LuaWidget::HostControl::Type::Input &&
-            control.id == id &&
-            HostControlBelongsToSurface(control, surface);
-    });
-    if (found == controls.rend() || !found->enabled || !found->focusable ||
-        (!found->controlled && found->storageKey.empty())) return false;
+    const auto findInput = [&](int widgetIndex) -> const LuaWidget::HostControl* {
+        if (widgetIndex < 0) return nullptr;
+        const auto& controls = widgets_[widgetIndex].hostControls;
+        const auto found = std::find_if(controls.rbegin(), controls.rend(), [&](const auto& control) {
+            return control.type == LuaWidget::HostControl::Type::Input &&
+                control.id == id && HostControlBelongsToSurface(control, surface);
+        });
+        if (found == controls.rend() || !found->enabled || !found->focusable ||
+            (!found->controlled && found->storageKey.empty())) return nullptr;
+        return &*found;
+    };
+    const auto* found = findInput(index);
+    if (!found) return false;
 
     if (focusedHostInput_.active && focusedHostInput_.widgetId == widgetId &&
         focusedHostInput_.id == id &&
@@ -28361,6 +28366,9 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
     }
 
     BlurHostInput(false);
+    index = FindWidget(widgetId);
+    found = findInput(index);
+    if (!found) return false;
     ViewFocusForSurface(widgets_[index], surface) = id;
     ViewFocusCueForSurface(widgets_[index], surface) =
         snowdesktop::widget_runtime::ShouldShowInteractionFocusCue(
@@ -28929,6 +28937,27 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
     std::string_view focusedKey, bool drawLogicalSlotDrag)
 {
     if (!d2dState_ || !d2dState_->ctx) return;
+    if (drawLogicalSlotDrag && hostInputDropCaret_ &&
+        hostInputDropWidgetId_ == widget.widgetId)
+    {
+        const auto& caret = *hostInputDropCaret_;
+        const auto& frame = d2dState_->widgetRect;
+        const auto& clip = caret.clip;
+        auto* context = d2dState_->ctx;
+        context->PushAxisAlignedClip(D2D1::RectF(
+            frame.left + static_cast<float>(clip.left),
+            frame.top + static_cast<float>(clip.top),
+            frame.left + static_cast<float>(clip.right),
+            frame.top + static_cast<float>(clip.bottom)),
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const auto from = D2D1::Point2F(frame.left + caret.left, frame.top + caret.top);
+        const auto to = D2D1::Point2F(frame.left + caret.right, frame.top + caret.bottom);
+        if (auto* halo = GetCachedBrush(d2dState_, 0x0B1220, 0.72f))
+            context->DrawLine(from, to, halo, 4.0f);
+        if (auto* accent = GetCachedBrush(d2dState_, 0x72C7FF))
+            context->DrawLine(from, to, accent, 2.0f);
+        context->PopAxisAlignedClip();
+    }
     const std::string_view surface = drawLogicalSlotDrag
         ? std::string_view("desktop")
         : std::string_view(widget.panelSurface);
@@ -30382,6 +30411,256 @@ bool WidgetEngine::IsHostInputAt(
     return false;
 }
 
+const LuaWidget::HostControl* WidgetEngine::HitTestHostInputTextDrop(
+    const LuaWidget& widget, POINT point) const
+{
+    if (!widget.valid || !widget.desktopVisible || widget.preview)
+        return nullptr;
+    for (const auto& control : widget.hostControls)
+        if (control.selectPopup && control.enabled &&
+            HostControlBelongsToSurface(control, "desktop") &&
+            HostControlContainsPoint(control, point))
+            return nullptr;
+    for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
+        if (it->type == LuaWidget::HostControl::Type::Input &&
+            HostControlBelongsToSurface(*it, "desktop") &&
+            HostControlContainsPoint(*it, point))
+            return &*it;
+    return nullptr;
+}
+
+bool WidgetEngine::HostInputAcceptsTextDrop(
+    const LuaWidget::HostControl& control) const
+{
+    return d2dState_ && !IsHostInputComposing() && control.focusable &&
+        snowdesktop::widget_runtime::HostInputAllowsMutation(
+            control.enabled, control.readOnly) &&
+        (control.controlled || !control.storageKey.empty());
+}
+
+std::wstring WidgetEngine::HostInputTextForDrop(
+    const LuaWidget& widget, const LuaWidget::HostControl& control) const
+{
+    if (focusedHostInput_.active && focusedHostInput_.surface == "desktop" &&
+        focusedHostInput_.widgetId == widget.widgetId &&
+        focusedHostInput_.id == control.id)
+        return focusedHostInput_.text;
+    return Utf8ToWideLocal(control.controlled ? control.controlledText :
+        RuntimeGetStorageValue(widget.widgetId, control.storageKey));
+}
+
+std::optional<std::string> WidgetEngine::FindHostInputTextDropTarget(
+    const std::wstring& widgetId, POINT point) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return std::nullopt;
+    const auto* control = HitTestHostInputTextDrop(widgets_[index], point);
+    if (!control) return std::nullopt;
+    return HostInputAcceptsTextDrop(*control) ? control->id : std::string{};
+}
+
+std::optional<size_t> WidgetEngine::ResolveHostInputTextDropPosition(
+    const LuaWidget& widget, const LuaWidget::HostControl& control,
+    POINT point, const std::wstring& text, HostInputDropCaret* caret) const
+{
+    using namespace snowdesktop::widget_runtime;
+    ViewRect frame{static_cast<float>(control.rect.left),
+        static_cast<float>(control.rect.top),
+        static_cast<float>(control.rect.right - control.rect.left),
+        static_cast<float>(control.rect.bottom - control.rect.top)};
+    ViewRect content{frame.x + control.padding.left,
+        frame.y + (control.multiline ? control.padding.top : 0.0f),
+        frame.width - control.padding.left - control.padding.right,
+        frame.height - (control.multiline
+            ? control.padding.top + control.padding.bottom : 0.0f)};
+    D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Identity();
+    const auto* node = widget.viewTree
+        ? FindViewNodeByKey(*widget.viewTree, control.id) : nullptr;
+    if (node && IsDeclarativeInputNode(node->type))
+    {
+        frame = node->frame;
+        content = ViewNodeContentRect(*node);
+        const auto t = ResolveViewTransformForKey(*widget.viewTree, control.id);
+        transform = D2D1::Matrix3x2F(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+    }
+    else
+        node = nullptr;
+
+    auto inverse = transform;
+    if (!inverse.Invert() || content.width <= 0.0f || content.height <= 0.0f)
+        return std::nullopt;
+    const auto local = inverse.TransformPoint(D2D1::Point2F(
+        static_cast<float>(point.x), static_cast<float>(point.y)));
+    if (local.x < frame.x || local.x >= frame.x + frame.width ||
+        local.y < frame.y || local.y >= frame.y + frame.height)
+        return std::nullopt;
+
+    const float fontSize = node ? node->fontSize : control.fontSize;
+    const float innerWidth = std::max(1.0f,
+        content.width - (control.multiline ? 8.0f : 0.0f));
+    auto layout = control.multiline
+        ? CreateHostMultilineTextLayout(d2dState_, text, fontSize, innerWidth)
+        : CreateHostSingleLineTextLayout(d2dState_, text, fontSize, innerWidth,
+            content.height);
+    if (!layout) return std::nullopt;
+    if (node)
+    {
+        ApplyViewTextLocaleAndDirection(layout.Get(), *node, text);
+        SetViewTextLayoutAlignment(layout.Get(), node->textAlign);
+    }
+    const float scaleY = std::hypot(transform._21, transform._22);
+    const float scrollOffset = control.multiline && scaleY > 0.0f
+        ? static_cast<float>(RuntimeGetScrollOffset(
+            widget.widgetId, control.id, control.surface)) / scaleY : 0.0f;
+    const float originY = content.y - scrollOffset;
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS hit{};
+    if (FAILED(layout->HitTestPoint(local.x - content.x, local.y - originY,
+            &trailing, &inside, &hit)))
+        return std::nullopt;
+
+    const size_t rawPosition = static_cast<size_t>(hit.textPosition) +
+        (trailing ? static_cast<size_t>(hit.length) : 0);
+    const size_t position = text_input::SnapBoundary(text, rawPosition);
+    if (!caret) return position;
+
+    // Keep DirectWrite's edge at a bidi boundary. For an empty field or a
+    // snapped grapheme, hit the actual insertion position instead.
+    const bool useHitEdge = position == rawPosition && !text.empty();
+    float x = 0.0f;
+    float y = 0.0f;
+    if (FAILED(layout->HitTestTextPosition(
+            useHitEdge ? hit.textPosition : static_cast<UINT32>(position),
+            useHitEdge && trailing, &x, &y, &hit)))
+        return std::nullopt;
+    x = std::clamp(content.x + x, content.x, content.x + content.width);
+    const float top = std::max(content.y, originY + y);
+    const float bottom = std::min(content.y + content.height,
+        originY + y + std::max(hit.height, fontSize));
+    const auto first = transform.TransformPoint(D2D1::Point2F(x, top));
+    const auto last = transform.TransformPoint(D2D1::Point2F(x, std::max(top, bottom)));
+    RECT clip = control.rect;
+    if (control.clipRect)
+        IntersectRect(&clip, &clip, &*control.clipRect);
+    *caret = {first.x, first.y, last.x, last.y, clip};
+    return position;
+}
+
+std::optional<bool> WidgetEngine::UpdateHostInputTextDropPreview(
+    const std::wstring& widgetId, POINT point, bool copyAllowed)
+{
+    const int index = FindWidget(widgetId);
+    const auto* control = index >= 0
+        ? HitTestHostInputTextDrop(widgets_[index], point) : nullptr;
+    if (!control || !copyAllowed || !HostInputAcceptsTextDrop(*control))
+    {
+        ClearHostInputTextDropPreview();
+        return control ? std::optional<bool>(false) : std::nullopt;
+    }
+
+    const auto& widget = widgets_[index];
+    HostInputDropCaret caret{};
+    if (!ResolveHostInputTextDropPosition(
+            widget, *control, point, HostInputTextForDrop(widget, *control), &caret))
+    {
+        ClearHostInputTextDropPreview();
+        return false;
+    }
+    if (hostInputDropWidgetId_ != widgetId)
+    {
+        ClearHostInputTextDropPreview();
+        hostInputDropWidgetId_ = widgetId;
+    }
+    if (hostInputDropCaret_ != caret)
+    {
+        hostInputDropCaret_ = caret;
+        RuntimeInvalidateHost(widgetId, std::nullopt, "desktop");
+    }
+    return true;
+}
+
+bool WidgetEngine::ClearHostInputTextDropPreview()
+{
+    if (!hostInputDropCaret_) return false;
+    hostInputDropCaret_.reset();
+    const auto widgetId = std::exchange(hostInputDropWidgetId_, {});
+    RuntimeInvalidateHost(widgetId, std::nullopt, "desktop");
+    return true;
+}
+
+static std::wstring NormalizeHostInputTransfer(
+    std::wstring_view text, bool multiline, size_t maximumUtf8Bytes)
+{
+    std::wstring result;
+    for (const auto& character : text)
+    {
+        if (character == L'\r') continue;
+        const std::wstring_view normalized = character == L'\n'
+            ? (multiline ? L"\n" : L" ")
+            : character == L'\t'
+                ? (multiline ? L"    " : L" ")
+                : std::wstring_view(&character, 1);
+        if (maximumUtf8Bytes != 0 &&
+            normalized.size() > maximumUtf8Bytes - result.size())
+            return {};
+        result.append(normalized);
+    }
+    return result;
+}
+
+bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
+    std::string_view target, POINT point, std::wstring_view text)
+{
+    using snowdesktop::widget_runtime::TryApplyHostTextReplacement;
+    int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto* control = HitTestHostInputTextDrop(widgets_[index], point);
+    if (!control || control->id != target || !HostInputAcceptsTextDrop(*control))
+        return false;
+
+    const std::string id = control->id;
+    const auto normalized = NormalizeHostInputTransfer(
+        text, control->multiline, control->maximumUtf8Bytes);
+    if (normalized.empty()) return false;
+    std::wstring nextText = HostInputTextForDrop(widgets_[index], *control);
+    const auto position = ResolveHostInputTextDropPosition(
+        widgets_[index], *control, point, nextText, nullptr);
+    if (!position || !snowdesktop::widget_runtime::HostTextReplacementFits(
+            nextText, *position, *position, normalized, control->maximumUtf8Bytes))
+        return false;
+
+    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
+    if (!RuntimeFocusHostInput(widgetId, id, "pointer") ||
+        !focusedHostInput_.active || focusedHostInput_.widgetId != widgetId ||
+        focusedHostInput_.id != id || focusedHostInput_.surface != "desktop")
+        return false;
+
+    // Focus/blur actions can change the control or the value. Recheck both
+    // before using the insertion offset from the visible text.
+    index = FindWidget(widgetId);
+    if (index < 0) return false;
+    control = HitTestHostInputTextDrop(widgets_[index], point);
+    if (!control || control->id != id || !HostInputAcceptsTextDrop(*control) ||
+        focusedHostInput_.readOnly)
+        return false;
+    const auto updatedPosition = ResolveHostInputTextDropPosition(
+        widgets_[index], *control, point, focusedHostInput_.text, nullptr);
+    if (!updatedPosition) return false;
+    const text_input::Snapshot before{
+        focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor};
+    size_t nextCursor = 0;
+    if (!TryApplyHostTextReplacement(focusedHostInput_.text, *updatedPosition,
+            *updatedPosition, normalized, focusedHostInput_.maximumUtf8Bytes, nextCursor))
+        return false;
+    focusedHostInput_.cursor = focusedHostInput_.selectionAnchor = nextCursor;
+    focusedHostInput_.pointerSelecting = false;
+    focusedHostInput_.pendingHighSurrogate = 0;
+    focusedHostInput_.duplicateImeResult.clear();
+    FinishHostInputEdit(before, "pointer");
+    return true;
+}
+
 bool WidgetEngine::PrepareHostInputContextMenu(
     const std::wstring& widgetId, int x, int y,
     std::string_view surface, bool clipboardHasText,
@@ -30954,11 +31233,6 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
                 true, focusedHostInput_.readOnly))
             return true;
         std::wstring pasted;
-        bool pasteExceededLimit = false;
-        const std::size_t pasteUnitLimit =
-            focusedHostInput_.maximumUtf8Bytes == 0
-            ? (std::numeric_limits<std::size_t>::max)()
-            : focusedHostInput_.maximumUtf8Bytes + 1;
         if (OpenClipboard(nullptr))
         {
             if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
@@ -30966,35 +31240,20 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
                 if (const wchar_t* clipboardText =
                         static_cast<const wchar_t*>(GlobalLock(data)))
                 {
-                    for (const wchar_t* cursor = clipboardText;
-                        *cursor; ++cursor)
-                    {
-                        if (*cursor == L'\r')
-                            continue;
-                        const std::wstring_view normalized =
-                            *cursor == L'\n'
-                            ? (focusedHostInput_.multiline
-                                ? std::wstring_view(L"\n")
-                                : std::wstring_view(L" "))
-                            : (*cursor == L'\t'
-                                ? (focusedHostInput_.multiline
-                                    ? std::wstring_view(L"    ")
-                                    : std::wstring_view(L" "))
-                                : std::wstring_view(cursor, 1));
-                        if (normalized.size() > pasteUnitLimit -
-                                std::min(pasted.size(), pasteUnitLimit))
-                        {
-                            pasteExceededLimit = true;
-                            break;
-                        }
-                        pasted.append(normalized);
-                    }
+                    const auto* end = clipboardText + GlobalSize(data) / sizeof(wchar_t);
+                    const auto* terminator = std::find(clipboardText, end, L'\0');
+                    if (terminator != end)
+                        pasted = NormalizeHostInputTransfer(
+                            std::wstring_view(clipboardText,
+                                static_cast<size_t>(terminator - clipboardText)),
+                            focusedHostInput_.multiline,
+                            focusedHostInput_.maximumUtf8Bytes);
                     GlobalUnlock(data);
                 }
             }
             CloseClipboard();
         }
-        if (!pasted.empty() && !pasteExceededLimit)
+        if (!pasted.empty())
         {
             const size_t start = selectionStart();
             const size_t end = selectionEnd();
@@ -31016,35 +31275,32 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
     }
 
     if (changed)
-    {
-        focusedHostInput_.history.Record({previousText, previousCursor, previousSelectionAnchor},
-            {focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
-        focusedHostInput_.caretVisibility.Request();
-        if (focusedHostInput_.liveUpdate)
-        {
-            if (focusedHostInput_.controlled)
-            {
-                DispatchHostInputChange(
-                    focusedHostInput_.widgetId,
-                    focusedHostInput_.id,
-                    focusedHostInput_.changeAction,
-                    previousText, focusedHostInput_.text,
-                    focusedHostInput_.numeric,
-                    focusedHostInput_.minimum,
-                    focusedHostInput_.maximum,
-                    false, false, eventSource);
-            }
-            else
-            {
-                RuntimeSetStorageValue(
-                    focusedHostInput_.widgetId,
-                    focusedHostInput_.storageKey,
-                    WidgetWideToUtf8(focusedHostInput_.text));
-            }
-        }
-        RuntimeInvalidateHost(focusedHostInput_.widgetId);
-    }
+        FinishHostInputEdit({previousText, previousCursor, previousSelectionAnchor}, eventSource);
     return true;
+}
+
+void WidgetEngine::FinishHostInputEdit(const text_input::Snapshot& before, const char* source)
+{
+    const auto widgetId = focusedHostInput_.widgetId;
+    focusedHostInput_.history.Record(before,
+        {focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
+    focusedHostInput_.caretVisibility.Request();
+    if (focusedHostInput_.liveUpdate)
+    {
+        if (focusedHostInput_.controlled)
+        {
+            DispatchHostInputChange(widgetId, focusedHostInput_.id,
+                focusedHostInput_.changeAction, before.text, focusedHostInput_.text,
+                focusedHostInput_.numeric, focusedHostInput_.minimum,
+                focusedHostInput_.maximum, false, false, source);
+        }
+        else
+        {
+            RuntimeSetStorageValue(widgetId, focusedHostInput_.storageKey,
+                WidgetWideToUtf8(focusedHostInput_.text));
+        }
+    }
+    RuntimeInvalidateHost(widgetId);
 }
 
 bool WidgetEngine::HandleHostInputKey(WPARAM key)

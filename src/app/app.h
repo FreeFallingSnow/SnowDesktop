@@ -4151,9 +4151,14 @@ private:
     void FinalizePendingExternalOleDragLeave();
     HRESULT HandleExternalOleDragLeave(bool pointerOnDesktopSurface);
     size_t HitTestLuaFileDropTarget(POINT point) const;
+    const DesktopWidget* FindLuaTextDropSurface(POINT point, POINT& local) const;
+    bool HandleLuaTextDragHover(POINT point, DWORD keyState, DWORD& effect);
+    std::optional<bool> DeliverLuaTextDrop(POINT point, IDataObject* source,
+        bool copyAllowed);
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
     bool externalOwnedContent_ = false;
+    bool externalWidgetTextAvailable_ = false;
     std::vector<std::wstring> externalFileDropPaths_;
     DWORD ExternalFileDropPreferredEffect(POINT point) const;
     HRESULT HandleOleDragEnter(IDataObject* dataObject,
@@ -4324,6 +4329,7 @@ private:
     };
     static DropReferenceSnapshot ReadDropReferenceSnapshot(
         IDataObject* dataObject);
+    static std::wstring ReadDroppedUnicodeText(IDataObject* dataObject);
     static std::vector<std::wstring> TryGetNonFileDropPaths(
         IDataObject* dataObject,
         const DropReferenceSnapshot& snapshot);

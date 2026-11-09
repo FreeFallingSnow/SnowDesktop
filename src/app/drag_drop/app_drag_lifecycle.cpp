@@ -772,6 +772,8 @@ void DesktopApp::EndDragSession()
     ResetPointerInteractionDamage();
     externalFileDropPaths_.clear();
     externalOwnedContent_ = false;
+    externalWidgetTextAvailable_ = false;
+    if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
     HideDragHintWindow();
     rightButtonItemDrag_ = false;
     widgetPairTargetIndex_ = static_cast<size_t>(-1);

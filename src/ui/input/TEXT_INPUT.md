@@ -29,6 +29,10 @@ Lua 的 `view.textInput`、`view.textArea`、`view.searchBox`、`view.numberInpu
 组件若依赖这些行为，应声明包含本实现的 `minHostVersion`，同版本早期构建
 不能仅由版本号推断具有新行为。
 
+从其他应用拖入 Unicode 文本时，桌面 Lua 组件的可编辑输入框显示插入线。
+松手按落位插入，复用粘贴的换行与制表符规则、字节上限和编辑历史。
+拖放只复制文本；文件载荷仍由文件拖放处理。悬停和取消不改变输入焦点或选区。
+
 密码使用独立缓冲，替换和释放时擦除。普通值、显示缓存、历史与 Text provider
 不持有密码；Value provider 标记 IsPassword 并拒绝读写，复制与剪切禁用。
 可信提交只能调用 `CopySecret`，调用方负责擦除接收缓冲并沿用既有受保护请求。

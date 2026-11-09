@@ -35,6 +35,71 @@ bool DesktopApp::DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>
         point.x - frame.left, point.y - frame.top, paths);
 }
 
+const DesktopWidget* DesktopApp::FindLuaTextDropSurface(
+    POINT point, POINT& local) const
+{
+    if (!widgetEngine_ || desktopPassthroughActive_ ||
+        IsPointOccludedByOpenPopup(point))
+        return nullptr;
+    const auto index = HitTestStandaloneWidgetIndex(point);
+    if (index >= widgets_.size() ||
+        HitTestStandaloneWidget(index, point) != WidgetHit::Content)
+        return nullptr;
+    const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
+    local = {point.x - frame.left, point.y - frame.top};
+    return ResolveLuaWidgetContent(&widgets_[index]);
+}
+
+bool DesktopApp::HandleLuaTextDragHover(
+    POINT point, DWORD keyState, DWORD& effect)
+{
+    if (!widgetEngine_) return false;
+    POINT local{};
+    const auto* content = externalWidgetTextAvailable_ &&
+        !(keyState & MK_RBUTTON) ? FindLuaTextDropSurface(point, local) : nullptr;
+    if (!content)
+    {
+        widgetEngine_->ClearHostInputTextDropPreview();
+        return false;
+    }
+    const auto accepted = widgetEngine_->UpdateHostInputTextDropPreview(
+        content->id, local, (effect & DROPEFFECT_COPY) != 0);
+    if (!accepted)
+        return false;
+
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
+    dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+    HideDragHintWindow();
+    effect = *accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+    return true;
+}
+
+std::optional<bool> DesktopApp::DeliverLuaTextDrop(
+    POINT point, IDataObject* source, bool copyAllowed)
+{
+    POINT local{};
+    const auto* content = FindLuaTextDropSurface(point, local);
+    if (!content) return std::nullopt;
+    const std::wstring widgetId = content->id;
+    const auto target = widgetEngine_->FindHostInputTextDropTarget(widgetId, local);
+    if (!target) return std::nullopt;
+    if (!copyAllowed || target->empty()) return false;
+
+    // GetData can pump messages. Recheck the desktop surface and control
+    // identity before writing to whatever is currently under the pointer.
+    const std::wstring text = ReadDroppedUnicodeText(source);
+    if (text.empty()) return false;
+    content = FindLuaTextDropSurface(point, local);
+    if (!content || content->id != widgetId ||
+        !widgetEngine_->DropHostInputText(widgetId, *target, local, text))
+        return false;
+
+    ClearSelection();
+    UpdateHostInputImePosition();
+    return true;
+}
+
 bool DesktopApp::IsSameWindowTree(HWND parent, HWND window)
 {
     return parent != nullptr && window != nullptr && (window == parent || IsChild(parent, window));

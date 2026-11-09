@@ -1633,6 +1633,14 @@ public:
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
     bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop") const;
+    // nullopt: outside an input; empty key: input that cannot accept text.
+    std::optional<std::string> FindHostInputTextDropTarget(
+        const std::wstring& widgetId, POINT point) const;
+    std::optional<bool> UpdateHostInputTextDropPreview(
+        const std::wstring& widgetId, POINT point, bool copyAllowed);
+    bool ClearHostInputTextDropPreview();
+    bool DropHostInputText(const std::wstring& widgetId, std::string_view target,
+        POINT point, std::wstring_view text);
     bool PrepareHostInputContextMenu(const std::wstring& widgetId,
         int x, int y, std::string_view surface,
         bool clipboardHasText,
@@ -1716,6 +1724,27 @@ private:
         std::wstring& error, std::uint64_t diagnosticQueryId = 0);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
+    struct HostInputDropCaret
+    {
+        float left, top, right, bottom;
+        RECT clip{};
+        bool operator==(const HostInputDropCaret& other) const noexcept
+        {
+            return left == other.left && top == other.top &&
+                right == other.right && bottom == other.bottom &&
+                EqualRect(&clip, &other.clip) != FALSE;
+        }
+    };
+    const LuaWidget::HostControl* HitTestHostInputTextDrop(
+        const LuaWidget& widget, POINT point) const;
+    std::optional<size_t> ResolveHostInputTextDropPosition(
+        const LuaWidget& widget, const LuaWidget::HostControl& control,
+        POINT point, const std::wstring& text, HostInputDropCaret* caret) const;
+    bool HostInputAcceptsTextDrop(const LuaWidget::HostControl& control) const;
+    std::wstring HostInputTextForDrop(const LuaWidget& widget,
+        const LuaWidget::HostControl& control) const;
+    void FinishHostInputEdit(const snowdesktop::text_input::Snapshot& before,
+        const char* source);
     bool HandleHostScrollbarPointer(
         const std::wstring& widgetId, int x, int y,
         std::string_view surface, bool finish);
@@ -2035,6 +2064,8 @@ private:
         std::size_t maximumUtf8Bytes = 0;
     };
     FocusedHostInput focusedHostInput_;
+    std::wstring hostInputDropWidgetId_;
+    std::optional<HostInputDropCaret> hostInputDropCaret_;
     struct HostScrollbarDrag
     {
         bool active = false;
