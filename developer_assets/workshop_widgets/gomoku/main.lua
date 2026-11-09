@@ -83,8 +83,22 @@ local function move(model, index)
 end
 
 local function showReaction(model, id, peer)
-    model.reaction = {id = id, peer = peer}
-    schedule.after("reaction", 3100, {whenHidden = "throttle"})
+    if not schedule.after("reaction", skin.reactionDuration, {whenHidden = "throttle"}) then return end
+    local reaction = {id = id, peer = peer, startedAt = time.monotonic()}
+    model.reaction = reaction
+    if widget.hasFeature("animation.frame") then
+        reaction.animated = animation.requestFrame("reaction") == true
+        if reaction.animated then
+            reaction.fade = schedule.after("reaction.fade", skin.reactionFadeAt, {whenHidden = "throttle"}) == true
+        end
+    end
+end
+
+local function clearReaction(model)
+    model.reaction = nil
+    schedule.cancel("reaction")
+    schedule.cancel("reaction.fade")
+    if widget.hasFeature("animation.frame") then animation.cancelFrame("reaction") end
 end
 
 local function reactionId(text)
@@ -219,7 +233,7 @@ local function action(model, id)
     elseif id == "mute" and model.connected then
         model.muted = not model.muted
         storage.set("mute_reactions", model.muted)
-        if model.muted and model.reaction and model.reaction.peer then model.reaction = nil end
+        if model.muted and model.reaction and model.reaction.peer then clearReaction(model) end
     elseif id == "new" then
         startRound(model)
     elseif id == "sync" and model.connected and not model.host then
@@ -248,8 +262,16 @@ local function event(_, model, e)
         action(model, e.id)
     elseif e.kind == "schedule" then
         if e.id == "computer" then applyComputerMove(model)
-        elseif e.id == "reaction" then model.reaction = nil
+        elseif e.id == "reaction" then clearReaction(model)
+        elseif e.id == "reaction.fade" and model.reaction and model.reaction.animated then
+            model.reaction.animated = animation.requestFrame("reaction") == true
         else return end
+    elseif e.kind == "frame" and e.id == "reaction" and model.reaction and model.reaction.animated then
+        local reaction = model.reaction
+        local elapsed = e.now - reaction.startedAt
+        if elapsed < skin.reactionEnter or (reaction.fade and elapsed >= skin.reactionFadeAt and elapsed < skin.reactionDuration) then
+            reaction.animated = animation.requestFrame("reaction") == true
+        end
     elseif e.kind == "multiplayer.state" then
         local connected = model.supportsParticipation and e.state == "connected"
         local arrived = connected and not model.connected
@@ -262,9 +284,9 @@ local function event(_, model, e)
             model.pending, model.pendingIndex, model.sendTask, model.sent, model.queued = nil, nil, nil, nil, nil
             model.resyncRequested, model.sendFailed = false, false
             model.roomEnded = e.state ~= "waitingPeer" and e.state ~= "roomReady" and e.state ~= "busy"
-            model.menu, model.reaction, model.lastSentReaction, model.lastReceivedReaction = nil, nil, nil, nil
+            model.menu, model.lastSentReaction, model.lastReceivedReaction = nil, nil, nil
             model.foul = nil
-            schedule.cancel("reaction")
+            clearReaction(model)
         end
         local left = model.connected and not connected
         model.state, model.connected, model.host = e.state, connected, e.host
