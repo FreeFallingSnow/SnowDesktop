@@ -180,8 +180,9 @@ inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float
     notificationWidth = std::max(0L, notificationWidth);
     if (controlIndex && *controlIndex >= rightWidths.size()) controlIndex.reset();
     const LONG controlWidth = controlIndex ? std::max(0L, rightWidths[*controlIndex]) : 0;
+    LONG clockGap = clockWidth && controlWidth ? static_cast<LONG>(std::ceil(8.f * scale)) : 0;
     std::vector<LONG> widths(rightWidths.begin(), rightWidths.end());
-    widths.push_back(clockWidth + notificationWidth);
+    widths.push_back(clockGap + clockWidth + notificationWidth);
     LONG edge = std::max(0L, padding);
     const auto arrange = [&] { return StatusBarHorizontalLayout(width, height, edge,
         std::span<const LONG>{}, centerWidth, widths, trailingInset); };
@@ -190,6 +191,13 @@ inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float
     const auto missingEssential = [&] {
         return (notificationWidth && IsRectEmpty(&bounds.back())) || missingControl();
     };
+    // Give back the spacer before dropping the date or system controls.
+    if (clockGap && (IsRectEmpty(&bounds.back()) || missingControl()))
+    {
+        widths.back() -= clockGap;
+        clockGap = 0;
+        bounds = arrange();
+    }
     if (missingEssential())
     {
         // Retain the existing narrow-layout rule: first remove the date as a
@@ -212,8 +220,9 @@ inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float
     const auto group = bounds.back();
     if (!IsRectEmpty(&group))
     {
-        if (clockWidth) result.clock = {group.left, 0, group.left + clockWidth, height};
-        if (notificationWidth) result.notifications = {group.left + clockWidth, 0, group.right, height};
+        const LONG clockLeft = group.left + clockGap;
+        if (clockWidth) result.clock = {clockLeft, 0, clockLeft + clockWidth, height};
+        if (notificationWidth) result.notifications = {clockLeft + clockWidth, 0, group.right, height};
     }
     return result;
 }
