@@ -1641,6 +1641,7 @@ public:
     bool ClearHostInputTextDropPreview();
     bool DropHostInputText(const std::wstring& widgetId, std::string_view target,
         POINT point, std::wstring_view text);
+    std::wstring TakeHostInputTextDrag();
     bool PrepareHostInputContextMenu(const std::wstring& widgetId,
         int x, int y, std::string_view surface,
         bool clipboardHasText,
@@ -1739,7 +1740,8 @@ private:
         const LuaWidget& widget, POINT point) const;
     std::optional<size_t> ResolveHostInputTextDropPosition(
         const LuaWidget& widget, const LuaWidget::HostControl& control,
-        POINT point, const std::wstring& text, HostInputDropCaret* caret) const;
+        POINT point, const std::wstring& text, HostInputDropCaret* caret,
+        std::optional<size_t>* hitCharacter = nullptr) const;
     bool HostInputAcceptsTextDrop(const LuaWidget::HostControl& control) const;
     std::wstring HostInputTextForDrop(const LuaWidget& widget,
         const LuaWidget::HostControl& control) const;
@@ -2051,6 +2053,7 @@ private:
         size_t compositionCursor = 0;
         wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;
+        bool selectionDragArmed = false;
         bool controlled = false;
         bool readOnly = false;
         bool numeric = false;

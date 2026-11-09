@@ -4152,13 +4152,31 @@ private:
     HRESULT HandleExternalOleDragLeave(bool pointerOnDesktopSurface);
     size_t HitTestLuaFileDropTarget(POINT point) const;
     const DesktopWidget* FindLuaTextDropSurface(POINT point, POINT& local) const;
-    bool HandleLuaTextDragHover(POINT point, DWORD keyState, DWORD& effect);
-    std::optional<bool> DeliverLuaTextDrop(POINT point, IDataObject* source,
+    ScrollingItemWidget* FindNativeSearchTextDropSurface(
+        POINT point, std::optional<RECT>& popupFrame) const;
+    const RECT* GetNativeSearchTextDropCaret(const ScrollingItemWidget& view,
+        const RECT& searchRect) const;
+    bool IsWidgetTextComposing() const;
+    void InvalidateNativeSearchTextDrop(const std::wstring& widgetId, bool popup);
+    bool ClearWidgetTextDropPreview();
+    bool HandleWidgetTextDragHover(POINT point, DWORD keyState, DWORD& effect);
+    std::optional<bool> DeliverWidgetTextDrop(POINT point, IDataObject* source,
         bool copyAllowed);
+    bool TryStartWidgetTextDrag(POINT point, WPARAM keys);
+    void RunWidgetTextDrag(std::wstring text);
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
     bool externalOwnedContent_ = false;
     bool externalWidgetTextAvailable_ = false;
+    bool widgetTextDragActive_ = false;
+    struct NativeSearchTextDropPreview
+    {
+        std::wstring widgetId;
+        RECT searchRect{};
+        RECT caret{};
+        bool popup = false;
+    };
+    std::optional<NativeSearchTextDropPreview> nativeSearchTextDropPreview_;
     std::vector<std::wstring> externalFileDropPaths_;
     DWORD ExternalFileDropPreferredEffect(POINT point) const;
     HRESULT HandleOleDragEnter(IDataObject* dataObject,

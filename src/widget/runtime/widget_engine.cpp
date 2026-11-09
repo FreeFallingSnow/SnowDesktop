@@ -23157,6 +23157,11 @@ bool WidgetEngine::HasInteractionPointerCapture(
 
 void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
 {
+    if (surface.empty() || focusedHostInput_.surface == NormalizeWidgetSurface(surface))
+    {
+        focusedHostInput_.pointerSelecting = false;
+        focusedHostInput_.selectionDragArmed = false;
+    }
     if (hostScrollbarDrag_.active &&
         (surface.empty() || hostScrollbarDrag_.surface ==
             NormalizeWidgetSurface(surface)))
@@ -29778,6 +29783,8 @@ bool WidgetEngine::HandleHostInputPointerMove(
         focusedHostInput_.widgetId != widgetId ||
         focusedHostInput_.surface != surface)
         return false;
+    if (focusedHostInput_.selectionDragArmed)
+        return true;
     const int index = FindWidget(widgetId);
     if (index < 0)
         return false;
@@ -29825,6 +29832,7 @@ bool WidgetEngine::HandleHostInputPointerUp(
         focusedHostInput_.widgetId != widgetId ||
         focusedHostInput_.surface != surface)
         return false;
+    const bool dragWasArmed = std::exchange(focusedHostInput_.selectionDragArmed, false);
     const int index = FindWidget(widgetId);
     if (index >= 0)
     {
@@ -29838,9 +29846,14 @@ bool WidgetEngine::HandleHostInputPointerUp(
             });
         if (control != controls.rend())
         {
-            focusedHostInput_.cursor =
-                HitTestHostInputPosition(
-                    *control, widgetId, x, y);
+            const auto dropPosition = dragWasArmed
+                ? ResolveHostInputTextDropPosition(
+                    widgets_[index], *control, {x, y}, focusedHostInput_.text, nullptr)
+                : std::nullopt;
+            focusedHostInput_.cursor = dropPosition ? *dropPosition :
+                HitTestHostInputPosition(*control, widgetId, x, y);
+            if (dragWasArmed)
+                focusedHostInput_.selectionAnchor = focusedHostInput_.cursor;
             focusedHostInput_.caretVisibility.Request();
         }
     }
@@ -30461,7 +30474,8 @@ std::optional<std::string> WidgetEngine::FindHostInputTextDropTarget(
 
 std::optional<size_t> WidgetEngine::ResolveHostInputTextDropPosition(
     const LuaWidget& widget, const LuaWidget::HostControl& control,
-    POINT point, const std::wstring& text, HostInputDropCaret* caret) const
+    POINT point, const std::wstring& text, HostInputDropCaret* caret,
+    std::optional<size_t>* hitCharacter) const
 {
     using namespace snowdesktop::widget_runtime;
     ViewRect frame{static_cast<float>(control.rect.left),
@@ -30474,13 +30488,13 @@ std::optional<size_t> WidgetEngine::ResolveHostInputTextDropPosition(
         frame.height - (control.multiline
             ? control.padding.top + control.padding.bottom : 0.0f)};
     D2D1::Matrix3x2F transform = D2D1::Matrix3x2F::Identity();
-    const auto* node = widget.viewTree
-        ? FindViewNodeByKey(*widget.viewTree, control.id) : nullptr;
+    const auto* tree = DeclarativeViewForSurface(widget, control.surface);
+    const auto* node = tree ? FindViewNodeByKey(*tree, control.id) : nullptr;
     if (node && IsDeclarativeInputNode(node->type))
     {
         frame = node->frame;
         content = ViewNodeContentRect(*node);
-        const auto t = ResolveViewTransformForKey(*widget.viewTree, control.id);
+        const auto t = ResolveViewTransformForKey(*tree, control.id);
         transform = D2D1::Matrix3x2F(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
     }
     else
@@ -30522,6 +30536,8 @@ std::optional<size_t> WidgetEngine::ResolveHostInputTextDropPosition(
 
     const size_t rawPosition = static_cast<size_t>(hit.textPosition) +
         (trailing ? static_cast<size_t>(hit.length) : 0);
+    if (hitCharacter && inside && hit.isText && hit.textPosition < text.size())
+        *hitCharacter = hit.textPosition;
     const size_t position = text_input::SnapBoundary(text, rawPosition);
     if (!caret) return position;
 
@@ -30589,26 +30605,6 @@ bool WidgetEngine::ClearHostInputTextDropPreview()
     return true;
 }
 
-static std::wstring NormalizeHostInputTransfer(
-    std::wstring_view text, bool multiline, size_t maximumUtf8Bytes)
-{
-    std::wstring result;
-    for (const auto& character : text)
-    {
-        if (character == L'\r') continue;
-        const std::wstring_view normalized = character == L'\n'
-            ? (multiline ? L"\n" : L" ")
-            : character == L'\t'
-                ? (multiline ? L"    " : L" ")
-                : std::wstring_view(&character, 1);
-        if (maximumUtf8Bytes != 0 &&
-            normalized.size() > maximumUtf8Bytes - result.size())
-            return {};
-        result.append(normalized);
-    }
-    return result;
-}
-
 bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
     std::string_view target, POINT point, std::wstring_view text)
 {
@@ -30620,7 +30616,7 @@ bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
         return false;
 
     const std::string id = control->id;
-    const auto normalized = NormalizeHostInputTransfer(
+    const auto normalized = text_input::NormalizeTransfer(
         text, control->multiline, control->maximumUtf8Bytes);
     if (normalized.empty()) return false;
     std::wstring nextText = HostInputTextForDrop(widgets_[index], *control);
@@ -30655,10 +30651,25 @@ bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
         return false;
     focusedHostInput_.cursor = focusedHostInput_.selectionAnchor = nextCursor;
     focusedHostInput_.pointerSelecting = false;
+    focusedHostInput_.selectionDragArmed = false;
     focusedHostInput_.pendingHighSurrogate = 0;
     focusedHostInput_.duplicateImeResult.clear();
     FinishHostInputEdit(before, "pointer");
     return true;
+}
+
+std::wstring WidgetEngine::TakeHostInputTextDrag()
+{
+    if (!focusedHostInput_.active || !focusedHostInput_.pointerSelecting ||
+        !std::exchange(focusedHostInput_.selectionDragArmed, false) ||
+        focusedHostInput_.composing)
+        return {};
+    const auto start = std::min(focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
+    const auto end = std::max(focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
+    if (start == end || end > focusedHostInput_.text.size())
+        return {};
+    focusedHostInput_.pointerSelecting = false;
+    return focusedHostInput_.text.substr(start, end - start);
 }
 
 bool WidgetEngine::PrepareHostInputContextMenu(
@@ -31243,7 +31254,7 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
                     const auto* end = clipboardText + GlobalSize(data) / sizeof(wchar_t);
                     const auto* terminator = std::find(clipboardText, end, L'\0');
                     if (terminator != end)
-                        pasted = NormalizeHostInputTransfer(
+                        pasted = text_input::NormalizeTransfer(
                             std::wstring_view(clipboardText,
                                 static_cast<size_t>(terminator - clipboardText)),
                             focusedHostInput_.multiline,
@@ -32107,20 +32118,46 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
         }
         if (it->type == LuaWidget::HostControl::Type::Input)
         {
-            if (RuntimeFocusHostInput(widgetId, it->id) &&
+            const std::string inputId = it->id;
+            const bool alreadyFocused = focusedHostInput_.active &&
+                focusedHostInput_.widgetId == widgetId &&
+                focusedHostInput_.id == inputId &&
+                focusedHostInput_.surface == normalizedSurface;
+            if (RuntimeFocusHostInput(widgetId, inputId) &&
                 focusedHostInput_.active &&
                 focusedHostInput_.widgetId == widgetId &&
-                focusedHostInput_.id == it->id)
+                focusedHostInput_.id == inputId)
             {
+                // A focus callback can repaint and replace the host-control list.
+                const int currentIndex = FindWidget(widgetId);
+                if (currentIndex < 0) return true;
+                const auto& currentWidget = widgets_[currentIndex];
+                const auto control = std::find_if(currentWidget.hostControls.rbegin(),
+                    currentWidget.hostControls.rend(), [&](const auto& candidate) {
+                        return candidate.type == LuaWidget::HostControl::Type::Input &&
+                            candidate.id == inputId &&
+                            HostControlBelongsToSurface(candidate, normalizedSurface);
+                    });
+                if (control == currentWidget.hostControls.rend()) return true;
                 focusedHostInput_.pointerSelectionStartCursor =
                     focusedHostInput_.cursor;
                 focusedHostInput_.pointerSelectionStartAnchor =
                     focusedHostInput_.selectionAnchor;
-                focusedHostInput_.cursor =
-                    HitTestHostInputPosition(
-                        *it, widgetId, x, y);
-                focusedHostInput_.selectionAnchor =
-                    focusedHostInput_.cursor;
+                const auto start = std::min(focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
+                const auto end = std::max(focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
+                std::optional<size_t> hitCharacter;
+                if (alreadyFocused && start != end && !focusedHostInput_.composing &&
+                    !snowdesktop::private_pointer::Active() &&
+                    !(snowdesktop::private_pointer::KeyState(VK_SHIFT) & 0x8000))
+                    (void)ResolveHostInputTextDropPosition(currentWidget, *control,
+                        {x, y}, focusedHostInput_.text, nullptr, &hitCharacter);
+                focusedHostInput_.selectionDragArmed = hitCharacter &&
+                    *hitCharacter >= start && *hitCharacter < end;
+                if (!focusedHostInput_.selectionDragArmed)
+                {
+                    focusedHostInput_.cursor = HitTestHostInputPosition(*control, widgetId, x, y);
+                    focusedHostInput_.selectionAnchor = focusedHostInput_.cursor;
+                }
                 focusedHostInput_.pointerSelecting = true;
                 focusedHostInput_.caretVisibility.Request();
                 RuntimeInvalidateHost(widgetId);

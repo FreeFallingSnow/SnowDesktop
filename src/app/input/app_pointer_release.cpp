@@ -928,7 +928,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             }
             RequestLayoutSave();
         }
-        else view->EndSearchPointerSelection();
+        else view->FinishSearchPointerSelection(upPoint);
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -1131,8 +1131,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (!searchable ||
             !searchable->IsSearchPointerSelecting())
             continue;
-        searchable->UpdateSearchPointerSelection(upPoint);
-        searchable->EndSearchPointerSelection();
+        searchable->FinishSearchPointerSelection(upPoint);
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ =

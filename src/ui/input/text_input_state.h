@@ -16,6 +16,25 @@
 // translate public Lua selections to/from UTF-8 at the existing API boundary.
 namespace snowdesktop::text_input
 {
+inline std::wstring NormalizeTransfer(
+    std::wstring_view text, bool multiline, std::size_t maximumUnits = 0)
+{
+    std::wstring result;
+    for (const auto& character : text)
+    {
+        if (character == L'\r') continue;
+        const std::wstring_view part = character == L'\n'
+            ? (multiline ? L"\n" : L" ")
+            : character == L'\t'
+                ? (multiline ? L"    " : L" ")
+                : std::wstring_view(&character, 1);
+        if (maximumUnits != 0 && part.size() > maximumUnits - result.size())
+            return {};
+        result.append(part);
+    }
+    return result;
+}
+
 inline std::uint32_t Codepoint(std::wstring_view value, std::size_t at,
     std::size_t& next) noexcept
 {

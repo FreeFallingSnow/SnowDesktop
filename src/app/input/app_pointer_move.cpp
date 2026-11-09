@@ -307,6 +307,7 @@ void DesktopApp::OnMouseMoveAt(
         GetSystemMetrics(SM_CYDRAG));
     const POINT tracePoint = current;
     if (DockTrayPopupPointerMove(current)) return;
+    if (TryStartWidgetTextDrag(current, wp)) return;
     const auto queueCategorizedDesktopOwner = [this](ScrollingItemWidget* view) {
         DesktopWidget* data = view->GetWidgetData();
         // Single-cell thumbnails read the unfiltered source list, not tab

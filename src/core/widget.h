@@ -426,7 +426,11 @@ public:
     void BeginSearchPointerSelection(
         POINT point, bool extendSelection);
     bool UpdateSearchPointerSelection(POINT point);
+    void FinishSearchPointerSelection(POINT point);
     void EndSearchPointerSelection();
+    std::wstring TakeSearchTextDrag();
+    bool GetSearchTextDropCaret(POINT point, RECT& caret) const;
+    bool DropSearchText(POINT point, std::wstring_view text);
     bool IsSearchPointerSelecting() const
     {
         return searchPointerSelecting_;
@@ -542,6 +546,7 @@ protected:
     size_t searchCompositionCursor_ = 0;
     bool searchFocused_ = false;
     bool searchPointerSelecting_ = false;
+    bool searchSelectionDragArmed_ = false;
 
 private:
     size_t GetSearchSelectionStart() const;
@@ -549,7 +554,9 @@ private:
     bool HasSearchSelection() const;
     bool EraseSearchSelection();
     void ReplaceSearchSelection(const std::wstring& text);
-    size_t HitTestSearchTextPosition(POINT point) const;
+    void ReplaceSearchRange(size_t start, size_t end, std::wstring_view text);
+    size_t HitTestSearchTextPosition(POINT point, RECT* caret = nullptr,
+        std::optional<size_t>* hitCharacter = nullptr) const;
     std::wstring BuildSearchDisplayText(
         size_t& displayCursor,
         size_t& compositionStart,

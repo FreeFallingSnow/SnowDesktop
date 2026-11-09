@@ -1,6 +1,7 @@
 #include "ui/input/private_pointer.h"
 #include "app/app.h"
 #include "app/navigation/quick_navigation_state.h"
+#include "app/popup/categorized_popup_scope.h"
 #include "dock/dock_window_preview.h"
 #include "widget/runtime/widget_engine.h"
 #include "common/utils.h"
@@ -41,6 +42,11 @@ const DesktopWidget* DesktopApp::FindLuaTextDropSurface(
     if (!widgetEngine_ || desktopPassthroughActive_ ||
         IsPointOccludedByOpenPopup(point))
         return nullptr;
+    if (!luaWidgetPanelAnimation_.IsHidden())
+    {
+        const RECT panel = GetLuaWidgetPanelRect();
+        if (luaWidgetPanelRequest_.modal || PtInRect(&panel, point)) return nullptr;
+    }
     const auto index = HitTestStandaloneWidgetIndex(point);
     if (index >= widgets_.size() ||
         HitTestStandaloneWidget(index, point) != WidgetHit::Content)
@@ -50,22 +56,139 @@ const DesktopWidget* DesktopApp::FindLuaTextDropSurface(
     return ResolveLuaWidgetContent(&widgets_[index]);
 }
 
-bool DesktopApp::HandleLuaTextDragHover(
+ScrollingItemWidget* DesktopApp::FindNativeSearchTextDropSurface(
+    POINT point, std::optional<RECT>& popupFrame) const
+{
+    popupFrame.reset();
+    if (desktopPassthroughActive_) return nullptr;
+    if (!luaWidgetPanelAnimation_.IsHidden())
+    {
+        const RECT panel = GetLuaWidgetPanelRect();
+        if (luaWidgetPanelRequest_.modal || PtInRect(&panel, point)) return nullptr;
+    }
+    if (IsPointOccludedByOpenPopup(point))
+    {
+        if (!IsCollectionPopupInteractive()) return nullptr;
+        auto* view = GetCategorizedPopupView();
+        if (!view) return nullptr;
+        const RECT frame = GetCategorizedPopupFrame(GetCollectionPopupRect(*GetOpenPopupWidget()));
+        CategorizedPopupScope scope(view, frame);
+        const RECT search = view->GetSearchBoxRect();
+        if (!PtInRect(&search, point)) return nullptr;
+        popupFrame = frame;
+        return view;
+    }
+    if (HitTestStandaloneWidgetIndex(point) < widgets_.size())
+        return nullptr;
+    for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+    {
+        auto* container = dynamic_cast<WidgetContainer*>(it->get());
+        const auto* widget = container ? container->GetWidgetData() : nullptr;
+        if (!widget || IsGroupedWidget(*widget) ||
+            (desktopIconsHidden_ && !widget->keepWhenDesktopHidden))
+            continue;
+        const RECT frame = container->GetFrameRect();
+        if (PtInRect(&frame, point))
+            return container->HitTestWidget(point) == WidgetHit::SearchBox
+                ? dynamic_cast<ScrollingItemWidget*>(container) : nullptr;
+    }
+    return nullptr;
+}
+
+const RECT* DesktopApp::GetNativeSearchTextDropCaret(const ScrollingItemWidget& view,
+    const RECT& searchRect) const
+{
+    const auto* widget = view.GetWidgetData();
+    return widget && nativeSearchTextDropPreview_ &&
+        widget->id == nativeSearchTextDropPreview_->widgetId &&
+        EqualRect(&searchRect, &nativeSearchTextDropPreview_->searchRect)
+        ? &nativeSearchTextDropPreview_->caret : nullptr;
+}
+
+bool DesktopApp::IsWidgetTextComposing() const
+{
+    if ((widgetEngine_ && widgetEngine_->IsHostInputComposing()) ||
+        (dockFolderPopupContainer_ && dockFolderPopupContainer_->IsSearchComposing()))
+        return true;
+    for (const auto& container : containers_)
+        if (const auto* view = dynamic_cast<const ScrollingItemWidget*>(container.get());
+            view && view->IsSearchComposing())
+            return true;
+    return false;
+}
+
+void DesktopApp::InvalidateNativeSearchTextDrop(const std::wstring& widgetId, bool popup)
+{
+    if (popup)
+        InvalidateCollectionPopupAnimation(false);
+    else if (FindWidgetIndexById(widgetId) < widgets_.size())
+        (void)QueueDesktopWidgetComposition(widgetId);
+}
+
+bool DesktopApp::ClearWidgetTextDropPreview()
+{
+    const bool hadLuaPreview = widgetEngine_ && widgetEngine_->ClearHostInputTextDropPreview();
+    if (!nativeSearchTextDropPreview_) return hadLuaPreview;
+    const auto old = std::exchange(nativeSearchTextDropPreview_, std::nullopt);
+    InvalidateNativeSearchTextDrop(old->widgetId, old->popup);
+    return true;
+}
+
+bool DesktopApp::HandleWidgetTextDragHover(
     POINT point, DWORD keyState, DWORD& effect)
 {
-    if (!widgetEngine_) return false;
-    POINT local{};
-    const auto* content = externalWidgetTextAvailable_ &&
-        !(keyState & MK_RBUTTON) ? FindLuaTextDropSurface(point, local) : nullptr;
-    if (!content)
+    if (!externalWidgetTextAvailable_ || (keyState & MK_RBUTTON))
     {
-        widgetEngine_->ClearHostInputTextDropPreview();
+        ClearWidgetTextDropPreview();
         return false;
     }
-    const auto accepted = widgetEngine_->UpdateHostInputTextDropPreview(
-        content->id, local, (effect & DROPEFFECT_COPY) != 0);
-    if (!accepted)
-        return false;
+    const bool canCopy = (effect & DROPEFFECT_COPY) != 0 && !IsWidgetTextComposing();
+    std::optional<bool> accepted;
+    std::optional<RECT> popupFrame;
+    if (auto* view = FindNativeSearchTextDropSurface(point, popupFrame))
+    {
+        RECT caret{};
+        RECT searchRect{};
+        {
+            std::optional<CategorizedPopupScope> scope;
+            if (popupFrame) scope.emplace(view, *popupFrame);
+            searchRect = view->GetSearchBoxRect();
+            accepted = canCopy && view->GetSearchTextDropCaret(point, caret);
+        }
+        if (*accepted)
+        {
+            const std::wstring widgetId = view->GetWidgetData()->id;
+            if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
+            const bool popup = popupFrame.has_value();
+            if (!nativeSearchTextDropPreview_ ||
+                nativeSearchTextDropPreview_->widgetId != widgetId ||
+                nativeSearchTextDropPreview_->popup != popup)
+                ClearWidgetTextDropPreview();
+            if (!nativeSearchTextDropPreview_ ||
+                !EqualRect(&nativeSearchTextDropPreview_->searchRect, &searchRect) ||
+                !EqualRect(&nativeSearchTextDropPreview_->caret, &caret))
+            {
+                nativeSearchTextDropPreview_ = NativeSearchTextDropPreview{
+                    widgetId, searchRect, caret, popup};
+                InvalidateNativeSearchTextDrop(widgetId, popup);
+            }
+        }
+        else
+            ClearWidgetTextDropPreview();
+    }
+    else
+    {
+        if (nativeSearchTextDropPreview_) ClearWidgetTextDropPreview();
+        POINT local{};
+        if (const auto* content = FindLuaTextDropSurface(point, local))
+        {
+            const std::wstring widgetId = content->id;
+            accepted = widgetEngine_->UpdateHostInputTextDropPreview(widgetId, local, canCopy);
+        }
+        else if (widgetEngine_)
+            widgetEngine_->ClearHostInputTextDropPreview();
+    }
+    if (!accepted) return false;
 
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
@@ -75,21 +198,55 @@ bool DesktopApp::HandleLuaTextDragHover(
     return true;
 }
 
-std::optional<bool> DesktopApp::DeliverLuaTextDrop(
+std::optional<bool> DesktopApp::DeliverWidgetTextDrop(
     POINT point, IDataObject* source, bool copyAllowed)
 {
+    std::optional<RECT> popupFrame;
+    if (auto* view = FindNativeSearchTextDropSurface(point, popupFrame))
+    {
+        if (!copyAllowed || IsWidgetTextComposing()) return false;
+        const std::wstring widgetId = view->GetWidgetData()->id;
+        const bool popup = popupFrame.has_value();
+        const std::wstring text = ReadDroppedUnicodeText(source);
+        if (text.empty() || IsWidgetTextComposing()) return false;
+        view = FindNativeSearchTextDropSurface(point, popupFrame);
+        if (!view || popupFrame.has_value() != popup ||
+            view->GetWidgetData()->id != widgetId)
+            return false;
+        {
+            std::optional<CategorizedPopupScope> scope;
+            if (popupFrame) scope.emplace(view, *popupFrame);
+            if (!view->DropSearchText(point, text)) return false;
+        }
+        if (widgetEngine_) widgetEngine_->BlurHostInput(false);
+        for (const auto& container : containers_)
+            if (auto* other = dynamic_cast<ScrollingItemWidget*>(container.get()); other && other != view)
+                other->SetSearchFocused(false);
+        if (dockFolderPopupContainer_ && dockFolderPopupContainer_.get() != view)
+            dockFolderPopupContainer_->SetSearchFocused(false);
+        if (!popup)
+        {
+            const size_t index = FindWidgetIndexById(widgetId);
+            if (index < widgets_.size()) SelectWidgetOnly(index);
+        }
+        FocusDesktopInputWindow();
+        UpdateHostInputImePosition();
+        InvalidateNativeSearchTextDrop(widgetId, false);
+        if (popup) InvalidateNativeSearchTextDrop(widgetId, true);
+        return true;
+    }
     POINT local{};
     const auto* content = FindLuaTextDropSurface(point, local);
     if (!content) return std::nullopt;
     const std::wstring widgetId = content->id;
     const auto target = widgetEngine_->FindHostInputTextDropTarget(widgetId, local);
     if (!target) return std::nullopt;
-    if (!copyAllowed || target->empty()) return false;
+    if (!copyAllowed || target->empty() || IsWidgetTextComposing()) return false;
 
     // GetData can pump messages. Recheck the desktop surface and control
     // identity before writing to whatever is currently under the pointer.
     const std::wstring text = ReadDroppedUnicodeText(source);
-    if (text.empty()) return false;
+    if (text.empty() || IsWidgetTextComposing()) return false;
     content = FindLuaTextDropSurface(point, local);
     if (!content || content->id != widgetId ||
         !widgetEngine_->DropHostInputText(widgetId, *target, local, text))
@@ -97,6 +254,41 @@ std::optional<bool> DesktopApp::DeliverLuaTextDrop(
 
     ClearSelection();
     UpdateHostInputImePosition();
+    return true;
+}
+
+bool DesktopApp::TryStartWidgetTextDrag(POINT point, WPARAM keys)
+{
+    if (!mouseDown_ || !(keys & MK_LBUTTON) || widgetTextDragActive_ ||
+        dragDropController_.IsTransportActive() || snowdesktop::private_pointer::Active())
+        return false;
+    if (std::abs(point.x - mouseDownPoint_.x) < GetSystemMetrics(SM_CXDRAG) &&
+        std::abs(point.y - mouseDownPoint_.y) < GetSystemMetrics(SM_CYDRAG))
+        return false;
+
+    std::wstring text;
+    if (auto* view = GetCategorizedPopupView())
+        text = view->TakeSearchTextDrag();
+    if (text.empty())
+        for (const auto& container : containers_)
+            if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()))
+            {
+                text = view->TakeSearchTextDrag();
+                if (!text.empty()) break;
+            }
+    if (text.empty() && widgetEngine_)
+        text = widgetEngine_->TakeHostInputTextDrag();
+    if (text.empty()) return false;
+
+    // DoDragDrop pumps a nested window loop and takes capture itself. The
+    // original gesture is already consumed; it cannot become an item drag.
+    mouseDown_ = false;
+    mouseDownHit_ = nullptr;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    luaWidgetPanelMouseDown_ = false;
+    luaWidgetPanelCaptureHwnd_ = nullptr;
+    ReleaseCapturePreservingPointerState();
+    RunWidgetTextDrag(std::move(text));
     return true;
 }
 

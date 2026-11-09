@@ -356,8 +356,17 @@ HRESULT DesktopApp::HandleOleDragEnter(
     externalLuaFileDropAvailable_ = false;
     externalOwnedContent_ = false;
     externalWidgetTextAvailable_ = false;
-    if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
+    ClearWidgetTextDropPreview();
     externalFileDropPaths_.clear();
+
+    if (widgetTextDragActive_)
+    {
+        externalWidgetTextAvailable_ = OffersWidgetInputText(dataObject);
+        if (!HandleWidgetTextDragHover(ScreenPointToClient(point), keyState, *effect))
+            *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -477,7 +486,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         PresentOleDragInteractionFrame();
         return S_OK;
     }
-    if (HandleLuaTextDragHover(client, keyState, *effect))
+    if (HandleWidgetTextDragHover(client, keyState, *effect))
     {
         PresentOleDragInteractionFrame();
         return S_OK;
@@ -571,6 +580,14 @@ HRESULT DesktopApp::HandleOleDragOver(
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
 
+    if (widgetTextDragActive_)
+    {
+        if (!HandleWidgetTextDragHover(ScreenPointToClient(point), keyState, *effect))
+            *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
+
     if (dragDropController_.IsSelfDragActive())
     {
         POINT client = ScreenPointToClient(point);
@@ -613,13 +630,13 @@ HRESULT DesktopApp::HandleOleDragOver(
         dragSession_.UpdatePoint(client);
     if (!UpdateDragPageNavigation(client))
     {
-        if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
+        ClearWidgetTextDropPreview();
         *effect = DROPEFFECT_NONE;
         HideDragHintWindow();
         PresentOleDragInteractionFrame();
         return S_OK;
     }
-    if (HandleLuaTextDragHover(client, keyState, *effect))
+    if (HandleWidgetTextDragHover(client, keyState, *effect))
     {
         PresentOleDragInteractionFrame();
         return S_OK;
@@ -713,6 +730,12 @@ HRESULT DesktopApp::HandleOleDragLeave()
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
+    if (widgetTextDragActive_)
+    {
+        externalWidgetTextAvailable_ = false;
+        if (ClearWidgetTextDropPreview()) PresentOleDragInteractionFrame();
+        return S_OK;
+    }
     if (dragDropController_.IsSelfDragActive())
     {
         POINT hoverPoint{};
@@ -740,7 +763,7 @@ HRESULT DesktopApp::HandleOleDragLeave()
 
 HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
 {
-    if (widgetEngine_ && widgetEngine_->ClearHostInputTextDropPreview())
+    if (ClearWidgetTextDropPreview())
         PresentOleDragInteractionFrame();
     if (dragDropController_.IsExternalDragActive() &&
         pointerOnDesktopSurface &&
@@ -783,7 +806,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 {
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
-    if (widgetEngine_) widgetEngine_->ClearHostInputTextDropPreview();
+    ClearWidgetTextDropPreview();
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
@@ -802,7 +825,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     if (!dragDropController_.IsSelfDragActive() && !(keyState & MK_RBUTTON) &&
         OffersWidgetInputText(dataObject))
     {
-        if (const auto inserted = DeliverLuaTextDrop(
+        if (const auto inserted = DeliverWidgetTextDrop(
                 clientPoint, dataObject, (*effect & DROPEFFECT_COPY) != 0))
         {
             dragDropController_.EndExternalDrag();
@@ -811,6 +834,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             PresentOleDragInteractionFrame();
             return S_OK;
         }
+    }
+    if (widgetTextDragActive_)
+    {
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
     }
     const bool externalContent = !dragDropController_.IsSelfDragActive() && OffersOwnedDropContent(dataObject);
     // Drop can arrive directly or with a different IDataObject than Enter.
@@ -2681,6 +2709,9 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
+    if (widgetTextDragActive_)
+        return escapePressed ? DRAGDROP_S_CANCEL :
+            (keyState & MK_LBUTTON) ? S_OK : DRAGDROP_S_DROP;
     if (escapePressed && TryDismissPopupForEscape())
         escapePressed = FALSE;
     POINT desktopPoint{};

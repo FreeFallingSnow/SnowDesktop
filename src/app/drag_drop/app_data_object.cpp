@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/drag_drop/ole_drag_drop_adapter.h"
 #include "common/utils.h"
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
@@ -7,7 +8,95 @@
 #include "layout/selected_desktop_move.h"
 #include "desktop_request.h"
 
+#include <wrl/implements.h>
+
 // OLE data-object construction and desktop landing bookkeeping.
+
+namespace
+{
+// Text dragged from an editor is a plain data object. A Shell item data
+// object can advertise file formats even when given an empty item list.
+class WidgetTextDataObject final : public Microsoft::WRL::RuntimeClass<
+    Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IDataObject>
+{
+public:
+    explicit WidgetTextDataObject(std::wstring text) : text_(std::move(text)) {}
+
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* format, STGMEDIUM* medium) override
+    {
+        if (!medium) return E_POINTER;
+        *medium = {};
+        const HRESULT supported = QueryGetData(format);
+        if (FAILED(supported)) return supported;
+        const size_t bytes = (text_.size() + 1) * sizeof(wchar_t);
+        const HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if (!memory) return E_OUTOFMEMORY;
+        void* target = GlobalLock(memory);
+        if (!target)
+        {
+            GlobalFree(memory);
+            return E_OUTOFMEMORY;
+        }
+        memcpy(target, text_.c_str(), bytes);
+        GlobalUnlock(memory);
+        medium->tymed = TYMED_HGLOBAL;
+        medium->hGlobal = memory;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* format) override
+    {
+        if (!format) return E_POINTER;
+        if (format->cfFormat != CF_UNICODETEXT) return DV_E_FORMATETC;
+        if (!(format->tymed & TYMED_HGLOBAL)) return DV_E_TYMED;
+        if (format->dwAspect != DVASPECT_CONTENT) return DV_E_DVASPECT;
+        if (format->lindex != -1) return DV_E_LINDEX;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD direction, IEnumFORMATETC** formats) override
+    {
+        if (!formats) return E_POINTER;
+        *formats = nullptr;
+        if (direction != DATADIR_GET) return E_NOTIMPL;
+        FORMATETC format{CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return SHCreateStdEnumFmtEtc(1, &format, formats);
+    }
+
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC* in, FORMATETC* out) override
+    {
+        if (!in || !out) return E_POINTER;
+        *out = *in;
+        out->ptd = nullptr;
+        return DATA_S_SAMEFORMATETC;
+    }
+
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override
+    { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override
+    { return OLE_E_ADVISENOTSUPPORTED; }
+
+private:
+    std::wstring text_;
+};
+}
+
+void DesktopApp::RunWidgetTextDrag(std::wstring text)
+{
+    auto data = Microsoft::WRL::Make<WidgetTextDataObject>(std::move(text));
+    auto* adapter = EnsureOleDragDropAdapter();
+    if (!data || !adapter) return;
+    ComPtr<IDropSource> source(static_cast<IDropSource*>(adapter));
+    widgetTextDragActive_ = true;
+    DWORD effect = DROPEFFECT_NONE;
+    DoDragDrop(data.Get(), source.Get(), DROPEFFECT_COPY, &effect);
+    widgetTextDragActive_ = false;
+    externalWidgetTextAvailable_ = false;
+    if (ClearWidgetTextDropPreview()) PresentOleDragInteractionFrame();
+}
 
 POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
