@@ -428,9 +428,11 @@ public:
     bool UpdateSearchPointerSelection(POINT point);
     void FinishSearchPointerSelection(POINT point);
     void EndSearchPointerSelection();
-    std::wstring TakeSearchTextDrag();
-    bool GetSearchTextDropCaret(POINT point, RECT& caret) const;
-    bool DropSearchText(POINT point, std::wstring_view text);
+    std::optional<snowdesktop::text_input::DragSelection> TakeSearchTextDrag();
+    bool GetSearchTextDropCaret(POINT point, RECT& caret,
+        const snowdesktop::text_input::DragSelection* move) const;
+    bool DropSearchText(POINT point, std::wstring_view text,
+        const snowdesktop::text_input::DragSelection* move);
     bool IsSearchPointerSelecting() const
     {
         return searchPointerSelecting_;
@@ -555,6 +557,7 @@ private:
     bool EraseSearchSelection();
     void ReplaceSearchSelection(const std::wstring& text);
     void ReplaceSearchRange(size_t start, size_t end, std::wstring_view text);
+    void FinishSearchEdit(const snowdesktop::text_input::Snapshot& before);
     size_t HitTestSearchTextPosition(POINT point, RECT* caret = nullptr,
         std::optional<size_t>* hitCharacter = nullptr) const;
     std::wstring BuildSearchDisplayText(

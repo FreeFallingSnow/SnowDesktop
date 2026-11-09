@@ -1635,13 +1635,16 @@ public:
         std::string_view surface = "desktop") const;
     // nullopt: outside an input; empty key: input that cannot accept text.
     std::optional<std::string> FindHostInputTextDropTarget(
-        const std::wstring& widgetId, POINT point) const;
+        const std::wstring& widgetId, POINT point, std::string_view surface) const;
     std::optional<bool> UpdateHostInputTextDropPreview(
-        const std::wstring& widgetId, POINT point, bool copyAllowed);
+        const std::wstring& widgetId, POINT point, std::string_view surface,
+        bool copyAllowed, const snowdesktop::text_input::DragSelection* move);
     bool ClearHostInputTextDropPreview();
     bool DropHostInputText(const std::wstring& widgetId, std::string_view target,
-        POINT point, std::wstring_view text);
-    std::wstring TakeHostInputTextDrag();
+        POINT point, std::string_view surface, std::wstring_view text,
+        const snowdesktop::text_input::DragSelection* move);
+    std::optional<snowdesktop::text_input::DragSelection> TakeHostInputTextDrag(
+        std::wstring& widgetId, std::string& controlId, std::string& surface);
     bool PrepareHostInputContextMenu(const std::wstring& widgetId,
         int x, int y, std::string_view surface,
         bool clipboardHasText,
@@ -1737,7 +1740,7 @@ private:
         }
     };
     const LuaWidget::HostControl* HitTestHostInputTextDrop(
-        const LuaWidget& widget, POINT point) const;
+        const LuaWidget& widget, POINT point, std::string_view surface) const;
     std::optional<size_t> ResolveHostInputTextDropPosition(
         const LuaWidget& widget, const LuaWidget::HostControl& control,
         POINT point, const std::wstring& text, HostInputDropCaret* caret,
@@ -2068,6 +2071,7 @@ private:
     };
     FocusedHostInput focusedHostInput_;
     std::wstring hostInputDropWidgetId_;
+    std::string hostInputDropSurface_;
     std::optional<HostInputDropCaret> hostInputDropCaret_;
     struct HostScrollbarDrag
     {

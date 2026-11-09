@@ -28942,7 +28942,10 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
     std::string_view focusedKey, bool drawLogicalSlotDrag)
 {
     if (!d2dState_ || !d2dState_->ctx) return;
-    if (drawLogicalSlotDrag && hostInputDropCaret_ &&
+    const std::string_view surface = drawLogicalSlotDrag
+        ? std::string_view("desktop")
+        : std::string_view(widget.panelSurface);
+    if (hostInputDropCaret_ && hostInputDropSurface_ == surface &&
         hostInputDropWidgetId_ == widget.widgetId)
     {
         const auto& caret = *hostInputDropCaret_;
@@ -28963,9 +28966,6 @@ void WidgetEngine::DrawHostViewInteractionOverlays(
             context->DrawLine(from, to, accent, 2.0f);
         context->PopAxisAlignedClip();
     }
-    const std::string_view surface = drawLogicalSlotDrag
-        ? std::string_view("desktop")
-        : std::string_view(widget.panelSurface);
     const bool declarativeSurface = drawLogicalSlotDrag
         ? widget.viewTree.has_value() : widget.panelViewTree.has_value();
     if (!declarativeSurface &&
@@ -30425,18 +30425,20 @@ bool WidgetEngine::IsHostInputAt(
 }
 
 const LuaWidget::HostControl* WidgetEngine::HitTestHostInputTextDrop(
-    const LuaWidget& widget, POINT point) const
+    const LuaWidget& widget, POINT point, std::string_view surface) const
 {
-    if (!widget.valid || !widget.desktopVisible || widget.preview)
+    const bool visible = IsPanelSurface(surface)
+        ? widget.panelActive && widget.panelSurface == surface : widget.desktopVisible;
+    if (!widget.valid || !visible || widget.preview)
         return nullptr;
     for (const auto& control : widget.hostControls)
         if (control.selectPopup && control.enabled &&
-            HostControlBelongsToSurface(control, "desktop") &&
+            HostControlBelongsToSurface(control, surface) &&
             HostControlContainsPoint(control, point))
             return nullptr;
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
         if (it->type == LuaWidget::HostControl::Type::Input &&
-            HostControlBelongsToSurface(*it, "desktop") &&
+            HostControlBelongsToSurface(*it, surface) &&
             HostControlContainsPoint(*it, point))
             return &*it;
     return nullptr;
@@ -30454,7 +30456,7 @@ bool WidgetEngine::HostInputAcceptsTextDrop(
 std::wstring WidgetEngine::HostInputTextForDrop(
     const LuaWidget& widget, const LuaWidget::HostControl& control) const
 {
-    if (focusedHostInput_.active && focusedHostInput_.surface == "desktop" &&
+    if (focusedHostInput_.active && focusedHostInput_.surface == control.surface &&
         focusedHostInput_.widgetId == widget.widgetId &&
         focusedHostInput_.id == control.id)
         return focusedHostInput_.text;
@@ -30463,11 +30465,11 @@ std::wstring WidgetEngine::HostInputTextForDrop(
 }
 
 std::optional<std::string> WidgetEngine::FindHostInputTextDropTarget(
-    const std::wstring& widgetId, POINT point) const
+    const std::wstring& widgetId, POINT point, std::string_view surface) const
 {
     const int index = FindWidget(widgetId);
     if (index < 0) return std::nullopt;
-    const auto* control = HitTestHostInputTextDrop(widgets_[index], point);
+    const auto* control = HitTestHostInputTextDrop(widgets_[index], point, surface);
     if (!control) return std::nullopt;
     return HostInputAcceptsTextDrop(*control) ? control->id : std::string{};
 }
@@ -30564,11 +30566,12 @@ std::optional<size_t> WidgetEngine::ResolveHostInputTextDropPosition(
 }
 
 std::optional<bool> WidgetEngine::UpdateHostInputTextDropPreview(
-    const std::wstring& widgetId, POINT point, bool copyAllowed)
+    const std::wstring& widgetId, POINT point, std::string_view surface,
+    bool copyAllowed, const text_input::DragSelection* move)
 {
     const int index = FindWidget(widgetId);
     const auto* control = index >= 0
-        ? HitTestHostInputTextDrop(widgets_[index], point) : nullptr;
+        ? HitTestHostInputTextDrop(widgets_[index], point, surface) : nullptr;
     if (!control || !copyAllowed || !HostInputAcceptsTextDrop(*control))
     {
         ClearHostInputTextDropPreview();
@@ -30577,21 +30580,24 @@ std::optional<bool> WidgetEngine::UpdateHostInputTextDropPreview(
 
     const auto& widget = widgets_[index];
     HostInputDropCaret caret{};
-    if (!ResolveHostInputTextDropPosition(
-            widget, *control, point, HostInputTextForDrop(widget, *control), &caret))
+    const auto text = HostInputTextForDrop(widget, *control);
+    const auto position = ResolveHostInputTextDropPosition(
+        widget, *control, point, text, &caret);
+    if (!position || (move && !move->CanMove(text, *position)))
     {
         ClearHostInputTextDropPreview();
         return false;
     }
-    if (hostInputDropWidgetId_ != widgetId)
+    if (hostInputDropWidgetId_ != widgetId || hostInputDropSurface_ != surface)
     {
         ClearHostInputTextDropPreview();
         hostInputDropWidgetId_ = widgetId;
+        hostInputDropSurface_ = surface;
     }
     if (hostInputDropCaret_ != caret)
     {
         hostInputDropCaret_ = caret;
-        RuntimeInvalidateHost(widgetId, std::nullopt, "desktop");
+        RuntimeInvalidateHost(widgetId, std::nullopt, surface);
     }
     return true;
 }
@@ -30601,42 +30607,46 @@ bool WidgetEngine::ClearHostInputTextDropPreview()
     if (!hostInputDropCaret_) return false;
     hostInputDropCaret_.reset();
     const auto widgetId = std::exchange(hostInputDropWidgetId_, {});
-    RuntimeInvalidateHost(widgetId, std::nullopt, "desktop");
+    const auto surface = std::exchange(hostInputDropSurface_, {});
+    RuntimeInvalidateHost(widgetId, std::nullopt, surface);
     return true;
 }
 
 bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
-    std::string_view target, POINT point, std::wstring_view text)
+    std::string_view target, POINT point, std::string_view surface,
+    std::wstring_view text, const text_input::DragSelection* move)
 {
     using snowdesktop::widget_runtime::TryApplyHostTextReplacement;
     int index = FindWidget(widgetId);
     if (index < 0) return false;
-    const auto* control = HitTestHostInputTextDrop(widgets_[index], point);
+    const auto* control = HitTestHostInputTextDrop(widgets_[index], point, surface);
     if (!control || control->id != target || !HostInputAcceptsTextDrop(*control))
         return false;
 
     const std::string id = control->id;
-    const auto normalized = text_input::NormalizeTransfer(
+    const auto normalized = move ? std::wstring{} : text_input::NormalizeTransfer(
         text, control->multiline, control->maximumUtf8Bytes);
-    if (normalized.empty()) return false;
-    std::wstring nextText = HostInputTextForDrop(widgets_[index], *control);
+    if (!move && normalized.empty()) return false;
+    const auto nextText = HostInputTextForDrop(widgets_[index], *control);
     const auto position = ResolveHostInputTextDropPosition(
         widgets_[index], *control, point, nextText, nullptr);
-    if (!position || !snowdesktop::widget_runtime::HostTextReplacementFits(
-            nextText, *position, *position, normalized, control->maximumUtf8Bytes))
+    if (!position || (move ? !move->CanMove(nextText, *position) :
+            !snowdesktop::widget_runtime::HostTextReplacementFits(
+                nextText, *position, *position, normalized, control->maximumUtf8Bytes)))
         return false;
 
-    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
+    const std::string surfaceName(surface);
+    WidgetSurfaceScope surfaceScope(d2dState_, surfaceName.c_str());
     if (!RuntimeFocusHostInput(widgetId, id, "pointer") ||
         !focusedHostInput_.active || focusedHostInput_.widgetId != widgetId ||
-        focusedHostInput_.id != id || focusedHostInput_.surface != "desktop")
+        focusedHostInput_.id != id || focusedHostInput_.surface != surface)
         return false;
 
     // Focus/blur actions can change the control or the value. Recheck both
     // before using the insertion offset from the visible text.
     index = FindWidget(widgetId);
     if (index < 0) return false;
-    control = HitTestHostInputTextDrop(widgets_[index], point);
+    control = HitTestHostInputTextDrop(widgets_[index], point, surface);
     if (!control || control->id != id || !HostInputAcceptsTextDrop(*control) ||
         focusedHostInput_.readOnly)
         return false;
@@ -30646,7 +30656,13 @@ bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
     const text_input::Snapshot before{
         focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor};
     size_t nextCursor = 0;
-    if (!TryApplyHostTextReplacement(focusedHostInput_.text, *updatedPosition,
+    if (move)
+    {
+        const auto moved = move->Move(focusedHostInput_.text, *updatedPosition);
+        if (!moved) return false;
+        nextCursor = *moved;
+    }
+    else if (!TryApplyHostTextReplacement(focusedHostInput_.text, *updatedPosition,
             *updatedPosition, normalized, focusedHostInput_.maximumUtf8Bytes, nextCursor))
         return false;
     focusedHostInput_.cursor = focusedHostInput_.selectionAnchor = nextCursor;
@@ -30658,7 +30674,8 @@ bool WidgetEngine::DropHostInputText(const std::wstring& widgetId,
     return true;
 }
 
-std::wstring WidgetEngine::TakeHostInputTextDrag()
+std::optional<text_input::DragSelection> WidgetEngine::TakeHostInputTextDrag(
+    std::wstring& widgetId, std::string& controlId, std::string& surface)
 {
     if (!focusedHostInput_.active || !focusedHostInput_.pointerSelecting ||
         !std::exchange(focusedHostInput_.selectionDragArmed, false) ||
@@ -30668,8 +30685,11 @@ std::wstring WidgetEngine::TakeHostInputTextDrag()
     const auto end = std::max(focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
     if (start == end || end > focusedHostInput_.text.size())
         return {};
+    widgetId = focusedHostInput_.widgetId;
+    controlId = focusedHostInput_.id;
+    surface = focusedHostInput_.surface;
     focusedHostInput_.pointerSelecting = false;
-    return focusedHostInput_.text.substr(start, end - start);
+    return text_input::DragSelection{focusedHostInput_.text, start, end};
 }
 
 bool WidgetEngine::PrepareHostInputContextMenu(

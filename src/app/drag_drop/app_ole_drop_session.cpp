@@ -359,7 +359,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     ClearWidgetTextDropPreview();
     externalFileDropPaths_.clear();
 
-    if (widgetTextDragActive_)
+    if (widgetTextDragSource_)
     {
         externalWidgetTextAvailable_ = OffersWidgetInputText(dataObject);
         if (!HandleWidgetTextDragHover(ScreenPointToClient(point), keyState, *effect))
@@ -580,7 +580,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
 
-    if (widgetTextDragActive_)
+    if (widgetTextDragSource_)
     {
         if (!HandleWidgetTextDragHover(ScreenPointToClient(point), keyState, *effect))
             *effect = DROPEFFECT_NONE;
@@ -730,7 +730,7 @@ HRESULT DesktopApp::HandleOleDragLeave()
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
-    if (widgetTextDragActive_)
+    if (widgetTextDragSource_)
     {
         externalWidgetTextAvailable_ = false;
         if (ClearWidgetTextDropPreview()) PresentOleDragInteractionFrame();
@@ -835,7 +835,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
             return S_OK;
         }
     }
-    if (widgetTextDragActive_)
+    if (widgetTextDragSource_)
     {
         *effect = DROPEFFECT_NONE;
         return S_OK;
@@ -2709,7 +2709,7 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
-    if (widgetTextDragActive_)
+    if (widgetTextDragSource_)
         return escapePressed ? DRAGDROP_S_CANCEL :
             (keyState & MK_LBUTTON) ? S_OK : DRAGDROP_S_DROP;
     if (escapePressed && TryDismissPopupForEscape())
@@ -2732,8 +2732,13 @@ HRESULT DesktopApp::HandleOleQueryContinueDrag(
  * @brief COM IDropSource::GiveFeedback 实现
  * @return DRAGDROP_S_USEDEFAULTCURSORS（使用默认光标）
  */
-HRESULT DesktopApp::HandleOleGiveFeedback(DWORD)
+HRESULT DesktopApp::HandleOleGiveFeedback(DWORD effect)
 {
+    if (widgetTextDragSource_ && widgetTextDropMovesSelection_ && (effect & DROPEFFECT_COPY))
+    {
+        snowdesktop::private_pointer::Cursor(LoadCursorW(nullptr, IDC_IBEAM));
+        return S_OK;
+    }
     if (dragDropController_.IsSelfDragActive() &&
         dragDropController_.SelfDragReturned())
     {

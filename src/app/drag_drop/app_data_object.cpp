@@ -107,18 +107,21 @@ private:
 };
 }
 
-void DesktopApp::RunWidgetTextDrag(std::wstring text)
+void DesktopApp::RunWidgetTextDrag(WidgetTextDragSource dragSource)
 {
+    std::wstring text(dragSource.selection.SelectedText());
     if (text.empty() || text.find(L'\0') != std::wstring::npos) return;
     auto data = Microsoft::WRL::Make<WidgetTextDataObject>(
         EncodeWidgetTextDrag(std::move(text)));
     auto* adapter = EnsureOleDragDropAdapter();
     if (!data || !adapter) return;
     ComPtr<IDropSource> source(static_cast<IDropSource*>(adapter));
-    widgetTextDragActive_ = true;
+    widgetTextDragSource_ = std::move(dragSource);
     DWORD effect = DROPEFFECT_NONE;
+    // The source offers a copy to other applications. A drop back into the
+    // same field moves the selection locally in the target editor's undo unit.
     DoDragDrop(data.Get(), source.Get(), DROPEFFECT_COPY, &effect);
-    widgetTextDragActive_ = false;
+    widgetTextDragSource_.reset();
     externalWidgetTextAvailable_ = false;
     if (ClearWidgetTextDropPreview()) PresentOleDragInteractionFrame();
 }

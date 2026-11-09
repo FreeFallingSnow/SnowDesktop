@@ -1512,6 +1512,11 @@ void ScrollingItemWidget::ReplaceSearchRange(
     searchText_.replace(start, end - start, text);
     searchCursorPos_ = start + text.size();
     searchSelectionAnchor_ = searchCursorPos_;
+    FinishSearchEdit(before);
+}
+
+void ScrollingItemWidget::FinishSearchEdit(const snowdesktop::text_input::Snapshot& before)
+{
     searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     if (searchText_.empty()) folderSearch_.reset();
     InvalidateSlots();
@@ -1968,39 +1973,53 @@ void ScrollingItemWidget::EndSearchPointerSelection()
     searchSelectionDragArmed_ = false;
 }
 
-std::wstring ScrollingItemWidget::TakeSearchTextDrag()
+std::optional<snowdesktop::text_input::DragSelection> ScrollingItemWidget::TakeSearchTextDrag()
 {
     if (!searchPointerSelecting_ || !searchSelectionDragArmed_ ||
         searchComposing_ || !HasSearchSelection())
-        return {};
+        return std::nullopt;
     EndSearchPointerSelection();
-    const size_t start = GetSearchSelectionStart();
-    return searchText_.substr(start, GetSearchSelectionEnd() - start);
+    return snowdesktop::text_input::DragSelection{
+        searchText_, GetSearchSelectionStart(), GetSearchSelectionEnd()};
 }
 
-bool ScrollingItemWidget::GetSearchTextDropCaret(POINT point, RECT& caret) const
+bool ScrollingItemWidget::GetSearchTextDropCaret(POINT point, RECT& caret,
+    const snowdesktop::text_input::DragSelection* move) const
 {
     caret = {};
     const RECT box = GetSearchBoxRect();
     if (searchComposing_ || !PtInRect(&box, point)) return false;
-    HitTestSearchTextPosition(point, &caret);
-    return !IsRectEmpty(&caret);
+    const auto position = HitTestSearchTextPosition(point, &caret);
+    return !IsRectEmpty(&caret) && (!move || move->CanMove(searchText_, position));
 }
 
-bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text)
+bool ScrollingItemWidget::DropSearchText(POINT point, std::wstring_view text,
+    const snowdesktop::text_input::DragSelection* move)
 {
     const RECT box = GetSearchBoxRect();
     if (searchComposing_ || !PtInRect(&box, point)) return false;
-    const auto normalized = snowdesktop::text_input::NormalizeTransfer(text, false);
-    if (normalized.empty()) return false;
+    const auto normalized = move ? std::wstring{} :
+        snowdesktop::text_input::NormalizeTransfer(text, false);
+    if (!move && normalized.empty()) return false;
     RECT caret{};
     const auto position = HitTestSearchTextPosition(point, &caret);
-    if (IsRectEmpty(&caret)) return false;
+    if (IsRectEmpty(&caret) || (move && !move->CanMove(searchText_, position)))
+        return false;
     SetSearchFocused(true);
     EndSearchPointerSelection();
     searchHighSurrogate_ = 0;
     searchDuplicateImeResult_.clear();
-    ReplaceSearchRange(position, position, normalized);
+    if (move)
+    {
+        const snowdesktop::text_input::Snapshot before{
+            searchText_, searchCursorPos_, searchSelectionAnchor_};
+        const auto cursor = move->Move(searchText_, position);
+        if (!cursor) return false;
+        searchCursorPos_ = searchSelectionAnchor_ = *cursor;
+        FinishSearchEdit(before);
+    }
+    else
+        ReplaceSearchRange(position, position, normalized);
     return true;
 }
 

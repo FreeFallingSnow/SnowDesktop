@@ -22,6 +22,7 @@
 #include "ui/render/native_tooltip.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
+#include "ui/input/text_input_state.h"
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "data/layout_save_queue.h"
@@ -4151,24 +4152,41 @@ private:
     void FinalizePendingExternalOleDragLeave();
     HRESULT HandleExternalOleDragLeave(bool pointerOnDesktopSurface);
     size_t HitTestLuaFileDropTarget(POINT point) const;
-    const DesktopWidget* FindLuaTextDropSurface(POINT point, POINT& local) const;
+    struct WidgetTextDragSource
+    {
+        std::wstring widgetId;
+        std::string controlId;
+        std::string surface;
+        snowdesktop::text_input::DragSelection selection;
+        std::optional<std::uint32_t> popupGeneration;
+    };
+    struct LuaTextDropSurface
+    {
+        std::wstring widgetId;
+        std::string surface;
+        POINT local{};
+    };
+    std::optional<LuaTextDropSurface> FindLuaTextDropSurface(POINT point) const;
     ScrollingItemWidget* FindNativeSearchTextDropSurface(
         POINT point, std::optional<RECT>& popupFrame) const;
     const RECT* GetNativeSearchTextDropCaret(const ScrollingItemWidget& view,
         const RECT& searchRect) const;
     bool IsWidgetTextComposing() const;
+    const snowdesktop::text_input::DragSelection* WidgetTextMoveSelection(
+        std::wstring_view widgetId, std::string_view controlId, std::string_view surface) const;
     void InvalidateNativeSearchTextDrop(const std::wstring& widgetId, bool popup);
     bool ClearWidgetTextDropPreview();
     bool HandleWidgetTextDragHover(POINT point, DWORD keyState, DWORD& effect);
     std::optional<bool> DeliverWidgetTextDrop(POINT point, IDataObject* source,
         bool copyAllowed);
     bool TryStartWidgetTextDrag(POINT point, WPARAM keys);
-    void RunWidgetTextDrag(std::wstring text);
+    void RunWidgetTextDrag(WidgetTextDragSource dragSource);
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
     bool externalOwnedContent_ = false;
     bool externalWidgetTextAvailable_ = false;
-    bool widgetTextDragActive_ = false;
+    std::optional<WidgetTextDragSource> widgetTextDragSource_;
+    bool widgetTextDropMovesSelection_ = false;
     struct NativeSearchTextDropPreview
     {
         std::wstring widgetId;
