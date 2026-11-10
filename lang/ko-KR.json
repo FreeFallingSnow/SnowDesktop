@@ -2873,5 +2873,6 @@
   "settings.calendar.subscriptionInvalidName": "캘린더 이름을 입력하세요.",
   "settings.calendar.subscriptionDuplicate": "이미 구독 중인 링크입니다.",
   "settings.calendar.subscriptionLimit": "캘린더 구독은 최대 16개까지 추가할 수 있습니다.",
-  "settings.calendar.subscriptionEmpty": "구독 중인 캘린더가 없습니다. 구독을 추가하면 월간 캘린더와 일정 위젯에서 이벤트를 볼 수 있습니다."
+  "settings.calendar.subscriptionEmpty": "구독 중인 캘린더가 없습니다. 구독을 추가하면 월간 캘린더와 일정 위젯에서 이벤트를 볼 수 있습니다.",
+  "statusBar.calendarEmpty": "일정 없음"
 }

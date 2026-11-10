@@ -2873,5 +2873,6 @@
   "settings.calendar.subscriptionInvalidName": "请输入日历名称。",
   "settings.calendar.subscriptionDuplicate": "已订阅此链接。",
   "settings.calendar.subscriptionLimit": "最多可添加 16 个日历订阅。",
-  "settings.calendar.subscriptionEmpty": "暂无日历订阅。添加订阅后，可在月历和日程组件中查看外部日程。"
+  "settings.calendar.subscriptionEmpty": "暂无日历订阅。添加订阅后，可在月历和日程组件中查看外部日程。",
+  "statusBar.calendarEmpty": "暂无日程"
 }

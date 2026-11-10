@@ -2873,5 +2873,6 @@
   "settings.calendar.subscriptionInvalidName": "請輸入行事曆名稱。",
   "settings.calendar.subscriptionDuplicate": "已訂閱此連結。",
   "settings.calendar.subscriptionLimit": "最多可新增 16 個行事曆訂閱。",
-  "settings.calendar.subscriptionEmpty": "目前沒有行事曆訂閱。新增訂閱後，即可在月曆和行程小工具中查看外部行程。"
+  "settings.calendar.subscriptionEmpty": "目前沒有行事曆訂閱。新增訂閱後，即可在月曆和行程小工具中查看外部行程。",
+  "statusBar.calendarEmpty": "目前沒有行程"
 }

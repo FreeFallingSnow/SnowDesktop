@@ -2873,5 +2873,6 @@
   "settings.calendar.subscriptionInvalidName": "Insira um nome para o calendário.",
   "settings.calendar.subscriptionDuplicate": "Este link já foi assinado.",
   "settings.calendar.subscriptionLimit": "Você pode adicionar até 16 assinaturas de calendário.",
-  "settings.calendar.subscriptionEmpty": "Ainda não há assinaturas. Adicione uma para ver seus eventos nos widgets Calendário mensal e Agenda."
+  "settings.calendar.subscriptionEmpty": "Ainda não há assinaturas. Adicione uma para ver seus eventos nos widgets Calendário mensal e Agenda.",
+  "statusBar.calendarEmpty": "Nenhum evento"
 }

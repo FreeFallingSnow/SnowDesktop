@@ -2873,5 +2873,6 @@
   "settings.calendar.subscriptionInvalidName": "Saisissez un nom de calendrier.",
   "settings.calendar.subscriptionDuplicate": "Vous êtes déjà abonné à ce lien.",
   "settings.calendar.subscriptionLimit": "Vous pouvez ajouter jusqu’à 16 abonnements à des calendriers.",
-  "settings.calendar.subscriptionEmpty": "Aucun abonnement pour le moment. Ajoutez-en un pour afficher ses événements dans les widgets Calendrier mensuel et Agenda."
+  "settings.calendar.subscriptionEmpty": "Aucun abonnement pour le moment. Ajoutez-en un pour afficher ses événements dans les widgets Calendrier mensuel et Agenda.",
+  "statusBar.calendarEmpty": "Aucun événement"
 }
