@@ -625,27 +625,29 @@ function Merge-SnowDesktopAppxFragments {
     }
 }
 
+function Get-SnowDesktopRepositoryLicenseMap {
+    return [ordered]@{
+        "third_party/everything/LICENSE.txt" = "Everything-SDK-LICENSE.txt"
+        "third_party/fluentui-system-icons/LICENSE" = "FluentSystemIcons-LICENSE.txt"
+        "third_party/microsoft-ui-xaml/LICENSE" = "WinUI-AcrylicNoise-LICENSE.txt"
+        "third_party/font-awesome/LICENSE.txt" = "FontAwesome-LICENSE.txt"
+        "third_party/imgui/LICENSE.txt" = "DearImGui-LICENSE.txt"
+        "third_party/libical/LICENSES/MPL-2.0.txt" = "libical-LICENSE.txt"
+        "third_party/libical/LICENSE.txt" = "libical-NOTICE.txt"
+        "third_party/lua/LICENSE.txt" = "Lua-LICENSE.txt"
+        "third_party/minhook/LICENSE.txt" = "MinHook-LICENSE.txt"
+        "third_party/pinyin-data/LICENSE" = "PinyinData-LICENSE.txt"
+    }
+}
+
 function Copy-SnowDesktopRepositoryLicenses {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$Destination
     )
 
-    $licenses = [ordered]@{
-        "third_party\everything\LICENSE.txt" = "Everything-SDK-LICENSE.txt"
-        "third_party\fluentui-system-icons\LICENSE" = "FluentSystemIcons-LICENSE.txt"
-        "third_party\microsoft-ui-xaml\LICENSE" = "WinUI-AcrylicNoise-LICENSE.txt"
-        "third_party\font-awesome\LICENSE.txt" = "FontAwesome-LICENSE.txt"
-        "third_party\imgui\LICENSE.txt" = "DearImGui-LICENSE.txt"
-        "third_party\libical\LICENSES\MPL-2.0.txt" = "libical-LICENSE.txt"
-        "third_party\libical\LICENSE.txt" = "libical-NOTICE.txt"
-        "third_party\lua\LICENSE.txt" = "Lua-LICENSE.txt"
-        "third_party\minhook\LICENSE.txt" = "MinHook-LICENSE.txt"
-        "third_party\pinyin-data\LICENSE" = "PinyinData-LICENSE.txt"
-    }
-
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    foreach ($entry in $licenses.GetEnumerator()) {
+    foreach ($entry in (Get-SnowDesktopRepositoryLicenseMap).GetEnumerator()) {
         $source = Join-Path $RepositoryRoot $entry.Key
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
             throw "Required third-party license was not found: $source"
@@ -658,6 +660,7 @@ function Copy-SnowDesktopRepositoryLicenses {
 Export-ModuleMember -Function `
     Read-SnowDesktopDeploymentManifest, `
     Copy-SnowDesktopDeploymentPayload, `
+    Get-SnowDesktopRepositoryLicenseMap, `
     Copy-SnowDesktopRepositoryLicenses, `
     Test-SnowDesktopExecutableRootResource, `
     Enable-SnowDesktopPrivateRuntimeAssembly, `
