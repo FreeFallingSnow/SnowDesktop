@@ -415,7 +415,7 @@ void SystemPanelModel::ConfirmControl()
 }
 void SystemPanelModel::ControlForm(float& y,bool inCard)
 {
-    if(!controlDraft_)return;auto& draft=*controlDraft_;const float left=inCard?24.f:16.f,right=scene_.width-left,width=right-left;
+    if(!controlDraft_)return;auto& draft=*controlDraft_;const float left=inCard?24.f:16.f,width=scene_.width-2*left;
     const bool connect=draft.request.name=="network.wifi.connect",busy=draft.task!=0;
     if(draft.binding)actionBindings_[draft.control]=*draft.binding;
     const auto field=[&](const std::string& id,const wchar_t* label)
@@ -445,9 +445,10 @@ void SystemPanelModel::ControlForm(float& y,bool inCard)
         auto& text=Add("control.confirmation",ui::Role::Text,Rect(left,y,width,68),_LW(key));text.wrap=true;y+=76;
     }
     if(!draft.error.empty()){auto& error=Add("control.error",ui::Role::Text,Rect(left,y,width,52),draft.error);error.wrap=true;error.fontSize=12;y+=60;}
-    const float button=(std::min)(134.f,(width-8)/2);
-    Add("control.cancel",ui::Role::Button,Rect(right-2*button-8,y,button,36),_LW("settings.dialog.cancel")).centered=true;Command("control.cancel",[this]{ControlBack();});
-    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(right-button,y,button,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.centered=confirm.accent=true;
+    constexpr float buttonGap=8.f;
+    const float buttonWidth=(width-buttonGap)/2;
+    Add("control.cancel",ui::Role::Button,Rect(left,y,buttonWidth,36),_LW("settings.dialog.cancel")).centered=true;Command("control.cancel",[this]{ControlBack();});
+    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(left+buttonWidth+buttonGap,y,buttonWidth,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.centered=confirm.accent=true;
     if(draft.hidden){const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,draft.ssid.data(),static_cast<int>(draft.ssid.size()),nullptr,0,nullptr,nullptr);confirm.enabled=confirm.enabled&&count>0&&count<=32;}
     Command("control.confirm",[this]{ConfirmControl();});y+=44;
 }
