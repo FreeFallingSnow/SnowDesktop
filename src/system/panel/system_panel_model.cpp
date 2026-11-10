@@ -1920,6 +1920,11 @@ bool SystemPanelModel::CalendarCanRefreshSubscription(std::string_view nodeId) c
     return !closed_&&action_==StatusBarAction::Calendar&&!CalendarEditing()&&
         source_.calendar.refreshSubscription&&scene_.Find(nodeId)&&calendarSubscriptionTargets_.contains(nodeId);
 }
+std::wstring SystemPanelModel::CalendarSubscriptionManagementUrl(std::string_view nodeId) const
+{
+    if(!CalendarCanRefreshSubscription(nodeId)||!source_.calendar.subscriptionManagementUrl)return {};
+    return source_.calendar.subscriptionManagementUrl(calendarSubscriptionTargets_.find(nodeId)->second);
+}
 bool SystemPanelModel::RefreshCalendarSubscription(std::string_view nodeId)
 {
     if(!CalendarCanRefreshSubscription(nodeId))return false;

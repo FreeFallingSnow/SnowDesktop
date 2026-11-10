@@ -629,11 +629,17 @@ std::vector<SubscriptionInfo> CalendarService::Subscriptions() const
     return subscriptions_->List();
 }
 
+std::optional<SubscriptionDetails> CalendarService::SubscriptionDetailsById(const std::string& id) const
+{
+    return subscriptions_->Details(id);
+}
+
 SubscriptionResult CalendarService::ApplySubscription(SubscriptionCommand command)
 {
     const auto action = command.action;
     const auto result = subscriptions_->Apply(std::move(command));
-    if (action == SubscriptionAction::Remove && result == SubscriptionResult::Applied && changedCallback_)
+    if ((action == SubscriptionAction::Edit || action == SubscriptionAction::Remove) &&
+        result == SubscriptionResult::Applied && changedCallback_)
         changedCallback_("events");
     return result;
 }

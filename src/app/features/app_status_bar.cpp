@@ -299,6 +299,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     return !exitRequested_ && widgetEngine_ &&
                         widgetEngine_->RuntimeCalendarSubscription({SubscriptionAction::Refresh,id,{},{}})
                             == SubscriptionResult::Applied;
+                }, [this](const std::string& id) {
+                    if (exitRequested_ || !widgetEngine_) return std::wstring{};
+                    auto details = widgetEngine_->RuntimeCalendarSubscriptionDetails(id);
+                    return details ? std::move(details->managementUrl) : std::wstring{};
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
@@ -321,8 +325,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     if (AppendMenuW(menu, MF_STRING, id, label))
                         SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
                 };
-                if (kind == snowdesktop::CalendarMenuKind::Subscription)
+                if (kind == snowdesktop::CalendarMenuKind::Subscription ||
+                    kind == snowdesktop::CalendarMenuKind::ManagedSubscription)
+                {
                     append(1, _LW("settings.calendar.refresh"), L"\uF13D");
+                    if (kind == snowdesktop::CalendarMenuKind::ManagedSubscription)
+                        append(2, _LW("settings.calendar.subscriptionOpenManagement"), L"\uF582");
+                }
                 else
                 {
                     const bool series = kind == snowdesktop::CalendarMenuKind::Series;

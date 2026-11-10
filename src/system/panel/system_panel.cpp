@@ -19,6 +19,7 @@
 #include <wrl/client.h>
 #include <windowsx.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -614,7 +615,8 @@ struct SystemPanel::Impl
         const bool subscription=model->CalendarCanRefreshSubscription(id);
         if(!subscription&&!id.starts_with("event:"))return;
         const auto life=lifetime;auto active=model;
-        const auto kind=subscription?CalendarMenuKind::Subscription:
+        const auto kind=subscription?(model->CalendarSubscriptionManagementUrl(id).empty()?
+            CalendarMenuKind::Subscription:CalendarMenuKind::ManagedSubscription):
             model->CalendarEventIsSeries(id)?CalendarMenuKind::Series:CalendarMenuKind::Local;
         StopPointerHover();input.Cancel();modal=calendarMenu=true;
         UINT command=0;
@@ -629,6 +631,12 @@ struct SystemPanel::Impl
         if(!showing||closing||model!=active)return;
         if(subscription)
         {
+            if(kind==CalendarMenuKind::ManagedSubscription&&command==2)
+            {
+                const auto url=active->CalendarSubscriptionManagementUrl(id);
+                if(!url.empty())ShellExecuteW(window,L"open",url.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+                return;
+            }
             if(command!=1)return;
             active->RefreshCalendarSubscription(id);
         }

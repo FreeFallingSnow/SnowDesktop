@@ -29,12 +29,17 @@ constexpr std::size_t MaxSubscriptions = 16;
 constexpr std::size_t MaxFeedBytes = 4 * 1024 * 1024;
 constexpr std::size_t MaxLinkLength = 4096;
 constexpr std::size_t MaxNameLength = 100;
-constexpr std::string_view ConfigVersion = "SnowDesktopCalendarSubscriptions1";
+constexpr std::size_t MaxConfigBytes = 512 * 1024;
+constexpr std::string_view LegacyConfigVersion = "SnowDesktopCalendarSubscriptions1";
+constexpr std::string_view ConfigVersion = "SnowDesktopCalendarSubscriptions2";
 
 struct Source
 {
     SubscriptionInfo info;
     std::wstring url;
+    std::wstring managementUrl;
+    // A feed change gets a new cache identity while keeping the subscription ID.
+    std::string cacheId;
     std::vector<CalendarEvent> events;
     Clock::time_point nextRefresh{};
     bool loadCache = false;
@@ -96,6 +101,14 @@ bool NormalizeLink(std::wstring& url)
     else if (url.size() >= 8 && CompareStringOrdinal(url.data(), 8, L"https://", 8, TRUE) == CSTR_EQUAL)
         url.replace(0, 8, L"https://");
     return url.starts_with(L"https://") && http_security::IsAllowedPublicHttpsUrl(url);
+}
+
+bool NormalizeManagementLink(std::wstring& url)
+{
+    url = Trim(std::move(url));
+    return url.empty() || (url.size() <= MaxLinkLength &&
+        std::ranges::none_of(url, [](wchar_t ch) { return ch <= L' ' || ch == L'\\'; }) &&
+        http_security::IsAllowedPublicHttpsUrl(url));
 }
 
 std::string NewSourceId()
@@ -162,6 +175,7 @@ struct CalendarSubscriptions::State
     struct Job
     {
         std::string id;
+        std::string cacheId;
         bool cache;
         std::future<WorkResult> result;
         std::jthread worker;
@@ -175,17 +189,28 @@ struct CalendarSubscriptions::State
     std::filesystem::path ConfigPath() const { return directory / L"sources.dat"; }
     std::filesystem::path CachePath(const std::string& id) const { return directory / (id + ".dat"); }
 
-    bool Save(const Source* addition = nullptr, std::string_view removal = {}) const
+    bool Save(const Source* changed = nullptr, std::string_view removal = {}) const
     {
         std::ostringstream output;
         output << ConfigVersion << '\n';
         const auto record = [&](const Source& source) {
             output << std::quoted(source.info.id) << ' ' << std::quoted(WideToUtf8(source.info.name))
-                   << ' ' << std::quoted(WideToUtf8(source.url)) << '\n';
+                   << ' ' << std::quoted(WideToUtf8(source.url))
+                   << ' ' << std::quoted(WideToUtf8(source.managementUrl))
+                   << ' ' << std::quoted(source.cacheId) << '\n';
         };
+        bool replaced = false;
         for (const auto& source : sources)
-            if (source.info.id != removal) record(source);
-        if (addition) record(*addition);
+        {
+            if (source.info.id == removal) continue;
+            if (changed && changed->info.id == source.info.id)
+            {
+                record(*changed);
+                replaced = true;
+            }
+            else record(source);
+        }
+        if (changed && !replaced) record(*changed);
         auto text = output.str();
         return SaveProtected(ConfigPath(), text);
     }
@@ -193,13 +218,13 @@ struct CalendarSubscriptions::State
     void Start(Source& source, bool cache)
     {
         const auto& id = source.info.id;
-        const auto path = CachePath(id);
+        const auto path = CachePath(source.cacheId);
         std::packaged_task<WorkResult(std::stop_token)> work(
             [id, url = source.url, path, cache](std::stop_token token) {
                 return ReadSource(id, url, path, cache, token);
             });
         auto future = work.get_future();
-        job.emplace(Job{id, cache, std::move(future), std::jthread(
+        job.emplace(Job{id, source.cacheId, cache, std::move(future), std::jthread(
             [task = std::move(work)](std::stop_token token) mutable { task(token); })});
         source.loadCache = false;
         source.info.status = SubscriptionStatus::Pending;
@@ -223,24 +248,31 @@ void CalendarSubscriptions::Load()
         state_->loaded = true;
         return;
     }
-    const auto text = LoadProtected(state_->ConfigPath(), 256 * 1024);
+    const auto text = LoadProtected(state_->ConfigPath(), MaxConfigBytes);
     if (!text) return;
     std::istringstream input(*text);
     std::string version;
-    if (!std::getline(input, version) || version != ConfigVersion) return;
+    if (!std::getline(input, version) || (version != ConfigVersion && version != LegacyConfigVersion)) return;
     std::vector<Source> sources;
     while (input >> std::ws && !input.eof())
     {
         Source source;
-        std::string name, url;
+        std::string name, url, managementUrl;
         if (!(input >> std::quoted(source.info.id) >> std::quoted(name) >> std::quoted(url)) ||
             !ValidSourceId(source.info.id) || sources.size() >= MaxSubscriptions)
             return;
+        if (version == LegacyConfigVersion)
+            source.cacheId = source.info.id;
+        else if (!(input >> std::quoted(managementUrl) >> std::quoted(source.cacheId)) ||
+            !ValidSourceId(source.cacheId))
+            return;
         source.info.name = Utf8ToWide(name);
         source.url = Utf8ToWide(url);
+        source.managementUrl = Utf8ToWide(managementUrl);
         if (source.info.name.empty() || source.info.name.size() > MaxNameLength || !NormalizeLink(source.url) ||
+            !NormalizeManagementLink(source.managementUrl) ||
             std::ranges::any_of(sources, [&](const Source& other) {
-                return other.info.id == source.info.id || other.url == source.url;
+                return other.info.id == source.info.id || other.url == source.url || other.cacheId == source.cacheId;
             }))
             return;
         source.loadCache = true;
@@ -265,9 +297,9 @@ bool CalendarSubscriptions::Tick()
         try { result = job.result.get(); }
         catch (const std::exception&) {}
         const auto source = std::ranges::find_if(sources, [&](const Source& item) { return item.info.id == job.id; });
-        if (source != sources.end())
+        if (source != sources.end() && source->cacheId == job.cacheId)
         {
-            const bool current = result.events && (job.cache || SaveProtected(state_->CachePath(job.id), result.body));
+            const bool current = result.events && (job.cache || SaveProtected(state_->CachePath(job.cacheId), result.body));
             if (current)
             {
                 changed = !SameEvents(source->events, *result.events);
@@ -307,34 +339,66 @@ std::vector<SubscriptionInfo> CalendarSubscriptions::List() const
     return result;
 }
 
+std::optional<SubscriptionDetails> CalendarSubscriptions::Details(const std::string& id) const
+{
+    const auto source = std::ranges::find_if(state_->sources, [&](const Source& item) { return item.info.id == id; });
+    if (source == state_->sources.end()) return std::nullopt;
+    return SubscriptionDetails{source->info.name, source->url, source->managementUrl};
+}
+
 SubscriptionResult CalendarSubscriptions::Apply(SubscriptionCommand command)
 {
     if (!state_->loaded) return SubscriptionResult::Unavailable;
     auto& sources = state_->sources;
-    if (command.action == SubscriptionAction::Add)
+    const bool adding = command.action == SubscriptionAction::Add;
+    const auto source = std::ranges::find_if(sources, [&](const Source& item) { return item.info.id == command.id; });
+    if (!adding && source == sources.end()) return SubscriptionResult::NotFound;
+    const bool inFlight = state_->job && state_->job->id == command.id;
+    if (adding || command.action == SubscriptionAction::Edit)
     {
-        if (sources.size() >= MaxSubscriptions) return SubscriptionResult::Limit;
+        if (adding && sources.size() >= MaxSubscriptions) return SubscriptionResult::Limit;
         if (!NormalizeLink(command.url)) return SubscriptionResult::InvalidLink;
+        if (!NormalizeManagementLink(command.managementUrl)) return SubscriptionResult::InvalidManagementLink;
         command.name = Trim(std::move(command.name));
         if (command.name.empty() || command.name.size() > MaxNameLength ||
             std::ranges::any_of(command.name, [](wchar_t ch) { return ch < L' '; }))
             return SubscriptionResult::InvalidName;
-        if (std::ranges::any_of(sources, [&](const Source& item) { return item.url == command.url; }))
+        if (std::ranges::any_of(sources, [&](const Source& item) {
+            return (adding || item.info.id != command.id) && item.url == command.url;
+        }))
             return SubscriptionResult::Duplicate;
-        Source source;
-        source.info.id = NewSourceId();
-        source.info.name = std::move(command.name);
-        source.url = std::move(command.url);
-        if (source.info.id.empty() || !state_->Save(&source)) return SubscriptionResult::SaveFailed;
-        sources.push_back(std::move(source));
+        const bool feedChanged = !adding && source->url != command.url;
+        if (!adding && !feedChanged && source->info.name == command.name &&
+            source->managementUrl == command.managementUrl)
+            return SubscriptionResult::Applied;
+        Source updated;
+        updated.info.id = adding ? NewSourceId() : source->info.id;
+        updated.info.name = std::move(command.name);
+        updated.url = std::move(command.url);
+        updated.managementUrl = std::move(command.managementUrl);
+        updated.cacheId = adding ? updated.info.id : feedChanged ? NewSourceId() : source->cacheId;
+        if (updated.info.id.empty() || updated.cacheId.empty()) return SubscriptionResult::SaveFailed;
+        const auto oldCache = feedChanged ? state_->CachePath(source->cacheId) : std::filesystem::path{};
+        if (adding) sources.reserve(sources.size() + 1);
+        if (!state_->Save(&updated)) return SubscriptionResult::SaveFailed;
+        if (adding) sources.push_back(std::move(updated));
+        else if (feedChanged)
+        {
+            if (inFlight) state_->job->worker.request_stop();
+            *source = std::move(updated);
+            std::error_code error;
+            std::filesystem::remove(oldCache, error);
+        }
+        else
+        {
+            source->info.name = std::move(updated.info.name);
+            source->managementUrl = std::move(updated.managementUrl);
+        }
         return SubscriptionResult::Applied;
     }
-    const auto source = std::ranges::find_if(sources, [&](const Source& item) { return item.info.id == command.id; });
-    if (source == sources.end()) return SubscriptionResult::NotFound;
-    const bool inFlight = state_->job && state_->job->id == command.id;
     if (command.action == SubscriptionAction::Refresh)
     {
-        if (!inFlight)
+        if (!inFlight || state_->job->cacheId != source->cacheId)
         {
             source->nextRefresh = {};
             source->info.status = SubscriptionStatus::Pending;
@@ -342,11 +406,12 @@ SubscriptionResult CalendarSubscriptions::Apply(SubscriptionCommand command)
         return SubscriptionResult::Applied;
     }
     if (command.action != SubscriptionAction::Remove) return SubscriptionResult::Unavailable;
+    const auto oldCache = state_->CachePath(source->cacheId);
     if (!state_->Save(nullptr, command.id)) return SubscriptionResult::SaveFailed;
     if (inFlight) state_->job->worker.request_stop();
     sources.erase(source);
     std::error_code error;
-    std::filesystem::remove(state_->CachePath(command.id), error);
+    std::filesystem::remove(oldCache, error);
     return SubscriptionResult::Applied;
 }
 

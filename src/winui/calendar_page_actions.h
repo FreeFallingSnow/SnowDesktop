@@ -22,6 +22,7 @@ struct CalendarPageActions
     std::function<std::optional<calendar::CalendarEvent>(std::uint64_t, std::string)> occurrence;
     std::function<calendar::MutationResult(std::uint64_t, calendar::CalendarSeries, bool)> mutateSeries;
     std::function<std::optional<std::vector<calendar::SubscriptionInfo>>(std::uint64_t)> subscriptions;
+    std::function<std::optional<calendar::SubscriptionDetails>(std::uint64_t, std::string)> subscriptionDetails;
     std::function<calendar::SubscriptionResult(std::uint64_t, calendar::SubscriptionCommand)> subscription;
 };
 

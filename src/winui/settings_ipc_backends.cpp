@@ -407,6 +407,13 @@ struct BackendServer::Impl
                     current->route.page != SettingsPage::Calendar) return std::nullopt;
                 return engine->RuntimeCalendarSubscriptions();
             });
+        channel.Bind<std::optional<calendar::SubscriptionDetails>, Token, std::string>("calendar.subscriptionDetails",
+            [this](Token generation, std::string id) -> std::optional<calendar::SubscriptionDetails> {
+                const auto current = controller.Snapshot();
+                if (!engine || !current || !current->sessionActive || current->generation != generation ||
+                    current->route.page != SettingsPage::Calendar) return std::nullopt;
+                return engine->RuntimeCalendarSubscriptionDetails(id);
+            });
         channel.Bind<calendar::SubscriptionResult, Token, calendar::SubscriptionCommand>("calendar.subscription",
             [this](Token generation, calendar::SubscriptionCommand command) {
                 const auto current = controller.Snapshot();
@@ -605,6 +612,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return channel.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
     options.calendarPage.subscriptions = [&channel](Token generation) {
         return channel.Call<std::optional<std::vector<calendar::SubscriptionInfo>>>("calendar.subscriptions", generation);
+    };
+    options.calendarPage.subscriptionDetails = [&channel](Token generation, std::string id) {
+        return channel.Call<std::optional<calendar::SubscriptionDetails>>("calendar.subscriptionDetails", generation, id);
     };
     options.calendarPage.subscription = [&channel](Token generation, calendar::SubscriptionCommand command) {
         return channel.Call<calendar::SubscriptionResult>("calendar.subscription", generation, std::move(command));

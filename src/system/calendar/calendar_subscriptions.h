@@ -18,6 +18,7 @@ public:
     void Load();
     bool Tick();
     std::vector<SubscriptionInfo> List() const;
+    std::optional<SubscriptionDetails> Details(const std::string& id) const;
     SubscriptionResult Apply(SubscriptionCommand command);
     void AppendEvents(std::vector<CalendarEvent>& result,
         const std::string& from, const std::string& to) const;

@@ -8,7 +8,7 @@ namespace snowdesktop
 struct SystemCalendarActions;
 struct SystemPanelInputMethodActions;
 enum class SystemPanelShortcut;
-enum class CalendarMenuKind { Local, Series, Subscription };
+enum class CalendarMenuKind { Local, Series, Subscription, ManagedSubscription };
 class SystemPanel
 {
 public:

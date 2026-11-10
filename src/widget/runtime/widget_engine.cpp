@@ -27751,6 +27751,12 @@ std::optional<std::vector<snowdesktop::calendar::SubscriptionInfo>> WidgetEngine
     return calendarService_ && calendarServiceLoaded_ ? std::optional{calendarService_->Subscriptions()} : std::nullopt;
 }
 
+std::optional<snowdesktop::calendar::SubscriptionDetails> WidgetEngine::RuntimeCalendarSubscriptionDetails(
+    const std::string& id) const
+{
+    return calendarService_ && calendarServiceLoaded_ ? calendarService_->SubscriptionDetailsById(id) : std::nullopt;
+}
+
 snowdesktop::calendar::SubscriptionResult WidgetEngine::RuntimeCalendarSubscription(
     snowdesktop::calendar::SubscriptionCommand command)
 {

@@ -366,7 +366,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         mux::Automation::AutomationProperties::SetAutomationId(subscriptionList, L"CalendarSubscriptions");
         mux::Automation::AutomationProperties::SetAutomationId(addSubscription, L"CalendarAddSubscription");
         content.Children().Append(subscriptionList);
-        Click(addSubscription, [this] { EditSubscription(); });
+        Click(addSubscription, [this] { ShowSubscriptionDialog(calendar::SubscriptionAction::Add); });
     }
     static void AppendListRow(const muxc::ListView& target, const std::wstring& name, const std::wstring& details)
     {
@@ -403,30 +403,40 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         subscriptionRows.clear();
         const auto weak = weak_from_this();
         const auto refreshLabel = L("settings.calendar.refresh");
+        const auto editLabel = L("settings.calendar.subscriptionEdit");
         const auto removeLabel = L("settings.calendar.subscriptionRemove");
         for (const auto& source : subscriptions)
         {
             auto& row = subscriptionRows.emplace_back();
+            muxc::HyperlinkButton editLink;
             muxc::HyperlinkButton removeLink;
             presenter_controls::ConfigureSettingsHeadingLink(row.refresh);
+            presenter_controls::ConfigureSettingsHeadingLink(editLink);
             presenter_controls::ConfigureSettingsHeadingLink(removeLink);
             row.refresh.Content(winrt::box_value(refreshLabel));
+            editLink.Content(winrt::box_value(editLabel));
             removeLink.Content(winrt::box_value(removeLabel));
             mux::Automation::AutomationProperties::SetName(row.refresh, refreshLabel + L" · " + source.name);
+            mux::Automation::AutomationProperties::SetName(editLink, editLabel + L" · " + source.name);
             mux::Automation::AutomationProperties::SetName(removeLink, removeLabel + L" · " + source.name);
             row.refresh.Click([weak, id = source.id](const auto&, const auto&) {
                 if (const auto self = weak.lock())
                     self->ApplySubscription({calendar::SubscriptionAction::Refresh, id, {}, {}});
             });
+            editLink.Click([weak, target = source](const auto&, const auto&) {
+                if (const auto self = weak.lock())
+                    self->ShowSubscriptionDialog(calendar::SubscriptionAction::Edit, target);
+            });
             removeLink.Click([weak, target = source](const auto&, const auto&) {
                 if (const auto self = weak.lock())
-                    self->EditSubscription(target);
+                    self->ShowSubscriptionDialog(calendar::SubscriptionAction::Remove, target);
             });
 
             muxc::StackPanel commands;
             commands.Orientation(muxc::Orientation::Horizontal);
             commands.Spacing(8);
             commands.Children().Append(row.refresh);
+            if (actions.subscriptionDetails) commands.Children().Append(editLink);
             commands.Children().Append(removeLink);
             row.setting.Initialize(commands, 0.0);
             row.setting.SetCompactEditor();
@@ -470,6 +480,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         switch (result)
         {
         case calendar::SubscriptionResult::InvalidLink: return L("settings.calendar.subscriptionInvalidLink");
+        case calendar::SubscriptionResult::InvalidManagementLink: return L("settings.calendar.subscriptionInvalidManagementLink");
         case calendar::SubscriptionResult::InvalidName: return L("settings.calendar.subscriptionInvalidName");
         case calendar::SubscriptionResult::Duplicate: return L("settings.calendar.subscriptionDuplicate");
         case calendar::SubscriptionResult::Limit: return L("settings.calendar.subscriptionLimit");
@@ -493,23 +504,42 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             subscriptionsFeedback.IsOpen(true);
         }
     }
-    winrt::fire_and_forget EditSubscription(std::optional<calendar::SubscriptionInfo> target = std::nullopt)
+    winrt::fire_and_forget ShowSubscriptionDialog(calendar::SubscriptionAction action,
+        std::optional<calendar::SubscriptionInfo> target = std::nullopt)
     {
         const auto lifetime = shared_from_this();
         if (!active || closed || !hasSnapshot || dialog || !actions.subscription) co_return;
-        const bool adding = !target;
+        using calendar::SubscriptionAction;
+        const bool adding = action == SubscriptionAction::Add;
+        const bool removing = action == SubscriptionAction::Remove;
+        if (!adding && !target) co_return;
         const auto session = generation;
         try
         {
             muxc::ContentDialog editorDialog;
             dialog = editorDialog;
             editorDialog.XamlRoot(root.XamlRoot());
-            editorDialog.Title(winrt::box_value(L(adding ? "settings.calendar.subscriptionAdd" : "settings.calendar.subscriptionRemove")));
-            editorDialog.PrimaryButtonText(L(adding ? "settings.calendar.subscriptionAdd" : "settings.calendar.subscriptionRemove"));
+            const auto title = L(adding ? "settings.calendar.subscriptionAdd" :
+                removing ? "settings.calendar.subscriptionRemove" : "settings.calendar.subscriptionEdit");
+            editorDialog.Title(winrt::box_value(title));
+            editorDialog.PrimaryButtonText(adding || removing ? title : L("app.settings.apply"));
             editorDialog.CloseButtonText(L("app.settings.cancel"));
-            editorDialog.DefaultButton(adding ? muxc::ContentDialogButton::Primary : muxc::ContentDialogButton::Close);
-            if (adding)
+            editorDialog.DefaultButton(removing ? muxc::ContentDialogButton::Close : muxc::ContentDialogButton::Primary);
+            if (!removing)
             {
+                std::optional<calendar::SubscriptionDetails> details;
+                if (!adding)
+                {
+                    if (actions.subscriptionDetails) details = actions.subscriptionDetails(session, target->id);
+                    if (!details)
+                    {
+                        dialog = nullptr;
+                        subscriptionsFeedback.Message(L("settings.calendar.failed"));
+                        subscriptionsFeedback.IsOpen(true);
+                        RefreshSubscriptions();
+                        co_return;
+                    }
+                }
                 muxc::StackPanel form;
                 form.Spacing(12);
                 muxc::TextBox name;
@@ -518,21 +548,33 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 muxc::PasswordBox url;
                 url.Header(winrt::box_value(L("settings.calendar.subscriptionLink")));
                 url.MaxLength(4096);
+                muxc::TextBox managementUrl;
+                managementUrl.Header(winrt::box_value(L("settings.calendar.subscriptionManagementLink")));
+                managementUrl.MaxLength(4096);
+                if (details)
+                {
+                    name.Text(details->name);
+                    url.Password(details->url);
+                    managementUrl.Text(details->managementUrl);
+                }
                 muxc::InfoBar error;
                 error.Severity(muxc::InfoBarSeverity::Warning);
                 error.IsClosable(false);
                 presenter_controls::BindInfoBarVisibility(error);
                 form.Children().Append(name);
                 form.Children().Append(url);
+                form.Children().Append(managementUrl);
                 form.Children().Append(error);
                 editorDialog.Content(form);
-                editorDialog.PrimaryButtonClick([this, session, name, url, error](const auto&, const auto& args) {
+                editorDialog.PrimaryButtonClick([this, session, action, id = target ? target->id : std::string{},
+                    name, url, managementUrl, error](const auto&, const auto& args) {
                     if (closed || !active || generation != session || !actions.subscription) return;
                     auto result = calendar::SubscriptionResult::Unavailable;
                     try
                     {
                         result = actions.subscription(session,
-                            {calendar::SubscriptionAction::Add, {}, std::wstring{name.Text()}, std::wstring{url.Password()}});
+                            {action, id, std::wstring{name.Text()}, std::wstring{url.Password()},
+                                std::wstring{managementUrl.Text()}});
                     }
                     catch (...) { }
                     if (result == calendar::SubscriptionResult::Applied) return;
@@ -547,7 +589,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (dialog == editorDialog) dialog = nullptr;
             if (closed || !active || generation != session || answer != muxc::ContentDialogResult::Primary || !actions.subscription)
                 co_return;
-            if (adding)
+            if (!removing)
             {
                 subscriptionsFeedback.IsOpen(false);
                 RefreshSubscriptions();

@@ -1280,6 +1280,7 @@ public:
             const std::string& fromDate,
             const std::string& toDate, bool includeSubscriptions = false) const;
     std::optional<std::vector<snowdesktop::calendar::SubscriptionInfo>> RuntimeCalendarSubscriptions() const;
+    std::optional<snowdesktop::calendar::SubscriptionDetails> RuntimeCalendarSubscriptionDetails(const std::string& id) const;
     snowdesktop::calendar::SubscriptionResult RuntimeCalendarSubscription(
         snowdesktop::calendar::SubscriptionCommand command);
     std::vector<snowdesktop::calendar::CalendarEvent>

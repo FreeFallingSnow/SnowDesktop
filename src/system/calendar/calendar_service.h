@@ -121,6 +121,7 @@ public:
     std::vector<CalendarEvent> SingleEvents() const;
     std::optional<CalendarEvent> EventById(const std::string& id, bool includeSubscriptions = false) const;
     std::vector<SubscriptionInfo> Subscriptions() const;
+    std::optional<SubscriptionDetails> SubscriptionDetailsById(const std::string& id) const;
     SubscriptionResult ApplySubscription(SubscriptionCommand command);
     std::optional<CalendarSeries> SeriesById(const std::string& id) const;
     const std::vector<CalendarSeries>& Series() const { return series_; }
