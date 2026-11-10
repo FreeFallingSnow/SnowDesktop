@@ -1,5 +1,6 @@
 #include "status_bar.h"
 #include "platform/foreground_fullscreen.h"
+#include "platform/window_observation.h"
 #include "platform/window_peek_policy.h"
 #include "status_bar_activation.h"
 #include "status_bar_application_menu_uia.h"
@@ -124,8 +125,12 @@ std::wstring RegisteredAppName(const wchar_t* appId)
     return name;
 }
 
-std::wstring ForegroundAppName(HWND window, DWORD processId, std::wstring_view kind)
+std::wstring ForegroundAppName(HWND window, DWORD processId)
 {
+    wchar_t windowClass[128]{};
+    GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
+    const std::wstring_view kind(windowClass);
+
     ComPtr<IPropertyStore> properties;
     if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&properties))))
     {
@@ -176,6 +181,54 @@ std::wstring ForegroundAppName(HWND window, DWORD processId, std::wstring_view k
     if (name.size() > 4 && _wcsicmp(name.data() + name.size() - 4, L".exe") == 0)
         name.remove_suffix(4);
     return std::wstring(name);
+}
+
+bool IsOpenAppWindow(HWND window, DWORD process)
+{
+    if (!window || !process || process == GetCurrentProcessId() ||
+        !IsWindowVisible(window) || IsIconic(window) || window == GetShellWindow() ||
+        fullscreen::IsShellWindow(window)) return false;
+    DWORD cloaked = 0;
+    return FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) || !cloaked;
+}
+
+struct ApplicationWindow
+{
+    HWND window = nullptr;
+    DWORD process = 0;
+    std::wstring name;
+
+    bool Matches(HWND candidate, DWORD owner) const { return window == candidate && process == owner; }
+};
+
+bool IsOpenAppWindow(const ApplicationWindow& app)
+{
+    DWORD process = 0;
+    return app.window && GetWindowThreadProcessId(app.window, &process) &&
+        process == app.process && IsOpenAppWindow(app.window, process);
+}
+
+ApplicationWindow FindBackgroundApp(DWORD preferredProcess)
+{
+    struct Search { DWORD preferredProcess; ApplicationWindow found; };
+    Search search{preferredProcess, {}};
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+        auto& state = *reinterpret_cast<Search*>(parameter);
+        DWORD process = 0;
+        GetWindowThreadProcessId(window, &process);
+        if (state.found.window && process != state.preferredProcess) return TRUE;
+        const auto placement = window_observation::ObservePlacement(window);
+        if (!placement || !placement->monitor ||
+            (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_NOACTIVATE) ||
+            !IsOpenAppWindow(window, process)) return TRUE;
+        auto name = ForegroundAppName(window, process);
+        if (name.empty()) return TRUE;
+        ApplicationWindow candidate{window, process, std::move(name)};
+        if (!IsOpenAppWindow(candidate)) return TRUE;
+        state.found = std::move(candidate);
+        return state.preferredProcess && process != state.preferredProcess;
+    }, reinterpret_cast<LPARAM>(&search));
+    return std::move(search.found);
 }
 
 }
@@ -825,7 +878,7 @@ struct StatusBar::Impl
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
             snapshot.trayExpanded = trayExpanded;
             if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
-            snapshot.foregroundAppName = owner.foregroundAppName;
+            snapshot.foregroundAppName = owner.displayedApp.name;
             snapshot.foregroundMenuRevision = owner.foregroundMenuRevision;
             snapshot.foregroundMenuHeadings = owner.foregroundMenu.headings;
             items = BuildStatusBarItems(owner.settings, snapshot);
@@ -1521,13 +1574,14 @@ struct StatusBar::Impl
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
                 self->owner.RefreshForegroundApp(window);
                 if (self->UpdateAppearance()) self->QueuePlace();
-                else if (self->dataSnapshot.foregroundAppName != self->owner.foregroundAppName ||
+                else if (self->dataSnapshot.foregroundAppName != self->owner.displayedApp.name ||
                     self->dataSnapshot.foregroundMenuRevision != self->owner.foregroundMenuRevision) self->Paint();
                 self->PollTrayMenu();
                 return 0;
             case kApplicationMenuReady:
                 if (wp) self->owner.RefreshApplicationMenuWindows(window);
-                if (self->dataSnapshot.foregroundMenuRevision != self->owner.foregroundMenuRevision) self->Paint();
+                if (self->dataSnapshot.foregroundAppName != self->owner.displayedApp.name ||
+                    self->dataSnapshot.foregroundMenuRevision != self->owner.foregroundMenuRevision) self->Paint();
                 return 0;
             case kFullscreen:
                 if (self->owner.fullscreenRequest.Consume(window)) self->owner.CheckFullscreenWindows(true);
@@ -1875,9 +1929,9 @@ struct StatusBar::Impl
     std::function<std::optional<HWND>(HMONITOR)> fullscreenSourceProvider;
     std::function<void(HRESULT)> graphicsFailure;
     StatusBarSettings settings;
-    HWND foregroundAppWindow = nullptr;
-    DWORD foregroundAppProcess = 0;
-    std::wstring foregroundAppName;
+    ApplicationWindow lastForegroundApp;
+    ApplicationWindow displayedApp;
+    ULONGLONG nextBackgroundAppSearch = 0;
     status_bar_application_menu::Snapshot foregroundMenu;
     std::unique_ptr<status_bar_application_menu::AutomationMenu> automationMenu;
     std::uint64_t foregroundMenuRevision = 0;
@@ -1893,12 +1947,35 @@ struct StatusBar::Impl
         if (automationMenu) automationMenu->Refresh(nullptr);
         UpdateForegroundMenu({});
     }
-    void ClearForegroundApp(const wchar_t* name = L"")
+    void ClearForegroundApp()
     {
-        foregroundAppWindow = nullptr;
-        foregroundAppProcess = 0;
-        foregroundAppName = name;
+        lastForegroundApp = {};
+        displayedApp = {};
+        nextBackgroundAppSearch = 0;
         ClearForegroundMenu();
+    }
+    void RefreshBackgroundApp(bool retainMenu)
+    {
+        if (IsOpenAppWindow(lastForegroundApp))
+        {
+            if (!displayedApp.Matches(lastForegroundApp.window, lastForegroundApp.process))
+            {
+                displayedApp = lastForegroundApp;
+                ClearForegroundMenu();
+            }
+            else if (!retainMenu || !settings.foregroundAppMenus ||
+                (foregroundMenu.source.window && !foregroundMenu.source.Live()))
+                ClearForegroundMenu();
+            return;
+        }
+        ClearForegroundMenu();
+        if (IsOpenAppWindow(displayedApp)) return;
+        // Several bars share this observation. Throttle only the empty case
+        // so a window that was just minimized or closed is replaced promptly.
+        if (!displayedApp.window && GetTickCount64() < nextBackgroundAppSearch) return;
+        displayedApp = FindBackgroundApp(lastForegroundApp.process);
+        nextBackgroundAppSearch = GetTickCount64() + 1000;
+        if (!displayedApp.window) displayedApp.name = kStatusBarDesktopAppName;
     }
     void RefreshForegroundApp(HWND receiver = nullptr)
     {
@@ -1908,43 +1985,27 @@ struct StatusBar::Impl
             return;
         }
         const auto window = GetForegroundWindow();
-        if (!window || window == GetShellWindow())
-        {
-            // A native menu handoff can briefly leave the foreground unset.
-            if (!window && settings.foregroundAppMenus && applicationMenuOpen) return;
-            ClearForegroundApp(kStatusBarDesktopAppName);
-            return;
-        }
         DWORD process = 0;
-        GetWindowThreadProcessId(window, &process);
-        // Status-bar popups can temporarily own the foreground. Keep the last
-        // application and retain its menu only while the source is still live.
-        if (!process || process == GetCurrentProcessId())
+        if (window) GetWindowThreadProcessId(window, &process);
+        if (!IsOpenAppWindow(window, process))
         {
-            if (!settings.foregroundAppMenus || (foregroundMenu.source.window && !foregroundMenu.source.Live()))
-                ClearForegroundMenu();
+            const bool hostInteraction = process == GetCurrentProcessId() || (!window && applicationMenuOpen);
+            RefreshBackgroundApp(hostInteraction);
             return;
         }
-        if (window != foregroundAppWindow || process != foregroundAppProcess)
+        if (!lastForegroundApp.Matches(window, process))
         {
-            wchar_t windowClass[128]{};
-            GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
-            const std::wstring_view kind(windowClass);
-            if (kind == L"Progman" || kind == L"WorkerW")
+            auto name = ForegroundAppName(window, process);
+            if (name.empty())
             {
-                ClearForegroundApp(kStatusBarDesktopAppName);
+                RefreshBackgroundApp(false);
                 return;
             }
-            if (kind == L"Shell_TrayWnd" || kind == L"Shell_SecondaryTrayWnd")
-            {
-                ClearForegroundMenu();
-                return;
-            }
-            foregroundAppWindow = window;
-            foregroundAppProcess = process;
-            foregroundAppName = ForegroundAppName(window, process, kind);
+            lastForegroundApp = {window, process, std::move(name)};
         }
-        if (!settings.foregroundAppMenus || foregroundAppName.empty())
+        if (!displayedApp.Matches(window, process) || displayedApp.name != lastForegroundApp.name)
+            displayedApp = lastForegroundApp;
+        if (!settings.foregroundAppMenus)
         {
             ClearForegroundMenu();
             return;

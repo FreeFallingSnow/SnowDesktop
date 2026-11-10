@@ -74,7 +74,8 @@ bool Source::CanInteract() const
     const HWND foreground = GetForegroundWindow();
     DWORD foregroundProcess = 0;
     if (foreground && foreground != window) GetWindowThreadProcessId(foreground, &foregroundProcess);
-    return (foreground == window || foregroundProcess == GetCurrentProcessId()) && Live();
+    return (foreground == window || foregroundProcess == GetCurrentProcessId()) &&
+        IsWindowVisible(window) && !IsIconic(window) && Live();
 }
 
 Snapshot Read(HWND window)
