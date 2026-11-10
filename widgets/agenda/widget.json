@@ -10,11 +10,14 @@
   "license": "GPL-3.0-only",
   "name": "Schedule",
   "nameKey": "lua_widget.agenda.name",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "A local schedule linked with the month calendar, including notes and reminders.",
   "descriptionKey": "lua_widget.agenda.description",
   "locales": {
     "zh-CN": {
+      "lua_widget.agenda.details": "查看日程详情",
+      "lua_widget.agenda.subscription_read_only": "只读订阅",
+      "lua_widget.agenda.close": "关闭",
       "lua_widget.agenda.name": "日程",
       "lua_widget.agenda.description": "与月历联动的本地日程，支持时间、备注与到点提醒。",
       "lua_widget.agenda.today": "今天",
@@ -88,6 +91,9 @@
       "lua_widget.agenda.delete_series": "删除整个系列"
     },
     "en-US": {
+      "lua_widget.agenda.details": "View Event Details",
+      "lua_widget.agenda.subscription_read_only": "Read-only subscription",
+      "lua_widget.agenda.close": "Close",
       "lua_widget.agenda.name": "Schedule",
       "lua_widget.agenda.description": "A local schedule linked with the month calendar, including notes and reminders.",
       "lua_widget.agenda.today": "Today",
@@ -161,6 +167,9 @@
       "lua_widget.agenda.delete_series": "Delete entire series"
     },
     "zh-TW": {
+      "lua_widget.agenda.details": "查看行程詳細資料",
+      "lua_widget.agenda.subscription_read_only": "唯讀訂閱",
+      "lua_widget.agenda.close": "關閉",
       "lua_widget.agenda.name": "行程",
       "lua_widget.agenda.description": "與月曆連結的本地行程，支援時間、備註與到點提醒。",
       "lua_widget.agenda.today": "今天",
@@ -234,6 +243,9 @@
       "lua_widget.agenda.delete_series": "刪除整個系列"
     },
     "ja-JP": {
+      "lua_widget.agenda.details": "予定の詳細を表示",
+      "lua_widget.agenda.subscription_read_only": "読み取り専用の購読",
+      "lua_widget.agenda.close": "閉じる",
       "lua_widget.agenda.name": "スケジュール",
       "lua_widget.agenda.description": "メモやリマインダーを含む、月のカレンダーにリンクされたローカル スケジュール。",
       "lua_widget.agenda.today": "今日",
@@ -307,6 +319,9 @@
       "lua_widget.agenda.delete_series": "シリーズ全体を削除"
     },
     "ko-KR": {
+      "lua_widget.agenda.details": "일정 세부 정보 보기",
+      "lua_widget.agenda.subscription_read_only": "읽기 전용 구독",
+      "lua_widget.agenda.close": "닫기",
       "lua_widget.agenda.name": "일정",
       "lua_widget.agenda.description": "메모 및 알림을 포함하여 월 달력과 연결된 로컬 일정입니다.",
       "lua_widget.agenda.today": "오늘",
@@ -380,6 +395,9 @@
       "lua_widget.agenda.delete_series": "전체 일정 삭제"
     },
     "de-DE": {
+      "lua_widget.agenda.details": "Termindetails anzeigen",
+      "lua_widget.agenda.subscription_read_only": "Schreibgeschütztes Abonnement",
+      "lua_widget.agenda.close": "Schließen",
       "lua_widget.agenda.name": "Termine",
       "lua_widget.agenda.description": "Ein lokaler Zeitplan, der mit dem Monatskalender verknüpft ist, einschließlich Notizen und Erinnerungen.",
       "lua_widget.agenda.today": "Heute",
@@ -453,6 +471,9 @@
       "lua_widget.agenda.delete_series": "Serie löschen"
     },
     "fr-FR": {
+      "lua_widget.agenda.details": "Afficher les détails de l’événement",
+      "lua_widget.agenda.subscription_read_only": "Abonnement en lecture seule",
+      "lua_widget.agenda.close": "Fermer",
       "lua_widget.agenda.name": "Agenda",
       "lua_widget.agenda.description": "Un agenda local lié au calendrier mensuel, avec des notes et des rappels.",
       "lua_widget.agenda.today": "Aujourd'hui",
@@ -526,6 +547,9 @@
       "lua_widget.agenda.delete_series": "Supprimer la série"
     },
     "es-ES": {
+      "lua_widget.agenda.details": "Ver detalles del evento",
+      "lua_widget.agenda.subscription_read_only": "Suscripción de solo lectura",
+      "lua_widget.agenda.close": "Cerrar",
       "lua_widget.agenda.name": "Agenda",
       "lua_widget.agenda.description": "Un horario local vinculado con el calendario mensual, que incluye notas y recordatorios.",
       "lua_widget.agenda.today": "Hoy",
@@ -599,6 +623,9 @@
       "lua_widget.agenda.delete_series": "Eliminar toda la serie"
     },
     "es-419": {
+      "lua_widget.agenda.details": "Ver detalles del evento",
+      "lua_widget.agenda.subscription_read_only": "Suscripción de solo lectura",
+      "lua_widget.agenda.close": "Cerrar",
       "lua_widget.agenda.name": "Horario",
       "lua_widget.agenda.description": "Un horario local vinculado con el calendario mensual, que incluye notas y recordatorios.",
       "lua_widget.agenda.today": "Hoy",
@@ -672,6 +699,9 @@
       "lua_widget.agenda.delete_series": "Eliminar toda la serie"
     },
     "pt-BR": {
+      "lua_widget.agenda.details": "Ver detalhes do evento",
+      "lua_widget.agenda.subscription_read_only": "Assinatura somente leitura",
+      "lua_widget.agenda.close": "Fechar",
       "lua_widget.agenda.name": "Agenda",
       "lua_widget.agenda.description": "Uma programação local vinculada ao calendário mensal, incluindo notas e lembretes.",
       "lua_widget.agenda.today": "Hoje",

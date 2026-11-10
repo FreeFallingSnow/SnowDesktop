@@ -1,4 +1,4 @@
--- agenda/main.lua - API v2 subscribed calendar with an editable panel
+-- agenda/main.lua - API v2 calendar agenda with local editing
 local descriptor
 
 local function componentMetrics()
@@ -24,6 +24,7 @@ local fluent = {
     add = utf8.char(0xF211),
     edit = utf8.char(0xE246),
     delete = utf8.char(0xF34C),
+    details = utf8.char(0xE24B),
     today = utf8.char(0xF23C),
     previous = utf8.char(0xF15B),
     next = utf8.char(0xF181),
@@ -133,6 +134,16 @@ end
 local function formatTime(minutes)
     local value = math.max(0, math.min(1439, tonumber(minutes) or 0))
     return string.format("%02d:%02d", math.floor(value / 60), value % 60)
+end
+
+local function eventTiming(item)
+    return item.allDay and l10n.tr("lua_widget.agenda.all_day") or
+        (formatTime(item.startMinutes) .. " – " .. formatTime(item.endMinutes))
+end
+
+local function isSubscription(id)
+    -- The host uses this reserved prefix for ICS event IDs.
+    return type(id) == "string" and id:sub(1, 4) == "ics-"
 end
 
 local function parseTime(value)
@@ -289,6 +300,17 @@ local function openEditor(model)
     model.panelOpen = true
 end
 
+local function openDetails(model, item)
+    if model.panelOpen or not item or not isSubscription(item.id) then return end
+    model.details = item
+    widget.openPanel({
+        title = l10n.tr("lua_widget.agenda.details"),
+        width = 400,
+        height = 300,
+    })
+    model.panelOpen = true
+end
+
 local function startNew(model)
     if not widget.hasPermission("calendar.write") then return end
     if model.panelOpen then
@@ -332,7 +354,7 @@ local function fillDraftFromItem(item)
 end
 
 local function startEdit(model, item, wholeSeries)
-    if not item or not widget.hasPermission("calendar.write") then return end
+    if not item or isSubscription(item.id) or not widget.hasPermission("calendar.write") then return end
     if model.panelOpen then
         widget.closePanel()
         return
@@ -449,7 +471,7 @@ local function saveDraft(model)
 end
 
 local function deleteEvent(model, item, wholeSeries)
-    if not item or model.pendingDeleteTask then return end
+    if not item or isSubscription(item.id) or model.pendingDeleteTask then return end
     local name="calendar.remove"
     local arguments={id=item.id}
     if wholeSeries and item.seriesId and supportsSeries() then
@@ -679,6 +701,7 @@ local function render(context, model)
     draw.pushClip(pad, listTop, width - pad * 2, viewportHeight)
     for index = first, last do
         local item = items[index]
+        local subscribed = isSubscription(item.id)
         local y = listTop + (index - 1) * rowHeight - scroll.offset
         local key = "agenda.event." .. item.id
         local highlighted = context.selected and selectedId == item.id
@@ -695,8 +718,8 @@ local function render(context, model)
         registerRegion(key, { type = "roundedRect", x = pad, y = y,
             width = width - pad * 2, height = cardHeight,
             radius = metrics.controlRadius }, {
-            click = { id = "agenda.select", value = item.id },
-            doubleClick = { id = "agenda.edit", value = item.id },
+            click = { id = subscribed and "agenda.details" or "agenda.select", value = item.id },
+            doubleClick = not subscribed and { id = "agenda.edit", value = item.id } or nil,
             contextMenu = { id = "agenda.menu", value = item.id },
         }, item.title or l10n.tr("lua_widget.agenda.untitled"), true, viewport)
 
@@ -706,10 +729,8 @@ local function render(context, model)
             item.title ~= "" and item.title or
                 l10n.tr("lua_widget.agenda.untitled"),
             mainFont, colors.text, textWidth, true, true)
-        local timing = item.allDay and l10n.tr("lua_widget.agenda.all_day") or
-            (formatTime(item.startMinutes) .. " – " .. formatTime(item.endMinutes))
         draw.text(textX, y + cardHeight - smallFont - metrics.spacingSm,
-            formatDate(item.date, true) .. " · " .. timing,
+            formatDate(item.date, true) .. " · " .. eventTiming(item),
             smallFont, colors.secondary, textWidth, false, true, 0, 0.92)
     end
     draw.popClip()
@@ -734,7 +755,29 @@ local function panel(context, model)
             events={click={id="agenda.select.open",value=id},change={id="agenda.select.change",value=id}},
             accessibility={label=label}})
     end
-    if model.timePicker then
+    local details = model.details
+    if details then
+        local width = math.max(1, layout.contentWidth() - row * 0.8)
+        local function detailText(key, value, fontSize, foreground)
+            local measured = draw.measureText(value, fontSize, width)
+            return view.text({key="agenda.details."..key,text=value,width="fill",
+                height=math.ceil(math.max(fontSize * 1.4, measured.height)),
+                textWrap="wrap",verticalAlign="start",fontSize=fontSize,
+                style={foreground=foreground}})
+        end
+        children = {
+            detailText("title", details.title ~= "" and details.title or l10n.tr("lua_widget.agenda.untitled"),
+                row * 0.58, "textPrimary"),
+            detailText("time", formatDate(details.date, true) .. " · " .. eventTiming(details),
+                row * 0.46, "textSecondary"),
+            detailText("readOnly", l10n.tr("lua_widget.agenda.subscription_read_only"),
+                row * 0.43, "textSecondary"),
+        }
+        if details.notes and details.notes ~= "" then
+            children[#children+1] = detailText("notes", details.notes, row * 0.46, "textPrimary")
+        end
+        children[#children+1] = button("cancel", l10n.tr("lua_widget.agenda.close"))
+    elseif model.timePicker then
         children={model.timePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
     elseif model.datePicker then
         children={model.datePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
@@ -898,7 +941,7 @@ local function panel(context, model)
             button("cancel",l10n.tr("lua_widget.agenda.cancel"),not busy),
             button("save",l10n.tr("lua_widget.agenda.save"),not busy and not titleError and not dateError and not timeError and widget.hasPermission("calendar.write"))}})
     end
-    local page=model.timePicker and "time"
+    local page=details and "details" or model.timePicker and "time"
         or model.datePicker and "date" or "editor"
     return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",children={
         view.column({key="agenda.form",width="fill",height="auto",padding=row*0.2,gap=row*0.25,children=children})}})
@@ -986,6 +1029,12 @@ local function handlePanelAction(model, id)
 end
 
 local function event(_context, model, value)
+    if model.details and value.kind == "action" and value.surface == "panel" then
+        if value.id == "agenda.panel" and value.value == "cancel" then
+            widget.closePanel()
+        end
+        return
+    end
     if model.timePicker then
         local result=model.timePicker:handle(value)
         if result then
@@ -1083,7 +1132,11 @@ local function event(_context, model, value)
             model.panelOpen = true
         elseif value.action == "closed" then
             model.panelOpen = false
-            clearDraft(model)
+            if model.details then
+                model.details = nil
+            else
+                clearDraft(model)
+            end
         end
         return
     elseif value.kind == "action" and value.surface == "panel" and
@@ -1134,6 +1187,9 @@ local function event(_context, model, value)
         storage.remove(SELECTED_ID)
     elseif value.id == "agenda.select" and id then
         storage.set(SELECTED_ID, id)
+    elseif value.id == "agenda.details" and id then
+        storage.set(SELECTED_ID, id)
+        openDetails(model, model.eventsById[id])
     elseif value.id == "agenda.edit" and id then
         storage.set(SELECTED_ID, id)
         startEdit(model, model.eventsById[id])
@@ -1152,6 +1208,12 @@ local function menu(_context, model, request)
     local id = request.value and tostring(request.value) or
         storage.get(SELECTED_ID)
     local item = id and model.eventsById[id] or nil
+    if item and isSubscription(item.id) then
+        return ui.menu({
+            {id="agenda.details",label=l10n.tr("lua_widget.agenda.details"),
+                icon=fluent.details,iconFont="fluent"},
+        })
+    end
     local canWrite = widget.hasPermission("calendar.write")
     if item then
         local actions={
