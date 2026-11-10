@@ -117,10 +117,12 @@ bool EnsureWinsock()
     return winsockReady;
 }
 
-bool ResolvePinnedPublicAddress(
+enum class AddressResolution { Unavailable, AllowedOnly, Mixed };
+
+AddressResolution ResolvePinnedPublicAddress(
     const std::wstring& host, std::wstring& pinnedAddress)
 {
-    if (!EnsureWinsock()) return false;
+    if (!EnsureWinsock()) return AddressResolution::Unavailable;
     ADDRINFOW hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -128,8 +130,7 @@ bool ResolvePinnedPublicAddress(
     PADDRINFOW addresses = nullptr;
     if (GetAddrInfoW(host.c_str(), nullptr, &hints, &addresses) != 0 ||
         !addresses)
-        return false;
-    bool foundPublic = false;
+        return AddressResolution::Unavailable;
     bool foundNonPublic = false;
     for (auto* current = addresses; current; current = current->ai_next)
     {
@@ -138,7 +139,6 @@ bool ResolvePinnedPublicAddress(
             foundNonPublic = true;
             continue;
         }
-        foundPublic = true;
         if (pinnedAddress.empty())
         {
             if (!SockaddrToIpLiteral(current->ai_addr, pinnedAddress))
@@ -146,7 +146,19 @@ bool ResolvePinnedPublicAddress(
         }
     }
     FreeAddrInfoW(addresses);
-    return foundPublic && !foundNonPublic && !pinnedAddress.empty();
+    if (pinnedAddress.empty()) return AddressResolution::Unavailable;
+    return foundNonPublic ? AddressResolution::Mixed : AddressResolution::AllowedOnly;
+}
+
+bool HasAllowedRemoteAddress(HINTERNET request)
+{
+    WINHTTP_CONNECTION_INFO connectionInfo{};
+    connectionInfo.cbSize = sizeof(connectionInfo);
+    DWORD size = sizeof(connectionInfo);
+    return WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
+        &connectionInfo, &size) &&
+        IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
+            &connectionInfo.RemoteAddress));
 }
 
 std::string WideToUtf8Http(const std::wstring& value)
@@ -397,6 +409,14 @@ snowdesktop::http_stream::StreamHttpGet(
         result.failureKind = FailureKind::LocalSetup;
         return result;
     }
+    // Mixed DNS results can only use an explicit pin on a session that
+    // cannot reuse a connection created outside this checked stream.
+    bool isolatedConnections = false;
+#ifdef WINHTTP_OPTION_DISABLE_GLOBAL_POOLING
+    if (options.publicHttpsOnly)
+        isolatedConnections = WinHttpSetOption(session,
+            WINHTTP_OPTION_DISABLE_GLOBAL_POOLING, nullptr, 0) != FALSE;
+#endif
     if (!WinHttpSetTimeouts(session, timeoutMs, timeoutMs,
             timeoutMs, timeoutMs))
     {
@@ -484,10 +504,19 @@ snowdesktop::http_stream::StreamHttpGet(
 
         const std::wstring currentHost(host, components.dwHostNameLength);
         std::wstring publicAddress;
-        if (options.publicHttpsOnly && !ResolvePinnedPublicAddress(currentHost, publicAddress))
+        const auto resolution = options.publicHttpsOnly
+            ? ResolvePinnedPublicAddress(currentHost, publicAddress)
+            : AddressResolution::Unavailable;
+        if (options.publicHttpsOnly && resolution == AddressResolution::Unavailable)
         {
             result.error = "Host resolves to a private, local, or unavailable address";
             result.failureKind = FailureKind::Candidate;
+            break;
+        }
+        if (resolution == AddressResolution::Mixed && !isolatedConnections)
+        {
+            result.error = "Cannot isolate the HTTP connection for a mixed DNS result";
+            result.failureKind = FailureKind::LocalSetup;
             break;
         }
         HINTERNET connection = WinHttpConnect(session,
@@ -519,7 +548,15 @@ snowdesktop::http_stream::StreamHttpGet(
         if (!publicAddress.empty())
         {
             const auto length = static_cast<DWORD>((publicAddress.size() + 1) * sizeof(wchar_t));
-            WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME, publicAddress.data(), length);
+            if (!WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                    publicAddress.data(), length) && resolution == AddressResolution::Mixed)
+            {
+                result.error = "Cannot pin an allowed HTTP address for a mixed DNS result";
+                result.failureKind = FailureKind::LocalSetup;
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                break;
+            }
         }
         DWORD disabledFeatures =
             WINHTTP_DISABLE_AUTHENTICATION |
@@ -542,6 +579,14 @@ snowdesktop::http_stream::StreamHttpGet(
         {
             result.error = "HTTP request failed";
             result.failureKind = FailureKind::Transport;
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
+        }
+        if (options.publicHttpsOnly && !HasAllowedRemoteAddress(request))
+        {
+            result.error = "HTTP connection reached a non-public or unavailable address";
+            result.failureKind = FailureKind::Candidate;
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             break;
@@ -926,7 +971,7 @@ HttpResponse AsyncHttpService::ExecuteAttempt(int id, const HttpRequestOptions& 
         const std::wstring currentHost(host, components.dwHostNameLength);
         std::wstring pinnedAddress;
         if (!options.allowAnyHttpOrHttpsUrl && !options.allowHttpAndLocalTargets &&
-            !ResolvePinnedPublicAddress(currentHost, pinnedAddress))
+            ResolvePinnedPublicAddress(currentHost, pinnedAddress) != AddressResolution::AllowedOnly)
         {
             response.error =
                 "Host resolves to a private, local, or unavailable address";
@@ -988,21 +1033,13 @@ HttpResponse AsyncHttpService::ExecuteAttempt(int id, const HttpRequestOptions& 
         }
         // Authorized widget requests use the normal Windows network path,
         // including local services, proxy endpoints and TUN virtual addresses.
-        if (!options.allowAnyHttpOrHttpsUrl && !options.allowHttpAndLocalTargets)
+        if (!options.allowAnyHttpOrHttpsUrl && !options.allowHttpAndLocalTargets &&
+            !HasAllowedRemoteAddress(request))
         {
-            WINHTTP_CONNECTION_INFO connectionInfo{};
-            connectionInfo.cbSize = sizeof(connectionInfo);
-            DWORD connectionInfoSize = sizeof(connectionInfo);
-            if (!WinHttpQueryOption(request, WINHTTP_OPTION_CONNECTION_INFO,
-                    &connectionInfo, &connectionInfoSize) ||
-                !IsAllowedRemoteSockaddr(reinterpret_cast<const SOCKADDR*>(
-                    &connectionInfo.RemoteAddress)))
-            {
-                response.error = "HTTP connection reached a non-public address";
-                WinHttpCloseHandle(request);
-                WinHttpCloseHandle(connection);
-                break;
-            }
+            response.error = "HTTP connection reached a non-public address";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            break;
         }
         DWORD status = 0;
         DWORD statusSize = sizeof(status);
