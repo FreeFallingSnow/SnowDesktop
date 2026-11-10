@@ -72,10 +72,6 @@ set(SNOWDESKTOP_SOURCES
     src/system/status_bar/status_bar_preview.cpp
     src/system/status_bar/status_bar_preview.h
     src/system/status_bar/status_bar.cpp
-    src/system/status_bar/status_bar_application_menu.cpp
-    src/system/status_bar/status_bar_application_menu.h
-    src/system/status_bar/status_bar_application_menu_uia.cpp
-    src/system/status_bar/status_bar_application_menu_uia.h
     src/system/status_bar/status_bar_input_method.cpp
     src/system/status_bar/status_bar_input_method.h
     src/system/status_bar/status_bar_input_method_profiles.h

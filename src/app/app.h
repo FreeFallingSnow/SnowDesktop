@@ -720,8 +720,7 @@ private:
     void ApplyDockWorkAreaReservation();
     void SyncStatusBar();
     void HandleStatusBarPointerPressed();
-    void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
-        std::optional<snowdesktop::StatusBar::ApplicationMenuTarget> applicationMenu = {});
+    void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
     struct StatusBarActivationHold;
     void ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
         std::uint64_t generation, std::shared_ptr<StatusBarActivationHold> hold);

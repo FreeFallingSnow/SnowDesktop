@@ -15,8 +15,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Adds the foreground app menu preference to the status-bar settings payload.
-constexpr std::uint32_t Version = 60;
+// Removes the foreground app menu preference from the status-bar settings payload.
+constexpr std::uint32_t Version = 61;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

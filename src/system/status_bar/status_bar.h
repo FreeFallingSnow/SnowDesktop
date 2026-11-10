@@ -1,6 +1,5 @@
 #pragma once
 #include "status_bar_appearance.h"
-#include "status_bar_application_menu.h"
 #include "dock/merged_dock_presentation.h"
 #include <windows.h>
 #include <functional>
@@ -27,7 +26,7 @@ struct TrayDragFeedback
 };
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
     MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel, ShowDesktop,
-    MenuInputMethod, MenuNotifications, MenuForegroundAppName, ForegroundAppMenu };
+    MenuInputMethod, MenuNotifications, MenuForegroundAppName };
 inline bool IsStatusBarContextMenuAction(StatusBarAction action)
 {
     return action == StatusBarAction::Menu || action == StatusBarAction::MenuInputMethod ||
@@ -53,8 +52,7 @@ struct StatusBarDockState
 class StatusBar final
 {
 public:
-    using ApplicationMenuTarget = status_bar_application_menu::Target;
-    using Activate = std::function<void(StatusBarAction, HWND, RECT, std::optional<ApplicationMenuTarget>)>;
+    using Activate = std::function<void(StatusBarAction, HWND, RECT)>;
     using Hidden = std::function<void(HMONITOR)>;
     using Error = std::function<void(const std::wstring&)>;
     using DrawBackground = std::function<void(ID2D1DeviceContext*, RECT,
@@ -144,8 +142,6 @@ public:
     void SetFullscreenSourceProvider(std::function<std::optional<HWND>(HMONITOR)> provider);
     void NotifyWindowObservations();
     void ObserveForeground(HWND window, DWORD eventTime);
-    void ActivateAutomationMenu(const ApplicationMenuTarget& target);
-    void SetApplicationMenuOpen(bool open);
     void SetGraphicsFailureHandler(std::function<void(HRESULT)> handler);
     PersonalizationSettings AppearanceForMonitor(HMONITOR monitor) const;
 private:

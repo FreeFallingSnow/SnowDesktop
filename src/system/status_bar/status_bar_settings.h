@@ -27,7 +27,6 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("taskView", &StatusBarSettings::taskView);
     visit("foregroundAppName", &StatusBarSettings::foregroundAppName);
     visit("foregroundAppNameCentered", &StatusBarSettings::foregroundAppNameCentered);
-    visit("foregroundAppMenus", &StatusBarSettings::foregroundAppMenus);
     visit("showDesktop", &StatusBarSettings::showDesktop);
     visit("inputMethod", &StatusBarSettings::inputMethod);
     visit("inputMethodSystemPanel", &StatusBarSettings::inputMethodSystemPanel);

@@ -280,12 +280,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         {
             auto data = source; StatusBarSettings settings;
             settings.foregroundAppName = preset == "information" || preset == "updated" || preset == "scaled" || preset == "merged";
-            settings.foregroundAppMenus = settings.foregroundAppName;
-            if (settings.foregroundAppMenus)
-            {
-                data.foregroundAppName = L"SnowDesktop Preview";
-                data.foregroundMenuHeadings = {{0, 0, L"File", true, true}, {1, 0, L"Edit", true, false}};
-            }
+            if (settings.foregroundAppName) data.foregroundAppName = L"SnowDesktop Preview";
             settings.batteryPercentage = preset.starts_with("percentage");
             const bool merged = preset == "merged" || preset == "percentage-merged";
             settings.foregroundAppNameCentered = merged || preset == "scaled";
@@ -804,19 +799,16 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 // descent for the bell. Text follows a fixed font baseline;
                 // its changing glyph extents must not be recentered.
                 const auto centeredInk = [&](RECT bounds, std::string_view name, bool opticalDescent = false,
-                    bool fixedBaselineText = false, bool dimmed = false) {
+                    bool fixedBaselineText = false) {
                     if (IsRectEmpty(&bounds)) return;
-                    // Disabled application headings draw with reduced opacity, including on a transparent canvas.
-                    const unsigned minimumAlpha = dimmed ? 64 : 128;
-                    const int minimumLightInk = dimmed ? 75 : 140;
                     int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
                     for (int py = top + bounds.top + 2; py < top + bounds.bottom - 2; ++py)
                         for (int px = left + bounds.left + 1; px < left + bounds.right - 1; ++px)
                         {
                             const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
                             const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
-                            if ((pixel >> 24) > minimumAlpha && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
-                                (appearance.contentTheme == 1 ? r < 150 : r > minimumLightInk))
+                            if ((pixel >> 24) > 128 && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
+                                (appearance.contentTheme == 1 ? r < 150 : r > 140))
                             { minX = std::min(minX, px); minY = std::min(minY, py); maxX = std::max(maxX, px); maxY = std::max(maxY, py); }
                         }
                     Require(maxX >= minX && maxY >= minY, "status bar alignment fixture has no visible ink");
@@ -833,10 +825,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     if (item.icon || item.key == "controlCenter" || item.action == StatusBarAction::ShowDesktop) continue;
                     centeredInk(item.bounds, item.key,
                         item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown,
-                        item.applicationMenuPosition || item.key == "foregroundAppName" || item.key == "clock" ||
-                        item.key == "cpu" || item.key == "memory" ||
-                        item.key == "gpu" || item.key == "traffic",
-                        item.applicationMenuPosition && item.action == StatusBarAction::None);
+                        item.key == "foregroundAppName" || item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.key == "gpu" || item.key == "traffic");
                 }
                 const auto& controls = Item(items, "controlCenter");
                 for (int part = 0; part < 3; ++part)

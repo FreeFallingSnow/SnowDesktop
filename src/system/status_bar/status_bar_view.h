@@ -9,7 +9,6 @@
 #include <d2d1_1.h>
 #include <optional>
 #include <array>
-#include <cstdint>
 #include <span>
 #include <memory>
 #include <dwrite.h>
@@ -37,7 +36,6 @@ struct StatusBarItem
     std::optional<status_bar_input_method::ProfileIcon> inputIcon;
     RECT contentBounds{}; // Full scrolled tray cell; bounds is its visible hit target.
     std::wstring batteryPercentageText;
-    std::optional<UINT> applicationMenuPosition;
 };
 
 inline constexpr wchar_t kStatusBarDesktopAppName[] = L"SnowDesktop";
@@ -60,8 +58,6 @@ struct StatusBarSnapshot
     bool trayExpanded = false;
     status_bar_input_method::Snapshot inputMethod;
     std::wstring foregroundAppName = kStatusBarDesktopAppName;
-    std::uint64_t foregroundMenuRevision = 0;
-    std::vector<status_bar_application_menu::Heading> foregroundMenuHeadings;
 };
 struct StatusBarPalette
 {
