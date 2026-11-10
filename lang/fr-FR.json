@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "Vous pouvez ajouter jusqu’à 16 abonnements à des calendriers.",
   "settings.calendar.subscriptionEmpty": "Aucun abonnement pour le moment. Ajoutez-en un pour afficher ses événements dans les widgets Calendrier mensuel et Agenda.",
   "statusBar.calendarEmpty": "Aucun événement",
-  "statusBar.calendarSubscriptionSource": "Source : {0}"
+  "statusBar.calendarSubscriptionSource": "Source : {0}",
+  "settings.calendar.subscriptionEdit": "Modifier l’abonnement",
+  "settings.calendar.subscriptionManagementLink": "Lien de gestion (facultatif)",
+  "settings.calendar.subscriptionInvalidManagementLink": "Saisissez un lien de gestion HTTPS valide.",
+  "settings.calendar.subscriptionOpenManagement": "Ouvrir le site du calendrier"
 }

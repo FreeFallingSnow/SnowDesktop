@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "Puedes añadir hasta 16 suscripciones a calendarios.",
   "settings.calendar.subscriptionEmpty": "Aún no hay suscripciones. Añade una para ver sus eventos en los widgets Calendario mensual y Agenda.",
   "statusBar.calendarEmpty": "No hay eventos",
-  "statusBar.calendarSubscriptionSource": "Fuente: {0}"
+  "statusBar.calendarSubscriptionSource": "Fuente: {0}",
+  "settings.calendar.subscriptionEdit": "Editar suscripción",
+  "settings.calendar.subscriptionManagementLink": "Enlace de gestión (opcional)",
+  "settings.calendar.subscriptionInvalidManagementLink": "Introduce un enlace de gestión HTTPS válido.",
+  "settings.calendar.subscriptionOpenManagement": "Abrir la página web del calendario"
 }

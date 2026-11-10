@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "最多可添加 16 个日历订阅。",
   "settings.calendar.subscriptionEmpty": "暂无日历订阅。添加订阅后，可在月历和日程组件中查看外部日程。",
   "statusBar.calendarEmpty": "暂无日程",
-  "statusBar.calendarSubscriptionSource": "来源：{0}"
+  "statusBar.calendarSubscriptionSource": "来源：{0}",
+  "settings.calendar.subscriptionEdit": "编辑订阅",
+  "settings.calendar.subscriptionManagementLink": "管理链接（可选）",
+  "settings.calendar.subscriptionInvalidManagementLink": "请输入有效的 HTTPS 管理链接。",
+  "settings.calendar.subscriptionOpenManagement": "打开日历网页"
 }

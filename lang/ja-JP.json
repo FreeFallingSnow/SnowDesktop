@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "カレンダーは最大 16 件まで購読できます。",
   "settings.calendar.subscriptionEmpty": "カレンダーの購読はまだありません。購読を追加すると、月間カレンダーと予定ウィジェットに予定が表示されます。",
   "statusBar.calendarEmpty": "予定はありません",
-  "statusBar.calendarSubscriptionSource": "ソース：{0}"
+  "statusBar.calendarSubscriptionSource": "ソース：{0}",
+  "settings.calendar.subscriptionEdit": "購読を編集",
+  "settings.calendar.subscriptionManagementLink": "管理リンク（任意）",
+  "settings.calendar.subscriptionInvalidManagementLink": "有効な HTTPS 管理リンクを入力してください。",
+  "settings.calendar.subscriptionOpenManagement": "カレンダーのウェブページを開く"
 }

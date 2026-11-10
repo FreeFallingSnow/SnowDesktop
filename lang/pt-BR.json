@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "Você pode adicionar até 16 assinaturas de calendário.",
   "settings.calendar.subscriptionEmpty": "Ainda não há assinaturas. Adicione uma para ver seus eventos nos widgets Calendário mensal e Agenda.",
   "statusBar.calendarEmpty": "Nenhum evento",
-  "statusBar.calendarSubscriptionSource": "Origem: {0}"
+  "statusBar.calendarSubscriptionSource": "Origem: {0}",
+  "settings.calendar.subscriptionEdit": "Editar assinatura",
+  "settings.calendar.subscriptionManagementLink": "Link de gerenciamento (opcional)",
+  "settings.calendar.subscriptionInvalidManagementLink": "Digite um link de gerenciamento HTTPS válido.",
+  "settings.calendar.subscriptionOpenManagement": "Abrir o site do calendário"
 }

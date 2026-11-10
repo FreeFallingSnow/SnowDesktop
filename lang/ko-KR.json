@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "캘린더 구독은 최대 16개까지 추가할 수 있습니다.",
   "settings.calendar.subscriptionEmpty": "구독 중인 캘린더가 없습니다. 구독을 추가하면 월간 캘린더와 일정 위젯에서 이벤트를 볼 수 있습니다.",
   "statusBar.calendarEmpty": "일정 없음",
-  "statusBar.calendarSubscriptionSource": "출처: {0}"
+  "statusBar.calendarSubscriptionSource": "출처: {0}",
+  "settings.calendar.subscriptionEdit": "구독 편집",
+  "settings.calendar.subscriptionManagementLink": "관리 링크(선택 사항)",
+  "settings.calendar.subscriptionInvalidManagementLink": "유효한 HTTPS 관리 링크를 입력하세요.",
+  "settings.calendar.subscriptionOpenManagement": "캘린더 웹페이지 열기"
 }

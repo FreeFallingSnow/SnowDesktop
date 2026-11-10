@@ -2875,5 +2875,9 @@
   "settings.calendar.subscriptionLimit": "最多可新增 16 個行事曆訂閱。",
   "settings.calendar.subscriptionEmpty": "目前沒有行事曆訂閱。新增訂閱後，即可在月曆和行程小工具中查看外部行程。",
   "statusBar.calendarEmpty": "目前沒有行程",
-  "statusBar.calendarSubscriptionSource": "來源：{0}"
+  "statusBar.calendarSubscriptionSource": "來源：{0}",
+  "settings.calendar.subscriptionEdit": "編輯訂閱",
+  "settings.calendar.subscriptionManagementLink": "管理連結（選填）",
+  "settings.calendar.subscriptionInvalidManagementLink": "請輸入有效的 HTTPS 管理連結。",
+  "settings.calendar.subscriptionOpenManagement": "開啟行事曆網頁"
 }
