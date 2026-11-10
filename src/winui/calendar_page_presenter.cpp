@@ -21,7 +21,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LocalizeCallback localize;
     CalendarPageActions actions;
     muxc::StackPanel root, preferences, editor;
-    muxc::Border editorCard{nullptr};
+    muxc::Border editorCard{nullptr}, schedulesCard{nullptr}, subscriptionsCard{nullptr};
     muxc::ToggleSwitch calendarToggle;
     muxc::CheckBox allDay;
     muxc::ComboBox calendarChoice;
@@ -29,7 +29,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     SettingRow titleRow, modeRow, scopeRow, dateRow, multipleDatesRow;
     SettingRow intervalRow, weekdaysRow, monthDayRow, endTypeRow, untilRow;
     SettingRow occurrenceRow, allDayRow, startRow, endRow, reminderRow, notesRow, actionsRow;
-    muxc::TextBlock listHeading;
+    muxc::TextBlock listHeading, schedulesEmpty, subscriptionsEmpty;
     muxc::InfoBar scheduleFeedback;
     muxc::ListView list;
     muxc::StackPanel subscriptionsSection;
@@ -123,11 +123,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         scheduleFeedback.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(scheduleFeedback);
         schedulesSection.Children().Append(scheduleFeedback);
-        muxc::Border schedulesSurface;
-        auto schedules = Card(style, &schedulesSurface);
+        ConfigureEmptyMessage(schedulesEmpty);
+        schedulesSection.Children().Append(schedulesEmpty);
+        auto schedules = Card(style, &schedulesCard);
         root.Children().RemoveAtEnd();
-        schedulesSection.Children().Append(schedulesSurface);
-        schedulesSurface.Padding({0, 0, 0, 0});
+        schedulesSection.Children().Append(schedulesCard);
+        schedulesCard.Padding({0, 0, 0, 0});
+        schedulesCard.Visibility(mux::Visibility::Collapsed);
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
         list.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
@@ -317,6 +319,18 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         revoke.push_back([c = timer, tick] { c.Tick(tick); });
         Localize();
     }
+    static void ConfigureEmptyMessage(const muxc::TextBlock& message)
+    {
+        message.FontSize(13);
+        message.Opacity(.72);
+        message.TextWrapping(mux::TextWrapping::Wrap);
+        message.Visibility(mux::Visibility::Collapsed);
+    }
+    static void ShowListOrEmpty(const muxc::Border& card, const muxc::TextBlock& message, bool hasItems)
+    {
+        card.Visibility(hasItems ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        message.Visibility(hasItems ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+    }
     void BuildSubscriptions(const mux::Style& style)
     {
         subscriptionsSection.Spacing(8);
@@ -333,11 +347,12 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         subscriptionsFeedback.Severity(muxc::InfoBarSeverity::Warning);
         presenter_controls::BindInfoBarVisibility(subscriptionsFeedback);
         subscriptionsSection.Children().Append(subscriptionsFeedback);
-        muxc::Border surface;
-        const auto content = Card(style, &surface);
+        ConfigureEmptyMessage(subscriptionsEmpty);
+        subscriptionsSection.Children().Append(subscriptionsEmpty);
+        const auto content = Card(style, &subscriptionsCard);
         root.Children().RemoveAtEnd();
-        subscriptionsSection.Children().Append(surface);
-        surface.Padding({0, 0, 0, 0});
+        subscriptionsSection.Children().Append(subscriptionsCard);
+        subscriptionsCard.Padding({0, 0, 0, 0});
         content.Spacing(0);
         subscriptionList.MaxHeight(256);
         subscriptionList.SelectionMode(muxc::ListViewSelectionMode::Single);
@@ -412,9 +427,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             AppendListRow(subscriptionList, source.name, L(key));
         }
         subscriptionList.SelectedIndex(index);
-        subscriptionList.Visibility(subscriptions.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        refreshSubscription.Visibility(subscriptionList.Visibility());
-        removeSubscription.Visibility(subscriptionList.Visibility());
+        ShowListOrEmpty(subscriptionsCard, subscriptionsEmpty, !subscriptions.empty());
         UpdateSubscriptionButtons();
     }
     void RefreshSubscriptions()
@@ -556,7 +569,9 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         calendarEnabledRow.SetText(L("settings.calendar.showSecondary"));
         calendarRow.SetText(L("settings.calendar.type"));
         listHeading.Text(L("settings.calendar.events"));
+        schedulesEmpty.Text(L("settings.calendar.empty"));
         subscriptionsHeading.Text(L("settings.calendar.subscriptions"));
+        subscriptionsEmpty.Text(L("settings.calendar.subscriptionEmpty"));
         addSubscription.Content(winrt::box_value(L("settings.calendar.subscriptionAdd")));
         refreshSubscription.Content(winrt::box_value(L("settings.calendar.refresh")));
         removeSubscription.Content(winrt::box_value(L("settings.calendar.subscriptionRemove")));
@@ -694,7 +709,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             }
             list.SelectedIndex(selected); updating = false;
             editingListIndex = selected;
-            listHeading.Text(L(rows.empty() ? "settings.calendar.empty" : "settings.calendar.events"));
+            ShowListOrEmpty(schedulesCard, schedulesEmpty, !rows.empty());
             if (explicitRefresh)
             {
                 SetError(L"");
@@ -1075,7 +1090,8 @@ void CalendarPagePresenter::Close() { if (impl_) impl_->Close(); }
 void CalendarPagePresenter::RegisterFocusTargets(const FocusRegistrar& registrar) const
 {
     registrar("calendar.secondary", impl_->calendarToggle);
-    registrar("calendar.events", impl_->list);
+    if (impl_->rows.empty()) registrar("calendar.events", impl_->add);
+    else registrar("calendar.events", impl_->list);
     registrar("calendar.subscriptions", impl_->addSubscription);
 }
 }
