@@ -40,6 +40,8 @@ struct StatusBarItem
     std::optional<UINT> applicationMenuPosition;
 };
 
+inline constexpr wchar_t kStatusBarDesktopAppName[] = L"SnowDesktop";
+
 // Data boundary only: no HWND, sampling, Explorer or device operations.
 struct StatusBarSnapshot
 {
@@ -57,7 +59,7 @@ struct StatusBarSnapshot
     std::vector<tray::Icon> tray;
     bool trayExpanded = false;
     status_bar_input_method::Snapshot inputMethod;
-    std::wstring foregroundAppName;
+    std::wstring foregroundAppName = kStatusBarDesktopAppName;
     std::uint64_t foregroundMenuRevision = 0;
     std::vector<status_bar_application_menu::Heading> foregroundMenuHeadings;
 };

@@ -124,15 +124,8 @@ std::wstring RegisteredAppName(const wchar_t* appId)
     return name;
 }
 
-std::wstring ForegroundAppName(HWND window, DWORD processId)
+std::wstring ForegroundAppName(HWND window, DWORD processId, std::wstring_view kind)
 {
-    if (!processId || processId == GetCurrentProcessId()) return {};
-    wchar_t windowClass[128]{};
-    GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
-    const std::wstring_view kind(windowClass);
-    if (window == GetShellWindow() || kind == L"Progman" || kind == L"WorkerW" ||
-        kind == L"Shell_TrayWnd" || kind == L"Shell_SecondaryTrayWnd") return {};
-
     ComPtr<IPropertyStore> properties;
     if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&properties))))
     {
@@ -1895,32 +1888,69 @@ struct StatusBar::Impl
         foregroundMenu = std::move(next);
         ++foregroundMenuRevision;
     }
+    void ClearForegroundMenu()
+    {
+        if (automationMenu) automationMenu->Refresh(nullptr);
+        UpdateForegroundMenu({});
+    }
+    void ClearForegroundApp(const wchar_t* name = L"")
+    {
+        foregroundAppWindow = nullptr;
+        foregroundAppProcess = 0;
+        foregroundAppName = name;
+        ClearForegroundMenu();
+    }
     void RefreshForegroundApp(HWND receiver = nullptr)
     {
         if (!settings.foregroundAppName)
         {
-            foregroundAppWindow = nullptr;
-            foregroundAppProcess = 0;
-            foregroundAppName.clear();
-            if (automationMenu) automationMenu->Refresh(nullptr);
-            UpdateForegroundMenu({});
+            ClearForegroundApp();
             return;
         }
         const auto window = GetForegroundWindow();
+        if (!window || window == GetShellWindow())
+        {
+            // A native menu handoff can briefly leave the foreground unset.
+            if (!window && settings.foregroundAppMenus && applicationMenuOpen) return;
+            ClearForegroundApp(kStatusBarDesktopAppName);
+            return;
+        }
         DWORD process = 0;
-        if (window) GetWindowThreadProcessId(window, &process);
-        // Our popup temporarily takes the foreground while it reads the source.
-        // An unrelated foreground app still replaces the snapshot normally.
-        if (settings.foregroundAppMenus && applicationMenuOpen && (!window || process == GetCurrentProcessId())) return;
+        GetWindowThreadProcessId(window, &process);
+        // Status-bar popups can temporarily own the foreground. Keep the last
+        // application and retain its menu only while the source is still live.
+        if (!process || process == GetCurrentProcessId())
+        {
+            if (!settings.foregroundAppMenus || (foregroundMenu.source.window && !foregroundMenu.source.Live()))
+                ClearForegroundMenu();
+            return;
+        }
         if (window != foregroundAppWindow || process != foregroundAppProcess)
         {
+            wchar_t windowClass[128]{};
+            GetClassNameW(window, windowClass, static_cast<int>(std::size(windowClass)));
+            const std::wstring_view kind(windowClass);
+            if (kind == L"Progman" || kind == L"WorkerW")
+            {
+                ClearForegroundApp(kStatusBarDesktopAppName);
+                return;
+            }
+            if (kind == L"Shell_TrayWnd" || kind == L"Shell_SecondaryTrayWnd")
+            {
+                ClearForegroundMenu();
+                return;
+            }
             foregroundAppWindow = window;
             foregroundAppProcess = process;
-            foregroundAppName = ForegroundAppName(window, process);
+            foregroundAppName = ForegroundAppName(window, process, kind);
         }
-        auto menu = settings.foregroundAppMenus ? status_bar_application_menu::Read(window) :
-            status_bar_application_menu::Snapshot{};
-        if (settings.foregroundAppMenus && window && process && process != GetCurrentProcessId() && menu.headings.empty())
+        if (!settings.foregroundAppMenus || foregroundAppName.empty())
+        {
+            ClearForegroundMenu();
+            return;
+        }
+        auto menu = status_bar_application_menu::Read(window);
+        if (menu.headings.empty())
         {
             if (!automationMenu)
                 automationMenu = std::make_unique<status_bar_application_menu::AutomationMenu>(kApplicationMenuReady);
@@ -2035,7 +2065,7 @@ struct StatusBar::Impl
         : data(std::move(source)), sharedTray(std::move(shared)), activate(std::move(action)), hidden(std::move(hide)), error(std::move(report)), drawBackground(std::move(draw)) {}
     void Close()
     {
-        if (automationMenu) automationMenu->Refresh(nullptr);
+        ClearForegroundApp();
         for (const auto& [id,window] : windows) if(window) window->EndDragFeedback();
         // A panel-origin drag can end from Window::~Window -> hidden. Its
         // cross-surface cleanup must not iterate a map during clear/erase.
@@ -2044,10 +2074,6 @@ struct StatusBar::Impl
         removingWindows=false;
         tray.reset();
         inputMethod.reset();
-        foregroundAppWindow = nullptr;
-        foregroundAppProcess = 0;
-        foregroundAppName.clear();
-        UpdateForegroundMenu({});
         applicationMenuOpen = false;
         volumeWheel.Reset();
         if (data) { data->RemoveConsumer("statusBar"); data->Controls()->RemoveConsumer("statusBarVolume"); }
