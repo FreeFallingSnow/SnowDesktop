@@ -1641,11 +1641,18 @@ void SystemPanelModel::Calendar()
             n.accessibilityLabel=n.text+L" · "+Wide(e.date)+L" · "+timing;
             if(!e.subscriptionName.empty())
             {
-                const auto source=std::wstring(_LW("settings.calendar.subscriptionName"))+L" · "+e.subscriptionName;
+                const auto source=_LFW("statusBar.calendarSubscriptionSource",e.subscriptionName);
                 n.tooltip+=L"\n"+source;
                 n.accessibilityLabel+=L" · "+source;
             }
-            if(!e.notes.empty())n.tooltip+=L"\n"+Wide(e.notes);
+            constexpr std::string_view whitespace=" \t\r\n\v\f";
+            const std::string_view notes=e.notes;
+            const auto firstNote=notes.find_first_not_of(whitespace);
+            if(firstNote!=std::string_view::npos)
+            {
+                const auto lastNote=notes.find_last_not_of(whitespace);
+                n.tooltip+=L"\n"+Wide(notes.substr(firstNote,lastNote-firstNote+1));
+            }
             if(subscribed)
             {
                 if(!e.subscriptionId.empty())
