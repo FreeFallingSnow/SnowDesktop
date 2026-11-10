@@ -400,6 +400,20 @@ struct BackendServer::Impl
             const auto revision = series.revision;
             return engine->RuntimeCalendarSeriesUpdate(id, revision, std::move(series));
         });
+        channel.Bind<std::optional<std::vector<calendar::SubscriptionInfo>>, Token>("calendar.subscriptions",
+            [this](Token generation) -> std::optional<std::vector<calendar::SubscriptionInfo>> {
+                const auto current = controller.Snapshot();
+                if (!engine || !current || !current->sessionActive || current->generation != generation ||
+                    current->route.page != SettingsPage::Calendar) return std::nullopt;
+                return engine->RuntimeCalendarSubscriptions();
+            });
+        channel.Bind<calendar::SubscriptionResult, Token, calendar::SubscriptionCommand>("calendar.subscription",
+            [this](Token generation, calendar::SubscriptionCommand command) {
+                const auto current = controller.Snapshot();
+                if (!engine || !current || !current->sessionActive || current->generation != generation ||
+                    current->route.page != SettingsPage::Calendar) return calendar::SubscriptionResult::Unavailable;
+                return engine->RuntimeCalendarSubscription(std::move(command));
+            });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
         });
@@ -589,6 +603,12 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.calendarPage.series = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarSeries>>>("calendar.series", generation); };
     options.calendarPage.occurrence = [&channel](Token generation, std::string id) { return channel.Call<std::optional<calendar::CalendarEvent>>("calendar.occurrence", generation, id); };
     options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return channel.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
+    options.calendarPage.subscriptions = [&channel](Token generation) {
+        return channel.Call<std::optional<std::vector<calendar::SubscriptionInfo>>>("calendar.subscriptions", generation);
+    };
+    options.calendarPage.subscription = [&channel](Token generation, calendar::SubscriptionCommand command) {
+        return channel.Call<calendar::SubscriptionResult>("calendar.subscription", generation, std::move(command));
+    };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
     options.pageLayoutPage.analyzeRemoval = [&channel](const std::wstring& id) { return channel.Call<PageRemovalImpact>("pages.removal.analyze", id); };
     options.pageLayoutPage.renamePage = [&channel](Token revision, const std::wstring& id, const std::wstring& name) { return channel.Call<PageLayoutOperationResult>("pages.rename", revision, id, name); };

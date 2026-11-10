@@ -10,6 +10,27 @@ SnowDesktop uses or redistributes the third-party software and assets listed bel
 
 The corresponding source, including third-party modifications and build scripts, is available free of charge from the [official repository](https://github.com/FreeFallingSnow/SnowDesktop). Build instructions and pinned dependencies are documented in `README.md`, `README.en.md`, `CMakeLists.txt`, `CMakePresets.json`, and `scripts/README.md`. Upstream links identify origins; project adaptations are included in the corresponding source.
 
+<a id="libical"></a>
+
+## libical
+
+用于解析订阅日历的 iCalendar 数据、内嵌时区和重复规则。
+
+Parses iCalendar data, embedded time zones, and recurrence rules in calendar subscriptions.
+
+| 项目 / Field | 内容 / Value |
+| --- | --- |
+| 上游 / Upstream | [libical/libical](https://github.com/libical/libical/tree/v4.0.5) |
+| 版本或提交 / Version or revision | v4.0.5 |
+| 版权 / Copyright | Eric Busboom and the libical contributors |
+| 许可证 / License | Mozilla Public License 2.0 |
+
+**分发 / Distribution**
+
+宿主静态链接 libical 核心。仓库保留核心源码、上游生成器的输出、许可证及 Windows 构建接线。发行包在 `licenses/` 中附带许可和声明。
+
+The host statically links the libical core. The repository contains the core sources, upstream generator output, licenses, and Windows build integration. Release packages include the license and notice in `licenses/`.
+
 <a id="windows-app-sdk"></a>
 
 ## Microsoft Windows App SDK

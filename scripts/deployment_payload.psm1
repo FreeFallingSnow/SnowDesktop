@@ -637,6 +637,8 @@ function Copy-SnowDesktopRepositoryLicenses {
         "third_party\microsoft-ui-xaml\LICENSE" = "WinUI-AcrylicNoise-LICENSE.txt"
         "third_party\font-awesome\LICENSE.txt" = "FontAwesome-LICENSE.txt"
         "third_party\imgui\LICENSE.txt" = "DearImGui-LICENSE.txt"
+        "third_party\libical\LICENSES\MPL-2.0.txt" = "libical-LICENSE.txt"
+        "third_party\libical\LICENSE.txt" = "libical-NOTICE.txt"
         "third_party\lua\LICENSE.txt" = "Lua-LICENSE.txt"
         "third_party\minhook\LICENSE.txt" = "MinHook-LICENSE.txt"
         "third_party\pinyin-data\LICENSE" = "PinyinData-LICENSE.txt"

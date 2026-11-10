@@ -196,6 +196,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::ContextMenu, "contextMenu.batch", "settings.contextMenu.groupToggle", "settings.contextMenu.groupHint"},
     {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
     {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
+    {SettingsPage::Calendar, "calendar.subscriptions", "settings.calendar.subscriptions", "settings.calendar.subscriptionLink"},
     {SettingsPage::General, "general.language",
         "settings.general.language",
         "settings.general.language.description"},

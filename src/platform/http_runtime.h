@@ -49,6 +49,7 @@ struct Options
     int totalTimeoutMs = 60000;
     std::uint64_t maximumResponseBytes = 64ull * 1024ull * 1024ull;
     int maxRedirects = 3;
+    bool publicHttpsOnly = false;
 };
 
 enum class FailureKind : std::uint8_t

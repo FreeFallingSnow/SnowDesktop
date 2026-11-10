@@ -366,9 +366,13 @@ snowdesktop::http_stream::StreamHttpGet(
     const ChunkSink& chunkSink)
 {
     Result result;
+    const auto allowedUrl = [&](const std::wstring& url) {
+        return options.publicHttpsOnly ? http_security::IsAllowedPublicHttpsUrl(url)
+                                       : http_security::IsAllowedHttpOrHttpsUrl(url);
+    };
     if (options.url.empty() || !headCallback || !chunkSink ||
         options.maximumResponseBytes == 0 ||
-        !http_security::IsAllowedHttpOrHttpsUrl(options.url))
+        !allowedUrl(options.url))
     {
         result.error = "Invalid HTTP stream request";
         result.failureKind = FailureKind::Candidate;
@@ -452,7 +456,7 @@ snowdesktop::http_stream::StreamHttpGet(
             result.failureKind = FailureKind::Transport;
             break;
         }
-        if (!http_security::IsAllowedHttpOrHttpsUrl(currentUrl))
+        if (!allowedUrl(currentUrl))
         {
             result.error = "Redirect URL is not an allowed HTTP URL";
             result.failureKind = FailureKind::Candidate;
@@ -479,6 +483,13 @@ snowdesktop::http_stream::StreamHttpGet(
         }
 
         const std::wstring currentHost(host, components.dwHostNameLength);
+        std::wstring publicAddress;
+        if (options.publicHttpsOnly && !ResolvePinnedPublicAddress(currentHost, publicAddress))
+        {
+            result.error = "Host resolves to a private, local, or unavailable address";
+            result.failureKind = FailureKind::Candidate;
+            break;
+        }
         HINTERNET connection = WinHttpConnect(session,
             currentHost.c_str(), components.nPort, 0);
         if (!connection)
@@ -505,6 +516,11 @@ snowdesktop::http_stream::StreamHttpGet(
             break;
         }
 
+        if (!publicAddress.empty())
+        {
+            const auto length = static_cast<DWORD>((publicAddress.size() + 1) * sizeof(wchar_t));
+            WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME, publicAddress.data(), length);
+        }
         DWORD disabledFeatures =
             WINHTTP_DISABLE_AUTHENTICATION |
             WINHTTP_DISABLE_COOKIES |

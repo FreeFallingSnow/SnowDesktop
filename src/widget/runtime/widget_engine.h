@@ -35,6 +35,7 @@ namespace snowdesktop::widget_runtime { struct WidgetMultiplayer; }
 #include "system/system_snapshot.h"
 #include "platform/http_runtime.h"
 #include "system/calendar/calendar_service.h"
+#include "system/calendar/calendar_subscription_types.h"
 #include "system/calendar/calendar_display.h"
 #include "widget/packages/widget_package.h"
 #include "steam/steam_workshop_sync.h"
@@ -1277,7 +1278,10 @@ public:
     std::vector<snowdesktop::calendar::CalendarEvent>
         RuntimeCalendarEvents(
             const std::string& fromDate,
-            const std::string& toDate) const;
+            const std::string& toDate, bool includeSubscriptions = false) const;
+    std::optional<std::vector<snowdesktop::calendar::SubscriptionInfo>> RuntimeCalendarSubscriptions() const;
+    snowdesktop::calendar::SubscriptionResult RuntimeCalendarSubscription(
+        snowdesktop::calendar::SubscriptionCommand command);
     std::vector<snowdesktop::calendar::CalendarEvent>
         RuntimeCalendarSingleEvents() const;
     std::optional<snowdesktop::calendar::CalendarEvent>

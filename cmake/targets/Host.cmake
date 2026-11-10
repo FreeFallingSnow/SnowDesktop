@@ -1,3 +1,5 @@
+add_subdirectory(third_party/libical EXCLUDE_FROM_ALL)
+
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     src/resources/resource.rc
@@ -67,7 +69,7 @@ function(snowdesktop_configure_host target)
     endif()
 
     target_link_libraries(${target} PRIVATE
-        webpdecoder SnowDesktopPuff SnowDesktopWindowSupport
+        webpdecoder SnowDesktopPuff SnowDesktopWindowSupport SnowDesktopLibIcal
         ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
         SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
         SnowDesktopSearchVisibility
@@ -94,6 +96,10 @@ function(snowdesktop_configure_host target)
             "${CMAKE_SOURCE_DIR}/third_party/libwebp/COPYING" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-LICENSE.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/third_party/libwebp/PATENTS" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-PATENTS.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/third_party/libical/LICENSE.txt" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libical-NOTICE.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/third_party/libical/LICENSES/MPL-2.0.txt" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libical-LICENSE.txt"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/third_party/puff/puff.h" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/puff-LICENSE.txt")
 endfunction()

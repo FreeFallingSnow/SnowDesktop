@@ -360,6 +360,8 @@ set(SNOWDESKTOP_SOURCES
     src/steam/steam_widget_multiplayer.cpp
     src/steam/steam_presence.h
     src/system/calendar/calendar_service.cpp
+    src/system/calendar/calendar_ics.cpp
+    src/system/calendar/calendar_subscriptions.cpp
     src/system/calendar/calendar_display.cpp
     src/data/full_data_backup.cpp
     src/data/portable_data_migration.cpp

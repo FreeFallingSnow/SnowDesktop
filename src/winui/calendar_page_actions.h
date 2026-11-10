@@ -2,6 +2,7 @@
 
 #include "settings/settings_fwd.h"
 #include "system/calendar/calendar_service.h"
+#include "system/calendar/calendar_subscription_types.h"
 
 #include <cstdint>
 #include <functional>
@@ -20,6 +21,8 @@ struct CalendarPageActions
     std::function<std::optional<std::vector<calendar::CalendarSeries>>(std::uint64_t)> series;
     std::function<std::optional<calendar::CalendarEvent>(std::uint64_t, std::string)> occurrence;
     std::function<calendar::MutationResult(std::uint64_t, calendar::CalendarSeries, bool)> mutateSeries;
+    std::function<std::optional<std::vector<calendar::SubscriptionInfo>>(std::uint64_t)> subscriptions;
+    std::function<calendar::SubscriptionResult(std::uint64_t, calendar::SubscriptionCommand)> subscription;
 };
 
 } // namespace snowdesktop::winui

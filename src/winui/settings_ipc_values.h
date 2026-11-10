@@ -21,6 +21,8 @@ SD_IPC_FIELDS(calendar::CalendarSeriesRule, v.kind, v.dates, v.startDate, v.endD
 SD_IPC_FIELDS(calendar::CalendarSeriesException, v.canceled, v.event);
 SD_IPC_FIELDS(calendar::CalendarSeries, v.id, v.revision, v.event, v.rule, v.exceptions, v.notifiedTriggers);
 SD_IPC_FIELDS(calendar::MutationResult, v.ok, v.id, v.revision, v.error);
+SD_IPC_FIELDS(calendar::SubscriptionInfo, v.id, v.name, v.status, v.hasCache);
+SD_IPC_FIELDS(calendar::SubscriptionCommand, v.action, v.id, v.name, v.url);
 SD_IPC_FIELDS(winui::WidgetPermissionSnapshot,
     v.id, v.labelKey, v.label, v.description,
     v.risk, v.required, v.requiresConsent, v.granted);

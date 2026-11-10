@@ -24950,7 +24950,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
         }
         else if (!binding->options.eventId.empty())
         {
-            const auto event = calendarService_->EventById(binding->options.eventId);
+            const auto event = calendarService_->EventById(binding->options.eventId, true);
             if (event) result.calendarEvents.push_back(*event);
             result.calendarRevision = calendarEventsRevision_;
             result.available = true;
@@ -24979,7 +24979,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
             else
             {
                 result.calendarEvents = RuntimeCalendarEvents(
-                    result.calendarRangeStart, result.calendarRangeEnd);
+                    result.calendarRangeStart, result.calendarRangeEnd, true);
                 constexpr std::size_t MaximumEvents = 512;
                 if (binding->options.calendarQuery)
                 {
@@ -27721,7 +27721,7 @@ WidgetEngine::RuntimeCalendarAddDays(
 std::vector<snowdesktop::calendar::CalendarEvent>
 WidgetEngine::RuntimeCalendarEvents(
     const std::string& fromDate,
-    const std::string& toDate) const
+    const std::string& toDate, bool includeSubscriptions) const
 {
     if (snowdesktop::widget_runtime::IsDryLoad())
     {
@@ -27741,9 +27741,21 @@ WidgetEngine::RuntimeCalendarEvents(
         return result;
     }
     return calendarService_
-        ? calendarService_->Events(fromDate, toDate)
+        ? calendarService_->Events(fromDate, toDate, includeSubscriptions)
         : std::vector<
             snowdesktop::calendar::CalendarEvent>{};
+}
+
+std::optional<std::vector<snowdesktop::calendar::SubscriptionInfo>> WidgetEngine::RuntimeCalendarSubscriptions() const
+{
+    return calendarService_ && calendarServiceLoaded_ ? std::optional{calendarService_->Subscriptions()} : std::nullopt;
+}
+
+snowdesktop::calendar::SubscriptionResult WidgetEngine::RuntimeCalendarSubscription(
+    snowdesktop::calendar::SubscriptionCommand command)
+{
+    return calendarService_ && calendarServiceLoaded_ ? calendarService_->ApplySubscription(std::move(command))
+        : snowdesktop::calendar::SubscriptionResult::Unavailable;
 }
 
 std::vector<snowdesktop::calendar::CalendarEvent>

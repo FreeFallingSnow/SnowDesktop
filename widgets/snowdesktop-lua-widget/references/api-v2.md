@@ -2078,8 +2078,10 @@ canChangePlaybackRate`，执行时再次检查会话 ID、权限与能力；设�
 `calendar.events` 和 `calendar.selectedDate` 受 `calendar.read` 保护，同样不启动
 轮询线程。events 可在订阅选项中同时传入 `fromDate/toDate`（ISO `YYYY-MM-DD`、
 闭区间、最长 366 天）；未传时使用当前选中日期前后各 62 天。value 返回实际
-`fromDate/toDate`、最多 512 个本地事件、`revision` 和 `truncated`，事件包含
+`fromDate/toDate`、最多 512 个事件、`revision` 和 `truncated`，事件包含
 `id/revision/title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`。
+宿主可将用户添加的只读 ICS 订阅纳入同一结果。跨天订阅日程按本地日期分别显示，
+订阅缓存覆盖最近 366 天至未来 730 天。订阅链接和刷新状态由宿主管理。
 声明 `data.calendar.events.byId` 后可传入 `eventId`（1–128 字节、无 NUL 的稳定 ID），
 与 `fromDate/toDate` 互斥。该模式不限制日期范围，改名和跨年改期后仍跟踪同一日程；
 返回相同事件结构、最多一项，`fromDate/toDate` 为空字符串，`truncated=false`。
