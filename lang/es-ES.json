@@ -2874,5 +2874,6 @@
   "settings.calendar.subscriptionDuplicate": "Ya tienes una suscripción a este enlace.",
   "settings.calendar.subscriptionLimit": "Puedes añadir hasta 16 suscripciones a calendarios.",
   "settings.calendar.subscriptionEmpty": "Aún no hay suscripciones. Añade una para ver sus eventos en los widgets Calendario mensual y Agenda.",
-  "statusBar.calendarEmpty": "No hay eventos"
+  "statusBar.calendarEmpty": "No hay eventos",
+  "statusBar.calendarSubscriptionSource": "Fuente: {0}"
 }

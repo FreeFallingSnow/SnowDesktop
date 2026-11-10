@@ -2874,5 +2874,6 @@
   "settings.calendar.subscriptionDuplicate": "This link is already subscribed.",
   "settings.calendar.subscriptionLimit": "You can add up to 16 calendar subscriptions.",
   "settings.calendar.subscriptionEmpty": "No calendar subscriptions yet. Add a subscription to see its events in the Month Calendar and Agenda widgets.",
-  "statusBar.calendarEmpty": "No events"
+  "statusBar.calendarEmpty": "No events",
+  "statusBar.calendarSubscriptionSource": "Source: {0}"
 }
