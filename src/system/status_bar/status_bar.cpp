@@ -2,6 +2,7 @@
 #include "platform/foreground_fullscreen.h"
 #include "platform/window_observation.h"
 #include "platform/window_peek_policy.h"
+#include "dock/dock_process_discovery.h"
 #include "status_bar_activation.h"
 #include "status_bar_application_menu_uia.h"
 #include "status_bar_appearance.h"
@@ -165,8 +166,9 @@ std::wstring ForegroundAppName(HWND window, DWORD processId)
         if (auto name = RegisteredAppName(appId.c_str()); !name.empty()) return name;
     if (!hasPath) return {};
 
+    const auto appPath = dock_process_discovery::ApplicationExecutablePath(processId, std::wstring(path, pathLength));
     ComPtr<IShellItem2> executable;
-    if (SUCCEEDED(SHCreateItemFromParsingName(path, nullptr, IID_PPV_ARGS(&executable))))
+    if (SUCCEEDED(SHCreateItemFromParsingName(appPath.c_str(), nullptr, IID_PPV_ARGS(&executable))))
     {
         PWSTR description = nullptr;
         std::wstring name;
@@ -175,7 +177,7 @@ std::wstring ForegroundAppName(HWND window, DWORD processId)
         CoTaskMemFree(description);
         if (!name.empty()) return name;
     }
-    const auto filename = std::wstring_view(path, pathLength);
+    const std::wstring_view filename(appPath);
     const auto separator = filename.find_last_of(L"\\/");
     auto name = separator == std::wstring_view::npos ? filename : filename.substr(separator + 1);
     if (name.size() > 4 && _wcsicmp(name.data() + name.size() - 4, L".exe") == 0)

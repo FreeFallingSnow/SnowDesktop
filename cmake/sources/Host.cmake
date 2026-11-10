@@ -498,6 +498,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/foreground_fullscreen.cpp
     src/platform/window_observation.cpp
     src/dock/dock_fullscreen_policy.cpp
+    src/dock/dock_process_discovery.cpp
     src/dock/dock_tray_rules.cpp
     src/dock/dock_layout_settings.cpp
     src/dock/dock_attention_dot.cpp
