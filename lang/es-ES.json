@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "Posición del nombre de la aplicación",
   "statusBar.foregroundAppNameHead": "Inicio",
   "statusBar.foregroundAppNamePositionHint": "Las barras combinadas muestran el nombre al principio. Al centrarlo en una barra independiente, el reloj y las notificaciones se desplazan a la derecha.",
-  "settings.widgets.workshop.minimumHostVersion": "Este componente requiere SnowDesktop {0} o una versión posterior."
+  "settings.widgets.workshop.minimumHostVersion": "Este componente requiere SnowDesktop {0} o una versión posterior.",
+  "settings.calendar.subscriptions": "Suscripciones a calendarios",
+  "settings.calendar.subscriptionAdd": "Añadir suscripción",
+  "settings.calendar.subscriptionRemove": "Eliminar suscripción",
+  "settings.calendar.subscriptionName": "Nombre del calendario",
+  "settings.calendar.subscriptionLink": "Enlace ICS de Outlook, Google Calendar o iCloud",
+  "settings.calendar.subscriptionPending": "Actualizando…",
+  "settings.calendar.subscriptionCurrent": "Al día",
+  "settings.calendar.subscriptionCached": "No se pudo actualizar. Se muestran los eventos guardados.",
+  "settings.calendar.subscriptionFailed": "No se pudo actualizar.",
+  "settings.calendar.subscriptionInvalidLink": "Introduce un enlace de calendario HTTPS o webcal válido.",
+  "settings.calendar.subscriptionInvalidName": "Introduce un nombre para el calendario.",
+  "settings.calendar.subscriptionDuplicate": "Ya tienes una suscripción a este enlace.",
+  "settings.calendar.subscriptionLimit": "Puedes añadir hasta 16 suscripciones a calendarios."
 }

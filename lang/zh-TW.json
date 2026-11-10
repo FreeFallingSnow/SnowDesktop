@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "應用程式名稱位置",
   "statusBar.foregroundAppNameHead": "開頭",
   "statusBar.foregroundAppNamePositionHint": "融合列會將名稱顯示在開頭。獨立狀態列將名稱置中時，時鐘與通知會移至右側。",
-  "settings.widgets.workshop.minimumHostVersion": "此元件需要 SnowDesktop {0} 或更新版本。"
+  "settings.widgets.workshop.minimumHostVersion": "此元件需要 SnowDesktop {0} 或更新版本。",
+  "settings.calendar.subscriptions": "行事曆訂閱",
+  "settings.calendar.subscriptionAdd": "新增訂閱",
+  "settings.calendar.subscriptionRemove": "移除訂閱",
+  "settings.calendar.subscriptionName": "行事曆名稱",
+  "settings.calendar.subscriptionLink": "Outlook、Google 日曆或 iCloud 的 ICS 連結",
+  "settings.calendar.subscriptionPending": "正在重新整理…",
+  "settings.calendar.subscriptionCurrent": "已更新",
+  "settings.calendar.subscriptionCached": "重新整理失敗。正在顯示上次儲存的行程。",
+  "settings.calendar.subscriptionFailed": "重新整理失敗。",
+  "settings.calendar.subscriptionInvalidLink": "請輸入有效的 HTTPS 或 webcal 行事曆連結。",
+  "settings.calendar.subscriptionInvalidName": "請輸入行事曆名稱。",
+  "settings.calendar.subscriptionDuplicate": "已訂閱此連結。",
+  "settings.calendar.subscriptionLimit": "最多可新增 16 個行事曆訂閱。"
 }

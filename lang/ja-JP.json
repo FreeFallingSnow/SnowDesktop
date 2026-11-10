@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "アプリ名の表示位置",
   "statusBar.foregroundAppNameHead": "先頭",
   "statusBar.foregroundAppNamePositionHint": "統合バーでは名前を先頭に表示します。独立したバーで名前を中央に表示すると、時計と通知は右側に移動します。",
-  "settings.widgets.workshop.minimumHostVersion": "このウィジェットには SnowDesktop {0} 以降が必要です。"
+  "settings.widgets.workshop.minimumHostVersion": "このウィジェットには SnowDesktop {0} 以降が必要です。",
+  "settings.calendar.subscriptions": "カレンダーの購読",
+  "settings.calendar.subscriptionAdd": "購読を追加",
+  "settings.calendar.subscriptionRemove": "購読を解除",
+  "settings.calendar.subscriptionName": "カレンダー名",
+  "settings.calendar.subscriptionLink": "Outlook、Google カレンダー、または iCloud の ICS リンク",
+  "settings.calendar.subscriptionPending": "更新中…",
+  "settings.calendar.subscriptionCurrent": "最新の状態です",
+  "settings.calendar.subscriptionCached": "更新できませんでした。保存済みの予定を表示しています。",
+  "settings.calendar.subscriptionFailed": "更新できませんでした。",
+  "settings.calendar.subscriptionInvalidLink": "有効な HTTPS または webcal のカレンダーリンクを入力してください。",
+  "settings.calendar.subscriptionInvalidName": "カレンダー名を入力してください。",
+  "settings.calendar.subscriptionDuplicate": "このリンクはすでに購読しています。",
+  "settings.calendar.subscriptionLimit": "カレンダーは最大 16 件まで購読できます。"
 }

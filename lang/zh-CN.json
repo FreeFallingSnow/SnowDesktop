@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "应用名称位置",
   "statusBar.foregroundAppNameHead": "头部",
   "statusBar.foregroundAppNamePositionHint": "融合栏使用头部。非融合栏居中显示应用名称时，时钟和通知移至右侧。",
-  "settings.widgets.workshop.minimumHostVersion": "此组件需要 SnowDesktop {0} 或更高版本。"
+  "settings.widgets.workshop.minimumHostVersion": "此组件需要 SnowDesktop {0} 或更高版本。",
+  "settings.calendar.subscriptions": "日历订阅",
+  "settings.calendar.subscriptionAdd": "添加订阅",
+  "settings.calendar.subscriptionRemove": "移除订阅",
+  "settings.calendar.subscriptionName": "日历名称",
+  "settings.calendar.subscriptionLink": "Outlook、Google 日历或 iCloud 的 ICS 链接",
+  "settings.calendar.subscriptionPending": "正在刷新…",
+  "settings.calendar.subscriptionCurrent": "已更新",
+  "settings.calendar.subscriptionCached": "刷新失败。正在显示上次保存的日程。",
+  "settings.calendar.subscriptionFailed": "刷新失败。",
+  "settings.calendar.subscriptionInvalidLink": "请输入有效的 HTTPS 或 webcal 日历链接。",
+  "settings.calendar.subscriptionInvalidName": "请输入日历名称。",
+  "settings.calendar.subscriptionDuplicate": "已订阅此链接。",
+  "settings.calendar.subscriptionLimit": "最多可添加 16 个日历订阅。"
 }

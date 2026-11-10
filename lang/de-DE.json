@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "Position des App-Namens",
   "statusBar.foregroundAppNameHead": "Anfang",
   "statusBar.foregroundAppNamePositionHint": "In kombinierten Leisten steht der Name am Anfang. In einer separaten Statusleiste verschiebt die Zentrierung des Namens die Uhr und die Benachrichtigungen nach rechts.",
-  "settings.widgets.workshop.minimumHostVersion": "Diese Komponente erfordert SnowDesktop {0} oder neuer."
+  "settings.widgets.workshop.minimumHostVersion": "Diese Komponente erfordert SnowDesktop {0} oder neuer.",
+  "settings.calendar.subscriptions": "Kalenderabonnements",
+  "settings.calendar.subscriptionAdd": "Abonnement hinzufügen",
+  "settings.calendar.subscriptionRemove": "Abonnement entfernen",
+  "settings.calendar.subscriptionName": "Kalendername",
+  "settings.calendar.subscriptionLink": "ICS-Link aus Outlook, Google Kalender oder iCloud",
+  "settings.calendar.subscriptionPending": "Wird aktualisiert…",
+  "settings.calendar.subscriptionCurrent": "Aktuell",
+  "settings.calendar.subscriptionCached": "Aktualisierung fehlgeschlagen. Gespeicherte Termine werden angezeigt.",
+  "settings.calendar.subscriptionFailed": "Aktualisierung fehlgeschlagen.",
+  "settings.calendar.subscriptionInvalidLink": "Geben Sie einen gültigen HTTPS- oder webcal-Kalenderlink ein.",
+  "settings.calendar.subscriptionInvalidName": "Geben Sie einen Kalendernamen ein.",
+  "settings.calendar.subscriptionDuplicate": "Dieser Link wurde bereits abonniert.",
+  "settings.calendar.subscriptionLimit": "Sie können bis zu 16 Kalenderabonnements hinzufügen."
 }

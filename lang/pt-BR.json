@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "Posição do nome do aplicativo",
   "statusBar.foregroundAppNameHead": "Início",
   "statusBar.foregroundAppNamePositionHint": "As barras combinadas exibem o nome no início. Centralizar o nome em uma barra independente move o relógio e as notificações para a direita.",
-  "settings.widgets.workshop.minimumHostVersion": "Este componente requer o SnowDesktop {0} ou uma versão posterior."
+  "settings.widgets.workshop.minimumHostVersion": "Este componente requer o SnowDesktop {0} ou uma versão posterior.",
+  "settings.calendar.subscriptions": "Assinaturas de calendários",
+  "settings.calendar.subscriptionAdd": "Adicionar assinatura",
+  "settings.calendar.subscriptionRemove": "Remover assinatura",
+  "settings.calendar.subscriptionName": "Nome do calendário",
+  "settings.calendar.subscriptionLink": "Link ICS do Outlook, Google Agenda ou iCloud",
+  "settings.calendar.subscriptionPending": "Atualizando…",
+  "settings.calendar.subscriptionCurrent": "Atualizado",
+  "settings.calendar.subscriptionCached": "Falha na atualização. Os eventos salvos estão sendo exibidos.",
+  "settings.calendar.subscriptionFailed": "Falha na atualização.",
+  "settings.calendar.subscriptionInvalidLink": "Insira um link de calendário HTTPS ou webcal válido.",
+  "settings.calendar.subscriptionInvalidName": "Insira um nome para o calendário.",
+  "settings.calendar.subscriptionDuplicate": "Este link já foi assinado.",
+  "settings.calendar.subscriptionLimit": "Você pode adicionar até 16 assinaturas de calendário."
 }

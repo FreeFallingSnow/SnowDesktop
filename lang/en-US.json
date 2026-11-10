@@ -2859,5 +2859,18 @@
   "statusBar.foregroundAppNamePosition": "App name position",
   "statusBar.foregroundAppNameHead": "Start",
   "statusBar.foregroundAppNamePositionHint": "Merged bars show the name at the start. Centering the name on a standalone bar moves the clock and notifications to the right.",
-  "settings.widgets.workshop.minimumHostVersion": "This component requires SnowDesktop {0} or later."
+  "settings.widgets.workshop.minimumHostVersion": "This component requires SnowDesktop {0} or later.",
+  "settings.calendar.subscriptions": "Calendar subscriptions",
+  "settings.calendar.subscriptionAdd": "Add subscription",
+  "settings.calendar.subscriptionRemove": "Remove subscription",
+  "settings.calendar.subscriptionName": "Calendar name",
+  "settings.calendar.subscriptionLink": "ICS link from Outlook, Google Calendar, or iCloud",
+  "settings.calendar.subscriptionPending": "Refreshing…",
+  "settings.calendar.subscriptionCurrent": "Up to date",
+  "settings.calendar.subscriptionCached": "Refresh failed. Showing saved events.",
+  "settings.calendar.subscriptionFailed": "Refresh failed.",
+  "settings.calendar.subscriptionInvalidLink": "Enter a valid HTTPS or webcal calendar link.",
+  "settings.calendar.subscriptionInvalidName": "Enter a calendar name.",
+  "settings.calendar.subscriptionDuplicate": "This link is already subscribed.",
+  "settings.calendar.subscriptionLimit": "You can add up to 16 calendar subscriptions."
 }
