@@ -49,6 +49,7 @@
 | [CF-023](#cf-023-dsh-插件精确版本限制阻止宿主升级) | P1 | DSH 宿主升级后，协作插件因精确版本限制拒载 | 已通过本机预检器对照 |
 | [CF-024](#cf-024-同一候选槽的局部续修重编多个宿主模块) | P2 | 局部续修后出现多组宿主源码重新编译 | 已观察重编，触发依赖待核实 |
 | [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已确认，待补充观察条件 |
+| [CF-026](#cf-026-打包脚本变更阻止复验已保存候选) | P2 | 无编译复验要求当前检出的打包脚本与旧候选一致 | 已确认，使用新快照定向执行 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -302,3 +303,9 @@
 - **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
 - **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
 - **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
+
+### CF-026 打包脚本变更阻止复验已保存候选
+
+- **实测**：2026-11-10，CLI，Task `latest-build-application-tests-20261110`。对基线批次 `a24756f9d67342ee83e12d07abf1a112`（Run `940f541489f44c28a2b593f29622200d`）调用 `run invoke -Action tests -Mode verify -Fresh`，Run 提交前退出 2，报 `Snapshot requires a matching candidate execution toolset; capture the updated runtime first.`。原命令及错误见 `.codex-probes/latest-build-application-tests-20261110/verify-preflight-failure.txt`。
+- **源码确认与影响**：`Assert-CandidateToolset` 检查 runner 中的全部脚本。原快照与当前 runner 文件的差异只有提交 `bb760455` 修改的 `deployment_payload.psm1` 和 `packaging_input.ps1`。原测试二进制和运行文件已通过本次提交前校验，但无法用原快照启动；需重新捕获并走同一编译槽的应用测试入口。
+- **下一步**：评估让复验复用已保存、可校验的原执行工具集，或按实际测试工具依赖约束比较范围。保留快照、运行文件、测试定义和执行环境的身份校验。
