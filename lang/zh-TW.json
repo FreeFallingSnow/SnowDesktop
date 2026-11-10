@@ -2859,7 +2859,5 @@
   "statusBar.foregroundAppNamePosition": "應用程式名稱位置",
   "statusBar.foregroundAppNameHead": "開頭",
   "statusBar.foregroundAppNamePositionHint": "融合列會將名稱顯示在開頭。獨立狀態列將名稱置中時，時鐘與通知會移至右側。",
-  "settings.widgets.workshop.minimumHostVersion": "此元件需要 SnowDesktop {0} 或更新版本。",
-  "statusBar.foregroundAppMenus": "顯示前景應用程式選單",
-  "statusBar.foregroundAppMenusHint": "顯示前景應用程式名稱後即可使用。選單會跟隨名稱的位置。"
+  "settings.widgets.workshop.minimumHostVersion": "此元件需要 SnowDesktop {0} 或更新版本。"
 }

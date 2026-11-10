@@ -2859,7 +2859,5 @@
   "statusBar.foregroundAppNamePosition": "应用名称位置",
   "statusBar.foregroundAppNameHead": "头部",
   "statusBar.foregroundAppNamePositionHint": "融合栏使用头部。非融合栏居中显示应用名称时，时钟和通知移至右侧。",
-  "settings.widgets.workshop.minimumHostVersion": "此组件需要 SnowDesktop {0} 或更高版本。",
-  "statusBar.foregroundAppMenus": "显示前台应用菜单",
-  "statusBar.foregroundAppMenusHint": "开启前台应用名称后可用。菜单跟随应用名称的位置。"
+  "settings.widgets.workshop.minimumHostVersion": "此组件需要 SnowDesktop {0} 或更高版本。"
 }

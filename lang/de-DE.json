@@ -2859,7 +2859,5 @@
   "statusBar.foregroundAppNamePosition": "Position des App-Namens",
   "statusBar.foregroundAppNameHead": "Anfang",
   "statusBar.foregroundAppNamePositionHint": "In kombinierten Leisten steht der Name am Anfang. In einer separaten Statusleiste verschiebt die Zentrierung des Namens die Uhr und die Benachrichtigungen nach rechts.",
-  "settings.widgets.workshop.minimumHostVersion": "Diese Komponente erfordert SnowDesktop {0} oder neuer.",
-  "statusBar.foregroundAppMenus": "Menüs der aktiven App anzeigen",
-  "statusBar.foregroundAppMenusHint": "Verfügbar, wenn der Name der aktiven App angezeigt wird. Die Menüs folgen der Position des Namens."
+  "settings.widgets.workshop.minimumHostVersion": "Diese Komponente erfordert SnowDesktop {0} oder neuer."
 }

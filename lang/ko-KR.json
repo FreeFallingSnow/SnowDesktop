@@ -2859,7 +2859,5 @@
   "statusBar.foregroundAppNamePosition": "앱 이름 위치",
   "statusBar.foregroundAppNameHead": "맨 앞",
   "statusBar.foregroundAppNamePositionHint": "통합된 표시줄에서는 이름을 맨 앞에 표시합니다. 독립 표시줄에서 이름을 가운데에 배치하면 시계와 알림이 오른쪽으로 이동합니다.",
-  "settings.widgets.workshop.minimumHostVersion": "이 위젯을 사용하려면 SnowDesktop {0} 이상이 필요합니다.",
-  "statusBar.foregroundAppMenus": "활성 앱 메뉴 표시",
-  "statusBar.foregroundAppMenusHint": "활성 앱 이름을 표시할 때 사용할 수 있습니다. 메뉴는 앱 이름의 위치를 따릅니다."
+  "settings.widgets.workshop.minimumHostVersion": "이 위젯을 사용하려면 SnowDesktop {0} 이상이 필요합니다."
 }

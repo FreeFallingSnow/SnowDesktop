@@ -2859,7 +2859,5 @@
   "statusBar.foregroundAppNamePosition": "Position du nom de l’application",
   "statusBar.foregroundAppNameHead": "Début",
   "statusBar.foregroundAppNamePositionHint": "Les barres fusionnées affichent le nom au début. Dans une barre indépendante, centrer le nom déplace l’horloge et les notifications vers la droite.",
-  "settings.widgets.workshop.minimumHostVersion": "Ce composant nécessite SnowDesktop {0} ou une version ultérieure.",
-  "statusBar.foregroundAppMenus": "Afficher les menus de l’application active",
-  "statusBar.foregroundAppMenusHint": "Disponible lorsque le nom de l’application active est affiché. Les menus suivent la position du nom."
+  "settings.widgets.workshop.minimumHostVersion": "Ce composant nécessite SnowDesktop {0} ou une version ultérieure."
 }
