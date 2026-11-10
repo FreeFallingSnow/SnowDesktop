@@ -152,6 +152,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **观察参数误入执行（2026-11-10）**：Task `latest-build-application-tests-20261110` 在捕获 Run `4b62b5afc49a431cb5f108cc19adf0e1` 后误用 `run invoke -RunId <捕获Run>` 等待。CLI 接受了 `-RunId`，但仍走创建逻辑并提交默认 tests/list Run `2de03c8eed2c4f549fbfd38e3285d57e`，额外执行了一次 CMake 配置和清单查询（配置日志记载 17.36 秒），未执行 CTest。既有 Run 使用 `run wait`；后续可让 `invoke` 拒绝 `-RunId` 并指明观察入口，或显式支持只观察。
+
 - **工坊候选的观察提示（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86`、批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0、Run `71efd003773f460887cd15d19494ee1a`。原 `ready-and-wait` session `43835` 多次交替输出 `Waiting for the collaboration state transaction.` 和同一编译阶段，入队时短暂输出 `resource reason not recorded`。原 Run 通过 Release 和七项测试，全程未重交。下一步仍是按业务状态去重并核对入队原因发布时序。
 
 - **编辑等待的重复提示（2026-11-08）**：Task `minimize-genie-perf` 在前台 `begin` session `99245` 两次收到 `Waiting for batch d7c34e793bd344e19c56e369c1e793a7: editing phase; editing peers dock-hover-expand-20261108.`，两次之间夹有 `Waiting for the collaboration state transaction.`。同一观察随后还短暂收到 Run `7e1ab48b28994011aa1e3496cbd63a7d` 的 `resource reason not recorded`。共享过渡文件确有其他任务改动，等待本身符合协议。继续原进程取得编辑批次，未重复登记或构建。下一步是按业务状态独立去重短时事务提示，并核对 Run 原因字段的发布时序。
@@ -309,3 +311,4 @@
 - **实测**：2026-11-10，CLI，Task `latest-build-application-tests-20261110`。对基线批次 `a24756f9d67342ee83e12d07abf1a112`（Run `940f541489f44c28a2b593f29622200d`）调用 `run invoke -Action tests -Mode verify -Fresh`，Run 提交前退出 2，报 `Snapshot requires a matching candidate execution toolset; capture the updated runtime first.`。原命令及错误见 `.codex-probes/latest-build-application-tests-20261110/verify-preflight-failure.txt`。
 - **源码确认与影响**：`Assert-CandidateToolset` 检查 runner 中的全部脚本。原快照与当前 runner 文件的差异只有提交 `bb760455` 修改的 `deployment_payload.psm1` 和 `packaging_input.ps1`。原测试二进制和运行文件已通过本次提交前校验，但无法用原快照启动；需重新捕获并走同一编译槽的应用测试入口。
 - **下一步**：评估让复验复用已保存、可校验的原执行工具集，或按实际测试工具依赖约束比较范围。保留快照、运行文件、测试定义和执行环境的身份校验。
+- **本轮结果**：新快照 `865adbc4937546838693697adbee3fdb` 与基线相比只有两份打包脚本和本反馈文档变化。沿用候选编译槽执行应用全量 Run `aac77bfb00b14026a87d475e09636a96`，34/34 通过。新旧测试名称、定义摘要和测试程序 SHA-256 逐项一致，候选主程序 SHA-256 与 Steam Build `26565801` 一致。
