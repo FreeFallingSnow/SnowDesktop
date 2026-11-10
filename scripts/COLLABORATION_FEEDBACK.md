@@ -190,6 +190,8 @@
 
 ### CF-015 模块计划无法声明临时定向验证
 
+- **日历日程间距的续证（2026-11-10）**：Task `statusbar-calendar-agenda-spacing-20261110` 通过 `scripts/build.bat ready-and-wait` 执行批次 `2a18c215bac54fd8808719e0d00aff72` 修订 0、Run `9e828f4c005c4e79986e3d9ccf5781db`。正式 CTest 未登记原生日历间距场景，计划选择 `behavior_manifest` 核对交付产物，日历间距和滚动由 `scripts/preview.bat native -Component calendar-panel` 验证。该批次的 `.log.product.log` 与 `.log` 分别记录 `Configuring CMake (Release preset)` 和 `Configuring tests`，指向同一候选编译目录，测试阶段配置耗时 5.96 秒。Release、部署契约和日历预览均通过。第二次配置能否复用产品阶段结果待核实，未为反馈再启动构建或测试。
+
 - **状态栏间距的新证据**：2026-11-09，Task `task-6410e174671f4c9f9abd4acce724b74f`、批次 `01855ebdc0de41f4b7bc61c89b82dd77` 修订 0。右侧日期间距已有 `scripts/preview.bat native -Component status-bar` 的生产渲染和窄栏检查，正式 CTest 无对应条目。按 `New-TaskPlan` 的现有准入规则选择 `behavior_manifest` 检查交付产物，间距仍由离屏预览验证。未重复提交已知会拒绝的 `module/none`，未为反馈新增构建或测试。
 - **托盘中键的新证据与处理**：Task `task-3ce5856630f8469dad256d8d3b1e8fde`、批次 `853bba595c0146769419350d2d9179be`，现有 CTest 无托盘回调条目，仍按已确认限制选 `behavior_manifest` 核对运行文件；实际中键消息生成和旧版/v3/v4 封装由忽略任务目录中的临时消息窗口驱动验证。临时项已记录所属任务、生产输入、最小范围和结束条件，不新增永久测试或全量需求；实际结果和第三方应用待验边界另记任务记录。此计划准入限制尚未修改。
 - **VPN 修复的新证据与处理**：2026-11-05，Task `vpn-connect-saved-credentials-20261105`、批次 `e2afef9c94df420f8ef49d7f07d7c445` 修订0。VPN 私有后端仅有宿主消费者，当前正式 CTest 没有 VPN 条目；本任务需要复用生产后端做临时拨号参数检查及真实分流测试连接验证。依据已确认的准入限制，不重复提交已知会拒绝的 `module/none`，计划选择 `behavior_manifest` 核对交付产物，VPN 行为由忽略任务目录中的临时驱动另验。该正式条目只验证部署契约，不能作为 VPN 已验证的证据；不新增永久测试、不展开全量，临时编译仍经标准执行租约。执行结果随本任务记录保存；模块临时验证入口仍待统一。
