@@ -143,7 +143,7 @@ void Input::Sync(const Scene& scene)
             if(!validation.Submit(r,error)){regions_.AbortFrame();throw std::runtime_error(error);}
             ++validated;
         }
-        if(r.focusable)focusable.push_back(n.id);
+        if(r.focusable.value_or(false))focusable.push_back(n.id);
         semantics.push_back(std::move(r));
     }
     validation.AbortFrame();regions_.CommitFrame();identities_=std::move(identities);
