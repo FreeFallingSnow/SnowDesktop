@@ -279,10 +279,16 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             "percentage", "percentage-zero", "percentage-full", "percentage-charging", "percentage-unknown", "percentage-unavailable", "percentage-narrow", "percentage-scaled", "percentage-merged"})
         {
             auto data = source; StatusBarSettings settings;
-            settings.foregroundAppName = preset == "information" || preset == "updated" || preset == "merged";
+            settings.foregroundAppName = preset == "information" || preset == "updated" || preset == "scaled" || preset == "merged";
+            settings.foregroundAppMenus = settings.foregroundAppName;
+            if (settings.foregroundAppMenus)
+            {
+                data.foregroundAppName = L"SnowDesktop Preview";
+                data.foregroundMenuHeadings = {{0, 0, L"File", true, true}, {1, 0, L"Edit", true, false}};
+            }
             settings.batteryPercentage = preset.starts_with("percentage");
             const bool merged = preset == "merged" || preset == "percentage-merged";
-            settings.foregroundAppNameCentered = merged;
+            settings.foregroundAppNameCentered = merged || preset == "scaled";
             const bool narrow = preset == "narrow" || preset == "percentage-narrow";
             if (preset == "volume-low") data.audio->volume = .45;
             if (preset == "volume-zero") data.audio->volume = 0;
@@ -570,9 +576,9 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             }
             else if (!request.contentOnly) background(context.Get(), {0, 0, width, height}, appearance, scale, settings.position);
             const auto contentResult = DrawStatusBarContent(context.Get(), text, items, static_cast<UINT>(width), static_cast<UINT>(height),
-                scale, appearance, palette, hover, false, 0, merged);
+                scale, appearance, palette, hover, false, 0, merged, settings.foregroundAppNameCentered);
             const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
-            CheckLayout(text, items, width, height, scale, merged);
+            CheckLayout(text, items, width, height, scale, merged, true, settings.foregroundAppNameCentered);
             if(preset=="normal")
             {
                 // The production rendered rectangles feed the same resolver
@@ -824,7 +830,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     if (item.icon || item.key == "controlCenter" || item.action == StatusBarAction::ShowDesktop) continue;
                     centeredInk(item.bounds, item.key,
                         item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown,
-                        item.key == "foregroundAppName" || item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.applicationMenuPosition || item.key == "foregroundAppName" || item.key == "clock" ||
+                        item.key == "cpu" || item.key == "memory" ||
                         item.key == "gpu" || item.key == "traffic");
                 }
                 const auto& controls = Item(items, "controlCenter");

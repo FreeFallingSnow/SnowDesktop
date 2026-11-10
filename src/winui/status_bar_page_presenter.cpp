@@ -268,6 +268,7 @@ struct StatusBarPagePresenter::Impl
         ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch);
         ToggleRow(leftItems, "statusBar.taskView", "statusBar.taskView", &StatusBarSettings::taskView);
         ToggleRow(leftItems, "statusBar.foregroundAppName", "statusBar.foregroundAppName", &StatusBarSettings::foregroundAppName);
+        ToggleRow(leftItems, "statusBar.foregroundAppMenus", "statusBar.foregroundAppMenus", &StatusBarSettings::foregroundAppMenus);
         foregroundAppNamePosition.Width(200);
         foregroundAppNamePositionRow.Initialize(foregroundAppNamePosition);
         foregroundAppNamePositionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -462,7 +463,9 @@ struct StatusBarPagePresenter::Impl
     void Sync(bool force = false)
     {
         syncing = true;
-        for (auto& toggle : toggles) toggle->control.IsOn(value.*(toggle->member));
+        for (auto& toggle : toggles)
+            toggle->control.IsOn(value.*(toggle->member) &&
+                (toggle->member != &StatusBarSettings::foregroundAppMenus || value.foregroundAppName));
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
         edgeRevealGesture.SelectedIndex(value.edgeRevealGesture);
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
@@ -496,7 +499,7 @@ struct StatusBarPagePresenter::Impl
         controlDisplayRow.SetEnabled(value.enabled);
         for (auto& toggle : toggles)
             toggle->row.SetEnabled(toggle->member == &StatusBarSettings::enabled ||
-                value.enabled);
+                (value.enabled && (toggle->member != &StatusBarSettings::foregroundAppMenus || value.foregroundAppName)));
         independentHost.IsEnabled(value.enabled);
         independentHost.Opacity(value.enabled ? 1.0 : .62);
         SyncAppearanceContext();
@@ -522,8 +525,10 @@ struct StatusBarPagePresenter::Impl
         const auto off = winrt::box_value(L("app.interact.off"));
         for (auto& toggle : toggles)
         {
-            toggle->row.SetText(L(toggle->key), toggle->member == &StatusBarSettings::showOnlyWhenSummoned
-                ? L("statusBar.showOnlyWhenSummoned.description") : L"");
+            const auto helpKey = toggle->member == &StatusBarSettings::showOnlyWhenSummoned
+                ? "statusBar.showOnlyWhenSummoned.description" : toggle->member == &StatusBarSettings::foregroundAppMenus
+                ? "statusBar.foregroundAppMenusHint" : nullptr;
+            toggle->row.SetText(L(toggle->key), helpKey ? L(helpKey) : std::wstring{});
             toggle->control.OnContent(on);
             toggle->control.OffContent(off);
             mux::Automation::AutomationProperties::SetName(toggle->control, toggle->row.label.Text());
@@ -734,7 +739,8 @@ mux::FrameworkElement StatusBarPagePresenter::FocusTarget(
         return enablingTarget(&StatusBarSettings::enabled);
     if (focusId == "statusBar.inputMethodPanel" && !impl_->value.inputMethod)
         return enablingTarget(&StatusBarSettings::inputMethod);
-    if (focusId == "statusBar.foregroundAppNamePosition" && !impl_->value.foregroundAppName)
+    if ((focusId == "statusBar.foregroundAppNamePosition" || focusId == "statusBar.foregroundAppMenus") &&
+        !impl_->value.foregroundAppName)
         return enablingTarget(&StatusBarSettings::foregroundAppName);
     if (result && focusId == "statusBar.mergedBarHeight" && !impl_->availability.anyMerged && prerequisite)
     {

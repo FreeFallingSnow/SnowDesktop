@@ -155,6 +155,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::StatusBar, "statusBar.menu", "statusBar.menu", "statusBar.leftItems"},
     {SettingsPage::StatusBar, "statusBar.quickSearch", "statusBar.quickSearch", "statusBar.leftItems"},
     {SettingsPage::StatusBar, "statusBar.foregroundAppName", "statusBar.foregroundAppName", "statusBar.barItems"},
+    {SettingsPage::StatusBar, "statusBar.foregroundAppMenus", "statusBar.foregroundAppMenus", "statusBar.foregroundAppMenusHint"},
     {SettingsPage::StatusBar, "statusBar.foregroundAppNamePosition", "statusBar.foregroundAppNamePosition",
         "statusBar.foregroundAppNamePositionHint"},
     {SettingsPage::StatusBar, "statusBar.inputMethod", "statusBar.inputMethod", "statusBar.controlCenter"},

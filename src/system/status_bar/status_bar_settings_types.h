@@ -34,6 +34,7 @@ struct StatusBarSettings
     bool menu = true, quickSearch = true, taskView = true;
     bool foregroundAppName = false;
     bool foregroundAppNameCentered = false;
+    bool foregroundAppMenus = false;
     bool showDesktop = true;
     bool clockSystemPanel = false, controlCenterSystemPanel = false;
     bool clockShowSeconds = false;

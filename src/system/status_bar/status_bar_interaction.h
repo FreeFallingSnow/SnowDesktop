@@ -180,8 +180,9 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
 {
     if (!index || *index >= items.size()) return {};
     const auto& item = items[*index];
-    if (item.action == StatusBarAction::None || IsRectEmpty(&item.bounds)) return {};
-    auto action = item.action;
+    if (IsRectEmpty(&item.bounds)) return {};
+    auto action = context && item.applicationMenuPosition ? StatusBarAction::MenuForegroundAppName : item.action;
+    if (action == StatusBarAction::None) return {};
     if (action == StatusBarAction::MenuForegroundAppName && !context) return {};
     if (context)
     {

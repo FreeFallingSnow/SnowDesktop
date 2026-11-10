@@ -17,6 +17,7 @@
 #include "system/controls/system_controls.h"
 #include "system/controls/system_quick_controls.h"
 #include "ui/menu/modern_menu.h"
+#include "system/status_bar/status_bar_application_menu.h"
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
 #include "system/status_bar/status_bar_shell_shortcut_relay.h"
@@ -73,6 +74,7 @@ catch (...) { /* Diagnostics must not change activation or release behavior. */ 
 struct DesktopApp::StatusBarActivationHold
 {
     std::function<void()> release;
+    std::optional<snowdesktop::StatusBar::ApplicationMenuTarget> applicationMenu;
     double shortcutStartedMilliseconds = -1;
     snowdesktop::StatusBarAction shortcutAction = snowdesktop::StatusBarAction::None;
     std::uint64_t shortcutGeneration = 0;
@@ -130,9 +132,11 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
     }
 }
 
-void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
+void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
+    std::optional<snowdesktop::StatusBar::ApplicationMenuTarget> applicationMenu)
 {
     using Action = snowdesktop::StatusBarAction;
+    if (action == Action::ForegroundAppMenu && !applicationMenu) return;
     if (action == Action::Tray && !snowdesktop::runtime_modules::Allowed(snowdesktop::runtime_modules::Module::Tray)) return;
     if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
         action = Action::ControlCenter;
@@ -189,6 +193,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     }
     const std::weak_ptr<std::uint64_t> lifetime = statusBarActivationGeneration_;
     auto hold = std::make_shared<StatusBarActivationHold>();
+    hold->applicationMenu = std::move(applicationMenu);
     hold->shortcutStartedMilliseconds = shortcutStarted;
     hold->shortcutAction = action;
     hold->shortcutGeneration = generation;
@@ -216,6 +221,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         return state && *state == generation && !exitRequested_ &&
             generalSettings_.statusBar.enabled && (action != Action::ShowDesktop || generalSettings_.statusBar.showDesktop) &&
             (action != Action::MenuForegroundAppName || generalSettings_.statusBar.foregroundAppName) &&
+            (action != Action::ForegroundAppMenu ||
+                (generalSettings_.statusBar.foregroundAppName && generalSettings_.statusBar.foregroundAppMenus)) &&
             statusBar_ && IsWindow(owner) &&
             IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
             statusBar_->IsInteractionAvailable(monitor);
@@ -406,7 +413,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->Hide();
         return;
     }
-    const bool externalSurface = snowdesktop::IsStatusBarContextMenuAction(action) ||
+    const bool externalSurface = snowdesktop::IsStatusBarContextMenuAction(action) || action == Action::ForegroundAppMenu ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
@@ -698,6 +705,52 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             MessageBeep(MB_ICONWARNING);
         }
     }
+    else if (action == Action::ForegroundAppMenu)
+    {
+        const auto& target = *hold->applicationMenu;
+        snowdesktop::status_bar_application_menu::Popup popup(target);
+        const auto menu = popup.Open();
+        if (!current()) return;
+        if (!target.heading.submenu)
+        {
+            (void)popup.InvokeDirect();
+            return;
+        }
+        if (!menu) return;
+        const POINT point{anchor.left, anchor.bottom};
+        PrepareMenuIconsForPoint(point);
+        statusBarMenuMonitor_ = monitor;
+        statusBarMenuOwner_ = owner;
+        statusBarMenuAction_ = action;
+        statusBar_->SetApplicationMenuOpen(true);
+        const auto endMenu = [this] {
+            statusBarMenuMonitor_ = nullptr;
+            statusBarMenuOwner_ = nullptr;
+            statusBarMenuAction_ = Action::None;
+            if (statusBar_) statusBar_->SetApplicationMenuOpen(false);
+            ClearMenuIcons();
+        };
+        UINT command = 0;
+        try
+        {
+            command = ShowModernMenu(menu.get(), point, owner, false, false, nullptr,
+                {}, {}, {}, nullptr, {}, false, 0, 0,
+                [&](UINT id, std::vector<snowdesktop::modern_menu::Item>& children) {
+                    const auto submenu = popup.Expand(id);
+                    children = submenu ? BuildModernMenuItems(submenu.get()) :
+                        std::vector<snowdesktop::modern_menu::Item>{};
+                });
+        }
+        catch (...)
+        {
+            endMenu();
+            throw;
+        }
+        endMenu();
+        if (!current() || !target.source.CanInteract()) return;
+        if (GetForegroundWindow() != target.source.window) (void)SetForegroundWindow(target.source.window);
+        if (command) (void)popup.Invoke(command);
+    }
     else if (snowdesktop::IsStatusBarContextMenuAction(action))
     {
         if (systemPanel_) systemPanel_->Hide();
@@ -726,6 +779,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch, L"\uF68F"}, // search
             {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView, L"\uE05D"}, // app_recent
             {"statusBar.foregroundAppName", &Settings::foregroundAppName, Action::MenuForegroundAppName, L"\uF133"}, // apps
+            {"statusBar.foregroundAppMenus", &Settings::foregroundAppMenus, Action::MenuForegroundAppName, L"\uF133"}, // apps
             {"statusBar.cpu", &Settings::cpu, Action::MenuCpu, L"\uE4AC"}, // developer_board
             {"statusBar.memory", &Settings::memory, Action::MenuMemory, L"\uE9F3"}, // ram
             {"statusBar.gpu", &Settings::gpu, Action::MenuGpu, L"\uF359"}, // desktop
@@ -744,7 +798,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
         constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230,
             controlDisplayBase = 42240, summonOnlyCommand = 42250, revealGestureBase = 42260, appNamePositionBase = 42270;
-        constexpr std::size_t controlFlagsBegin = 13;
+        constexpr std::size_t controlFlagsBegin = 14;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
@@ -766,10 +820,12 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         };
         const auto addFlag = [&](HMENU target, std::size_t index) {
             const auto command = flagBase + static_cast<UINT>(index);
+            const auto member = flags[index].member;
+            const bool disabled = member == &Settings::foregroundAppMenus && !currentSettings.foregroundAppName;
             std::wstring label = _LW(flags[index].key);
             label += L"\t";
-            label += _LW(currentSettings.*(flags[index].member) ? "app.interact.shown" : "app.interact.hidden");
-            AppendMenuW(target, MF_STRING, command, label.c_str());
+            label += _LW(!disabled && currentSettings.*member ? "app.interact.shown" : "app.interact.hidden");
+            AppendMenuW(target, MF_STRING | (disabled ? MF_GRAYED : 0), command, label.c_str());
             SetMenuItemIcon(target, command, flags[index].glyph, MenuIconFont::FluentRegular);
         };
         const auto submenu = [&](HMENU parent, const char* label) {
@@ -977,6 +1033,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             if (command >= flagBase && command < flagBase + std::size(flags))
             {
                 const auto member = flags[command - flagBase].member;
+                if (member == &Settings::foregroundAppMenus && !bar.foregroundAppName) return;
                 bar.*member = !(bar.*member);
             }
             else if (command == positionBase || command == positionBase + 1)
@@ -1161,6 +1218,10 @@ void DesktopApp::SyncStatusBar()
     else dockTrayService_.reset();
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
     if (systemPanel_) systemPanel_->UpdateSettings(generalSettings_.statusBar);
+    if (statusBarMenuAction_ == snowdesktop::StatusBarAction::ForegroundAppMenu &&
+        (!generalSettings_.statusBar.enabled || !generalSettings_.statusBar.foregroundAppName ||
+            !generalSettings_.statusBar.foregroundAppMenus))
+        DismissActiveContextMenuForPopupTransition();
     if (!generalSettings_.statusBar.enabled)
     {
         CancelStatusBarActivation();
@@ -1170,12 +1231,13 @@ void DesktopApp::SyncStatusBar()
     if (!statusBar_)
     {
         statusBar_ = std::make_unique<snowdesktop::StatusBar>(systemDataProvider_,
-            [this](snowdesktop::StatusBarAction action, HWND owner, RECT anchor) {
+            [this](snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
+                std::optional<snowdesktop::StatusBar::ApplicationMenuTarget> applicationMenu) {
                 // Sample once at the input boundary. Deferred activation must
                 // not reinterpret either an ordinary click or a Ctrl click.
                 action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0,
                     generalSettings_.statusBar, snowdesktop::StatusBarSupportsSystemQuickSettings());
-                ActivateStatusBar(action, owner, anchor);
+                ActivateStatusBar(action, owner, anchor, std::move(applicationMenu));
             },
             [this](HMONITOR monitor) { CancelStatusBarActivation(monitor); },
             [this](const std::wstring& error) {

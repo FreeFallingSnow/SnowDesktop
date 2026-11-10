@@ -832,6 +832,8 @@ struct StatusBar::Impl
             snapshot.trayExpanded = trayExpanded;
             if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
             snapshot.foregroundAppName = owner.foregroundAppName;
+            snapshot.foregroundMenuRevision = owner.foregroundMenuRevision;
+            snapshot.foregroundMenuHeadings = owner.foregroundMenu.headings;
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
@@ -1316,7 +1318,7 @@ struct StatusBar::Impl
             });
             const auto onActivated = owner.activate;
             if (InputAvailable() && onActivated)
-                onActivated(StatusBarAction::Dismiss, hwnd, placedBounds);
+                onActivated(StatusBarAction::Dismiss, hwnd, placedBounds, {});
         }
         void ActivateItem(std::optional<std::size_t> index, bool context = false)
         {
@@ -1336,13 +1338,27 @@ struct StatusBar::Impl
                 return;
             }
             const auto action = invocation->action;
+            std::optional<ApplicationMenuTarget> applicationMenu;
+            if (action == StatusBarAction::ForegroundAppMenu)
+            {
+                if (!owner.settings.foregroundAppName || !owner.settings.foregroundAppMenus ||
+                    dataSnapshot.foregroundMenuRevision != owner.foregroundMenuRevision ||
+                    !owner.foregroundMenu.source.CanInteract()) return;
+                const auto position = items[*index].applicationMenuPosition;
+                const auto& headings = owner.foregroundMenu.headings;
+                const auto heading = std::find_if(headings.begin(), headings.end(), [&](const auto& item) {
+                    return position && item.position == *position && item.enabled;
+                });
+                if (heading == headings.end()) return;
+                applicationMenu = ApplicationMenuTarget{owner.foregroundMenu.source, *heading};
+            }
             UpdateInteraction([&] {
                 CancelTrayMenu();
                 if (owner.tray) owner.tray->CancelFocusReturn();
                 interaction.PrepareActionHover(items, index, context, [this] { ClearHover(); });
             });
             auto onActivated = owner.activate;
-            onActivated(action, hwnd, anchor);
+            onActivated(action, hwnd, anchor, std::move(applicationMenu));
         }
         bool TrayMouse(UINT message, POINT point)
         {
@@ -1511,7 +1527,8 @@ struct StatusBar::Impl
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
                 self->owner.RefreshForegroundApp();
                 if (self->UpdateAppearance()) self->QueuePlace();
-                else if (self->dataSnapshot.foregroundAppName != self->owner.foregroundAppName) self->Paint();
+                else if (self->dataSnapshot.foregroundAppName != self->owner.foregroundAppName ||
+                    self->dataSnapshot.foregroundMenuRevision != self->owner.foregroundMenuRevision) self->Paint();
                 self->PollTrayMenu();
                 return 0;
             case kFullscreen:
@@ -1694,7 +1711,7 @@ struct StatusBar::Impl
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                 self->ClearHover();
                 auto onActivated = self->owner.activate;
-                if (onActivated) onActivated(StatusBarAction::Menu, window, {point.x, point.y, point.x, point.y});
+                if (onActivated) onActivated(StatusBarAction::Menu, window, {point.x, point.y, point.x, point.y}, {});
                 return 0;
             }
             case WM_MOUSEMOVE:
@@ -1863,6 +1880,15 @@ struct StatusBar::Impl
     HWND foregroundAppWindow = nullptr;
     DWORD foregroundAppProcess = 0;
     std::wstring foregroundAppName;
+    status_bar_application_menu::Snapshot foregroundMenu;
+    std::uint64_t foregroundMenuRevision = 0;
+    bool applicationMenuOpen = false;
+    void UpdateForegroundMenu(status_bar_application_menu::Snapshot next)
+    {
+        if (foregroundMenu == next) return;
+        foregroundMenu = std::move(next);
+        ++foregroundMenuRevision;
+    }
     void RefreshForegroundApp()
     {
         if (!settings.foregroundAppName)
@@ -1870,15 +1896,23 @@ struct StatusBar::Impl
             foregroundAppWindow = nullptr;
             foregroundAppProcess = 0;
             foregroundAppName.clear();
+            UpdateForegroundMenu({});
             return;
         }
         const auto window = GetForegroundWindow();
         DWORD process = 0;
         if (window) GetWindowThreadProcessId(window, &process);
-        if (window == foregroundAppWindow && process == foregroundAppProcess) return;
-        foregroundAppWindow = window;
-        foregroundAppProcess = process;
-        foregroundAppName = ForegroundAppName(window, process);
+        // Our popup temporarily takes the foreground while it reads the source.
+        // An unrelated foreground app still replaces the snapshot normally.
+        if (settings.foregroundAppMenus && applicationMenuOpen && (!window || process == GetCurrentProcessId())) return;
+        if (window != foregroundAppWindow || process != foregroundAppProcess)
+        {
+            foregroundAppWindow = window;
+            foregroundAppProcess = process;
+            foregroundAppName = ForegroundAppName(window, process);
+        }
+        UpdateForegroundMenu(settings.foregroundAppMenus ? status_bar_application_menu::Read(window) :
+            status_bar_application_menu::Snapshot{});
     }
     PersonalizationSettings globalAppearance;
     PersonalizationSettings tooltipAppearance;
@@ -1988,6 +2022,8 @@ struct StatusBar::Impl
         foregroundAppWindow = nullptr;
         foregroundAppProcess = 0;
         foregroundAppName.clear();
+        UpdateForegroundMenu({});
+        applicationMenuOpen = false;
         volumeWheel.Reset();
         if (data) { data->RemoveConsumer("statusBar"); data->Controls()->RemoveConsumer("statusBarVolume"); }
     }
@@ -2293,6 +2329,10 @@ void StatusBar::ObserveForeground(HWND foreground, DWORD eventTime)
     // A retained Dock fullscreen source also depends on foreground ownership.
     // Reconcile it even when the observed fullscreen HWND did not change.
     NotifyWindowObservations();
+}
+void StatusBar::SetApplicationMenuOpen(bool open)
+{
+    impl_->applicationMenuOpen = open;
 }
 PersonalizationSettings StatusBar::AppearanceForMonitor(HMONITOR monitor) const
 {
