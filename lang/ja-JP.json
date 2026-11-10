@@ -2872,5 +2872,6 @@
   "settings.calendar.subscriptionInvalidLink": "有効な HTTPS または webcal のカレンダーリンクを入力してください。",
   "settings.calendar.subscriptionInvalidName": "カレンダー名を入力してください。",
   "settings.calendar.subscriptionDuplicate": "このリンクはすでに購読しています。",
-  "settings.calendar.subscriptionLimit": "カレンダーは最大 16 件まで購読できます。"
+  "settings.calendar.subscriptionLimit": "カレンダーは最大 16 件まで購読できます。",
+  "settings.calendar.subscriptionEmpty": "カレンダーの購読はまだありません。購読を追加すると、月間カレンダーと予定ウィジェットに予定が表示されます。"
 }

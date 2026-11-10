@@ -2872,5 +2872,6 @@
   "settings.calendar.subscriptionInvalidLink": "Geben Sie einen gültigen HTTPS- oder webcal-Kalenderlink ein.",
   "settings.calendar.subscriptionInvalidName": "Geben Sie einen Kalendernamen ein.",
   "settings.calendar.subscriptionDuplicate": "Dieser Link wurde bereits abonniert.",
-  "settings.calendar.subscriptionLimit": "Sie können bis zu 16 Kalenderabonnements hinzufügen."
+  "settings.calendar.subscriptionLimit": "Sie können bis zu 16 Kalenderabonnements hinzufügen.",
+  "settings.calendar.subscriptionEmpty": "Noch keine Kalenderabonnements. Nach dem Hinzufügen erscheinen die Termine in den Widgets Monatskalender und Agenda."
 }

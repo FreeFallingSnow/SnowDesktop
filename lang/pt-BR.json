@@ -2872,5 +2872,6 @@
   "settings.calendar.subscriptionInvalidLink": "Insira um link de calendário HTTPS ou webcal válido.",
   "settings.calendar.subscriptionInvalidName": "Insira um nome para o calendário.",
   "settings.calendar.subscriptionDuplicate": "Este link já foi assinado.",
-  "settings.calendar.subscriptionLimit": "Você pode adicionar até 16 assinaturas de calendário."
+  "settings.calendar.subscriptionLimit": "Você pode adicionar até 16 assinaturas de calendário.",
+  "settings.calendar.subscriptionEmpty": "Ainda não há assinaturas. Adicione uma para ver seus eventos nos widgets Calendário mensal e Agenda."
 }
