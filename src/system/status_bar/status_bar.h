@@ -144,6 +144,7 @@ public:
     void SetFullscreenSourceProvider(std::function<std::optional<HWND>(HMONITOR)> provider);
     void NotifyWindowObservations();
     void ObserveForeground(HWND window, DWORD eventTime);
+    void ActivateAutomationMenu(const ApplicationMenuTarget& target);
     void SetApplicationMenuOpen(bool open);
     void SetGraphicsFailureHandler(std::function<void(HRESULT)> handler);
     PersonalizationSettings AppearanceForMonitor(HMONITOR monitor) const;

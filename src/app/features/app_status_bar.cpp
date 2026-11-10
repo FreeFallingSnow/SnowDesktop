@@ -708,6 +708,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     else if (action == Action::ForegroundAppMenu)
     {
         const auto& target = *hold->applicationMenu;
+        if (!target.source.root)
+        {
+            if (!target.source.CanInteract()) return;
+            if (GetForegroundWindow() != target.source.window) (void)SetForegroundWindow(target.source.window);
+            if (current()) statusBar_->ActivateAutomationMenu(target);
+            return;
+        }
         snowdesktop::status_bar_application_menu::Popup popup(target);
         const auto menu = popup.Open();
         if (!current()) return;

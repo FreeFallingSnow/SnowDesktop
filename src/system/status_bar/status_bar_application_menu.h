@@ -11,7 +11,7 @@ namespace snowdesktop::status_bar_application_menu
 struct Source
 {
     HWND window = nullptr;
-    HMENU root = nullptr;
+    HMENU root = nullptr; // UI Automation sources are identified by the window and have no native root.
     DWORD process = 0, thread = 0;
 
     bool Live() const;

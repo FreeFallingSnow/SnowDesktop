@@ -2,6 +2,7 @@
 #include "platform/foreground_fullscreen.h"
 #include "platform/window_peek_policy.h"
 #include "status_bar_activation.h"
+#include "status_bar_application_menu_uia.h"
 #include "status_bar_appearance.h"
 #include "status_bar_view.h"
 #include "status_bar_geometry.h"
@@ -53,7 +54,7 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
-    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46;
+    kActivate = WM_APP + 45, kEnsurePresentation = WM_APP + 46, kApplicationMenuReady = WM_APP + 47;
 constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5,
     kRevealTimer = 6;
 const char* StatusBarTimerPhase(WPARAM timer) noexcept
@@ -1525,11 +1526,15 @@ struct StatusBar::Impl
             case kPlace: self->Place(); return 0;
             case kForeground:
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
-                self->owner.RefreshForegroundApp();
+                self->owner.RefreshForegroundApp(window);
                 if (self->UpdateAppearance()) self->QueuePlace();
                 else if (self->dataSnapshot.foregroundAppName != self->owner.foregroundAppName ||
                     self->dataSnapshot.foregroundMenuRevision != self->owner.foregroundMenuRevision) self->Paint();
                 self->PollTrayMenu();
+                return 0;
+            case kApplicationMenuReady:
+                if (wp) self->owner.RefreshApplicationMenuWindows(window);
+                if (self->dataSnapshot.foregroundMenuRevision != self->owner.foregroundMenuRevision) self->Paint();
                 return 0;
             case kFullscreen:
                 if (self->owner.fullscreenRequest.Consume(window)) self->owner.CheckFullscreenWindows(true);
@@ -1552,7 +1557,7 @@ struct StatusBar::Impl
                         self->TraceValue("volume.completions");
                         self->owner.volumeWheel.Complete(completion.id);
                     }
-                    self->owner.RefreshForegroundApp();
+                    self->owner.RefreshForegroundApp(window);
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else self->Paint();
                     self->PollTrayMenu();
@@ -1881,6 +1886,7 @@ struct StatusBar::Impl
     DWORD foregroundAppProcess = 0;
     std::wstring foregroundAppName;
     status_bar_application_menu::Snapshot foregroundMenu;
+    std::unique_ptr<status_bar_application_menu::AutomationMenu> automationMenu;
     std::uint64_t foregroundMenuRevision = 0;
     bool applicationMenuOpen = false;
     void UpdateForegroundMenu(status_bar_application_menu::Snapshot next)
@@ -1889,13 +1895,14 @@ struct StatusBar::Impl
         foregroundMenu = std::move(next);
         ++foregroundMenuRevision;
     }
-    void RefreshForegroundApp()
+    void RefreshForegroundApp(HWND receiver = nullptr)
     {
         if (!settings.foregroundAppName)
         {
             foregroundAppWindow = nullptr;
             foregroundAppProcess = 0;
             foregroundAppName.clear();
+            if (automationMenu) automationMenu->Refresh(nullptr);
             UpdateForegroundMenu({});
             return;
         }
@@ -1911,8 +1918,25 @@ struct StatusBar::Impl
             foregroundAppProcess = process;
             foregroundAppName = ForegroundAppName(window, process);
         }
-        UpdateForegroundMenu(settings.foregroundAppMenus ? status_bar_application_menu::Read(window) :
-            status_bar_application_menu::Snapshot{});
+        auto menu = settings.foregroundAppMenus ? status_bar_application_menu::Read(window) :
+            status_bar_application_menu::Snapshot{};
+        if (settings.foregroundAppMenus && window && process && process != GetCurrentProcessId() && menu.headings.empty())
+        {
+            if (!automationMenu)
+                automationMenu = std::make_unique<status_bar_application_menu::AutomationMenu>(kApplicationMenuReady);
+            menu = automationMenu->Refresh(window, receiver);
+        }
+        else if (automationMenu) automationMenu->Refresh(nullptr);
+        UpdateForegroundMenu(std::move(menu));
+    }
+    void RefreshApplicationMenuWindows(HWND receiver)
+    {
+        const auto before = foregroundMenuRevision;
+        RefreshForegroundApp(receiver);
+        if (before == foregroundMenuRevision) return;
+        for (const auto& [id, bar] : windows)
+            if (bar && !bar->closing && bar->hwnd && bar->hwnd != receiver)
+                PostMessageW(bar->hwnd, kApplicationMenuReady, FALSE, 0);
     }
     PersonalizationSettings globalAppearance;
     PersonalizationSettings tooltipAppearance;
@@ -2011,6 +2035,7 @@ struct StatusBar::Impl
         : data(std::move(source)), sharedTray(std::move(shared)), activate(std::move(action)), hidden(std::move(hide)), error(std::move(report)), drawBackground(std::move(draw)) {}
     void Close()
     {
+        if (automationMenu) automationMenu->Refresh(nullptr);
         for (const auto& [id,window] : windows) if(window) window->EndDragFeedback();
         // A panel-origin drag can end from Window::~Window -> hidden. Its
         // cross-surface cleanup must not iterate a map during clear/erase.
@@ -2333,6 +2358,14 @@ void StatusBar::ObserveForeground(HWND foreground, DWORD eventTime)
 void StatusBar::SetApplicationMenuOpen(bool open)
 {
     impl_->applicationMenuOpen = open;
+}
+void StatusBar::ActivateAutomationMenu(const ApplicationMenuTarget& target)
+{
+    auto& self = *impl_;
+    if (self.automationMenu && self.settings.foregroundAppName && self.settings.foregroundAppMenus &&
+        !target.source.root && GetForegroundWindow() == target.source.window &&
+        status_bar_application_menu::Read(target.source.window).headings.empty())
+        self.automationMenu->Activate(target);
 }
 PersonalizationSettings StatusBar::AppearanceForMonitor(HMONITOR monitor) const
 {

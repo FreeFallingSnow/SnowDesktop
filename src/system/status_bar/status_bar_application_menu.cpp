@@ -65,8 +65,8 @@ bool CanPost(const Entry& entry, HMENU root)
 bool Source::Live() const
 {
     DWORD currentProcess = 0;
-    return window && root && thread && GetWindowThreadProcessId(window, &currentProcess) == thread &&
-        currentProcess == process && GetMenu(window) == root;
+    return window && thread && GetWindowThreadProcessId(window, &currentProcess) == thread &&
+        currentProcess == process && (!root || GetMenu(window) == root);
 }
 
 bool Source::CanInteract() const
@@ -214,7 +214,7 @@ OwnedMenu Popup::Open()
 {
     auto& self = *impl_;
     const auto& target = self.target;
-    if (!target.heading.enabled || !self.Notify(WM_INITMENU, target.source.root, 0)) return {};
+    if (!target.source.root || !target.heading.enabled || !self.Notify(WM_INITMENU, target.source.root, 0)) return {};
     auto heading = ReadEntry(target.source.root, target.heading.position);
     if (!heading || !heading->Enabled() || heading->id != target.heading.command ||
         (heading->submenu != nullptr) != target.heading.submenu || heading->Title() != target.heading.label) return {};
