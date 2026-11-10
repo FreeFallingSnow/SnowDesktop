@@ -919,6 +919,7 @@ private:
     void ApplyCollectionPopupBackdropAnimationFrame();
     void InvalidateFloatingPopupWindow(
         bool immediatePresent = false);
+    HRESULT EnsureFloatingPopupCompositionRoot();
     HRESULT CreateOrResizeFloatingPopupCompositionSurface();
     bool RenderFloatingPopupCompositionFrame();
     bool PresentFloatingPopupComposition();
@@ -3969,8 +3970,10 @@ private:
     std::optional<TrayDragPreview> trayDragPreview_;
     ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
+    ComPtr<IDCompositionVisual2> floatingPopupDcompLiveVisual_;
     ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
-    RECT floatingPopupWindowBounds_{};
+    // Desktop coordinates. The HWND itself stays at the virtual desktop origin.
+    RECT floatingPopupContentBounds_{};
     RECT floatingPopupCollectionRegion_{};
     RECT floatingPopupLuaPanelRegion_{};
     UINT floatingPopupCompWidth_ = 0;

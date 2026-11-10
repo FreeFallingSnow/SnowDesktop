@@ -106,16 +106,6 @@ constexpr Handle ResolveMenuZOrderOwner(
     return Handle{};
 }
 
-constexpr POINT AnimationVisualOffset(
-    const RECT& animationBounds,
-    const RECT& hostBounds)
-{
-    return POINT{
-        animationBounds.left - hostBounds.left,
-        animationBounds.top - hostBounds.top,
-    };
-}
-
 constexpr std::uint64_t PackScreenPoint(POINT point)
 {
     return static_cast<std::uint64_t>(

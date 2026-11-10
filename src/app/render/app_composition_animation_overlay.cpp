@@ -2,7 +2,6 @@
 #include "navigation/quick_navigation_animation_rules.h"
 #include "app/navigation/quick_navigation_state.h"
 #include "diagnostics/diagnostic_log.h"
-#include "layout/floating_popup_rules.h"
 #include "app/dock/persistent_dock_host.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
@@ -167,8 +166,9 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
     {
         if (!floatingPopupHwnd_ ||
             !IsWindow(floatingPopupHwnd_) ||
-            IsRectEmpty(&floatingPopupWindowBounds_) ||
-            FAILED(CreateOrResizeFloatingPopupCompositionSurface()))
+            IsRectEmpty(&floatingPopupContentBounds_) ||
+            floatingPopupCompositionPaintInProgress_ ||
+            FAILED(EnsureFloatingPopupCompositionRoot()))
         {
             return false;
         }
@@ -249,14 +249,7 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
     }
 
     overlay.bounds = bounds;
-    POINT visualOffset{ bounds.left, bounds.top };
-    if (host == UiCompositionAnimationHost::FloatingPopup)
-    {
-        visualOffset = snowdesktop::floating_popup_rules::
-            AnimationVisualOffset(
-                bounds, floatingPopupWindowBounds_);
-    }
-    if (FAILED(overlay.SetPlacementOffset(visualOffset)) ||
+    if (FAILED(overlay.SetPlacementOffset({bounds.left, bounds.top})) ||
         FAILED(overlay.visual->SetContent(overlay.surface.Get())))
         return false;
     overlay.scaleTransform->SetScaleX(1.0f);
@@ -342,7 +335,11 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
         hr = overlay.effect->SetOpacity(opacityAnimation.Get());
     if (FAILED(hr))
         return false;
-    return CommitCompositionAnimationFrame();
+    // The snapshot takes over from the live popup in the same DComp batch.
+    // Paint the live surface with the active snapshot excluded before its
+    // native timeline becomes visible.
+    return overlay.host == UiCompositionAnimationHost::FloatingPopup
+        ? RenderFloatingPopupCompositionFrame() : CommitCompositionAnimationFrame();
 }
 
 bool DesktopApp::CommitCompositionAnimationFrame()
@@ -800,8 +797,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
             visual.scale, opening ? 1.0f : popupAnimation_.HiddenScale(),
             visual.opacity, popupAnimation_.EndpointOpacity(opening),
-            static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
-            static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
+            static_cast<float>(anchor.x), static_cast<float>(anchor.y),
             duration, normalizedScaleStartSlope, popupAnimation_.UsesSpring() ? &springTimeline : nullptr,
             nullptr, reinterpret_cast<std::uintptr_t>(&popupAnimation_)))
     {
@@ -923,8 +919,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
         !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
             visual.scale, opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
             visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening),
-            static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
-            static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
+            static_cast<float>(anchor.x), static_cast<float>(anchor.y),
             duration, normalizedScaleStartSlope, luaWidgetPanelAnimation_.UsesSpring() ? &springTimeline : nullptr,
             nullptr, reinterpret_cast<std::uintptr_t>(&luaWidgetPanelAnimation_)))
     {

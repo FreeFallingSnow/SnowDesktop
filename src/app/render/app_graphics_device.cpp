@@ -557,6 +557,7 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
         host->compositionRenderRecoveryPending = false;
     }
     ResetFloatingPopupCompositionResources();
+    floatingPopupDcompLiveVisual_.Reset();
     releaseRoot(floatingPopupDcompTarget_, floatingPopupDcompVisual_);
     floatingPopupCompositionRenderRecoveryPending_ = false;
     releaseRoot(dragPreviewDcompTarget_, dragPreviewDcompVisual_);
