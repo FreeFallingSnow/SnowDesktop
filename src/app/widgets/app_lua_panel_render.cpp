@@ -10,50 +10,42 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
 {
     if (luaWidgetPanelRequest_.widgetId.empty())
         return {};
-    RECT work = layoutWorkArea_;
-    const DesktopWidget* source = nullptr;
-    for (const auto& widget : widgets_)
+    // The anchor belongs to the rendered opener, including a Lua stack's
+    // visible frame. The member's stored grid page can be on another display.
+    RECT work{};
+    for (const auto& page : gridPages_)
     {
-        if (widget.id ==
-            luaWidgetPanelRequest_.widgetId)
+        if (PtInRect(&page.bounds, luaWidgetPanelAnchorPoint_))
         {
-            source = &widget;
+            work = page.workArea;
             break;
         }
     }
-    const GridPage* sourcePage = nullptr;
-    if (source)
+    if (IsRectEmpty(&work))
     {
-        for (const auto& page : gridPages_)
+        const POINT screenAnchor{
+            luaWidgetPanelAnchorPoint_.x + virtualLeft_,
+            luaWidgetPanelAnchorPoint_.y + virtualTop_,
+        };
+        MONITORINFO monitor{};
+        monitor.cbSize = sizeof(monitor);
+        if (GetMonitorInfoW(MonitorFromPoint(screenAnchor, MONITOR_DEFAULTTONEAREST), &monitor))
         {
-            if (page.id == source->gridCell.pageId)
-            {
-                sourcePage = &page;
-                break;
-            }
+            work = monitor.rcWork;
+            OffsetRect(&work, -virtualLeft_, -virtualTop_);
         }
+        else if (const auto* page = GetFirstPageGridPage())
+            work = page->workArea;
     }
-    if (!sourcePage)
-    {
-        for (const auto& page : gridPages_)
-        {
-            if (PtInRect(
-                    &page.bounds,
-                    luaWidgetPanelAnchorPoint_))
-            {
-                sourcePage = &page;
-                break;
-            }
-        }
-    }
-    if (sourcePage)
-        work = sourcePage->workArea;
-    const int availableWidth =
-        std::max(1, static_cast<int>(
-            work.right - work.left) - 24);
-    const int availableHeight =
-        std::max(1, static_cast<int>(
-            work.bottom - work.top) - 24);
+    if (IsRectEmpty(&work))
+        return {};
+
+    const int workWidth = work.right - work.left;
+    const int workHeight = work.bottom - work.top;
+    const int marginX = std::min(12, (workWidth - 1) / 2);
+    const int marginY = std::min(12, (workHeight - 1) / 2);
+    const int availableWidth = workWidth - 2 * marginX;
+    const int availableHeight = workHeight - 2 * marginY;
     const bool popover =
         luaWidgetPanelRequest_.surface == "popover";
     const int width = std::clamp(
@@ -67,9 +59,9 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
     if (luaWidgetPanelRequest_.surface == "dialog")
     {
         const int left = work.left +
-            (availableWidth + 24 - width) / 2;
+            (workWidth - width) / 2;
         const int top = work.top +
-            (availableHeight + 24 - height) / 2;
+            (workHeight - height) / 2;
         return MakeRect(
             left, top, left + width, top + height);
     }
@@ -136,13 +128,11 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
             placement == "topEnd")
             top = anchor.top - height - gap;
         left = std::clamp(left,
-            static_cast<int>(work.left + 12),
-            static_cast<int>(std::max<LONG>(
-                work.left + 12, work.right - width - 12)));
+            static_cast<int>(work.left + marginX),
+            static_cast<int>(work.right - width - marginX));
         top = std::clamp(top,
-            static_cast<int>(work.top + 12),
-            static_cast<int>(std::max<LONG>(
-                work.top + 12, work.bottom - height - 12)));
+            static_cast<int>(work.top + marginY),
+            static_cast<int>(work.bottom - height - marginY));
         return MakeRect(
             left, top, left + width, top + height);
     }
@@ -150,26 +140,22 @@ RECT DesktopApp::GetLuaWidgetPanelRect() const
         luaWidgetPanelAnchorPoint_.x + 12;
     int top =
         luaWidgetPanelAnchorPoint_.y + 12;
-    if (left + width > work.right - 12)
+    if (left + width > work.right - marginX)
         left =
             luaWidgetPanelAnchorPoint_.x -
             width - 12;
-    if (top + height > work.bottom - 12)
+    if (top + height > work.bottom - marginY)
         top =
             luaWidgetPanelAnchorPoint_.y -
             height - 12;
     left = std::clamp(
         left,
-        static_cast<int>(work.left + 12),
-        static_cast<int>(std::max<LONG>(
-            work.left + 12,
-            work.right - width - 12)));
+        static_cast<int>(work.left + marginX),
+        static_cast<int>(work.right - width - marginX));
     top = std::clamp(
         top,
-        static_cast<int>(work.top + 12),
-        static_cast<int>(std::max<LONG>(
-            work.top + 12,
-            work.bottom - height - 12)));
+        static_cast<int>(work.top + marginY),
+        static_cast<int>(work.bottom - height - marginY));
     return MakeRect(
         left, top, left + width, top + height);
 }

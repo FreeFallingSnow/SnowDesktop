@@ -797,14 +797,15 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         UpdateCollectionPopupCompositionAnimation();
         return false;
     }
-    if (collectionPopupGlassTheme_ && !IsLuaPanelHostedByFloatingWindow() &&
-        collectionPopupBackdropCompositor_.IsAvailable() &&
+    const auto* collection = GetOpenPopupWidget();
+    if (collectionPopupGlassTheme_ && collection && !UsesCollectionPopupFan(*collection) &&
         !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
             visual.scale, opening ? 1.0f : popupAnimation_.HiddenScale(),
             visual.opacity, popupAnimation_.EndpointOpacity(opening),
             static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
             static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
-            duration, normalizedScaleStartSlope, popupAnimation_.UsesSpring() ? &springTimeline : nullptr))
+            duration, normalizedScaleStartSlope, popupAnimation_.UsesSpring() ? &springTimeline : nullptr,
+            nullptr, reinterpret_cast<std::uintptr_t>(&popupAnimation_)))
     {
         // If either animation cannot start, detach both native timelines.
         // The scheduler must own both layers during the fallback.
@@ -920,15 +921,14 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
         UpdateLuaWidgetPanelCompositionAnimation();
         return false;
     }
-    const auto* collection = GetOpenPopupWidget();
-    if (collectionPopupGlassTheme_ && (!collection || UsesCollectionPopupFan(*collection)) &&
-        collectionPopupBackdropCompositor_.IsAvailable() &&
+    if (collectionPopupGlassTheme_ &&
         !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
             visual.scale, opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
             visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening),
             static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
             static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
-            duration, normalizedScaleStartSlope, luaWidgetPanelAnimation_.UsesSpring() ? &springTimeline : nullptr))
+            duration, normalizedScaleStartSlope, luaWidgetPanelAnimation_.UsesSpring() ? &springTimeline : nullptr,
+            nullptr, reinterpret_cast<std::uintptr_t>(&luaWidgetPanelAnimation_)))
     {
         UpdateLuaWidgetPanelCompositionAnimation();
         return false;

@@ -915,68 +915,39 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
         return;
 
     const auto* collection = GetOpenPopupWidget();
-    const bool collectionGlass = collection && !UsesCollectionPopupFan(*collection);
-    const bool luaGlass = IsLuaPanelHostedByFloatingWindow();
-    const bool hostVisible = floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_);
-    if (IsLuaStackIndicatorVisible() || (collectionGlass && luaGlass))
+    bool visible = IsLuaStackIndicatorVisible();
+    if (collection && !UsesCollectionPopupFan(*collection))
     {
-        // The two popups have independent poses. A shared root transform
-        // would move one backdrop around the other popup's anchor.
-        collectionPopupBackdropCompositor_.SetVisualTransform(1.0f, 1.0f, 0.0f, 0.0f);
-        collectionPopupBackdropCompositor_.SetVisible(hostVisible);
-        collectionPopupBackdropCompositor_.CommitVisualChanges();
-        return;
+        const auto visual = popupAnimation_.GetVisual();
+        const bool animatingNatively = popupAnimationCompositorDriven_ && popupAnimation_.IsAnimating();
+        POINT anchor{(popupRect_.left + popupRect_.right) / 2, (popupRect_.top + popupRect_.bottom) / 2};
+        if (popupHasAnchor_)
+        {
+            anchor.x = std::clamp(popupAnchorPoint_.x, popupRect_.left, popupRect_.right);
+            anchor.y = std::clamp(popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
+        }
+        collectionPopupBackdropCompositor_.SetPopupPanelTransform(
+            reinterpret_cast<std::uintptr_t>(&popupAnimation_),
+            visual.scale, visual.visible ? visual.opacity : 0.0f,
+            {anchor.x - floatingPopupWindowBounds_.left, anchor.y - floatingPopupWindowBounds_.top},
+            animatingNatively);
+        visible = visible || animatingNatively || visual.visible;
     }
-    if (luaGlass)
+    if (IsLuaPanelHostedByFloatingWindow())
     {
         const auto visual = luaWidgetPanelAnimation_.GetVisual();
         const bool animatingNatively = luaWidgetPanelAnimationCompositorDriven_ &&
             luaWidgetPanelAnimation_.IsAnimating();
-        if (!animatingNatively)
-        {
-            const POINT anchor = GetLuaWidgetPanelAnimationAnchor(GetLuaWidgetPanelRect());
-            collectionPopupBackdropCompositor_.SetVisualTransform(
-                visual.scale, visual.visible ? visual.opacity : 0.0f,
-                static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
-                static_cast<float>(anchor.y - floatingPopupWindowBounds_.top));
-        }
-        collectionPopupBackdropCompositor_.SetVisible(hostVisible && (animatingNatively || visual.visible));
-        collectionPopupBackdropCompositor_.CommitVisualChanges();
-        return;
+        const POINT anchor = GetLuaWidgetPanelAnimationAnchor(GetLuaWidgetPanelRect());
+        collectionPopupBackdropCompositor_.SetPopupPanelTransform(
+            reinterpret_cast<std::uintptr_t>(&luaWidgetPanelAnimation_),
+            visual.scale, visual.visible ? visual.opacity : 0.0f,
+            {anchor.x - floatingPopupWindowBounds_.left, anchor.y - floatingPopupWindowBounds_.top},
+            animatingNatively);
+        visible = visible || animatingNatively || visual.visible;
     }
-    if (popupAnimationCompositorDriven_ &&
-        popupAnimation_.IsAnimating())
-    {
-        collectionPopupBackdropCompositor_.SetVisible(
-            ShouldShowFloatingPopupWindow() &&
-            floatingPopupHwnd_ &&
-            IsWindowVisible(floatingPopupHwnd_));
-        collectionPopupBackdropCompositor_.CommitVisualChanges();
-        return;
-    }
-
-    const auto visual = popupAnimation_.GetVisual();
-    POINT anchor{
-        (popupRect_.left + popupRect_.right) / 2,
-        (popupRect_.top + popupRect_.bottom) / 2,
-    };
-    if (popupHasAnchor_)
-    {
-        anchor.x = std::clamp(
-            popupAnchorPoint_.x, popupRect_.left, popupRect_.right);
-        anchor.y = std::clamp(
-            popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
-    }
-    collectionPopupBackdropCompositor_.SetVisualTransform(
-        visual.scale, visual.visible ? visual.opacity : 0.0f,
-        static_cast<float>(
-            anchor.x - floatingPopupWindowBounds_.left),
-        static_cast<float>(
-            anchor.y - floatingPopupWindowBounds_.top));
     collectionPopupBackdropCompositor_.SetVisible(
-        visual.visible && ShouldShowFloatingPopupWindow() &&
-        floatingPopupHwnd_ &&
-        IsWindowVisible(floatingPopupHwnd_));
+        visible && floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_));
     // Explicitly submit the same logical frame as the content. Relying on
     // WUC's implicit commit cycle can leave the glass behind a busy UI thread.
     collectionPopupBackdropCompositor_.CommitVisualChanges();
@@ -989,7 +960,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
     const bool collectionGlass = popup && !UsesCollectionPopupFan(*popup);
     const bool luaGlass = IsLuaPanelHostedByFloatingWindow();
     const bool stackGlass = IsLuaStackIndicatorVisible();
-    if (!collectionPopupGlassTheme_ || (popup && !collectionGlass && !luaGlass))
+    if (!collectionPopupGlassTheme_)
     {
         collectionPopupBackdropCompositor_.Reset();
         return;
@@ -1048,14 +1019,15 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
             panel, radius, collectionPopupBlurRadius_, reinterpret_cast<std::uintptr_t>(owner));
     };
     if (collectionGlass)
-        addPanel(GetCollectionPopupRect(*popup), 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale, this);
+        addPanel(GetCollectionPopupRect(*popup), 18.0f * GetCollectionPopupLayoutMetrics(*popup).scale,
+            &popupAnimation_);
     if (luaGlass)
-        addPanel(GetLuaWidgetPanelRect(), kLuaWidgetPanelCornerRadius, &luaWidgetPanelRequest_);
+        addPanel(GetLuaWidgetPanelRect(), kLuaWidgetPanelCornerRadius, &luaWidgetPanelAnimation_);
     if (stackGlass)
     {
         const auto& stack = widgets_[FindWidgetIndexById(luaStackIndicator_.stackId)];
         addPanel(luaStackIndicator_.bounds,
-            static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(stack))), this);
+            static_cast<float>(ScaleWidgetCu(12.0f, GetWidgetCellScale(stack))), &luaStackIndicator_);
     }
     // Include geometry and the current pose in one backdrop transaction.
     collectionPopupBackdropCompositor_.EndFrame(false);

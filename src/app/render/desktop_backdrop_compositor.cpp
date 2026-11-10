@@ -370,6 +370,8 @@ struct DesktopBackdropCompositor::Impl
         float cornerRadius = 0;
         float regionCornerRadius = 0;
         std::optional<RECT> animationFence;
+        // Engaged once the popup lifecycle owns this panel's scale and opacity.
+        std::optional<bool> popupTransformAnimating;
         RECT synchronizedRegionFrame{};
         float synchronizedRegionRadius = 0;
         bool regionFenceSynchronized = false;
@@ -407,7 +409,9 @@ struct DesktopBackdropCompositor::Impl
         }
         float FenceRadius() const noexcept
         {
-            return animationFence ? 0.0f : regionCornerRadius;
+            // A scaled contour can intersect the corners of its resting
+            // shape. Reserve the rectangle and let the visual clip shape it.
+            return animationFence || popupTransformAnimating.has_value() ? 0.0f : regionCornerRadius;
         }
 
         void SetTransform(const wfn::float4x4& value)
@@ -1594,6 +1598,34 @@ void DesktopBackdropCompositor::SetVisualTransform(
     }
 }
 
+void DesktopBackdropCompositor::SetPopupPanelTransform(
+    std::uintptr_t ownerKey, float scale, float opacity,
+    POINT anchor, bool preserveAnimation)
+{
+    if (!impl_->available || !ownerKey)
+        return;
+    const auto panel = impl_->FindPanel({}, ownerKey);
+    if (panel == impl_->panels.end() ||
+        (preserveAnimation && panel->popupTransformAnimating.value_or(false)))
+        return;
+
+    try
+    {
+        panel->visual.CenterPoint(wfn::float3{
+            static_cast<float>(anchor.x - panel->frame.left),
+            static_cast<float>(anchor.y - panel->frame.top), 0.0f});
+        panel->visual.Scale(wfn::float3{scale, scale, 1.0f});
+        panel->visual.Opacity(std::clamp(opacity, 0.0f, 1.0f));
+        if (!panel->popupTransformAnimating.has_value())
+            impl_->transformedRegionDirty = true;
+        panel->popupTransformAnimating = false;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 bool DesktopBackdropCompositor::StartVisualScaleAnimation(
     float fromScale, float toScale, float opacity,
     float anchorX, float anchorY,
@@ -1613,19 +1645,33 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
     std::uint32_t durationMilliseconds,
     float normalizedStartSlope,
     const snowdesktop::popup_motion_curve::Timeline* springTimeline,
-    const snowdesktop::popup_motion_curve::Timeline* opacityTimeline)
+    const snowdesktop::popup_motion_curve::Timeline* opacityTimeline,
+    std::uintptr_t panelOwnerKey)
 {
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
         !impl_->contentWindow || !IsWindow(impl_->contentWindow))
         return false;
 
-    ClearGenieTransform();
-    if (!impl_->available)
+    const auto panel = panelOwnerKey ? impl_->FindPanel({}, panelOwnerKey) : impl_->panels.end();
+    if (panelOwnerKey && panel == impl_->panels.end())
         return false;
+    wuc::Visual target = impl_->root;
+    if (panelOwnerKey)
+    {
+        target = panel->visual;
+        anchorX -= static_cast<float>(panel->frame.left);
+        anchorY -= static_cast<float>(panel->frame.top);
+    }
+    else
+    {
+        ClearGenieTransform();
+        if (!impl_->available)
+            return false;
+    }
 
-    const float clampedFrom =
-        std::clamp(fromScale, 0.0f, 1.0f);
+    const float initialScale =
+        panelOwnerKey ? fromScale : std::clamp(fromScale, 0.0f, 1.0f);
     const float clampedTo =
         std::clamp(toScale, 0.0f, 1.0f);
     const float clampedFromOpacity =
@@ -1651,7 +1697,7 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
                 durationMilliseconds) * 10'000LL });
         animation.InsertKeyFrame(
             0.0f,
-            wfn::float3{ clampedFrom, clampedFrom, 1.0f });
+            wfn::float3{ initialScale, initialScale, 1.0f });
         if (springTimeline)
         {
             if (springTimeline->segments.empty()) return false;
@@ -1690,18 +1736,33 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
         }
         else opacityAnimation.InsertKeyFrame(1.0f, clampedToOpacity, easing);
 
-        impl_->root.CenterPoint(wfn::float3{
+        target.CenterPoint(wfn::float3{
             anchorX, anchorY, 0.0f });
-        impl_->SetAnimationPathRegionExpanded(
-            std::min(clampedFrom, clampedTo) < 0.9995f);
+        if (panelOwnerKey)
+        {
+            if (!panel->popupTransformAnimating.has_value())
+                impl_->transformedRegionDirty = true;
+            panel->popupTransformAnimating = false;
+            if (impl_->transformedRegionDirty)
+                impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        }
+        else
+            impl_->SetAnimationPathRegionExpanded(std::min(initialScale, clampedTo) < 0.9995f);
         // Keep final values as the base properties. Direct assignments also
         // disconnect prior animations before a rapid reversal.
-        impl_->root.Scale(wfn::float3{
+        target.Scale(wfn::float3{
             clampedTo, clampedTo, 1.0f });
-        impl_->root.Opacity(clampedToOpacity);
-        impl_->root.StartAnimation(L"Scale", animation);
-        impl_->root.StartAnimation(L"Opacity", opacityAnimation);
-        impl_->RequestCommit();
+        target.Opacity(clampedToOpacity);
+        target.StartAnimation(L"Scale", animation);
+        target.StartAnimation(L"Opacity", opacityAnimation);
+        if (panelOwnerKey)
+        {
+            if (!impl_->RequestCommit())
+                return false;
+            panel->popupTransformAnimating = true;
+        }
+        else
+            impl_->RequestCommit();
         return true;
     }
     catch (...)
@@ -1711,11 +1772,13 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
 
     try
     {
-        impl_->root.Scale(wfn::float3{
-            clampedFrom, clampedFrom, 1.0f });
-        impl_->root.Opacity(clampedFromOpacity);
-        impl_->SetAnimationPathRegionExpanded(
-            clampedFrom < 0.9995f);
+        target.Scale(wfn::float3{
+            initialScale, initialScale, 1.0f });
+        target.Opacity(clampedFromOpacity);
+        if (panelOwnerKey && panel->popupTransformAnimating.has_value())
+            panel->popupTransformAnimating = false;
+        if (!panelOwnerKey)
+            impl_->SetAnimationPathRegionExpanded(initialScale < 0.9995f);
         impl_->RequestCommit();
     }
     catch (...)
@@ -2126,7 +2189,9 @@ bool DesktopBackdropCompositor::UpdatePanel(
             impl_->genieRoot.Opacity(impl_->genieOpacity);
             existing->SetOpacity(0.0f);
         }
-        else
+        // Popup geometry can be rebased mid-animation. Its opacity is owned
+        // by the popup lifecycle and a direct write would cancel the track.
+        else if (!existing->popupTransformAnimating.has_value())
             existing->SetOpacity(1.0f);
         existing->seen = true;
         impl_->PruneUnusedBlurFactories();

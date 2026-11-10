@@ -77,13 +77,18 @@ public:
     void SetVisualTransform(
         float scale, float opacity,
         float anchorX, float anchorY);
+    // A popup panel keeps its own pose when other panels join the same host.
+    // The anchor is in content-window coordinates.
+    void SetPopupPanelTransform(std::uintptr_t ownerKey, float scale,
+        float opacity, POINT anchor, bool preserveAnimation);
     /** @brief 由 Windows Composition 自驱根视觉缩放，避免 UI 线程逐帧提交。 */
     [[nodiscard]] bool StartVisualScaleAnimation(
         float fromScale, float toScale, float opacity,
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
-    /** @brief 由 Windows Composition 自驱根视觉缩放和透明度；弹窗可提供与内容层共用的弹簧轨迹。 */
+    // Animate the root, or the popup panel identified by panelOwnerKey.
+    // The anchor is in content-window coordinates in both cases.
     [[nodiscard]] bool StartVisualTransformAnimation(
         float fromScale, float toScale,
         float fromOpacity, float toOpacity,
@@ -91,7 +96,8 @@ public:
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f,
         const snowdesktop::popup_motion_curve::Timeline* springTimeline = nullptr,
-        const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr);
+        const snowdesktop::popup_motion_curve::Timeline* opacityTimeline = nullptr,
+        std::uintptr_t panelOwnerKey = 0);
     /**
      * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
      *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
