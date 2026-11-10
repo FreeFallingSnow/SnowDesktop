@@ -48,6 +48,7 @@
 | [CF-022](#cf-022-冻结前空白检查遗漏未跟踪的新文件) | P2 | 新文件的空白问题到冻结后提交才暴露 | 已确认：冻结前检查覆盖缺口 |
 | [CF-023](#cf-023-dsh-插件精确版本限制阻止宿主升级) | P1 | DSH 宿主升级后，协作插件因精确版本限制拒载 | 已通过本机预检器对照 |
 | [CF-024](#cf-024-同一候选槽的局部续修重编多个宿主模块) | P2 | 局部续修后出现多组宿主源码重新编译 | 已观察重编，触发依赖待核实 |
+| [CF-025](#cf-025-文件观察提前结束) | P2 | 前序候选的文件仍有待提交改动，文件观察已返回可认领 | 已确认，待补充观察条件 |
 
 
 ### CF-001 持久执行器被父 Job 拒绝
@@ -295,3 +296,9 @@
 - **来源**：2026-11-10，CLI，Task `calendar-ics-subscriptions-20261110`。对照批次 `6935a08f187f4e5ab54942c412c905be` 修订 2、Run `c77d7675a5e74747bdfd3ad852dc8080` 与续修批次 `b4e75fc6e1ac437ba0dbe344b5a46e23` 修订 4、Run `f5f1d056ef664e27ae2ed219cbcb4835`，入口均为 `scripts/build.bat ready-and-wait`。
 - **实测与影响**：本任务在两轮间只调整 `calendar_ics.cpp` 的两处 libical 调用。两轮产品日志均指向同一候选槽 `a32a06cfeb995ec8-batches`，后一轮记录了 `settings_ipc_backends.cpp`、`App.xaml.cpp` 和多份 WinUI 设置页源码的编译。原件为 `.build/collaboration/<批次>.log.product.log`。已观察到重编；其他冻结输入、生成文件和 MSBuild 依赖的触发链待核实，额外耗时未单独测量。
 - **下一步**：比较两次冻结输入和对应项目的 MSBuild 增量判据，确认可以保留的对象。原续修结果照常使用，反馈沿用日历空态批次，不为调查追加构建。
+
+### CF-025 文件观察提前结束
+
+- **实测**：2026-11-10，Task `equal-width-dialog-buttons` 的 `watch wait --condition files` 票据 `60dbdd917961def6c363b541ea23f1ae` 返回 `eligible`。前序日历 Run `f829e893544f42b2848fc5c0ffd7cc13` 已冻结，`src/system/panel/system_panel_model.cpp` 仍有前序任务的待提交改动。Task 在批次 `781988dcbc324ac5a85d2030414f7234` 修订 0 执行 `claim`，收到 `Newly claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.`
+- **源码确认及处理**：`build_wait_tasks.py` 的 `files` 条件只核对当前窗口的编辑成员，未核对指定路径的 Git 状态。认领保护正常，本任务等待前序提交后再认领，未接手他人改动或为反馈重建。
+- **下一步**：支持等待目标路径进入可安全认领的状态，区分前序冻结未提交、无归属的脏路径和显式接手，保留 `claim` 的原子复核。
