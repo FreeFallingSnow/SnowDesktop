@@ -331,12 +331,9 @@ void DesktopApp::ResetDesktopWindowResources()
     ResetCollectionPopupAnimationCache();
     ResetLuaWidgetPanelAnimationCache();
     ResetPageNotifyTextCache();
-    popupAnimationOverlay_.visual.Reset();
-    popupAnimationOverlay_.effect.Reset();
-    luaWidgetPanelAnimationOverlay_.visual.Reset();
-    luaWidgetPanelAnimationOverlay_.effect.Reset();
-    pageNotifyAnimationOverlay_.visual.Reset();
-    pageNotifyAnimationOverlay_.effect.Reset();
+    popupAnimationOverlay_ = {};
+    luaWidgetPanelAnimationOverlay_ = {};
+    pageNotifyAnimationOverlay_ = {};
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();

@@ -144,6 +144,14 @@ bool DesktopApp::UpdateCompositionAnimationOverlayContent(
     return drawn && SUCCEEDED(endDrawHr);
 }
 
+HRESULT UiCompositionAnimationOverlay::SetPlacementOffset(POINT offset) const
+{
+    if (!placementTransform)
+        return E_UNEXPECTED;
+    const HRESULT hr = placementTransform->SetOffsetX(static_cast<float>(offset.x));
+    return SUCCEEDED(hr) ? placementTransform->SetOffsetY(static_cast<float>(offset.y)) : hr;
+}
+
 bool DesktopApp::PrepareCompositionAnimationOverlay(
     UiCompositionAnimationOverlay& overlay,
     const DragRenderCache& cache,
@@ -184,6 +192,7 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
         overlay.visual.Reset();
         overlay.effect.Reset();
         overlay.scaleTransform.Reset();
+        overlay.placementTransform.Reset();
     }
 
     const UINT width = static_cast<UINT>(
@@ -193,29 +202,19 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
     if (!overlay.visual)
     {
         HRESULT hr = dcompDevice_->CreateVisual(&overlay.visual);
-        if (FAILED(hr) || !overlay.visual)
-            return false;
-        hr = dcompDevice_->CreateEffectGroup(&overlay.effect);
-        if (FAILED(hr) || !overlay.effect)
-        {
-            overlay.visual.Reset();
-            return false;
-        }
-        hr = dcompDevice_->CreateScaleTransform(
-            &overlay.scaleTransform);
-        if (FAILED(hr) || !overlay.scaleTransform)
-        {
-            overlay.effect.Reset();
-            overlay.visual.Reset();
-            return false;
-        }
-        overlay.effect->SetOpacity(0.0f);
-        overlay.visual->SetEffect(overlay.effect.Get());
-        overlay.visual->SetTransform(
-            overlay.scaleTransform.Get());
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateEffectGroup(&overlay.effect);
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateScaleTransform(&overlay.scaleTransform);
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateTranslateTransform(&overlay.placementTransform);
+        // Scale around the snapshot's local anchor, then place it in the
+        // host. Visual Offset would be applied before the scale instead.
+        IDCompositionTransform* transforms[]{overlay.scaleTransform.Get(), overlay.placementTransform.Get()};
+        ComPtr<IDCompositionTransform> transformGroup;
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateTransformGroup(transforms, 2, &transformGroup);
+        if (SUCCEEDED(hr)) hr = overlay.effect->SetOpacity(0.0f);
+        if (SUCCEEDED(hr)) hr = overlay.visual->SetEffect(overlay.effect.Get());
+        if (SUCCEEDED(hr)) hr = overlay.visual->SetTransform(transformGroup.Get());
         overlay.host = host;
-        hr = parentVisual->AddVisual(
-            overlay.visual.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr)) hr = parentVisual->AddVisual(overlay.visual.Get(), TRUE, nullptr);
         if (SUCCEEDED(hr) &&
             host == UiCompositionAnimationHost::Desktop)
             hr = SyncDesktopCompositionRootZOrder();
@@ -223,10 +222,11 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
             hr = SyncFloatingPopupCompositionRootZOrder();
         if (FAILED(hr))
         {
-            (void)parentVisual->RemoveVisual(
-                overlay.visual.Get());
+            if (overlay.visual)
+                (void)parentVisual->RemoveVisual(overlay.visual.Get());
             overlay.effect.Reset();
             overlay.scaleTransform.Reset();
+            overlay.placementTransform.Reset();
             overlay.visual.Reset();
             return false;
         }
@@ -249,7 +249,6 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
     }
 
     overlay.bounds = bounds;
-    overlay.visual->SetContent(overlay.surface.Get());
     POINT visualOffset{ bounds.left, bounds.top };
     if (host == UiCompositionAnimationHost::FloatingPopup)
     {
@@ -257,10 +256,9 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
             AnimationVisualOffset(
                 bounds, floatingPopupWindowBounds_);
     }
-    overlay.visual->SetOffsetX(
-        static_cast<float>(visualOffset.x));
-    overlay.visual->SetOffsetY(
-        static_cast<float>(visualOffset.y));
+    if (FAILED(overlay.SetPlacementOffset(visualOffset)) ||
+        FAILED(overlay.visual->SetContent(overlay.surface.Get())))
+        return false;
     overlay.scaleTransform->SetScaleX(1.0f);
     overlay.scaleTransform->SetScaleY(1.0f);
     overlay.scaleTransform->SetCenterX(0.0f);

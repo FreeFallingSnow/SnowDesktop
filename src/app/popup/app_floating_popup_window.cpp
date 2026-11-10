@@ -15,6 +15,7 @@
 
 #include <array>
 #include <bit>
+#include <dwmapi.h>
 #include <sstream>
 
 namespace
@@ -25,6 +26,7 @@ constexpr UINT kStackIndicatorMouseLeavePollIntervalMs = 30;
 constexpr UINT_PTR kPopupPresentationRetryTimerId = 2;
 constexpr UINT kPopupPresentationRetryIntervalMs = 100;
 constexpr unsigned kPopupPresentationRetryLimit = 5;
+constexpr UINT kRefreshPopupBoundsMessage = WM_APP + 0x477;
 
 RECT UnionRects(const RECT& first, const RECT& second)
 {
@@ -1094,46 +1096,39 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             &floatingPopupLuaPanelRegion_) ||
         nextModalRegion != floatingPopupModalRegion_;
 
+    if (floatingPopupCompositionPaintInProgress_ && (boundsChanged || regionChanged))
+    {
+        // A Lua draw callback can replace the popup while BeginDraw owns the
+        // surface. Leave its geometry intact until that frame has ended.
+        PostMessageW(floatingPopupHwnd_, kRefreshPopupBoundsMessage, 0, 0);
+        return;
+    }
+
+    const bool sharedBefore = !IsRectEmpty(&floatingPopupCollectionRegion_) &&
+        !IsRectEmpty(&floatingPopupLuaPanelRegion_);
+    const bool sharedAfter = !IsRectEmpty(&nextCollectionRegion) &&
+        !IsRectEmpty(&nextLuaPanelRegion);
+    const bool stageOriginChange = wasVisible && (sharedBefore || sharedAfter) &&
+        (nextBounds.left != floatingPopupWindowBounds_.left ||
+         nextBounds.top != floatingPopupWindowBounds_.top);
+    const bool keepVisible = wasVisible && !stageOriginChange;
+    const bool presentNow = immediatePresent || stageOriginChange;
+
     floatingPopupWindowBounds_ = nextBounds;
     floatingPopupCollectionRegion_ = nextCollectionRegion;
     floatingPopupLuaPanelRegion_ = nextLuaPanelRegion;
     floatingPopupModalRegion_ = nextModalRegion;
-
-    if (boundsChanged)
-    {
-        const auto rebaseAnimationOverlay =
-            [&](UiCompositionAnimationOverlay& overlay) {
-                if (!overlay.active || !overlay.visual ||
-                    overlay.host !=
-                        UiCompositionAnimationHost::FloatingPopup)
-                {
-                    return;
-                }
-                // Overlay bounds stay in desktop coordinates, while their
-                // visual offsets are local to the shared popup HWND. When a
-                // closing popup leaves an opening popup behind, the host
-                // shrinks from A union B to B. Rebase every surviving child
-                // before moving the host so it keeps the same screen position
-                // instead of being shifted outside the new window region.
-                const POINT offset =
-                    snowdesktop::floating_popup_rules::
-                        AnimationVisualOffset(
-                            overlay.bounds, nextBounds);
-                overlay.visual->SetOffsetX(
-                    static_cast<float>(offset.x));
-                overlay.visual->SetOffsetY(
-                    static_cast<float>(offset.y));
-            };
-        rebaseAnimationOverlay(popupAnimationOverlay_);
-        rebaseAnimationOverlay(
-            luaWidgetPanelAnimationOverlay_);
-    }
 
     const bool topmost =
         snowdesktop::floating_popup_rules::ShouldBeTopmost(
             true, shellPopupMenuLayerDepth_);
     if (!wasVisible || boundsChanged)
     {
+        // User32 moves the HWND separately from DirectComposition. Hide
+        // the glass before moving it and hide the content in the move itself,
+        // so neither can present its old pixels at the new origin.
+        if (stageOriginChange)
+            collectionPopupBackdropCompositor_.SetVisible(false);
         const MenuHostZOrderSnapshot menuZOrderBefore =
             CaptureMenuHostZOrder(floatingPopupHwnd_);
         const BOOL positioned = SetWindowPos(
@@ -1148,7 +1143,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             SWP_NOACTIVATE | SWP_NOOWNERZORDER |
                 (wasVisible && snowdesktop::popup_window_pair_z_order::IsTopmost(
                     floatingPopupHwnd_) == topmost ? SWP_NOZORDER : 0) |
-                (wasVisible ? SWP_SHOWWINDOW : 0));
+                (stageOriginChange ? SWP_HIDEWINDOW : (keepVisible ? SWP_SHOWWINDOW : 0)));
         TraceMenuHostZOrderTransition(
             positioned
                 ? L"bounds-set-window-pos"
@@ -1166,6 +1161,25 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     else
     {
         ApplyFloatingPopupLayerPolicy();
+    }
+
+    if (boundsChanged)
+    {
+        const auto rebase = [&](UiCompositionAnimationOverlay& overlay) -> HRESULT {
+            if (!overlay.active || overlay.host != UiCompositionAnimationHost::FloatingPopup)
+                return S_OK;
+            return overlay.SetPlacementOffset(snowdesktop::floating_popup_rules::
+                AnimationVisualOffset(overlay.bounds, nextBounds));
+        };
+        HRESULT hr = rebase(popupAnimationOverlay_);
+        if (SUCCEEDED(hr)) hr = rebase(luaWidgetPanelAnimationOverlay_);
+        if (FAILED(hr))
+        {
+            floatingPopupWindowBounds_ = {};
+            RecoverFloatingPopupCompositionFailure(L"Rebase animation", hr);
+            SuspendFloatingPopupPresentation();
+            return;
+        }
     }
 
     const DesktopWidget* collection = GetOpenPopupWidget();
@@ -1219,13 +1233,13 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         }
     }
 
-    const bool rendered = immediatePresent
+    const bool rendered = presentNow
         ? PresentFloatingPopupComposition()
         : false;
     if (!rendered && refreshContent)
     {
         InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
-        if (immediatePresent)
+        if (presentNow)
         {
             // A nested provider callback can ask for presentation while the
             // outer frame owns BeginDraw. It is deferred, not failed: preserve
@@ -1237,8 +1251,15 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         }
     }
 
+    // Both the backdrop and content have submitted the new coordinates.
+    // A flush here keeps the hidden HWNDs from exposing an earlier batch.
+    if (stageOriginChange && FAILED(DwmFlush()))
+    {
+        SuspendFloatingPopupPresentation();
+        return;
+    }
     if (snowdesktop::floating_popup_rules::ShouldRevealHost(
-            wasVisible, immediatePresent))
+            keepVisible, presentNow) && ShouldShowFloatingPopupWindow())
     {
         const MenuHostZOrderSnapshot menuZOrderBefore =
             CaptureMenuHostZOrder(floatingPopupHwnd_);
@@ -1255,6 +1276,11 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             menuZOrderBefore,
             CaptureMenuHostZOrder(floatingPopupHwnd_),
             positioned == FALSE);
+        if (!positioned)
+        {
+            SuspendFloatingPopupPresentation();
+            return;
+        }
         ApplyCollectionPopupBackdropAnimationFrame();
         wchar_t message[224]{};
         wsprintfW(
@@ -1267,7 +1293,7 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
             topmost != false);
         WriteModuleDiagnosticLogEntry(DiagnosticLogModule::Menus, message);
     }
-    else if (boundsChanged && !immediatePresent)
+    else if (boundsChanged && !presentNow)
     {
         InvalidateFloatingPopupWindow(false);
     }
@@ -1443,6 +1469,9 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         HandleFloatingPopupExternalPointerDown(
             static_cast<std::uint32_t>(wp),
             std::bit_cast<std::uint64_t>(lp));
+        return 0;
+    case kRefreshPopupBoundsMessage:
+        UpdateFloatingPopupWindowBounds(true);
         return 0;
     case WM_NCHITTEST:
         return ShouldShowFloatingPopupWindow()

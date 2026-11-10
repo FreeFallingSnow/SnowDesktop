@@ -25,12 +25,15 @@ struct UiCompositionAnimationOverlay
     Microsoft::WRL::ComPtr<IDCompositionVisual2> visual;
     Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
     Microsoft::WRL::ComPtr<IDCompositionScaleTransform> scaleTransform;
+    Microsoft::WRL::ComPtr<IDCompositionTranslateTransform> placementTransform;
     Microsoft::WRL::ComPtr<IDCompositionSurface> surface;
     UINT surfaceWidth = 0, surfaceHeight = 0;
     RECT bounds{};
     UiCompositionAnimationHost host =
         UiCompositionAnimationHost::Desktop;
     bool active = false;
+
+    HRESULT SetPlacementOffset(POINT offset) const;
 };
 
 struct PopupFanIconDrawing
