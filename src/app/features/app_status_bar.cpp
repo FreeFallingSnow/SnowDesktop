@@ -293,6 +293,12 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         std::vector<snowdesktop::calendar::DayAnnotation>{};
                 }, [this] {
                     return generalSettings_.calendarDisplay.calendar;
+                }, [this](const std::string& id) {
+                    using snowdesktop::calendar::SubscriptionAction;
+                    using snowdesktop::calendar::SubscriptionResult;
+                    return !exitRequested_ && widgetEngine_ &&
+                        widgetEngine_->RuntimeCalendarSubscription({SubscriptionAction::Refresh,id,{},{}})
+                            == SubscriptionResult::Applied;
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
@@ -303,19 +309,32 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
                     brushCache_.clear(); brushCacheContext_ = nullptr;
                 });
-        systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, bool series) -> UINT {
+        systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, snowdesktop::CalendarMenuKind kind) -> UINT {
             if (exitRequested_) return 0;
             HMENU menu = CreatePopupMenu();
             if (!menu) return 0;
-            AppendMenuW(menu, MF_STRING, 1, _LW(series ? "settings.calendar.editOccurrence" : "settings.calendar.edit"));
-            if (series) AppendMenuW(menu, MF_STRING, 3, _LW("settings.calendar.editSeries"));
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(menu, MF_STRING, 2, _LW(series ? "settings.calendar.deleteOccurrence" : "app.settings.delete"));
-            if (series) AppendMenuW(menu, MF_STRING, 4, _LW("settings.calendar.deleteSeries"));
-            PrepareMenuIconsForPoint(screen);
             UINT command = 0;
-            try { command = ShowModernMenu(menu, screen, owner, false, false, nullptr,
-                {}, {}, {}, nullptr, {}, true); }
+            try
+            {
+                PrepareMenuIconsForPoint(screen);
+                const auto append = [&](UINT id, const wchar_t* label, const wchar_t* glyph) {
+                    if (AppendMenuW(menu, MF_STRING, id, label))
+                        SetMenuItemIcon(menu, id, glyph, MenuIconFont::FluentRegular);
+                };
+                if (kind == snowdesktop::CalendarMenuKind::Subscription)
+                    append(1, _LW("settings.calendar.refresh"), L"\uF13D");
+                else
+                {
+                    const bool series = kind == snowdesktop::CalendarMenuKind::Series;
+                    append(1, _LW(series ? "settings.calendar.editOccurrence" : "settings.calendar.edit"), L"\uF3DD");
+                    if (series) append(3, _LW("settings.calendar.editSeries"), L"\uF3DD");
+                    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+                    append(2, _LW(series ? "settings.calendar.deleteOccurrence" : "app.settings.delete"), L"\uF34C");
+                    if (series) append(4, _LW("settings.calendar.deleteSeries"), L"\uF34C");
+                }
+                command = ShowModernMenu(menu, screen, owner, false, false, nullptr,
+                    {}, {}, {}, nullptr, {}, true);
+            }
             catch (...) { DestroyMenu(menu); ClearMenuIcons(); throw; }
             DestroyMenu(menu);
             ClearMenuIcons();

@@ -48,6 +48,9 @@ struct CalendarEvent
     std::string seriesId;
     std::string occurrenceDate;
     bool occurrenceOverride = false;
+    // Owning ICS subscription, populated on reads for native calendar UI.
+    std::string subscriptionId{};
+    std::wstring subscriptionName{};
 };
 
 struct CalendarSeriesRule

@@ -1379,6 +1379,7 @@ bool SystemPanelModel::Drop(std::string_view key,D2D1_POINT_2F p)
 void SystemPanelModel::Calendar()
 {
     calendarEvents_.clear();
+    calendarSubscriptionTargets_.clear();
     scene_.width=(std::min)(calendarStacked_?384.f:720.f,availableWidth_);
     auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(today))today=calendar::CalendarService::CurrentLocalNow().date;
@@ -1628,16 +1629,29 @@ void SystemPanelModel::Calendar()
         if(events.empty()&&hasEvents){Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,30),_LW("statusBar.calendarEmpty")).fontSize=12;y+=32;}
         for(const auto& e:events)
         {
-            wchar_t when[32]{};swprintf_s(when,L"%02d:%02d",e.startMinutes/60,e.startMinutes%60);
             const bool subscribed = e.id.starts_with(calendar::SubscriptionEventIdPrefix);
-            const auto bounds = subscribed ? Rect(agendaLeft+12,y,agendaWidth-24,eventRowHeight) :
-                Rect(agendaLeft,y,agendaWidth,eventRowHeight);
             auto& n=Add((subscribed ? "subscription-event:" : "event:")+agendaDate+":"+e.id,
-                subscribed ? ui::Role::Text : ui::Role::ListItem,bounds,Wide(e.title));
-            n.detail=e.allDay?_LW("settings.calendar.allDay"):when;n.tooltip=Wide(e.title)+L"\n"+Wide(e.date)+L" · "+n.detail;
+                subscribed ? ui::Role::ReadOnlyListItem : ui::Role::ListItem,
+                Rect(agendaLeft,y,agendaWidth,eventRowHeight),Wide(e.title));
+            n.detail=e.allDay?_LW("settings.calendar.allDay"):ui::DateTimePicker::TimeText(e.startMinutes);
+            auto timing=n.detail;
+            if(subscribed&&!e.allDay&&e.endMinutes>e.startMinutes)
+                timing+=L" – "+ui::DateTimePicker::TimeText(e.endMinutes);
+            n.tooltip=n.text+L"\n"+Wide(e.date)+L" · "+timing;
+            n.accessibilityLabel=n.text+L" · "+Wide(e.date)+L" · "+timing;
+            if(!e.subscriptionName.empty())
+            {
+                const auto source=std::wstring(_LW("settings.calendar.subscriptionName"))+L" · "+e.subscriptionName;
+                n.tooltip+=L"\n"+source;
+                n.accessibilityLabel+=L" · "+source;
+            }
             if(!e.notes.empty())n.tooltip+=L"\n"+Wide(e.notes);
-            n.accessibilityLabel=Wide(e.title)+L" · "+Wide(e.date)+L" · "+n.detail;
-            if(!subscribed)
+            if(subscribed)
+            {
+                if(!e.subscriptionId.empty())
+                    calendarSubscriptionTargets_.emplace(n.id,e.subscriptionId);
+            }
+            else
             {
                 calendarEvents_[n.id]=e;
                 Command(n.id,[this,id=n.id]{CalendarEventCommand(id,false);});
@@ -1892,6 +1906,17 @@ bool SystemPanelModel::CalendarEventIsSeries(std::string_view nodeId) const
 {
     const auto found=calendarEvents_.find(std::string(nodeId));
     return found!=calendarEvents_.end()&&!found->second.seriesId.empty();
+}
+bool SystemPanelModel::CalendarCanRefreshSubscription(std::string_view nodeId) const
+{
+    return !closed_&&action_==StatusBarAction::Calendar&&!CalendarEditing()&&
+        source_.calendar.refreshSubscription&&scene_.Find(nodeId)&&calendarSubscriptionTargets_.contains(nodeId);
+}
+bool SystemPanelModel::RefreshCalendarSubscription(std::string_view nodeId)
+{
+    if(!CalendarCanRefreshSubscription(nodeId))return false;
+    const auto subscriptionId=calendarSubscriptionTargets_.find(nodeId)->second;
+    return source_.calendar.refreshSubscription(subscriptionId);
 }
 bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove,bool wholeSeries)
 {

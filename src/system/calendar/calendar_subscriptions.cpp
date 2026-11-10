@@ -357,7 +357,13 @@ void CalendarSubscriptions::AppendEvents(std::vector<CalendarEvent>& result,
     {
         const auto begin = std::ranges::lower_bound(source.events, from, {}, &CalendarEvent::date);
         const auto end = std::ranges::upper_bound(begin, source.events.end(), to, {}, &CalendarEvent::date);
+        const auto firstAdded = result.size();
         result.insert(result.end(), begin, end);
+        for (auto index = firstAdded; index < result.size(); ++index)
+        {
+            result[index].subscriptionId = source.info.id;
+            result[index].subscriptionName = source.info.name;
+        }
     }
 }
 
@@ -366,7 +372,13 @@ std::optional<CalendarEvent> CalendarSubscriptions::EventById(const std::string&
     for (const auto& source : state_->sources)
     {
         const auto event = std::ranges::find(source.events, id, &CalendarEvent::id);
-        if (event != source.events.end()) return *event;
+        if (event != source.events.end())
+        {
+            auto result = *event;
+            result.subscriptionId = source.info.id;
+            result.subscriptionName = source.info.name;
+            return result;
+        }
     }
     return std::nullopt;
 }
