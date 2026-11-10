@@ -712,13 +712,13 @@ scripts\build.bat watch wait --ticket TICKET
 
 ```bat
 scripts\build.bat resource prepare task-A --batch BATCH --revision REVISION --file lang/zh-CN.json --keys font.title,font.family
-rem 编辑返回的 patchFile，仅填写这些键的新字符串；预期旧值保存在独立登记中。
+rem 编辑返回的 patchFile，仅填写已准备的键。字符串用于新增或更新，null 用于删除。
 scripts\build.bat resource apply task-A --batch BATCH --revision REVISION --request REQUEST_ID
 scripts\build.bat resource status --request REQUEST_ID
 scripts\build.bat commit task-A -Batch BATCH -Revision REVISION -ResourceRequests REQUEST_ID,OTHER_REQUEST_ID -MessageFile C:\Temp\task-a-locales.txt
 ```
 
-prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有短时 state/Git 事务锁，重读最新文件，仅比较已声明键的旧值；不同键合并保留，相同键旧值改变拒绝，忙时重复同一 apply 请求排队。保留原键顺序、无关内容、BOM 和换行，支持新增字符串键；每个受支持语言仍需真实翻译。成功请求可重复读取同一结果；中途崩溃留写入意图，不重放不确定写入。token 过期、旧轮次、finished 编辑者和冻结批次均拒绝。准备/写入不授予任意代码文件豁免，也不撤销活跃代码声明。
+prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有短时 state/Git 事务锁，重读最新文件，仅比较已声明键的旧值；不同键合并保留，相同键旧值改变拒绝，忙时重复同一 apply 请求排队。新增或更新使用字符串，删除使用补丁中的 `null`，资源文件继续保存纯字符串键值。保留其他键顺序、无关内容、BOM 和换行。每个受支持语言仍需真实翻译。成功请求可重复读取同一结果；中途崩溃留写入意图，不重放不确定写入。token 过期、旧轮次、finished 编辑者和冻结批次均拒绝。准备/写入不授予任意代码文件豁免，也不撤销活跃代码声明。
 
 `-ResourceRequests` 与 `-Files` 分开调用，使用当前登记或冻结检查点提交所列回执仍归本任务的语言键。
 提交核对 HEAD、工作区和暂存区中的选定键，保留同文件的其他键和其他已暂存路径。选定键冲突时先处理冲突。

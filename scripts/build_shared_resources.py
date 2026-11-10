@@ -58,6 +58,9 @@ def source(path):
 def key_value(values, key):
     return {'exists': key in values, 'value': values.get(key)}
 
+def desired_value(value):
+    return {'exists': value is not None, 'value': value}
+
 def load_key_ownership(folder):
     path = folder / KEY_OWNERSHIP
     if not path.exists():
@@ -124,13 +127,13 @@ def next_key_ownership(root, owners, record, changes):
             raise ValueError('Uncommitted language key belongs to ' + previous['participant'] + ': ' + key)
         before = record['expected'][key]
         if previous:
-            if before != {'exists': True, 'value': previous['after']}:
+            if before != desired_value(previous['after']):
                 raise ValueError('Pending language key differs from its last applied value: ' + key)
             before = previous['before']
         elif before != key_value(baseline, key):
             raise ValueError('Language key has an unowned working change relative to HEAD: ' + key)
         touched.add(key)
-        if before != {'exists': True, 'value': after}:
+        if before != desired_value(after):
             current[key] = {'file': file, 'key': key, 'before': before, 'after': after,
                             **{name: record[name] for name in ('participant', 'batchId', 'editRevision', 'requestId')}}
         else:
@@ -152,13 +155,14 @@ def spans(text):
     index = skip(index+1)
     result = {}
     while text[index] != '}':
+        start = index
         key, end = decoder.raw_decode(text, index)
         index = skip(end)
         if text[index] != ':':
             raise ValueError('Invalid language JSON')
         index = skip(index+1)
         _, end = decoder.raw_decode(text, index)
-        result[key] = (index, end)
+        result[key] = (start, index, end)
         index = skip(end)
         if text[index] == '}':
             break
@@ -167,14 +171,39 @@ def spans(text):
         index = skip(index+1)
     return result, index
 
-def patch_bytes(raw, text, current, values):
+def remove_keys(text, positions, values):
+    entries = list(positions.items())
+    removals = []
+    first = None
+    for index, (key, (start, _, _)) in enumerate(entries):
+        if key in values and values[key] is None:
+            if first is None:
+                first = index
+        elif first is not None:
+            # Keep the indentation before the first removed key for this entry.
+            removals.append((entries[first][1][0], start))
+            first = None
+    if first is not None:
+        # A trailing run must also consume the separator after the last survivor.
+        start = entries[first - 1][1][2] if first else entries[0][1][0]
+        removals.append((start, entries[-1][1][2]))
+    for start, end in reversed(removals):
+        text = text[:start] + text[end:]
+    return text
+
+def patch_bytes(raw, text, values):
     positions, closing = spans(text)
+    if any(value is None for value in values.values()):
+        text = remove_keys(text, positions, values)
+        positions, closing = spans(text)
     updates = []
     additions = []
     for key, value in values.items():
+        if value is None:
+            continue
         encoded = json.dumps(value, ensure_ascii=False)
-        if key in current:
-            start, end = positions[key]
+        if key in positions:
+            _, start, end = positions[key]
             updates.append((start, end, encoded))
         else:
             additions.append(json.dumps(key, ensure_ascii=False)+': '+encoded)
@@ -182,7 +211,7 @@ def patch_bytes(raw, text, current, values):
         newline = '\r\n' if '\r\n' in text else '\n'
         indent = re.search(r'\n([ \t]*)"', text)
         indent = indent.group(1) if indent else '  '
-        insertion = max(end for _, end in positions.values()) if positions else closing
+        insertion = max(end for _, _, end in positions.values()) if positions else closing
         updates.append((insertion, insertion, (',' if positions else '')+newline+indent+(','+newline+indent).join(additions)))
     for start, end, value in sorted(updates, reverse=True):
         text = text[:start]+value+text[end:]
@@ -328,8 +357,8 @@ def run(args):
             atomic(record_path,record)
             return record
         changes = strict_json((folder/'requests'/(args.request+'.json')).read_text(encoding='utf-8-sig'))
-        if not isinstance(changes,dict) or set(changes) != set(record['expected']) or any(not isinstance(value,str) for value in changes.values()):
-            raise ValueError('Patch must contain exactly the prepared keys with string values')
+        if not isinstance(changes,dict) or set(changes) != set(record['expected']) or any(value is not None and not isinstance(value,str) for value in changes.values()):
+            raise ValueError('Patch must contain exactly the prepared keys, with a string value or null to delete')
         for key, expected in record['expected'].items():
             if (key in current) != expected['exists'] or current.get(key) != expected['value']:
                 raise ValueError('Same-key conflict: '+key+' changed since prepare; no resource was written')
@@ -342,7 +371,7 @@ def run(args):
             return record
         owners = load_key_ownership(folder)
         updated_owners = next_key_ownership(root, owners, record, effective)
-        updated = patch_bytes(raw,text,current,effective)
+        updated = patch_bytes(raw,text,effective)
         refresh_ready(root,state,batch,args.participant,record['file'])
         intent = {'requestId': args.request, 'file': record['file'],
                   'beforeHash': hashlib.sha256(raw).hexdigest(), 'afterHash': hashlib.sha256(updated).hexdigest(),

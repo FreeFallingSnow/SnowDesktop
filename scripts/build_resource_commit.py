@@ -11,7 +11,7 @@ import tempfile
 
 sys.dont_write_bytecode = True
 from build_shared_resources import (
-    COMMIT_PENDING, GIT_CHECKOUT_OVERRIDES, HEX, WRITE_PENDING, decode_source, key_value, load_key_ownership,
+    COMMIT_PENDING, GIT_CHECKOUT_OVERRIDES, HEX, WRITE_PENDING, decode_source, desired_value, key_value, load_key_ownership,
     patch_bytes, safe_file, save_key_ownership, source, strict_json,
 )
 from build_wait_tasks import atomic, lease, utc
@@ -65,13 +65,13 @@ def add_keys_to_index(root, index, relative, keys, already_staged=False):
     for entry in keys:
         key = entry['key']
         before = key_value(values, key)
-        if before == {'exists': True, 'value': entry['after']} and already_staged:
+        if before == desired_value(entry['after']) and already_staged:
             continue  # The real index may already stage this exact value.
         if before != entry['before']:
             raise ValueError('Language key differs from its expected HEAD or staged value: ' + relative + ':' + key)
         changes[key] = entry['after']
     if changes:
-        updated = patch_bytes(raw, text, values, changes)
+        updated = patch_bytes(raw, text, changes)
         oid = output(root, 'hash-object', '-w', '--stdin', data=updated).decode('ascii').strip()
         output(root, 'update-index', '--cacheinfo', mode + ',' + oid + ',' + relative, index=index)
 
@@ -80,7 +80,7 @@ def check_worktree(root, groups):
     for relative, entries in groups.items():
         values = source(safe_file(root, relative))[2]
         for entry in entries:
-            if values.get(entry['key']) != entry['after']:
+            if key_value(values, entry['key']) != desired_value(entry['after']):
                 raise ValueError('Owned key changed since apply: ' + relative + ':' + entry['key'])
 
 
