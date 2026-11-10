@@ -258,22 +258,28 @@ struct AutomationMenu::Impl
                 nextScan = source.window ? Clock::now() : Clock::time_point::max();
             }
             const auto deadline = Clock::now() + kProbeBudget;
-            const auto proceed = [&] {
-                if (stop.stop_requested() || Clock::now() >= deadline || !source.Live() ||
-                    GetForegroundWindow() != source.window) return false;
+            const auto sourceCurrent = [&] {
+                if (stop.stop_requested() || Clock::now() >= deadline || !source.Live()) return false;
                 std::lock_guard lock(mutex);
                 return revision == currentRevision;
             };
-            if (activation && activation->source == source && proceed())
+            if (activation && activation->source == source)
             {
+                const auto canInvoke = [&] {
+                    return GetForegroundWindow() == source.window && IsWindowVisible(source.window) &&
+                        !IsIconic(source.window) && sourceCurrent();
+                };
                 const auto it = std::find_if(entries.begin(), entries.end(),
                     [&](const Entry& entry) { return entry.heading == activation->heading && entry.heading.enabled; });
-                if (it != entries.end()) InvokeEntry(*it, source, proceed);
+                if (it != entries.end()) InvokeEntry(*it, source, canInvoke);
             }
             if (!source.window || Clock::now() < nextScan) continue;
-            auto found = Discover(automation.Get(), walker.Get(), source, edge, proceed);
-            nextScan = Clock::now() + (found.empty() ? kMissingMenuInterval : kRefreshInterval);
-            if (!proceed()) continue;
+            auto found = Discover(automation.Get(), walker.Get(), source, edge, sourceCurrent);
+            // Some providers hide menu controls while inactive. Keep the known
+            // entries for the selected window and recheck them on activation.
+            const bool retain = found.empty() && !entries.empty() && GetForegroundWindow() != source.window;
+            nextScan = Clock::now() + (found.empty() && !retain ? kMissingMenuInterval : kRefreshInterval);
+            if (retain || !sourceCurrent()) continue;
             Snapshot result;
             if (!found.empty()) result.source = source;
             for (std::size_t i = 0; i < found.size(); ++i)

@@ -1388,16 +1388,18 @@ struct StatusBar::Impl
             std::optional<ApplicationMenuTarget> applicationMenu;
             if (action == StatusBarAction::ForegroundAppMenu)
             {
+                owner.RefreshForegroundApp(hwnd);
+                const auto& source = owner.foregroundMenu.source;
                 if (!owner.settings.foregroundAppName || !owner.settings.foregroundAppMenus ||
                     dataSnapshot.foregroundMenuRevision != owner.foregroundMenuRevision ||
-                    !owner.foregroundMenu.source.CanInteract()) return;
+                    !owner.displayedApp.Matches(source.window, source.process) || !source.Live()) return;
                 const auto position = items[*index].applicationMenuPosition;
                 const auto& headings = owner.foregroundMenu.headings;
                 const auto heading = std::find_if(headings.begin(), headings.end(), [&](const auto& item) {
                     return position && item.position == *position && item.enabled;
                 });
                 if (heading == headings.end()) return;
-                applicationMenu = ApplicationMenuTarget{owner.foregroundMenu.source, *heading};
+                applicationMenu = ApplicationMenuTarget{source, *heading};
             }
             UpdateInteraction([&] {
                 CancelTrayMenu();
@@ -1405,7 +1407,15 @@ struct StatusBar::Impl
                 interaction.PrepareActionHover(items, index, context, [this] { ClearHover(); });
             });
             auto onActivated = owner.activate;
-            onActivated(action, hwnd, anchor, std::move(applicationMenu));
+            const HWND activationWindow = hwnd;
+            if (applicationMenu)
+            {
+                const auto& source = applicationMenu->source;
+                // Only a click on a validated menu heading brings its background window forward.
+                if (!source.Live() || !IsOpenAppWindow(source.window, source.process)) return;
+                if (!source.CanInteract() && !SetForegroundWindow(source.window)) return;
+            }
+            onActivated(action, activationWindow, anchor, std::move(applicationMenu));
         }
         bool TrayMouse(UINT message, POINT point)
         {
@@ -1954,21 +1964,14 @@ struct StatusBar::Impl
         nextBackgroundAppSearch = 0;
         ClearForegroundMenu();
     }
-    void RefreshBackgroundApp(bool retainMenu)
+    void RefreshBackgroundApp()
     {
         if (IsOpenAppWindow(lastForegroundApp))
         {
             if (!displayedApp.Matches(lastForegroundApp.window, lastForegroundApp.process))
-            {
                 displayedApp = lastForegroundApp;
-                ClearForegroundMenu();
-            }
-            else if (!retainMenu || !settings.foregroundAppMenus ||
-                (foregroundMenu.source.window && !foregroundMenu.source.Live()))
-                ClearForegroundMenu();
             return;
         }
-        ClearForegroundMenu();
         if (IsOpenAppWindow(displayedApp)) return;
         // Several bars share this observation. Throttle only the empty case
         // so a window that was just minimized or closed is replaced promptly.
@@ -1977,20 +1980,14 @@ struct StatusBar::Impl
         nextBackgroundAppSearch = GetTickCount64() + 1000;
         if (!displayedApp.window) displayedApp.name = kStatusBarDesktopAppName;
     }
-    void RefreshForegroundApp(HWND receiver = nullptr)
+    void RefreshDisplayedApp()
     {
-        if (!settings.foregroundAppName)
-        {
-            ClearForegroundApp();
-            return;
-        }
         const auto window = GetForegroundWindow();
         DWORD process = 0;
         if (window) GetWindowThreadProcessId(window, &process);
         if (!IsOpenAppWindow(window, process))
         {
-            const bool hostInteraction = process == GetCurrentProcessId() || (!window && applicationMenuOpen);
-            RefreshBackgroundApp(hostInteraction);
+            RefreshBackgroundApp();
             return;
         }
         if (!lastForegroundApp.Matches(window, process))
@@ -1998,24 +1995,35 @@ struct StatusBar::Impl
             auto name = ForegroundAppName(window, process);
             if (name.empty())
             {
-                RefreshBackgroundApp(false);
+                RefreshBackgroundApp();
                 return;
             }
             lastForegroundApp = {window, process, std::move(name)};
         }
         if (!displayedApp.Matches(window, process) || displayedApp.name != lastForegroundApp.name)
             displayedApp = lastForegroundApp;
-        if (!settings.foregroundAppMenus)
+    }
+    void RefreshForegroundApp(HWND receiver = nullptr)
+    {
+        if (!settings.foregroundAppName)
+        {
+            ClearForegroundApp();
+            return;
+        }
+        RefreshDisplayedApp();
+        if (!settings.foregroundAppMenus || !displayedApp.window)
         {
             ClearForegroundMenu();
             return;
         }
-        auto menu = status_bar_application_menu::Read(window);
+        const auto& source = foregroundMenu.source;
+        if (applicationMenuOpen && displayedApp.Matches(source.window, source.process) && source.Live()) return;
+        auto menu = status_bar_application_menu::Read(displayedApp.window);
         if (menu.headings.empty())
         {
             if (!automationMenu)
                 automationMenu = std::make_unique<status_bar_application_menu::AutomationMenu>(kApplicationMenuReady);
-            menu = automationMenu->Refresh(window, receiver);
+            menu = automationMenu->Refresh(displayedApp.window, receiver);
         }
         else if (automationMenu) automationMenu->Refresh(nullptr);
         UpdateForegroundMenu(std::move(menu));
