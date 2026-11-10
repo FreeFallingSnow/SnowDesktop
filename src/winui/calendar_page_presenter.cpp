@@ -519,10 +519,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             muxc::ContentDialog editorDialog;
             dialog = editorDialog;
             editorDialog.XamlRoot(root.XamlRoot());
-            const auto title = L(adding ? "settings.calendar.subscriptionAdd" :
+            const auto dialogTitle = L(adding ? "settings.calendar.subscriptionAdd" :
                 removing ? "settings.calendar.subscriptionRemove" : "settings.calendar.subscriptionEdit");
-            editorDialog.Title(winrt::box_value(title));
-            editorDialog.PrimaryButtonText(adding || removing ? title : L("app.settings.apply"));
+            editorDialog.Title(winrt::box_value(dialogTitle));
+            editorDialog.PrimaryButtonText(adding || removing ? dialogTitle : L("app.settings.apply"));
             editorDialog.CloseButtonText(L("app.settings.cancel"));
             editorDialog.DefaultButton(removing ? muxc::ContentDialogButton::Close : muxc::ContentDialogButton::Primary);
             if (!removing)
