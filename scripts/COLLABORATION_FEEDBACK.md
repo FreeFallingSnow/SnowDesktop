@@ -227,6 +227,8 @@
 
 ### CF-018 固定内存估算限制编译并行且缺少动态调整
 
+- **冻结队列的内存申报（2026-11-10）**：Task `calendar-ics-mixed-dns-20261110` 通过 `ready-and-wait` 提交批次 `a6e4c11a3bd047aca4319cdfbbf64449` 修订 0、Run `4fbc0fe964244421b9910adcd9f373b6`。产品仅改动一个 HTTP 实现文件。默认申报 18 CPU / 8704 MiB，Run 的 `resourceAdmission` 记录系统余量 4027 MiB、排队原因 `memory-headroom`。确认仅本任务参与且尚未开始编译后执行 `run cancel`，原回执保留 `cancelled`。对该回执执行 `repair` 返回 `Repair requires a failed/invalidated/interrupted saved attempt, never a live frozen batch.`。同 Task 通过 `begin` 在批次 `ac30398eb4534399b5ad96f79d9c910d` 修订 0 重新认领，按 2 CPU / 2048 MiB 申报。命令边界的动态并发尚未运行，冻结队列仍须通过初始预算准入。后续评估排队前能否依据实际变更预估更低预算，或明确文档化取消后重开流程。未为记录另启构建，额外耗时未单独测量。
+
 - **发现时间与来源**：2026-11-04，CLI / Codex；来源 Task、批次、Run 同CF-017，记录 Task `adaptive-build-parallelism-feedback-20261104`。用户在了解本轮资源配置后指出内存计算过于保守，并要求登记动态并行建议；与CF-009的小范围工具默认申报问题分别跟踪。
 - **源码确认**：`scripts/build_entry.ps1` 的 `Get-CompileResourceJobs` 统一使用 `min(cpuSlots, max(1, floor((memoryMiB - 1024) / 2048)))`；普通测试源码、WinUI和重型模板未在此区分。`Get-DefaultResourceRequest` 根据提交时可用内存计算申报，扣除系统余量后再留25%；各构建命令从冻结预算计算并行度，未按后续可用内存动态调整。`scripts/build_telemetry.ps1` 在Visual Studio入口传入 `--parallel 1`、`UseMultiToolTask=true` 和上述 `MultiProcMaxCount`，覆盖预设项目并行及缓存中的编译默认值。
 - **本轮实测**：24逻辑处理器，申报18 CPU槽、3584 MiB内存，系统余量4027 MiB；公式得到1路编译，MSBuild采集确认单节点。本轮测试目标构建346.68秒、实际编译39个单元；其中 `SnowDesktopBehaviorTests` 的5个编译单元耗时137.19秒，链接14.87秒。构建尚未结束时的进程组采样峰值为5183995904字节，约4.83 GiB，超过3.5 GiB申报；记录为 `memoryBudgetMode=advisory`，没有内存硬上限。证据为原Run请求/状态、`.stages.*.jsonl`、`.msbuild.*.jsonl`、`.resources.json`及批次 `.log`，不为反馈另跑构建。
