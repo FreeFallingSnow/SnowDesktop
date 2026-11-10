@@ -1618,19 +1618,26 @@ void SystemPanelModel::Calendar()
         const auto& [agendaDate,events]=agenda[offsetDay];if(agendaDate.empty())continue;
         if(offsetDay&&events.empty())continue;
         if(offsetDay){auto& n=Add("calendar.agenda:"+agendaDate,ui::Role::Text,Rect(agendaLeft,y,agendaWidth,28),Wide(agendaDate));n.fontSize=12;n.secondary=true;y+=32;}
-        if(events.empty()&&hasEvents){Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,40),_LW("settings.calendar.empty")).fontSize=12;y+=48;}
+        if(events.empty()&&hasEvents){Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,40),_LW("statusBar.calendarEmpty")).fontSize=12;y+=48;}
         for(const auto& e:events)
         {
             wchar_t when[32]{};swprintf_s(when,L"%02d:%02d",e.startMinutes/60,e.startMinutes%60);
-            auto& n=Add("event:"+agendaDate+":"+e.id,ui::Role::ListItem,Rect(agendaLeft,y,agendaWidth,56),Wide(e.title));
+            const bool subscribed = e.id.starts_with(calendar::SubscriptionEventIdPrefix);
+            const auto bounds = subscribed ? Rect(agendaLeft+12,y,agendaWidth-24,56) : Rect(agendaLeft,y,agendaWidth,56);
+            auto& n=Add((subscribed ? "subscription-event:" : "event:")+agendaDate+":"+e.id,
+                subscribed ? ui::Role::Text : ui::Role::ListItem,bounds,Wide(e.title));
             n.detail=e.allDay?_LW("settings.calendar.allDay"):when;n.tooltip=Wide(e.title)+L"\n"+Wide(e.date)+L" · "+n.detail;
             if(!e.notes.empty())n.tooltip+=L"\n"+Wide(e.notes);
             n.accessibilityLabel=Wide(e.title)+L" · "+Wide(e.date)+L" · "+n.detail;
-            calendarEvents_[n.id]=e;
-            Command(n.id,[this,id=n.id]{CalendarEventCommand(id,false);});y+=64;
+            if(!subscribed)
+            {
+                calendarEvents_[n.id]=e;
+                Command(n.id,[this,id=n.id]{CalendarEventCommand(id,false);});
+            }
+            y+=64;
         }
     }
-    if(!hasEvents){auto& empty=Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,48),_LW("settings.calendar.empty"));empty.fontSize=12;empty.centered=empty.wrap=true;y+=two?48.f:104.f;}
+    if(!hasEvents){auto& empty=Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,48),_LW("statusBar.calendarEmpty"));empty.fontSize=12;empty.centered=empty.wrap=true;y+=two?48.f:104.f;}
     // Keep month navigation and the day grid stationary when the
     // full month fits. Short/narrow viewports retain one accessible scroll flow.
     bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaStart:0;

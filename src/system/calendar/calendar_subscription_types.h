@@ -6,6 +6,8 @@
 namespace snowdesktop::calendar
 {
 
+inline constexpr char SubscriptionEventIdPrefix[] = "ics-";
+
 enum class SubscriptionStatus : std::uint8_t { Pending, Current, Failed };
 enum class SubscriptionAction : std::uint8_t { Add, Refresh, Remove };
 enum class SubscriptionResult : std::uint8_t

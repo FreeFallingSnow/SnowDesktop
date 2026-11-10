@@ -239,7 +239,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 });
             }, snowdesktop::SystemCalendarActions{
                 [this](const std::string& date) {
-                    return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date) :
+                    return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date, true) :
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
                 },
                 [this] {
@@ -286,7 +286,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         return widgetEngine_->RuntimeCalendarSeriesRemove(id,revision);
                     }
                 }, [this](const std::string& from,const std::string& to) {
-                    return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to):
+                    return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to,true):
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
                 }, [this](const std::string& from,const std::string& to) {
                     return widgetEngine_?widgetEngine_->RuntimeCalendarAnnotations(from,to):

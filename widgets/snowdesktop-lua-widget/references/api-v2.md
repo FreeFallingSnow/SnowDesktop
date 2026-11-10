@@ -2705,8 +2705,8 @@ ID，应用重启后会绑定新的 Lua VM generation，错过不超过 24 小�
 create/update 共用 `title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`；
 update 另需宿主事件 `id` 和正整数 `expectedRevision`，remove 只接受 `id`。提醒值
 限定为 `-1/0/5/15/30/60/1440`，日期必须是有效 `YYYY-MM-DD`，文本和时间范围在
-进入日历服务前完成边界检查。新增和更新不要求手势；删除必须从直接指针动作或菜单
-命令的可信调用栈启动：
+进入日历服务前完成边界检查。宿主对 ICS 订阅日程的更新和删除返回 `read_only`。
+新增和更新不要求手势；删除必须从直接指针动作或菜单命令的可信调用栈启动。
 
 系列任务为 `calendar.series.create`、`calendar.series.update`、
 `calendar.series.remove`，要求 `calendar.write` 和

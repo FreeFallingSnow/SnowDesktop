@@ -36,8 +36,14 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::TextBlock subscriptionsHeading;
     muxc::InfoBar subscriptionsFeedback;
     muxc::ListView subscriptionList;
-    muxc::HyperlinkButton addSubscription, refreshSubscription, removeSubscription;
+    muxc::HyperlinkButton addSubscription;
     std::vector<calendar::SubscriptionInfo> subscriptions;
+    struct SubscriptionRow
+    {
+        SettingRow setting;
+        muxc::HyperlinkButton refresh;
+    };
+    std::vector<SubscriptionRow> subscriptionRows;
     muxc::TextBox title, notes;
     muxc::CalendarDatePicker date;
     muxc::CalendarDatePicker until, occurrenceDate;
@@ -355,43 +361,12 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         subscriptionsCard.Padding({0, 0, 0, 0});
         content.Spacing(0);
         subscriptionList.MaxHeight(256);
-        subscriptionList.SelectionMode(muxc::ListViewSelectionMode::Single);
+        subscriptionList.SelectionMode(muxc::ListViewSelectionMode::None);
         subscriptionList.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
         mux::Automation::AutomationProperties::SetAutomationId(subscriptionList, L"CalendarSubscriptions");
         mux::Automation::AutomationProperties::SetAutomationId(addSubscription, L"CalendarAddSubscription");
         content.Children().Append(subscriptionList);
-        muxc::StackPanel commands;
-        commands.Orientation(muxc::Orientation::Horizontal);
-        commands.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        commands.Margin({12, 4, 12, 8});
-        presenter_controls::ConfigureSettingsHeadingLink(refreshSubscription);
-        presenter_controls::ConfigureSettingsHeadingLink(removeSubscription);
-        commands.Children().Append(refreshSubscription);
-        commands.Children().Append(removeSubscription);
-        content.Children().Append(commands);
-
-        const auto selection = subscriptionList.SelectionChanged([this](const auto&, const auto&) {
-            UpdateSubscriptionButtons();
-        });
-        revoke.push_back([list = subscriptionList, selection] { list.SelectionChanged(selection); });
-        Click(addSubscription, [this] { EditSubscription(true); });
-        Click(removeSubscription, [this] { EditSubscription(false); });
-        Click(refreshSubscription, [this] {
-            if (const auto* selected = SelectedSubscription())
-                ApplySubscription({calendar::SubscriptionAction::Refresh, selected->id, {}, {}});
-        });
-    }
-    const calendar::SubscriptionInfo* SelectedSubscription() const
-    {
-        const auto index = subscriptionList.SelectedIndex();
-        return index >= 0 && static_cast<std::size_t>(index) < subscriptions.size()
-            ? &subscriptions[static_cast<std::size_t>(index)] : nullptr;
-    }
-    void UpdateSubscriptionButtons()
-    {
-        const auto* selected = SelectedSubscription();
-        refreshSubscription.IsEnabled(selected && selected->status != calendar::SubscriptionStatus::Pending);
-        removeSubscription.IsEnabled(selected != nullptr);
+        Click(addSubscription, [this] { EditSubscription(); });
     }
     static void AppendListRow(const muxc::ListView& target, const std::wstring& name, const std::wstring& details)
     {
@@ -413,22 +388,59 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         item.Content(information);
         target.Items().Append(item);
     }
-    void RenderSubscriptions(std::string_view selectedId)
+    void UpdateSubscriptionRow(SubscriptionRow& row, const calendar::SubscriptionInfo& source)
+    {
+        const auto key = source.status == calendar::SubscriptionStatus::Pending
+            ? "settings.calendar.subscriptionPending"
+            : source.status == calendar::SubscriptionStatus::Current ? "settings.calendar.subscriptionCurrent"
+            : source.hasCache ? "settings.calendar.subscriptionCached" : "settings.calendar.subscriptionFailed";
+        row.setting.SetText(source.name, L(key));
+        row.refresh.IsEnabled(source.status != calendar::SubscriptionStatus::Pending);
+    }
+    void RenderSubscriptions()
     {
         subscriptionList.Items().Clear();
-        int index = -1;
+        subscriptionRows.clear();
+        const auto weak = weak_from_this();
+        const auto refreshLabel = L("settings.calendar.refresh");
+        const auto removeLabel = L("settings.calendar.subscriptionRemove");
         for (const auto& source : subscriptions)
         {
-            if (source.id == selectedId) index = static_cast<int>(subscriptionList.Items().Size());
-            const auto key = source.status == calendar::SubscriptionStatus::Pending
-                ? "settings.calendar.subscriptionPending"
-                : source.status == calendar::SubscriptionStatus::Current ? "settings.calendar.subscriptionCurrent"
-                : source.hasCache ? "settings.calendar.subscriptionCached" : "settings.calendar.subscriptionFailed";
-            AppendListRow(subscriptionList, source.name, L(key));
+            auto& row = subscriptionRows.emplace_back();
+            muxc::HyperlinkButton removeLink;
+            presenter_controls::ConfigureSettingsHeadingLink(row.refresh);
+            presenter_controls::ConfigureSettingsHeadingLink(removeLink);
+            row.refresh.Content(winrt::box_value(refreshLabel));
+            removeLink.Content(winrt::box_value(removeLabel));
+            mux::Automation::AutomationProperties::SetName(row.refresh, refreshLabel + L" · " + source.name);
+            mux::Automation::AutomationProperties::SetName(removeLink, removeLabel + L" · " + source.name);
+            row.refresh.Click([weak, id = source.id](const auto&, const auto&) {
+                if (const auto self = weak.lock())
+                    self->ApplySubscription({calendar::SubscriptionAction::Refresh, id, {}, {}});
+            });
+            removeLink.Click([weak, target = source](const auto&, const auto&) {
+                if (const auto self = weak.lock())
+                    self->EditSubscription(target);
+            });
+
+            muxc::StackPanel commands;
+            commands.Orientation(muxc::Orientation::Horizontal);
+            commands.Spacing(8);
+            commands.Children().Append(row.refresh);
+            commands.Children().Append(removeLink);
+            row.setting.Initialize(commands, 0.0);
+            row.setting.SetCompactEditor();
+            row.setting.SetControlAlignment(mux::HorizontalAlignment::Right);
+            presenter_controls::StyleSettingsSubrow(row.setting.root, subscriptionRows.size() == 1, 0.0);
+            UpdateSubscriptionRow(row, source);
+            muxc::ListViewItem item;
+            item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            item.IsTabStop(false);
+            item.Padding({0});
+            item.Content(row.setting.root);
+            subscriptionList.Items().Append(item);
         }
-        subscriptionList.SelectedIndex(index);
         ShowListOrEmpty(subscriptionsCard, subscriptionsEmpty, !subscriptions.empty());
-        UpdateSubscriptionButtons();
     }
     void RefreshSubscriptions()
     {
@@ -439,10 +451,17 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             auto result = actions.subscriptions(generation);
             if (!result || *result == subscriptions) return;
-            const auto* selected = SelectedSubscription();
-            const auto selectedId = selected ? selected->id : std::string{};
+            const bool sameSources = std::ranges::equal(subscriptions, *result, [](const auto& first, const auto& second) {
+                return first.id == second.id && first.name == second.name;
+            });
+            if (sameSources)
+            {
+                for (std::size_t index = 0; index < result->size(); ++index)
+                    if (subscriptions[index] != (*result)[index])
+                        UpdateSubscriptionRow(subscriptionRows[index], (*result)[index]);
+            }
             subscriptions = std::move(*result);
-            RenderSubscriptions(selectedId);
+            if (!sameSources) RenderSubscriptions();
         }
         catch (...) { }
     }
@@ -459,6 +478,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void ApplySubscription(calendar::SubscriptionCommand command)
     {
+        if (!active || closed || !hasSnapshot || !actions.subscription) return;
         try
         {
             const auto result = actions.subscription(generation, std::move(command));
@@ -473,14 +493,12 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             subscriptionsFeedback.IsOpen(true);
         }
     }
-    winrt::fire_and_forget EditSubscription(bool adding)
+    winrt::fire_and_forget EditSubscription(std::optional<calendar::SubscriptionInfo> target = std::nullopt)
     {
         const auto lifetime = shared_from_this();
-        if (dialog || !actions.subscription) co_return;
-        const auto* selected = SelectedSubscription();
-        if (!adding && !selected) co_return;
+        if (!active || closed || !hasSnapshot || dialog || !actions.subscription) co_return;
+        const bool adding = !target;
         const auto session = generation;
-        const auto target = selected ? *selected : calendar::SubscriptionInfo{};
         try
         {
             muxc::ContentDialog editorDialog;
@@ -524,7 +542,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 });
             }
             else
-                editorDialog.Content(winrt::box_value(target.name));
+                editorDialog.Content(winrt::box_value(target->name));
             const auto answer = co_await editorDialog.ShowAsync();
             if (dialog == editorDialog) dialog = nullptr;
             if (closed || !active || generation != session || answer != muxc::ContentDialogResult::Primary || !actions.subscription)
@@ -535,7 +553,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 RefreshSubscriptions();
             }
             else
-                ApplySubscription({calendar::SubscriptionAction::Remove, target.id, {}, {}});
+                ApplySubscription({calendar::SubscriptionAction::Remove, target->id, {}, {}});
         }
         catch (...)
         {
@@ -573,11 +591,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         subscriptionsHeading.Text(L("settings.calendar.subscriptions"));
         subscriptionsEmpty.Text(L("settings.calendar.subscriptionEmpty"));
         addSubscription.Content(winrt::box_value(L("settings.calendar.subscriptionAdd")));
-        refreshSubscription.Content(winrt::box_value(L("settings.calendar.refresh")));
-        removeSubscription.Content(winrt::box_value(L("settings.calendar.subscriptionRemove")));
-        const auto* selected = SelectedSubscription();
-        const auto selectedId = selected ? selected->id : std::string{};
-        RenderSubscriptions(selectedId);
+        RenderSubscriptions();
         titleRow.SetText(L("settings.calendar.title"));
         dateRow.SetText(L("settings.calendar.date"));
         multipleDatesRow.SetText(L("settings.calendar.chooseDates"));

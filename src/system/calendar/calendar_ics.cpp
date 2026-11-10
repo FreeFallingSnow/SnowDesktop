@@ -192,7 +192,7 @@ std::string Id(std::string_view source, std::string_view uid, std::string_view o
             static_cast<ULONG>(key.size()), digest, static_cast<ULONG>(sizeof(digest))) < 0)
         throw InvalidFeed{};
     constexpr char hex[] = "0123456789abcdef";
-    std::string id = "ics-";
+    std::string id = SubscriptionEventIdPrefix;
     for (const unsigned char byte : digest)
     {
         id.push_back(hex[byte >> 4]);

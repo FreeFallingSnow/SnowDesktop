@@ -564,7 +564,7 @@ bool CalendarService::ValidateAndNormalize(
 
 std::optional<CalendarEvent> CalendarService::EventById(const std::string& id, bool includeSubscriptions) const
 {
-    if (includeSubscriptions && id.starts_with("ics-"))
+    if (includeSubscriptions && id.starts_with(SubscriptionEventIdPrefix))
         return subscriptions_->EventById(id);
     for (const auto& event : events_)
         if (event.id == id) return event;
@@ -699,6 +699,8 @@ MutationResult CalendarService::Update(
     int expectedRevision,
     CalendarEvent event)
 {
+    if (id.starts_with(SubscriptionEventIdPrefix))
+        return { false, id, 0, "read_only" };
     if (const auto separator = id.find('/'); separator != std::string::npos)
     {
         for (auto& series : series_)
@@ -777,6 +779,8 @@ MutationResult CalendarService::Update(
 MutationResult CalendarService::Remove(
     const std::string& id, int expectedRevision)
 {
+    if (id.starts_with(SubscriptionEventIdPrefix))
+        return { false, id, 0, "read_only" };
     if (const auto separator = id.find('/'); separator != std::string::npos)
     {
         for (auto& series : series_)

@@ -150,7 +150,7 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
         events = std::move(next); agenda.Children().Clear(); dateHeading.Text(DateLabel(selected, L"month.full day"));
         if (events.empty())
         {
-            auto empty = Text(_LW("settings.calendar.empty")); empty.Opacity(.65); empty.Margin({0, 8, 0, 8});
+            auto empty = Text(_LW("statusBar.calendarEmpty")); empty.Opacity(.65); empty.Margin({0, 8, 0, 8});
             agenda.Children().Append(empty);
         }
         for (const auto& event : events)
