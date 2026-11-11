@@ -129,7 +129,7 @@ end
 local function drawViewSwitch(x, y, hitSize, unit, colors)
     local key = "screenTime.switch"
     local focused = widget.hasFeature("interaction.keyboard") and interaction.isFocused(key)
-    local size = math.min(28 * unit, 0.75 * hitSize)
+    local size = math.min(28 * unit, 0.9 * hitSize)
     local buttonX, buttonY = x + hitSize - size, y + (hitSize - size) / 2
     unit = math.min(0.9 * unit, size / 25)
     draw.rect(buttonX, buttonY, size, size, colors.primary, 6 * unit, focused and 0.25 or 0.12)
@@ -166,16 +166,16 @@ end
 local function drawReport(data, width, height, colors)
     local unit = math.max(0.72, math.min(1.5, width / 216, height / 156))
     local pad = math.min(14 * unit, width / 10)
-    local topPad = math.min(12 * unit, height / 8)
+    local topPad = math.min(8 * unit, height / 8)
     local bottomPad = math.min(8 * unit, height / 8)
     local innerWidth = width - 2 * pad
     local usableHeight = height - topPad - bottomPad
-    local gap = 8 * unit
+    local sectionGap = 6 * unit
     local contentRowHeight = widget.hasFeature("ui.semanticMetrics.rowUnit")
         and ui.metrics().layoutRowHeight or 28
-    local headerHeight = math.min(2 * contentRowHeight, usableHeight)
+    local headerHeight = math.min(1.5 * contentRowHeight, usableHeight)
     local switchSize = math.min(headerHeight, innerWidth / 3)
-    local valueWidth = innerWidth - switchSize - gap
+    local valueWidth = innerWidth - switchSize - 8 * unit
     local status
     if not data then
         status = l10n.tr("lua_widget.screen_time.waiting")
@@ -192,14 +192,14 @@ local function drawReport(data, width, height, colors)
     local rowContentHeight = math.max(26 * unit, trackOffset + 4 * unit)
     local rowMinimum = rowContentHeight + 3 * unit
 
-    local desired = bold and headerHeight * 0.75 or math.min(12 * unit, headerHeight * 0.75)
+    local desired = bold and headerHeight * 0.9 or math.min(12 * unit, headerHeight * 0.75)
     local fullLine = draw.measureText(value, desired, 0, bold)
     local measuredWidth = math.max(1, valueWidth - 2 * unit)
     local font = desired * math.min(1, measuredWidth / math.max(1, fullLine.width),
         headerHeight / math.max(1, fullLine.height))
     local textHeight = draw.measureText(value, font, 0, bold).height
     if headerHeight + statusHeight > usableHeight then statusHeight = 0 end
-    local available = usableHeight - headerHeight - statusHeight - gap
+    local available = usableHeight - headerHeight - statusHeight - sectionGap
     local columnGap = 20 * unit
     local columns = 1
     if width / height >= 1.45 then
@@ -223,7 +223,7 @@ local function drawReport(data, width, height, colors)
         textLine(status, pad, y, innerWidth, 12 * unit, colors.primary, false, 0.84)
         y = y + statusHeight
     end
-    y = y + gap
+    y = y + sectionGap
     if hasChart then
         drawChart(data.hours or {}, pad, y, innerWidth, available, unit, colors)
     end
