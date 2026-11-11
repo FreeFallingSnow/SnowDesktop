@@ -2893,5 +2893,9 @@
   "settings.screenTime.clear": "Verlauf löschen",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Taskleiste beim Öffnen von Start mit der Windows-Taste ausgeblendet lassen",
   "settings.screenTime.clearAction": "Löschen",
-  "settings.screenTime.durationSeconds": "{0} Sek."
+  "settings.screenTime.durationSeconds": "{0} Sek.",
+  "settings.screenTime.overview": "Nutzungsübersicht",
+  "settings.screenTime.appUsage": "App-Nutzung",
+  "settings.screenTime.recentWeek": "Letzte 7 Tage",
+  "settings.screenTime.emptyWeek": "Keine Aktivität in den letzten 7 Tagen"
 }

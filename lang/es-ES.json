@@ -2893,5 +2893,9 @@
   "settings.screenTime.clear": "Borrar historial",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Mantener oculta la barra de tareas al abrir Inicio con la tecla Windows",
   "settings.screenTime.clearAction": "Borrar",
-  "settings.screenTime.durationSeconds": "{0} s"
+  "settings.screenTime.durationSeconds": "{0} s",
+  "settings.screenTime.overview": "Resumen de uso",
+  "settings.screenTime.appUsage": "Uso de aplicaciones",
+  "settings.screenTime.recentWeek": "Últimos 7 días",
+  "settings.screenTime.emptyWeek": "No hay actividad en los últimos 7 días"
 }

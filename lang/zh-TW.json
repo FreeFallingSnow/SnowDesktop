@@ -2893,5 +2893,9 @@
   "settings.screenTime.clear": "清除記錄",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "使用 Win 鍵開啟時保持工作列隱藏",
   "settings.screenTime.clearAction": "清除",
-  "settings.screenTime.durationSeconds": "{0} 秒"
+  "settings.screenTime.durationSeconds": "{0} 秒",
+  "settings.screenTime.overview": "使用概覽",
+  "settings.screenTime.appUsage": "應用程式使用時間",
+  "settings.screenTime.recentWeek": "近 7 天",
+  "settings.screenTime.emptyWeek": "近 7 天沒有記錄"
 }

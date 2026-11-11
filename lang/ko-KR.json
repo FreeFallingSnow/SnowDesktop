@@ -2893,5 +2893,9 @@
   "settings.screenTime.clear": "기록 지우기",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Windows 키로 시작 메뉴를 열 때 작업 표시줄 숨김 유지",
   "settings.screenTime.clearAction": "지우기",
-  "settings.screenTime.durationSeconds": "{0}초"
+  "settings.screenTime.durationSeconds": "{0}초",
+  "settings.screenTime.overview": "사용 현황",
+  "settings.screenTime.appUsage": "앱 사용 시간",
+  "settings.screenTime.recentWeek": "최근 7일",
+  "settings.screenTime.emptyWeek": "최근 7일 동안 기록이 없습니다"
 }

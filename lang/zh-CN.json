@@ -2893,5 +2893,9 @@
   "app.settings.widgets_permission_screen_time_read": "读取屏幕使用时间",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "使用 Win 键打开时保持任务栏隐藏",
   "settings.screenTime.clearAction": "清除",
-  "settings.screenTime.durationSeconds": "{0} 秒"
+  "settings.screenTime.durationSeconds": "{0} 秒",
+  "settings.screenTime.overview": "使用概览",
+  "settings.screenTime.appUsage": "应用用量",
+  "settings.screenTime.recentWeek": "近 7 天",
+  "settings.screenTime.emptyWeek": "近 7 天没有记录"
 }

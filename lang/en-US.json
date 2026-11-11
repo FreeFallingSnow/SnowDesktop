@@ -2893,5 +2893,9 @@
   "settings.screenTime.clear": "Clear history",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Keep the taskbar hidden when opening Start with the Windows key",
   "settings.screenTime.clearAction": "Clear",
-  "settings.screenTime.durationSeconds": "{0} sec"
+  "settings.screenTime.durationSeconds": "{0} sec",
+  "settings.screenTime.overview": "Usage overview",
+  "settings.screenTime.appUsage": "App usage",
+  "settings.screenTime.recentWeek": "Last 7 days",
+  "settings.screenTime.emptyWeek": "No activity in the last 7 days"
 }

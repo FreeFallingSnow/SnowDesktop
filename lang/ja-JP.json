@@ -2893,5 +2893,9 @@
   "settings.screenTime.clear": "記録を消去",
   "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Windows キーでスタートを開くときにタスクバーを非表示のままにする",
   "settings.screenTime.clearAction": "消去",
-  "settings.screenTime.durationSeconds": "{0} 秒"
+  "settings.screenTime.durationSeconds": "{0} 秒",
+  "settings.screenTime.overview": "使用状況の概要",
+  "settings.screenTime.appUsage": "アプリの使用時間",
+  "settings.screenTime.recentWeek": "過去7日間",
+  "settings.screenTime.emptyWeek": "過去7日間の記録はありません"
 }
