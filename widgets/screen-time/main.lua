@@ -99,7 +99,7 @@ local function drawChart(hours, x, y, width, height, unit, colors)
     end
 end
 
-local function drawApp(app, peak, x, y, width, unit, colors)
+local function drawApp(app, peak, x, y, width, unit, trackOffset, colors)
     local font = 12 * unit
     local iconSize = 24 * unit
     if app.icon then
@@ -118,7 +118,7 @@ local function drawApp(app, peak, x, y, width, unit, colors)
     textLine(tostring(app.name or ""), textX, y, trackWidth - amountWidth - 4 * unit,
         font, colors.primary, false)
     textLine(amount, x + width - amountWidth, y, amountWidth, font, colors.primary, true)
-    local trackY = y + 21 * unit
+    local trackY = y + trackOffset
     draw.rect(textX, trackY, trackWidth, 4 * unit, colors.primary, 2 * unit, 0.14)
     local fill = trackWidth * math.min(1, (tonumber(app.seconds) or 0) / peak)
     if fill > 0 then
@@ -161,10 +161,15 @@ end
 
 local function drawReport(data, width, height, colors)
     local unit = math.max(0.72, math.min(1.5, width / 216, height / 156))
-    local pad = math.min(14 * unit, width / 10, height / 8)
+    local pad = math.min(14 * unit, width / 10)
+    local topPad = math.min(12 * unit, height / 8)
+    local bottomPad = math.min(8 * unit, height / 8)
     local innerWidth = width - 2 * pad
-    local gap = 10 * unit
-    local headerHeight = math.min(38 * unit, height - 2 * pad)
+    local usableHeight = height - topPad - bottomPad
+    local gap = 8 * unit
+    local contentRowHeight = widget.hasFeature("ui.semanticMetrics.rowUnit")
+        and ui.metrics().layoutRowHeight or 28
+    local headerHeight = math.min(2 * contentRowHeight, usableHeight)
     local switchSize = math.min(headerHeight, innerWidth / 3)
     local valueWidth = innerWidth - switchSize - gap
     local status
@@ -176,38 +181,39 @@ local function drawReport(data, width, height, colors)
         status = l10n.tr("lua_widget.screen_time.empty")
     end
     local total = data and duration(data.totalSeconds)
-    local statusHeight = total and status and height - 2 * pad - headerHeight >= 19 * unit
-        and 19 * unit or 0
-
-    local available = height - 2 * pad - headerHeight - statusHeight - gap
+    local value, bold = total or status, total ~= nil
+    local statusHeight = total and status and draw.measureText(status, 12 * unit).height + 3 * unit or 0
     local apps = data and data.apps or {}
+    local trackOffset = math.max(19 * unit, draw.measureText(duration(60), 12 * unit, 0, true).height + 2 * unit)
+    local rowContentHeight = math.max(26 * unit, trackOffset + 4 * unit)
+    local rowMinimum = rowContentHeight + 3 * unit
+
+    local desired = bold and headerHeight * 0.75 or math.min(12 * unit, headerHeight * 0.75)
+    local fullLine = draw.measureText(value, desired, 0, bold)
+    local measuredWidth = math.max(1, valueWidth - 2 * unit)
+    local font = desired * math.min(1, measuredWidth / math.max(1, fullLine.width),
+        headerHeight / math.max(1, fullLine.height))
+    local textHeight = draw.measureText(value, font, 0, bold).height
+    if headerHeight + statusHeight > usableHeight then statusHeight = 0 end
+    local available = usableHeight - headerHeight - statusHeight - gap
     local columnGap = 20 * unit
     local columns = 1
     if width / height >= 1.45 then
         local fitting = math.floor((innerWidth + columnGap) / (150 * unit + columnGap))
         columns = math.max(1, math.min(3, fitting, #apps))
     end
-    local fittingRows = math.max(0, math.floor(available / (32 * unit)))
+    local fittingRows = math.max(0, math.floor(available / rowMinimum))
     local appCount = not hourly and math.min(#apps, columns * fittingRows) or 0
     local hasChart = hourly and data and (tonumber(data.totalSeconds) or 0) > 0
         and available >= 57 * unit and innerWidth >= 145 * unit
-    local y = pad
+    local y = topPad
     if switchSize > 0 then
         drawViewSwitch(width - pad - switchSize, y + (headerHeight - switchSize) / 2,
             switchSize, math.min(unit, switchSize / 25), colors)
     end
 
-    local value = total or status
-    local bold = total ~= nil
-    local desired = math.min((bold and 30 or 12) * unit, headerHeight * 0.8)
-    local measured = draw.measureText(value, desired, 0, bold)
-    local font = measured.width > 0
-        and desired * math.min(1, (valueWidth - 4 * unit) / measured.width) or desired
-    if font > 0 then
-        local lineHeight = draw.measureText(value, font, 0, bold).height
-        textLine(value, pad, y + math.max(0, (headerHeight - lineHeight) / 2), valueWidth,
-            font, colors.primary, bold)
-    end
+    local textY = y + math.max(0, (headerHeight - textHeight) / 2)
+    textLine(value, pad, textY, valueWidth, font, colors.primary, bold)
     y = y + headerHeight
     if statusHeight > 0 then
         textLine(status, pad, y, innerWidth, 12 * unit, colors.primary, false, 0.84)
@@ -221,11 +227,11 @@ local function drawReport(data, width, height, colors)
         local columnWidth = (innerWidth - (columns - 1) * columnGap) / columns
         local rows = math.ceil(appCount / columns)
         local rowHeight = math.min(48 * unit, available / rows)
-        local rowInset = (rowHeight - 28 * unit) / 2
+        local rowInset = (rowHeight - rowContentHeight) / 2
         local peak = math.max(1, tonumber(apps[1].seconds) or 0)
         for i = 0, appCount - 1 do
             drawApp(apps[i + 1], peak, pad + (i % columns) * (columnWidth + columnGap),
-                y + (i // columns) * rowHeight + rowInset, columnWidth, unit, colors)
+                y + (i // columns) * rowHeight + rowInset, columnWidth, unit, trackOffset, colors)
         end
     end
 end
