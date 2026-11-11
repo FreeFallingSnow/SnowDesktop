@@ -2899,5 +2899,8 @@
   "settings.screenTime.recentWeek": "過去7日間",
   "settings.screenTime.emptyWeek": "過去7日間の記録はありません",
   "settings.screenTime.showMoreApps": "ほかのアプリを表示",
-  "settings.screenTime.clearConfirm": "このPCのスクリーンタイム記録をすべて完全に削除しますか？"
+  "settings.screenTime.clearConfirm": "このPCのスクリーンタイム記録をすべて完全に削除しますか？",
+  "app.menu.sort_fill_gaps": "隙間を詰める",
+  "app.menu.sort_fill_horizontal": "横方向",
+  "app.menu.sort_fill_vertical": "縦方向"
 }

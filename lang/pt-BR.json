@@ -2899,5 +2899,8 @@
   "settings.screenTime.recentWeek": "Últimos 7 dias",
   "settings.screenTime.emptyWeek": "Não há atividade nos últimos 7 dias",
   "settings.screenTime.showMoreApps": "Mostrar mais aplicativos",
-  "settings.screenTime.clearConfirm": "Excluir permanentemente todos os registros de tempo de tela deste computador?"
+  "settings.screenTime.clearConfirm": "Excluir permanentemente todos os registros de tempo de tela deste computador?",
+  "app.menu.sort_fill_gaps": "Preencher espaços",
+  "app.menu.sort_fill_horizontal": "Horizontal",
+  "app.menu.sort_fill_vertical": "Vertical"
 }

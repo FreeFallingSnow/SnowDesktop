@@ -2899,5 +2899,8 @@
   "settings.screenTime.recentWeek": "Last 7 days",
   "settings.screenTime.emptyWeek": "No activity in the last 7 days",
   "settings.screenTime.showMoreApps": "Show more apps",
-  "settings.screenTime.clearConfirm": "Permanently delete all screen time records on this PC?"
+  "settings.screenTime.clearConfirm": "Permanently delete all screen time records on this PC?",
+  "app.menu.sort_fill_gaps": "Fill Gaps",
+  "app.menu.sort_fill_horizontal": "Horizontal",
+  "app.menu.sort_fill_vertical": "Vertical"
 }

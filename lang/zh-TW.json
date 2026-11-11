@@ -2899,5 +2899,8 @@
   "settings.screenTime.recentWeek": "近 7 天",
   "settings.screenTime.emptyWeek": "近 7 天沒有記錄",
   "settings.screenTime.showMoreApps": "顯示更多應用程式",
-  "settings.screenTime.clearConfirm": "永久刪除這部電腦上的所有螢幕使用時間記錄？"
+  "settings.screenTime.clearConfirm": "永久刪除這部電腦上的所有螢幕使用時間記錄？",
+  "app.menu.sort_fill_gaps": "填補空隙",
+  "app.menu.sort_fill_horizontal": "橫向",
+  "app.menu.sort_fill_vertical": "縱向"
 }

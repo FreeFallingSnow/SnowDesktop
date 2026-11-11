@@ -2899,5 +2899,8 @@
   "settings.screenTime.recentWeek": "최근 7일",
   "settings.screenTime.emptyWeek": "최근 7일 동안 기록이 없습니다",
   "settings.screenTime.showMoreApps": "앱 더 보기",
-  "settings.screenTime.clearConfirm": "이 PC의 모든 스크린 타임 기록을 영구적으로 삭제할까요?"
+  "settings.screenTime.clearConfirm": "이 PC의 모든 스크린 타임 기록을 영구적으로 삭제할까요?",
+  "app.menu.sort_fill_gaps": "빈칸 채우기",
+  "app.menu.sort_fill_horizontal": "가로",
+  "app.menu.sort_fill_vertical": "세로"
 }
