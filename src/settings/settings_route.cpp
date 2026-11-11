@@ -318,6 +318,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::AgentOperations:
     case SettingsPage::IconLibrary:
     case SettingsPage::QuickNavigation:
+    case SettingsPage::ScreenTime:
         break;
     default:
         return false;
@@ -370,6 +371,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::AgentOperations: return "agent-operations";
     case SettingsPage::IconLibrary: return "icon-library";
     case SettingsPage::QuickNavigation: return "quick-navigation";
+    case SettingsPage::ScreenTime: return "screen-time";
     }
     return "home";
 }

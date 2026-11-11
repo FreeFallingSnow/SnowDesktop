@@ -2359,8 +2359,9 @@ task.start("audio.setPlaybackMode", {playbackId=id, shuffle=true, repeatMode="li
 依赖新任务的官方社区组件，不能只凭版本号或原生控制中心可用来判断 Lua 支持。
 
 `system.openSettings` 要求 `shell.launch` 和当前可信用户手势，只接受宿主固定枚举的
-`page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization`。
-宿主把枚举映射到微软公开的固定 `ms-settings:` 页面；Lua 不能传 URI、查询参数或
+`page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization/screenTime`。
+除 `screenTime` 外，宿主把枚举映射到微软公开的固定 `ms-settings:` 页面。
+`screenTime` 打开 SnowDesktop 自己的屏幕使用时间设置页。Lua 不能传 URI、查询参数或
 任意设置页名称：
 
 ```lua

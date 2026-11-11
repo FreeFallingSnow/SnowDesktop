@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "id": "6f4c2a91-8e15-4c0a-9b37-2d5e8a1c4f60",
+  "slug": "screen-time",
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "entry": "main.lua",
+  "minHostVersion": "1.0.15.0",
+  "author": "SnowDesktop",
+  "license": "GPL-3.0-only",
+  "name": "Screen Time",
+  "nameKey": "lua_widget.screen_time.name",
+  "version": "1.0.0",
+  "description": "Shows today's foreground app usage.",
+  "descriptionKey": "lua_widget.screen_time.description",
+  "locales": {
+    "zh-CN": {
+      "lua_widget.screen_time.name": "屏幕使用时间",
+      "lua_widget.screen_time.description": "显示今天的前台应用使用时间。",
+      "lua_widget.screen_time.paused": "统计已暂停",
+      "lua_widget.screen_time.empty": "今天还没有记录",
+      "lua_widget.screen_time.waiting": "正在获取数据",
+      "lua_widget.screen_time.duration": "{0} 小时 {1} 分钟",
+      "lua_widget.screen_time.duration_minutes": "{0} 分钟"
+    },
+    "zh-TW": {
+      "lua_widget.screen_time.name": "螢幕使用時間",
+      "lua_widget.screen_time.description": "顯示今天的前景應用程式使用時間。",
+      "lua_widget.screen_time.paused": "統計已暫停",
+      "lua_widget.screen_time.empty": "今天還沒有記錄",
+      "lua_widget.screen_time.waiting": "正在取得資料",
+      "lua_widget.screen_time.duration": "{0} 小時 {1} 分鐘",
+      "lua_widget.screen_time.duration_minutes": "{0} 分鐘"
+    },
+    "en-US": {
+      "lua_widget.screen_time.name": "Screen Time",
+      "lua_widget.screen_time.description": "Shows today's foreground app usage.",
+      "lua_widget.screen_time.paused": "Tracking is paused",
+      "lua_widget.screen_time.empty": "No activity yet today",
+      "lua_widget.screen_time.waiting": "Getting data",
+      "lua_widget.screen_time.duration": "{0} h {1} min",
+      "lua_widget.screen_time.duration_minutes": "{0} min"
+    },
+    "ja-JP": {
+      "lua_widget.screen_time.name": "スクリーンタイム",
+      "lua_widget.screen_time.description": "今日の前面アプリの使用時間を表示します。",
+      "lua_widget.screen_time.paused": "集計は一時停止中です",
+      "lua_widget.screen_time.empty": "今日の記録はまだありません",
+      "lua_widget.screen_time.waiting": "データを取得しています",
+      "lua_widget.screen_time.duration": "{0} 時間 {1} 分",
+      "lua_widget.screen_time.duration_minutes": "{0} 分"
+    },
+    "ko-KR": {
+      "lua_widget.screen_time.name": "스크린 타임",
+      "lua_widget.screen_time.description": "오늘 전면 앱 사용 시간을 표시합니다.",
+      "lua_widget.screen_time.paused": "집계가 일시 중지됨",
+      "lua_widget.screen_time.empty": "오늘 기록이 아직 없습니다",
+      "lua_widget.screen_time.waiting": "데이터를 가져오는 중",
+      "lua_widget.screen_time.duration": "{0}시간 {1}분",
+      "lua_widget.screen_time.duration_minutes": "{0}분"
+    },
+    "de-DE": {
+      "lua_widget.screen_time.name": "Bildschirmzeit",
+      "lua_widget.screen_time.description": "Zeigt die heutige Nutzungszeit der Vordergrund-Apps.",
+      "lua_widget.screen_time.paused": "Erfassung angehalten",
+      "lua_widget.screen_time.empty": "Heute noch keine Einträge",
+      "lua_widget.screen_time.waiting": "Daten werden abgerufen",
+      "lua_widget.screen_time.duration": "{0} Std. {1} Min.",
+      "lua_widget.screen_time.duration_minutes": "{0} Min."
+    },
+    "fr-FR": {
+      "lua_widget.screen_time.name": "Temps d'écran",
+      "lua_widget.screen_time.description": "Affiche le temps passé aujourd'hui dans les applications au premier plan.",
+      "lua_widget.screen_time.paused": "Le suivi est en pause",
+      "lua_widget.screen_time.empty": "Aucune activité aujourd'hui",
+      "lua_widget.screen_time.waiting": "Récupération des données",
+      "lua_widget.screen_time.duration": "{0} h {1} min",
+      "lua_widget.screen_time.duration_minutes": "{0} min"
+    },
+    "es-ES": {
+      "lua_widget.screen_time.name": "Tiempo de pantalla",
+      "lua_widget.screen_time.description": "Muestra el uso de hoy de las aplicaciones en primer plano.",
+      "lua_widget.screen_time.paused": "El registro está en pausa",
+      "lua_widget.screen_time.empty": "Todavía no hay actividad hoy",
+      "lua_widget.screen_time.waiting": "Obteniendo datos",
+      "lua_widget.screen_time.duration": "{0} h {1} min",
+      "lua_widget.screen_time.duration_minutes": "{0} min"
+    },
+    "es-419": {
+      "lua_widget.screen_time.name": "Tiempo de pantalla",
+      "lua_widget.screen_time.description": "Muestra el uso de hoy de las aplicaciones en primer plano.",
+      "lua_widget.screen_time.paused": "El registro está en pausa",
+      "lua_widget.screen_time.empty": "Todavía no hay actividad hoy",
+      "lua_widget.screen_time.waiting": "Obteniendo datos",
+      "lua_widget.screen_time.duration": "{0} h {1} min",
+      "lua_widget.screen_time.duration_minutes": "{0} min"
+    },
+    "pt-BR": {
+      "lua_widget.screen_time.name": "Tempo de tela",
+      "lua_widget.screen_time.description": "Mostra o uso de hoje dos aplicativos em primeiro plano.",
+      "lua_widget.screen_time.paused": "A contagem está pausada",
+      "lua_widget.screen_time.empty": "Ainda não há atividade hoje",
+      "lua_widget.screen_time.waiting": "Obtendo dados",
+      "lua_widget.screen_time.duration": "{0} h {1} min",
+      "lua_widget.screen_time.duration_minutes": "{0} min"
+    }
+  },
+  "defaultSize": {
+    "columns": 4,
+    "rows": 3
+  },
+  "minSize": {
+    "columns": 3,
+    "rows": 2
+  },
+  "permissions": [
+    "system.screenTime.read",
+    "shell.launch"
+  ],
+  "requiredFeatures": [
+    "data.subscribe",
+    "data.system.screenTime",
+    "draw.immediate",
+    "interaction.pointerActions",
+    "interaction.region",
+    "l10n.basic",
+    "l10n.format",
+    "lifecycle.event",
+    "task.start",
+    "task.system.openSettings"
+  ]
+}

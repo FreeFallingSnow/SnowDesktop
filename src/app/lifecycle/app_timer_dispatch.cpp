@@ -700,6 +700,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kWidgetRefreshTimerId)
     {
+        ObserveScreenTime();
         UpdateDesktopIdleHide();
         // This periodic sample may restore hover after a missed mouse message,
         // but its reconcile mode still enforces the foreground-settle delay in

@@ -75,7 +75,7 @@ function(snowdesktop_configure_host target)
         SnowDesktopSearchVisibility
         comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
         advapi32 bcrypt crypt32 delayimp imm32 iphlpapi mfuuid ole32 oleacc oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
-        version wbemuuid taskschd
+        version wbemuuid taskschd wtsapi32
     )
 
     add_custom_command(TARGET ${target} POST_BUILD

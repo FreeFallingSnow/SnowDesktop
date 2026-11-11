@@ -13,6 +13,7 @@
 #include "status_bar_page_presenter.h"
 #include "general_page_presenter.h"
 #include "calendar_page_presenter.h"
+#include "screen_time_page_presenter.h"
 #include "context_menu_page_presenter.h"
 #include "home_about_page_presenter.h"
 #include "runtime_modules_page_presenter.h"
@@ -127,6 +128,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
     void SetCancelOperationCallback(CancelOperationCallback callback);
     void SetCalendarPageActions(snowdesktop::winui::CalendarPageActions actions);
+    void SetScreenTimePageActions(snowdesktop::winui::ScreenTimePageActions actions);
     void SetGeneralPageActions(
         snowdesktop::winui::GeneralPageActions actions);
     void SetPersonalizationPageActions(
@@ -337,6 +339,9 @@ private:
     snowdesktop::winui::GeneralPageActions generalPageActions_;
     snowdesktop::winui::CalendarPageActions calendarPageActions_;
     std::unique_ptr<snowdesktop::winui::CalendarPagePresenter> calendarPage_;
+    bool screenTimeEnabled_ = true;
+    snowdesktop::winui::ScreenTimePageActions screenTimePageActions_;
+    std::unique_ptr<snowdesktop::winui::ScreenTimePagePresenter> screenTimePage_;
     std::unique_ptr<snowdesktop::winui::ContextMenuPagePresenter> contextMenuPage_;
     snowdesktop::winui::PersonalizationPageActions
         personalizationPageActions_;

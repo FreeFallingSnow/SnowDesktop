@@ -46,6 +46,7 @@ enum class SettingsPage : std::uint8_t
     IconLibrary,
     RuntimeModules,
     AgentOperations,
+    ScreenTime,
 };
 
 /**

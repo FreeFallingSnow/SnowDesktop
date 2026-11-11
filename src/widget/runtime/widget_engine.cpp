@@ -5015,6 +5015,35 @@ static void PushDataSnapshotEnvelope(lua_State* state,
             lua_setfield(state, -2, "estimatedRemainingSeconds");
         }
     }
+    else if (snapshot->topic == "system.screenTime")
+    {
+        lua_pushboolean(state, snapshot->screenTime.enabled);
+        lua_setfield(state, -2, "enabled");
+        lua_pushinteger(state, static_cast<lua_Integer>(
+            snapshot->screenTime.totalSeconds));
+        lua_setfield(state, -2, "totalSeconds");
+        lua_createtable(state, 24, 0);
+        for (int hour = 0; hour < 24; ++hour)
+        {
+            lua_pushinteger(state, static_cast<lua_Integer>(
+                snapshot->screenTime.hours[static_cast<std::size_t>(hour)]));
+            lua_rawseti(state, -2, hour + 1);
+        }
+        lua_setfield(state, -2, "hours");
+        lua_createtable(state,
+            static_cast<int>(snapshot->screenTime.apps.size()), 0);
+        int appIndex = 1;
+        for (const auto& app : snapshot->screenTime.apps)
+        {
+            lua_createtable(state, 0, 2);
+            lua_pushlstring(state, app.name.data(), app.name.size());
+            lua_setfield(state, -2, "name");
+            lua_pushinteger(state, static_cast<lua_Integer>(app.seconds));
+            lua_setfield(state, -2, "seconds");
+            lua_rawseti(state, -2, appIndex++);
+        }
+        lua_setfield(state, -2, "apps");
+    }
     else if (snapshot->topic == "system.network.status")
     {
         lua_pushlstring(state, snapshot->networkStatus.connectivity.data(),
@@ -5860,7 +5889,8 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
         const char* value = lua_tolstring(state, -1, &length);
         const std::string page(value ? value : "", length);
         lua_pop(state, 1);
-        if (!snowdesktop::widget_runtime::SystemSettingsUri(page))
+        if (!snowdesktop::widget_runtime::SystemSettingsUri(page) &&
+            !snowdesktop::widget_runtime::HostSettingsPage(page))
             return luaL_error(state,
                 "task.start: system.openSettings page is not supported");
         arguments.emplace("page", page);
@@ -14557,11 +14587,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (action.name == "system.openSettings")
         {
             const auto page = action.arguments.find("page");
-            const auto uri = page == action.arguments.end()
+            const auto hostPage = page == action.arguments.end()
+                ? std::nullopt
+                : snowdesktop::widget_runtime::HostSettingsPage(page->second);
+            const auto uri = page == action.arguments.end() || hostPage
                 ? std::nullopt
                 : snowdesktop::widget_runtime::SystemSettingsUri(
                     page->second);
-            if (!uri)
+            if (!uri && !hostPage)
             {
                 (void)taskBroker_->Complete(
                     action.id, false, "invalidArguments");
@@ -14570,6 +14603,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (action.preview)
             {
                 (void)taskBroker_->Complete(action.id, true);
+                continue;
+            }
+            if (hostPage)
+            {
+                const bool accepted = hostSettingsPageCallback_ &&
+                    hostSettingsPageCallback_(*hostPage);
+                (void)taskBroker_->Complete(action.id, accepted,
+                    accepted ? std::string{} : "openRejected");
                 continue;
             }
             const bool accepted = RuntimeOpenDesktopPath(
@@ -24320,6 +24361,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.power.estimatedRemainingSeconds = 10800;
             result.power.timestampMs = timestampNow;
         }
+        else if (result.topic == "system.screenTime")
+        {
+            result.screenTime.available = true;
+            result.screenTime.enabled = true;
+            result.screenTime.totalSeconds = 5400;
+            result.screenTime.hours[9] = 1800;
+            result.screenTime.hours[10] = 3600;
+            result.screenTime.apps.push_back({"Preview", 3600});
+            result.screenTime.apps.push_back({"Notes", 1800});
+            result.screenTime.timestampMs = timestampNow;
+        }
         else if (result.topic == "system.network.status")
         {
             result.networkStatus.available = true;
@@ -24698,6 +24750,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
         if (snapshot)
         {
             result.power = *snapshot;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+        }
+    }
+    else if (result.topic == "system.screenTime")
+    {
+        const auto snapshot = widgetSystemDataProvider_->ScreenTime();
+        if (snapshot)
+        {
+            result.screenTime = *snapshot;
             result.available = snapshot->available;
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);

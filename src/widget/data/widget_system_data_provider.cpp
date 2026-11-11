@@ -46,6 +46,7 @@ constexpr std::string_view CpuTopic = "system.cpu";
 constexpr std::string_view MemoryTopic = "system.memory";
 constexpr std::string_view ProcessSummaryTopic = "process.summary";
 constexpr std::string_view PowerTopic = "system.power";
+constexpr std::string_view ScreenTimeTopic = "system.screenTime";
 constexpr std::string_view NetworkStatusTopic = "system.network.status";
 constexpr std::string_view NetworkTrafficTopic = "system.network.traffic";
 constexpr std::string_view GpuTopic = "system.gpu";
@@ -745,7 +746,8 @@ bool WidgetSystemDataProvider::SupportsTopic(
 {
     return system_control::SupportsTopic(topic) || topic == CpuTopic || topic == MemoryTopic ||
         topic == ProcessSummaryTopic ||
-        topic == PowerTopic || topic == NetworkStatusTopic ||
+        topic == PowerTopic || topic == ScreenTimeTopic ||
+        topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
         topic == StorageVolumesTopic || topic == StorageIoTopic ||
         topic == DisplayTopologyTopic || topic == DisplayCurrentTopic ||
@@ -989,6 +991,36 @@ WidgetSystemDataProvider::Power() const
     return power_;
 }
 
+std::optional<WidgetScreenTimeDataSnapshot>
+WidgetSystemDataProvider::ScreenTime() const
+{
+    std::scoped_lock lock(mutex_);
+    return screenTime_;
+}
+
+void WidgetSystemDataProvider::SetScreenTimeSampleSource(
+    ScreenTimeSampleSource source)
+{
+    std::scoped_lock lock(mutex_);
+    screenTimeSource_ = std::move(source);
+}
+
+WidgetScreenTimeDataSnapshot WidgetSystemDataProvider::SampleScreenTime()
+{
+    ScreenTimeSampleSource source;
+    {
+        std::scoped_lock lock(mutex_);
+        source = screenTimeSource_;
+    }
+    WidgetScreenTimeDataSnapshot snapshot;
+    if (source) snapshot = source();
+    else snapshot.error = "unavailable";
+    snapshot.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (source) snapshot.available = true;
+    return snapshot;
+}
+
 std::optional<WidgetNetworkStatusDataSnapshot>
 WidgetSystemDataProvider::NetworkStatus() const
 {
@@ -1192,6 +1224,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishProcessSummary(SampleProcessSummary());
             else if (topic == PowerTopic)
                 PublishPower(SamplePower());
+            else if (topic == ScreenTimeTopic)
+                PublishScreenTime(SampleScreenTime());
             else if (topic == NetworkStatusTopic)
                 PublishNetworkStatus(SampleNetworkStatus());
             else if (topic == NetworkTrafficTopic)
@@ -2182,6 +2216,18 @@ void WidgetSystemDataProvider::PublishProcessSummary(
         ? processSummary_->revision + 1 : 1;
     processSummary_ = std::move(snapshot);
     changedTopics_.insert(std::string(ProcessSummaryTopic));
+}
+
+void WidgetSystemDataProvider::PublishScreenTime(
+    WidgetScreenTimeDataSnapshot snapshot)
+{
+    std::scoped_lock lock(mutex_);
+    if (!schedules_.contains(std::string(ScreenTimeTopic))) return;
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), screenTime_,
+        semanticDebouncers_[std::string(ScreenTimeTopic)]);
+    snapshot.revision = screenTime_ ? screenTime_->revision + 1 : 1;
+    screenTime_ = std::move(snapshot);
+    changedTopics_.insert(std::string(ScreenTimeTopic));
 }
 
 void WidgetSystemDataProvider::PublishPower(

@@ -1243,7 +1243,11 @@ public:
         // observes a desktop-style preset. Shell request rejection above must
         // still leave both mirrors untouched.
         if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
-        if (generalCommitted) app_.generalSettings_ = snapshot.values.general;
+        if (generalCommitted)
+        {
+            app_.generalSettings_ = snapshot.values.general;
+            app_.ApplyScreenTimeEnabled();
+        }
 
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
@@ -1610,6 +1614,10 @@ public:
             }
             break;
         }
+        case Action::ClearScreenTime:
+            app_.EnsureScreenTimeTracker();
+            if (app_.screenTime_) app_.screenTime_->Clear();
+            break;
         case Action::SetAnimationDiagnostics:
             app_.uiAnimationScheduler_.SetDiagnosticsEnabled(
                 request.boolValue);
@@ -2225,6 +2233,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
             InvalidateRect(hwnd_, nullptr, TRUE);
         InvalidateFloatingDockWindow(false);
     }
+    ApplyScreenTimeEnabled();
 }
 
 void DesktopApp::ApplyQuickNavigationAppearance()

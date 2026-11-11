@@ -386,6 +386,7 @@ struct LuaWidgetDataSnapshot
     snowdesktop::widget_runtime::WidgetProcessSummaryDataSnapshot
         processSummary;
     snowdesktop::widget_runtime::WidgetPowerDataSnapshot power;
+    snowdesktop::widget_runtime::WidgetScreenTimeDataSnapshot screenTime;
     snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot
         networkStatus;
     snowdesktop::widget_runtime::WidgetNetworkTrafficDataSnapshot
@@ -815,6 +816,11 @@ public:
     }
     /** @brief 设置桌面文件打开回调 */
     void SetDesktopOpenCallback(DesktopPathAction callback) { desktopOpenCallback_ = std::move(callback); }
+    using HostSettingsPageCallback = std::function<bool(std::string_view)>;
+    void SetHostSettingsPageCallback(HostSettingsPageCallback callback)
+    {
+        hostSettingsPageCallback_ = std::move(callback);
+    }
     /** @brief 设置桌面文件揭示回调（在资源管理器中定位） */
     void SetDesktopRevealCallback(DesktopPathAction callback) { desktopRevealCallback_ = std::move(callback); }
     /** @brief 设置桌面刷新回调 */
@@ -1899,6 +1905,7 @@ private:
     snowdesktop::widget_runtime::WidgetInvalidationBatch invalidationBatch_;
     NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
+    HostSettingsPageCallback hostSettingsPageCallback_;
     DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调
     DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
     DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调

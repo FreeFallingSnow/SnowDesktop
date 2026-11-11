@@ -943,7 +943,7 @@ constexpr SettingsPage pages[] = {
     SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
     SettingsPage::IconLibrary, SettingsPage::RuntimeModules, SettingsPage::AgentOperations,
     SettingsPage::AnimationPerformance, SettingsPage::ContextMenu, SettingsPage::ThemeManager,
-    SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::BackupAndData, SettingsPage::About,
+    SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ScreenTime, SettingsPage::BackupAndData, SettingsPage::About,
     SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon,
     // Revisit editors after the centralized theme page to verify reattachment.
     SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar, SettingsPage::QuickNavigation};

@@ -65,6 +65,9 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_running_animation.h
     src/dock/dock_entry_removal.h
     src/app/features/app_status_bar.cpp
+    src/app/features/app_screen_time.cpp
+    src/system/screen_time/screen_time_tracker.cpp
+    src/system/screen_time/screen_time_tracker.h
     src/system/status_bar/status_bar_view.cpp
     src/system/status_bar/status_bar_tooltip.h
     src/system/status_bar/status_bar_view.h
@@ -433,6 +436,9 @@ set(SNOWDESKTOP_SOURCES
     src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
+    src/winui/screen_time_page_presenter.cpp
+    src/winui/screen_time_page_presenter.h
+    src/winui/screen_time_page_actions.h
     src/winui/context_menu_page_presenter.cpp
     src/winui/context_menu_page_presenter.h
     src/winui/animation_performance_page_presenter.cpp

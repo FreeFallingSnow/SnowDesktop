@@ -191,6 +191,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
                 <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
+                <NavigationViewItem x:Name="ScreenTimeItem" Tag="screen-time" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
                 <NavigationViewItem x:Name="AdvancedSettingsItem" Tag="group-advanced" Visibility="Collapsed" IsExpanded="False" SelectsOnInvoked="False">
                     <NavigationViewItem.MenuItems>

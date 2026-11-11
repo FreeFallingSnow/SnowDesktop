@@ -70,6 +70,7 @@ public:
         CreateDebugEnvironment,
         SelectDebugEnvironment,
         RenameDebugEnvironment,
+        ClearScreenTime,
     };
 
     struct Request

@@ -12,6 +12,7 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "system/screen_time/screen_time_tracker.h"
 #include "ui/render/font_weight_rules.h"
 #include "app/render/composition_state_types.h"
 #include "app/render/demo_icon_load_types.h"
@@ -1179,6 +1180,14 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
+    void EnsureScreenTimeTracker();
+    void ApplyScreenTimeEnabled();
+    void ObserveScreenTime();
+    void RegisterScreenTimeNotifications(HWND window);
+    void UnregisterScreenTimeNotifications();
+    void HandleScreenTimePower(WPARAM wp, LPARAM lp);
+    void HandleScreenTimeSession(WPARAM wp);
+    void FlushScreenTime();
     /** @brief 按通用设置注册“切换桌面穿透”全局快捷键。 */
     void ApplyDesktopPassthroughHotkey();
     /** @brief 注销穿透快捷键并退出穿透状态。 */
@@ -3348,6 +3357,9 @@ private:
     bool floatingDockPointerPresentPending_ = false;
     /** @brief 桌面覆盖窗口句柄 */
     HWND hwnd_ = nullptr;
+    std::unique_ptr<snowdesktop::screen_time::Tracker> screenTime_;
+    HPOWERNOTIFY screenTimeDisplayNotify_ = nullptr;
+    bool screenTimeSessionRegistered_ = false;
     /** @brief 虚拟桌面区域（左、上、宽、高） */
     int virtualLeft_ = 0, virtualTop_ = 0, virtualWidth_ = 0, virtualHeight_ = 0;
 

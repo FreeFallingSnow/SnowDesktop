@@ -34,4 +34,11 @@ std::optional<std::wstring_view> SystemSettingsUri(
     }
     return std::nullopt;
 }
+
+std::optional<std::string_view> HostSettingsPage(
+    std::string_view page) noexcept
+{
+    if (page == "screenTime") return "screen-time";
+    return std::nullopt;
+}
 }

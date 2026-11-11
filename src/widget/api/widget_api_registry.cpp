@@ -83,6 +83,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "data.system.network.status",
     "data.system.network.traffic",
     "data.system.power",
+    "data.system.screenTime",
     "data.system.storage.volumes",
     "data.system.storage.io",
     "draw.advanced",
@@ -361,7 +362,7 @@ kSystemFunctionContracts = {{
         kFormatRelativeTimeParameters, "string" },
     { "l10n.formatList", "l10n.format", kFormatListParameters, "string" },
 }};
-constexpr std::array<SystemDataTopicContract, 31>
+constexpr std::array<SystemDataTopicContract, 32>
 kSystemDataTopicContracts = {{
     { "audio.devices", "data.audio.devices", "audio.devices.read",
         1000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
@@ -396,6 +397,9 @@ kSystemDataTopicContracts = {{
     { "system.power", "data.system.power", "system.power.read",
         2000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
         "SnowPowerDataValue" },
+    { "system.screenTime", "data.system.screenTime", "system.screenTime.read",
+        30000, 60000, 0, false, false, "SnowDataSubscribeOptions",
+        "SnowScreenTimeDataValue" },
     { "system.storage.volumes", "data.system.storage.volumes",
         "system.storage.read", 2000, 10000, 2000, false, false,
         "SnowDataSubscribeOptions", "SnowStorageVolumesDataValue" },
