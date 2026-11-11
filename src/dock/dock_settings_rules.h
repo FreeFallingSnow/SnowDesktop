@@ -18,6 +18,9 @@ bool ShellPanelVisibility(bool launcherVisible, bool dockStartActive, bool other
 
 bool ProtectDockStart(bool dockEnabled, bool keepTaskbarHidden, bool hiddenTaskbarMode) noexcept;
 
+bool ProtectWinKeyStart(bool dockEnabled, bool showWindowsButton, bool keepTaskbarHidden,
+    bool keepTaskbarHiddenOnWinKey, bool hiddenTaskbarMode, bool desktopPassthrough) noexcept;
+
 std::uint64_t StartMenuLeaseDeadline(bool active, std::uint64_t now) noexcept;
 
 void NormalizeAlwaysEnabledFeatures(

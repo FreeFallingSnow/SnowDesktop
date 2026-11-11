@@ -8,6 +8,7 @@
 #include "common/l10n.h"
 #include "taskbar_dynamic/search_visibility_detector.h"
 #include "shell/native_start_menu.h"
+#include "shell/win_key_start_tap.h"
 #include "diagnostics/diagnostic_log.h"
 #include "widget/runtime/widget_engine.h"
 #include "widget/data/widget_system_data_provider.h"
@@ -53,6 +54,7 @@ DesktopApp::DesktopApp()
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::StopWinKeyStartTap();
     // Closed draw lists retain images and fonts. Join before releasing any
     // graphics/runtime caches, not just before the final device teardown.
     widgetSurfaceRenderer_.reset();

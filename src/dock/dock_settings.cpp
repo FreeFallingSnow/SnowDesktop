@@ -1411,6 +1411,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
     ReadBoolField(text, "startMenuKeepTaskbarHidden", settings.startMenuKeepTaskbarHidden);
+    ReadBoolField(text, "startMenuKeepTaskbarHiddenOnWinKey", settings.startMenuKeepTaskbarHiddenOnWinKey);
     ReadBoolField(text, "showQuickSearchButton", settings.showQuickSearchButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
@@ -1599,6 +1600,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
     file << "  \"startMenuKeepTaskbarHidden\": "
          << (settings.startMenuKeepTaskbarHidden ? "true" : "false") << ",\n";
+    file << "  \"startMenuKeepTaskbarHiddenOnWinKey\": "
+         << (settings.startMenuKeepTaskbarHiddenOnWinKey ? "true" : "false") << ",\n";
     file << "  \"showQuickSearchButton\": "
          << (settings.showQuickSearchButton ? "true" : "false") << ",\n";
     // Preserve the legacy keys for downgrade compatibility while migrating

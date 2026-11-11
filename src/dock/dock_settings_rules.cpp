@@ -40,6 +40,13 @@ bool ProtectDockStart(bool dockEnabled, bool keepTaskbarHidden, bool hiddenTaskb
     return dockEnabled && keepTaskbarHidden && hiddenTaskbarMode;
 }
 
+bool ProtectWinKeyStart(bool dockEnabled, bool showWindowsButton, bool keepTaskbarHidden,
+    bool keepTaskbarHiddenOnWinKey, bool hiddenTaskbarMode, bool desktopPassthrough) noexcept
+{
+    return dockEnabled && showWindowsButton && keepTaskbarHidden &&
+        keepTaskbarHiddenOnWinKey && hiddenTaskbarMode && !desktopPassthrough;
+}
+
 std::uint64_t StartMenuLeaseDeadline(bool active, std::uint64_t now) noexcept
 {
     // Let Shell finish hiding the native bar after Start closes. Native edge

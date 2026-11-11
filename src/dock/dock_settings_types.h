@@ -63,6 +63,7 @@ struct DockSettings : DockLayoutSettings
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
     bool startMenuKeepTaskbarHidden = false;
+    bool startMenuKeepTaskbarHiddenOnWinKey = false;
     bool followComponentAppearance = true;
     bool followComponentCornerRadius = true;
     float cornerRadius = 12.0f;
