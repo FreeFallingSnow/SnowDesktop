@@ -239,6 +239,65 @@ std::wstring Widen(std::string_view value)
         static_cast<int>(value.size()), text.data(), size);
     return text;
 }
+
+struct AppIconImages
+{
+    muxmi::WriteableBitmap original{nullptr};
+    muxmi::WriteableBitmap alternate{nullptr};
+    mux::ElementTheme alternateTheme = mux::ElementTheme::Default;
+};
+
+// Icon pixels are premultiplied BGRA. Compare against alpha rather than 255
+// so the antialiased edges of a white or black glyph do not look gray.
+mux::ElementTheme LowContrastTheme(const screen_time::AppIcon& icon)
+{
+    bool light = true;
+    bool dark = true;
+    bool hasInk = false;
+    std::size_t transparent = 0;
+    const auto& pixels = icon.bgraPremultiplied;
+    for (std::size_t i = 0; i + 3 < pixels.size(); i += 4)
+    {
+        const int alpha = pixels[i + 3];
+        if (alpha < 16) ++transparent;
+        if (alpha < 48) continue;
+        hasInk = true;
+        const auto [minimum, maximum] = std::minmax({pixels[i], pixels[i + 1], pixels[i + 2]});
+        light = light && minimum * 255 >= 235 * alpha;
+        dark = dark && maximum * 255 <= 20 * alpha;
+        if (!light && !dark) return mux::ElementTheme::Default;
+    }
+    // Keep full-color artwork and opaque plates in their original colors.
+    if (!hasInk || transparent * 16 < pixels.size() / 4)
+        return mux::ElementTheme::Default;
+    return light ? mux::ElementTheme::Light : mux::ElementTheme::Dark;
+}
+
+muxmi::WriteableBitmap AppIconBitmap(const screen_time::AppIcon& pixels, int tint = -1)
+{
+    const auto& source = pixels.bgraPremultiplied;
+    if (!pixels.width || !pixels.height ||
+        source.size() != static_cast<std::size_t>(pixels.width) * pixels.height * 4)
+        return nullptr;
+    muxmi::WriteableBitmap bitmap(static_cast<int>(pixels.width), static_cast<int>(pixels.height));
+    const auto buffer = bitmap.PixelBuffer();
+    if (buffer.Capacity() < source.size()) return nullptr;
+    auto* target = buffer.data();
+    if (tint < 0)
+        std::memcpy(target, source.data(), source.size());
+    else
+    {
+        for (std::size_t i = 0; i < source.size(); i += 4)
+        {
+            const auto alpha = source[i + 3];
+            const auto color = static_cast<std::uint8_t>((tint * alpha + 127) / 255);
+            target[i] = target[i + 1] = target[i + 2] = color;
+            target[i + 3] = alpha;
+        }
+    }
+    bitmap.Invalidate();
+    return bitmap;
+}
 }
 
 struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
@@ -280,13 +339,14 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
     bool updating = false;
     bool handlersBound = false;
     std::size_t visibleApps = kAppPageSize;
-    std::map<std::string, muxmi::WriteableBitmap> appImages;
+    std::map<std::string, AppIconImages> appImages;
     std::map<std::string, muxc::Border> appIconSlots;
     winrt::event_token toggled;
     winrt::event_token cleared;
     winrt::event_token ranged;
     winrt::event_token ticked;
     winrt::event_token moreClicked;
+    winrt::event_token iconThemeChanged;
 
     std::wstring L(std::string_view key) const
     {
@@ -428,6 +488,15 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             visibleApps += kAppPageSize;
             Reload();
         });
+        iconThemeChanged = root.ActualThemeChanged([this](const auto&, const auto&) {
+            if (closed) return;
+            for (const auto& [identity, slot] : appIconSlots)
+            {
+                const auto cached = appImages.find(identity);
+                if (cached != appImages.end() && cached->second.alternate)
+                    ShowAppIcon(slot, cached->second);
+            }
+        });
         handlersBound = true;
     }
 
@@ -471,6 +540,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (timer) timer.Tick(ticked);
         if (dayList) dayList.SelectionChanged(dayChanged);
         if (moreApps) moreApps.Click(moreClicked);
+        if (root) root.ActualThemeChanged(iconThemeChanged);
     }
 
     void ShowPaused()
@@ -621,22 +691,16 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             icon.Width(20);
             icon.Height(20);
             icon.VerticalAlignment(mux::VerticalAlignment::Center);
+            if (!app.identity.empty()) appIconSlots.emplace(app.identity, icon);
             if (const auto cached = appImages.find(app.identity); cached != appImages.end())
-            {
-                muxc::Image image;
-                image.Source(cached->second);
-                icon.Child(image);
-            }
+                ShowAppIcon(icon, cached->second);
             else
             {
                 muxc::SymbolIcon fallback{muxc::Symbol::AllApps};
                 fallback.Opacity(0.7);
                 icon.Child(fallback);
                 if (!app.identity.empty())
-                {
-                    appIconSlots.emplace(app.identity, icon);
                     missingIcons.push_back(app.identity);
-                }
             }
             appName.Children().Append(icon);
             muxc::Grid::SetColumn(name, 1);
@@ -659,33 +723,40 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             ResolveIcons(root.DispatcherQueue(), weak_from_this(), std::move(missingIcons));
     }
 
+    void ShowAppIcon(const muxc::Border& slot, const AppIconImages& images) const
+    {
+        const auto source = images.alternate && root.ActualTheme() == images.alternateTheme
+            ? images.alternate : images.original;
+        if (const auto image = slot.Child().try_as<muxc::Image>())
+        {
+            image.Source(source);
+            return;
+        }
+        muxc::Image image;
+        image.Source(source);
+        slot.Child(image);
+    }
+
     void ApplyAppIcon(const std::string& identity, const screen_time::AppIcon& pixels)
     {
         if (closed) return;
         auto existing = appImages.find(identity);
         if (existing == appImages.end())
         {
-            muxmi::WriteableBitmap bitmap(static_cast<int>(pixels.width),
-                static_cast<int>(pixels.height));
-            const auto buffer = bitmap.PixelBuffer();
-            // Length is the current logical data length, which need not be
-            // set yet. Capacity describes the writable pixel allocation.
-            if (buffer.Capacity() < pixels.bgraPremultiplied.size()) return;
-            std::memcpy(buffer.data(), pixels.bgraPremultiplied.data(),
-                pixels.bgraPremultiplied.size());
-            bitmap.Invalidate();
+            AppIconImages images;
+            images.original = AppIconBitmap(pixels);
+            if (!images.original) return;
+            images.alternateTheme = LowContrastTheme(pixels);
+            if (images.alternateTheme != mux::ElementTheme::Default)
+                images.alternate = AppIconBitmap(pixels,
+                    images.alternateTheme == mux::ElementTheme::Light ? 40 : 232);
             if (appImages.size() >= 128) appImages.erase(appImages.begin());
-            existing = appImages.emplace(identity, std::move(bitmap)).first;
+            existing = appImages.emplace(identity, std::move(images)).first;
         }
         // The report may have replaced its rows while the lookup was running.
         // Only update the slot for this application in the current report.
         if (const auto slot = appIconSlots.find(identity); slot != appIconSlots.end())
-        {
-            muxc::Image image;
-            image.Source(existing->second);
-            slot->second.Child(image);
-            appIconSlots.erase(slot);
-        }
+            ShowAppIcon(slot->second, existing->second);
     }
 
     static winrt::fire_and_forget ResolveIcons(
