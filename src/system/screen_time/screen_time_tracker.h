@@ -3,7 +3,9 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace snowdesktop::screen_time
@@ -18,7 +20,19 @@ struct AppTotal
 {
     std::string name;
     std::int64_t seconds = 0;
+    std::string identity;
 };
+
+struct AppIcon
+{
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<std::uint8_t> bgraPremultiplied;
+};
+
+// Resolve existing history identities on a COM-initialized worker. The
+// process-local cache is bounded and also remembers unavailable icons briefly.
+[[nodiscard]] std::shared_ptr<const AppIcon> LoadAppIcon(std::string_view identity);
 
 struct DayReport
 {

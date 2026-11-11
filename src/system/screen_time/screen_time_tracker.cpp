@@ -1,6 +1,7 @@
 #include "screen_time_tracker.h"
 
 #include "common/json_value.h"
+#include "common/utils.h"
 #include "data/atomic_file.h"
 #include "dock/dock_process_discovery.h"
 #include "platform/foreground_fullscreen.h"
@@ -10,6 +11,7 @@
 #include <propkey.h>
 #include <propsys.h>
 #include <shlobj.h>
+#include <shellapi.h>
 
 #include <wrl/client.h>
 
@@ -19,6 +21,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <unordered_map>
 
 namespace snowdesktop::screen_time
 {
@@ -140,6 +143,56 @@ std::wstring RegisteredAppName(const wchar_t* appId)
         name = displayName;
     CoTaskMemFree(displayName);
     return name;
+}
+
+std::shared_ptr<const AppIcon> ResolveAppIcon(std::string_view identity)
+{
+    HICON icon = nullptr;
+    if (identity.starts_with("aumid:"))
+    {
+        const auto id = Utf8ToWide(identity.substr(6));
+        if (id.empty() || id.find_first_of(L"\\/") != std::wstring::npos ||
+            id.find(L'\0') != std::wstring::npos) return {};
+        ComPtr<IShellItem> app;
+        if (FAILED(SHCreateItemInKnownFolder(FOLDERID_AppsFolder,
+            KF_FLAG_DONT_VERIFY, id.c_str(), IID_PPV_ARGS(&app)))) return {};
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (FAILED(SHGetIDListFromObject(app.Get(), &pidl))) return {};
+        SHFILEINFOW info{};
+        SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info,
+            sizeof(info), SHGFI_PIDL | SHGFI_ICON | SHGFI_LARGEICON);
+        CoTaskMemFree(pidl);
+        icon = info.hIcon;
+    }
+    else if (identity.starts_with("path:"))
+    {
+        const auto path = Utf8ToWide(identity.substr(5));
+        if (path.size() <= 3 || path[1] != L':' || path[2] != L'\\' ||
+            path.find(L'\0') != std::wstring::npos) return {};
+        const UINT drive = GetDriveTypeW(path.substr(0, 3).c_str());
+        if (drive != DRIVE_FIXED && drive != DRIVE_REMOVABLE) return {};
+        ExtractIconExW(path.c_str(), 0, &icon, nullptr, 1);
+    }
+    if (!icon) return {};
+    constexpr int size = 32;
+    SIZE dimensions{};
+    const HBITMAP bitmap = CreateAlphaBitmapFromIcon(icon, size, size, dimensions);
+    DestroyIcon(icon);
+    if (!bitmap) return {};
+    BITMAP pixels{};
+    const bool valid = GetObjectW(bitmap, sizeof(pixels), &pixels) == static_cast<int>(sizeof(pixels)) &&
+        pixels.bmBits && pixels.bmBitsPixel == 32 && pixels.bmWidthBytes == size * 4;
+    std::shared_ptr<AppIcon> result;
+    if (valid)
+    {
+        const auto* bytes = static_cast<const std::uint8_t*>(pixels.bmBits);
+        result = std::make_shared<AppIcon>();
+        result->width = size;
+        result->height = size;
+        result->bgraPremultiplied.assign(bytes, bytes + size * size * 4);
+    }
+    DeleteObject(bitmap);
+    return result;
 }
 
 std::wstring FileDescription(const std::wstring& path)
@@ -405,7 +458,7 @@ struct Tracker::State
             if (seconds <= 0) continue;
             view.totalSeconds += seconds;
             const auto name = names.find(key);
-            apps.push_back({name == names.end() ? key : name->second, seconds});
+            apps.push_back({name == names.end() ? key : name->second, seconds, key});
         }
         std::sort(apps.begin(), apps.end(), [](const auto& left, const auto& right) {
             return left.seconds > right.seconds;
@@ -637,7 +690,7 @@ std::vector<DayReport> Tracker::Reports() const
             if (seconds <= 0) continue;
             const auto name = state_->names.find(key);
             report.apps.push_back({
-                name == state_->names.end() ? key : name->second, seconds});
+                name == state_->names.end() ? key : name->second, seconds, key});
         }
         std::sort(report.apps.begin(), report.apps.end(),
             [](const auto& left, const auto& right) {
@@ -651,6 +704,42 @@ std::vector<DayReport> Tracker::Reports() const
 std::vector<DayReport> LoadReports(const std::filesystem::path& path)
 {
     return Tracker(path).Reports();
+}
+
+std::shared_ptr<const AppIcon> LoadAppIcon(std::string_view identity)
+{
+    if (identity.empty()) return {};
+    using Clock = std::chrono::steady_clock;
+    struct Entry
+    {
+        std::shared_ptr<const AppIcon> icon;
+        Clock::time_point refreshed;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<std::string, Entry> cache;
+    const std::string key(identity);
+    const auto now = Clock::now();
+    {
+        std::scoped_lock guard(mutex);
+        const auto cached = cache.find(key);
+        if (cached != cache.end() && now - cached->second.refreshed <
+            (cached->second.icon ? std::chrono::minutes(30) : std::chrono::minutes(5)))
+            return cached->second.icon;
+    }
+    auto icon = ResolveAppIcon(identity);
+    {
+        std::scoped_lock guard(mutex);
+        if (cache.size() >= 128 && !cache.contains(key))
+        {
+            const auto oldest = std::min_element(cache.begin(), cache.end(),
+                [](const auto& a, const auto& b) {
+                    return a.second.refreshed < b.second.refreshed;
+                });
+            cache.erase(oldest);
+        }
+        cache.insert_or_assign(key, Entry{icon, now});
+    }
+    return icon;
 }
 
 } // namespace snowdesktop::screen_time

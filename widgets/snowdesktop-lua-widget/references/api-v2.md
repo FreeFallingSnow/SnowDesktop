@@ -1777,14 +1777,20 @@ ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，�
 
 ### `data`
 
-当前公开二十五个按需数据源：`system.cpu`、`system.memory`、`process.summary`、`system.gpu`、`system.power`、
+按需数据源包括 `system.cpu`、`system.memory`、`process.summary`、`system.gpu`、`system.power`、`system.screenTime`、
 `system.network.status`、`system.network.traffic`、`system.storage.volumes`、
 `system.storage.io`、`system.display.topology`、`system.display.current`、
 `audio.output.default`、`audio.output.volume`、`audio.output.analysis`、
 `media.sessions`、`media.current`、`media.timeline`、`media.artwork`、`desktop.items`、
 `desktop.selection`、`desktop.changes`、`calendar.events` 和
 `calendar.selectedDate`、`app.indexStatus`，以及 `filesystem.watch`。在 `setup` 或模块
-入口创建订阅，不要在每次 `render` 中重复订阅：
+入口创建订阅，不要在每次 `render` 中重复订阅。
+
+`system.screenTime` 受 `system.screenTime.read` 保护，返回今日的 `enabled`、
+`totalSeconds`、24 项的 `hours` 和最多 8 项的 `apps`。每项应用包含
+`name` 和 `seconds`。支持 `data.system.screenTime.appIcons` 的宿主在成功解析图标后
+提供可选的 `apps[].icon`。在当前渲染内将它传给 `draw.image`；该句柄不包含路径或应用
+标识，不能持久化。旧宿主或图标不可用时该字段省略。
 
 ```lua
 local cpu

@@ -3,6 +3,7 @@
 #include "widget_gpu_usage.h"
 #include "widget_network_status_refresh.h"
 #include "system/controls/system_power_status.h"
+#include "system/screen_time/screen_time_tracker.h"
 #include "widget/storage/widget_storage_usage.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/runtime/widget_media_session_registry.h"
@@ -1003,6 +1004,25 @@ void WidgetSystemDataProvider::SetScreenTimeSampleSource(
 {
     std::scoped_lock lock(mutex_);
     screenTimeSource_ = std::move(source);
+}
+
+WidgetScreenTimeAppDataSnapshot MakeScreenTimeAppSnapshot(
+    std::string name, std::int64_t seconds, std::string_view identity)
+{
+    WidgetScreenTimeAppDataSnapshot result;
+    result.name = std::move(name);
+    result.seconds = seconds;
+    if (const auto source = screen_time::LoadAppIcon(identity))
+    {
+        auto icon = std::make_shared<WidgetRuntimeImagePixels>();
+        icon->width = source->width;
+        icon->height = source->height;
+        icon->stride = source->width * 4;
+        icon->bgraPremultiplied = source->bgraPremultiplied;
+        result.iconToken = MakeWidgetRuntimeImageToken("screen-time", *icon);
+        result.icon = std::move(icon);
+    }
+    return result;
 }
 
 WidgetScreenTimeDataSnapshot WidgetSystemDataProvider::SampleScreenTime()

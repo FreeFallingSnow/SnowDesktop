@@ -7,19 +7,24 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <map>
 #include <string>
 
+#include <robuffer.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Storage.Streams.h>
 
 namespace snowdesktop::winui
 {
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxc = mux::Controls;
 namespace muxa = mux::Automation;
+namespace muxmi = mux::Media::Imaging;
 
 namespace
 {
@@ -236,8 +241,17 @@ std::wstring Widen(std::string_view value)
 }
 }
 
-struct ScreenTimePagePresenter::Impl
+struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
 {
+    struct IconTarget
+    {
+        std::string identity;
+        winrt::weak_ref<muxc::Image> image;
+        winrt::weak_ref<muxc::SymbolIcon> fallback;
+        std::shared_ptr<const screen_time::AppIcon> pixels;
+    };
+    static constexpr std::size_t kAppPageSize = 30;
+
     LocalizeCallback localize;
     ScreenTimePageActions actions;
     mux::Style cardStyle{nullptr};
@@ -254,6 +268,8 @@ struct ScreenTimePagePresenter::Impl
     muxc::Border appsHost{nullptr};
     muxc::ToggleSwitch enabled{nullptr};
     muxc::Button clear{nullptr};
+    muxc::Button moreApps{nullptr};
+    muxc::ContentDialog clearDialog{nullptr};
     muxc::SelectorBar range{nullptr};
     muxc::SelectorBarItem dayItem{nullptr};
     muxc::SelectorBarItem weekItem{nullptr};
@@ -270,10 +286,13 @@ struct ScreenTimePagePresenter::Impl
     bool closed = false;
     bool updating = false;
     bool handlersBound = false;
+    std::size_t visibleApps = kAppPageSize;
+    std::map<std::string, muxmi::WriteableBitmap> appImages;
     winrt::event_token toggled;
     winrt::event_token cleared;
     winrt::event_token ranged;
     winrt::event_token ticked;
+    winrt::event_token moreClicked;
 
     std::wstring L(std::string_view key) const
     {
@@ -294,9 +313,6 @@ struct ScreenTimePagePresenter::Impl
         enabledRow.Initialize(enabled);
         body.Children().Append(enabledRow.root);
 
-        clear = muxc::Button{};
-        clearRow.Initialize(clear);
-        body.Children().Append(clearRow.root);
         muxc::Border card;
         presenter_controls::InitializeSettingsGroup(
             card, nullptr, body, cardStyle);
@@ -358,10 +374,23 @@ struct ScreenTimePagePresenter::Impl
         apps.Children().Append(appsTitle);
         appsHost = muxc::Border{};
         apps.Children().Append(appsHost);
+        moreApps = muxc::Button{};
+        moreApps.Visibility(mux::Visibility::Collapsed);
+        apps.Children().Append(moreApps);
         muxc::Border appsCard;
         if (cardStyle) appsCard.Style(cardStyle);
+        appsCard.Padding({16, 12, 16, 8});
         appsCard.Child(apps);
         root.Children().Append(appsCard);
+
+        clear = muxc::Button{};
+        clearRow.Initialize(clear);
+        muxc::StackPanel dataActions;
+        dataActions.Children().Append(clearRow.root);
+        muxc::Border dataCard;
+        presenter_controls::InitializeSettingsGroup(dataCard, nullptr, dataActions, cardStyle);
+        presenter_controls::UpdateSettingsSubrows(dataActions, 0);
+        root.Children().Append(dataCard);
 
         timer = mux::DispatcherTimer{};
         timer.Interval(std::chrono::seconds(15));
@@ -379,12 +408,13 @@ struct ScreenTimePagePresenter::Impl
             ShowPaused();
         });
         cleared = clear.Click([this](const auto&, const auto&) {
-            if (closed || !actions.clear) return;
-            if (actions.clear(generation)) Reload();
+            if (closed || clearDialog || !actions.clear || !root.XamlRoot()) return;
+            ConfirmClear(shared_from_this(), generation);
         });
         ranged = range.SelectionChanged([this](const auto&, const auto&) {
             if (updating || closed) return;
             week = range.SelectedItem() == weekItem;
+            visibleApps = kAppPageSize;
             Reload();
         });
         ticked = timer.Tick([this](const auto&, const auto&) {
@@ -395,10 +425,46 @@ struct ScreenTimePagePresenter::Impl
             if (const auto selected = dayList.SelectedItem().try_as<winrt::hstring>())
             {
                 selectedDate = winrt::to_string(*selected);
+                visibleApps = kAppPageSize;
                 Reload();
             }
         });
+        moreClicked = moreApps.Click([this](const auto&, const auto&) {
+            if (closed) return;
+            visibleApps += kAppPageSize;
+            Reload();
+        });
         handlersBound = true;
+    }
+
+    static winrt::fire_and_forget ConfirmClear(std::shared_ptr<Impl> self,
+        std::uint64_t requestedGeneration)
+    {
+        try
+        {
+            muxc::ContentDialog dialog;
+            dialog.XamlRoot(self->root.XamlRoot());
+            dialog.RequestedTheme(self->root.ActualTheme());
+            dialog.Title(winrt::box_value(self->L("settings.screenTime.clear")));
+            dialog.Content(winrt::box_value(self->L("settings.screenTime.clearConfirm")));
+            dialog.PrimaryButtonText(self->L("settings.screenTime.clearAction"));
+            dialog.CloseButtonText(self->L("settings.dialog.cancel"));
+            dialog.DefaultButton(muxc::ContentDialogButton::Close);
+            self->clearDialog = dialog;
+            const auto result = co_await dialog.ShowAsync();
+            self->clearDialog = nullptr;
+            if (result == muxc::ContentDialogResult::Primary && !self->closed &&
+                self->active && self->generation == requestedGeneration &&
+                self->actions.clear && self->actions.clear(requestedGeneration))
+            {
+                self->visibleApps = kAppPageSize;
+                self->Reload();
+            }
+        }
+        catch (const winrt::hresult_error&)
+        {
+            self->clearDialog = nullptr;
+        }
     }
 
     void Unbind()
@@ -410,6 +476,7 @@ struct ScreenTimePagePresenter::Impl
         if (range) range.SelectionChanged(ranged);
         if (timer) timer.Tick(ticked);
         if (dayList) dayList.SelectionChanged(dayChanged);
+        if (moreApps) moreApps.Click(moreClicked);
     }
 
     void ShowPaused()
@@ -450,7 +517,7 @@ struct ScreenTimePagePresenter::Impl
         if (week)
         {
             std::int64_t sum = 0;
-            std::map<std::string, std::int64_t> apps;
+            std::map<std::string, screen_time::AppTotal> apps;
             std::vector<std::int64_t> totals;
             std::vector<std::wstring> dates;
             totals.reserve(recent.size());
@@ -461,13 +528,19 @@ struct ScreenTimePagePresenter::Impl
                 totals.push_back(day.totalSeconds);
                 dates.push_back(Widen(day.date));
                 for (const auto& app : day.apps)
-                    apps[app.name] += app.seconds;
+                {
+                    auto& totalForApp = apps[app.identity];
+                    totalForApp.name = app.name;
+                    totalForApp.identity = app.identity;
+                    totalForApp.seconds += app.seconds;
+                }
             }
             total.Text(Duration(localize, sum));
             chartHost.Child(UsageChart(totals, dates, localize, accentStyle, dividerStyle));
             std::vector<snowdesktop::screen_time::AppTotal> ranked;
-            for (const auto& [name, seconds] : apps)
-                ranked.push_back({name, seconds});
+            ranked.reserve(apps.size());
+            for (auto& entry : apps)
+                ranked.push_back(std::move(entry.second));
             std::sort(ranked.begin(), ranked.end(),
                 [](const auto& left, const auto& right) {
                     return left.seconds > right.seconds;
@@ -504,6 +577,8 @@ struct ScreenTimePagePresenter::Impl
 
     void AppendApps(const std::vector<snowdesktop::screen_time::AppTotal>& apps)
     {
+        moreApps.Visibility(apps.size() > visibleApps
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (apps.empty())
         {
             auto empty = SmallLabel(L(week ? "settings.screenTime.emptyWeek" :
@@ -513,8 +588,9 @@ struct ScreenTimePagePresenter::Impl
             return;
         }
         const auto peak = std::max<std::int64_t>(1, apps.front().seconds);
-        const auto limit = std::min<std::size_t>(apps.size(), 30);
+        const auto limit = std::min(apps.size(), visibleApps);
         muxc::Grid rows;
+        std::vector<IconTarget> icons;
         rows.ColumnSpacing(12);
         AddColumn(rows, 3);
         AddColumn(rows, 1);
@@ -542,20 +618,88 @@ struct ScreenTimePagePresenter::Impl
             name.TextTrimming(mux::TextTrimming::CharacterEllipsis);
             name.VerticalAlignment(mux::VerticalAlignment::Center);
             muxc::ToolTipService::SetToolTip(name, winrt::box_value(name.Text()));
+            muxc::Grid appName;
+            appName.ColumnSpacing(8);
+            AddColumn(appName, 0);
+            AddColumn(appName, 1);
+            muxc::Grid icon;
+            icon.Width(20);
+            icon.Height(20);
+            icon.VerticalAlignment(mux::VerticalAlignment::Center);
+            muxc::SymbolIcon fallback{muxc::Symbol::AllApps};
+            fallback.Opacity(0.7);
+            muxc::Image image;
+            if (const auto cached = appImages.find(app.identity); cached != appImages.end())
+            {
+                image.Source(cached->second);
+                fallback.Visibility(mux::Visibility::Collapsed);
+            }
+            else if (!app.identity.empty())
+                icons.push_back({app.identity, winrt::make_weak(image), winrt::make_weak(fallback), {}});
+            icon.Children().Append(fallback);
+            icon.Children().Append(image);
+            appName.Children().Append(icon);
+            muxc::Grid::SetColumn(name, 1);
+            appName.Children().Append(name);
             const auto bar = UsageTrack(app.seconds, peak, accentStyle, dividerStyle);
             auto amount = SmallLabel(Duration(localize, app.seconds));
             amount.VerticalAlignment(mux::VerticalAlignment::Center);
             amount.HorizontalAlignment(mux::HorizontalAlignment::Right);
-            muxc::Grid::SetRow(name, rowIndex);
+            muxc::Grid::SetRow(appName, rowIndex);
             muxc::Grid::SetRow(bar, rowIndex);
             muxc::Grid::SetRow(amount, rowIndex);
             muxc::Grid::SetColumn(bar, 1);
             muxc::Grid::SetColumn(amount, 2);
-            rows.Children().Append(name);
+            rows.Children().Append(appName);
             rows.Children().Append(bar);
             rows.Children().Append(amount);
         }
         appsHost.Child(rows);
+        if (!icons.empty()) ResolveIcons(weak_from_this(), std::move(icons));
+    }
+
+    static winrt::fire_and_forget ResolveIcons(std::weak_ptr<Impl> owner,
+        std::vector<IconTarget> targets)
+    {
+        try
+        {
+            const winrt::apartment_context ui;
+            co_await winrt::resume_background();
+            for (auto& target : targets)
+                target.pixels = screen_time::LoadAppIcon(target.identity);
+            co_await ui;
+            const auto self = owner.lock();
+            if (!self || self->closed) co_return;
+            for (const auto& target : targets)
+            {
+                const auto image = target.image.get();
+                const auto fallback = target.fallback.get();
+                if (!image || !fallback || !target.pixels) continue;
+                const auto& pixels = *target.pixels;
+                auto existing = self->appImages.find(target.identity);
+                if (existing == self->appImages.end())
+                {
+                    muxmi::WriteableBitmap bitmap(static_cast<int>(pixels.width),
+                        static_cast<int>(pixels.height));
+                    const auto buffer = bitmap.PixelBuffer();
+                    if (buffer.Length() != pixels.bgraPremultiplied.size()) continue;
+                    BYTE* bytes = nullptr;
+                    winrt::check_hresult(
+                        buffer.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+                    std::memcpy(bytes, pixels.bgraPremultiplied.data(), pixels.bgraPremultiplied.size());
+                    bitmap.Invalidate();
+                    if (self->appImages.size() >= 128)
+                        self->appImages.erase(self->appImages.begin());
+                    existing = self->appImages.emplace(target.identity, std::move(bitmap)).first;
+                }
+                image.Source(existing->second);
+                fallback.Visibility(mux::Visibility::Collapsed);
+            }
+        }
+        catch (const winrt::hresult_error&)
+        {
+            // The page can close before the image work returns to its dispatcher.
+        }
     }
 };
 
@@ -612,6 +756,7 @@ void ScreenTimePagePresenter::RefreshLocalizedText()
     impl_->clear.Content(winrt::box_value(
         impl_->L("settings.screenTime.clearAction")));
     impl_->clearRow.SetText(impl_->L("settings.screenTime.clear"));
+    impl_->moreApps.Content(winrt::box_value(impl_->L("settings.screenTime.showMoreApps")));
     impl_->dayItem.Text(impl_->L("settings.screenTime.day"));
     impl_->weekItem.Text(impl_->L("settings.screenTime.week"));
     impl_->overviewTitle.Text(impl_->L("settings.screenTime.overview"));
@@ -649,6 +794,7 @@ void ScreenTimePagePresenter::Deactivate()
 {
     impl_->active = false;
     if (impl_->timer) impl_->timer.Stop();
+    if (impl_->clearDialog) impl_->clearDialog.Hide();
 }
 
 void ScreenTimePagePresenter::Close()

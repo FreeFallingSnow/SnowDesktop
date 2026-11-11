@@ -1,5 +1,6 @@
 -- screen-time/main.lua - today's foreground app usage
 local usage
+local hourly = false
 
 local function payload()
     if not usage then return nil end
@@ -27,6 +28,7 @@ end
 
 local function setup()
     usage = data.subscribe("system.screenTime", { maxAgeMs = 120000 })
+    hourly = storage.get("reportView") == "hours"
 end
 
 local function mixColor(from, to, fraction)
@@ -97,22 +99,64 @@ local function drawChart(hours, x, y, width, height, unit, colors)
     end
 end
 
-local function drawApps(apps, count, x, y, width, unit, colors)
+local function drawApp(app, peak, x, y, width, unit, colors)
     local font = 12 * unit
-    local heading = l10n.tr("lua_widget.screen_time.top_apps")
-    textLine(heading, x, y, width, font, colors.primary, true)
-    y = y + 21 * unit
-    for index = 1, count do
-        local app = apps[index]
-        local amount = duration(app.seconds)
-        local amountWidth = draw.measureText(amount, font).width + unit
-        if index > 1 then
-            draw.line(x, y - 3 * unit, x + width, y - 3 * unit, unit, colors.primary, 0.18)
-        end
-        textLine(tostring(app.name or ""), x, y, width - amountWidth - 8 * unit, font, colors.primary, false)
-        textLine(amount, x + width - amountWidth, y, amountWidth, font, colors.primary, false, 0.85)
-        y = y + 22 * unit
+    local iconSize = 24 * unit
+    if app.icon then
+        draw.image(app.icon, x, y + 2 * unit, iconSize, iconSize)
+    else
+        draw.rect(x, y + 2 * unit, iconSize, iconSize, colors.primary, 5 * unit, 0.12)
+        draw.strokeRect(x + 6 * unit, y + 8 * unit, 12 * unit, 10 * unit,
+            colors.primary, 2 * unit, unit, 0.70)
+        draw.line(x + 6 * unit, y + 11 * unit, x + 18 * unit, y + 11 * unit,
+            unit, colors.primary, 0.70)
     end
+    local amount = duration(app.seconds)
+    local textX = x + iconSize + 8 * unit
+    local trackWidth = width - (textX - x)
+    local amountWidth = math.min(trackWidth * 0.64, draw.measureText(amount, font, 0, true).width + 3 * unit)
+    textLine(tostring(app.name or ""), textX, y, trackWidth - amountWidth - 4 * unit,
+        font, colors.primary, false)
+    textLine(amount, x + width - amountWidth, y, amountWidth, font, colors.primary, true)
+    local trackY = y + 21 * unit
+    draw.rect(textX, trackY, trackWidth, 4 * unit, colors.primary, 2 * unit, 0.14)
+    local fill = trackWidth * math.min(1, (tonumber(app.seconds) or 0) / peak)
+    if fill > 0 then
+        draw.rect(textX, trackY, fill, 4 * unit, colors.accent, math.min(2 * unit, fill / 2))
+    end
+end
+
+local function drawViewSwitch(x, y, size, unit, colors)
+    local key = "screenTime.switch"
+    local focused = widget.hasFeature("interaction.keyboard") and interaction.isFocused(key)
+    draw.rect(x, y, size, size, colors.primary, 6 * unit, focused and 0.25 or 0.12)
+    local left, top = x + (size - 14 * unit) / 2, y + (size - 14 * unit) / 2
+    if hourly then
+        for i = 0, 2 do
+            local lineY = top + (2 + 5 * i) * unit
+            draw.line(left, lineY, left + (14 - 3 * i) * unit, lineY, 2 * unit, colors.primary)
+        end
+    else
+        for i = 0, 2 do
+            local height = (6 + 4 * ((i + 1) % 3)) * unit
+            draw.rect(left + 5 * i * unit, top + 14 * unit - height, 3 * unit, height, colors.primary, unit)
+        end
+    end
+    local region = {
+        key = key, cursor = "hand",
+        shape = { type = "rect", x = x, y = y, width = size, height = size },
+        events = {
+            click = { id = key },
+            contextMenu = { id = "screenTime.menu", scope = "component" },
+        },
+    }
+    local target = hourly and l10n.tr("lua_widget.screen_time.top_apps")
+        or l10n.tr("lua_widget.screen_time.hourly")
+    if widget.hasFeature("interaction.tooltip") then region.tooltip = target end
+    if widget.hasFeature("interaction.accessibility.metadata") then
+        region.accessibility = { role = "button", label = target }
+    end
+    interaction.region(region)
 end
 
 local function drawReport(data, width, height, colors)
@@ -120,7 +164,9 @@ local function drawReport(data, width, height, colors)
     local pad = math.min(14 * unit, width / 10, height / 8)
     local innerWidth = width - 2 * pad
     local gap = 10 * unit
-    local label = l10n.tr("lua_widget.screen_time.today")
+    local headerHeight = math.min(38 * unit, height - 2 * pad)
+    local switchSize = math.min(headerHeight, innerWidth / 3)
+    local valueWidth = innerWidth - switchSize - gap
     local status
     if not data then
         status = l10n.tr("lua_widget.screen_time.waiting")
@@ -129,64 +175,58 @@ local function drawReport(data, width, height, colors)
     elseif (tonumber(data.totalSeconds) or 0) <= 0 then
         status = l10n.tr("lua_widget.screen_time.empty")
     end
-    local statusHeight = status and 19 * unit or 0
     local total = data and duration(data.totalSeconds)
-    local headerHeight = (total and 55 or 18) * unit + statusHeight
-    if height - 2 * pad < headerHeight then
-        textLine(total or status, pad, pad, innerWidth, math.min(24 * unit, height / 2), colors.primary, true)
-        return
-    end
+    local statusHeight = total and status and height - 2 * pad - headerHeight >= 19 * unit
+        and 19 * unit or 0
 
-    local available = height - 2 * pad - headerHeight - gap
+    local available = height - 2 * pad - headerHeight - statusHeight - gap
     local apps = data and data.apps or {}
-    local chartMin = 57 * unit
-    local rowHeight = 22 * unit
-    local listHeading = 21 * unit
-    local hasChart = data and (tonumber(data.totalSeconds) or 0) > 0
-        and available >= chartMin and innerWidth >= 145 * unit
-    local chartWidth = innerWidth
-    local chartHeight = 0
-    local appCount = 0
-    local detailHeight = 0
-    local sideBySide = false
-    if hasChart then
-        sideBySide = #apps > 0 and width / height >= 1.6 and innerWidth >= 346 * unit
-        if sideBySide then
-            chartWidth = (innerWidth - gap) * 0.55
-            appCount = math.min(3, #apps, math.floor((available - listHeading) / rowHeight))
-            chartHeight = math.min(available, 148 * unit)
-            detailHeight = math.max(chartHeight, listHeading + appCount * rowHeight)
-        else
-            appCount = math.min(3, #apps, math.max(0,
-                math.floor((available - chartMin - gap - listHeading) / rowHeight)))
-            local listHeight = appCount > 0 and gap + listHeading + appCount * rowHeight or 0
-            chartHeight = math.min(available - listHeight, math.max(118 * unit, height * 0.50))
-            detailHeight = chartHeight + listHeight
-        end
+    local columnGap = 20 * unit
+    local columns = 1
+    if width / height >= 1.45 then
+        local fitting = math.floor((innerWidth + columnGap) / (150 * unit + columnGap))
+        columns = math.max(1, math.min(3, fitting, #apps))
+    end
+    local fittingRows = math.max(0, math.floor(available / (32 * unit)))
+    local appCount = not hourly and math.min(#apps, columns * fittingRows) or 0
+    local hasChart = hourly and data and (tonumber(data.totalSeconds) or 0) > 0
+        and available >= 57 * unit and innerWidth >= 145 * unit
+    local y = pad
+    if switchSize > 0 then
+        drawViewSwitch(width - pad - switchSize, y + (headerHeight - switchSize) / 2,
+            switchSize, math.min(unit, switchSize / 25), colors)
     end
 
-    local y = (height - headerHeight - detailHeight - (hasChart and gap or 0)) / 2
-    textLine(label, pad, y, innerWidth, 12 * unit, colors.primary, false, 0.84)
-    y = y + 18 * unit
-    if total then
-        local desired = 30 * unit
-        local measured = draw.measureText(total, desired, 0, true).width
-        local font = measured > 0 and desired * math.min(1, (innerWidth - 4 * unit) / measured) or desired
-        textLine(total, pad, y, innerWidth, font, colors.primary, true)
-        y = y + 37 * unit
+    local value = total or status
+    local bold = total ~= nil
+    local desired = math.min((bold and 30 or 12) * unit, headerHeight * 0.8)
+    local measured = draw.measureText(value, desired, 0, bold)
+    local font = measured.width > 0
+        and desired * math.min(1, (valueWidth - 4 * unit) / measured.width) or desired
+    if font > 0 then
+        local lineHeight = draw.measureText(value, font, 0, bold).height
+        textLine(value, pad, y + math.max(0, (headerHeight - lineHeight) / 2), valueWidth,
+            font, colors.primary, bold)
     end
-    if status then
+    y = y + headerHeight
+    if statusHeight > 0 then
         textLine(status, pad, y, innerWidth, 12 * unit, colors.primary, false, 0.84)
         y = y + statusHeight
     end
+    y = y + gap
     if hasChart then
-        y = y + gap
-        drawChart(data.hours or {}, pad, y, chartWidth, chartHeight, unit, colors)
+        drawChart(data.hours or {}, pad, y, innerWidth, available, unit, colors)
     end
     if appCount > 0 then
-        local listX = sideBySide and pad + chartWidth + gap or pad
-        local listY = sideBySide and y or y + chartHeight + gap
-        drawApps(apps, appCount, listX, listY, width - pad - listX, unit, colors)
+        local columnWidth = (innerWidth - (columns - 1) * columnGap) / columns
+        local rows = math.ceil(appCount / columns)
+        local rowHeight = math.min(48 * unit, available / rows)
+        local rowInset = (rowHeight - 28 * unit) / 2
+        local peak = math.max(1, tonumber(apps[1].seconds) or 0)
+        for i = 0, appCount - 1 do
+            drawApp(apps[i + 1], peak, pad + (i % columns) * (columnWidth + columnGap),
+                y + (i // columns) * rowHeight + rowInset, columnWidth, unit, colors)
+        end
     end
 end
 
@@ -195,8 +235,6 @@ local function render()
     local width, height = layout.width(), layout.height()
     local context = widget.hasFeature("widget.context") and widget.context() or nil
     local content = context and context.layoutSize
-    drawReport(available and data or nil, content and content.width or width,
-        content and content.height or height, palette(context))
     interaction.region({
         key = "screenTime.open",
         shape = { type = "rect", x = 0, y = 0, width = width, height = height },
@@ -205,6 +243,8 @@ local function render()
             contextMenu = { id = "screenTime.menu", scope = "component" },
         },
     })
+    drawReport(available and data or nil, content and content.width or width,
+        content and content.height or height, palette(context))
 end
 
 local function menu(_, _, request)
@@ -213,13 +253,18 @@ local function menu(_, _, request)
         {
             id = "screenTime.open",
             label = l10n.tr("lua_widget.screen_time.open_report"),
+            icon = utf8.char(0xF582), iconFont = "fluent",
         },
     })
 end
 
 local function event(_, _, value)
-    if value.kind ~= "action" or value.id ~= "screenTime.open" then return end
-    if widget.hasFeature("task.system.openSettings") then
+    if value.kind ~= "action" then return end
+    if value.id == "screenTime.switch" then
+        hourly = not hourly
+        storage.set("reportView", hourly and "hours" or "apps")
+        widget.invalidate()
+    elseif value.id == "screenTime.open" and widget.hasFeature("task.system.openSettings") then
         task.start("system.openSettings", { page = "screenTime" })
     end
 end

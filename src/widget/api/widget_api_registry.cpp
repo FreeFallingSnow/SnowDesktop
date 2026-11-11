@@ -84,6 +84,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "data.system.network.traffic",
     "data.system.power",
     "data.system.screenTime",
+    "data.system.screenTime.appIcons",
     "data.system.storage.volumes",
     "data.system.storage.io",
     "draw.advanced",

@@ -808,7 +808,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snapshot.hours = today.hours;
         snapshot.apps.reserve(today.apps.size());
         for (const auto& app : today.apps)
-            snapshot.apps.push_back({app.name, app.seconds});
+            snapshot.apps.push_back(
+                snowdesktop::widget_runtime::MakeScreenTimeAppSnapshot(
+                    app.name, app.seconds, app.identity));
         return snapshot;
     });
     SyncStatusBar();

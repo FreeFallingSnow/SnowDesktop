@@ -2660,6 +2660,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     // width instead of the prose-reading column used by ordinary settings.
     PageSurface().MaxWidth(pageRoute.page == SettingsPage::IconLibrary
         ? std::numeric_limits<double>::infinity() : 1000.);
+    auto pageMargin = PageSurface().Margin();
+    pageMargin.Bottom = pageRoute.page == SettingsPage::ScreenTime ? 16.0 : 48.0;
+    PageSurface().Margin(pageMargin);
     pageRoute.focusId.clear();
     pageRoute.guideTopic.clear();
     if (!sessionActive_)

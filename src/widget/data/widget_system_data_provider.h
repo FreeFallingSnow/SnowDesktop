@@ -78,7 +78,12 @@ struct WidgetScreenTimeAppDataSnapshot
 {
     std::string name;
     std::int64_t seconds = 0;
+    std::string iconToken;
+    std::shared_ptr<const WidgetRuntimeImagePixels> icon;
 };
+
+WidgetScreenTimeAppDataSnapshot MakeScreenTimeAppSnapshot(
+    std::string name, std::int64_t seconds, std::string_view identity);
 
 struct WidgetScreenTimeDataSnapshot
 {

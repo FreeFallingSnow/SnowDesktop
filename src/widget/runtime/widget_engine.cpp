@@ -812,7 +812,7 @@ static std::string RegisterRuntimeImageSource(D2DState* state,
     const std::wstring& widgetId, std::string_view token,
     std::shared_ptr<const snowdesktop::widget_runtime::
         WidgetRuntimeImagePixels> pixels,
-    std::string source)
+    std::string source, bool preserveExisting = false)
 {
     const std::string boundToken = BindRuntimeImageToken(token, widgetId);
     if (!state || boundToken.empty() || !pixels ||
@@ -823,6 +823,14 @@ static std::string RegisterRuntimeImageSource(D2DState* state,
     std::size_t bytes = pixels->bgraPremultiplied.size();
     for (const auto& [key, resource] : state->runtimeImages)
         if (key != boundToken && resource.pixels) bytes += resource.pixels->bgraPremultiplied.size();
+    if (preserveExisting && (bytes > maximumBytes ||
+        (!state->runtimeImages.contains(boundToken) &&
+            (state->runtimeImages.size() >= 128 ||
+             std::count_if(state->runtimeImages.begin(), state->runtimeImages.end(),
+                 [&widgetId](const auto& entry) {
+                     return entry.second.ownerWidgetId == widgetId;
+                 }) >= 16))))
+        return {};
     while (bytes > maximumBytes && !state->runtimeImages.empty())
     {
         auto victim = std::find_if(state->runtimeImages.begin(), state->runtimeImages.end(),
@@ -837,8 +845,9 @@ static std::string RegisterRuntimeImageSource(D2DState* state,
         [&widgetId](const auto& item) {
             return item.second.ownerWidgetId == widgetId;
         }));
-    if ((!state->runtimeImages.contains(boundToken) && ownerCount >= 16) ||
-        state->runtimeImages.size() >= 128)
+    if (!preserveExisting &&
+        ((!state->runtimeImages.contains(boundToken) && ownerCount >= 16) ||
+         state->runtimeImages.size() >= 128))
     {
         std::vector<std::string> removed;
         for (const auto& [key, resource] : state->runtimeImages)
@@ -5017,6 +5026,26 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     }
     else if (snapshot->topic == "system.screenTime")
     {
+        auto* d2d = GetD2D(state);
+        const auto owner = BoundWidgetId(state);
+        if (d2d && !owner.empty())
+        {
+            const auto& apps = snapshot->screenTime.apps;
+            for (auto entry = d2d->runtimeImages.begin(); entry != d2d->runtimeImages.end();)
+            {
+                if (entry->second.source == "screen-time" &&
+                    entry->second.ownerWidgetId == owner &&
+                    std::none_of(apps.begin(), apps.end(), [&](const auto& app) {
+                        return !app.iconToken.empty() &&
+                            BindRuntimeImageToken(app.iconToken, owner) == entry->first;
+                    }))
+                {
+                    EraseRuntimeImageBitmap(d2d, entry->first);
+                    entry = d2d->runtimeImages.erase(entry);
+                }
+                else ++entry;
+            }
+        }
         lua_pushboolean(state, snapshot->screenTime.enabled);
         lua_setfield(state, -2, "enabled");
         lua_pushinteger(state, static_cast<lua_Integer>(
@@ -5035,11 +5064,18 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         int appIndex = 1;
         for (const auto& app : snapshot->screenTime.apps)
         {
-            lua_createtable(state, 0, 2);
+            lua_createtable(state, 0, 3);
             lua_pushlstring(state, app.name.data(), app.name.size());
             lua_setfield(state, -2, "name");
             lua_pushinteger(state, static_cast<lua_Integer>(app.seconds));
             lua_setfield(state, -2, "seconds");
+            const auto token = RegisterRuntimeImageSource(d2d, owner,
+                app.iconToken, app.icon, "screen-time", true);
+            if (!token.empty())
+            {
+                PushResourceHandle(state, LuaResourceType::Image, token);
+                lua_setfield(state, -2, "icon");
+            }
             lua_rawseti(state, -2, appIndex++);
         }
         lua_setfield(state, -2, "apps");
@@ -24368,8 +24404,14 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.screenTime.totalSeconds = 5400;
             result.screenTime.hours[9] = 1800;
             result.screenTime.hours[10] = 3600;
-            result.screenTime.apps.push_back({"Preview", 3600});
-            result.screenTime.apps.push_back({"Notes", 1800});
+            wchar_t windows[MAX_PATH]{};
+            const UINT windowsLength = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
+            const auto directory = windowsLength && windowsLength < ARRAYSIZE(windows)
+                ? WidgetWideToUtf8(std::wstring(windows, windowsLength)) : std::string{};
+            result.screenTime.apps.push_back(snowdesktop::widget_runtime::MakeScreenTimeAppSnapshot("File Explorer", 3600,
+                directory.empty() ? std::string{} : "path:" + directory + "\\explorer.exe"));
+            result.screenTime.apps.push_back(snowdesktop::widget_runtime::MakeScreenTimeAppSnapshot("Notepad", 1800,
+                directory.empty() ? std::string{} : "path:" + directory + "\\System32\\notepad.exe"));
             result.screenTime.timestampMs = timestampNow;
         }
         else if (result.topic == "system.network.status")
