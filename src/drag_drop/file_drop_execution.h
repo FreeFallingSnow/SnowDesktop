@@ -1,5 +1,6 @@
 #pragma once
 
+#include "desktop_icon_drop_order.h"
 #include "pending_drop_completion.h"
 #include <atomic>
 #include <functional>
@@ -36,7 +37,14 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& previe
     PendingLandingCache cache = folderTarget ? PendingLandingCache{} :
         pending_drop::BuildLanding(sources, preview, services.snapshotDesktopKeys(), GetTickCount(), services.fileName);
     if (folderTarget)
-        cache.folderPlacements.push_back(services.folderPlacement(*preview.targetWidget, preview.insertIndex, &sources));
+    {
+        const auto order = desktop_icon_drop_order::FolderInsertionSources(sources, preview);
+        DragSourceList orderedSources;
+        orderedSources.entries.reserve(order.size());
+        for (const auto* entry : order) orderedSources.entries.push_back(*entry);
+        cache.folderPlacements.push_back(services.folderPlacement(*preview.targetWidget,
+            preview.insertIndex, order.empty() ? &sources : &orderedSources));
+    }
 
     auto completed = std::make_shared<std::atomic_bool>(false);
     auto committed = std::make_shared<bool>(false);

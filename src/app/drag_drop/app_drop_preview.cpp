@@ -6,6 +6,7 @@
 #include "drag_drop/empty_group_drop_rules.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "drag_drop/desktop_drop_dispatch.h"
+#include "drag_drop/desktop_icon_drop_order.h"
 #include "drag_drop/file_source_eligibility.h"
 #include "dock/dock_desktop_return.h"
 #include "widgets/widget_folder_search.h"
@@ -775,13 +776,14 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             preview.targetWidget)
             preview.insertIndex =
                 preview.targetWidget->itemKeys.size();
-        for (const auto& entry : sourceList.entries)
+        for (const auto* entry : snowdesktop::desktop_icon_drop_order::WidgetInsertionSources(
+                sourceList, savedPageIds_))
         {
             DropLanding landing;
             landing.kind = preview.targetKind == DropTargetKind::FolderMapping
                 ? DropLandingKind::Folder
                 : DropLandingKind::WidgetIndex;
-            landing.sourceIndex = entry.sourceIndex;
+            landing.sourceIndex = entry->sourceIndex;
             landing.widget = preview.targetWidget;
             if (preview.targetWidget)
                 landing.widgetId = preview.targetWidget->id;
