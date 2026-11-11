@@ -247,8 +247,8 @@ struct AppIconImages
     mux::ElementTheme alternateTheme = mux::ElementTheme::Default;
 };
 
-// Icon pixels are premultiplied BGRA. Compare against alpha rather than 255
-// so the antialiased edges of a white or black glyph do not look gray.
+// Classify the nearly opaque core of a premultiplied BGRA glyph. Shell
+// extraction and resampling can darken the partially transparent edges.
 mux::ElementTheme LowContrastTheme(const screen_time::AppIcon& icon)
 {
     bool light = true;
@@ -261,8 +261,11 @@ mux::ElementTheme LowContrastTheme(const screen_time::AppIcon& icon)
         const int alpha = pixels[i + 3];
         if (alpha < 16) ++transparent;
         if (alpha < 48) continue;
-        hasInk = true;
         const auto [minimum, maximum] = std::minmax({pixels[i], pixels[i + 1], pixels[i + 2]});
+        if ((maximum - minimum) * 255 > 20 * alpha)
+            return mux::ElementTheme::Default;
+        if (alpha < 240) continue;
+        hasInk = true;
         light = light && minimum * 255 >= 235 * alpha;
         dark = dark && maximum * 255 <= 20 * alpha;
         if (!light && !dark) return mux::ElementTheme::Default;
