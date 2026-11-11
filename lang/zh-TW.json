@@ -2890,5 +2890,6 @@
   "settings.screenTime.week": "週",
   "settings.screenTime.enabledHint": "記錄目前前景應用程式的使用時間。連續 3 分鐘沒有鍵盤或滑鼠輸入、鎖定畫面或關閉顯示器時會暫停。記錄只保存在這台電腦上。",
   "settings.screenTime.enabled": "統計螢幕使用時間",
-  "settings.screenTime.clear": "清除記錄"
+  "settings.screenTime.clear": "清除記錄",
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "使用 Win 鍵開啟時保持工作列隱藏"
 }

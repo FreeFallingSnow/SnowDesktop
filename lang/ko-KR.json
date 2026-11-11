@@ -2890,5 +2890,6 @@
   "settings.screenTime.week": "주",
   "settings.screenTime.enabledHint": "전면 앱의 사용 시간을 기록합니다. 키보드나 마우스를 3분 동안 사용하지 않거나, 화면이 잠기거나 꺼지면 일시 중지됩니다. 기록은 이 PC에만 저장됩니다.",
   "settings.screenTime.enabled": "스크린 타임 기록",
-  "settings.screenTime.clear": "기록 지우기"
+  "settings.screenTime.clear": "기록 지우기",
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Windows 키로 시작 메뉴를 열 때 작업 표시줄 숨김 유지"
 }

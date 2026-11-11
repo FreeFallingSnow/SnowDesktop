@@ -2890,5 +2890,6 @@
   "settings.screenTime.week": "Semana",
   "settings.screenTime.enabledHint": "Registra por quanto tempo o aplicativo em primeiro plano fica em uso. O registro pausa após 3 minutos sem teclado ou mouse e quando a tela está bloqueada ou desligada. Os dados ficam neste computador.",
   "settings.screenTime.enabled": "Registrar tempo de tela",
-  "settings.screenTime.clear": "Limpar histórico"
+  "settings.screenTime.clear": "Limpar histórico",
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Manter a barra de tarefas oculta ao abrir o Iniciar com a tecla Windows"
 }
