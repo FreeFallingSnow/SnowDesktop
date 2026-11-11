@@ -1940,7 +1940,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
             });
         SetMenuItemIcon(sortMenu, kFillGapsDefaultCommand,
-            snowdesktop::menu_fluent_glyphs::kSort, MenuIconFont::FluentRegular);
+            snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
         SetMenuItemInlineAction(sortMenu, kFillGapsDefaultCommand, kFillGapsDefaultCommand, false, false, true);
         SetMenuItemInlineAction(sortMenu, kFillGapsHorizontalCommand, kFillGapsDefaultCommand, true, false, true);
         SetMenuItemInlineAction(sortMenu, kFillGapsVerticalCommand, kFillGapsDefaultCommand, true, false, true);
