@@ -364,6 +364,41 @@ local function content(node)
     local out={};for _,child in ipairs(node.children) do out[#out+1]=content(child) end
     return table.concat(out)
 end
+local function repairZeroWordTimes(line)
+    local words=line.words
+    local index=1
+    while index<=#words do
+        local word,previous=words[index],words[index-1]
+        -- A zero-length span at the beginning of playback can be valid.
+        if word.start==0 and word.finish==0 and (line.start>0 or (previous and previous.finish>0)) then
+            local first=index
+            local weights,total={},0
+            repeat
+                local weight=math.max(1,utf8.len(trim(words[index].text)) or 1)
+                weights[index]=weight
+                total=total+weight
+                index=index+1
+            until not words[index] or words[index].start~=0 or words[index].finish~=0
+
+            local following=words[index]
+            local start=math.max(line.start,previous and previous.finish or line.start)
+            local finish=math.min(line.finish,following and following.start or line.finish)
+            if (not previous and not following) or finish<start then
+                -- Keep the text and let the display use its existing untimed-line behavior.
+                line.words={}
+                return
+            end
+            local elapsed=0
+            for i=first,index-1 do
+                words[i].start=start+(finish-start)*elapsed/total
+                elapsed=elapsed+weights[i]
+                words[i].finish=start+(finish-start)*elapsed/total
+            end
+        else
+            index=index+1
+        end
+    end
+end
 function M.ttml(text,duration)
     if type(text)~="string" then return nil end
     local ok,root=pcall(xml,text);if not ok then return nil end
@@ -400,6 +435,7 @@ function M.ttml(text,duration)
     end
     visit(root)
     local result=finish(lines,duration)
+    for _,line in ipairs(result.lines) do repairZeroWordTimes(line) end
     return #result.lines>0 and result or nil
 end
 return M
