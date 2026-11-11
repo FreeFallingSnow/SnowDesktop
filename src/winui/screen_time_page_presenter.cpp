@@ -11,6 +11,7 @@
 #include <string>
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
+#include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.Foundation.h>
 
@@ -18,7 +19,7 @@ namespace snowdesktop::winui
 {
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxc = mux::Controls;
-namespace muxm = mux::Media;
+namespace muxa = mux::Automation;
 
 namespace
 {
@@ -58,69 +59,168 @@ std::wstring Duration(const std::function<std::wstring(std::string_view)>& text,
         std::to_wstring(minutes));
 }
 
-muxm::SolidColorBrush Teal(std::uint8_t alpha)
+mux::Style BorderFillStyle(std::wstring_view brush)
 {
-    return muxm::SolidColorBrush(
-        winrt::Windows::UI::Color{alpha, 22, 140, 136});
+    return mux::Markup::XamlReader::Load(
+        L"<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' "
+        L"TargetType='Border'><Setter Property='Background' Value='{ThemeResource "
+        + std::wstring(brush) + L"}'/></Style>").as<mux::Style>();
 }
 
-mux::FrameworkElement UsageTrack(std::int64_t seconds, std::int64_t peak)
+void AddColumn(const muxc::Grid& grid, double weight)
 {
-    muxc::Border track;
-    track.Width(140);
-    track.Height(4);
+    muxc::ColumnDefinition column;
+    column.Width(weight == 0 ? mux::GridLengthHelper::Auto() :
+        mux::GridLengthHelper::FromValueAndType(weight, mux::GridUnitType::Star));
+    grid.ColumnDefinitions().Append(column);
+}
+
+muxc::TextBlock SmallLabel(const std::wstring& value)
+{
+    muxc::TextBlock label;
+    label.Text(value);
+    label.FontSize(12);
+    label.Opacity(0.75);
+    return label;
+}
+
+muxc::TextBlock SectionTitle()
+{
+    muxc::TextBlock title;
+    title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+    title.TextWrapping(mux::TextWrapping::Wrap);
+    muxa::AutomationProperties::SetHeadingLevel(title,
+        muxa::Peers::AutomationHeadingLevel::Level2);
+    return title;
+}
+
+mux::FrameworkElement UsageTrack(std::int64_t seconds, std::int64_t peak,
+    const mux::Style& accent, const mux::Style& line)
+{
+    muxc::Grid track;
+    track.Height(5);
     track.VerticalAlignment(mux::VerticalAlignment::Center);
-    track.CornerRadius({2, 2, 2, 2});
-    track.Background(Teal(36));
+    const auto fraction = std::clamp(static_cast<double>(seconds) / peak, 0.0, 1.0);
+    AddColumn(track, fraction);
+    AddColumn(track, 1 - fraction);
+    muxc::Border background;
+    background.Style(line);
+    background.CornerRadius({2});
+    muxc::Grid::SetColumnSpan(background, 2);
+    track.Children().Append(background);
     if (seconds > 0 && peak > 0)
     {
         muxc::Border fill;
-        fill.Width(std::max(4.0, 140.0 * static_cast<double>(seconds) / peak));
-        fill.Height(4);
-        fill.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        fill.CornerRadius({2, 2, 2, 2});
-        fill.Background(Teal(255));
-        track.Child(fill);
+        fill.Style(accent);
+        fill.CornerRadius({2});
+        track.Children().Append(fill);
     }
     return track;
 }
 
-mux::UIElement UsageChart(const std::vector<std::int64_t>& values)
+std::wstring HourLabel(int hour)
 {
-    muxc::Grid chart;
-    chart.Height(72);
-    chart.ColumnSpacing(values.size() > 12 ? 3.0 : 10.0);
-    std::int64_t peak = 1;
-    for (const auto value : values) peak = std::max(peak, value);
-    for (std::size_t index = 0; index < values.size(); ++index)
-    {
-        muxc::ColumnDefinition column;
-        column.Width(mux::GridLengthHelper::FromValueAndType(
-            1, mux::GridUnitType::Star));
-        chart.ColumnDefinitions().Append(column);
-        if (values[index] <= 0) continue;
-        muxc::Border bar;
-        bar.Height(std::max(3.0, 72.0 * static_cast<double>(values[index]) / peak));
-        bar.VerticalAlignment(mux::VerticalAlignment::Bottom);
-        bar.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        bar.CornerRadius({2, 2, 2, 2});
-        bar.Background(Teal(255));
-        muxc::Grid::SetColumn(bar, static_cast<int>(index));
-        chart.Children().Append(bar);
-    }
-    return chart;
+    return (hour < 10 ? L"0" : L"") + std::to_wstring(hour) + L":00";
 }
 
-std::string TodayDate()
+mux::UIElement UsageChart(const std::vector<std::int64_t>& values,
+    const std::vector<std::wstring>& dates,
+    const std::function<std::wstring(std::string_view)>& text,
+    const mux::Style& accent, const mux::Style& line)
 {
-    const auto now = std::chrono::system_clock::to_time_t(
-        std::chrono::system_clock::now());
-    std::tm local{};
-    localtime_s(&local, &now);
-    char text[16]{};
-    sprintf_s(text, "%04d-%02d-%02d",
-        local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
-    return text;
+    constexpr double plotHeight = 104.0;
+    const bool hourly = dates.empty();
+    const auto peak = *std::max_element(values.begin(), values.end());
+    // Round the weekly ceiling in two steps. The hourly scale stays at one hour
+    // unless a local clock change puts more than an hour in the same bucket.
+    const std::int64_t step = hourly ? 3600 : (peak > 3600 ? 7200 : 3600);
+    const auto ceiling = std::max(step, (peak + step - 1) / step * step);
+
+    muxc::Grid chart;
+    chart.ColumnSpacing(8);
+    chart.RowSpacing(4);
+    AddColumn(chart, 1);
+    AddColumn(chart, 0);
+    for (int row = 0; row < 2; ++row)
+    {
+        muxc::RowDefinition definition;
+        definition.Height(mux::GridLengthHelper::Auto());
+        chart.RowDefinitions().Append(definition);
+    }
+
+    muxc::Grid plot;
+    plot.Height(plotHeight);
+    muxc::Grid labels;
+    muxc::Grid::SetRow(labels, 1);
+    const auto count = static_cast<int>(values.size());
+    for (int index = 0; index < count; ++index)
+    {
+        AddColumn(plot, 1);
+        AddColumn(labels, 1);
+    }
+    chart.Children().Append(plot);
+    chart.Children().Append(labels);
+
+    muxc::Grid scale;
+    muxc::Grid::SetColumn(scale, 1);
+    chart.Children().Append(scale);
+    const mux::VerticalAlignment positions[]{
+        mux::VerticalAlignment::Top, mux::VerticalAlignment::Center,
+        mux::VerticalAlignment::Bottom};
+    for (int index = 0; index < 3; ++index)
+    {
+        muxc::Border rule;
+        rule.Style(line);
+        rule.Height(1);
+        rule.VerticalAlignment(positions[index]);
+        muxc::Grid::SetColumnSpan(rule, count);
+        plot.Children().Append(rule);
+        const auto value = index == 0 ? ceiling : ceiling / 2;
+        auto tick = SmallLabel(index == 2 ? L"0" : hourly ?
+            Format(text("settings.screenTime.durationMinutes"), std::to_wstring(value / 60)) :
+            Duration(text, value));
+        tick.VerticalAlignment(positions[index]);
+        tick.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        scale.Children().Append(tick);
+    }
+
+    for (int index = 0; index < count; ++index)
+    {
+        const auto value = values[static_cast<std::size_t>(index)];
+        if (!hourly || index % 6 == 0)
+        {
+            auto label = SmallLabel(hourly ? HourLabel(index) :
+                dates[static_cast<std::size_t>(index)].substr(5));
+            label.HorizontalAlignment(hourly ? mux::HorizontalAlignment::Left :
+                mux::HorizontalAlignment::Center);
+            if (hourly) muxc::Grid::SetColumnSpan(label, 4);
+            muxc::Grid::SetColumn(label, index);
+            labels.Children().Append(label);
+        }
+        if (value <= 0) continue;
+        muxc::Border bar;
+        bar.Style(accent);
+        bar.Height(std::max(1.0, plotHeight * static_cast<double>(value) / ceiling));
+        bar.VerticalAlignment(mux::VerticalAlignment::Bottom);
+        bar.MaxWidth(hourly ? 24 : 48);
+        bar.Margin({2, 0, 2, 0});
+        bar.CornerRadius({3, 3, 0, 0});
+        const auto detail = (hourly ? HourLabel(index) + L"–" + HourLabel(index + 1) :
+            dates[static_cast<std::size_t>(index)]) + L"  ·  " + Duration(text, value);
+        muxc::ToolTipService::SetToolTip(bar, winrt::box_value(detail));
+        muxa::AutomationProperties::SetName(bar, detail);
+        muxc::Grid::SetColumn(bar, index);
+        plot.Children().Append(bar);
+    }
+    if (hourly)
+    {
+        auto end = SmallLabel(HourLabel(24));
+        end.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid::SetColumn(end, count - 4);
+        muxc::Grid::SetColumnSpan(end, 4);
+        labels.Children().Append(end);
+    }
+    return chart;
 }
 
 std::wstring Widen(std::string_view value)
@@ -141,11 +241,17 @@ struct ScreenTimePagePresenter::Impl
     LocalizeCallback localize;
     ScreenTimePageActions actions;
     mux::Style cardStyle{nullptr};
+    mux::Style accentStyle{nullptr};
+    mux::Style dividerStyle{nullptr};
     muxc::StackPanel root{nullptr};
+    muxc::TextBlock overviewTitle{nullptr};
+    muxc::TextBlock appsTitle{nullptr};
     muxc::TextBlock paused{nullptr};
     muxc::TextBlock total{nullptr};
+    muxc::TextBlock weekCaption{nullptr};
     muxc::ComboBox dayList{nullptr};
-    muxc::StackPanel report{nullptr};
+    muxc::Border chartHost{nullptr};
+    muxc::Border appsHost{nullptr};
     muxc::ToggleSwitch enabled{nullptr};
     muxc::Button clear{nullptr};
     muxc::SelectorBar range{nullptr};
@@ -154,11 +260,11 @@ struct ScreenTimePagePresenter::Impl
     presenter_controls::SettingRow enabledRow;
     presenter_controls::SettingRow clearRow;
     mux::DispatcherTimer timer{nullptr};
-    muxc::TextBlock enabledLabel;
     std::uint64_t generation = 0;
     bool enabledValue = true;
     bool week = false;
     std::string selectedDate;
+    std::string firstPickerDate;
     winrt::event_token dayChanged;
     bool active = false;
     bool closed = false;
@@ -178,16 +284,14 @@ struct ScreenTimePagePresenter::Impl
     {
         root = muxc::StackPanel{};
         root.Spacing(12);
+        accentStyle = BorderFillStyle(L"AccentFillColorDefaultBrush");
+        dividerStyle = BorderFillStyle(L"DividerStrokeColorDefaultBrush");
 
-        muxc::TextBlock heading;
-        heading.Text(L("settings.screenTime.page"));
-        heading.FontSize(16);
         muxc::StackPanel body;
         body.Spacing(0);
 
         enabled = muxc::ToggleSwitch{};
         enabledRow.Initialize(enabled);
-        enabledLabel = enabledRow.label;
         body.Children().Append(enabledRow.root);
 
         clear = muxc::Button{};
@@ -195,33 +299,69 @@ struct ScreenTimePagePresenter::Impl
         body.Children().Append(clearRow.root);
         muxc::Border card;
         presenter_controls::InitializeSettingsGroup(
-            card, heading, body, cardStyle);
+            card, nullptr, body, cardStyle);
         presenter_controls::UpdateSettingsSubrows(body, 0);
         root.Children().Append(card);
 
-        paused = muxc::TextBlock{};
-        paused.TextWrapping(mux::TextWrapping::Wrap);
-        paused.Opacity(0.72);
-        root.Children().Append(paused);
-
+        muxc::StackPanel overview;
+        overview.Spacing(8);
+        muxc::Grid header;
+        header.ColumnSpacing(8);
+        AddColumn(header, 1);
+        AddColumn(header, 0);
+        overviewTitle = SectionTitle();
+        overviewTitle.VerticalAlignment(mux::VerticalAlignment::Center);
+        header.Children().Append(overviewTitle);
         range = muxc::SelectorBar{};
         dayItem = muxc::SelectorBarItem{};
         weekItem = muxc::SelectorBarItem{};
         range.Items().Append(dayItem);
         range.Items().Append(weekItem);
-        root.Children().Append(range);
+        muxc::Grid::SetColumn(range, 1);
+        header.Children().Append(range);
+        overview.Children().Append(header);
 
+        muxc::Grid summary;
+        summary.ColumnSpacing(8);
+        AddColumn(summary, 1);
+        AddColumn(summary, 0);
         total = muxc::TextBlock{};
-        total.FontSize(20);
-        root.Children().Append(total);
+        total.FontSize(30);
+        total.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        total.TextWrapping(mux::TextWrapping::Wrap);
+        total.VerticalAlignment(mux::VerticalAlignment::Center);
+        summary.Children().Append(total);
         dayList = muxc::ComboBox{};
-        dayList.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        dayList.MinWidth(160);
-        root.Children().Append(dayList);
+        dayList.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(dayList, 1);
+        summary.Children().Append(dayList);
+        weekCaption = SmallLabel(L"");
+        weekCaption.Visibility(mux::Visibility::Collapsed);
+        weekCaption.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(weekCaption, 1);
+        summary.Children().Append(weekCaption);
+        overview.Children().Append(summary);
 
-        report = muxc::StackPanel{};
-        report.Spacing(10);
-        root.Children().Append(report);
+        paused = SmallLabel(L"");
+        paused.TextWrapping(mux::TextWrapping::Wrap);
+        overview.Children().Append(paused);
+        chartHost = muxc::Border{};
+        overview.Children().Append(chartHost);
+        muxc::Border overviewCard;
+        if (cardStyle) overviewCard.Style(cardStyle);
+        overviewCard.Child(overview);
+        root.Children().Append(overviewCard);
+
+        muxc::StackPanel apps;
+        apps.Spacing(6);
+        appsTitle = SectionTitle();
+        apps.Children().Append(appsTitle);
+        appsHost = muxc::Border{};
+        apps.Children().Append(appsHost);
+        muxc::Border appsCard;
+        if (cardStyle) appsCard.Style(cardStyle);
+        appsCard.Child(apps);
+        root.Children().Append(appsCard);
 
         timer = mux::DispatcherTimer{};
         timer.Interval(std::chrono::seconds(15));
@@ -281,17 +421,15 @@ struct ScreenTimePagePresenter::Impl
 
     void Reload()
     {
-        if (!report) return;
-        report.Children().Clear();
         const auto history = snowdesktop::screen_time::LoadReports(
             GetDataFilePath(L"SnowDesktop.screen-time.json"));
-        const std::string today = TodayDate();
+        const auto now = std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now());
         std::vector<snowdesktop::screen_time::DayReport> recent;
+        recent.reserve(7);
         for (int offset = 6; offset >= 0; --offset)
         {
             std::tm local{};
-            const auto now = std::chrono::system_clock::to_time_t(
-                std::chrono::system_clock::now());
             localtime_s(&local, &now);
             local.tm_mday -= offset;
             local.tm_hour = 12;
@@ -307,22 +445,26 @@ struct ScreenTimePagePresenter::Impl
             recent.push_back(std::move(day));
         }
 
+        dayList.Visibility(week ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        weekCaption.Visibility(week ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (week)
         {
-            dayList.Visibility(mux::Visibility::Collapsed);
             std::int64_t sum = 0;
             std::map<std::string, std::int64_t> apps;
             std::vector<std::int64_t> totals;
+            std::vector<std::wstring> dates;
             totals.reserve(recent.size());
+            dates.reserve(recent.size());
             for (const auto& day : recent)
             {
                 sum += day.totalSeconds;
                 totals.push_back(day.totalSeconds);
+                dates.push_back(Widen(day.date));
                 for (const auto& app : day.apps)
                     apps[app.name] += app.seconds;
             }
             total.Text(Duration(localize, sum));
-            report.Children().Append(UsageChart(totals));
+            chartHost.Child(UsageChart(totals, dates, localize, accentStyle, dividerStyle));
             std::vector<snowdesktop::screen_time::AppTotal> ranked;
             for (const auto& [name, seconds] : apps)
                 ranked.push_back({name, seconds});
@@ -334,27 +476,29 @@ struct ScreenTimePagePresenter::Impl
             return;
         }
 
-        if (selectedDate.empty()) selectedDate = today;
         updating = true;
-        dayList.Items().Clear();
-        dayList.Visibility(mux::Visibility::Visible);
+        if (firstPickerDate != recent.front().date)
+        {
+            firstPickerDate = recent.front().date;
+            dayList.Items().Clear();
+            for (const auto& day : recent)
+                dayList.Items().Append(winrt::box_value(Widen(day.date)));
+        }
         int selectedIndex = static_cast<int>(recent.size()) - 1;
         for (int index = 0; index < static_cast<int>(recent.size()); ++index)
         {
-            dayList.Items().Append(winrt::box_value(Widen(recent[index].date)));
-            if (recent[index].date == selectedDate) selectedIndex = index;
+            if (recent[static_cast<std::size_t>(index)].date == selectedDate)
+                selectedIndex = index;
         }
-        dayList.SelectedIndex(selectedIndex);
-        if (selectedIndex >= 0 &&
-            selectedIndex < static_cast<int>(recent.size()))
-            selectedDate = recent[static_cast<std::size_t>(selectedIndex)].date;
+        if (dayList.SelectedIndex() != selectedIndex)
+            dayList.SelectedIndex(selectedIndex);
         updating = false;
-        const auto selected = std::find_if(recent.begin(), recent.end(),
-            [&](const auto& day) { return day.date == selectedDate; });
-        const auto& day = selected == recent.end() ? recent.back() : *selected;
+        const auto& day = recent[static_cast<std::size_t>(selectedIndex)];
+        selectedDate = day.date;
         total.Text(Duration(localize, day.totalSeconds));
-        report.Children().Append(UsageChart(
-            std::vector<std::int64_t>(day.hours.begin(), day.hours.end())));
+        chartHost.Child(UsageChart(
+            std::vector<std::int64_t>(day.hours.begin(), day.hours.end()),
+            {}, localize, accentStyle, dividerStyle));
         AppendApps(day.apps);
     }
 
@@ -362,47 +506,56 @@ struct ScreenTimePagePresenter::Impl
     {
         if (apps.empty())
         {
-            muxc::TextBlock empty;
-            empty.Text(L("settings.screenTime.empty"));
-            empty.Opacity(0.72);
-            report.Children().Append(empty);
+            auto empty = SmallLabel(L(week ? "settings.screenTime.emptyWeek" :
+                "settings.screenTime.empty"));
+            empty.TextWrapping(mux::TextWrapping::Wrap);
+            appsHost.Child(empty);
             return;
         }
         const auto peak = std::max<std::int64_t>(1, apps.front().seconds);
         const auto limit = std::min<std::size_t>(apps.size(), 30);
+        muxc::Grid rows;
+        rows.ColumnSpacing(12);
+        AddColumn(rows, 3);
+        AddColumn(rows, 1);
+        AddColumn(rows, 0);
         for (std::size_t index = 0; index < limit; ++index)
         {
             const auto& app = apps[index];
-            muxc::Grid row;
-            row.ColumnSpacing(12);
-            muxc::ColumnDefinition nameColumn;
-            nameColumn.Width(mux::GridLengthHelper::FromValueAndType(
-                1, mux::GridUnitType::Star));
-            muxc::ColumnDefinition barColumn;
-            barColumn.Width(mux::GridLengthHelper::FromValueAndType(
-                160, mux::GridUnitType::Pixel));
-            muxc::ColumnDefinition valueColumn;
-            valueColumn.Width(mux::GridLengthHelper::Auto());
-            row.ColumnDefinitions().Append(nameColumn);
-            row.ColumnDefinitions().Append(barColumn);
-            row.ColumnDefinitions().Append(valueColumn);
+            const auto rowIndex = static_cast<int>(index);
+            muxc::RowDefinition row;
+            row.Height(mux::GridLengthHelper::Auto());
+            row.MinHeight(32);
+            rows.RowDefinitions().Append(row);
+            if (index > 0)
+            {
+                muxc::Border divider;
+                divider.Style(dividerStyle);
+                divider.Height(1);
+                divider.VerticalAlignment(mux::VerticalAlignment::Top);
+                muxc::Grid::SetColumnSpan(divider, 3);
+                muxc::Grid::SetRow(divider, rowIndex);
+                rows.Children().Append(divider);
+            }
             muxc::TextBlock name;
             name.Text(Widen(app.name));
             name.TextTrimming(mux::TextTrimming::CharacterEllipsis);
             name.VerticalAlignment(mux::VerticalAlignment::Center);
-            const auto bar = UsageTrack(app.seconds, peak);
-            muxc::TextBlock amount;
-            amount.Text(Duration(localize, app.seconds));
+            muxc::ToolTipService::SetToolTip(name, winrt::box_value(name.Text()));
+            const auto bar = UsageTrack(app.seconds, peak, accentStyle, dividerStyle);
+            auto amount = SmallLabel(Duration(localize, app.seconds));
             amount.VerticalAlignment(mux::VerticalAlignment::Center);
-            muxc::Grid::SetColumn(name, 0);
+            amount.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            muxc::Grid::SetRow(name, rowIndex);
+            muxc::Grid::SetRow(bar, rowIndex);
+            muxc::Grid::SetRow(amount, rowIndex);
             muxc::Grid::SetColumn(bar, 1);
             muxc::Grid::SetColumn(amount, 2);
-            row.MinHeight(28);
-            row.Children().Append(name);
-            row.Children().Append(bar);
-            row.Children().Append(amount);
-            report.Children().Append(row);
+            rows.Children().Append(name);
+            rows.Children().Append(bar);
+            rows.Children().Append(amount);
         }
+        appsHost.Child(rows);
     }
 };
 
@@ -452,7 +605,6 @@ void ScreenTimePagePresenter::SetCollectionState(
 
 void ScreenTimePagePresenter::RefreshLocalizedText()
 {
-    impl_->enabledLabel.Text(impl_->L("settings.screenTime.enabled"));
     impl_->enabledRow.SetText(impl_->L("settings.screenTime.enabled"),
         impl_->L("settings.screenTime.enabledHint"));
     impl_->enabled.OnContent(winrt::box_value(impl_->L("app.interact.on")));
@@ -462,6 +614,11 @@ void ScreenTimePagePresenter::RefreshLocalizedText()
     impl_->clearRow.SetText(impl_->L("settings.screenTime.clear"));
     impl_->dayItem.Text(impl_->L("settings.screenTime.day"));
     impl_->weekItem.Text(impl_->L("settings.screenTime.week"));
+    impl_->overviewTitle.Text(impl_->L("settings.screenTime.overview"));
+    impl_->appsTitle.Text(impl_->L("settings.screenTime.appUsage"));
+    impl_->weekCaption.Text(impl_->L("settings.screenTime.recentWeek"));
+    muxa::AutomationProperties::SetName(impl_->dayList,
+        impl_->L("settings.screenTime.day"));
     impl_->ShowPaused();
     if (impl_->active) impl_->Reload();
 }

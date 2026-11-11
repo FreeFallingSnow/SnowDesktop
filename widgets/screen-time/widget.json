@@ -13,9 +13,12 @@
   "version": "1.0.0",
   "description": "Shows today's foreground app usage.",
   "descriptionKey": "lua_widget.screen_time.description",
+  "preview": "preview.png",
   "locales": {
     "zh-CN": {
       "lua_widget.screen_time.name": "屏幕使用时间",
+      "lua_widget.screen_time.today": "今日屏幕使用时间",
+      "lua_widget.screen_time.top_apps": "用时最长的应用",
       "lua_widget.screen_time.description": "显示今天的前台应用使用时间。",
       "lua_widget.screen_time.paused": "统计已暂停",
       "lua_widget.screen_time.empty": "今天还没有记录",
@@ -27,6 +30,8 @@
     },
     "zh-TW": {
       "lua_widget.screen_time.name": "螢幕使用時間",
+      "lua_widget.screen_time.today": "今日螢幕使用時間",
+      "lua_widget.screen_time.top_apps": "使用時間最長的應用程式",
       "lua_widget.screen_time.description": "顯示今天的前景應用程式使用時間。",
       "lua_widget.screen_time.paused": "統計已暫停",
       "lua_widget.screen_time.empty": "今天還沒有記錄",
@@ -38,6 +43,8 @@
     },
     "en-US": {
       "lua_widget.screen_time.name": "Screen Time",
+      "lua_widget.screen_time.today": "Screen time today",
+      "lua_widget.screen_time.top_apps": "Most used apps",
       "lua_widget.screen_time.description": "Shows today's foreground app usage.",
       "lua_widget.screen_time.paused": "Tracking is paused",
       "lua_widget.screen_time.empty": "No activity yet today",
@@ -49,6 +56,8 @@
     },
     "ja-JP": {
       "lua_widget.screen_time.name": "スクリーンタイム",
+      "lua_widget.screen_time.today": "今日のスクリーンタイム",
+      "lua_widget.screen_time.top_apps": "使用時間が長いアプリ",
       "lua_widget.screen_time.description": "今日の前面アプリの使用時間を表示します。",
       "lua_widget.screen_time.paused": "集計は一時停止中です",
       "lua_widget.screen_time.empty": "今日の記録はまだありません",
@@ -60,6 +69,8 @@
     },
     "ko-KR": {
       "lua_widget.screen_time.name": "스크린 타임",
+      "lua_widget.screen_time.today": "오늘의 스크린 타임",
+      "lua_widget.screen_time.top_apps": "가장 많이 사용한 앱",
       "lua_widget.screen_time.description": "오늘 전면 앱 사용 시간을 표시합니다.",
       "lua_widget.screen_time.paused": "집계가 일시 중지됨",
       "lua_widget.screen_time.empty": "오늘 기록이 아직 없습니다",
@@ -71,6 +82,8 @@
     },
     "de-DE": {
       "lua_widget.screen_time.name": "Bildschirmzeit",
+      "lua_widget.screen_time.today": "Bildschirmzeit heute",
+      "lua_widget.screen_time.top_apps": "Meistgenutzte Apps",
       "lua_widget.screen_time.description": "Zeigt die heutige Nutzungszeit der Vordergrund-Apps.",
       "lua_widget.screen_time.paused": "Erfassung angehalten",
       "lua_widget.screen_time.empty": "Heute noch keine Einträge",
@@ -82,6 +95,8 @@
     },
     "fr-FR": {
       "lua_widget.screen_time.name": "Temps d'écran",
+      "lua_widget.screen_time.today": "Temps d’écran aujourd’hui",
+      "lua_widget.screen_time.top_apps": "Apps les plus utilisées",
       "lua_widget.screen_time.description": "Affiche le temps passé aujourd'hui dans les applications au premier plan.",
       "lua_widget.screen_time.paused": "Le suivi est en pause",
       "lua_widget.screen_time.empty": "Aucune activité aujourd'hui",
@@ -93,6 +108,8 @@
     },
     "es-ES": {
       "lua_widget.screen_time.name": "Tiempo de pantalla",
+      "lua_widget.screen_time.today": "Tiempo de pantalla de hoy",
+      "lua_widget.screen_time.top_apps": "Apps más usadas",
       "lua_widget.screen_time.description": "Muestra el uso de hoy de las aplicaciones en primer plano.",
       "lua_widget.screen_time.paused": "El registro está en pausa",
       "lua_widget.screen_time.empty": "Todavía no hay actividad hoy",
@@ -104,6 +121,8 @@
     },
     "es-419": {
       "lua_widget.screen_time.name": "Tiempo de pantalla",
+      "lua_widget.screen_time.today": "Tiempo de pantalla de hoy",
+      "lua_widget.screen_time.top_apps": "Apps más usadas",
       "lua_widget.screen_time.description": "Muestra el uso de hoy de las aplicaciones en primer plano.",
       "lua_widget.screen_time.paused": "El registro está en pausa",
       "lua_widget.screen_time.empty": "Todavía no hay actividad hoy",
@@ -115,6 +134,8 @@
     },
     "pt-BR": {
       "lua_widget.screen_time.name": "Tempo de tela",
+      "lua_widget.screen_time.today": "Tempo de tela hoje",
+      "lua_widget.screen_time.top_apps": "Apps mais usados",
       "lua_widget.screen_time.description": "Mostra o uso de hoje dos aplicativos em primeiro plano.",
       "lua_widget.screen_time.paused": "A contagem está pausada",
       "lua_widget.screen_time.empty": "Ainda não há atividade hoje",
@@ -149,5 +170,8 @@
     "lifecycle.event",
     "task.start",
     "task.system.openSettings"
+  ],
+  "optionalFeatures": [
+    "widget.context"
   ]
 }
