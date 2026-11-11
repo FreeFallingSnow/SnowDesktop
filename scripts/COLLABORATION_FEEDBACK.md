@@ -152,6 +152,8 @@
 
 ### CF-012 观察等待默认超时导致模型轮询
 
+- **新需求登记中断旧候选回执（2026-11-11）**：Task `task-16065c1cdd3846c4a9e782099ce5fcc3` 的 `ready-and-wait` 正在观察批次 `75bb4514cee8497f9c13a6a9603fabc9`、Run `a1e0c45a81d34bce9dc40878df1cb736` 时，收到新需求并用同 ID `begin` 取得未认领文件的批次 `1bef5f6cf6254647bb6c8d6d72520abf`。原观察结束时仅输出 `This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.`，未返回已经归档的编译失败，须另读原回执；`repair` 又因空的新登记被拒绝。源码分别在 `build_manager.ps1` 和 `build_protocol.ps1` 确认两处校验。已用 `recover -ConfirmStopped` 撤回自己的空登记，并从原失败建立续修 `454c6e5ccd9f493e83a1032124afc88f`；未重交原 Run。待改进：原观察应返回与原批次绑定的只读结果并明确其不适用于新修订，空的新登记应提供明确的续修合入或撤回提示。
+
 - **观察参数误入执行（2026-11-10）**：Task `latest-build-application-tests-20261110` 在捕获 Run `4b62b5afc49a431cb5f108cc19adf0e1` 后误用 `run invoke -RunId <捕获Run>` 等待。CLI 接受了 `-RunId`，但仍走创建逻辑并提交默认 tests/list Run `2de03c8eed2c4f549fbfd38e3285d57e`，额外执行了一次 CMake 配置和清单查询（配置日志记载 17.36 秒），未执行 CTest。既有 Run 使用 `run wait`；后续可让 `invoke` 拒绝 `-RunId` 并指明观察入口，或显式支持只观察。
 
 - **工坊候选的观察提示（2026-11-09）**：Task `task-1723f991a9ca41aab8d21d8250c7cc86`、批次 `1bdd559292384c28b727ffd28415d7b7` 修订 0、Run `71efd003773f460887cd15d19494ee1a`。原 `ready-and-wait` session `43835` 多次交替输出 `Waiting for the collaboration state transaction.` 和同一编译阶段，入队时短暂输出 `resource reason not recorded`。原 Run 通过 Release 和七项测试，全程未重交。下一步仍是按业务状态去重并核对入队原因发布时序。
