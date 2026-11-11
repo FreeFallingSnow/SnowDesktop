@@ -2879,5 +2879,16 @@
   "settings.calendar.subscriptionEdit": "Modifier l’abonnement",
   "settings.calendar.subscriptionManagementLink": "Lien de gestion (facultatif)",
   "settings.calendar.subscriptionInvalidManagementLink": "Saisissez un lien de gestion HTTPS valide.",
-  "settings.calendar.subscriptionOpenManagement": "Ouvrir le site du calendrier"
+  "settings.calendar.subscriptionOpenManagement": "Ouvrir le site du calendrier",
+  "settings.screenTime.durationMinutes": "{0} min",
+  "settings.screenTime.duration": "{0} h {1} min",
+  "settings.screenTime.paused": "La mesure est en pause. L'historique existant reste consultable.",
+  "app.settings.widgets_permission_screen_time_read": "Lire le temps d'écran",
+  "settings.screenTime.page": "Temps d'écran",
+  "settings.screenTime.empty": "Aucune activité pour cette journée",
+  "settings.screenTime.day": "Jour",
+  "settings.screenTime.week": "Semaine",
+  "settings.screenTime.enabledHint": "Enregistre la durée d'utilisation de l'application au premier plan. La mesure s'interrompt après 3 minutes sans clavier ni souris, ainsi que lorsque l'écran est verrouillé ou éteint. Les données restent sur cet ordinateur.",
+  "settings.screenTime.enabled": "Mesurer le temps d'écran",
+  "settings.screenTime.clear": "Effacer l'historique"
 }

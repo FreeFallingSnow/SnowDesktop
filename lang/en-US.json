@@ -2879,5 +2879,16 @@
   "settings.calendar.subscriptionEdit": "Edit subscription",
   "settings.calendar.subscriptionManagementLink": "Management link (optional)",
   "settings.calendar.subscriptionInvalidManagementLink": "Enter a valid HTTPS management link.",
-  "settings.calendar.subscriptionOpenManagement": "Open calendar website"
+  "settings.calendar.subscriptionOpenManagement": "Open calendar website",
+  "settings.screenTime.durationMinutes": "{0} min",
+  "settings.screenTime.duration": "{0} h {1} min",
+  "settings.screenTime.paused": "Tracking is paused. Existing history remains available.",
+  "app.settings.widgets_permission_screen_time_read": "Read screen time",
+  "settings.screenTime.page": "Screen Time",
+  "settings.screenTime.empty": "No activity for this day",
+  "settings.screenTime.day": "Day",
+  "settings.screenTime.week": "Week",
+  "settings.screenTime.enabledHint": "Records how long the foreground app is in use. Tracking pauses after 3 minutes without keyboard or mouse input, and while the screen is locked or off. Records stay on this PC.",
+  "settings.screenTime.enabled": "Track screen time",
+  "settings.screenTime.clear": "Clear history"
 }

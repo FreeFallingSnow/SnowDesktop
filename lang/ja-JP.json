@@ -2879,5 +2879,16 @@
   "settings.calendar.subscriptionEdit": "購読を編集",
   "settings.calendar.subscriptionManagementLink": "管理リンク（任意）",
   "settings.calendar.subscriptionInvalidManagementLink": "有効な HTTPS 管理リンクを入力してください。",
-  "settings.calendar.subscriptionOpenManagement": "カレンダーのウェブページを開く"
+  "settings.calendar.subscriptionOpenManagement": "カレンダーのウェブページを開く",
+  "settings.screenTime.durationMinutes": "{0} 分",
+  "settings.screenTime.duration": "{0} 時間 {1} 分",
+  "settings.screenTime.paused": "集計は一時停止中です。既存の記録は引き続き表示できます。",
+  "app.settings.widgets_permission_screen_time_read": "スクリーンタイムの読み取り",
+  "settings.screenTime.page": "スクリーンタイム",
+  "settings.screenTime.empty": "この日の記録はまだありません",
+  "settings.screenTime.day": "日",
+  "settings.screenTime.week": "週",
+  "settings.screenTime.enabledHint": "前面にあるアプリの使用時間を記録します。キーボードまたはマウスの操作が 3 分間ないとき、画面がロックされているとき、ディスプレイがオフのときは一時停止します。記録はこの PC にだけ保存されます。",
+  "settings.screenTime.enabled": "スクリーンタイムを記録する",
+  "settings.screenTime.clear": "記録を消去"
 }

@@ -2879,5 +2879,16 @@
   "settings.calendar.subscriptionEdit": "Abonnement bearbeiten",
   "settings.calendar.subscriptionManagementLink": "Verwaltungslink (optional)",
   "settings.calendar.subscriptionInvalidManagementLink": "Geben Sie einen gültigen HTTPS-Verwaltungslink ein.",
-  "settings.calendar.subscriptionOpenManagement": "Kalenderwebsite öffnen"
+  "settings.calendar.subscriptionOpenManagement": "Kalenderwebsite öffnen",
+  "settings.screenTime.durationMinutes": "{0} Min.",
+  "settings.screenTime.duration": "{0} Std. {1} Min.",
+  "settings.screenTime.paused": "Die Erfassung ist angehalten. Der vorhandene Verlauf bleibt sichtbar.",
+  "app.settings.widgets_permission_screen_time_read": "Bildschirmzeit lesen",
+  "settings.screenTime.page": "Bildschirmzeit",
+  "settings.screenTime.empty": "Keine Aktivität an diesem Tag",
+  "settings.screenTime.day": "Tag",
+  "settings.screenTime.week": "Woche",
+  "settings.screenTime.enabledHint": "Zeichnet auf, wie lange die Vordergrund-App verwendet wird. Die Erfassung pausiert nach 3 Minuten ohne Tastatur- oder Mauseingabe sowie bei gesperrtem oder ausgeschaltetem Bildschirm. Die Aufzeichnungen bleiben auf diesem PC.",
+  "settings.screenTime.enabled": "Bildschirmzeit erfassen",
+  "settings.screenTime.clear": "Verlauf löschen"
 }

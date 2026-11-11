@@ -2879,5 +2879,16 @@
   "settings.calendar.subscriptionEdit": "Editar assinatura",
   "settings.calendar.subscriptionManagementLink": "Link de gerenciamento (opcional)",
   "settings.calendar.subscriptionInvalidManagementLink": "Digite um link de gerenciamento HTTPS válido.",
-  "settings.calendar.subscriptionOpenManagement": "Abrir o site do calendário"
+  "settings.calendar.subscriptionOpenManagement": "Abrir o site do calendário",
+  "settings.screenTime.durationMinutes": "{0} min",
+  "settings.screenTime.duration": "{0} h {1} min",
+  "settings.screenTime.paused": "A contagem está pausada. O histórico existente continua disponível.",
+  "app.settings.widgets_permission_screen_time_read": "Ler tempo de tela",
+  "settings.screenTime.page": "Tempo de tela",
+  "settings.screenTime.empty": "Nenhuma atividade neste dia",
+  "settings.screenTime.day": "Dia",
+  "settings.screenTime.week": "Semana",
+  "settings.screenTime.enabledHint": "Registra por quanto tempo o aplicativo em primeiro plano fica em uso. O registro pausa após 3 minutos sem teclado ou mouse e quando a tela está bloqueada ou desligada. Os dados ficam neste computador.",
+  "settings.screenTime.enabled": "Registrar tempo de tela",
+  "settings.screenTime.clear": "Limpar histórico"
 }

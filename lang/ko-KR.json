@@ -2879,5 +2879,16 @@
   "settings.calendar.subscriptionEdit": "구독 편집",
   "settings.calendar.subscriptionManagementLink": "관리 링크(선택 사항)",
   "settings.calendar.subscriptionInvalidManagementLink": "유효한 HTTPS 관리 링크를 입력하세요.",
-  "settings.calendar.subscriptionOpenManagement": "캘린더 웹페이지 열기"
+  "settings.calendar.subscriptionOpenManagement": "캘린더 웹페이지 열기",
+  "settings.screenTime.durationMinutes": "{0}분",
+  "settings.screenTime.duration": "{0}시간 {1}분",
+  "settings.screenTime.paused": "집계가 일시 중지되었습니다. 기존 기록은 계속 볼 수 있습니다.",
+  "app.settings.widgets_permission_screen_time_read": "스크린 타임 읽기",
+  "settings.screenTime.page": "스크린 타임",
+  "settings.screenTime.empty": "이 날짜의 기록이 없습니다",
+  "settings.screenTime.day": "일",
+  "settings.screenTime.week": "주",
+  "settings.screenTime.enabledHint": "전면 앱의 사용 시간을 기록합니다. 키보드나 마우스를 3분 동안 사용하지 않거나, 화면이 잠기거나 꺼지면 일시 중지됩니다. 기록은 이 PC에만 저장됩니다.",
+  "settings.screenTime.enabled": "스크린 타임 기록",
+  "settings.screenTime.clear": "기록 지우기"
 }
