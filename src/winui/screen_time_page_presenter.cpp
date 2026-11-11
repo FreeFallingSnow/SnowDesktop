@@ -186,9 +186,6 @@ struct ScreenTimePagePresenter::Impl
         body.Spacing(0);
 
         enabled = muxc::ToggleSwitch{};
-        enabled.MinWidth(0);
-        enabled.OnContent(winrt::box_value(L""));
-        enabled.OffContent(winrt::box_value(L""));
         enabledRow.Initialize(enabled);
         enabledLabel = enabledRow.label;
         body.Children().Append(enabledRow.root);
@@ -458,6 +455,8 @@ void ScreenTimePagePresenter::RefreshLocalizedText()
     impl_->enabledLabel.Text(impl_->L("settings.screenTime.enabled"));
     impl_->enabledRow.SetText(impl_->L("settings.screenTime.enabled"),
         impl_->L("settings.screenTime.enabledHint"));
+    impl_->enabled.OnContent(winrt::box_value(impl_->L("app.interact.on")));
+    impl_->enabled.OffContent(winrt::box_value(impl_->L("app.interact.off")));
     impl_->clear.Content(winrt::box_value(
         impl_->L("settings.screenTime.clearAction")));
     impl_->clearRow.SetText(impl_->L("settings.screenTime.clear"));
