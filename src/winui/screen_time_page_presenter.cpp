@@ -243,12 +243,6 @@ std::wstring Widen(std::string_view value)
 
 struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
 {
-    struct IconTarget
-    {
-        std::string identity;
-        winrt::weak_ref<muxc::Image> image;
-        winrt::weak_ref<muxc::SymbolIcon> fallback;
-    };
     static constexpr std::size_t kAppPageSize = 30;
 
     LocalizeCallback localize;
@@ -287,6 +281,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
     bool handlersBound = false;
     std::size_t visibleApps = kAppPageSize;
     std::map<std::string, muxmi::WriteableBitmap> appImages;
+    std::map<std::string, muxc::Border> appIconSlots;
     winrt::event_token toggled;
     winrt::event_token cleared;
     winrt::event_token ranged;
@@ -576,6 +571,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
 
     void AppendApps(const std::vector<snowdesktop::screen_time::AppTotal>& apps)
     {
+        appIconSlots.clear();
         moreApps.Visibility(apps.size() > visibleApps
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (apps.empty())
@@ -589,7 +585,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto peak = std::max<std::int64_t>(1, apps.front().seconds);
         const auto limit = std::min(apps.size(), visibleApps);
         muxc::Grid rows;
-        std::vector<IconTarget> icons;
+        std::vector<std::string> missingIcons;
         rows.ColumnSpacing(12);
         AddColumn(rows, 3);
         AddColumn(rows, 1);
@@ -621,22 +617,27 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             appName.ColumnSpacing(8);
             AddColumn(appName, 0);
             AddColumn(appName, 1);
-            muxc::Grid icon;
+            muxc::Border icon;
             icon.Width(20);
             icon.Height(20);
             icon.VerticalAlignment(mux::VerticalAlignment::Center);
-            muxc::SymbolIcon fallback{muxc::Symbol::AllApps};
-            fallback.Opacity(0.7);
-            muxc::Image image;
             if (const auto cached = appImages.find(app.identity); cached != appImages.end())
             {
+                muxc::Image image;
                 image.Source(cached->second);
-                fallback.Visibility(mux::Visibility::Collapsed);
+                icon.Child(image);
             }
-            else if (!app.identity.empty())
-                icons.push_back({app.identity, winrt::make_weak(image), winrt::make_weak(fallback)});
-            icon.Children().Append(fallback);
-            icon.Children().Append(image);
+            else
+            {
+                muxc::SymbolIcon fallback{muxc::Symbol::AllApps};
+                fallback.Opacity(0.7);
+                icon.Child(fallback);
+                if (!app.identity.empty())
+                {
+                    appIconSlots.emplace(app.identity, icon);
+                    missingIcons.push_back(app.identity);
+                }
+            }
             appName.Children().Append(icon);
             muxc::Grid::SetColumn(name, 1);
             appName.Children().Append(name);
@@ -654,16 +655,14 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             rows.Children().Append(amount);
         }
         appsHost.Child(rows);
-        if (!icons.empty()) ResolveIcons(root.DispatcherQueue(), weak_from_this(), std::move(icons));
+        if (!missingIcons.empty())
+            ResolveIcons(root.DispatcherQueue(), weak_from_this(), std::move(missingIcons));
     }
 
-    void ApplyAppIcon(const IconTarget& target, const screen_time::AppIcon& pixels)
+    void ApplyAppIcon(const std::string& identity, const screen_time::AppIcon& pixels)
     {
         if (closed) return;
-        const auto image = target.image.get();
-        const auto fallback = target.fallback.get();
-        if (!image || !fallback) return;
-        auto existing = appImages.find(target.identity);
+        auto existing = appImages.find(identity);
         if (existing == appImages.end())
         {
             muxmi::WriteableBitmap bitmap(static_cast<int>(pixels.width),
@@ -676,15 +675,22 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
                 pixels.bgraPremultiplied.size());
             bitmap.Invalidate();
             if (appImages.size() >= 128) appImages.erase(appImages.begin());
-            existing = appImages.emplace(target.identity, std::move(bitmap)).first;
+            existing = appImages.emplace(identity, std::move(bitmap)).first;
         }
-        image.Source(existing->second);
-        fallback.Visibility(mux::Visibility::Collapsed);
+        // The report may have replaced its rows while the lookup was running.
+        // Only update the slot for this application in the current report.
+        if (const auto slot = appIconSlots.find(identity); slot != appIconSlots.end())
+        {
+            muxc::Image image;
+            image.Source(existing->second);
+            slot->second.Child(image);
+            appIconSlots.erase(slot);
+        }
     }
 
     static winrt::fire_and_forget ResolveIcons(
         winrt::Microsoft::UI::Dispatching::DispatcherQueue queue, std::weak_ptr<Impl> owner,
-        std::vector<IconTarget> targets)
+        std::vector<std::string> identities)
     {
         if (!queue) co_return;
         try
@@ -697,15 +703,15 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
                 HRESULT result;
                 ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); }
             } apartment{initialized};
-            for (auto& target : targets)
+            for (auto& identity : identities)
             {
                 if (owner.expired()) co_return;
-                const auto pixels = screen_time::LoadAppIcon(target.identity);
+                const auto pixels = screen_time::LoadAppIcon(identity);
                 if (!pixels) continue;
-                if (!queue.TryEnqueue([owner, target = std::move(target), pixels] {
+                if (!queue.TryEnqueue([owner, identity = std::move(identity), pixels] {
                     try
                     {
-                        if (const auto self = owner.lock()) self->ApplyAppIcon(target, *pixels);
+                        if (const auto self = owner.lock()) self->ApplyAppIcon(identity, *pixels);
                     }
                     catch (const winrt::hresult_error&) {}
                 })) co_return;
