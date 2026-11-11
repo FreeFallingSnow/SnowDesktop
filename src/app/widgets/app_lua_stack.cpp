@@ -5,6 +5,7 @@
 #include "common/l10n.h"
 #include "ui/input/private_pointer.h"
 #include "app/layout/grid_geometry.h"
+#include "layout/grid_occupancy.h"
 #include "layout/widget_displacement.h"
 
 #include <algorithm>
@@ -35,37 +36,41 @@ bool DesktopApp::IsLuaDesktopSurface(const DesktopWidget& widget) const
     return snowdesktop::lua_stack::IsSurface(widget.type);
 }
 
-bool DesktopApp::CanStackLuaWidgets(size_t source, size_t target) const
+bool DesktopApp::CanStackLuaWidgets(size_t source, size_t target,
+    const snowdesktop::lua_stack::MemberDrag* memberDrag) const
 {
-    if (!snowdesktop::lua_stack::CanCombine(widgets_, source, target, false)) return false;
+    if (!snowdesktop::lua_stack::CanCombine(widgets_, source, target, false, memberDrag)) return false;
     const auto& destination = widgets_[target];
     const GridPage* page = FindGridPage(gridPages_, destination.gridCell.pageId);
-    if (!page || destination.gridCell.column + destination.gridSpan.columns > page->columns ||
-        destination.gridCell.row + destination.gridSpan.rows > page->rows) return false;
-    for (const size_t index : {source, target})
-        for (const auto& id : snowdesktop::lua_stack::Members(widgets_[index]))
-        {
-            const size_t child = FindWidgetIndexById(id);
-            if (child >= widgets_.size()) return false;
-            const auto manifest = WidgetEngine::GetWidgetManifest(widgets_[child].packageId);
-            // An absent package must not silently acquire an unrestricted size.
-            if (!manifest.hasManifest) return false;
-            DesktopWidget limits;
-            limits.minGridSpan = {std::max(1, manifest.minColumns), std::max(1, manifest.minRows)};
-            limits.maxGridSpan = {manifest.maxColumns, manifest.maxRows};
-            if (!snowdesktop::lua_stack::Supports(limits, destination.gridSpan)) return false;
-        }
-    return true;
+    if (!page || !snowdesktop::grid_occupancy::Fits(*page, destination.gridCell, destination.gridSpan)) return false;
+    const auto supportsDestination = [&](const std::wstring& id) {
+        const size_t child = FindWidgetIndexById(id);
+        if (child >= widgets_.size()) return false;
+        const auto manifest = WidgetEngine::GetWidgetManifest(widgets_[child].packageId);
+        // An absent package must not silently acquire an unrestricted size.
+        if (!manifest.hasManifest) return false;
+        DesktopWidget limits;
+        limits.minGridSpan = {std::max(1, manifest.minColumns), std::max(1, manifest.minRows)};
+        limits.maxGridSpan = {manifest.maxColumns, manifest.maxRows};
+        return snowdesktop::lua_stack::Supports(limits, destination.gridSpan);
+    };
+    const auto incoming = memberDrag
+        ? std::vector<std::wstring>{widgets_[memberDrag->MemberIndex(widgets_)].id}
+        : snowdesktop::lua_stack::Members(widgets_[source]);
+    const auto existing = snowdesktop::lua_stack::Members(destination);
+    return std::ranges::all_of(incoming, supportsDestination) &&
+        std::ranges::all_of(existing, supportsDestination);
 }
 
-bool DesktopApp::CommitLuaWidgetStack(size_t source, size_t target)
+bool DesktopApp::CommitLuaWidgetStack(size_t source, size_t target,
+    const snowdesktop::lua_stack::MemberDrag* memberDrag)
 {
-    if (!CanStackLuaWidgets(source, target)) return false;
+    if (!CanStackLuaWidgets(source, target, memberDrag)) return false;
     HideLuaStackIndicator();
-    for (auto& widget : widgets_)
-        if (widget.type == DesktopWidgetType::LuaScript) ConfigureWidgetGridLimits(widget);
     auto proposed = widgets_;
-    if (!snowdesktop::lua_stack::Combine(proposed, source, target, MakeNewWidgetId())) return false;
+    for (auto& widget : proposed)
+        if (widget.type == DesktopWidgetType::LuaScript) ConfigureWidgetGridLimits(widget);
+    if (!snowdesktop::lua_stack::Combine(proposed, source, target, MakeNewWidgetId(), memberDrag)) return false;
     // Keep the retired model alive through page mapping and container rebuild.
     widgets_.swap(proposed);
     for (auto& widget : widgets_)
@@ -78,6 +83,13 @@ bool DesktopApp::CommitLuaWidgetStack(size_t source, size_t target)
     RequestLayoutSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
+}
+
+bool DesktopApp::WantsLuaStackMemberDrag() const
+{
+    using snowdesktop::private_pointer::AsyncKeyState;
+    return !rightButtonItemDrag_ && (AsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+        (AsyncKeyState(VK_SHIFT) & 0x8000) == 0 && (AsyncKeyState(VK_MENU) & 0x8000) == 0;
 }
 
 bool DesktopApp::SelectLuaStackMember(std::wstring stackId, std::wstring memberId)

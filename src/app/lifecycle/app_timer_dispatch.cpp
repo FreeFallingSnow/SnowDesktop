@@ -525,6 +525,16 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (widgetAction_ == WidgetAction::Move)
         {
             if (mouseDownWidgetIndex_ < widgets_.size() &&
+                widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaStack)
+            {
+                if (WantsLuaStackMemberDrag() != luaStackMemberDrag_.Armed())
+                {
+                    RefreshDragHintFromKeyboard();
+                    return;
+                }
+                if (luaStackMemberDrag_.Armed()) return;
+            }
+            if (mouseDownWidgetIndex_ < widgets_.size() &&
                 widgetPairTargetIndex_ < widgets_.size())
             {
                 namespace pair = snowdesktop::widget_pair_drop;
@@ -534,7 +544,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) != 0,
                     (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) != 0);
                 if ((action == pair::Action::CreateCollectionGroup ||
-                     action == pair::Action::CreateFileGroup) &&
+                     action == pair::Action::CreateFileGroup ||
+                     action == pair::Action::CreateLuaStack) &&
                     !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
                     action = pair::Action::None;
                 if (action != widgetPairAction_)

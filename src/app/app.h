@@ -2879,8 +2879,11 @@ private:
     const DesktopWidget* ResolveLuaWidgetContent(const DesktopWidget* widget) const;
     const DesktopWidget& ResolveLuaWidgetFrameOwner(const DesktopWidget& widget) const;
     bool IsLuaDesktopSurface(const DesktopWidget& widget) const;
-    bool CanStackLuaWidgets(size_t source, size_t target) const;
-    bool CommitLuaWidgetStack(size_t source, size_t target);
+    bool CanStackLuaWidgets(size_t source, size_t target,
+        const snowdesktop::lua_stack::MemberDrag* memberDrag = nullptr) const;
+    bool CommitLuaWidgetStack(size_t source, size_t target,
+        const snowdesktop::lua_stack::MemberDrag* memberDrag = nullptr);
+    bool WantsLuaStackMemberDrag() const;
     bool SelectLuaStackMember(std::wstring stackId, std::wstring memberId);
     bool ScrollLuaWidgetStack(const std::wstring& stackId, int delta);
     bool ReleaseLuaStackMember(const std::wstring& stackId);

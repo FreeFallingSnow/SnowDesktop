@@ -1233,8 +1233,15 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             if (commitMove && mouseDownWidgetIndex_ < widgets_.size() && luaStackMemberDrag_.Armed())
             {
                 widgetAction_ = WidgetAction::None;
-                if (IsPointOccludedByOpenPopup(upPoint) || IsExternalDropWindowAt(upPoint) ||
-                    !CommitLuaStackMemberDrag(widgetPreviewCell_))
+                bool committed = false;
+                if (!IsPointOccludedByOpenPopup(upPoint) && !IsExternalDropWindowAt(upPoint))
+                {
+                    if (widgetPairTargetIndex_ < widgets_.size())
+                        committed = CommitLuaWidgetStack(mouseDownWidgetIndex_, widgetPairTargetIndex_,
+                            &luaStackMemberDrag_);
+                    else committed = CommitLuaStackMemberDrag(widgetPreviewCell_);
+                }
+                if (!committed)
                     MessageBeep(MB_ICONWARNING);
             }
             else if (commitMove && mouseDownWidgetIndex_ < widgets_.size())

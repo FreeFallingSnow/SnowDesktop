@@ -840,10 +840,7 @@ void DesktopApp::OnMouseMoveAt(
         memberDragModeChanged = false;
         if (mouseDownWidgetIndex_ >= widgets_.size()) return false;
         if (widgets_[mouseDownWidgetIndex_].type != DesktopWidgetType::LuaStack) return true;
-        const bool detach = !rightButtonItemDrag_ &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_SHIFT) & 0x8000) == 0 &&
-            (snowdesktop::private_pointer::AsyncKeyState(VK_MENU) & 0x8000) == 0;
+        const bool detach = WantsLuaStackMemberDrag();
         if (detach == luaStackMemberDrag_.Armed()) return true;
         const std::wstring sourceId = widgets_[mouseDownWidgetIndex_].id;
         const auto* previous = ResolveLuaWidgetContent(&widgets_[mouseDownWidgetIndex_]);
@@ -981,10 +978,25 @@ void DesktopApp::OnMouseMoveAt(
             widgetDockTarget_ = false;
             widgetDockTargetContainer_ = nullptr;
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
-            UpdateWidgetDragPageNavigation(current);
+            widgetPairTargetIndex_ = HitTestWidgetPairTarget(current, owner);
+            const bool overStackTarget = widgetPairTargetIndex_ < widgets_.size();
+            if (overStackTarget)
+            {
+                SetPageNavHotEdgeHover(0);
+                navAutoFlipDir_ = 0;
+                navAutoFlipTick_ = 0;
+            }
+            else UpdateWidgetDragPageNavigation(current);
             widgetPreviewCell_ = ResolveGridSpanDragCell(gridPages_, current,
                 widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
-            ShowDragHintWindow(current, _LW("app.lua_stack.release"));
+            if (!overStackTarget)
+                ShowDragHintWindow(current, _LW("app.lua_stack.release"));
+            else if (CanStackLuaWidgets(owner, widgetPairTargetIndex_, &luaStackMemberDrag_))
+            {
+                widgetPairAction_ = pair::Action::CreateLuaStack;
+                ShowDragHintWindow(current, _LW("core.drag.create_lua_stack"), true);
+            }
+            else HideDragHintWindow();
             return;
         }
         const auto movingPayload = snowdesktop::slot_contract::
