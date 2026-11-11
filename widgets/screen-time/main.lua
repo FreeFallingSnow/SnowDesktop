@@ -19,6 +19,9 @@ local function duration(seconds)
         return l10n.tr("lua_widget.screen_time.duration",
             tostring(hours), tostring(minutes))
     end
+    if seconds < 60 then
+        return l10n.tr("lua_widget.screen_time.duration_seconds", tostring(seconds))
+    end
     return l10n.tr("lua_widget.screen_time.duration_minutes", tostring(minutes))
 end
 
@@ -26,16 +29,7 @@ local function setup()
     usage = data.subscribe("system.screenTime", { maxAgeMs = 120000 })
 end
 
-local function render()
-    local data, available = payload()
-    local width, height = layout.width(), layout.height()
-    local text = 0xFFFFFF
-    local theme = widget.theme()
-    if theme and theme.contentTheme == 1 then text = 0x10211F end
-    if not data or not available then
-        draw.text(12, 12, l10n.tr("lua_widget.screen_time.waiting"), 13, text)
-        return
-    end
+local function drawReport(data, width, height, text, theme)
     draw.text(12, 8, duration(data.totalSeconds), 22, text)
     local y = 36
     if data.enabled == false then
@@ -48,34 +42,73 @@ local function render()
         peak = math.max(peak, tonumber(hours[index]) or 0)
     end
     local barTop = y
-    local barHeight = math.max(18, math.min(42, height * 0.22))
-    local gap = 2
+    local barHeight = math.max(16, math.min(36, height * 0.18))
+    local gap = 3
     local barWidth = math.max(2, (width - 24 - gap * 23) / 24)
+    local accent = theme and theme.contentTheme == 1 and 0x0E6E6A or 0x7ED0CC
     for index = 1, 24 do
         local amount = tonumber(hours[index]) or 0
-        local h = math.max(2, barHeight * amount / peak)
-        draw.rect(12 + (index - 1) * (barWidth + gap), barTop + barHeight - h,
-            barWidth, h, 0x168C88, 1)
+        if amount > 0 then
+            local h = math.max(3, barHeight * amount / peak)
+            draw.rect(12 + (index - 1) * (barWidth + gap), barTop + barHeight - h,
+                barWidth, h, accent, 2)
+        end
     end
-    y = barTop + barHeight + 8
+    y = barTop + barHeight + 10
     local apps = data.apps or {}
     if #apps == 0 then
         draw.text(12, y, l10n.tr("lua_widget.screen_time.empty"), 12, text, width - 24, true, false, 0, 0.72)
     else
-        local limit = math.min(#apps, 5)
+        local appPeak = 1
+        local limit = math.min(#apps, 4)
         for index = 1, limit do
-            if y > height - 16 then break end
-            local app = apps[index]
-            draw.text(12, y, tostring(app.name or ""), 13, text, width * 0.62, true)
-            draw.text(width * 0.64, y, duration(app.seconds), 13, text, width * 0.32, true)
-            y = y + 18
+            appPeak = math.max(appPeak, tonumber(apps[index].seconds) or 0)
         end
+        for index = 1, limit do
+            if y > height - 18 then break end
+            local app = apps[index]
+            local seconds = tonumber(app.seconds) or 0
+            local nameWidth = width * 0.46
+            draw.text(12, y, tostring(app.name or ""), 13, text, nameWidth, true)
+            local barX = 16 + nameWidth
+            local barMax = math.max(24, width - barX - width * 0.28)
+            if seconds > 0 then
+                draw.rect(barX, y + 6, math.max(4, barMax * seconds / appPeak), 4, accent, 2)
+            end
+            draw.text(width * 0.74, y, duration(seconds), 13, text, width * 0.24, true)
+            y = y + 20
+        end
+    end
+end
+
+local function render()
+    local data, available = payload()
+    local width, height = layout.width(), layout.height()
+    local text = 0xFFFFFF
+    local theme = widget.theme()
+    if theme and theme.contentTheme == 1 then text = 0x10211F end
+    if not data or not available then
+        draw.text(12, 12, l10n.tr("lua_widget.screen_time.waiting"), 13, text)
+    else
+        drawReport(data, width, height, text, theme)
     end
     interaction.region({
         key = "screenTime.open",
         shape = { type = "rect", x = 0, y = 0, width = width, height = height },
-        cursor = "hand",
-        events = { click = { id = "screenTime.open" } },
+        events = {
+            doubleClick = { id = "screenTime.open" },
+            contextMenu = { id = "screenTime.menu", scope = "component" },
+        },
+    })
+end
+
+local function menu(_, _, request)
+    if request.id ~= "screenTime.menu" then return nil end
+    return ui.menu({
+        {
+            id = "screenTime.open",
+            label = l10n.tr("lua_widget.screen_time.open_report"),
+        },
     })
 end
 
@@ -97,4 +130,5 @@ return widget.define({
     setup = setup,
     render = render,
     event = event,
+    menu = menu,
 })

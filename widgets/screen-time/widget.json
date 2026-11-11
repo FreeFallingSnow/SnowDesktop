@@ -21,7 +21,9 @@
       "lua_widget.screen_time.empty": "今天还没有记录",
       "lua_widget.screen_time.waiting": "正在获取数据",
       "lua_widget.screen_time.duration": "{0} 小时 {1} 分钟",
-      "lua_widget.screen_time.duration_minutes": "{0} 分钟"
+      "lua_widget.screen_time.duration_minutes": "{0} 分钟",
+      "lua_widget.screen_time.duration_seconds": "{0} 秒",
+      "lua_widget.screen_time.open_report": "打开报告"
     },
     "zh-TW": {
       "lua_widget.screen_time.name": "螢幕使用時間",
@@ -30,7 +32,9 @@
       "lua_widget.screen_time.empty": "今天還沒有記錄",
       "lua_widget.screen_time.waiting": "正在取得資料",
       "lua_widget.screen_time.duration": "{0} 小時 {1} 分鐘",
-      "lua_widget.screen_time.duration_minutes": "{0} 分鐘"
+      "lua_widget.screen_time.duration_minutes": "{0} 分鐘",
+      "lua_widget.screen_time.duration_seconds": "{0} 秒",
+      "lua_widget.screen_time.open_report": "開啟報告"
     },
     "en-US": {
       "lua_widget.screen_time.name": "Screen Time",
@@ -39,7 +43,9 @@
       "lua_widget.screen_time.empty": "No activity yet today",
       "lua_widget.screen_time.waiting": "Getting data",
       "lua_widget.screen_time.duration": "{0} h {1} min",
-      "lua_widget.screen_time.duration_minutes": "{0} min"
+      "lua_widget.screen_time.duration_minutes": "{0} min",
+      "lua_widget.screen_time.duration_seconds": "{0} sec",
+      "lua_widget.screen_time.open_report": "Open report"
     },
     "ja-JP": {
       "lua_widget.screen_time.name": "スクリーンタイム",
@@ -48,7 +54,9 @@
       "lua_widget.screen_time.empty": "今日の記録はまだありません",
       "lua_widget.screen_time.waiting": "データを取得しています",
       "lua_widget.screen_time.duration": "{0} 時間 {1} 分",
-      "lua_widget.screen_time.duration_minutes": "{0} 分"
+      "lua_widget.screen_time.duration_minutes": "{0} 分",
+      "lua_widget.screen_time.duration_seconds": "{0} 秒",
+      "lua_widget.screen_time.open_report": "レポートを開く"
     },
     "ko-KR": {
       "lua_widget.screen_time.name": "스크린 타임",
@@ -57,7 +65,9 @@
       "lua_widget.screen_time.empty": "오늘 기록이 아직 없습니다",
       "lua_widget.screen_time.waiting": "데이터를 가져오는 중",
       "lua_widget.screen_time.duration": "{0}시간 {1}분",
-      "lua_widget.screen_time.duration_minutes": "{0}분"
+      "lua_widget.screen_time.duration_minutes": "{0}분",
+      "lua_widget.screen_time.duration_seconds": "{0}초",
+      "lua_widget.screen_time.open_report": "보고서 열기"
     },
     "de-DE": {
       "lua_widget.screen_time.name": "Bildschirmzeit",
@@ -66,7 +76,9 @@
       "lua_widget.screen_time.empty": "Heute noch keine Einträge",
       "lua_widget.screen_time.waiting": "Daten werden abgerufen",
       "lua_widget.screen_time.duration": "{0} Std. {1} Min.",
-      "lua_widget.screen_time.duration_minutes": "{0} Min."
+      "lua_widget.screen_time.duration_minutes": "{0} Min.",
+      "lua_widget.screen_time.duration_seconds": "{0} Sek.",
+      "lua_widget.screen_time.open_report": "Bericht öffnen"
     },
     "fr-FR": {
       "lua_widget.screen_time.name": "Temps d'écran",
@@ -75,7 +87,9 @@
       "lua_widget.screen_time.empty": "Aucune activité aujourd'hui",
       "lua_widget.screen_time.waiting": "Récupération des données",
       "lua_widget.screen_time.duration": "{0} h {1} min",
-      "lua_widget.screen_time.duration_minutes": "{0} min"
+      "lua_widget.screen_time.duration_minutes": "{0} min",
+      "lua_widget.screen_time.duration_seconds": "{0} s",
+      "lua_widget.screen_time.open_report": "Ouvrir le rapport"
     },
     "es-ES": {
       "lua_widget.screen_time.name": "Tiempo de pantalla",
@@ -84,7 +98,9 @@
       "lua_widget.screen_time.empty": "Todavía no hay actividad hoy",
       "lua_widget.screen_time.waiting": "Obteniendo datos",
       "lua_widget.screen_time.duration": "{0} h {1} min",
-      "lua_widget.screen_time.duration_minutes": "{0} min"
+      "lua_widget.screen_time.duration_minutes": "{0} min",
+      "lua_widget.screen_time.duration_seconds": "{0} s",
+      "lua_widget.screen_time.open_report": "Abrir informe"
     },
     "es-419": {
       "lua_widget.screen_time.name": "Tiempo de pantalla",
@@ -93,7 +109,9 @@
       "lua_widget.screen_time.empty": "Todavía no hay actividad hoy",
       "lua_widget.screen_time.waiting": "Obteniendo datos",
       "lua_widget.screen_time.duration": "{0} h {1} min",
-      "lua_widget.screen_time.duration_minutes": "{0} min"
+      "lua_widget.screen_time.duration_minutes": "{0} min",
+      "lua_widget.screen_time.duration_seconds": "{0} s",
+      "lua_widget.screen_time.open_report": "Abrir informe"
     },
     "pt-BR": {
       "lua_widget.screen_time.name": "Tempo de tela",
@@ -102,7 +120,9 @@
       "lua_widget.screen_time.empty": "Ainda não há atividade hoje",
       "lua_widget.screen_time.waiting": "Obtendo dados",
       "lua_widget.screen_time.duration": "{0} h {1} min",
-      "lua_widget.screen_time.duration_minutes": "{0} min"
+      "lua_widget.screen_time.duration_minutes": "{0} min",
+      "lua_widget.screen_time.duration_seconds": "{0} s",
+      "lua_widget.screen_time.open_report": "Abrir relatório"
     }
   },
   "defaultSize": {
@@ -121,6 +141,7 @@
     "data.subscribe",
     "data.system.screenTime",
     "draw.immediate",
+    "interaction.contextMenu",
     "interaction.pointerActions",
     "interaction.region",
     "l10n.basic",
