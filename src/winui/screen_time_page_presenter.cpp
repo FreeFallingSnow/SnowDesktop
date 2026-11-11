@@ -11,7 +11,7 @@
 #include <map>
 #include <string>
 
-#include <robuffer.h>
+#include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
@@ -248,7 +248,6 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
         std::string identity;
         winrt::weak_ref<muxc::Image> image;
         winrt::weak_ref<muxc::SymbolIcon> fallback;
-        std::shared_ptr<const screen_time::AppIcon> pixels;
     };
     static constexpr std::size_t kAppPageSize = 30;
 
@@ -635,7 +634,7 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
                 fallback.Visibility(mux::Visibility::Collapsed);
             }
             else if (!app.identity.empty())
-                icons.push_back({app.identity, winrt::make_weak(image), winrt::make_weak(fallback), {}});
+                icons.push_back({app.identity, winrt::make_weak(image), winrt::make_weak(fallback)});
             icon.Children().Append(fallback);
             icon.Children().Append(image);
             appName.Children().Append(icon);
@@ -655,45 +654,61 @@ struct ScreenTimePagePresenter::Impl : std::enable_shared_from_this<Impl>
             rows.Children().Append(amount);
         }
         appsHost.Child(rows);
-        if (!icons.empty()) ResolveIcons(weak_from_this(), std::move(icons));
+        if (!icons.empty()) ResolveIcons(root.DispatcherQueue(), weak_from_this(), std::move(icons));
     }
 
-    static winrt::fire_and_forget ResolveIcons(std::weak_ptr<Impl> owner,
+    void ApplyAppIcon(const IconTarget& target, const screen_time::AppIcon& pixels)
+    {
+        if (closed) return;
+        const auto image = target.image.get();
+        const auto fallback = target.fallback.get();
+        if (!image || !fallback) return;
+        auto existing = appImages.find(target.identity);
+        if (existing == appImages.end())
+        {
+            muxmi::WriteableBitmap bitmap(static_cast<int>(pixels.width),
+                static_cast<int>(pixels.height));
+            const auto buffer = bitmap.PixelBuffer();
+            // Length is the current logical data length, which need not be
+            // set yet. Capacity describes the writable pixel allocation.
+            if (buffer.Capacity() < pixels.bgraPremultiplied.size()) return;
+            std::memcpy(buffer.data(), pixels.bgraPremultiplied.data(),
+                pixels.bgraPremultiplied.size());
+            bitmap.Invalidate();
+            if (appImages.size() >= 128) appImages.erase(appImages.begin());
+            existing = appImages.emplace(target.identity, std::move(bitmap)).first;
+        }
+        image.Source(existing->second);
+        fallback.Visibility(mux::Visibility::Collapsed);
+    }
+
+    static winrt::fire_and_forget ResolveIcons(
+        winrt::Microsoft::UI::Dispatching::DispatcherQueue queue, std::weak_ptr<Impl> owner,
         std::vector<IconTarget> targets)
     {
+        if (!queue) co_return;
         try
         {
-            const winrt::apartment_context ui;
             co_await winrt::resume_background();
-            for (auto& target : targets)
-                target.pixels = screen_time::LoadAppIcon(target.identity);
-            co_await ui;
-            const auto self = owner.lock();
-            if (!self || self->closed) co_return;
-            for (const auto& target : targets)
+            const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) co_return;
+            struct Apartment
             {
-                const auto image = target.image.get();
-                const auto fallback = target.fallback.get();
-                if (!image || !fallback || !target.pixels) continue;
-                const auto& pixels = *target.pixels;
-                auto existing = self->appImages.find(target.identity);
-                if (existing == self->appImages.end())
-                {
-                    muxmi::WriteableBitmap bitmap(static_cast<int>(pixels.width),
-                        static_cast<int>(pixels.height));
-                    const auto buffer = bitmap.PixelBuffer();
-                    if (buffer.Length() != pixels.bgraPremultiplied.size()) continue;
-                    BYTE* bytes = nullptr;
-                    winrt::check_hresult(
-                        buffer.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
-                    std::memcpy(bytes, pixels.bgraPremultiplied.data(), pixels.bgraPremultiplied.size());
-                    bitmap.Invalidate();
-                    if (self->appImages.size() >= 128)
-                        self->appImages.erase(self->appImages.begin());
-                    existing = self->appImages.emplace(target.identity, std::move(bitmap)).first;
-                }
-                image.Source(existing->second);
-                fallback.Visibility(mux::Visibility::Collapsed);
+                HRESULT result;
+                ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); }
+            } apartment{initialized};
+            for (auto& target : targets)
+            {
+                if (owner.expired()) co_return;
+                const auto pixels = screen_time::LoadAppIcon(target.identity);
+                if (!pixels) continue;
+                if (!queue.TryEnqueue([owner, target = std::move(target), pixels] {
+                    try
+                    {
+                        if (const auto self = owner.lock()) self->ApplyAppIcon(target, *pixels);
+                    }
+                    catch (const winrt::hresult_error&) {}
+                })) co_return;
             }
         }
         catch (const winrt::hresult_error&)
