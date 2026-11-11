@@ -4,6 +4,10 @@
 
 namespace snowdesktop::desktop_item_sort_rules
 {
+// Desktop-only modes. Folder and widget sorts use modes 0 through 3.
+inline constexpr int kFillGapsHorizontal = 4;
+inline constexpr int kFillGapsVertical = 5;
+
 // Missing size/time metadata stays last in both directions, with name ties.
 // Type sorting instead reverses its complete category/type/name comparison.
 template<class Item>
