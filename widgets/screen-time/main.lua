@@ -126,11 +126,15 @@ local function drawApp(app, peak, x, y, width, unit, trackOffset, colors)
     end
 end
 
-local function drawViewSwitch(x, y, size, unit, colors)
+local function drawViewSwitch(x, y, hitSize, unit, colors)
     local key = "screenTime.switch"
     local focused = widget.hasFeature("interaction.keyboard") and interaction.isFocused(key)
-    draw.rect(x, y, size, size, colors.primary, 6 * unit, focused and 0.25 or 0.12)
-    local left, top = x + (size - 14 * unit) / 2, y + (size - 14 * unit) / 2
+    local size = math.min(28 * unit, 0.75 * hitSize)
+    local buttonX, buttonY = x + hitSize - size, y + (hitSize - size) / 2
+    unit = math.min(0.9 * unit, size / 25)
+    draw.rect(buttonX, buttonY, size, size, colors.primary, 6 * unit, focused and 0.25 or 0.12)
+    local left = buttonX + (size - 14 * unit) / 2
+    local top = buttonY + (size - 14 * unit) / 2
     if hourly then
         for i = 0, 2 do
             local lineY = top + (2 + 5 * i) * unit
@@ -144,7 +148,7 @@ local function drawViewSwitch(x, y, size, unit, colors)
     end
     local region = {
         key = key, cursor = "hand",
-        shape = { type = "rect", x = x, y = y, width = size, height = size },
+        shape = { type = "rect", x = x, y = y, width = hitSize, height = hitSize },
         events = {
             click = { id = key },
             contextMenu = { id = "screenTime.menu", scope = "component" },
@@ -209,7 +213,7 @@ local function drawReport(data, width, height, colors)
     local y = topPad
     if switchSize > 0 then
         drawViewSwitch(width - pad - switchSize, y + (headerHeight - switchSize) / 2,
-            switchSize, math.min(unit, switchSize / 25), colors)
+            switchSize, unit, colors)
     end
 
     local textY = y + math.max(0, (headerHeight - textHeight) / 2)
