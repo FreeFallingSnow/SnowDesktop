@@ -2891,5 +2891,7 @@
   "settings.screenTime.enabledHint": "Registra cuánto tiempo está en uso la aplicación en primer plano. El registro se pausa después de 3 minutos sin teclado ni mouse, y cuando la pantalla está bloqueada o apagada. Los datos permanecen en esta computadora.",
   "settings.screenTime.enabled": "Registrar el tiempo de pantalla",
   "settings.screenTime.clear": "Borrar historial",
-  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Mantener oculta la barra de tareas al abrir Inicio con la tecla Windows"
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Mantener oculta la barra de tareas al abrir Inicio con la tecla Windows",
+  "settings.screenTime.clearAction": "Borrar",
+  "settings.screenTime.durationSeconds": "{0} s"
 }

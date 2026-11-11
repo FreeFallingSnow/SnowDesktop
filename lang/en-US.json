@@ -2891,5 +2891,7 @@
   "settings.screenTime.enabledHint": "Records how long the foreground app is in use. Tracking pauses after 3 minutes without keyboard or mouse input, and while the screen is locked or off. Records stay on this PC.",
   "settings.screenTime.enabled": "Track screen time",
   "settings.screenTime.clear": "Clear history",
-  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Keep the taskbar hidden when opening Start with the Windows key"
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Keep the taskbar hidden when opening Start with the Windows key",
+  "settings.screenTime.clearAction": "Clear",
+  "settings.screenTime.durationSeconds": "{0} sec"
 }

@@ -2891,5 +2891,7 @@
   "settings.screenTime.enabledHint": "Zeichnet auf, wie lange die Vordergrund-App verwendet wird. Die Erfassung pausiert nach 3 Minuten ohne Tastatur- oder Mauseingabe sowie bei gesperrtem oder ausgeschaltetem Bildschirm. Die Aufzeichnungen bleiben auf diesem PC.",
   "settings.screenTime.enabled": "Bildschirmzeit erfassen",
   "settings.screenTime.clear": "Verlauf löschen",
-  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Taskleiste beim Öffnen von Start mit der Windows-Taste ausgeblendet lassen"
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Taskleiste beim Öffnen von Start mit der Windows-Taste ausgeblendet lassen",
+  "settings.screenTime.clearAction": "Löschen",
+  "settings.screenTime.durationSeconds": "{0} Sek."
 }

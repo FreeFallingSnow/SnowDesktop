@@ -2891,5 +2891,7 @@
   "settings.screenTime.enabledHint": "Enregistre la durée d'utilisation de l'application au premier plan. La mesure s'interrompt après 3 minutes sans clavier ni souris, ainsi que lorsque l'écran est verrouillé ou éteint. Les données restent sur cet ordinateur.",
   "settings.screenTime.enabled": "Mesurer le temps d'écran",
   "settings.screenTime.clear": "Effacer l'historique",
-  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Garder la barre des tâches masquée à l’ouverture de Démarrer avec la touche Windows"
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Garder la barre des tâches masquée à l’ouverture de Démarrer avec la touche Windows",
+  "settings.screenTime.clearAction": "Effacer",
+  "settings.screenTime.durationSeconds": "{0} s"
 }

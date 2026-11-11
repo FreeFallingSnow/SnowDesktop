@@ -2891,5 +2891,7 @@
   "settings.screenTime.enabledHint": "前面にあるアプリの使用時間を記録します。キーボードまたはマウスの操作が 3 分間ないとき、画面がロックされているとき、ディスプレイがオフのときは一時停止します。記録はこの PC にだけ保存されます。",
   "settings.screenTime.enabled": "スクリーンタイムを記録する",
   "settings.screenTime.clear": "記録を消去",
-  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Windows キーでスタートを開くときにタスクバーを非表示のままにする"
+  "settings.dock.startMenuKeepTaskbarHiddenOnWinKey": "Windows キーでスタートを開くときにタスクバーを非表示のままにする",
+  "settings.screenTime.clearAction": "消去",
+  "settings.screenTime.durationSeconds": "{0} 秒"
 }
