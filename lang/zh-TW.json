@@ -2897,5 +2897,7 @@
   "settings.screenTime.overview": "使用概覽",
   "settings.screenTime.appUsage": "應用程式使用時間",
   "settings.screenTime.recentWeek": "近 7 天",
-  "settings.screenTime.emptyWeek": "近 7 天沒有記錄"
+  "settings.screenTime.emptyWeek": "近 7 天沒有記錄",
+  "settings.screenTime.showMoreApps": "顯示更多應用程式",
+  "settings.screenTime.clearConfirm": "永久刪除這部電腦上的所有螢幕使用時間記錄？"
 }

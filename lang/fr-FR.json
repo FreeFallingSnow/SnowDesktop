@@ -2897,5 +2897,7 @@
   "settings.screenTime.overview": "Vue d’ensemble de l’utilisation",
   "settings.screenTime.appUsage": "Utilisation des applications",
   "settings.screenTime.recentWeek": "7 derniers jours",
-  "settings.screenTime.emptyWeek": "Aucune activité au cours des 7 derniers jours"
+  "settings.screenTime.emptyWeek": "Aucune activité au cours des 7 derniers jours",
+  "settings.screenTime.showMoreApps": "Afficher plus d’applications",
+  "settings.screenTime.clearConfirm": "Supprimer définitivement tout l’historique du temps d’écran sur cet ordinateur ?"
 }

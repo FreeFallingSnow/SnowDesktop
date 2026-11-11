@@ -2897,5 +2897,7 @@
   "settings.screenTime.overview": "使用状況の概要",
   "settings.screenTime.appUsage": "アプリの使用時間",
   "settings.screenTime.recentWeek": "過去7日間",
-  "settings.screenTime.emptyWeek": "過去7日間の記録はありません"
+  "settings.screenTime.emptyWeek": "過去7日間の記録はありません",
+  "settings.screenTime.showMoreApps": "ほかのアプリを表示",
+  "settings.screenTime.clearConfirm": "このPCのスクリーンタイム記録をすべて完全に削除しますか？"
 }

@@ -2897,5 +2897,7 @@
   "settings.screenTime.overview": "Nutzungsübersicht",
   "settings.screenTime.appUsage": "App-Nutzung",
   "settings.screenTime.recentWeek": "Letzte 7 Tage",
-  "settings.screenTime.emptyWeek": "Keine Aktivität in den letzten 7 Tagen"
+  "settings.screenTime.emptyWeek": "Keine Aktivität in den letzten 7 Tagen",
+  "settings.screenTime.showMoreApps": "Weitere Apps anzeigen",
+  "settings.screenTime.clearConfirm": "Alle Bildschirmzeitaufzeichnungen auf diesem PC dauerhaft löschen?"
 }
