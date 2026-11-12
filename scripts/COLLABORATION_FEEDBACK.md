@@ -114,6 +114,8 @@
 
 ### CF-010 等待结束回执过大
 
+- **定向测试结果的读取范围（2026-11-12）**：Task `fix-hidden-desktop-selection`、批次 `a0636dc6f15b469cbf6118978b822e68` 修订 0、Run `bff864dba7214013b178a708042df590`。`ready-and-wait` 的精简回执正常返回一项测试通过。随后 Agent 从批次 JSON 读取完整 `coverage` 并执行 `ConvertTo-Json -Depth 4`，内嵌的执行上下文和 `source-report-not-in-generated-project` 明细导致输出截断。核对状态时直接读取 `coverage.completed`，产物另读 `productBuild.exitCode` 与 `activation`。窄字段摘要可同时覆盖测试和产品构建。本次没有重复构建或测试，依赖报告的根因待核实。
+
 - **指定批次的状态回执（2026-11-08）**：Task `dock-desktop-blur` 执行 `scripts/build.bat status -Batch 76b73a4d35c24415adbd5e6dff38c08a` 核对合成器文件归属时，返回包含全局 `tasks` 历史的状态。整对象以 Depth 3 投影后仍被工具截断。后续只投影 `current.batch.participants` 和 `activeCandidates.participants`，核对了候选 `d7c34e793bd344e19c56e369c1e793a7` 的文件归属，未重交构建。建议让指定批次状态提供窄回执并保留完整查询。此项涉及只读 `status`，不改变 `ready-and-wait` 精简结束回执的验证结论。
 
 - **候选 Run 等待的剩余输出（2026-11-07）**：Task `steam-beta-full-20261107` 在复用产品 Run `41840d218870446dba384ebd77214e58` 时，通过 `scripts/build.bat run wait -Task steam-beta-full-20261107 -RunId 6d4726de92b446519cd200994117e5ab -Seconds 60` 在原前台进程等待同快照应用全量。返回码 10 的超时快照也完整输出请求、runner 文件清单和累计阶段；原会话一次工具续接（chunk `9999c5`）被截断。持久原件见 `.build/collaboration/runs/6d4726de92b446519cd200994117e5ab.request.json`、同名 `.json` 和 `.stages.*.jsonl`。源码确认 `build_run.ps1` 的 `run wait` 有 60 秒上限且输出完整投影，与已精简的批次 `ready-and-wait` 路径不同；外层循环未丢弃中间快照，放大了读取成本。P2，候选 Run 入口的剩余缺口已确认（关联 CF-012）。继续观察原 Run，未重复提交构建或测试。后续为 Run 等待提供精简投影和不限时观察，保留原件、退出码与急件行为；未测额外耗时或 token。
