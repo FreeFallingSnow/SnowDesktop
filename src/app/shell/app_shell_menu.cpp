@@ -5,6 +5,7 @@
 #include "dock/dock_window_transition.h"
 #include "common/l10n.h"
 #include "diagnostics/diagnostic_log.h"
+#include "diagnostics/performance_trace.h"
 #include "common/utils.h"
 #include "diagnostics/crashlog.h"
 #include "app/dock/persistent_dock_host.h"
@@ -350,6 +351,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         }
     } layerUpdateScope{*this, host.hwnd, wasTopmost};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    const bool desktopRestoreWasPending = host.desktopLayerRestorePending;
     host.desktopLayerRestorePending = false;
     host.desktopLayerRestoreRetryTick = GetTickCount64() +
         snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
@@ -443,6 +445,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
     if (!promoted && !systemShowDesktopGuard)
     {
+        namespace perf = snowdesktop::performance;
+        perf::Scope layerCheck("dock", "desktop.layer.check");
+        perf::Value("dock", "desktop.layer.pending_before", {}, desktopRestoreWasPending);
         if (wasTopmost)
             snowdesktop::dock_input_diagnostics::RecordLayer(L"policy-lower", host.hwnd, host.promoted);
         // A desktop-band Dock is still a top-level no-activate window. Place
@@ -478,11 +483,16 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         const bool alreadyRestored = pairIntact &&
             snowdesktop::floating_dock_rules::IsDesktopLayerRestored(
                 host.hwnd, desktopRoot, isApplicationWindow, isDockWindow);
+        perf::Value("dock", "desktop.layer.already_restored", {}, alreadyRestored);
         const bool restored = alreadyRestored || snowdesktop::floating_dock_rules::RestoreDesktopLayer(
             host.hwnd, desktopHost, isApplicationWindow, isDockWindow,
             [&host](HWND anchor) {
-                return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
+                perf::Scope placement("dock", "desktop.layer.place");
+                const bool placed = host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
+                perf::Value("dock", "desktop.layer.place.accepted", {}, placed);
+                return placed;
             }, GetAncestor(snowdesktop::private_pointer::ForegroundWindow(), GA_ROOT));
+        perf::Value("dock", "desktop.layer.restored", {}, restored);
         host.desktopLayerRestorePending = !restored;
         host.desktopLayerRestoreRetryTick = GetTickCount64() +
             snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
