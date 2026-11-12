@@ -48,6 +48,8 @@ void SelectDockAppearance(DockSettings& settings, bool followGlobal,
 void NormalizeDockSettings(DockSettings& settings);
 
 std::wstring GetDockSettingsPath();
+enum class SystemTaskbarBottomResult { Unchanged, Moved, Failed };
+SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
 bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false, DWORD deadline = 0);

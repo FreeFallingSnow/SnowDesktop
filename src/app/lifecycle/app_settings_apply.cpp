@@ -1074,25 +1074,26 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
-            // Auto-hide and alignment are committed through the Windows Shell
-            // request queue.  Keep their last committed mirrors intact while
-            // previewing the remaining Dock appearance and layout values so
-            // the commit path can detect a requested system-state change.
+            // Taskbar display mode and alignment take effect on commit. In
+            // particular, the suppression hook can enable native auto-hide,
+            // so preview must preserve suppression until location is ready.
             const bool committedTaskbarAutoHide =
                 app_.dockSettings_.systemTaskbarAutoHide;
             const int committedTaskbarAlignment =
                 app_.dockSettings_.systemTaskbarAlignment;
+            const bool committedTaskbarSuppression = app_.dockSettings_.suppressSystemTaskbar;
+            const bool committedTaskbarSuppressionAllMonitors = app_.dockSettings_.suppressSystemTaskbarAllMonitors;
             app_.dockSettings_ = snapshot.values.dock;
+            app_.dockSettings_.systemTaskbarAutoHide = committedTaskbarAutoHide;
+            app_.dockSettings_.systemTaskbarAlignment = committedTaskbarAlignment;
+            app_.dockSettings_.suppressSystemTaskbar = committedTaskbarSuppression;
+            app_.dockSettings_.suppressSystemTaskbarAllMonitors = committedTaskbarSuppressionAllMonitors;
             app_.ApplyPersistentDockHostAppearance();
             app_.SyncStatusBar();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
-            app_.dockSettings_.systemTaskbarAutoHide =
-                committedTaskbarAutoHide;
-            app_.dockSettings_.systemTaskbarAlignment =
-                committedTaskbarAlignment;
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1205,6 +1206,7 @@ public:
         NormalizeDockSettings(requestedDockSettings);
         const bool dockCommitted = HasSettingsDomain(domains, SettingsDomain::Dock);
         const bool generalCommitted = HasSettingsDomain(domains, SettingsDomain::General);
+        bool taskbarMovedToBottom = false;
         if (dockCommitted)
         {
             const bool autoHideChanged =
@@ -1213,11 +1215,26 @@ public:
             const bool alignmentChanged =
                 app_.dockSettings_.systemTaskbarAlignment !=
                     requestedDockSettings.systemTaskbarAlignment;
+            const bool suppressionChanged =
+                app_.dockSettings_.suppressSystemTaskbar != requestedDockSettings.suppressSystemTaskbar ||
+                app_.dockSettings_.suppressSystemTaskbarAllMonitors != requestedDockSettings.suppressSystemTaskbarAllMonitors;
+
+            if ((autoHideChanged || suppressionChanged) &&
+                (requestedDockSettings.systemTaskbarAutoHide || requestedDockSettings.suppressSystemTaskbar))
+            {
+                const auto location = MoveSystemTaskbarToBottomForAutoHide();
+                if (location == SystemTaskbarBottomResult::Failed)
+                {
+                    return snowdesktop::SettingsActionResult::Failure(
+                        _LW("settings.taskbar.position.moveToBottomFailed"), SettingsDomain::Dock);
+                }
+                taskbarMovedToBottom = location == SystemTaskbarBottomResult::Moved;
+            }
 
             // Queue system-owned changes before mutating the application
             // mirror.  A rejected request leaves the Dock domain pending so
             // SettingsController can surface the error and retry safely.
-            if (autoHideChanged &&
+            if ((autoHideChanged || (taskbarMovedToBottom && requestedDockSettings.systemTaskbarAutoHide)) &&
                 !RequestSystemTaskbarAutoHideEnabled(
                     requestedDockSettings.systemTaskbarAutoHide))
             {
@@ -1400,7 +1417,10 @@ public:
         }
         if (app_.hwnd_)
             InvalidateRect(app_.hwnd_, nullptr, TRUE);
-        return snowdesktop::SettingsActionResult::Success(domains);
+        auto result = snowdesktop::SettingsActionResult::Success(domains);
+        if (taskbarMovedToBottom)
+            result.message = _LW("settings.taskbar.position.movedToBottom");
+        return result;
     }
 
     snowdesktop::SettingsActionResult OnSettingsRouteChanged(

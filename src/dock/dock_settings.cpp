@@ -1164,6 +1164,66 @@ std::wstring GetDockSettingsPath()
     return GetDataFilePath(L"SnowDesktop.dock.json");
 }
 
+SystemTaskbarBottomResult MoveSystemTaskbarToBottomForAutoHide()
+{
+    using Result = SystemTaskbarBottomResult;
+    if (!IsWindows11OrGreater()) return Result::Unchanged;
+
+    // Windows 11's native taskbar location is stored as an ABE_* value.
+    // The value is absent on older shells and can be left behind by a rollback.
+    constexpr auto key = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced";
+    constexpr auto value = L"TaskbarLocation";
+    const auto readLocation = [&]() -> std::optional<DWORD> {
+        DWORD edge = 0;
+        DWORD size = sizeof(edge);
+        if (RegGetValueW(HKEY_CURRENT_USER, key, value, RRF_RT_REG_DWORD,
+                nullptr, &edge, &size) != ERROR_SUCCESS || edge > ABE_BOTTOM)
+            return std::nullopt;
+        return edge;
+    };
+    const auto location = readLocation();
+    if (!location || *location == ABE_BOTTOM) return Result::Unchanged;
+
+    const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!taskbar) return Result::Failed;
+    const auto readAppliedEdge = [taskbar]() -> std::optional<UINT> {
+        APPBARDATA data{};
+        data.cbSize = sizeof(data);
+        data.hWnd = taskbar;
+        data.uEdge = UINT_MAX;
+        if (!SHAppBarMessage(ABM_GETTASKBARPOS, &data) || data.uEdge > ABE_BOTTOM)
+            return std::nullopt;
+        return data.uEdge;
+    };
+    const auto edge = readAppliedEdge();
+    if (edge == ABE_BOTTOM) return Result::Unchanged;
+    if (!edge || *edge != *location) return Result::Failed;
+
+    const DWORD bottom = ABE_BOTTOM;
+    if (RegSetKeyValueW(HKEY_CURRENT_USER, key, value, REG_DWORD,
+            &bottom, sizeof(bottom)) != ERROR_SUCCESS)
+        return Result::Failed;
+
+    // The Windows Settings app uses this private Explorer message to apply
+    // TaskbarLocation live. Read the applied edge independently of its reply.
+    constexpr UINT traySettingMessage = 0x05CA;
+    constexpr WPARAM taskbarLocationSetting = 6;
+    DWORD_PTR ignored = 0;
+    if (!SendMessageTimeoutW(taskbar, traySettingMessage, taskbarLocationSetting,
+            ABE_BOTTOM, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1500, &ignored) ||
+        readAppliedEdge() != ABE_BOTTOM)
+    {
+        if (readLocation() == ABE_BOTTOM)
+            RegSetKeyValueW(HKEY_CURRENT_USER, key, value, REG_DWORD,
+                &*location, sizeof(DWORD));
+        return Result::Failed;
+    }
+
+    // Explorer reloads the settings for secondary taskbars from this notification.
+    SendNotifyMessageW(taskbar, WM_SETTINGCHANGE, 0, reinterpret_cast<LPARAM>(L"TraySettings"));
+    return Result::Moved;
+}
+
 bool IsSystemTaskbarAutoHideEnabled()
 {
     if (const auto requested =

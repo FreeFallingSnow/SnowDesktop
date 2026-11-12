@@ -1055,6 +1055,19 @@ struct SettingsWindowHost::Impl
             std::move(title), std::move(message));
     }
 
+    void ShowCommitFeedback(const SettingsActionResult& result)
+    {
+        if (!result.Succeeded())
+        {
+            ShowActionError(result);
+            return;
+        }
+        if (result.message.empty() || !shell || !controller) return;
+        if (const auto snapshot = controller->Snapshot())
+            (void)shell->ShowInfoForGeneration(snapshot->generation,
+                shell_impl::SettingsShellInfoSeverity::Success, L"", result.message);
+    }
+
     [[nodiscard]] bool DispatchToOwner(std::function<void()> task)
     {
         if (!task || shuttingDown || !callbacks ||
@@ -1332,8 +1345,7 @@ struct SettingsWindowHost::Impl
         if (!controller || shuttingDown)
             return;
         const SettingsActionResult result = controller->FlushPending();
-        if (!result.Succeeded())
-            ShowActionError(result);
+        ShowCommitFeedback(result);
         // A successful preview/commit already publishes revisioned snapshots
         // for the affected presenters. Refreshing every localized label here
         // rewrites the active XAML tree on the DispatcherQueue turn following
@@ -2409,8 +2421,12 @@ struct SettingsWindowHost::Impl
             // The optional animation dialog follows an accepted layout commit,
             // not merely a queued draft or a failed host action.
             if (result.Succeeded() && request.action == SettingsHostActions::Action::ApplyDesktopStylePreset)
+            {
                 result = state->owner->controller->FlushPending();
-            state->owner->ShowActionError(result);
+                state->owner->ShowCommitFeedback(result);
+            }
+            else
+                state->owner->ShowActionError(result);
             return result;
         };
         dock.openTaskbarSettings = [weak](std::uint64_t generation) {
