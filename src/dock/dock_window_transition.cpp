@@ -106,15 +106,6 @@ bool SystemWindowAnimationsEnabled()
         snowdesktop::animation::RuntimeWindowEffect() != 0;
 }
 
-bool UsesNativeMinimize(HWND window)
-{
-    // Foxit PDF Editor can restore its minimized main window when the Dock
-    // animation releases the DWM cloak. Keep that window on the native path.
-    wchar_t className[64]{};
-    return GetClassNameW(window, className, static_cast<int>(std::size(className))) &&
-        wcscmp(className, L"classFoxitPhantom") == 0;
-}
-
 double TransitionDuration(int effect) noexcept
 {
     return (effect == 4   ? 420.0
@@ -703,11 +694,6 @@ bool DockWindowTransition::StartMinimize(
     HWND sourceWindow, RECT dockRect,
     HWND keepBelowWindow, std::function<void(HWND)> minimizeRequest)
 {
-    if (UsesNativeMinimize(sourceWindow))
-    {
-        ObserveMinimize(sourceWindow, dockRect, true);
-        return false;
-    }
     if (StartHelperAnimation(sourceWindow, dockRect, keepBelowWindow, false)) return true;
     if (helperRouting_ && snowdesktop::window_support::WindowSupport().Resolve(
             snowdesktop::window_support::Capability::MinimizeAnimation, sourceWindow).provider !=
@@ -823,7 +809,6 @@ bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRec
     // CBT will still perform the original native minimize. Starting a helper
     // command here could dispatch a second native request for the same action.
     ObserveMinimize(sourceWindow, dockRect, true);
-    if (UsesNativeMinimize(sourceWindow)) return false;
     if (!Start(sourceWindow, dockRect, DockWindowTransitionDirection::Minimize, {}, keepBelowWindow))
         return false;
     externalMinimize_ = true;
